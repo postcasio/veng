@@ -126,22 +126,28 @@ namespace Veng
         }
     }
 
-    void AudioSystem::OnStart(Scene& /*scene*/, const SystemContext& /*context*/)
+    void AudioSystem::OnStart(Scene& scene, const SystemContext& context)
     {
         m_Voices.clear();
         m_Finished.clear();
         m_SourcePosition.clear();
         m_HasListenerPosition = false;
+
+        // Hand any authored initial track to the music director once, at its authored fade — a level
+        // with no MusicState simply starts silent on the Music bus.
+        if (const MusicState* music = scene.TryGetFirst<MusicState>(); music != nullptr)
+        {
+            context.Audio.Music().Set(
+                music->Track,
+                Audio::MusicTransition{.FadeSeconds = music->FadeSeconds, .Loop = music->Loop});
+        }
     }
 
-    void AudioSystem::OnStop(Scene& /*scene*/, const SystemContext& /*context*/)
+    void AudioSystem::OnStop(Scene& /*scene*/, const SystemContext& context)
     {
-        if (m_Engine != nullptr)
+        for (const auto& [entity, voice] : m_Voices)
         {
-            for (const auto& [entity, voice] : m_Voices)
-            {
-                m_Engine->StopVoice(voice);
-            }
+            context.Audio.StopVoice(voice);
         }
         m_Voices.clear();
         m_Finished.clear();
@@ -151,12 +157,7 @@ namespace Veng
 
     void AudioSystem::OnUpdate(Scene& scene, const f32 delta, const SystemContext& context)
     {
-        // With no engine the system is inert: a device-less or headless scene ticks it as a no-op.
-        if (m_Engine == nullptr)
-        {
-            return;
-        }
-
+        Audio::AudioEngine& engine = context.Audio;
         const f32 alpha = context.Alpha;
 
         // Resolve the single listener from its live drawn pose, and difference its position for
@@ -187,7 +188,7 @@ namespace Veng
         // retired-voice channel): a finished non-looping source stays finished and is not restarted.
         for (auto it = m_Voices.begin(); it != m_Voices.end();)
         {
-            if (m_Engine->IsVoiceLive(it->second))
+            if (engine.IsVoiceLive(it->second))
             {
                 ++it;
                 continue;
@@ -260,7 +261,7 @@ namespace Veng
                 ++it;
                 continue;
             }
-            m_Engine->StopVoice(it->second);
+            engine.StopVoice(it->second);
             it = m_Voices.erase(it);
         }
         std::erase_if(m_SourcePosition,
@@ -278,7 +279,7 @@ namespace Veng
             {
                 if (const auto it = m_Voices.find(candidates[i].Source); it != m_Voices.end())
                 {
-                    m_Engine->StopVoice(it->second);
+                    engine.StopVoice(it->second);
                     m_Voices.erase(it);
                 }
             }
@@ -291,15 +292,19 @@ namespace Veng
             const auto it = m_Voices.find(candidate.Source);
             if (it != m_Voices.end())
             {
-                m_Engine->SetVoiceParams(it->second, candidate.Params);
+                engine.SetVoiceParams(it->second, candidate.Params);
                 continue;
             }
-            const Audio::VoiceHandle voice = m_Engine->AddVoice(candidate.Buffer, candidate.Params);
+            const Audio::VoiceHandle voice = engine.AddVoice(candidate.Buffer, candidate.Params);
             if (voice.IsValid())
             {
                 m_Voices[candidate.Source] = voice;
             }
         }
+
+        // Merge the engine's code-triggered voices into the same snapshot: advance the music
+        // crossfade and re-spatialize every PlayAt voice against this frame's listener.
+        engine.UpdateManagedVoices(listener, delta);
     }
 
     optional<vec3> AudioSystem::GetDebugSourcePosition(const Entity entity) const

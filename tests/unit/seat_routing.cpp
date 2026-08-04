@@ -145,6 +145,7 @@ namespace
                 .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
                 .Input = HeadlessInput,
                 .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
+                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
             };
         }
     };

@@ -417,6 +417,7 @@ namespace Veng
                 return SystemContext{.Assets = *m_AssetManager,
                                      .Input = *m_Input,
                                      .Tasks = *m_TaskSystem,
+                                     .Audio = m_AudioDevice->GetEngine(),
                                      .Role = NetRole::Server};
             },
         });
@@ -1280,6 +1281,7 @@ namespace Veng
         scene.StartSimulation(SystemContext{.Assets = *m_AssetManager,
                                             .Input = *m_Input,
                                             .Tasks = *m_TaskSystem,
+                                            .Audio = m_AudioDevice->GetEngine(),
                                             .Role = RoleForWorld(world)});
     }
 
@@ -1629,6 +1631,13 @@ namespace Veng
                 .Scene = owner->GetPresentedScene()};
     }
 
+    Audio::AudioEngine& Application::GetAudioEngine()
+    {
+        VE_ASSERT(m_AudioDevice, "GetAudioEngine before Run(): the audio device exists only once "
+                                 "Run() has initialized the engine");
+        return m_AudioDevice->GetEngine();
+    }
+
     SystemContext Application::BuildSystemContext(const Scene& scene, const NetRole role,
                                                   const PointerRouting& pointer, const u64 tick,
                                                   const f32 alpha, const bool firstStepThisFrame,
@@ -1638,6 +1647,7 @@ namespace Veng
             .Assets = *m_AssetManager,
             .Input = *m_Input,
             .Tasks = *m_TaskSystem,
+            .Audio = m_AudioDevice->GetEngine(),
             .Pointer = pointer,
             .Tick = tick,
             .Alpha = alpha,

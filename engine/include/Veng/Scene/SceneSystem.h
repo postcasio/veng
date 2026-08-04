@@ -15,6 +15,11 @@ namespace Veng
     class TaskSystem;
 }
 
+namespace Veng::Audio
+{
+    class AudioEngine;
+}
+
 namespace Veng::Renderer
 {
     class DebugDraw;
@@ -121,6 +126,13 @@ namespace Veng
         /// A scene-agnostic Application service, always present. A reference (not a pointer), so an
         /// async-using system needs no null-guard.
         TaskSystem& Tasks;
+        /// @brief The device-wide audio engine a system triggers sound through.
+        ///
+        /// The mixer-facing engine every system reaches to fire one-shots (PlayOneShot / PlayAt) and
+        /// set the background music (Music()). A scene-agnostic Application service backed by a null
+        /// device when there is no hardware, so every call is a no-op that still tracks the request
+        /// and no audio-triggering system needs a null-guard.
+        Audio::AudioEngine& Audio;
         /// @brief This frame's free-pointer owner + region-local position; default-empty when unrouted.
         ///
         /// The InputMappingSystem reads it to build each seat's region-gated pointer view. Its

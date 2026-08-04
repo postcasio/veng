@@ -11,6 +11,8 @@
 
 #include <miniaudio.h>
 
+#include <glm/geometric.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <numbers>
@@ -471,7 +473,12 @@ namespace Veng::Audio
 
     // -- engine --------------------------------------------------------------
 
-    AudioEngine::AudioEngine(AudioDevice& device) : m_Device(device) {}
+    AudioEngine::AudioEngine(AudioDevice& device)
+        : m_Device(device), m_Music(CreateUnique<MusicDirector>(*this))
+    {
+    }
+
+    AudioEngine::~AudioEngine() = default;
 
     void AudioEngine::SetBusGain(AudioBus bus, f32 gain)
     {
@@ -554,6 +561,9 @@ namespace Veng::Audio
         voice.Active = true;
         voice.Source = buffer;
         voice.Params = params;
+        // A raw voice carries no engine-owned metadata; PlayOneShot / PlayAt / the director stamp the
+        // slot after this returns, so a reused slot never inherits its predecessor's managed role.
+        m_Managed[slot] = Managed{};
         ++m_ActiveCount;
         return VoiceHandle{.Slot = slot, .Generation = voice.Generation};
     }
@@ -601,6 +611,7 @@ namespace Veng::Audio
         }
         voice.Active = false;
         voice.Source = nullptr;
+        m_Managed[slot] = Managed{};
         if (m_ActiveCount > 0)
         {
             --m_ActiveCount;
@@ -672,5 +683,320 @@ namespace Veng::Audio
         const u64 consumed = m_Device.GetConsumedSerial();
         std::erase_if(m_Deferred, [consumed](const Deferred& deferred)
                       { return consumed > deferred.SafeAfterSerial; });
+    }
+
+    VoiceParams AudioEngine::SpatializeManaged(const Managed& managed,
+                                               const ListenerPose& listener) const
+    {
+        VoiceParams params;
+        params.Bus = managed.Bus;
+        params.Loop = managed.Loop;
+        const f32 distance = glm::length(managed.WorldPos - listener.Position);
+        params.Gain = managed.BaseGain * listener.Gain *
+                      DistanceAttenuation(distance, managed.MinDistance, managed.MaxDistance);
+        params.Pan = StereoPan(listener.Position, listener.Rotation, managed.WorldPos);
+        params.Pitch =
+            managed.BasePitch * DopplerRatio(listener.Position, listener.Velocity, managed.WorldPos,
+                                             managed.Velocity, DefaultSpeedOfSound);
+        params.Occlusion = std::clamp(managed.Occlusion, 0.0f, 1.0f);
+        params.ReverbSend = ReverbSend(distance, managed.MinDistance, managed.MaxDistance);
+        return params;
+    }
+
+    bool AudioEngine::ReserveOneShotSlot(const f32 incomingGain)
+    {
+        u32 count = 0;
+        u32 quietest = VoiceHandle::InvalidSlot;
+        f32 quietestGain = incomingGain;
+        for (u32 i = 0; i < MaxVoices; ++i)
+        {
+            if (!m_Voices[i].Active)
+            {
+                continue;
+            }
+            const ManagedKind kind = m_Managed[i].Kind;
+            if (kind != ManagedKind::OneShot && kind != ManagedKind::Spatial)
+            {
+                continue;
+            }
+            ++count;
+            if (m_Managed[i].BaseGain < quietestGain)
+            {
+                quietestGain = m_Managed[i].BaseGain;
+                quietest = i;
+            }
+        }
+        if (count < MaxOneShotVoices)
+        {
+            return true;
+        }
+        // The pool is full: evict the quietest only if the incoming voice is louder, else reject.
+        if (quietest == VoiceHandle::InvalidSlot)
+        {
+            return false;
+        }
+        RetireSlot(quietest);
+        return true;
+    }
+
+    VoiceHandle AudioEngine::PlayOneShot(const AssetHandle<AudioClip>& clip,
+                                         const OneShotParams& params)
+    {
+        AudioClip* resolved = clip.Get();
+        if (resolved == nullptr || !resolved->Buffer())
+        {
+            return {};
+        }
+        if (!ReserveOneShotSlot(params.Gain))
+        {
+            return {};
+        }
+        const VoiceHandle handle = AddVoice(resolved->Buffer(), VoiceParams{.Bus = params.Bus,
+                                                                            .Gain = params.Gain,
+                                                                            .Pitch = params.Pitch,
+                                                                            .Loop = params.Loop});
+        if (handle.IsValid())
+        {
+            m_Managed[handle.Slot] = Managed{.Kind = ManagedKind::OneShot,
+                                             .Bus = params.Bus,
+                                             .BaseGain = params.Gain,
+                                             .BasePitch = params.Pitch,
+                                             .Loop = params.Loop};
+        }
+        return handle;
+    }
+
+    VoiceHandle AudioEngine::PlayAt(const AssetHandle<AudioClip>& clip, const vec3 worldPos,
+                                    const SpatialOneShotParams& params)
+    {
+        AudioClip* resolved = clip.Get();
+        if (resolved == nullptr || !resolved->Buffer())
+        {
+            return {};
+        }
+        if (!ReserveOneShotSlot(params.Gain))
+        {
+            return {};
+        }
+        const Managed managed{.Kind = ManagedKind::Spatial,
+                              .Bus = params.Bus,
+                              .BaseGain = params.Gain,
+                              .BasePitch = params.Pitch,
+                              .Loop = params.Loop,
+                              .WorldPos = worldPos,
+                              .Velocity = params.Velocity,
+                              .MinDistance = params.MinDistance,
+                              .MaxDistance = params.MaxDistance,
+                              .Occlusion = params.OcclusionFactor};
+        const VoiceHandle handle =
+            AddVoice(resolved->Buffer(), SpatializeManaged(managed, m_Listener));
+        if (handle.IsValid())
+        {
+            m_Managed[handle.Slot] = managed;
+        }
+        return handle;
+    }
+
+    void AudioEngine::SetVoicePose(const VoiceHandle voice, const vec3 worldPos,
+                                   const vec3 velocity)
+    {
+        if (!IsVoiceLive(voice) || m_Managed[voice.Slot].Kind != ManagedKind::Spatial)
+        {
+            return;
+        }
+        Managed& managed = m_Managed[voice.Slot];
+        managed.WorldPos = worldPos;
+        managed.Velocity = velocity;
+        m_Voices[voice.Slot].Params = SpatializeManaged(managed, m_Listener);
+    }
+
+    void AudioEngine::UpdateManagedVoices(const ListenerPose& listener, const f32 delta)
+    {
+        m_Listener = listener;
+        m_Music->Advance(delta);
+        for (u32 slot = 0; slot < MaxVoices; ++slot)
+        {
+            if (m_Voices[slot].Active && m_Managed[slot].Kind == ManagedKind::Spatial)
+            {
+                m_Voices[slot].Params = SpatializeManaged(m_Managed[slot], listener);
+            }
+        }
+    }
+
+    MusicDirector& AudioEngine::Music()
+    {
+        return *m_Music;
+    }
+
+    optional<VoiceParams> AudioEngine::GetVoiceParams(const VoiceHandle voice) const
+    {
+        if (!IsVoiceLive(voice))
+        {
+            return std::nullopt;
+        }
+        return m_Voices[voice.Slot].Params;
+    }
+
+    usize AudioEngine::GetManagedVoiceCount() const
+    {
+        usize count = 0;
+        for (u32 i = 0; i < MaxVoices; ++i)
+        {
+            const ManagedKind kind = m_Managed[i].Kind;
+            if (m_Voices[i].Active &&
+                (kind == ManagedKind::OneShot || kind == ManagedKind::Spatial))
+            {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    // -- music director ------------------------------------------------------
+
+    MusicDirector::MusicDirector(AudioEngine& engine) : m_Engine(engine) {}
+
+    f32 MusicDirector::TrackGain(const Track& track) const
+    {
+        if (track.Steady)
+        {
+            return m_Gain;
+        }
+        // Equal-power crossfade: the incoming track rises as sin, the outgoing falls as cos, so the
+        // summed power stays constant across the fade and neither dips at the midpoint.
+        const f32 t = std::clamp(track.Phase, 0.0f, 1.0f) * (std::numbers::pi_v<f32> * 0.5f);
+        const f32 envelope = track.FadingOut ? std::cos(t) : std::sin(t);
+        return envelope * m_Gain;
+    }
+
+    void MusicDirector::Apply(const Track& track) const
+    {
+        m_Engine.SetVoiceParams(
+            track.Voice,
+            VoiceParams{.Bus = AudioBus::Music, .Gain = TrackGain(track), .Loop = track.Loop});
+    }
+
+    void MusicDirector::Set(const AssetHandle<AudioClip>& track, const MusicTransition& transition)
+    {
+        // Already the one logical track: a no-op, so re-setting the playing track never re-triggers.
+        if (m_Current.Get() != nullptr && m_Current.Get() == track.Get())
+        {
+            return;
+        }
+
+        // Hold at most the crossfade pair: if a fade is still in flight, drop its oldest voice.
+        while (m_Tracks.size() >= 2)
+        {
+            m_Engine.StopVoice(m_Tracks.front().Voice);
+            m_Tracks.erase(m_Tracks.begin());
+        }
+
+        const bool hardCut = transition.FadeSeconds <= 0.0f;
+        for (Track& existing : m_Tracks)
+        {
+            existing.FadingOut = true;
+            existing.Steady = false;
+            existing.Phase = 0.0f;
+            existing.FadeDuration = transition.FadeSeconds;
+        }
+        if (hardCut)
+        {
+            for (const Track& existing : m_Tracks)
+            {
+                m_Engine.StopVoice(existing.Voice);
+            }
+            m_Tracks.clear();
+        }
+
+        AudioClip* resolved = track.Get();
+        if (resolved != nullptr && resolved->Buffer())
+        {
+            Track incoming;
+            incoming.Clip = track;
+            incoming.Loop = transition.Loop;
+            incoming.FadingOut = false;
+            incoming.Phase = 0.0f;
+            incoming.FadeDuration = transition.FadeSeconds;
+            incoming.Steady = hardCut;
+            incoming.Voice =
+                m_Engine.AddVoice(resolved->Buffer(), VoiceParams{.Bus = AudioBus::Music,
+                                                                  .Gain = TrackGain(incoming),
+                                                                  .Loop = transition.Loop});
+            if (incoming.Voice.IsValid())
+            {
+                m_Engine.m_Managed[incoming.Voice.Slot].Kind = AudioEngine::ManagedKind::Music;
+                m_Tracks.push_back(incoming);
+            }
+        }
+
+        m_Current = track;
+    }
+
+    void MusicDirector::Stop(const f32 fadeSeconds)
+    {
+        if (fadeSeconds <= 0.0f)
+        {
+            for (const Track& track : m_Tracks)
+            {
+                m_Engine.StopVoice(track.Voice);
+            }
+            m_Tracks.clear();
+        }
+        else
+        {
+            for (Track& track : m_Tracks)
+            {
+                track.FadingOut = true;
+                track.Steady = false;
+                track.Phase = 0.0f;
+                track.FadeDuration = fadeSeconds;
+            }
+        }
+        m_Current = AssetHandle<AudioClip>{};
+    }
+
+    void MusicDirector::SetGain(const f32 gain)
+    {
+        m_Gain = std::max(gain, 0.0f);
+    }
+
+    void MusicDirector::Advance(const f32 delta)
+    {
+        for (usize i = 0; i < m_Tracks.size();)
+        {
+            Track& track = m_Tracks[i];
+            if (!track.Steady)
+            {
+                track.Phase = track.FadeDuration > 0.0f
+                                  ? std::min(track.Phase + delta / track.FadeDuration, 1.0f)
+                                  : 1.0f;
+            }
+            if (track.FadingOut && track.Phase >= 1.0f)
+            {
+                m_Engine.StopVoice(track.Voice);
+                m_Tracks.erase(m_Tracks.begin() + static_cast<std::ptrdiff_t>(i));
+                continue;
+            }
+            if (!track.FadingOut && track.Phase >= 1.0f)
+            {
+                track.Steady = true;
+            }
+            Apply(track);
+            ++i;
+        }
+    }
+
+    vector<MusicDirector::VoiceState> MusicDirector::GetVoiceStates() const
+    {
+        vector<VoiceState> states;
+        states.reserve(m_Tracks.size());
+        for (const Track& track : m_Tracks)
+        {
+            states.push_back(VoiceState{.Voice = track.Voice,
+                                        .Clip = track.Clip,
+                                        .Gain = TrackGain(track),
+                                        .FadingOut = track.FadingOut});
+        }
+        return states;
     }
 }

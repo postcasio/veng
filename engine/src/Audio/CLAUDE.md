@@ -118,8 +118,33 @@ factor into a per-voice low-pass (`VoiceParams::Occlusion`, `0` an exact bypass)
 trace geometry to decide what occludes — the game supplies the factor from whatever it knows (a ray,
 a portal test). This keeps the engine general while shipping the DSP.
 
-The engine the system publishes through is set by the host (`SetEngine`); with none set the system is
-an inert no-op, so a device-less or headless scene naming it ticks harmlessly.
+The system drives `SystemContext::Audio` — the device-wide engine every system reaches, backed by
+the null device when there is no hardware — so it is never inert: a headless scene simply mixes
+through the null device. Each update it also calls `AudioEngine::UpdateManagedVoices` with the
+resolved listener, merging the engine's code-triggered one-shots and music into the same snapshot.
+
+## The code API and the music director
+
+Beyond authored `AudioSource`s, any system fires sound through `SystemContext::Audio`:
+
+- **`PlayOneShot(clip, OneShotParams)`** — a non-spatial fire-and-forget voice on a chosen bus
+  (default `SFX`). **`PlayAt(clip, worldPos, SpatialOneShotParams)`** — a spatial voice fixed at a
+  world position, spatialized against the listener exactly as an `AudioSource` is.
+  **`SetVoicePose(handle, pos, vel)`** repositions a `PlayAt` voice each frame — the general
+  capability a moving positioned voice (a projectile, a tracked remote emitter) reaches for.
+- These share one **engine-owned pool** (`MaxOneShotVoices`) inside the wider `MaxVoices` budget:
+  a full pool drops its quietest voice for a louder incoming one, else rejects the request. Each
+  slot carries `Managed` metadata (kind, world pose, rolloff) parallel to the voice table; the
+  `AudioSystem`'s per-frame `UpdateManagedVoices` re-spatializes the `Spatial` ones against the
+  listener. A slot's metadata is reset on `AddVoice` / `RetireSlot`, so a reused slot never
+  inherits a stale role.
+- **`Music()`** returns the **`MusicDirector`**, the one-track policy over the Music bus. `Set(track,
+  MusicTransition)` makes `track` the one logical background track, **equal-power crossfading** from
+  the current one over `FadeSeconds` (0 is a hard cut); re-setting the playing track is a no-op. It
+  holds at most the crossfade pair — two live Music voices — collapsing to one when the fade
+  completes, and offers `Stop(fade)`, `SetGain`, `Current()`. It does not layer, stinger, or
+  sequence. A level's authored initial track is the reflected `MusicState` component, read via
+  `Scene::TryGetFirst` on world start and handed to the director once at its authored fade.
 
 ## The self-test tone
 

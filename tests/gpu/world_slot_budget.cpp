@@ -190,8 +190,10 @@ namespace
                 .MakeStartContext =
                     [this]
                 {
-                    return SystemContext{
-                        .Assets = GetAssetManager(), .Input = GetInput(), .Tasks = GetTaskSystem()};
+                    return SystemContext{.Assets = GetAssetManager(),
+                                         .Input = GetInput(),
+                                         .Tasks = GetTaskSystem(),
+                                         .Audio = GetAudioEngine()};
                 },
             });
         }

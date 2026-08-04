@@ -36,6 +36,7 @@ namespace
                 .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
                 .Input = *reinterpret_cast<Input*>(InputBytes),
                 .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
+                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
             };
         }
     };

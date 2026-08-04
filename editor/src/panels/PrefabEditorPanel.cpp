@@ -44,14 +44,14 @@ namespace VengEditor
         AddSceneEditingChildren(app, imgui, editors, sources);
     }
 
-    PrefabEditorPanel::PrefabEditorPanel(AssetId worldPrefab, string title, Application& /*app*/,
+    PrefabEditorPanel::PrefabEditorPanel(AssetId worldPrefab, string title, Application& app,
                                          AssetManager& assets, ImGuiLayer& imgui,
                                          TypeRegistry& types, EditorRegistry& /*editors*/,
                                          const AssetSourceIndex& /*sources*/, Input& input,
                                          InputRouter& router, SystemRegistry& systems)
         : m_Id(worldPrefab), m_BaseTitle(std::move(title)),
           m_TitleId(fmt::format("##doc0x{:X}", worldPrefab.Value)), m_Assets(assets),
-          m_Input(input), m_Router(router), m_Systems(systems)
+          m_Input(input), m_Audio(app.GetAudioEngine()), m_Router(router), m_Systems(systems)
     {
         m_Scene = Scene::Create(types);
         m_Context.Scene = m_Scene.get();
@@ -158,9 +158,10 @@ namespace VengEditor
                                ? CreateUnique<SceneSimulation>(m_Systems, *playSystems)
                                : CreateUnique<SceneSimulation>(m_Systems);
         }
-        m_Simulation->Start(
-            *m_PlayScene,
-            SystemContext{.Assets = m_Assets, .Input = m_Input, .Tasks = m_Assets.GetTaskSystem()});
+        m_Simulation->Start(*m_PlayScene, SystemContext{.Assets = m_Assets,
+                                                        .Input = m_Input,
+                                                        .Tasks = m_Assets.GetTaskSystem(),
+                                                        .Audio = m_Audio});
 
         // The running game owns input: capture the cursor in the viewport until the release
         // chord (or window-focus loss) pops it.
@@ -178,7 +179,8 @@ namespace VengEditor
         {
             m_Simulation->Stop(*m_PlayScene, SystemContext{.Assets = m_Assets,
                                                            .Input = m_Input,
-                                                           .Tasks = m_Assets.GetTaskSystem()});
+                                                           .Tasks = m_Assets.GetTaskSystem(),
+                                                           .Audio = m_Audio});
         }
 
         ReleaseFromPlay();
@@ -241,6 +243,7 @@ namespace VengEditor
                 return SystemContext{.Assets = m_Assets,
                                      .Input = m_Input,
                                      .Tasks = m_Assets.GetTaskSystem(),
+                                     .Audio = m_Audio,
                                      .Tick = tick,
                                      .Alpha = alpha};
             };

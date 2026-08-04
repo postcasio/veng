@@ -129,8 +129,10 @@ namespace
                 .MakeStartContext =
                     [this]
                 {
-                    return SystemContext{
-                        .Assets = GetAssetManager(), .Input = GetInput(), .Tasks = GetTaskSystem()};
+                    return SystemContext{.Assets = GetAssetManager(),
+                                         .Input = GetInput(),
+                                         .Tasks = GetTaskSystem(),
+                                         .Audio = GetAudioEngine()};
                 },
             });
             SimIds.push_back(id);
@@ -206,8 +208,10 @@ TEST_CASE("Opening a world ticks it, closing it stops, and an unopened scene nev
         unopened = Scene::Create(a.GetTypeRegistry());
         unopened->SetSimulation(CreateUnique<SceneSimulation>(
             a.GetSystemRegistry(), std::vector<SystemId>{SystemIdOf<ProbeSystem<2>>()}));
-        unopened->StartSimulation(SystemContext{
-            .Assets = a.GetAssetManager(), .Input = a.GetInput(), .Tasks = a.GetTaskSystem()});
+        unopened->StartSimulation(SystemContext{.Assets = a.GetAssetManager(),
+                                                .Input = a.GetInput(),
+                                                .Tasks = a.GetTaskSystem(),
+                                                .Audio = a.GetAudioEngine()});
     };
 
     int atClose = 0;

@@ -141,8 +141,12 @@ TEST_CASE_FIXTURE(LevelFixture,
     // The counting systems never read Input, so a never-dereferenced placeholder lvalue
     // satisfies the SystemContext aggregate without a Window-bound Input.
     alignas(16) unsigned char inputBytes[64]{};
-    const SystemContext context{
-        .Assets = *Assets, .Input = *reinterpret_cast<Input*>(inputBytes), .Tasks = Tasks};
+    // The counting systems read neither Input nor Audio, so a never-dereferenced placeholder
+    // lvalue satisfies the SystemContext aggregate without a device.
+    const SystemContext context{.Assets = *Assets,
+                                .Input = *reinterpret_cast<Input*>(inputBytes),
+                                .Tasks = Tasks,
+                                .Audio = *reinterpret_cast<Audio::AudioEngine*>(inputBytes)};
     instance.World->TickSimulation(0.016f, context);
     CHECK(g_RanA == 0);
     CHECK(g_RanB == 1);

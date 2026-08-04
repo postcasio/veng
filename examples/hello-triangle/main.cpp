@@ -896,6 +896,7 @@ protected:
                 return SystemContext{.Assets = GetAssetManager(),
                                      .Input = GetInput(),
                                      .Tasks = GetTaskSystem(),
+                                     .Audio = GetAudioEngine(),
                                      .Role = GetNetRole()};
             },
         });
@@ -1539,6 +1540,7 @@ private:
                 return SystemContext{.Assets = GetAssetManager(),
                                      .Input = GetInput(),
                                      .Tasks = GetTaskSystem(),
+                                     .Audio = GetAudioEngine(),
                                      .Role = NetRole::Server};
             },
         });

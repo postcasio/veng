@@ -29,20 +29,21 @@ using namespace Veng::Audio;
 
 namespace
 {
-    // A SystemContext the AudioSystem never dereferences: it reads only Alpha, never the Assets,
-    // Input, or Tasks services, so the backing storage is never touched.
+    // The AudioSystem reads context.Audio and context.Alpha, never the Assets, Input, or Tasks
+    // services, so those stay faked while the audio engine is the live one under test.
     struct ContextStorage
     {
         alignas(16) unsigned char InputBytes[64]{};
         alignas(16) unsigned char TasksBytes[64]{};
         alignas(16) unsigned char AssetsBytes[64]{};
 
-        SystemContext Make()
+        SystemContext Make(AudioEngine& engine)
         {
             return SystemContext{
                 .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
                 .Input = *reinterpret_cast<Input*>(InputBytes),
                 .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
+                .Audio = engine,
             };
         }
     };
@@ -93,10 +94,9 @@ TEST_CASE("a PlayOnStart non-spatial source plays with no listener in the scene"
                                                 .Spatial = false});
 
     AudioSystem system;
-    system.SetEngine(&device->GetEngine());
     ContextStorage storage;
-    system.OnStart(*scene, storage.Make());
-    system.OnUpdate(*scene, 1.0f / 60.0f, storage.Make());
+    system.OnStart(*scene, storage.Make(device->GetEngine()));
+    system.OnUpdate(*scene, 1.0f / 60.0f, storage.Make(device->GetEngine()));
 
     // No AudioListener anywhere, yet the non-spatial voice plays — the listener-at-origin fallback.
     CHECK(device->GetEngine().GetActiveVoiceCount() == 1);
@@ -119,10 +119,9 @@ TEST_CASE("a finished non-looping source is gone the next tick")
                                                 .Spatial = false});
 
     AudioSystem system;
-    system.SetEngine(&device->GetEngine());
     ContextStorage storage;
-    system.OnStart(*scene, storage.Make());
-    system.OnUpdate(*scene, 1.0f / 60.0f, storage.Make());
+    system.OnStart(*scene, storage.Make(device->GetEngine()));
+    system.OnUpdate(*scene, 1.0f / 60.0f, storage.Make(device->GetEngine()));
     CHECK(system.HasVoice(entity));
 
     // Pump plays the one-shot out and drains the retired-voice channel.
@@ -133,10 +132,10 @@ TEST_CASE("a finished non-looping source is gone the next tick")
 
     // The system learns of the retirement through IsVoiceLive and drops the voice, and does not
     // restart the finished one-shot on any later tick.
-    system.OnUpdate(*scene, 1.0f / 60.0f, storage.Make());
+    system.OnUpdate(*scene, 1.0f / 60.0f, storage.Make(device->GetEngine()));
     CHECK_FALSE(system.HasVoice(entity));
     CHECK(device->GetEngine().GetActiveVoiceCount() == 0);
-    system.OnUpdate(*scene, 1.0f / 60.0f, storage.Make());
+    system.OnUpdate(*scene, 1.0f / 60.0f, storage.Make(device->GetEngine()));
     CHECK(device->GetEngine().GetActiveVoiceCount() == 0);
 }
 
@@ -155,14 +154,13 @@ TEST_CASE("a looping source persists across pumps")
                                                 .Spatial = false});
 
     AudioSystem system;
-    system.SetEngine(&device->GetEngine());
     ContextStorage storage;
-    system.OnStart(*scene, storage.Make());
-    system.OnUpdate(*scene, 1.0f / 60.0f, storage.Make());
+    system.OnStart(*scene, storage.Make(device->GetEngine()));
+    system.OnUpdate(*scene, 1.0f / 60.0f, storage.Make(device->GetEngine()));
     for (int i = 0; i < 10; ++i)
     {
         device->Pump(1.0f / 60.0f);
-        system.OnUpdate(*scene, 1.0f / 60.0f, storage.Make());
+        system.OnUpdate(*scene, 1.0f / 60.0f, storage.Make(device->GetEngine()));
     }
     CHECK(system.HasVoice(entity));
     CHECK(device->GetEngine().GetActiveVoiceCount() == 1);
@@ -192,11 +190,10 @@ TEST_CASE("the voice cap keeps the loudest sources")
     }
 
     AudioSystem system;
-    system.SetEngine(&device->GetEngine());
     system.SetVoiceCap(2);
     ContextStorage storage;
-    system.OnStart(*scene, storage.Make());
-    system.OnUpdate(*scene, 1.0f / 60.0f, storage.Make());
+    system.OnStart(*scene, storage.Make(device->GetEngine()));
+    system.OnUpdate(*scene, 1.0f / 60.0f, storage.Make(device->GetEngine()));
 
     CHECK(device->GetEngine().GetActiveVoiceCount() == 2);
     CHECK_FALSE(system.HasVoice(sources[0])); // gain 0.1 — dropped
@@ -224,10 +221,9 @@ TEST_CASE("the system places a source at its interpolated drawn pose, not the ra
     REQUIRE(scene->HasTransformInterpolation());
 
     AudioSystem system;
-    system.SetEngine(&device->GetEngine());
     ContextStorage storage;
-    system.OnStart(*scene, storage.Make());
-    system.OnUpdate(*scene, 1.0f / 60.0f, storage.Make().WithAlpha(0.5f));
+    system.OnStart(*scene, storage.Make(device->GetEngine()));
+    system.OnUpdate(*scene, 1.0f / 60.0f, storage.Make(device->GetEngine()).WithAlpha(0.5f));
 
     // At alpha 0.5 the drawn pose is x=5, the midpoint the renderer blends to — not the Sim tick's
     // x=10 the un-interpolated transform holds.

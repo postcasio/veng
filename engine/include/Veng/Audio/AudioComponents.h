@@ -53,6 +53,22 @@ namespace Veng
         /// @brief Master gain applied to every voice this listener hears.
         f32 Gain = 1.0f;
     };
+
+    /// @brief The level's authored initial background-music track, read on world start.
+    ///
+    /// Placed on a level's settings entity, this is the "this level starts with this music" the
+    /// AudioSystem hands to the music director once when the simulation starts (at the authored
+    /// fade). Changing the track at runtime is the director's Set call; a level with no MusicState
+    /// simply starts silent on the Music bus.
+    struct MusicState
+    {
+        /// @brief The track the director plays when the level starts.
+        AssetHandle<Audio::AudioClip> Track;
+        /// @brief The fade-in duration in seconds; 0 starts the track at full gain.
+        f32 FadeSeconds = 0.0f;
+        /// @brief Whether the track loops.
+        bool Loop = true;
+    };
 }
 
 VE_ENUM(::Veng::Audio::AudioBus, 0x6200F1CAA558FF3DULL)
@@ -83,4 +99,10 @@ VE_REFLECT_END();
 
 VE_REFLECT(::Veng::AudioListener, 0x94FFDFB63B3607BBULL)
 VE_FIELD(Gain, .DisplayName = "Gain", .Display = {.Min = 0.0})
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::MusicState, 0x52BEE4008DB11531ULL)
+VE_FIELD(Track, .DisplayName = "Track")
+VE_FIELD(FadeSeconds, .DisplayName = "Fade Seconds", .Display = {.Min = 0.0, .Step = 0.05})
+VE_FIELD(Loop, .DisplayName = "Loop")
 VE_REFLECT_END();

@@ -54,6 +54,7 @@ namespace Veng
     namespace Audio
     {
         class AudioDevice;
+        class AudioEngine;
     }
 
     /// @brief Returns the directory containing the running executable.
@@ -516,6 +517,13 @@ namespace Veng
                                       "once Run() has initialized the engine");
             return *m_AssetManager;
         }
+
+        /// @brief Returns the mixer-facing audio engine.
+        ///
+        /// The device-wide engine every system reaches through SystemContext::Audio to trigger
+        /// sound; backed by a null device when there is no hardware.
+        /// @pre Run() has initialized the engine — the audio device exists only inside Run().
+        [[nodiscard]] Audio::AudioEngine& GetAudioEngine();
 
         /// @brief Returns the host-owned, process-wide registry of reflected types.
         ///

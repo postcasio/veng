@@ -70,6 +70,8 @@ namespace Veng
         // View-phase AudioSystem. Audio::AudioBus registers transitively through AudioSource's Bus.
         registry.Register<AudioSource>();
         registry.Register<AudioListener>();
+        // The level's authored initial background-music track, handed to the music director on start.
+        registry.Register<MusicState>();
 
         // Rigid-body simulation: what the solver simulates, the shape it collides with, the
         // overlap-only sensor, and the three constraints. MotionType, PhysicsLayer and

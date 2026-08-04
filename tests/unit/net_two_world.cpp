@@ -92,6 +92,7 @@ namespace
                 .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
                 .Input = *reinterpret_cast<Input*>(InputBytes),
                 .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
+                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
                 .Role = Role,
             };
         }
@@ -1172,6 +1173,7 @@ TEST_CASE("Two worlds in one runner carry distinct NetRoles; authority gates eac
             .Assets = *reinterpret_cast<AssetManager*>(assetsBytes),
             .Input = *reinterpret_cast<Input*>(inputBytes),
             .Tasks = *reinterpret_cast<TaskSystem*>(tasksBytes),
+            .Audio = *reinterpret_cast<Audio::AudioEngine*>(tasksBytes),
             .Tick = tick,
             .Alpha = alpha,
             .Role = role,

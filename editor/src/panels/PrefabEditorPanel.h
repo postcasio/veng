@@ -25,6 +25,10 @@ namespace Veng
     class SceneSimulation;
     class SystemRegistry;
     class TypeRegistry;
+    namespace Audio
+    {
+        class AudioEngine;
+    }
 }
 
 namespace VengEditor
@@ -237,6 +241,7 @@ namespace VengEditor
 
         Veng::AssetManager& m_Assets;
         Veng::Input& m_Input;
+        Veng::Audio::AudioEngine& m_Audio;
         Veng::InputRouter& m_Router;
         Veng::SystemRegistry& m_Systems;
 

@@ -29,6 +29,8 @@
 #include <Veng/InputRouter.h>
 #include <Veng/LevelOverlay.h>
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Audio/AudioDevice.h>
+#include <Veng/Audio/AudioEngine.h>
 #include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Asset/Level.h>
 #include <Veng/Asset/Prefab.h>
@@ -197,10 +199,15 @@ namespace
         input.BeginFrame();
         input.ApplyEvent(KeyPressedEvent{Key::W, 0, 0});
 
+        const Unique<Audio::AudioDevice> audio = Audio::AudioDevice::Create(
+            Audio::AudioDeviceInfo{.Backend = Audio::AudioBackend::Null});
+
         InputMappingSystem mapping;
-        mapping.OnUpdate(
-            scene, 0.016f,
-            SystemContext{.Assets = assets, .Input = input, .Tasks = assets.GetTaskSystem()});
+        mapping.OnUpdate(scene, 0.016f,
+                         SystemContext{.Assets = assets,
+                                       .Input = input,
+                                       .Tasks = assets.GetTaskSystem(),
+                                       .Audio = audio->GetEngine()});
 
         const InputSeat seat = ResolveInputSeat(&scene);
         return scene.Get<PlayerInput>(seat.Viewer).GetValue(Move).y;

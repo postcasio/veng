@@ -3,13 +3,63 @@
 #include <Veng/Veng.h>
 #include <Veng/Audio/AudioBus.h>
 #include <Veng/Audio/AudioBuffer.h>
+#include <Veng/Audio/AudioClip.h>
 #include <Veng/Audio/Voice.h>
+#include <Veng/Asset/AssetHandle.h>
 
 #include <array>
 
 namespace Veng::Audio
 {
     class AudioDevice;
+    class MusicDirector;
+
+    /// @brief Parameters of a code-triggered non-spatial one-shot voice.
+    struct OneShotParams
+    {
+        /// @brief The bus the voice mixes into.
+        AudioBus Bus = AudioBus::SFX;
+        /// @brief Linear gain, 0 = silent, 1 = unity.
+        f32 Gain = 1.0f;
+        /// @brief Playback pitch (resample ratio); 1 = the clip's native rate.
+        f32 Pitch = 1.0f;
+        /// @brief Whether the voice loops; a one-shot (false) retires when the clip ends.
+        bool Loop = false;
+    };
+
+    /// @brief Parameters of a code-triggered spatial voice placed at a fixed world position.
+    ///
+    /// The voice is attenuated, panned, Doppler-shifted, and reverb-sent against the current
+    /// listener exactly as an authored AudioSource is. A moving positioned voice is registered with
+    /// PlayAt and then repositioned each frame through AudioEngine::SetVoicePose.
+    struct SpatialOneShotParams
+    {
+        /// @brief The bus the voice mixes into.
+        AudioBus Bus = AudioBus::SFX;
+        /// @brief Linear gain applied before spatialization; 0 = silent, 1 = unity.
+        f32 Gain = 1.0f;
+        /// @brief Base playback pitch (resample ratio); Doppler multiplies this.
+        f32 Pitch = 1.0f;
+        /// @brief Whether the voice loops; false retires it when the clip ends.
+        bool Loop = false;
+        /// @brief Distance at or within which the voice plays at full Gain.
+        f32 MinDistance = 1.0f;
+        /// @brief Distance at or beyond which the voice is silent.
+        f32 MaxDistance = 50.0f;
+        /// @brief Occlusion low-pass drive, 0 = clear (bypass) to 1 = fully occluded.
+        f32 OcclusionFactor = 0.0f;
+        /// @brief Initial world velocity for Doppler, units per second (updated via SetVoicePose).
+        vec3 Velocity{0.0f};
+    };
+
+    /// @brief How the music director transitions to a new track.
+    struct MusicTransition
+    {
+        /// @brief Crossfade duration in seconds; 0 is a hard cut.
+        f32 FadeSeconds = 0.0f;
+        /// @brief Whether the incoming track loops.
+        bool Loop = true;
+    };
 
     /// @brief The mixer-facing, main-thread API: buses and voices.
     ///
@@ -23,6 +73,9 @@ namespace Veng::Audio
         /// @brief Constructs the engine over its owning device.
         /// @param device The device whose snapshot bridge and generation counter the engine drives.
         explicit AudioEngine(AudioDevice& device);
+
+        /// @brief Destroys the engine and its music director.
+        ~AudioEngine();
 
         AudioEngine(const AudioEngine&) = delete;
         AudioEngine& operator=(const AudioEngine&) = delete;
@@ -83,6 +136,59 @@ namespace Veng::Audio
         /// @brief Returns the number of live voices.
         [[nodiscard]] usize GetActiveVoiceCount() const;
 
+        /// @brief Fires a non-spatial one-shot voice on a chosen bus.
+        ///
+        /// A fire-and-forget voice: a non-looping clip's voice retires when it ends. Backed by the
+        /// engine one-shot pool; when the pool is full the quietest pooled voice is dropped if the
+        /// incoming voice is louder, and otherwise the request is rejected. A clip with no resident
+        /// PCM buffer (unresident, or stream-only) plays nothing.
+        /// @param clip   The clip to play.
+        /// @param params The mix parameters (bus, gain, pitch, loop).
+        /// @return A handle to the voice for early stop, or an invalid handle if it was rejected.
+        VoiceHandle PlayOneShot(const AssetHandle<AudioClip>& clip,
+                                const OneShotParams& params = {});
+
+        /// @brief Fires a spatial one-shot voice at a fixed world position.
+        ///
+        /// The voice is spatialized against the current listener like an authored AudioSource. It is
+        /// fixed by default; call SetVoicePose each frame to move it. Same pool policy as
+        /// PlayOneShot; a clip with no resident PCM buffer plays nothing.
+        /// @param clip     The clip to play.
+        /// @param worldPos The voice's world position.
+        /// @param params   The spatial mix parameters.
+        /// @return A handle to the voice for early stop or repositioning, or an invalid handle.
+        VoiceHandle PlayAt(const AssetHandle<AudioClip>& clip, vec3 worldPos,
+                           const SpatialOneShotParams& params = {});
+
+        /// @brief Repositions an imperatively-placed spatial voice (no effect on a stale handle).
+        ///
+        /// Folds the new pose into the next published snapshot. Applies only to a voice registered
+        /// spatial through PlayAt (a non-spatial one-shot ignores it); the general capability a
+        /// consumer tracking a moving emitter every frame reaches for.
+        /// @param voice    The handle returned by PlayAt.
+        /// @param worldPos The new world position.
+        /// @param velocity The new world velocity, units per second (for Doppler).
+        void SetVoicePose(VoiceHandle voice, vec3 worldPos, vec3 velocity);
+
+        /// @brief Advances the engine-owned managed voices against the listener for one frame.
+        ///
+        /// Advances the music director's crossfade and re-spatializes every positioned one-shot
+        /// against @p listener, folding both into the voice table before the next Publish. The
+        /// View-phase AudioSystem calls this each update with the resolved listener pose.
+        /// @param listener The listener pose to spatialize positioned voices against.
+        /// @param delta    Time in seconds since the previous update.
+        void UpdateManagedVoices(const ListenerPose& listener, f32 delta);
+
+        /// @brief Returns the music director, the one-track policy over the Music bus.
+        [[nodiscard]] MusicDirector& Music();
+
+        /// @brief Returns a live voice's current mix parameters, or nullopt for a stale handle.
+        /// @param voice The handle.
+        [[nodiscard]] optional<VoiceParams> GetVoiceParams(VoiceHandle voice) const;
+
+        /// @brief Returns the number of live one-shot / positioned voices in the pool (test seam).
+        [[nodiscard]] usize GetManagedVoiceCount() const;
+
         /// @brief Publishes a snapshot of the current bus and voice state to the mixing thread.
         void Publish();
 
@@ -115,8 +221,57 @@ namespace Veng::Audio
             u64 SafeAfterSerial = 0;
         };
 
+        /// @brief What an engine-owned voice is, beyond a raw AudioSource-driven one.
+        enum class ManagedKind : u8
+        {
+            /// @brief Not engine-owned: an AudioSource voice the AudioSystem drives directly.
+            None,
+            /// @brief A non-spatial fire-and-forget one-shot (PlayOneShot).
+            OneShot,
+            /// @brief A positioned voice re-spatialized each frame (PlayAt / SetVoicePose).
+            Spatial,
+            /// @brief A music-director voice, its gain driven by the crossfade envelope.
+            Music,
+        };
+
+        /// @brief Per-slot metadata for an engine-owned voice (empty for an AudioSource voice).
+        struct Managed
+        {
+            /// @brief What kind of engine-owned voice occupies this slot.
+            ManagedKind Kind = ManagedKind::None;
+            /// @brief The voice's bus.
+            AudioBus Bus = AudioBus::SFX;
+            /// @brief Pre-spatialization linear gain.
+            f32 BaseGain = 1.0f;
+            /// @brief Base pitch, before any Doppler multiply.
+            f32 BasePitch = 1.0f;
+            /// @brief Whether the voice loops.
+            bool Loop = false;
+            /// @brief World position (Spatial voices).
+            vec3 WorldPos{0.0f};
+            /// @brief World velocity for Doppler (Spatial voices).
+            vec3 Velocity{0.0f};
+            /// @brief Full-gain rolloff distance (Spatial voices).
+            f32 MinDistance = 1.0f;
+            /// @brief Silence rolloff distance (Spatial voices).
+            f32 MaxDistance = 50.0f;
+            /// @brief Occlusion low-pass drive (Spatial voices).
+            f32 Occlusion = 0.0f;
+        };
+
         /// @brief Deactivates a slot and routes its source to reclamation.
         void RetireSlot(u32 slot);
+
+        /// @brief Folds a positioned voice's metadata and the listener into final mix parameters.
+        [[nodiscard]] VoiceParams SpatializeManaged(const Managed& managed,
+                                                    const ListenerPose& listener) const;
+
+        /// @brief Makes room in the one-shot pool for an incoming voice, or reports it rejected.
+        ///
+        /// Evicts the quietest pooled voice when the pool is full and the incoming voice is louder;
+        /// returns false when the pool is full and the incoming voice would be the quietest.
+        /// @param incomingGain The incoming voice's pre-spatialization gain.
+        [[nodiscard]] bool ReserveOneShotSlot(f32 incomingGain);
 
         /// @brief The owning device.
         AudioDevice& m_Device;
@@ -130,11 +285,119 @@ namespace Veng::Audio
         ReverbParams m_Reverb;
         /// @brief The voice table.
         std::array<Voice, MaxVoices> m_Voices;
+        /// @brief Per-slot engine-owned-voice metadata, parallel to m_Voices.
+        std::array<Managed, MaxVoices> m_Managed;
+        /// @brief The one-track policy over the Music bus.
+        Unique<MusicDirector> m_Music;
+        /// @brief The last listener pose managed voices were spatialized against.
+        ListenerPose m_Listener;
         /// @brief Sources awaiting reclamation.
         vector<Deferred> m_Deferred;
         /// @brief The last published snapshot serial.
         u64 m_PublishedSerial = 0;
         /// @brief The number of live voices.
         usize m_ActiveCount = 0;
+
+        friend class MusicDirector;
+    };
+
+    /// @brief The one-track background-music policy over the Music bus.
+    ///
+    /// Keeps exactly one logical track playing, crossfading (equal-power) to a new track on Set and
+    /// looping it. It holds at most two live Music voices — the crossfade pair — collapsing to one
+    /// when a fade completes. It does not layer, stinger, or sequence; that richer interactive-music
+    /// surface is a separate capability. A stream-mode clip is the expected long-track input, but
+    /// the director plays whatever the handle resolves to (a clip with no resident PCM buffer plays
+    /// nothing).
+    class MusicDirector
+    {
+    public:
+        /// @brief Constructs the director over its owning engine.
+        /// @param engine The engine whose Music-bus voices the director drives.
+        explicit MusicDirector(AudioEngine& engine);
+
+        MusicDirector(const MusicDirector&) = delete;
+        MusicDirector& operator=(const MusicDirector&) = delete;
+
+        /// @brief Makes @p track the one logical background track, crossfading from the current one.
+        ///
+        /// Fades the outgoing track out and the incoming in over the transition's FadeSeconds (0 is a
+        /// hard cut). Calling it with the already-playing track is a no-op — no re-trigger, no gain
+        /// glitch.
+        /// @param track      The clip to play as the background track.
+        /// @param transition The crossfade duration and loop flag.
+        void Set(const AssetHandle<AudioClip>& track, const MusicTransition& transition = {});
+
+        /// @brief Fades the current track out over @p fadeSeconds, leaving the Music bus silent.
+        /// @param fadeSeconds The fade-out duration in seconds; 0 stops immediately.
+        void Stop(f32 fadeSeconds);
+
+        /// @brief Sets the director's overall linear gain, scaling every Music voice.
+        /// @param gain Linear gain (clamped to >= 0).
+        void SetGain(f32 gain);
+
+        /// @brief Returns the director's overall linear gain.
+        [[nodiscard]] f32 GetGain() const { return m_Gain; }
+
+        /// @brief Returns the current logical track, or an invalid handle when none plays.
+        [[nodiscard]] AssetHandle<AudioClip> Current() const { return m_Current; }
+
+        /// @brief Advances the crossfade envelope one frame, retuning and reaping Music voices.
+        /// @param delta Time in seconds since the previous update.
+        void Advance(f32 delta);
+
+        /// @brief A live Music voice's state (test seam).
+        struct VoiceState
+        {
+            /// @brief The voice handle.
+            VoiceHandle Voice;
+            /// @brief The clip it plays.
+            AssetHandle<AudioClip> Clip;
+            /// @brief Its current applied linear gain.
+            f32 Gain = 0.0f;
+            /// @brief Whether it is fading out (the outgoing member of the pair).
+            bool FadingOut = false;
+        };
+
+        /// @brief Returns the live Music voices — one, or the crossfade pair (test seam).
+        [[nodiscard]] vector<VoiceState> GetVoiceStates() const;
+
+        /// @brief Returns the number of live Music voices (0, 1, or 2).
+        [[nodiscard]] usize GetVoiceCount() const { return m_Tracks.size(); }
+
+    private:
+        /// @brief One live Music voice and its fade state.
+        struct Track
+        {
+            /// @brief The engine voice handle.
+            VoiceHandle Voice;
+            /// @brief The clip it plays.
+            AssetHandle<AudioClip> Clip;
+            /// @brief Fade progress, 0..1.
+            f32 Phase = 0.0f;
+            /// @brief Fade duration in seconds (0 is an immediate transition).
+            f32 FadeDuration = 0.0f;
+            /// @brief Whether the track is fading out (true) or in / steady (false).
+            bool FadingOut = false;
+            /// @brief Whether the track has reached full gain and no longer fades.
+            bool Steady = false;
+            /// @brief Whether the voice loops.
+            bool Loop = true;
+        };
+
+        /// @brief The applied linear gain of a track: its equal-power envelope times the overall gain.
+        [[nodiscard]] f32 TrackGain(const Track& track) const;
+
+        /// @brief Pushes a track's current gain into its engine voice.
+        void Apply(const Track& track) const;
+
+        /// @brief The owning engine.
+        AudioEngine& m_Engine;
+        /// @brief The current logical track (invalid when stopped).
+        AssetHandle<AudioClip> m_Current;
+        /// @brief The live voices: the incoming/steady track and at most one outgoing.
+        vector<Track> m_Tracks;
+        /// @brief The overall linear gain scaling every Music voice.
+        f32 m_Gain = 1.0f;
     };
 }
