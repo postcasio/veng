@@ -185,6 +185,54 @@ generator handle removes it from the live snapshot, publishes, and returns only 
 consumed serial has passed that frame — after which the caller may free the borrowed generator with
 no use-after-free (on the null device `StopVoice` drives the mixer itself, there being no RT thread).
 
+## The Dsp primitive library
+
+`Veng/Audio/Dsp/` is the reusable **synthesis parts** a consumer composes to *invent* a sound
+inside its own `IAudioGenerator`, rather than hand-rolling oscillators and filters. It ships the
+**parts, not an instrument** — there is deliberately no `SynthVoice`, preset patch, or routing
+graph, because how the parts wire into a playable voice is a taste that belongs in the consumer.
+The public surface is one header per primitive under `engine/include/Veng/Audio/Dsp/` plus the
+umbrella `Veng/Audio/Dsp.h`; every primitive is **header-inline** (a phase accumulator, a pair of
+integrators, a ring index — no `.cpp` earns its keep) and lives in namespace `Veng::Audio::Dsp`.
+
+- **`Oscillator`** — a band-limited oscillator whose waveform is a **continuous shape** parameter
+  (sine → triangle → saw → square as one axis), so a consumer interpolates *between* timbres. The
+  non-sine archetypes are **PolyBLEP** band-limited (PolyBLAMP for the triangle's slope corners) so
+  a swept oscillator does not alias.
+- **`Noise`** — white and pink from one seeded xorshift PRNG; a fixed seed reproduces a sequence.
+- **`Envelope`** — an ADSR advancing by **sample count** (`NoteOn`/`NoteOff`, `Tick`/`Advance`),
+  segment lengths set in samples (a seconds setter converts), exposing `IsActive` to retire a voice.
+- **`Filter`** — a resonant **TPT (Zavalishin) state-variable filter**: LP/HP/BP/notch from one
+  core, stable under per-sample cutoff modulation — the response the bus/occlusion one-pole cannot
+  give. The one-pole stays where it is; this SVF is the synthesis filter.
+- **`Lfo`** — the same morphable shape at sub-audio rate (unipolar/bipolar, settable phase),
+  un-band-limited by design.
+- **`DelayLine`** — a fractional-read ring buffer sized once in `Prepare`; `Write`/`Read`/
+  `ReadInterpolated` are allocation-free. The storage a comb, all-pass, echo, or chorus is built on.
+- **`Smoother`** — a one-pole control-rate slew easing a stepped parameter (a cutoff jump, a gain
+  change) so it does not zipper.
+- **`CustomSource` / `CustomFilter`** — the escape-hatch nodes for DSP that maps onto no standard
+  primitive, first-class beside `Oscillator` and `Filter`.
+
+**The RT contract each obeys.** A primitive a generator invokes inside `Render` inherits the
+mixing-thread contract exactly: it is **lock-free, allocation-free, and calls no engine API**. It
+**advances purely by the sample count it is handed** (`Tick` per sample, `frames` variable — the
+mixer chunks at `kMaxChunkFrames` and asks for the resampled source-sample count, never a fixed
+block), so it makes no block-size assumption. The **only** allocation is `DelayLine::Prepare`, run
+off the RT thread before use. Everything is CPU-testable with no device (`tests/unit/audio_dsp.cpp`
+asserts frequency, band-limiting, envelope segment shape, filter response and modulation stability,
+noise character/determinism, delay readback, and smoother approach as properties).
+
+**A `CustomSource`/`CustomFilter` callable is bound off the RT thread, while its live parameters
+still cross only through `GeneratorParams`.** A `function` is not POD and may allocate when
+constructed, so it can never cross the triple-buffered param block — it is bound **once**, at the
+point the generator's node graph is built. *Invoking* an already-constructed `function` allocates
+nothing, so the call itself is RT-safe. The bound callable's **live knobs still flow through the
+param block** like every other node's: the generator latches its `GeneratorParams<T>` once at the
+top of its own `Render`, stores the latched values in plain members, and the callable — which closed
+over a pointer to that state at construction — reads them. Only the *code* is fixed at build time,
+never the parameters.
+
 ## Streaming voices
 
 A **stream voice** is the third voice source beside a resident PCM buffer and an `IAudioGenerator`,
