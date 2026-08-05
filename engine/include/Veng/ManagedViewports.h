@@ -165,10 +165,9 @@ namespace Veng
         /// viewport, re-resolving its seat in the destination, and re-seeding the viewport's render
         /// settings and @p knobs from the destination's authored LevelRenderSettings when it carries
         /// one), then evaluates each present-on-ready rebind — applying it once its destination is
-        /// ready, dropping it if the destination closed, or abandoning it (surfaced through
-        /// GetAbandonedPresentWorld) once it exceeds the ready timeout. The runner resolves the
-        /// departed and destination worlds; @p delta advances each pending present-on-ready request's
-        /// wait clock.
+        /// ready, or abandoning it (surfaced through GetAbandonedPresentWorld) once it exceeds the
+        /// ready timeout or its destination vanishes mid-wait. The runner resolves the departed and
+        /// destination worlds; @p delta advances each pending present-on-ready request's wait clock.
         /// @param runner  The runner the departed/destination worlds resolve through.
         /// @param delta   The wall-clock frame delta in seconds, accruing toward the ready timeout.
         /// @param knobs   The per-frame view knobs the managed viewports render with, re-seeded by a
@@ -231,12 +230,14 @@ namespace Veng
         /// @return The pending destination world, or nullopt when no rebind is in flight for the index.
         [[nodiscard]] optional<WorldInstanceId> GetPendingViewportWorld(usize index) const;
 
-        /// @brief Returns the destination a present-on-ready rebind abandoned on timeout, else invalid.
+        /// @brief Returns the destination a present-on-ready rebind abandoned, else invalid.
         ///
         /// The self-contained failure surface of RebindWorldWhenReady: when a present-on-ready request
-        /// exceeds its ready timeout it is abandoned (the viewport keeps its current world) and its
-        /// destination is recorded here, so a caller can react rather than presenting the old world
-        /// forever. The record clears when a later rebind of the same index is recorded (it supersedes).
+        /// does not complete — it exceeds its ready timeout, or its destination vanishes before it is
+        /// ready (idle-reaped or closed out from under the wait) — it is abandoned (the viewport keeps
+        /// its current world) and its destination is recorded here, so a caller can react rather than
+        /// presenting the old world forever. Every non-completion is reported this way. The record
+        /// clears when a later rebind of the same index is recorded (it supersedes).
         /// @param index  The managed viewport index (0 the primary).
         /// @return The abandoned destination world, or an invalid handle when none was abandoned.
         [[nodiscard]] WorldInstanceId GetAbandonedPresentWorld(usize index) const;
@@ -270,9 +271,10 @@ namespace Veng
         /// simulation started, its spawn residency batch resident, and its clock has ticked at least
         /// once), then the rebind applies in one frame — the departed world's overlays detach and the
         /// seat re-resolves atomically, with no empty-world frame between. Superseded by any later
-        /// rebind of the same index (last wins), dropped if the destination closes before it is ready,
-        /// and abandoned once it exceeds the ready timeout (surfaced through GetAbandonedPresentWorld),
-        /// so a destination that never readies does not strand the viewport presenting the old world
+        /// rebind of the same index (last wins), and abandoned (surfaced through
+        /// GetAbandonedPresentWorld) either once it exceeds the ready timeout or if its destination
+        /// vanishes before it is ready (idle-reaped or closed out from under the wait), so a
+        /// destination that never readies does not strand the viewport presenting the old world
         /// forever. The pending destination is observable through GetPendingViewportWorld. A no-op for an
         /// out-of-range index (dropped at apply).
         /// @param index  The managed viewport index (0 the primary).
@@ -451,11 +453,12 @@ namespace Veng
         {
             /// @brief The managed viewport index whose present-on-ready request was abandoned.
             usize Index = 0;
-            /// @brief The destination world the request timed out waiting to present.
+            /// @brief The destination world the request never presented — timed out or vanished mid-wait.
             WorldInstanceId World;
         };
 
-        /// @brief Present-on-ready destinations abandoned on timeout, cleared when the index is superseded.
+        /// @brief Present-on-ready destinations abandoned on timeout or destination-close, cleared when
+        ///        the index is superseded.
         vector<AbandonedPresent> m_AbandonedPresents;
 
         /// @brief Seconds a present-on-ready rebind waits for readiness before it is abandoned.

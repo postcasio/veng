@@ -418,9 +418,8 @@ TEST_CASE("A present-on-ready rebind holds the old world until the destination r
     app.Run({});
 }
 
-TEST_CASE(
-    "A present-on-ready rebind is superseded by a later rebind, and dropped if its destination "
-    "closes")
+TEST_CASE("A present-on-ready rebind superseded is not abandoned, but one whose destination is "
+          "reaped mid-wait is — every non-completion observable")
 {
     TypeRegistry types;
     RegisterBuiltinTypes(types);
@@ -465,6 +464,9 @@ TEST_CASE(
             CHECK(app.GetManagedViewportWorld(0) == replacement.World);
             CHECK_FALSE(app.GetPendingManagedViewportWorld(0).has_value());
             CHECK(v->GetPresentedScene() == replacement.Scene);
+            // Negative control: a deliberate supersession is an intentional replacement, not a
+            // failure — it records no abandonment.
+            CHECK(app.GetAbandonedManagedPresentWorld(0) == WorldInstanceId{});
             // Now request a present-on-ready to the never-ready world again, then close it mid-wait.
             app.RebindManagedViewportWhenReady(0, neverReady.World);
         }
@@ -476,10 +478,12 @@ TEST_CASE(
         }
         else if (frame == 5)
         {
-            // The destination closed mid-wait, so the conditional rebind dropped: no pending, and the
-            // viewport still presents the replacement (unchanged).
+            // The destination was reaped mid-wait, so the conditional rebind was abandoned: no pending,
+            // the viewport still presents the replacement (unchanged), and the vanished destination is
+            // recorded — a reaped present-on-ready failure is observable, not silent.
             CHECK_FALSE(app.GetPendingManagedViewportWorld(0).has_value());
             CHECK(app.GetManagedViewportWorld(0) == replacement.World);
+            CHECK(app.GetAbandonedManagedPresentWorld(0) == neverReady.World);
         }
     };
 

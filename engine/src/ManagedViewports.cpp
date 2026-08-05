@@ -173,13 +173,22 @@ namespace Veng
         m_PendingRebinds.clear();
 
         // Present-on-ready rebinds hold the viewport on its current world until the destination readies.
-        // Drop one whose destination closed mid-wait, apply one that readied, and abandon one that
-        // exceeds the timeout (surfaced through GetAbandonedPresentWorld) so a never-ready destination
-        // does not strand the viewport on the old world forever.
+        // Apply one that readied, and abandon one whose destination vanished mid-wait or that exceeds
+        // the timeout (both surfaced through GetAbandonedPresentWorld) so a never-ready or reaped
+        // destination does not strand the viewport on the old world forever.
         for (auto it = m_PendingReadyRebinds.begin(); it != m_PendingReadyRebinds.end();)
         {
             if (runner.ResolveWorld(it->World) == nullptr)
             {
+                // The destination vanished while still waiting — idle-reaped or closed out from under
+                // the wait. A deliberate supersession never reaches here: a later rebind of this index
+                // erases the pending through SupersedePending before this drive runs, so a pending
+                // still in the list whose world no longer resolves genuinely disappeared. Record the
+                // abandonment (as the timeout path does) so every non-completion is observable.
+                Log::Warn("Managed viewport {} present-on-ready to world {} was abandoned: its "
+                          "destination closed before it became ready; keeping the current world.",
+                          it->Index, it->World.Value);
+                m_AbandonedPresents.push_back({.Index = it->Index, .World = it->World});
                 it = m_PendingReadyRebinds.erase(it);
                 continue;
             }

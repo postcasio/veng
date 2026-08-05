@@ -631,9 +631,9 @@ namespace Veng
         /// reports its residency batch resident, and ticks at least once, then swaps in one frame (the
         /// departed world's overlays detach and the seat re-resolves atomically) — the front-door / world
         /// jump path, with no empty-world frame and no consumer polling loop. Superseded by a later
-        /// rebind of the same index, dropped if the destination closes first, and abandoned (surfaced
-        /// through GetAbandonedPresentWorld) if the destination never readies. A no-op for an
-        /// out-of-range index.
+        /// rebind of the same index, and abandoned (surfaced through GetAbandonedPresentWorld) if the
+        /// destination never readies or vanishes mid-wait (idle-reaped or closed out from under the
+        /// wait). A no-op for an out-of-range index.
         /// @param index  The managed viewport index (0 the primary).
         /// @param world  The world to present once it is ready.
         void RebindManagedViewportWhenReady(usize index, WorldInstanceId world);
@@ -670,11 +670,11 @@ namespace Veng
         /// @return True when some view shows @p world this frame.
         [[nodiscard]] bool IsWorldPresented(WorldInstanceId world) const;
 
-        /// @brief Returns the destination a present-on-ready rebind abandoned on timeout, else invalid.
+        /// @brief Returns the destination a present-on-ready rebind abandoned, else invalid.
         ///
         /// Forwards to ManagedViewportSet::GetAbandonedPresentWorld: the failure surface of
-        /// RebindManagedViewportWhenReady, so a caller can react to a destination that never readied
-        /// rather than presenting the old world forever.
+        /// RebindManagedViewportWhenReady reporting every non-completion — a destination that timed out
+        /// or vanished mid-wait — so a caller can react rather than presenting the old world forever.
         /// @param index  The managed viewport index (0 the primary).
         /// @return The abandoned destination world, or an invalid handle when none was abandoned.
         [[nodiscard]] WorldInstanceId GetAbandonedManagedPresentWorld(usize index) const;
