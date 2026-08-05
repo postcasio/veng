@@ -257,6 +257,17 @@ top of its own `Render`, stores the latched values in plain members, and the cal
 over a pointer to that state at construction — reads them. Only the *code* is fixed at build time,
 never the parameters.
 
+**The worked example is `examples/template`'s `DemoSynth`.** It composes the primitives into one
+`IAudioGenerator` — two `Oscillator`s a fifth apart, spread across a stereo pair, through a resonant
+`Filter` low-pass (cutoff eased by a `Smoother`), amplitude-shaped by an `Envelope`, into an
+**embedded `Reverb`** (`Prepare`d once off the RT thread, `ProcessBlock` wetting only this voice) —
+registered non-spatial **stereo** (`GeneratorVoiceParams{ .Channels = 2, .Spatial = false }`) on the
+Music bus and driven live by a clock nudging the cutoff through a `GeneratorParams` block. It exercises
+the primitive library, the public reverb, and the stereo generator path in one place, out-of-tree via
+`find_package(veng)` — the consumer proof the toolkit is held to. It is a **demonstrator of
+composition, not a synth to reuse**: the oscillator count, the interval, and the routing are the
+example's arbitrary taste, not an engine opinion.
+
 ## Streaming voices
 
 A **stream voice** is the third voice source beside a resident PCM buffer and an `IAudioGenerator`,
@@ -321,5 +332,5 @@ session confirms "the right things are playing" without a speaker. It reaches th
 [mcp/CLAUDE.md](../../../mcp/CLAUDE.md). The engine's own consumption exemplars wire the whole
 subsystem — an authored looping `AudioSource` and an `AudioListener`, a code-triggered `PlayOneShot`
 through `SystemContext::Audio`, an authored `MusicState`, and a trivial `IAudioGenerator` +
-`CreateClip` demo — in `examples/hello-triangle` (`examples/template` takes the minimal
-listener + source), the consumer proof a new capability is held to.
+`CreateClip` demo — in `examples/hello-triangle`; `examples/template` takes the minimal
+listener + source plus the composed `DemoSynth` above, the consumer proof a new capability is held to.

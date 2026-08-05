@@ -6,6 +6,10 @@
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Asset/DataTable.h>
 #include <Veng/Asset/Level.h>
+#include <Veng/Audio/AudioEngine.h>
+#include <Veng/Audio/AudioGenerator.h>
+#include <Veng/Audio/Dsp.h>
+#include <Veng/Audio/Reverb.h>
 #include <Veng/Log.h>
 #include <Veng/Gui/BindingContext.h>
 #include <Veng/Gui/Document.h>
@@ -24,6 +28,8 @@
 #include <fmt/format.h>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdlib>
 #include <optional>
 
@@ -149,6 +155,133 @@ VE_FIELD(Markers)
 VE_FIELD(Marker)
 VE_REFLECT_END();
 
+// The one live-drive field the DemoSynth reads across the thread boundary: a low-pass cutoff the app
+// nudges from a clock. It is a trivially-copyable POD so it may ride a GeneratorParams block.
+struct DemoParams
+{
+    f32 Cutoff = 800.0f;
+};
+
+// A deliberately simple demonstrator instrument: two Dsp::Oscillators a fifth apart, spread across a
+// stereo pair, low-pass filtered with modest resonance, amplitude-shaped by an ADSR, and sent through
+// an embedded Reverb — the toolkit's parts wired together end to end in one non-spatial stereo voice.
+//
+// It is a demonstrator of composition, NOT a synth to reuse. The oscillator count, the interval, the
+// routing, and the drive character are an example's arbitrary taste, not an engine opinion — a
+// consumer builds the voice *it* wants from the same parts. The engine ships the primitives; where
+// they compose into a playable voice is the consumer's call.
+//
+// Render runs on the real-time mixing thread, so it only latches the param block and ticks the
+// primitives — no lock, no allocation, no engine call. The single off-thread allocation is the
+// embedded reverb's Prepare, run once before the voice is registered.
+class DemoSynth final : public Audio::IAudioGenerator
+{
+public:
+    // Sizes the embedded reverb and seeds the primitives, off the real-time thread. Must run before
+    // PlayGenerator hands the mixer the voice. The reverb and the sample-count timings (envelope,
+    // cutoff slew) are sized against the standard output rate — the mixer prepares its own master
+    // reverb the same way — while oscillator pitch and filter cutoff track the rate Render is handed.
+    void Prepare(const u32 sampleRate)
+    {
+        m_Reverb.Prepare(sampleRate);
+        for (Audio::Dsp::Oscillator& osc : m_Osc)
+        {
+            osc.SetShape(0.8f); // between saw (~2/3) and square (1) — a bright, hollow morph
+        }
+        for (Audio::Dsp::Filter& filter : m_Filter)
+        {
+            // Modest resonance: an audible peak, well short of self-oscillation.
+            filter.SetResonance(5.0f);
+        }
+        m_Cutoff.SetValue(DemoParams{}.Cutoff);
+        m_Cutoff.SetTime(0.02f, sampleRate);
+        m_Env.SetSeconds(0.5f, 0.4f, 0.75f, 0.8f, sampleRate);
+        // A sustained drone: rise through attack/decay and hold at sustain for the run.
+        m_Env.NoteOn();
+    }
+
+    // Publishes new synthesis parameters from the main/View thread.
+    void SetParams(const DemoParams& params) { m_Params.Set(params); }
+
+    void Render(f32* out, const u32 frames, const u32 channels, const u32 sampleRate) override
+    {
+        const DemoParams params = m_Params.Get();
+        m_Cutoff.SetTarget(params.Cutoff);
+        m_Osc[0].SetFrequency(BaseHz, sampleRate);
+        m_Osc[1].SetFrequency(BaseHz * IntervalRatio, sampleRate);
+
+        // Process in sub-blocks bounded by the reverb scratch: one mono send, one stereo wet, per pass.
+        u32 done = 0;
+        while (done < frames)
+        {
+            const u32 block = std::min(frames - done, BlockFrames);
+            for (u32 i = 0; i < block; ++i)
+            {
+                const f32 cutoff = m_Cutoff.Tick();
+                m_Filter[0].SetCutoff(cutoff, sampleRate);
+                m_Filter[1].SetCutoff(cutoff, sampleRate);
+
+                const f32 a = m_Osc[0].Tick();
+                const f32 b = m_Osc[1].Tick();
+                // Spread the two oscillators: the first leans left, the second right, so the stereo
+                // image is audibly wide before the reverb widens it further.
+                const f32 gain = m_Env.Tick() * Level;
+                const f32 left = m_Filter[0].Tick(a * 0.75f + b * 0.25f).LowPass * gain;
+                const f32 right = m_Filter[1].Tick(a * 0.25f + b * 0.75f).LowPass * gain;
+
+                m_Send[i] = (left + right) * 0.5f; // fold to the mono reverb send
+                if (channels >= 2)
+                {
+                    out[(done + i) * channels + 0] = left;
+                    out[(done + i) * channels + 1] = right;
+                }
+                else
+                {
+                    out[(done + i) * channels] = m_Send[i];
+                }
+            }
+
+            m_Reverb.ProcessBlock(m_Send.data(), m_WetL.data(), m_WetR.data(), block,
+                                  Audio::ReverbParams{.RoomSize = 0.7f,
+                                                      .Damping = 0.4f,
+                                                      .Width = 1.0f,
+                                                      .Quality = Audio::ReverbQuality::Standard});
+            if (channels >= 2)
+            {
+                for (u32 i = 0; i < block; ++i)
+                {
+                    out[(done + i) * channels + 0] += m_WetL[i] * WetMix;
+                    out[(done + i) * channels + 1] += m_WetR[i] * WetMix;
+                }
+            }
+            done += block;
+        }
+    }
+
+private:
+    // The base pitch and the second oscillator's interval above it — a perfect fifth.
+    static constexpr f32 BaseHz = 110.0f;
+    static constexpr f32 IntervalRatio = 1.5f;
+    // The dry output level before the voice's own Gain, and the caller-applied reverb wet mix (the
+    // reverb's ProcessBlock leaves ReverbParams::Wet to the caller).
+    static constexpr f32 Level = 0.35f;
+    static constexpr f32 WetMix = 0.35f;
+    // The sub-block size; the mixer never hands Render more than one mixer chunk plus a resample
+    // carry, so this bounds the reverb scratch with room to spare.
+    static constexpr u32 BlockFrames = 1024;
+
+    Audio::Dsp::Oscillator m_Osc[2];
+    Audio::Dsp::Filter m_Filter[2];
+    Audio::Dsp::Smoother m_Cutoff;
+    Audio::Dsp::Envelope m_Env;
+    Audio::Reverb m_Reverb;
+    Audio::GeneratorParams<DemoParams> m_Params;
+
+    std::array<f32, BlockFrames> m_Send{};
+    std::array<f32, BlockFrames> m_WetL{};
+    std::array<f32, BlockFrames> m_WetR{};
+};
+
 // The smallest veng game that also authors a HUD and opens a live sub-scene: the bare managed-world
 // app (a rotating cube driven entirely by cooked data) grows a minimal Application subclass. Its
 // jobs are the primary HUD's data binding (the one thing the engine cannot do from data alone) and
@@ -166,6 +299,10 @@ public:
         : Application(info, types, systems), m_Smoke(smoke)
     {
     }
+
+    // Runs before ~Application, while the audio engine is still alive: stop the generator voice so the
+    // mixer no longer references the borrowed m_Synth before it is destroyed with the app.
+    ~TemplateApp() override { GetAudioEngine().StopVoice(m_SynthVoice); }
 
 private:
     // The world is loaded here; find the prefab-authored primary GuiOverlay and bind it the
@@ -197,6 +334,20 @@ private:
         m_Markers = *markers;
 
         ReportBeacon(world);
+        SetupSynth();
+    }
+
+    // Registers the demonstrator instrument as a live stereo, non-spatial voice on the Music bus. The
+    // reverb is prepared here, off the mixing thread, before the mixer is ever handed the generator;
+    // OnUpdate then drives its cutoff live through the param block. It runs in every mode (silent under
+    // the headless null device the smoke path uses), so the voice exists whenever the app does.
+    void SetupSynth()
+    {
+        m_Synth.Prepare(SynthSampleRate);
+        m_SynthVoice = GetAudioEngine().PlayGenerator(
+            &m_Synth,
+            Audio::GeneratorVoiceParams{
+                .Bus = Audio::AudioBus::Music, .Spatial = false, .Channels = 2, .Gain = 0.5f});
     }
 
     // Reads the prefab-authored reference to the game-defined asset and reports what it resolved
@@ -234,6 +385,12 @@ private:
             RequestExit();
             return;
         }
+
+        // Sweep the synth's low-pass cutoff from a clock — the sanctioned live-parameter seam, a step
+        // eased by the synth's own Smoother so it never zippers. This is the resonant filter sweep a
+        // listen would judge.
+        m_SynthClock += delta;
+        m_Synth.SetParams(DemoParams{.Cutoff = 800.0f + 500.0f * std::sin(m_SynthClock * 0.5f)});
 
         m_Model.Caption =
             fmt::format("{} — {:.0f} fps", m_TuningLabel, delta > 0.0f ? 1.0f / delta : 0.0f);
@@ -340,6 +497,13 @@ private:
 
     // The game-defined asset, held resident for the app's lifetime.
     AssetHandle<Template::MarkerSet> m_Markers;
+
+    // The demonstrator instrument, its live voice handle, and the clock driving its cutoff sweep. The
+    // standard output rate the reverb and envelope timings are sized against (the mixer runs at it).
+    static constexpr u32 SynthSampleRate = 48000;
+    DemoSynth m_Synth;
+    Audio::VoiceHandle m_SynthVoice;
+    f32 m_SynthClock = 0.0f;
 
     // Enough frames for the world load, the first spawn, and a couple of rendered frames to
     // settle before smoke mode exits.
