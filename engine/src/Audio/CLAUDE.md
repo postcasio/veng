@@ -179,12 +179,23 @@ Two runtime paths put code-made sound into the mix; pick by whether the sound is
   the director, indistinguishable downstream from a cooked clip.
 - **`IAudioGenerator` + `AudioEngine::PlayGenerator(gen, GeneratorVoiceParams)`** — for an
   **unbounded, continuously-varying voice** the mixer pulls from. The engine holds a *borrowed*
-  pointer (the caller owns the generator and guarantees it outlives the voice) and, internally,
-  drives it as one mono voice at the device rate; `Render` fills the samples on the mixing thread.
-  Pitch (Doppler) is applied by resampling that stream, so a generator voice shares the clip
-  attenuation/pan/Doppler/occlusion path with **no generator-specific case** — a spatial generator
-  is a `Spatial` `Managed` voice moved each frame with `SetVoicePose` (position is a placement, never
-  a generator param). A generator voice never retires by exhaustion; only `StopVoice` removes it.
+  pointer (the caller owns the generator and guarantees it outlives the voice); `Render` fills the
+  samples on the mixing thread at the device rate. Pitch (Doppler) is applied by resampling that
+  stream, so a generator voice shares the clip attenuation/pan/Doppler/occlusion path with **no
+  generator-specific case** — a spatial generator is a `Spatial` `Managed` voice moved each frame
+  with `SetVoicePose` (position is a placement, never a generator param). A generator voice never
+  retires by exhaustion; only `StopVoice` removes it.
+
+  **A generator voice is mono by default, and a non-spatial one may declare stereo.** A voice
+  registers its width through `GeneratorVoiceParams::Channels` — `1` (mono) or `2` (an interleaved
+  stereo image). A **mono** voice renders one stream that the pan stage fans to stereo, exactly as a
+  clip does. A **stereo** voice's two channels are *authored* by the generator: they are summed
+  straight into the stereo bus, **bypassing the pan** (a non-spatial voice has no distance and no pan
+  to compute — its stereo image is what the generator draws), resampled per channel through the base
+  `Pitch` only, and folded to the mono reverb send as `(L + R) × 0.5 × ReverbSend`. Stereo is
+  **non-spatial only**: spatialization is a mono-source-then-pan model, so a stereo point source is
+  undefined and `PlayGenerator` **rejects** a `Channels == 2 && Spatial` request with an invalid
+  handle. The spatial path is untouched and mono by construction.
 
 > **`IAudioGenerator::Render` runs on the real-time mixing thread. It must be lock-free,
 > allocation-free, and call no engine API — the same contract the snapshot bridge rests on. Live

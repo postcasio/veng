@@ -867,6 +867,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/audio_generation.cpp
             tests/unit/audio_dsp.cpp
             tests/unit/audio_reverb.cpp
+            tests/unit/audio_stereo.cpp
             tests/unit/audio_streaming.cpp
             tests/unit/pure_logic.cpp
             tests/unit/task_system.cpp

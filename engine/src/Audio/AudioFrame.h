@@ -25,6 +25,8 @@ namespace Veng::Audio
 
         /// @brief The on-demand sample source, or null for a non-generator voice.
         IAudioGenerator* Generator = nullptr;
+        /// @brief Rendered channel count of a generator voice: 1 (mono) or 2 (interleaved stereo).
+        u32 GeneratorChannels = 1;
 
         /// @brief The streaming source (its ring the callback drains), or null for a non-stream voice.
         StreamVoice* Stream = nullptr;

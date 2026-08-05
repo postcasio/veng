@@ -26,11 +26,14 @@ namespace Veng::Audio
         ///
         /// Called on the real-time mixing thread. It must not lock, allocate, or call any engine
         /// API; it reads its drive parameters through a GeneratorParams block latched inside this
-        /// call. The engine drives a voice as mono (channels == 1) — a spatialized voice collapses
-        /// to mono before panning — so a generator writes @p frames samples at @p sampleRate.
+        /// call. The engine drives a voice at the channel count the voice declared through
+        /// GeneratorVoiceParams::Channels — 1 for the default mono voice, 2 for a voice registered
+        /// stereo (which must be non-spatial: a spatialized voice is mono-source-then-pan). So a
+        /// mono voice writes @p frames samples and a stereo voice writes @p frames × 2 interleaved
+        /// samples, at @p sampleRate.
         /// @param out        Destination for interleaved samples, @p frames × @p channels long.
         /// @param frames     Number of sample frames to produce.
-        /// @param channels   Channel count to interleave (the engine passes 1).
+        /// @param channels   Channel count to interleave (1 for a mono voice, 2 for a stereo one).
         /// @param sampleRate The output sample rate in Hz.
         virtual void Render(f32* out, u32 frames, u32 channels, u32 sampleRate) = 0;
     };
@@ -90,6 +93,12 @@ namespace Veng::Audio
         AudioBus Bus = AudioBus::SFX;
         /// @brief Whether the voice is placed and spatialized against the listener.
         bool Spatial = false;
+        /// @brief Rendered channel count: 1 (mono, the default) or 2 (an interleaved stereo image).
+        ///
+        /// A stereo voice's two channels are authored by the generator and mixed straight to the
+        /// stereo bus, bypassing the pan stage. Stereo requires Spatial == false — a stereo point
+        /// source has no defined pan — so PlayGenerator rejects a Spatial stereo request.
+        u32 Channels = 1;
         /// @brief Linear gain applied before spatialization; 0 = silent, 1 = unity.
         f32 Gain = 1.0f;
         /// @brief Base playback pitch (resample ratio); Doppler multiplies this for a spatial voice.

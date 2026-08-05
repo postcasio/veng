@@ -47,6 +47,7 @@
 #include <Veng/Audio/AudioComponents.h>
 #include <Veng/Audio/AudioDevice.h>
 #include <Veng/Audio/AudioEngine.h>
+#include <Veng/Audio/AudioGenerator.h>
 #include <Veng/Audio/AudioSystem.h>
 #include <Veng/Audio/Dsp.h>
 #include <Veng/Audio/Reverb.h>

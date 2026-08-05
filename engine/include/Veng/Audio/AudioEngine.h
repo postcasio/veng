@@ -312,6 +312,8 @@ namespace Veng::Audio
             Ref<AudioBuffer> Source;
             /// @brief The borrowed on-demand source (null for a buffer or stream voice); not owned.
             IAudioGenerator* Generator = nullptr;
+            /// @brief Rendered channel count of a generator voice: 1 (mono) or 2 (interleaved stereo).
+            u32 GeneratorChannels = 1;
             /// @brief The owned streaming source (null for a buffer or generator voice).
             Unique<StreamVoice> Stream;
             /// @brief The mix parameters.

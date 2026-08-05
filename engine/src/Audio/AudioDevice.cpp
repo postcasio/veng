@@ -120,8 +120,12 @@ namespace Veng::Audio
             /// @brief Generator resampler: fractional read position between GenS0 and GenS1, [0, 1).
             f64 GenFrac = 0.0;
             /// @brief Generator resampler: the two source samples the current output interpolates.
+            ///        For a stereo generator these are the left channel's window.
             f32 GenS0 = 0.0f;
             f32 GenS1 = 0.0f;
+            /// @brief Generator resampler: the right channel's two-sample window (stereo voice only).
+            f32 GenS0R = 0.0f;
+            f32 GenS1R = 0.0f;
             /// @brief Whether the two-sample interpolation window has been primed for this voice.
             bool GenPrimed = false;
         };
@@ -141,9 +145,11 @@ namespace Veng::Audio
         /// @brief The stereo wet reverb output (sized kMaxChunkFrames each).
         vector<f32> WetL;
         vector<f32> WetR;
-        /// @brief Per-voice mono render scratch (sized kMaxChunkFrames).
+        /// @brief Per-voice mono render scratch (sized kMaxChunkFrames); a stereo generator's left.
         vector<f32> VoiceScratch;
-        /// @brief Generator source-render scratch (sized for the widest resample per chunk).
+        /// @brief A stereo generator's right-channel render scratch (sized kMaxChunkFrames).
+        vector<f32> VoiceScratchR;
+        /// @brief Generator source-render scratch (sized for the widest interleaved-stereo resample).
         vector<f32> GenScratch;
 
         /// @brief The last null-device pump output, for headless inspection and tests.
@@ -169,11 +175,14 @@ namespace Veng::Audio
             WetL.assign(kMaxChunkFrames, 0.0f);
             WetR.assign(kMaxChunkFrames, 0.0f);
             VoiceScratch.assign(kMaxChunkFrames, 0.0f);
+            VoiceScratchR.assign(kMaxChunkFrames, 0.0f);
             // The most source samples a chunk resamples: floor(GenFrac + frames * pitch) + 1, bounded
-            // by the pitch clamp; a fixed margin covers the +1 and the fractional carry.
-            GenScratch.assign(
-                static_cast<usize>(kMaxChunkFrames) * static_cast<usize>(kMaxGeneratorPitch) + 4,
-                0.0f);
+            // by the pitch clamp; a fixed margin covers the +1 and the fractional carry. Doubled for
+            // an interleaved stereo pull, so this one buffer covers the mono pull too.
+            GenScratch.assign(static_cast<usize>(kMaxChunkFrames) *
+                                      static_cast<usize>(kMaxGeneratorPitch) * 2 +
+                                  8,
+                              0.0f);
             MasterReverb.Prepare(sampleRate);
         }
     };
@@ -274,6 +283,57 @@ namespace Veng::Audio
                 {
                     rt.GenS0 = rt.GenS1;
                     rt.GenS1 = batch[pullIdx++];
+                    frac -= 1.0;
+                }
+            }
+            rt.GenFrac = frac;
+        }
+
+        // Pulls one chunk of interleaved stereo from a non-spatial generator voice into
+        // native.VoiceScratch (left) and native.VoiceScratchR (right). The generator renders at the
+        // device rate; the only resample ratio is the voice's base Pitch (a non-spatial voice has no
+        // Doppler), applied per channel through a shared two-sample window advanced by one fractional
+        // cursor — so at unity pitch this is a straight device-rate copy. No occlusion: a stereo
+        // voice is non-spatial by construction, so its occlusion is a bypass.
+        void RenderGeneratorStereoChunk(AudioDevice::Native& native, const VoiceSnapshot& voice,
+                                        AudioDevice::Native::RtVoice& rt, u32 frames)
+        {
+            const f64 ratio = static_cast<f64>(std::clamp(voice.Pitch, 0.01f, kMaxGeneratorPitch));
+            f32* batch = native.GenScratch.data();
+
+            // Prime both channels' windows from the generator's first two interleaved frames, once.
+            if (!rt.GenPrimed)
+            {
+                voice.Generator->Render(batch, 2, 2, native.SampleRate);
+                rt.GenS0 = batch[0];
+                rt.GenS1 = batch[2];
+                rt.GenS0R = batch[1];
+                rt.GenS1R = batch[3];
+                rt.GenFrac = 0.0;
+                rt.GenPrimed = true;
+            }
+
+            const u64 pulls = static_cast<u64>(rt.GenFrac + static_cast<f64>(frames) * ratio);
+            VE_ASSERT(pulls * 2 <= native.GenScratch.size(),
+                      "stereo generator chunk pulls {} interleaved samples, scratch holds {}",
+                      pulls * 2, native.GenScratch.size());
+            voice.Generator->Render(batch, static_cast<u32>(pulls), 2, native.SampleRate);
+
+            f64 frac = rt.GenFrac;
+            u64 pullIdx = 0;
+            for (u32 i = 0; i < frames; ++i)
+            {
+                native.VoiceScratch[i] = rt.GenS0 + (rt.GenS1 - rt.GenS0) * static_cast<f32>(frac);
+                native.VoiceScratchR[i] =
+                    rt.GenS0R + (rt.GenS1R - rt.GenS0R) * static_cast<f32>(frac);
+                frac += ratio;
+                while (frac >= 1.0)
+                {
+                    rt.GenS0 = rt.GenS1;
+                    rt.GenS1 = batch[pullIdx * 2];
+                    rt.GenS0R = rt.GenS1R;
+                    rt.GenS1R = batch[pullIdx * 2 + 1];
+                    ++pullIdx;
                     frac -= 1.0;
                 }
             }
@@ -493,6 +553,8 @@ namespace Veng::Audio
                     rt.GenFrac = 0.0;
                     rt.GenS0 = 0.0f;
                     rt.GenS1 = 0.0f;
+                    rt.GenS0R = 0.0f;
+                    rt.GenS1R = 0.0f;
                     rt.GenPrimed = false;
                 }
                 if (rt.Finished)
@@ -500,12 +562,20 @@ namespace Veng::Audio
                     continue;
                 }
 
+                const bool stereoGen = isGenerator && voice.GeneratorChannels == 2;
                 bool exhausted = false;
                 if (isGenerator)
                 {
                     // An on-demand generator is unbounded; it renders at the device rate and never
                     // retires by exhaustion — only StopVoice removes it.
-                    RenderGeneratorChunk(native, voice, rt, frames);
+                    if (stereoGen)
+                    {
+                        RenderGeneratorStereoChunk(native, voice, rt, frames);
+                    }
+                    else
+                    {
+                        RenderGeneratorChunk(native, voice, rt, frames);
+                    }
                 }
                 else if (isStream)
                 {
@@ -541,18 +611,35 @@ namespace Veng::Audio
                     }
                 }
 
-                f32 leftGain = 0.0f;
-                f32 rightGain = 0.0f;
-                EqualPowerPan(voice.Pan, leftGain, rightGain);
                 const f32 gain = std::max(voice.Gain, 0.0f);
                 vector<f32>& bus = native.BusAccum[static_cast<usize>(voice.Bus)];
                 const f32 send = std::clamp(voice.ReverbSend, 0.0f, 1.0f);
-                for (u32 i = 0; i < frames; ++i)
+                if (stereoGen)
                 {
-                    const f32 s = native.VoiceScratch[i] * gain;
-                    bus[i * 2] += s * leftGain;
-                    bus[i * 2 + 1] += s * rightGain;
-                    native.ReverbSend[i] += s * send;
+                    // A non-spatial stereo generator carries an authored L/R image: sum both channels
+                    // straight into the stereo bus with no EqualPowerPan, and fold to a mono reverb
+                    // send the way the bus-master send folds a stereo bus.
+                    for (u32 i = 0; i < frames; ++i)
+                    {
+                        const f32 l = native.VoiceScratch[i] * gain;
+                        const f32 r = native.VoiceScratchR[i] * gain;
+                        bus[i * 2] += l;
+                        bus[i * 2 + 1] += r;
+                        native.ReverbSend[i] += (l + r) * 0.5f * send;
+                    }
+                }
+                else
+                {
+                    f32 leftGain = 0.0f;
+                    f32 rightGain = 0.0f;
+                    EqualPowerPan(voice.Pan, leftGain, rightGain);
+                    for (u32 i = 0; i < frames; ++i)
+                    {
+                        const f32 s = native.VoiceScratch[i] * gain;
+                        bus[i * 2] += s * leftGain;
+                        bus[i * 2 + 1] += s * rightGain;
+                        native.ReverbSend[i] += s * send;
+                    }
                 }
 
                 if (exhausted && !voice.Loop)
@@ -863,6 +950,7 @@ namespace Veng::Audio
         voice.Active = true;
         voice.Source = buffer;
         voice.Generator = nullptr;
+        voice.GeneratorChannels = 1;
         voice.Params = params;
         // A raw voice carries no engine-owned metadata; PlayOneShot / PlayAt / the director stamp the
         // slot after this returns, so a reused slot never inherits its predecessor's managed role.
@@ -906,6 +994,7 @@ namespace Veng::Audio
         voice.Active = true;
         voice.Source = nullptr;
         voice.Generator = nullptr;
+        voice.GeneratorChannels = 1;
         voice.Stream = std::move(stream);
         voice.Params = params;
         m_Managed[slot] = Managed{};
@@ -954,6 +1043,13 @@ namespace Veng::Audio
     {
         VE_ASSERT(generator != nullptr, "PlayGenerator requires a non-null generator");
 
+        // Stereo is a non-spatial-only width: spatialization is a mono-source-then-pan model, so a
+        // stereo point source has no defined pan. Reject it the way a full budget rejects a voice.
+        if (params.Channels == 2 && params.Spatial)
+        {
+            return {};
+        }
+
         // A spatial generator carries the same Managed metadata a PlayAt voice does, so it is
         // re-spatialized by UpdateManagedVoices and moved by SetVoicePose through the one shared
         // path; a non-spatial generator routes straight to its bus with static params.
@@ -990,6 +1086,7 @@ namespace Veng::Audio
         voice.Active = true;
         voice.Source = nullptr;
         voice.Generator = generator;
+        voice.GeneratorChannels = params.Channels == 2 ? 2 : 1;
         voice.Params = voiceParams;
         m_Managed[slot] = managed;
         ++m_ActiveCount;
@@ -1160,6 +1257,7 @@ namespace Veng::Audio
                 snapshot.Active = true;
                 snapshot.Generation = voice.Generation;
                 snapshot.Generator = voice.Generator;
+                snapshot.GeneratorChannels = voice.GeneratorChannels;
                 snapshot.Stream = voice.Stream.get();
                 if (voice.Source)
                 {
