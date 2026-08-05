@@ -217,6 +217,19 @@ namespace Veng
         /// @return The opened world's handle.
         [[nodiscard]] WorldInstanceId OpenWorld(const WorldOpenInfo& info);
 
+        /// @brief Sets the factory CloseWorld builds a started world's stop context from.
+        ///
+        /// The one place CloseWorld gets a SystemContext to run each system's OnStop with, uniform
+        /// across every world however its simulation was started — at open (WorldOpenInfo) or
+        /// externally (Scene::StartSimulation). Called with the closing world's id and live scene, it
+        /// returns a context built over the same services the world's ticks saw, or nullopt when none
+        /// can be built (a device-free runner has no services to fill one). Unset — the default — is
+        /// the device-free contract: CloseWorld drops a started world without running OnStop rather
+        /// than fabricating a context.
+        /// @param factory  The stop-context factory, or an empty function to clear it.
+        void
+        SetStopContextFactory(function<optional<SystemContext>(WorldInstanceId, Scene&)> factory);
+
         /// @brief Closes a world, stopping its simulation and dropping it; the id then resolves to nothing.
         /// @param world  The world to close; an unminted or already-closed id is a no-op.
         void CloseWorld(WorldInstanceId world);
@@ -349,6 +362,9 @@ namespace Veng
 
         /// @brief The owned worlds, in ascending id (open) order.
         vector<Unique<World>> m_Worlds;
+
+        /// @brief Builds a started world's stop context at CloseWorld; unset leaves OnStop unrun.
+        function<optional<SystemContext>(WorldInstanceId, Scene&)> m_StopContextFactory;
 
         /// @brief The instance counter minting world ids; never reused, so a stale id resolves to nothing.
         u64 m_NextId = 1;

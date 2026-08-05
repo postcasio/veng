@@ -97,9 +97,6 @@ namespace Veng
             }
         }
         world->LiveScene = world->OwnedScene.get();
-        // Capture the context factory so CloseWorld can stop the simulation symmetrically with the
-        // start below; a fresh call at close rebuilds a context over the same live services.
-        world->MakeContext = info.MakeStartContext;
 
         const WorldInstanceId id = world->Id;
         Scene& scene = *world->LiveScene;
@@ -121,6 +118,12 @@ namespace Veng
         return id;
     }
 
+    void WorldRunner::SetStopContextFactory(
+        function<optional<SystemContext>(WorldInstanceId, Scene&)> factory)
+    {
+        m_StopContextFactory = std::move(factory);
+    }
+
     void WorldRunner::CloseWorld(const WorldInstanceId world)
     {
         const auto it = std::ranges::find_if(m_Worlds, [world](const Unique<World>& w)
@@ -131,19 +134,23 @@ namespace Veng
         }
 
         // End-play before teardown: run each system's OnStop while its scene is still live, symmetric
-        // with OpenWorld starting the simulation. Destructing the world (Scene::~Scene → the systems)
-        // runs no OnStop — a destructor has no SystemContext to supply — so a system that releases an
-        // engine-owned resource in OnStop depends on this stop, not on destruction. Guarded on a
-        // started simulation and a captured context factory: a deferred-start or device-free world
-        // carries no factory and is dropped without a fabricated context rather than crashing (the
-        // same guard OpenWorld puts on the start). Stopping is idempotent, so a caller that already
-        // stopped before closing takes a harmless second no-op here.
+        // with a simulation start. Destructing the world (Scene::~Scene → the systems) runs no
+        // OnStop — a destructor has no SystemContext to supply — so a system that releases an
+        // engine-owned resource in OnStop depends on this stop, not on destruction. The stop context
+        // comes from the runner-level factory, which builds one over the live services for any
+        // started world regardless of how its simulation was started; a runner with no factory, or a
+        // factory that returns nullopt (a device-free runner with no services), drops a started world
+        // without running OnStop rather than fabricating one. Stopping is idempotent, so a caller
+        // that already stopped before closing takes a harmless second no-op here.
         const World& closing = **it;
         Scene& scene = closing.GetScene();
         if (const SceneSimulation* sim = scene.GetSimulation();
-            sim != nullptr && sim->IsStarted() && closing.MakeContext)
+            sim != nullptr && sim->IsStarted() && m_StopContextFactory)
         {
-            scene.StopSimulation(closing.MakeContext());
+            if (optional<SystemContext> context = m_StopContextFactory(closing.Id, scene))
+            {
+                scene.StopSimulation(*context);
+            }
         }
 
         m_Worlds.erase(it);

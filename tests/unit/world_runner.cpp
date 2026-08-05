@@ -129,6 +129,16 @@ namespace
         };
     }
 
+    // A minimal device-free stop-context factory for CloseWorld: it hands back the same fake context
+    // the opens forward, so end-play runs without any real service. It ignores the world id and scene
+    // it is passed — the probe never dereferences the context — and always yields one, standing in
+    // for Application's factory over its live services.
+    function<optional<SystemContext>(WorldInstanceId, Scene&)> StopFactory(ContextStorage& storage)
+    {
+        return [&storage](WorldInstanceId, Scene&) -> optional<SystemContext>
+        { return storage.Make(); };
+    }
+
     // A tick info that runs one Sim step per call (delta == the 60 Hz fixed step) and forwards the
     // fake context; the probe reads only the scene, so BuildContext's tick/alpha are immaterial here.
     WorldTickInfo OneStep(ContextStorage& storage)
@@ -268,7 +278,7 @@ TEST_CASE("Closing a world resolves its id to nothing and leaves a peer untouche
     CHECK(runner.ResolveWorld(b)->Clock.GetTick() == 2);
 }
 
-TEST_CASE("Closing a started world through the runner runs its systems' OnStop exactly once")
+TEST_CASE("Closing a runner-started world runs its systems' OnStop exactly once")
 {
     StopProbe::Reset();
 
@@ -278,6 +288,7 @@ TEST_CASE("Closing a started world through the runner runs its systems' OnStop e
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
 
     ContextStorage storage;
+    runner.SetStopContextFactory(StopFactory(storage));
     const WorldInstanceId a = runner.OpenWorld(StopWorld(storage));
     const Scene* scene = &runner.ResolveWorld(a)->GetScene();
 
@@ -286,9 +297,47 @@ TEST_CASE("Closing a started world through the runner runs its systems' OnStop e
 
     runner.CloseWorld(a);
 
-    // Closing stops the simulation before dropping the world, so OnStop ran once for this scene —
-    // the contract a system releasing a resource in OnStop depends on. The id then resolves to nothing.
+    // Closing builds the stop context from the runner's factory and stops the simulation before
+    // dropping the world, so OnStop ran once for this scene — the contract a system releasing a
+    // resource in OnStop depends on. The id then resolves to nothing.
     CHECK(StopProbe::Stops[scene] == 1);
+    CHECK(runner.ResolveWorld(a) == nullptr);
+}
+
+TEST_CASE("Closing an externally-started world runs its systems' OnStop exactly once")
+{
+    StopProbe::Reset();
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<StopProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+
+    ContextStorage storage;
+    runner.SetStopContextFactory(StopFactory(storage));
+
+    // The join/travel shape: open a world deferred (no MakeStartContext), install a scene carrying a
+    // simulation, then start it externally through Scene::StartSimulation — never the runner's own
+    // open-time start. This is the common case the per-world capture missed.
+    const WorldInstanceId a = runner.OpenWorld(WorldOpenInfo{
+        .SimTickRate = 60,
+        .StartSimulation = false,
+    });
+    Unique<Scene> owned = Scene::Create(types);
+    owned->SetSimulation(
+        CreateUnique<SceneSimulation>(systems, vector<SystemId>{SystemIdOf<StopProbe>()}));
+    Scene& scene = runner.InstallScene(a, std::move(owned));
+    const Scene* key = &scene;
+    scene.StartSimulation(storage.Make());
+
+    // A started, unclosed world has not run end-play yet.
+    CHECK(StopProbe::Stops.find(key) == StopProbe::Stops.end());
+
+    runner.CloseWorld(a);
+
+    // Closing runs OnStop once for the externally-started world, from the runner-level factory — the
+    // same guarantee a runner-started world gets, regardless of how the simulation was started.
+    CHECK(StopProbe::Stops[key] == 1);
     CHECK(runner.ResolveWorld(a) == nullptr);
 }
 
@@ -302,6 +351,7 @@ TEST_CASE("A world stopped before closing runs OnStop once, not twice")
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
 
     ContextStorage storage;
+    runner.SetStopContextFactory(StopFactory(storage));
     const WorldInstanceId a = runner.OpenWorld(StopWorld(storage));
     Scene& scene = runner.ResolveWorld(a)->GetScene();
     const Scene* key = &scene;
@@ -311,10 +361,34 @@ TEST_CASE("A world stopped before closing runs OnStop once, not twice")
     scene.StopSimulation(storage.Make());
     CHECK(StopProbe::Stops[key] == 1);
 
-    // CloseWorld's own stop lands on an already-stopped simulation and is a no-op (Stop is idempotent),
-    // so end-play runs exactly once across the two stops, never twice.
+    // CloseWorld sees the already-stopped simulation and does not run OnStop again (Stop is
+    // idempotent), so end-play runs exactly once across the two stops, never twice.
     runner.CloseWorld(a);
     CHECK(StopProbe::Stops[key] == 1);
+    CHECK(runner.ResolveWorld(a) == nullptr);
+}
+
+TEST_CASE("A runner with no stop-context factory closes a started world without running OnStop")
+{
+    StopProbe::Reset();
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<StopProbe>();
+
+    // No stop-context factory set — the device-free contract: a runner with no services to fill a
+    // context drops a started world without fabricating one, so OnStop simply does not run.
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+
+    ContextStorage storage;
+    const WorldInstanceId a = runner.OpenWorld(StopWorld(storage));
+    const Scene* scene = &runner.ResolveWorld(a)->GetScene();
+
+    runner.CloseWorld(a);
+
+    // The started world closed cleanly and resolves to nothing; end-play never ran, since there was
+    // no context to run it with.
+    CHECK(StopProbe::Stops.find(scene) == StopProbe::Stops.end());
     CHECK(runner.ResolveWorld(a) == nullptr);
 }
 

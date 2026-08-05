@@ -231,6 +231,22 @@ namespace Veng
             .Context = &m_RenderContext,
         });
 
+        // The one place CloseWorld gets a stop context, covering every world however its simulation
+        // was started (at open, or externally through StartWorldScene). Built over the same services a
+        // world's ticks saw, so each system's OnStop releases what its OnStart acquired. The services
+        // are all live by now, so the guard is defensive; a window without them yields nullopt and the
+        // world closes without running OnStop rather than dereferencing a missing service.
+        m_WorldRunner->SetStopContextFactory(
+            [this](const WorldInstanceId world, Scene&) -> optional<SystemContext>
+            {
+                if (m_AssetManager == nullptr || m_Input == nullptr || m_TaskSystem == nullptr ||
+                    m_AudioDevice == nullptr)
+                {
+                    return std::nullopt;
+                }
+                return MakeWorldContext(world);
+            });
+
         // ImGui needs a window (GLFW backend), so it's only available windowed.
         if (!m_Info.Headless && m_Info.ImGui)
         {
@@ -1278,11 +1294,16 @@ namespace Veng
         // assert. The standalone path's batch is a local that dies here for the same reason.
         state.Pending = ResidencyBatch{};
 
-        scene.StartSimulation(SystemContext{.Assets = *m_AssetManager,
-                                            .Input = *m_Input,
-                                            .Tasks = *m_TaskSystem,
-                                            .Audio = m_AudioDevice->GetEngine(),
-                                            .Role = RoleForWorld(world)});
+        scene.StartSimulation(MakeWorldContext(world));
+    }
+
+    SystemContext Application::MakeWorldContext(const WorldInstanceId world) const
+    {
+        return SystemContext{.Assets = *m_AssetManager,
+                             .Input = *m_Input,
+                             .Tasks = *m_TaskSystem,
+                             .Audio = m_AudioDevice->GetEngine(),
+                             .Role = RoleForWorld(world)};
     }
 
     void Application::PresentJoinedWorld(const Net::JoinId join, const WorldInstanceId world)

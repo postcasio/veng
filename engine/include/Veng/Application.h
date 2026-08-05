@@ -1204,6 +1204,16 @@ namespace Veng
         /// @param scene  The runner-owned scene the join loaded into @p world.
         void StartWorldScene(WorldInstanceId world, Scene& scene);
 
+        /// @brief Builds the SystemContext a world's simulation starts and stops with, over the live services.
+        ///
+        /// The single source of the per-world context: the external start (StartWorldScene) and the
+        /// runner's stop-at-close factory both build through this, so the start-time and stop-time
+        /// contexts are the same shape and cannot drift. Fills the scene-agnostic Application services
+        /// and the world's authority role (RoleForWorld).
+        /// @param world  The world whose context is built, resolving its authority role.
+        /// @return The per-world system context.
+        [[nodiscard]] SystemContext MakeWorldContext(WorldInstanceId world) const;
+
         /// @brief Rebinds a managed viewport onto a presenting join's freshly installed world.
         ///
         /// The client arm of the present-on-ready front door: when a presenting join (its request or
