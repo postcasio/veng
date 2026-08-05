@@ -163,3 +163,48 @@ TEST_CASE("A world with both a warm pin and a join survives until both are gone"
     REQUIRE(reaped.size() == 1);
     CHECK(reaped[0] == resolve.World);
 }
+
+TEST_CASE("A factory-opened world that is never pinned reaps after the dwell")
+{
+    // The reap gate keys on a bucket's presence, not on whether it was ever pinned: a world resolved
+    // through the factory and then superseded before it ever took a presentation pin — the rapid
+    // world-switch case — never runs Release, so its idle-since is stamped by the reaper's first
+    // zero-presence sighting rather than by a presence falling to zero. Without that a never-pinned
+    // open is unreapable and accumulates one leaked world per superseded switch.
+    DirectoryFixture fx(/*dwell=*/5.0);
+    const WorldKey key = WorldKey::FromU64(0x4);
+    const WorldResolveResult resolve = fx.Open(key, AccountId{});
+    REQUIRE(resolve.Outcome == WorldResolveOutcome::Opened);
+    CHECK(fx.Directory->PresenceOf(resolve.World) == 0);
+
+    // The reaper's first zero-presence sighting begins the dwell rather than reaping outright, so the
+    // world is still warm within the dwell after it (matching a pinned-then-released world's grace).
+    CHECK(fx.Directory->ReapIdle(/*now=*/100.0).empty());
+    CHECK(fx.Directory->Contains(resolve.World));
+    CHECK(fx.Directory->ReapIdle(/*now=*/104.0).empty());
+    CHECK(fx.Directory->Contains(resolve.World));
+
+    // Past the dwell measured from that first sighting, the never-pinned open reaps through the hook.
+    const vector<WorldInstanceId> reaped = fx.Directory->ReapIdle(/*now=*/106.0);
+    REQUIRE(reaped.size() == 1);
+    CHECK(reaped[0] == resolve.World);
+    CHECK_FALSE(fx.Directory->Contains(resolve.World));
+    REQUIRE(fx.Closed.size() == 1);
+    CHECK(fx.Closed[0] == resolve.World.Value);
+}
+
+TEST_CASE("A world pinned before its first reap sighting is never reaped by the never-pinned path")
+{
+    // The stamp-on-first-sighting is gated on zero presence, so a resolve that takes its pin before
+    // any reap runs — the ordinary present-on-ready destination, pinned the frame after it opens —
+    // is untouched by it and stays warm however far past the dwell, exactly as a warm pin does.
+    DirectoryFixture fx(/*dwell=*/5.0);
+    const WorldKey key = WorldKey::FromU64(0x5);
+    const WorldResolveResult resolve = fx.Open(key, AccountId{});
+    REQUIRE(resolve.Outcome == WorldResolveOutcome::Opened);
+
+    fx.Directory->Pin(resolve.World);
+    CHECK(fx.Directory->ReapIdle(/*now=*/1000.0).empty());
+    CHECK(fx.Directory->Contains(resolve.World));
+    CHECK(fx.Closed.empty());
+}

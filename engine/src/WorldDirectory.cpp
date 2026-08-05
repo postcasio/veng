@@ -297,10 +297,23 @@ namespace Veng
     {
         State& s = *m_State;
         vector<WorldInstanceId> reaped;
-        for (const auto& [value, bucket] : s.Buckets)
+        for (auto& [value, bucket] : s.Buckets)
         {
-            if (bucket.Reapable && bucket.Presence == 0 && bucket.IdleSince &&
-                now - *bucket.IdleSince >= bucket.Dwell.value_or(s.IdleKeepWarmDwell))
+            if (!bucket.Reapable || bucket.Presence != 0)
+            {
+                continue;
+            }
+            // An idle reapable bucket begins its dwell the first time the reaper sees it with no
+            // presence — whether Release stamped the idle-since when a presence fell to zero, or the
+            // bucket was opened and never acquired at all. A destination resolved and then superseded
+            // before it was ever presented takes no pin, so Release never runs and its idle-since
+            // stays unset; without stamping it here the reap gate below skips such a never-pinned open
+            // forever, leaking the bucket and its runner world for the process's life.
+            if (!bucket.IdleSince)
+            {
+                bucket.IdleSince = now;
+            }
+            if (now - *bucket.IdleSince >= bucket.Dwell.value_or(s.IdleKeepWarmDwell))
             {
                 reaped.push_back(bucket.World);
             }
