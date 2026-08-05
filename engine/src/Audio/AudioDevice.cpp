@@ -5,10 +5,10 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Log.h>
 
+#include <Veng/Audio/Reverb.h>
 #include <Veng/Audio/TripleBuffer.h>
 
 #include "AudioFrame.h"
-#include "Reverb.h"
 #include "SpscRing.h"
 #include "StreamVoice.h"
 

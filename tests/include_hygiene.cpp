@@ -49,6 +49,7 @@
 #include <Veng/Audio/AudioEngine.h>
 #include <Veng/Audio/AudioSystem.h>
 #include <Veng/Audio/Dsp.h>
+#include <Veng/Audio/Reverb.h>
 #include <Veng/Audio/Voice.h>
 
 #include <Veng/Diagnostics/FileTraceSink.h>

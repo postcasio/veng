@@ -66,7 +66,23 @@ namespace Veng::Audio
         bool Loop = false;
     };
 
-    /// @brief Parameters of the first-party master reverb node.
+    /// @brief Reverb density tier: more filters and optional tap modulation trade CPU for smoothness.
+    ///
+    /// A caller trades real-time cost for tail quality. Low runs a reduced comb/all-pass bank for a
+    /// cheap send; Standard is the classic Schröder/Freeverb configuration; High runs the full bank
+    /// and modulates the comb tap lengths with a slow LFO so the tail does not ring on fixed comb
+    /// frequencies.
+    enum class ReverbQuality : u8
+    {
+        /// @brief A reduced-bank, low-cost tail.
+        Low,
+        /// @brief The classic 8-comb / 4-all-pass configuration.
+        Standard,
+        /// @brief The full bank with modulated comb taps for a denser, less-ringing tail.
+        High
+    };
+
+    /// @brief Parameters of the first-party embeddable reverb effect.
     struct ReverbParams
     {
         /// @brief Room size / feedback, 0 = small, 1 = large.
@@ -77,6 +93,8 @@ namespace Veng::Audio
         f32 Wet = 0.0f;
         /// @brief Stereo width of the wet signal, 0 = mono, 1 = full width.
         f32 Width = 1.0f;
+        /// @brief Density tier. Standard reproduces the classic 8-comb / 4-all-pass configuration.
+        ReverbQuality Quality = ReverbQuality::Standard;
     };
 
     /// @brief A voice reported by the real-time thread as finished playing.

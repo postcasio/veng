@@ -77,9 +77,22 @@ does **not** re-route to a new device or follow a sample-rate change.
 `AudioBus` is a fixed enum (`Master / Music / SFX / UI / Ambience`), each a mixing group under the
 master, created at init and living for the run. It is deliberately closed — no designer-authorable
 graph. Each bus carries an independent gain and a small typed effect surface (gain, a one-pole
-low-pass, a send into the master reverb); the master reverb is a first-party Freeverb-style node
-(`Reverb.h`), since miniaudio has none, its per-block cost inside the voice budget. A voice's own
-occlusion low-pass, pan, and reverb send ride the snapshot per voice.
+low-pass, a send into the master reverb); the master reverb is a first-party Freeverb-style node,
+since miniaudio has none, its per-block cost inside the voice budget. A voice's own occlusion
+low-pass, pan, and reverb send ride the snapshot per voice.
+
+**The reverb is a public, embeddable effect (`Veng/Audio/Reverb.h`), used two ways.** It is one
+`Reverb` class — a bank of feedback-comb and all-pass filters expressed on `Dsp::DelayLine` (and
+`Dsp::Lfo` for the High-quality tap modulation) — driving both the mixer's master node
+(`AudioDevice`'s `Native::MasterReverb`) and any generator that embeds one to wet only the sub-mix
+it chooses; there is no second implementation. The contract is `Prepare(sampleRate)` off the RT
+thread (the one allocating call — it sizes the banks to the maximum) and `ProcessBlock(send, wetL,
+wetR, frames, params)` on it (**no lock, no alloc**), reading a mono send and writing a stereo wet
+pair. `ReverbParams::Quality` (`Low / Standard / High`) trades CPU for tail density: fewer filters
+at Low for a cheap send, the classic 8-comb/4-all-pass bank at Standard, and the full bank with
+slow LFO-modulated comb taps at High for a denser, less-ringing tail. **Standard reproduces the
+classic configuration exactly**, so the master node's default behaviour is unchanged; because the
+banks are sized to the maximum in `Prepare`, switching quality between blocks stays allocation-free.
 
 ## The voice budget
 
