@@ -906,6 +906,11 @@ namespace Veng::Audio
         return m_Reverb;
     }
 
+    u32 AudioEngine::GetOutputSampleRate() const
+    {
+        return m_Device.GetSampleRate();
+    }
+
     u32 AudioEngine::AllocateSlot(const f32 incomingGain)
     {
         for (u32 i = 0; i < MaxVoices; ++i)

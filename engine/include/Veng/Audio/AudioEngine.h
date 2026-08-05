@@ -130,6 +130,13 @@ namespace Veng::Audio
         AudioEngine(const AudioEngine&) = delete;
         AudioEngine& operator=(const AudioEngine&) = delete;
 
+        /// @brief The device's negotiated output sample rate in Hz.
+        ///
+        /// The rate every registered generator's Render is invoked at. A consumer that must size
+        /// rate-dependent state before its first Render — a generator allocating delay lines for an
+        /// embedded reverb, say — reads the real rate here instead of assuming a default.
+        [[nodiscard]] u32 GetOutputSampleRate() const;
+
         /// @brief Sets a bus's linear gain.
         /// @param bus  The bus.
         /// @param gain Linear gain (clamped to >= 0).
