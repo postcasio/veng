@@ -33,6 +33,10 @@
 #include <xmmintrin.h>
 #endif
 
+#if defined(__APPLE__)
+#include <pthread/qos.h>
+#endif
+
 namespace Veng::Audio
 {
     namespace
@@ -606,6 +610,13 @@ namespace Veng::Audio
         // callback.
         void DecodeThreadMain(AudioDevice::Native* native)
         {
+#if defined(__APPLE__)
+            // The fill thread must keep every ring topped ahead of the real-time drain, so a busy
+            // machine must not deschedule it long enough to underrun a buffered voice — even though
+            // its throughput is far above real time, the scheduling latency is what starves it. Raise
+            // its QoS to the interactive band (still below the audio callback's real-time thread).
+            pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
             std::vector<StreamVoice*> working;
             std::vector<BufferedGenerator*> buffered;
             while (!native->DecodeStop.load(std::memory_order_acquire))
