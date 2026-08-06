@@ -9,6 +9,7 @@
 
 #include <VengEditor/CookRequest.h>
 #include <VengEditor/EditorPanel.h>
+#include <VengEditor/StatusTracker.h>
 
 /// @brief EditorRegistry — the editor's side of the module contract.
 ///
@@ -50,6 +51,9 @@ namespace Veng
         /// @brief The host task system, for a panel that offloads heavy work (a bake, an offline
         ///        render, an export) off the UI thread, the same one the cook-on-demand runs on.
         TaskSystem& Tasks;
+        /// @brief The editor status tracker, so a panel's background task shows in the status bar
+        ///        alongside the cook — Begin at the submit site, End from its main-thread completion.
+        VengEditor::StatusTracker& Status;
         /// @brief The asset's authoring source file, the panel's save target; empty when unresolved.
         path SourcePath;
         /// @brief The recook seam, bound over the host's cook-on-demand; empty when no project is

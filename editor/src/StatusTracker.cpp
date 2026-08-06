@@ -1,4 +1,4 @@
-#include "StatusTracker.h"
+#include <VengEditor/StatusTracker.h>
 
 #include <algorithm>
 

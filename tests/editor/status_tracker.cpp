@@ -4,7 +4,7 @@
 
 #include <doctest/doctest.h>
 
-#include "StatusTracker.h"
+#include <VengEditor/StatusTracker.h>
 
 using namespace VengEditor;
 

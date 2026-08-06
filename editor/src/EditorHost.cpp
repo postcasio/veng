@@ -23,7 +23,7 @@
 #include "CommandStack.h"
 #include "JsonUtil.h"
 #include "PreviewCapability.h"
-#include "StatusTracker.h"
+#include <VengEditor/StatusTracker.h>
 #include "panels/AssetBrowserPanel.h"
 #include "panels/ConsolePanel.h"
 #include "panels/DataTableEditorPanel.h"
@@ -728,6 +728,7 @@ namespace VengEditor
             .Context = GetRenderContext(),
             .Audio = GetAudioEngine(),
             .Tasks = GetTaskSystem(),
+            .Status = *m_Status,
             .SourcePath = entry != nullptr ? entry->Source : path{},
             .Cook = VengEditor::CookDriver([this](const VengEditor::CookRequest& request,
                                                   function<void(Result<MountHandle>)> onComplete)
