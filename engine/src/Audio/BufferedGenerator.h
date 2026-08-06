@@ -9,14 +9,16 @@
 
 namespace Veng::Audio
 {
-    /// @brief Ring capacity for a buffered generator voice's rendered-PCM channel, in interleaved
-    ///        samples (a power of two).
+    /// @brief The smallest and largest ahead-of-time buffer depth a buffered voice may request, in
+    ///        seconds.
     ///
-    /// About 16384 stereo frames (~341 ms) or 32768 mono frames (~682 ms) at 48 kHz — deep enough
-    /// that the audio fill thread's coarse wake cadence never starves the real-time reader, sized
-    /// generously because a buffered voice exists precisely to carry latency-tolerant heavy synthesis
-    /// off the real-time thread. The store is interleaved by the voice's channel count.
-    inline constexpr usize BufferedGeneratorRingCapacity = 1u << 15;
+    /// The depth is the consumer's policy — @ref GeneratorVoiceParams::BufferSeconds — because it is a
+    /// latency-versus-headroom trade the consumer owns, not the engine: a deeper ring survives a longer
+    /// synthesis stall but plays a parameter change that much later, and how much of each a voice wants
+    /// depends on the voice. The request is clamped to this band before the ring is sized, so a
+    /// consumer can neither ask for a degenerate ring nor a runaway allocation.
+    inline constexpr f32 BufferedGeneratorMinSeconds = 0.05f;
+    inline constexpr f32 BufferedGeneratorMaxSeconds = 4.0f;
 
     /// @brief How many frames the fill thread renders from a generator per pass while topping a ring.
     inline constexpr u32 BufferedGeneratorChunkFrames = 4096;
@@ -41,7 +43,9 @@ namespace Veng::Audio
     struct BufferedGenerator
     {
         /// @brief The rendered-PCM channel: fill thread pushes interleaved samples, callback pops them.
-        SpscRing<f32, BufferedGeneratorRingCapacity> Ring;
+        ///        PlayGenerator sizes it to the voice's requested BufferSeconds (rounded up to a power
+        ///        of two) before either thread touches it; it is never reallocated after.
+        SpscRingDynamic<f32> Ring;
 
         /// @brief Fill thread → main: this voice is out of the fill thread's working set, safe to free.
         std::atomic<bool> ReleasedByDecoder{false};

@@ -109,6 +109,13 @@ namespace Veng::Audio
         /// requires Spatial == false (a buffered voice carries no per-frame pan or Doppler), so
         /// PlayGenerator rejects a Spatial buffered request; mono and stereo are both supported.
         bool Buffered = false;
+        /// @brief Ahead-of-time buffer depth for a buffered voice, in seconds (ignored otherwise).
+        ///
+        /// The consumer's latency-versus-headroom policy: a deeper buffer survives a longer synthesis
+        /// stall on the fill thread but plays a parameter change that much later. PlayGenerator clamps
+        /// it to a sane band and rounds the resulting ring up to a power of two. Latency-tolerant work
+        /// (background music) wants a large value; something twitchier wants a small one.
+        f32 BufferSeconds = 0.25f;
         /// @brief Linear gain applied before spatialization; 0 = silent, 1 = unity.
         f32 Gain = 1.0f;
         /// @brief Base playback pitch (resample ratio); Doppler multiplies this for a spatial voice.

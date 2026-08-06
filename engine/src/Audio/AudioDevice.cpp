@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -1267,6 +1268,17 @@ namespace Veng::Audio
             buffered->SampleRate = m_Device.GetSampleRate();
             buffered->RenderScratch.assign(
                 static_cast<usize>(BufferedGeneratorChunkFrames) * buffered->Channels, 0.0f);
+
+            // Size the ring to the consumer's requested depth (clamped to a sane band), rounded up to
+            // a power of two — done here, off the real-time and fill threads, before either can reach
+            // it. The band and the pow2 rounding are why BufferSeconds cannot allocate a runaway ring.
+            const f32 seconds = std::clamp(params.BufferSeconds, BufferedGeneratorMinSeconds,
+                                           BufferedGeneratorMaxSeconds);
+            const usize wantSamples =
+                static_cast<usize>(std::ceil(static_cast<f32>(buffered->SampleRate) * seconds)) *
+                buffered->Channels;
+            buffered->Ring.Prepare(std::bit_ceil(std::max<usize>(wantSamples, usize{2})));
+
             BufferedGenerator* bufferedPtr = buffered.get();
             voice.Buffered = std::move(buffered);
 
