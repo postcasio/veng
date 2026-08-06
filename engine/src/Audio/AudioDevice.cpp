@@ -898,6 +898,9 @@ namespace Veng::Audio
                 m_SampleRate = m_Native->Device.sampleRate;
                 m_Native->HasDevice = true;
                 m_Backend = AudioBackend::Auto;
+                // Size the RT scratch before the device starts: the callback can fire the
+                // instant ma_device_start returns (WASAPI does), and it mixes into these buffers.
+                m_Native->PrepareScratch(m_SampleRate, m_Channels);
                 started = ma_device_start(&m_Native->Device) == MA_SUCCESS;
                 if (!started)
                 {
@@ -914,9 +917,8 @@ namespace Veng::Audio
             {
                 m_SampleRate = 48000;
             }
+            m_Native->PrepareScratch(m_SampleRate, m_Channels);
         }
-
-        m_Native->PrepareScratch(m_SampleRate, m_Channels);
 
         // The decode thread runs regardless of backend: on the null device the main-thread Pump
         // drains the rings it fills, so a finite stream still retires headless with no device.
