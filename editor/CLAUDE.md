@@ -104,7 +104,8 @@ across the whole project's one AssetId namespace, not just its own pack.
   and at most one queued) — which is what makes the model testable in the device-free `editor_unit`
   band. It and `AssetEditorPanel` are public `VengEditor/` headers, so a game-defined asset type can
   ship a first-class save/preview editor (the `AssetEditorContext` carries the audio engine, the
-  asset's source path, and the recook `CookDriver` a game factory needs beyond the render context). **No panel carries a countdown that reaches a file**: a cook debounce that *follows* an
+  host task system, the asset's source path, and the recook `CookDriver` a game factory needs beyond
+  the render context). **No panel carries a countdown that reaches a file**: a cook debounce that *follows* an
   explicit save would not be an auto-save, but none exists either — the sole per-frame countdown in
   a panel is the material editor's status toast.
 - **`AssetEditorPanel` hosts a private, class-restricted dockspace.** An asset editor is a

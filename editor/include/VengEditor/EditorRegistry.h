@@ -22,6 +22,7 @@
 namespace Veng
 {
     class AssetManager;
+    class TaskSystem;
     namespace Renderer
     {
         class Context;
@@ -46,6 +47,9 @@ namespace Veng
         Renderer::Context& Context;
         /// @brief The host audio engine, for a panel that auditions sound through PlayGenerator.
         Audio::AudioEngine& Audio;
+        /// @brief The host task system, for a panel that offloads heavy work (a bake, an offline
+        ///        render, an export) off the UI thread, the same one the cook-on-demand runs on.
+        TaskSystem& Tasks;
         /// @brief The asset's authoring source file, the panel's save target; empty when unresolved.
         path SourcePath;
         /// @brief The recook seam, bound over the host's cook-on-demand; empty when no project is

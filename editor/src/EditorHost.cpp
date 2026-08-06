@@ -727,6 +727,7 @@ namespace VengEditor
             .Assets = GetAssetManager(),
             .Context = GetRenderContext(),
             .Audio = GetAudioEngine(),
+            .Tasks = GetTaskSystem(),
             .SourcePath = entry != nullptr ? entry->Source : path{},
             .Cook = VengEditor::CookDriver([this](const VengEditor::CookRequest& request,
                                                   function<void(Result<MountHandle>)> onComplete)
