@@ -8,7 +8,7 @@
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SimClock.h>
 
-#include "AssetEditorPanel.h"
+#include <VengEditor/AssetEditorPanel.h>
 #include "CommandStack.h"
 #include "panels/PrefabEditContext.h"
 

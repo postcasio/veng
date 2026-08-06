@@ -7,7 +7,7 @@
 #include <Veng/Result.h>
 #include <Veng/Veng.h>
 
-#include "AssetEditorPanel.h"
+#include <VengEditor/AssetEditorPanel.h>
 #include "panels/TableDocument.h"
 #include "panels/TextureEditorPanel.h" // CookDriver alias
 

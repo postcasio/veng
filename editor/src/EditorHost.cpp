@@ -18,7 +18,7 @@
 
 #include <VengGraph/MaterialCatalog.h>
 
-#include "AssetEditorPanel.h"
+#include <VengEditor/AssetEditorPanel.h>
 #include "AssetSourceIndex.h"
 #include "CommandStack.h"
 #include "JsonUtil.h"
@@ -718,8 +718,20 @@ namespace VengEditor
     void EditorHost::OpenAssetEditor(AssetTypeId type, AssetId id)
     {
         // Built at open time (not registration): a game module's factory registers before the engine
-        // services exist, so the panel receives them here, when they are live.
-        const AssetEditorContext ctx{.Assets = GetAssetManager(), .Context = GetRenderContext()};
+        // services exist, so the panel receives them here, when they are live. A game asset editor
+        // gets the same seams the built-ins take by hand — the audio engine to audition through, its
+        // source path to save to, and the recook driver — so it can be a first-class save/preview
+        // editor rather than only a viewer.
+        const AssetSourceIndex::Entry* const entry = m_Sources ? m_Sources->Find(id) : nullptr;
+        const AssetEditorContext ctx{
+            .Assets = GetAssetManager(),
+            .Context = GetRenderContext(),
+            .Audio = GetAudioEngine(),
+            .SourcePath = entry != nullptr ? entry->Source : path{},
+            .Cook = VengEditor::CookDriver([this](const VengEditor::CookRequest& request,
+                                                  function<void(Result<MountHandle>)> onComplete)
+                                           { RequestCook(request, std::move(onComplete)); }),
+        };
         if (Unique<EditorPanel> panel = m_Registries->Editor.CreateEditorFor(type, id, ctx))
         {
             m_PendingPanels.push_back(std::move(panel));

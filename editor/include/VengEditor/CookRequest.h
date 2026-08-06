@@ -7,6 +7,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Project/BuildConfiguration.h>
+#include <Veng/Result.h>
 #include <Veng/Task/TaskSystem.h>
 
 /// @brief Cook-on-demand contract as seen by libveng_editor.
@@ -86,4 +87,13 @@ namespace VengEditor
     /// @param assetTypes      Registry the reference manifests' type names resolve through.
     using AssetIdMinter =
         Veng::function<Veng::AssetId(std::span<const Veng::path>, const Veng::AssetTypeRegistry&)>;
+
+    /// @brief Off-thread cook callback a panel drives its recook through.
+    ///
+    /// The host binds it over EditorHost::RequestCook: it shadow-mounts the cooked result and
+    /// delivers a MountHandle (or an error) back on the main thread, so a panel triggers a recook
+    /// and hot-reload behind the stable handle without seeing the cook backend. An asset editor
+    /// receives one through the panel's construction or its AssetEditorContext.
+    using CookDriver = Veng::function<void(const CookRequest&,
+                                           Veng::function<void(Veng::Result<Veng::MountHandle>)>)>;
 }

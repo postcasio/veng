@@ -99,10 +99,12 @@ across the whole project's one AssetId namespace, not just its own pack.
   is the only place to ask) — a subclass writes nothing for the prompt. A toolbar Save button wraps
   in `UI::Disabled(!dirty)`. A recook arriving while one is in flight is **queued**, not dropped —
   the in-flight cook read an older source, so a save landing behind it must re-cook once it lands.
-  `editor/src/AssetSaveModel.h` is the shared, UI-free form of both halves — `SaveAssetSource` (the
+  `VengEditor/AssetSaveModel.h` is the shared, UI-free form of both halves — `SaveAssetSource` (the
   ordered write → clear-dirty → cook sequence) and `CookGate` (`Request`/`Complete`, one in flight
   and at most one queued) — which is what makes the model testable in the device-free `editor_unit`
-  band. **No panel carries a countdown that reaches a file**: a cook debounce that *follows* an
+  band. It and `AssetEditorPanel` are public `VengEditor/` headers, so a game-defined asset type can
+  ship a first-class save/preview editor (the `AssetEditorContext` carries the audio engine, the
+  asset's source path, and the recook `CookDriver` a game factory needs beyond the render context). **No panel carries a countdown that reaches a file**: a cook debounce that *follows* an
   explicit save would not be an auto-save, but none exists either — the sole per-frame countdown in
   a panel is the material editor's status toast.
 - **`AssetEditorPanel` hosts a private, class-restricted dockspace.** An asset editor is a

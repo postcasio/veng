@@ -15,8 +15,8 @@
 #include <VengGraph/MaterialCompile.h>
 #include <VengGraph/MaterialShaderInterface.h>
 
-#include "AssetEditorPanel.h"
-#include "AssetSaveModel.h"
+#include <VengEditor/AssetEditorPanel.h>
+#include <VengEditor/AssetSaveModel.h>
 
 #include "material/MaterialPreview.h"
 

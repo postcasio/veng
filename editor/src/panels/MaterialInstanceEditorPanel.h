@@ -9,8 +9,8 @@
 #include <VengEditor/CookRequest.h>
 #include <VengEditor/EditorRegistry.h>
 
-#include "AssetEditorPanel.h"
-#include "AssetSaveModel.h"
+#include <VengEditor/AssetEditorPanel.h>
+#include <VengEditor/AssetSaveModel.h>
 
 #include "material/MaterialPreview.h"
 

@@ -3,9 +3,11 @@
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
+#include <Veng/Path.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/FieldDescriptor.h>
 
+#include <VengEditor/CookRequest.h>
 #include <VengEditor/EditorPanel.h>
 
 /// @brief EditorRegistry — the editor's side of the module contract.
@@ -24,19 +26,31 @@ namespace Veng
     {
         class Context;
     }
+    namespace Audio
+    {
+        class AudioEngine;
+    }
 
     /// @brief Engine services an asset-editor factory receives when it opens a panel.
     ///
     /// A game editor module registers its factories while the module loads, before the engine's
     /// AssetManager and render Context exist, so a factory cannot capture them at registration. This
     /// context is passed to OpenEditor instead — built by the host at open time, when the services
-    /// are live — so a game panel can load and inspect the asset it edits.
+    /// are live — so a game panel can load, inspect, audition, and save the asset it edits with the
+    /// same host seams the built-in editors get.
     struct AssetEditorContext
     {
         /// @brief The asset manager the panel loads and hot-reloads its asset through.
         AssetManager& Assets;
         /// @brief The render context, for a panel that builds GPU resources (a preview target).
         Renderer::Context& Context;
+        /// @brief The host audio engine, for a panel that auditions sound through PlayGenerator.
+        Audio::AudioEngine& Audio;
+        /// @brief The asset's authoring source file, the panel's save target; empty when unresolved.
+        path SourcePath;
+        /// @brief The recook seam, bound over the host's cook-on-demand; empty when no project is
+        ///        configured. A panel that saves triggers its in-process recook and hot-reload here.
+        VengEditor::CookDriver Cook;
     };
 
     /// @brief Factory that mints an EditorPanel for a given asset.
@@ -50,8 +64,8 @@ namespace Veng
         /// @brief Creates and returns the editor panel for the given asset id.
         /// @param id   The asset to open.
         /// @param ctx  Live engine services the panel may capture (asset manager, render context).
-        [[nodiscard]] virtual Unique<VengEditor::EditorPanel> OpenEditor(
-            AssetId id, const AssetEditorContext& ctx) = 0;
+        [[nodiscard]] virtual Unique<VengEditor::EditorPanel>
+        OpenEditor(AssetId id, const AssetEditorContext& ctx) = 0;
     };
 
     /// @brief Inspector widget function for a single field.
@@ -105,8 +119,8 @@ namespace Veng
         /// @param type The asset type whose factory to use.
         /// @param id   The asset to open.
         /// @param ctx  Live engine services passed through to the factory's OpenEditor.
-        [[nodiscard]] Unique<VengEditor::EditorPanel> CreateEditorFor(
-            AssetTypeId type, AssetId id, const AssetEditorContext& ctx) const
+        [[nodiscard]] Unique<VengEditor::EditorPanel>
+        CreateEditorFor(AssetTypeId type, AssetId id, const AssetEditorContext& ctx) const
         {
             AssetEditorFactory* factory = AssetEditorFor(type);
             return factory == nullptr ? nullptr : factory->OpenEditor(id, ctx);

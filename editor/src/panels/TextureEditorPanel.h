@@ -10,8 +10,8 @@
 
 #include <VengEditor/CookRequest.h>
 
-#include "AssetEditorPanel.h"
-#include "AssetSaveModel.h"
+#include <VengEditor/AssetEditorPanel.h>
+#include <VengEditor/AssetSaveModel.h>
 
 namespace Veng
 {
@@ -28,13 +28,6 @@ namespace Veng
 
 namespace VengEditor
 {
-    /// @brief Off-thread cook callback bound to EditorHost::RequestCook.
-    ///
-    /// The host shadow-mounts the cooked result and delivers a MountHandle (or
-    /// error) back on the main thread.
-    using CookDriver = Veng::function<void(const CookRequest&,
-                                           Veng::function<void(Veng::Result<Veng::MountHandle>)>)>;
-
     /// @brief Reads the project's active build configuration (or null for the zero-config state).
     ///
     /// Read each frame so the resolved-format read-out tracks a configuration change made in

@@ -7,7 +7,7 @@
 #include <doctest/doctest.h>
 #include <Veng/Path.h>
 
-#include "AssetSaveModel.h"
+#include <VengEditor/AssetSaveModel.h>
 #include "panels/UIDocumentSource.h"
 
 #include <filesystem>

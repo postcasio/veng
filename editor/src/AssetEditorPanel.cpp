@@ -1,4 +1,4 @@
-#include "AssetEditorPanel.h"
+#include <VengEditor/AssetEditorPanel.h>
 
 #include <Veng/Log.h>
 #include <Veng/UI/UI.h>

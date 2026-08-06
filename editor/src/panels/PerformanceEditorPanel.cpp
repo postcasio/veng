@@ -1,6 +1,6 @@
 #include "PerformanceEditorPanel.h"
 
-#include "../AssetEditorPanel.h"
+#include <VengEditor/AssetEditorPanel.h>
 
 #include <VengEditor/EditorHost.h>
 

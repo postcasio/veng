@@ -1,6 +1,6 @@
 #include "EditorMcp.h"
 
-#include "AssetEditorPanel.h"
+#include <VengEditor/AssetEditorPanel.h>
 #include "AssetSourceIndex.h"
 #include "CommandStack.h"
 #include "EditorCommand.h"

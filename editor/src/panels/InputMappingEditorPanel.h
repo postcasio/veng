@@ -6,8 +6,8 @@
 #include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Input/Actions.h>
 
-#include "AssetEditorPanel.h"
-#include "AssetSaveModel.h"
+#include <VengEditor/AssetEditorPanel.h>
+#include <VengEditor/AssetSaveModel.h>
 
 #include "panels/TextureEditorPanel.h" // CookDriver alias
 

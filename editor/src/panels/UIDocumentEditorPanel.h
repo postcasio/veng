@@ -9,8 +9,8 @@
 
 #include <VengEditor/CookRequest.h>
 
-#include "AssetEditorPanel.h"
-#include "AssetSaveModel.h"
+#include <VengEditor/AssetEditorPanel.h>
+#include <VengEditor/AssetSaveModel.h>
 
 #include "panels/TextureEditorPanel.h" // CookDriver alias
 #include "panels/UIDocumentSource.h"

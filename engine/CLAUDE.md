@@ -356,7 +356,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 9** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 10** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the
@@ -370,7 +370,12 @@ and calls `Run()`.
   `AllowUnreplicatedReference` flag (a reflected `Entity` field declaring it may name a
   non-replicated target — see [src/Net/CLAUDE.md](src/Net/CLAUDE.md)), and a module registers its
   component descriptors *through* `Types`, so a module built against ABI 8 would register a short
-  descriptor and be read past its end. The
+  descriptor and be read past its end. **Version 10** is the same class again, on the editor seam:
+  `AssetEditorContext` — which the host constructs and passes to a module-registered asset-editor
+  factory's `OpenEditor` — grew the host audio engine, the asset's source path, and the recook
+  `CookDriver` (so a game panel can audition and save, not only view — see
+  [editor/CLAUDE.md](../editor/CLAUDE.md)), so a game module built against ABI 9 would read those
+  fields past the end of a short host-constructed context. The
   gameplay *simulation* layer still adds **no** ABI surface: game modes are systems + components,
   the system catalog rides a per-system trait the way a component's `TypeId` does, and a `Level`
   is an asset — registered through the existing registries or authored as data, never through a

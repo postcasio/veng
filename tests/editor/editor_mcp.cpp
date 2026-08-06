@@ -13,7 +13,7 @@
 #include <Veng/Path.h>
 #include "support/TempPath.h"
 
-#include "AssetEditorPanel.h"
+#include <VengEditor/AssetEditorPanel.h>
 #include "AssetSourceIndex.h"
 #include "CommandStack.h"
 #include "panels/PrefabEditContext.h"

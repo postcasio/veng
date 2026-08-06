@@ -19,7 +19,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-#include "AssetEditorPanel.h"
+#include <VengEditor/AssetEditorPanel.h>
 #include "AssetSourceIndex.h"
 #include "CookSession.h"
 #ifdef VENG_EDITOR_WITH_MCP

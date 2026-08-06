@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "AssetSaveModel.h"
+#include <VengEditor/AssetSaveModel.h>
 
 #include <Veng/Result.h>
 #include <Veng/Veng.h>
