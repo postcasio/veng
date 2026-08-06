@@ -287,7 +287,7 @@ TEST_CASE("SceneBroadphase: every spatial mutation rebuilds and the tree stays c
 
     SUBCASE("remove a component")
     {
-        scene->Remove<MeshRenderer>(b);
+        (void)scene->Remove<MeshRenderer>(b);
         broadphase.Sync(*scene);
         CheckConverges();
         CHECK(broadphase.GetCandidates().size() == 2);

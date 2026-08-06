@@ -73,8 +73,8 @@ namespace Veng
         }
         for (const Entity entity : drop)
         {
-            scene.Remove<Collider>(entity);
-            scene.Remove<RigidBody>(entity);
+            (void)scene.Remove<Collider>(entity);
+            (void)scene.Remove<RigidBody>(entity);
         }
     }
 }

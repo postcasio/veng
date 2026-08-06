@@ -115,7 +115,7 @@ namespace Veng
             }
             for (const Entity entity : settled)
             {
-                scene.Remove<PredictionError>(entity);
+                (void)scene.Remove<PredictionError>(entity);
             }
         }
 

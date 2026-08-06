@@ -177,7 +177,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // Removing the component destroys its runtime; the DocumentLayer detaches the document, so the
     // viewport's layer stack reconciles to empty with no dangling pointer.
-    scene->Remove<GuiOverlay>(entity);
+    (void)scene->Remove<GuiOverlay>(entity);
     CHECK(viewport->GetAttachedDocuments().empty());
 
     // The viewport still renders cleanly after the detach.

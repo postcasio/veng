@@ -107,7 +107,7 @@ TEST_CASE("IsLocallyOwned: releasing the marker falls back cleanly to the local 
 
     // Release: with no marker left, every seat answers locally again rather than stranding the peer
     // on a dead handle's answer.
-    scene->Remove<LocalSeat>(mine);
+    (void)scene->Remove<LocalSeat>(mine);
     CHECK(IsLocallyOwned(*scene, mine));
     CHECK(IsLocallyOwned(*scene, peer));
 }

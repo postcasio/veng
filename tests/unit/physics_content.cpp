@@ -385,7 +385,7 @@ TEST_CASE("a fixed constraint carries a dynamic body on a moving kinematic one w
     CHECK((cargoPosition - carrierPosition).y == doctest::Approx(2.0f).epsilon(0.01));
 
     // The component is the authority: dropping it releases the pair.
-    fixture.World->Remove<FixedConstraint>(cargo);
+    (void)fixture.World->Remove<FixedConstraint>(cargo);
     fixture.Step(1);
     CHECK(fixture.Physics().GetConstraintCount() == 0);
 }

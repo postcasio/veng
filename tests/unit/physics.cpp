@@ -143,7 +143,7 @@ TEST_CASE("the reconcile pass creates a body per physics entity and destroys an 
     CHECK(fixture.Physics().HasBody(box));
 
     // The component is the authority and the body is its shadow.
-    fixture.World->Remove<Collider>(box);
+    (void)fixture.World->Remove<Collider>(box);
     fixture.Step(1);
     CHECK(fixture.Physics().GetBodyCount() == 1);
     CHECK_FALSE(fixture.Physics().HasBody(box));

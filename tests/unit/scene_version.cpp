@@ -103,7 +103,7 @@ TEST_CASE("Removing each spatial component bumps the spatial version")
         const Entity e = scene->CreateEntity();
         scene->Add<Transform>(e);
         const u64 before = scene->GetSpatialVersion();
-        scene->Remove<Transform>(e);
+        (void)scene->Remove<Transform>(e);
         CHECK(scene->GetSpatialVersion() > before);
     }
 
@@ -112,7 +112,7 @@ TEST_CASE("Removing each spatial component bumps the spatial version")
         const Entity e = scene->CreateEntity();
         scene->Add<Hierarchy>(e);
         const u64 before = scene->GetSpatialVersion();
-        scene->Remove<Hierarchy>(e);
+        (void)scene->Remove<Hierarchy>(e);
         CHECK(scene->GetSpatialVersion() > before);
     }
 
@@ -121,7 +121,7 @@ TEST_CASE("Removing each spatial component bumps the spatial version")
         const Entity e = scene->CreateEntity();
         scene->Add<MeshRenderer>(e);
         const u64 before = scene->GetSpatialVersion();
-        scene->Remove<MeshRenderer>(e);
+        (void)scene->Remove<MeshRenderer>(e);
         CHECK(scene->GetSpatialVersion() > before);
     }
 }

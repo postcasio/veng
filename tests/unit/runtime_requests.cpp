@@ -151,7 +151,7 @@ TEST_CASE("A pending request is retried and can be withdrawn before it is acted 
     CHECK(pending->Status == RequestStatus::Pending);
 
     // The stamping system withdraws it by removing the component itself.
-    runner.ResolveWorld(world)->GetScene().Remove<ConnectRequest>(entity);
+    (void)runner.ResolveWorld(world)->GetScene().Remove<ConnectRequest>(entity);
 
     // Frame 2: nothing to dispatch — the request was never acted on.
     DrainRequests(runner, dispatch);

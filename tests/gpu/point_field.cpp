@@ -286,7 +286,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // Drop the right field's component: the renderer walks one field next frame with no teardown
     // ordering (the field retires with its component), so only the left half lights.
-    scene->Remove<Veng::PointField>(rightEntity);
+    (void)scene->Remove<Veng::PointField>(rightEntity);
     {
         const vector<u8> pixels = Render();
         CHECK(BrightFraction(pixels, extent.x, 0, extent.x / 2, 0, extent.y) > 0.02f);
@@ -294,7 +294,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     }
 
     // Drop the last field too: presence removes the pass again and the frame goes dark, cleanly.
-    scene->Remove<Veng::PointField>(leftEntity);
+    (void)scene->Remove<Veng::PointField>(leftEntity);
     {
         const vector<u8> pixels = Render();
         CHECK(BrightFraction(pixels, extent.x, 0, extent.x, 0, extent.y) < 0.01f);

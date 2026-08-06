@@ -714,7 +714,7 @@ TEST_CASE_FIXTURE(
 
         if (removeComponent)
         {
-            scene->Remove<CaptureSurface>(surfaceEntity);
+            (void)scene->Remove<CaptureSurface>(surfaceEntity);
         }
         else
         {
@@ -781,7 +781,7 @@ TEST_CASE_FIXTURE(
         DriveAndRegister(*scene, surfaceEntity, driveList);
         CHECK(driveList.size() == 1);
 
-        scene->Remove<CaptureSurface>(surfaceEntity);
+        (void)scene->Remove<CaptureSurface>(surfaceEntity);
         CHECK(driveList.empty());
     }
 

@@ -75,7 +75,7 @@ namespace Veng
         }
         for (const Entity entity : stale)
         {
-            scene.Remove<LocalControl>(entity);
+            (void)scene.Remove<LocalControl>(entity);
         }
 
         for (const Entity seat : presentingSeats)

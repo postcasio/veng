@@ -287,7 +287,7 @@ namespace VengEditor
         Scene* scene = ctx.Scene;
         if (scene != nullptr && scene->IsAlive(m_Entity))
         {
-            scene->RemoveComponent(m_Entity, m_TypeId);
+            (void)scene->RemoveComponent(m_Entity, m_TypeId);
         }
     }
 
@@ -304,7 +304,7 @@ namespace VengEditor
         Scene* scene = ctx.Scene;
         if (scene != nullptr && scene->IsAlive(m_Entity))
         {
-            scene->RemoveComponent(m_Entity, m_TypeId);
+            (void)scene->RemoveComponent(m_Entity, m_TypeId);
         }
     }
 

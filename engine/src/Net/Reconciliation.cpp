@@ -354,7 +354,7 @@ namespace Veng::Net
             {
                 if (scene.Has<PredictionError>(pose.Entity))
                 {
-                    scene.Remove<PredictionError>(pose.Entity);
+                    (void)scene.Remove<PredictionError>(pose.Entity);
                 }
                 result.Snapped = true;
                 continue;

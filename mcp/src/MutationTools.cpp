@@ -205,7 +205,7 @@ namespace Veng::Mcp
             mutation.Component = type;
             if (!RouteMutation(host, mutation))
             {
-                scene.RemoveComponent(target, type);
+                (void)scene.RemoveComponent(target, type);
             }
             return Json{{"id", EntityId(target)}, {"removed", host.Types.Info(type).QualifiedName}};
         }

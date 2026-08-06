@@ -219,7 +219,7 @@ namespace Veng::Net
                                    });
             for (const TypeId id : stale)
             {
-                scene.RemoveComponent(captured.Entity, id);
+                (void)scene.RemoveComponent(captured.Entity, id);
             }
         }
         return true;

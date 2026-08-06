@@ -334,7 +334,7 @@ namespace Veng
             }
             if (scene.Has<SeatInput>(seat))
             {
-                scene.Remove<SeatInput>(seat);
+                (void)scene.Remove<SeatInput>(seat);
             }
 
             const Authority owner{.Tier = Tier::Server, .Owner = id};
@@ -1477,7 +1477,7 @@ namespace Veng
                     // Drop the physics-rollback marker with the prediction stance that placed it.
                     if (jc.World->Has<Predicted>(entity))
                     {
-                        jc.World->Remove<Predicted>(entity);
+                        (void)jc.World->Remove<Predicted>(entity);
                     }
                 }
                 jc.History.Untrack(entity);
@@ -1537,7 +1537,7 @@ namespace Veng
                 if (!jc.Seat.IsNull() && jc.World->IsAlive(jc.Seat) &&
                     jc.World->Has<LocalSeat>(jc.Seat))
                 {
-                    jc.World->Remove<LocalSeat>(jc.Seat);
+                    (void)jc.World->Remove<LocalSeat>(jc.Seat);
                 }
                 Repredict(jc, Entity::Null);
                 jc.Replication->Leave(*jc.World);

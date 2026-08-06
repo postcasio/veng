@@ -250,7 +250,7 @@ namespace Veng
 
             if (hadSeated)
             {
-                scene.Remove<Seated>(character);
+                (void)scene.Remove<Seated>(character);
             }
             return HandleOutcome::Handled;
         }
@@ -301,7 +301,7 @@ namespace Veng
             // A held-Failed request has had its one-frame observation window; retire it now.
             if (scene.Get<InteractRequest>(holder).Status == RequestStatus::Failed)
             {
-                scene.Remove<InteractRequest>(holder);
+                (void)scene.Remove<InteractRequest>(holder);
                 continue;
             }
 
@@ -318,7 +318,7 @@ namespace Veng
             {
             case HandleOutcome::Handled:
             {
-                scene.Remove<InteractRequest>(holder);
+                (void)scene.Remove<InteractRequest>(holder);
                 break;
             }
             case HandleOutcome::Failed:

@@ -983,7 +983,7 @@ namespace Veng
         {
             for (const TypeId type : adopted.AddedTypes)
             {
-                scene.RemoveComponent(adopted.Claimant, type);
+                (void)scene.RemoveComponent(adopted.Claimant, type);
             }
         }
         // Free the anchor for the next join to bind, and drop the wire id's map + baseline state.

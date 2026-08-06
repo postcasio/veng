@@ -170,14 +170,14 @@ TEST_CASE("Add/Get/Has/TryGet/Remove round-trip")
     CHECK(scene->Has<Velocity>(e));
     CHECK(scene->Get<Velocity>(e).Dx == doctest::Approx(0.5f));
 
-    scene->Remove<Position>(e);
+    (void)scene->Remove<Position>(e);
     CHECK_FALSE(scene->Has<Position>(e));
     CHECK(scene->TryGet<Position>(e) == nullptr);
     // Velocity is untouched by removing Position.
     CHECK(scene->Has<Velocity>(e));
 
     // Removing an absent component is a safe no-op.
-    scene->Remove<Position>(e);
+    (void)scene->Remove<Position>(e);
     CHECK_FALSE(scene->Has<Position>(e));
 }
 
@@ -197,7 +197,7 @@ TEST_CASE("Sparse-set swap-and-pop keeps survivors intact (non-trivial move)")
     }
 
     // Remove from the middle: the tail (label-4) moves into the hole.
-    scene->Remove<Label>(entities[2]);
+    (void)scene->Remove<Label>(entities[2]);
 
     CHECK_FALSE(scene->Has<Label>(entities[2]));
     CHECK(scene->Get<Label>(entities[0]).Text == "label-0");

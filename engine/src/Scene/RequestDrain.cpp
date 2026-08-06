@@ -48,7 +48,7 @@ namespace Veng
                 if (request.Status == RequestStatus::Failed)
                 {
                     // The failure was held one frame for the stamping system to read; retire it now.
-                    scene.template Remove<T>(holder);
+                    (void)scene.template Remove<T>(holder);
                     continue;
                 }
 
@@ -56,7 +56,7 @@ namespace Veng
                 switch (dispatch(id, std::as_const(request), error))
                 {
                 case RequestResult::Handled:
-                    scene.template Remove<T>(holder);
+                    (void)scene.template Remove<T>(holder);
                     break;
                 case RequestResult::Pending:
                     // Left in place, retried next frame.
