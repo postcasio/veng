@@ -329,6 +329,19 @@ namespace Veng
             m_Compositor.InitializeTail(*m_AssetManager, *m_ImGuiLayer);
         }
 
+        // The managed game world renders through the managed viewport, so its whole bootstrap is
+        // gated on one being present.
+        const bool bootstrapWorld = m_Info.World && m_ManagedViewports->Get(0);
+
+        // The project's packs mount before OnInitialize, so a subclass can load a cooked asset (a
+        // startup palette, a config table, a boot UI atlas) during initialization; the world
+        // bootstrap below reuses the project this read rather than parsing it again.
+        optional<CookedProject> project;
+        if (bootstrapWorld)
+        {
+            project = MountProjectPacks();
+        }
+
         OnInitialize();
 
         // A subclass that hit a fatal startup failure calls RequestExit(status) from OnInitialize;
@@ -340,15 +353,31 @@ namespace Veng
         }
 
         // The engine-managed game world bootstraps after OnInitialize, so a subclass has already
-        // set up its ImGui surface and read the managed viewport. It renders through the managed
-        // viewport, so it is gated on one being present.
-        if (m_Info.World && m_ManagedViewports->Get(0))
+        // set up its ImGui surface and read the managed viewport.
+        if (project)
         {
-            BootstrapWorld();
+            BootstrapWorld(*project);
         }
     }
 
-    void Application::BootstrapWorld()
+    CookedProject Application::MountProjectPacks()
+    {
+        // The cooked project names the packs to mount and the startup level; everything resolves
+        // beside the executable so the launcher + project + packs move as one directory.
+        const path projectFile = ExecutableDirectory() / m_Info.World->Project;
+        Result<CookedProject> project = ReadCookedProject(projectFile);
+        VE_ASSERT(project, "{}", project.error());
+
+        for (const string& packName : project->PackMountNames)
+        {
+            const VoidResult mounted = m_AssetManager->Mount(ExecutableDirectory() / packName);
+            VE_ASSERT(mounted, "{}", mounted.error());
+        }
+
+        return std::move(*project);
+    }
+
+    void Application::BootstrapWorld(const CookedProject& project)
     {
         // Resolve the local player's account once per activation: the Identity hook, or a
         // process-random ephemeral id when unset (valid, but keyed to nothing durable). A headless
@@ -364,21 +393,9 @@ namespace Veng
             m_LocalProfile = net.PresentProfile ? net.PresentProfile() : Net::Blob{};
         }
 
-        // The cooked project names the packs to mount and the startup level; everything resolves
-        // beside the executable so the launcher + project + packs move as one directory.
-        const path projectFile = ExecutableDirectory() / m_Info.World->Project;
-        const Result<CookedProject> project = ReadCookedProject(projectFile);
-        VE_ASSERT(project, "{}", project.error());
-
-        for (const string& packName : project->PackMountNames)
-        {
-            const VoidResult mounted = m_AssetManager->Mount(ExecutableDirectory() / packName);
-            VE_ASSERT(mounted, "{}", mounted.error());
-        }
-
         // A --level override selects a different level from the project's mounted packs; without
         // it the cooked project's own startup level is used.
-        const AssetId startupLevel = m_LaunchArgs.Level.value_or(project->StartupLevel);
+        const AssetId startupLevel = m_LaunchArgs.Level.value_or(project.StartupLevel);
         VE_ASSERT(startupLevel.IsValid(), "project '{}' declares no startup level",
                   m_Info.World->Project.string());
 

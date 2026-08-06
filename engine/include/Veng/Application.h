@@ -47,6 +47,7 @@ namespace Veng
     class ServerHost;
     class ClientHost;
     class GuiDriverRegistry;
+    struct CookedProject;
     namespace Net
     {
         class Client;
@@ -1070,15 +1071,25 @@ namespace Veng
         /// slot — not the current one. Reaches the timings only through the public Context accessors.
         void BridgeGpuTimings();
 
-        /// @brief Mounts the world pack, loads its startup level, and starts the running world.
+        /// @brief Reads the cooked project beside the executable and mounts its packs.
         ///
-        /// Called at the end of Initialize when ApplicationInfo::World is set: mounts the pack
-        /// beside the executable, reads its cooked startup level, seeds the managed viewport from
-        /// the level's render settings, spawns the world (LoadInto), fires OnWorldLoaded, then
-        /// starts the scene's simulation. In client mode the startup-level load is deferred to the
-        /// join flow (the level comes from the accept), so this only mounts the packs and connects.
-        /// A missing pack or startup level is a fatal assert.
-        void BootstrapWorld();
+        /// Called before OnInitialize when ApplicationInfo::World is set, so a game can load a cooked
+        /// asset (a startup palette, a config table, a boot UI atlas) during initialization — before
+        /// the world bootstrap runs. The parsed project is returned for BootstrapWorld to reuse rather
+        /// than re-read. A missing project file or pack is a fatal assert.
+        /// @return The parsed cooked project, its packs mounted.
+        [[nodiscard]] CookedProject MountProjectPacks();
+
+        /// @brief Loads the world's startup level and starts the running world.
+        ///
+        /// Called at the end of Initialize when ApplicationInfo::World is set, after MountProjectPacks
+        /// has mounted the project's packs: reads the cooked startup level, seeds the managed viewport
+        /// from the level's render settings, spawns the world (LoadInto), fires OnWorldLoaded, then
+        /// starts the scene's simulation. In client mode the startup-level load is deferred to the join
+        /// flow (the level comes from the accept), so this only connects. A missing startup level is a
+        /// fatal assert.
+        /// @param project  The cooked project MountProjectPacks parsed, naming the startup level.
+        void BootstrapWorld(const CookedProject& project);
 
         /// @brief Seeds the managed viewport + view knobs from a started world scene's render settings.
         ///

@@ -183,9 +183,11 @@ never-ready or reaped destination does not strand the viewport on the old world.
 `GetPendingViewportWorld` / `RebindWorldWhenReady` / `GetAbandonedPresentWorld`).
 
 **`Application` optionally bootstraps and drives worlds through the `WorldRunner`.** Set
-`ApplicationInfo::World` (`GameWorldInfo { path Project; }`) and `Application` runs the game: at
-the end of `Initialize` (after `OnInitialize`) it reads the **cooked project** (`<name>.vengproj`)
-beside the executable (`ReadCookedProject`), mounts each pack it names, and opens the startup level
+`ApplicationInfo::World` (`GameWorldInfo { path Project; }`) and `Application` runs the game: it reads
+the **cooked project** (`<name>.vengproj`) beside the executable (`ReadCookedProject`) and mounts each
+pack it names **before `OnInitialize`**, so a subclass can load a cooked asset (a startup palette, a
+config table, a boot UI atlas) during initialization; then, at the end of `Initialize` (after
+`OnInitialize`), it reuses that same parsed project to open the startup level
 as **world #0** through `WorldRunner::OpenWorld` — a first-class `World` bundling
 `{ WorldInstanceId, Unique<Scene> (+ its SceneSimulation), a per-world clock, pause state }`. The
 open seeds the managed viewport's topology + per-frame view from the spawned scene (the level's
