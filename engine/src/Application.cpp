@@ -6,6 +6,7 @@
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Gui/GuiConsumer.h>
 #include <Veng/Log.h>
+#include <Veng/Platform/CrashReport.h>
 #include <Veng/Platform/UserPaths.h>
 #include <Veng/Time.h>
 
@@ -1784,6 +1785,9 @@ namespace Veng
 
     i32 Application::Run(vector<string> arguments)
     {
+        // First, before anything can fault: a crash without it is a silent exit on Windows.
+        InstallCrashReporter();
+
         // Parse argv (without the program name) once; the engine consumes the recognised options
         // itself and a game can read them back through GetLaunchArguments(). The app object is
         // constructed before Run, so m_Info's declared options are available to widen the parse.
