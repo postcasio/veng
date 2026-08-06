@@ -8,6 +8,8 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <limits>
 
 namespace Veng::UI
@@ -120,6 +122,91 @@ namespace Veng::UI
     {
         const string id = AsCStr(label);
         return ImGui::SliderInt(id.c_str(), &v, min, max);
+    }
+
+    bool Knob(string_view label, f32& v, KnobOptions options)
+    {
+        const Theme& theme = GetTheme();
+        const string id = AsCStr(label);
+        const string visible(label.substr(0, label.find("##")));
+
+        const f32 diameter =
+            options.Diameter > 0.0f ? options.Diameter : ImGui::GetFrameHeight() * 2.2f;
+        const f32 range = options.Max - options.Min;
+        const f32 speed =
+            options.Speed > 0.0f ? options.Speed : (range > 0.0f ? range / 200.0f : 0.0f);
+
+        ImGui::BeginGroup();
+        const ImVec2 topLeft = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton(id.c_str(), ImVec2(diameter, diameter));
+
+        bool changed = false;
+        if (ImGui::IsItemActive())
+        {
+            const f32 delta = ImGui::GetIO().MouseDelta.y;
+            if (delta != 0.0f)
+            {
+                // Vertical drag turns the knob: up (negative screen delta) increases.
+                v = std::clamp(v - delta * speed, options.Min, options.Max);
+                changed = true;
+            }
+        }
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+        {
+            v = (options.Min + options.Max) * 0.5f;
+            changed = true;
+        }
+        if (ImGui::IsItemActive() || ImGui::IsItemHovered())
+        {
+            char readout[64];
+            std::snprintf(readout, sizeof(readout), options.Format, static_cast<double>(v));
+            ImGui::SetTooltip("%s", readout);
+        }
+
+        // The 270-degree sweep with its gap at the bottom: min at the lower-left, max at the
+        // lower-right, turning clockwise over the top.
+        const ImVec2 center(topLeft.x + diameter * 0.5f, topLeft.y + diameter * 0.5f);
+        const f32 radius = diameter * 0.5f - 2.0f;
+        constexpr f32 Pi = 3.14159265358979323846f;
+        const f32 aMin = Pi * 0.75f;
+        const f32 aMax = Pi * 2.25f;
+        const f32 t = range > 0.0f ? std::clamp((v - options.Min) / range, 0.0f, 1.0f) : 0.0f;
+        const f32 aVal = aMin + t * (aMax - aMin);
+        const f32 thickness = std::max(2.0f, diameter * 0.09f);
+
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        const ImU32 track = ImGui::GetColorU32(SrgbToLinear(theme.SurfaceRaised));
+        const ImU32 fill = ImGui::GetColorU32(
+            SrgbToLinear(ImGui::IsItemActive() ? theme.AccentActive : theme.Accent));
+        drawList->AddCircleFilled(center, radius - thickness * 0.5f,
+                                  ImGui::GetColorU32(SrgbToLinear(theme.Surface)), 32);
+        drawList->PathArcTo(center, radius, aMin, aMax, 32);
+        drawList->PathStroke(track, 0, thickness);
+        drawList->PathArcTo(center, radius, aMin, aVal, 32);
+        drawList->PathStroke(fill, 0, thickness);
+        // The indicator points from near the hub out to the value angle.
+        const ImVec2 dir(std::cos(aVal), std::sin(aVal));
+        drawList->AddLine(
+            ImVec2(center.x + dir.x * radius * 0.35f, center.y + dir.y * radius * 0.35f),
+            ImVec2(center.x + dir.x * (radius - thickness),
+                   center.y + dir.y * (radius - thickness)),
+            ImGui::GetColorU32(SrgbToLinear(theme.Text)), std::max(1.5f, thickness * 0.6f));
+
+        // The label sits centered beneath the knob, in the muted caption color.
+        if (!visible.empty())
+        {
+            const ImVec2 labelSize = ImGui::CalcTextSize(visible.c_str());
+            const f32 indent = (diameter - labelSize.x) * 0.5f;
+            if (indent > 0.0f)
+            {
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + indent);
+            }
+            ImGui::PushStyleColor(ImGuiCol_Text, SrgbToLinear(theme.TextMuted));
+            ImGui::TextUnformatted(visible.c_str());
+            ImGui::PopStyleColor();
+        }
+        ImGui::EndGroup();
+        return changed;
     }
 
     bool ColorEdit3(string_view label, vec3& v)

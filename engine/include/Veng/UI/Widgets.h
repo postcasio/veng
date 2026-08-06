@@ -85,6 +85,18 @@ namespace Veng::UI
     /// @return True the frame the value changed.
     [[nodiscard]] bool Slider(string_view label, i32& v, i32 min, i32 max);
 
+    /// @brief Edits a bounded scalar through a compact rotary knob with a label beneath it.
+    ///
+    /// The dense-panel alternative to a full-width `Slider`: vertical drag turns the knob (up
+    /// increases), a double-click resets to the range midpoint, and the value reads out in a tooltip
+    /// while hovered or dragged. The control lays out as a fixed-width column — the knob over its
+    /// label — so a row of knobs (`UI::SameLine` between them) forms a parameter bank.
+    /// @param label    Label drawn beneath the knob; also its ImGui id (text after `##` is hidden).
+    /// @param v        Value to edit in place, clamped to the option range.
+    /// @param options  Range, drag speed, diameter, and readout format.
+    /// @return True the frame the value changed.
+    [[nodiscard]] bool Knob(string_view label, f32& v, KnobOptions options);
+
     /// @brief Edits an RGB color through a swatch + picker popup.
     /// @param label  Widget label and ImGui id.
     /// @param v      RGB color edited in place; each channel in [0, 1].

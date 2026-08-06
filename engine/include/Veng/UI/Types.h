@@ -45,6 +45,28 @@ namespace Veng::UI
         const char* Format = "%.3f";
     };
 
+    /// @brief Configuration for the rotary `Knob` widget.
+    ///
+    /// A knob edits a bounded scalar in a compact round control — dense parameter panels (a synth
+    /// voice, a mixer strip, a colour grade) where a row of full-width sliders would not fit. The
+    /// range is required (`Min`/`Max`); vertical drag moves the value, `Speed` value-units per pixel
+    /// (`0` derives one that crosses the range in a comfortable drag). `Diameter` is the knob's pixel
+    /// size (`0` takes a default a few text-lines across), and `Format` is the printf spec for the
+    /// value readout shown while hovered or dragged.
+    struct KnobOptions
+    {
+        /// @brief Lower bound of the value range.
+        f32 Min = 0.0f;
+        /// @brief Upper bound of the value range.
+        f32 Max = 1.0f;
+        /// @brief Value units per pixel of vertical drag; `0` derives one from the range.
+        f32 Speed = 0.0f;
+        /// @brief Knob diameter in pixels; `0` takes the default.
+        f32 Diameter = 0.0f;
+        /// @brief Printf format string for the value readout shown on hover/drag.
+        const char* Format = "%.2f";
+    };
+
     /// @brief Configuration for the `PlotLines` graph widget.
     ///
     /// `ScaleMin`/`ScaleMax` are optional: `nullopt` autoscales that bound to the series'
