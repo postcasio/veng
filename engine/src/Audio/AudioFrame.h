@@ -10,6 +10,7 @@ namespace Veng::Audio
 {
     struct IAudioGenerator;
     struct StreamVoice;
+    struct BufferedGenerator;
 
     /// @brief One voice as the real-time mixer sees it: an immutable, POD description.
     ///
@@ -30,6 +31,13 @@ namespace Veng::Audio
 
         /// @brief The streaming source (its ring the callback drains), or null for a non-stream voice.
         StreamVoice* Stream = nullptr;
+
+        /// @brief The buffered generator (its ring the callback drains), or null for a non-buffered voice.
+        ///
+        /// When set, the callback drains this ring instead of calling Generator (which is null): the
+        /// generator's Render already ran ahead of time on the fill thread. GeneratorChannels gives
+        /// the ring's interleaving.
+        BufferedGenerator* Buffered = nullptr;
 
         /// @brief Interleaved PCM samples, or null.
         const f32* Pcm = nullptr;

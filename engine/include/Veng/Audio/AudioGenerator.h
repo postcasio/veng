@@ -14,9 +14,10 @@ namespace Veng::Audio
     /// synthesize the next samples. The caller implements Render and owns the object; the engine
     /// holds a borrowed pointer while the voice is live (see AudioEngine::PlayGenerator).
     ///
-    /// @warning Render runs on the real-time mixing thread. It must be lock-free, allocation-free,
-    ///          and touch no engine state — the same contract the voice snapshot rests on. Live
-    ///          state reaches it only through a GeneratorParams block, never a direct call.
+    /// @warning Render runs off the main thread — on the real-time mixing thread, or, for a buffered
+    ///          voice, on the audio fill thread. It must be lock-free, allocation-free, and touch no
+    ///          engine state — the same contract the voice snapshot rests on. Live state reaches it
+    ///          only through a GeneratorParams block, never a direct call.
     struct IAudioGenerator
     {
         /// @brief Destroys the generator.
@@ -24,9 +25,10 @@ namespace Veng::Audio
 
         /// @brief Fills @p frames × @p channels interleaved float samples.
         ///
-        /// Called on the real-time mixing thread. It must not lock, allocate, or call any engine
-        /// API; it reads its drive parameters through a GeneratorParams block latched inside this
-        /// call. The engine drives a voice at the channel count the voice declared through
+        /// Runs off the main thread — the real-time mixing thread, or, for a buffered voice, the
+        /// audio fill thread — and must be lock-free and allocation-free and call no engine API; it
+        /// reads its drive parameters through a GeneratorParams block latched inside this call. The
+        /// engine drives a voice at the channel count the voice declared through
         /// GeneratorVoiceParams::Channels — 1 for the default mono voice, 2 for a voice registered
         /// stereo (which must be non-spatial: a spatialized voice is mono-source-then-pan). So a
         /// mono voice writes @p frames samples and a stereo voice writes @p frames × 2 interleaved
@@ -99,6 +101,14 @@ namespace Veng::Audio
         /// stereo bus, bypassing the pan stage. Stereo requires Spatial == false — a stereo point
         /// source has no defined pan — so PlayGenerator rejects a Spatial stereo request.
         u32 Channels = 1;
+        /// @brief Whether the voice renders ahead of time on the fill thread into a ring (opt-in).
+        ///
+        /// A buffered voice's Render is called on the audio fill thread, ahead of playback, into a
+        /// ring the real-time callback only drains — so expensive, latency-tolerant synthesis never
+        /// runs on the real-time thread and cannot underrun it. It applies no pitch resample. Buffered
+        /// requires Spatial == false (a buffered voice carries no per-frame pan or Doppler), so
+        /// PlayGenerator rejects a Spatial buffered request; mono and stereo are both supported.
+        bool Buffered = false;
         /// @brief Linear gain applied before spatialization; 0 = silent, 1 = unity.
         f32 Gain = 1.0f;
         /// @brief Base playback pitch (resample ratio); Doppler multiplies this for a spatial voice.

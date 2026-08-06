@@ -53,6 +53,20 @@ namespace Veng::Audio
             return kMask - ((head - tail) & kMask);
         }
 
+        /// @brief Items available to pop as the consumer sees it: poppable before the ring is empty.
+        ///
+        /// A consumer-side query (loads its own tail relaxed, the producer's head acquire), so it
+        /// never overestimates what the producer has already published — a subsequent Pop of at most
+        /// this many items is guaranteed to succeed. Used to drain a whole interleaved frame at once
+        /// without half-popping a stereo pair on an underrun.
+        /// @return The number of items that can be popped before Pop starts returning false.
+        [[nodiscard]] usize Available() const
+        {
+            const usize head = m_Head.load(std::memory_order_acquire);
+            const usize tail = m_Tail.load(std::memory_order_relaxed);
+            return (head - tail) & kMask;
+        }
+
         /// @brief Pops an item (consumer side).
         /// @param out Receives the dequeued payload when one was available.
         /// @return true if an item was dequeued, false if the ring was empty.

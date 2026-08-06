@@ -16,6 +16,7 @@ namespace Veng::Audio
     class AudioDevice;
     class MusicDirector;
     struct StreamVoice;
+    struct BufferedGenerator;
 
     /// @brief Parameters of a code-triggered non-spatial one-shot voice.
     struct OneShotParams
@@ -182,7 +183,10 @@ namespace Veng::Audio
         /// owns it and guarantees it outlives the voice, releasing it only after StopVoice returns.
         /// A Spatial voice is placed at params.Position and spatialized against the listener exactly
         /// as a clip is (move it later with SetVoicePose); a non-spatial voice routes to its bus at
-        /// params.Gain. Same budget arbitration as AddVoice.
+        /// params.Gain. A Buffered voice renders ahead of time on the fill thread into a ring the
+        /// real-time callback only drains, moving heavy synthesis off the real-time thread; it is
+        /// non-spatial, so a Buffered && Spatial request is rejected. Same budget arbitration as
+        /// AddVoice.
         /// @param generator The sample source (must be non-null; not owned).
         /// @param params    The voice registration parameters.
         /// @return A handle to the voice, or an invalid handle if it was rejected.
@@ -225,7 +229,9 @@ namespace Veng::Audio
         /// mid-mix. A generator voice's reclamation is the same handshake made synchronous: the call
         /// removes the generator from the live snapshot and returns only once the callback has
         /// consumed a frame past it, so the caller may then free the borrowed generator with no
-        /// use-after-free.
+        /// use-after-free. A buffered generator voice adds the fill thread as a second party: the call
+        /// also posts a Remove and returns only once the fill thread has acknowledged it, so no thread
+        /// can render the borrowed generator after this returns.
         /// @param voice The handle.
         void StopVoice(VoiceHandle voice);
 
@@ -323,6 +329,11 @@ namespace Veng::Audio
             u32 GeneratorChannels = 1;
             /// @brief The owned streaming source (null for a buffer or generator voice).
             Unique<StreamVoice> Stream;
+            /// @brief The owned buffered-generator ring wrapper (null unless the voice is buffered).
+            ///
+            /// Wraps the borrowed Generator, which the fill thread renders off the real-time thread;
+            /// the wrapper is engine-owned and rides the reclamation handshake, the generator is not.
+            Unique<BufferedGenerator> Buffered;
             /// @brief The mix parameters.
             VoiceParams Params;
         };
@@ -337,6 +348,11 @@ namespace Veng::Audio
             /// A stream also rides the decode thread's release ack: it is freed only once the mixer's
             /// consumed serial passes SafeAfterSerial and the decode thread reports it released.
             Unique<StreamVoice> Stream;
+            /// @brief The buffered-generator wrapper to release (set for a buffered generator voice).
+            ///
+            /// Rides the same dual handshake as Stream: freed only once the mixer's consumed serial
+            /// passes SafeAfterSerial and the fill thread reports it released.
+            Unique<BufferedGenerator> Buffered;
             /// @brief Free once the consumed generation exceeds this serial.
             u64 SafeAfterSerial = 0;
         };
