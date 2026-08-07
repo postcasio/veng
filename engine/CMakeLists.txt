@@ -269,6 +269,8 @@ add_library(veng SHARED
         src/Renderer/EnvironmentIbl.cpp
         src/Renderer/FluidSim.cpp
         src/Renderer/FluidSimShape.cpp
+        src/Renderer/FlowField.cpp
+        src/Renderer/FlowFieldConfig.cpp
         src/Renderer/AsyncReadback.cpp
         src/Renderer/GeneratedTextureBlob.cpp
         src/Renderer/GeneratedTextureQueue.cpp

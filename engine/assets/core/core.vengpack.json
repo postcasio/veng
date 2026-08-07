@@ -392,6 +392,11 @@
       "source": "shaders/fluid/fluid_store_rgba16f.comp.shader.json"
     },
     {
+      "id": "0x8CC60D972048009E",
+      "type": "Shader",
+      "source": "shaders/fluid/flow_sharpen.comp.shader.json"
+    },
+    {
       "id": "0xA0C295968AB1FB31",
       "type": "Shader",
       "source": "shaders/debug_line.vert.shader.json"

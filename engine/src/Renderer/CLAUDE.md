@@ -1194,6 +1194,57 @@ deliberately the collocated scheme. The device-free half of the configuration ch
 (`src/Renderer/FluidSimShape.h`, the `FrameTopology` precedent) and the CPU reference for one
 advection tap are pinned in `tests/unit/fluid_sim_config.cpp` with no ICD.
 
+A caller that wants a texture to *flow* along a field it never changes wants **`FlowField`** below,
+not the solver — the advection kernel is shared, but none of the pressure solve is paid.
+
+## FlowField: transporting a dye along a static field
+
+`FlowField` (`Veng/Renderer/FlowField.h`) is the lean, art-directed cousin of `FluidSim` with the
+whole pressure solve removed: a caller paints a velocity field once, and `FlowField` carries one or
+more dye images along it in a feedback loop. It reuses `FluidSim`'s semi-Lagrangian advection kernel
+(`fluid_advect.comp`) and its per-format store family verbatim, adding one kernel of its own — the
+clamped unsharp mask (`flow_sharpen.comp`). It renders nothing and owns no meaning; a dye's channels,
+its seed, and how many steps are worth running are the caller's.
+
+- **What it is:** advection-only transport of a dye along a **static** velocity field.
+- **What it is not:** no solve, no velocity update (the field is read-only for life — that is the
+  definition of a flow field, not an optimisation), no seeding, no reinjection, no colour management.
+
+The surface is the intersection of what a flow effect needs:
+
+- **The velocity is the caller's and is never written.** `RG16Sfloat` or `RG32Sfloat`, in grid cells
+  per unit of flow, its extent *is* the grid. One or more dye images (`R16Sfloat` / `RG16Sfloat` /
+  `RGBA16Sfloat`, up to `MaxFlowDyes`) are advected in place through the one internally owned
+  `RGBA32Sfloat` scratch — the *only* thing the primitive allocates, since advection cannot run in
+  place. There are no pressure, curl or divergence transients.
+- **`RecordAdvect(cmd)`** records one semi-Lagrangian advection of every dye along the static
+  velocity, honouring the shape's per-axis `FlowWrap` and per-row metric; **`RecordAdvect(cmd,
+  steps)`** is the barriered loop. The advance-per-step is the shape's `StepScale`, so a caller tunes
+  how far the dye moves without re-timing anything.
+- **`RecordSharpen(cmd, strength)`** records a clamped unsharp pass: a dye minus a blurred copy of
+  itself, then **clamped to its local 3×3 neighbourhood's range**. The clamp is not optional — an
+  unclamped sharpen in a feedback loop amplifies each pass's overshoot and diverges; clamping to the
+  neighbourhood means the result is never brighter than the brightest neighbour, so the global
+  maximum is non-increasing under any advect/sharpen sequence. `strength` 0 records nothing.
+- **Nothing rides bindless and nothing touches the render graph.** Every kernel binds its own set 1
+  and the primitive records its own barriers, the `FluidSim` / `AtmospherePrecompute` pattern.
+
+**A long unbroken advect turns any dye to mush.** Each step samples with interpolation, so a feedback
+advection homogenises over many steps — the dye's contrast bleeds toward the local mean. `RecordSharpen`
+fights the blur, but a caller holding a specific look must interleave its **own** reinjection of source
+content between advects, because the source is the caller's. The idiom is the one `FluidSim` documents:
+**wrap `RecordAdvect` in `GeneratedTextureService` ticks and interleave your own reinjection**, the
+primitive holding no reference to the service.
+
+**The device-free core carries the correctness.** The wrap fold, the step-scaled back-trace, the
+bilinear tap and the clamped-sharpen bound are pure functions (`FoldFlowTexel`, `FlowBackTrace`,
+`SampleFlowBilinear`, `FlowSharpen` in `FlowField.h`), and the configuration validator
+(`src/Renderer/FlowFieldConfig.h`, the `FluidSimShape` precedent) is device-free too — both pinned in
+`tests/unit/flow_field.cpp` with no ICD, including the property that a static field keeps a dye's mass
+bounded across many advects. `tests/gpu/flow_field.cpp` is the mirror check: a dye advected along a
+known field lands where the back-trace predicts, and a sharpened feedback advection carries more local
+contrast than the un-sharpened control while staying bounded.
+
 ## Pipeline cache
 
 `Context` owns a `vk::PipelineCache` created at device init and threaded into both the graphics
