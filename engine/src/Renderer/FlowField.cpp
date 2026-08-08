@@ -1,4 +1,4 @@
-// FlowField transports a caller-painted dye along a static velocity field. It shares FluidSim's
+// FlowField transports a caller-painted dye along a caller-owned velocity field. It shares FluidSim's
 // semi-Lagrangian advection kernel (fluid_advect.comp) and its per-format store family, adding one
 // kernel of its own — the clamped unsharp mask (flow_sharpen.comp) that holds detail against the
 // blur a feedback advection accrues.
@@ -294,7 +294,9 @@ namespace Veng::Renderer
 
     void FlowField::RecordAdvect(CommandBuffer& cmd)
     {
-        // The velocity is static: it is only ever sampled, transitioned once out of Undefined here.
+        // Prepare the velocity for sampling from its tracked state each advect, not once: a caller
+        // may have rewritten the image since the last advect, so this barrier makes that write
+        // visible to the sample below (and orders this read ahead of the caller's next write).
         cmd.PrepareForAccess(m_VelocityView, AccessKind::Sample);
         for (const Dye& dye : m_Dyes)
         {

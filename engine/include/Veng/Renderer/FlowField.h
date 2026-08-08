@@ -30,10 +30,13 @@ namespace Veng::Renderer
         /// @brief Debug name; the instance's owned resources are named after it.
         string Name = "FlowField";
 
-        /// @brief The caller-created, caller-painted velocity field, read-only for life.
+        /// @brief The caller-created, caller-painted velocity field FlowField reads but never writes.
         ///
         /// RG16Sfloat or RG32Sfloat, carrying ImageUsage::Sampled. Its texels are grid cells per
-        /// unit of flow, and its extent is the grid. FlowField never writes it.
+        /// unit of flow, and its extent is the grid. FlowField never writes it, but the field is not
+        /// frozen: the caller may rewrite the image between RecordAdvect calls and the next advect
+        /// reads whatever it then holds — the sanctioned way to build an evolving or animated field.
+        /// See RecordAdvect for the barrier contract that makes such a rewrite well defined.
         Ref<Veng::Renderer::Image> Velocity;
 
         /// @brief The dye fields transported through the velocity; may not be empty.
@@ -47,13 +50,15 @@ namespace Veng::Renderer
         FlowFieldShape Shape;
     };
 
-    /// @brief A lean advection-only transport of caller-supplied dye images along a static field.
+    /// @brief A lean advection-only transport of caller-supplied dye images along a velocity field.
     ///
     /// FlowField is the art-directed cousin of FluidSim with the whole pressure solve removed: a
-    /// caller paints a velocity field once, and FlowField carries one or more dye images along it
-    /// in a feedback loop. There is no velocity update — the field is static by construction, which
-    /// is what makes this a *flow field* rather than a fluid — and no seeding, reinjection, or
-    /// colour management: those are the caller's, because the source content is the caller's.
+    /// caller supplies a velocity field, and FlowField carries one or more dye images along it in a
+    /// feedback loop. FlowField performs no velocity *solve* — that is what makes this a *flow
+    /// field* rather than a fluid — but the field is not frozen: FlowField never writes the
+    /// velocity, yet the caller may rewrite it between advects (see RecordAdvect), so an evolving or
+    /// animated field is well defined. There is no seeding, reinjection, or colour management:
+    /// those are the caller's, because the source content is the caller's.
     ///
     /// The primitive allocates only a single advection scratch; the velocity is never written and
     /// the dyes are advected in place. Every pass is compute, and every barrier is recorded by hand
@@ -91,11 +96,21 @@ namespace Veng::Renderer
         FlowField(const FlowField&) = delete;
         FlowField& operator=(const FlowField&) = delete;
 
-        /// @brief Records one semi-Lagrangian advection of every dye along the static velocity.
+        /// @brief Records one semi-Lagrangian advection of every dye along the current velocity.
         ///
         /// Each dye moves by its local velocity scaled by the shape's StepScale, honouring the
         /// per-axis wrap and the per-row metric. Every dye is left in a sampled layout, so the
         /// caller may read the result immediately after.
+        ///
+        /// The advect reads the velocity live off the GPU — it caches nothing CPU-side — so a caller
+        /// may rewrite the velocity image between advects to drive an evolving field, and this
+        /// advect reads whatever the image then holds. The rewrite is the caller's own write pass
+        /// (a compute or transfer): transition the velocity to the write layout, write it, and leave
+        /// the write registered in the image's tracked state (a PrepareForAccess after the write, or
+        /// a render-graph pass). This advect records the transition to a sampled layout from that
+        /// tracked state itself — so the caller need not restore the sampled layout — which both
+        /// makes the caller's write visible to this advect and orders this advect's read ahead of
+        /// the caller's next write.
         /// @param cmd The command buffer the advection is recorded into.
         void RecordAdvect(CommandBuffer& cmd);
 
@@ -169,7 +184,8 @@ namespace Veng::Renderer
         /// @brief The grid extent, taken from the velocity field.
         uvec2 m_Extent{0, 0};
 
-        /// @brief The caller's velocity field, read-only for the instance's life.
+        /// @brief The caller's velocity field; FlowField reads but never writes it (the caller may
+        /// rewrite it between advects).
         Ref<Image> m_Velocity;
         /// @brief The velocity field's whole-image view.
         Ref<ImageView> m_VelocityView;

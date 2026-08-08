@@ -1194,33 +1194,44 @@ deliberately the collocated scheme. The device-free half of the configuration ch
 (`src/Renderer/FluidSimShape.h`, the `FrameTopology` precedent) and the CPU reference for one
 advection tap are pinned in `tests/unit/fluid_sim_config.cpp` with no ICD.
 
-A caller that wants a texture to *flow* along a field it never changes wants **`FlowField`** below,
-not the solver — the advection kernel is shared, but none of the pressure solve is paid.
+A caller that wants a texture to *flow* along a velocity field with no pressure solve wants
+**`FlowField`** below, not the solver — the advection kernel is shared, but none of the pressure
+solve is paid.
 
-## FlowField: transporting a dye along a static field
+## FlowField: transporting a dye along a caller-owned velocity field
 
 `FlowField` (`Veng/Renderer/FlowField.h`) is the lean, art-directed cousin of `FluidSim` with the
-whole pressure solve removed: a caller paints a velocity field once, and `FlowField` carries one or
+whole pressure solve removed: a caller supplies a velocity field, and `FlowField` carries one or
 more dye images along it in a feedback loop. It reuses `FluidSim`'s semi-Lagrangian advection kernel
 (`fluid_advect.comp`) and its per-format store family verbatim, adding one kernel of its own — the
 clamped unsharp mask (`flow_sharpen.comp`). It renders nothing and owns no meaning; a dye's channels,
 its seed, and how many steps are worth running are the caller's.
 
-- **What it is:** advection-only transport of a dye along a **static** velocity field.
-- **What it is not:** no solve, no velocity update (the field is read-only for life — that is the
-  definition of a flow field, not an optimisation), no seeding, no reinjection, no colour management.
+- **What it is:** advection-only transport of a dye along a caller-owned velocity field.
+- **What it is not:** no solve — the primitive performs no velocity *solve*, which is what makes it
+  a flow field rather than a fluid; no seeding, no reinjection, no colour management. It never writes
+  the velocity itself, but the field is not frozen: the caller may rewrite it between advects (below).
 
 The surface is the intersection of what a flow effect needs:
 
-- **The velocity is the caller's and is never written.** `RG16Sfloat` or `RG32Sfloat`, in grid cells
-  per unit of flow, its extent *is* the grid. One or more dye images (`R16Sfloat` / `RG16Sfloat` /
-  `RGBA16Sfloat`, up to `MaxFlowDyes`) are advected in place through the one internally owned
-  `RGBA32Sfloat` scratch — the *only* thing the primitive allocates, since advection cannot run in
-  place. There are no pressure, curl or divergence transients.
-- **`RecordAdvect(cmd)`** records one semi-Lagrangian advection of every dye along the static
+- **The velocity is the caller's and FlowField never writes it.** `RG16Sfloat` or `RG32Sfloat`, in
+  grid cells per unit of flow, its extent *is* the grid. One or more dye images (`R16Sfloat` /
+  `RG16Sfloat` / `RGBA16Sfloat`, up to `MaxFlowDyes`) are advected in place through the one
+  internally owned `RGBA32Sfloat` scratch — the *only* thing the primitive allocates, since
+  advection cannot run in place. There are no pressure, curl or divergence transients.
+- **`RecordAdvect(cmd)`** records one semi-Lagrangian advection of every dye along the current
   velocity, honouring the shape's per-axis `FlowWrap` and per-row metric; **`RecordAdvect(cmd,
   steps)`** is the barriered loop. The advance-per-step is the shape's `StepScale`, so a caller tunes
   how far the dye moves without re-timing anything.
+- **The field is static to the primitive, but a caller may evolve it between advects.** `FlowField`
+  writes no velocity, yet the advect reads the velocity live off the GPU, so a caller may rewrite
+  the velocity image between advects and the next advect reads the new field — the sanctioned way to
+  build an animated or turbulence-perturbed flow. The caller records its own write pass (transition
+  to the write layout, write with a compute or transfer, leave the write registered in the image's
+  tracked state); the advect transitions the velocity back to a sampled layout from that tracked
+  state itself, so the write is visible to the advect and the advect's read is ordered ahead of the
+  caller's next write. Because a caller owns the image and records its barriers, the primitive needs
+  no behavioural change for this — it always read live.
 - **`RecordSharpen(cmd, strength)`** records a clamped unsharp pass: a dye minus a blurred copy of
   itself, then **clamped to its local 3×3 neighbourhood's range**. The clamp is not optional — an
   unclamped sharpen in a feedback loop amplifies each pass's overshoot and diverges; clamping to the

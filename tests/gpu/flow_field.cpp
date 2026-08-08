@@ -8,6 +8,9 @@
 //   2. Sharpen holds detail and stays bounded — a sharpened feedback advection carries more local
 //      contrast than the un-sharpened control, and its dye never climbs above the seed's range,
 //      the clamp doing its job on the real GPU path over a long loop.
+//   3. A velocity rewritten mid-run is read live — a dye advected under field A, then under a field
+//      B the test writes into the velocity image between advects (in one command buffer), lands
+//      where B's oracle predicts and not A's, so the advect reads the field the moment it records.
 //
 // Skips cleanly (exit 77) on a machine with no Vulkan ICD, like the rest of the gpu band.
 
@@ -23,10 +26,12 @@
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Renderer/AsyncReadback.h>
+#include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/FlowField.h>
 #include <Veng/Renderer/Image.h>
+#include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Types.h>
 
 #include <gpu/fixture.h>
@@ -304,4 +309,96 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     }
     CHECK(runMax <= SeedMax + 0.02f);
     CHECK(runMin >= SeedMin - 0.02f);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "flow field: a velocity rewritten mid-run advects the dye along the new field")
+{
+    AssetManager assets(Context, Tasks, Types);
+    constexpr uvec2 Extent{32, 32};
+    constexpr u32 StepsA = 5;
+    constexpr u32 StepsB = 7;
+    constexpr u32 StartColumn = 3;
+    constexpr u32 StartRow = 4;
+
+    const Ref<Image> velocity = MakeField(Context, "Evolving Velocity", Extent, Format::RG32Sfloat);
+    const Ref<Image> dye = MakeField(Context, "Evolving Dye", Extent, Format::R16Sfloat);
+
+    // Field A flows +x, field B flows +y. A single bright texel tracks each segment's whole-texel
+    // steps undiffused, so its final cell is a clean oracle for which field the second segment read:
+    // B moves it in y, an axis A (zero y-velocity) can never touch.
+    SeedVelocity(velocity, Extent, [](u32, u32) { return vec2(1.0f, 0.0f); });
+    SeedDye(dye, Extent, [](const u32 x, const u32 y)
+            { return (x == StartColumn && y == StartRow) ? 1.0f : 0.0f; });
+
+    // Field B staged for a mid-command-buffer transfer into the velocity image.
+    std::vector<f32> fieldB(static_cast<usize>(Extent.x) * Extent.y * 2);
+    for (usize texel = 0; texel < static_cast<usize>(Extent.x) * Extent.y; ++texel)
+    {
+        fieldB[texel * 2 + 0] = 0.0f;
+        fieldB[texel * 2 + 1] = 1.0f;
+    }
+    const Ref<Buffer> stagingB = Buffer::Create(Context, {
+                                                             .Name = "Field B Staging",
+                                                             .Size = fieldB.size() * sizeof(f32),
+                                                             .Usage = BufferUsage::TransferSrc,
+                                                         });
+    stagingB->UploadSync(
+        std::span(reinterpret_cast<const u8*>(fieldB.data()), fieldB.size() * sizeof(f32)));
+
+    // A caller-owned view of the velocity: layout tracking is per-image, so transitioning through
+    // this view is exactly what FlowField's own advect barrier sees.
+    const Ref<ImageView> velocityView =
+        ImageView::Create(Context, {.Name = "Evolving Velocity View", .Image = velocity});
+
+    const Unique<FlowField> flow = FlowField::Create(Context, assets,
+                                                     {
+                                                         .Name = "Evolving",
+                                                         .Velocity = velocity,
+                                                         .Dyes = {dye},
+                                                         .Shape =
+                                                             {
+                                                                 .WrapX = FlowWrap::Periodic,
+                                                                 .WrapY = FlowWrap::Periodic,
+                                                                 .StepScale = 1.0f,
+                                                             },
+                                                     });
+
+    // Advect along A, then rewrite the velocity to B in the sanctioned dance — transition it to a
+    // transfer destination, copy B in, and let the next advect's own sample barrier make the write
+    // visible — then advect along B, all in one command buffer.
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            flow->RecordAdvect(cmd, StepsA);
+            cmd.PrepareForAccess(velocityView, AccessKind::TransferDst);
+            cmd.CopyBufferToImage(stagingB, velocity);
+            flow->RecordAdvect(cmd, StepsB);
+        });
+    CHECK(flow->GetAdvectCount() == StepsA + StepsB);
+
+    const DyeReader field = ReadDye(Context, dye, Extent);
+
+    // The oracle: A carried the texel +x by StepsA, then B carried it +y by StepsB. Reading B is the
+    // only way the row moves — had the advect kept reading A, the texel would sit at
+    // (StartColumn + StepsA + StepsB, StartRow): the same row, a further column.
+    const u32 expectedColumn = (StartColumn + StepsA) % Extent.x;
+    const u32 expectedRow = (StartRow + StepsB) % Extent.y;
+
+    uvec2 peak{0, 0};
+    f32 peakValue = -1.0f;
+    for (u32 y = 0; y < Extent.y; ++y)
+    {
+        for (u32 x = 0; x < Extent.x; ++x)
+        {
+            if (const f32 value = field.At(x, y); value > peakValue)
+            {
+                peakValue = value;
+                peak = {x, y};
+            }
+        }
+    }
+    CHECK(peak.x == expectedColumn);
+    CHECK(peak.y == expectedRow);
+    CHECK(field.At(expectedColumn, expectedRow) == doctest::Approx(1.0f).epsilon(0.02));
 }
