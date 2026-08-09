@@ -7,9 +7,9 @@
 // buffers bind on set 1, matching the test's hand-built layout.
 #include "Veng/sh.slang"
 
-[[vk::binding(0, 1)]] ByteAddressBuffer u_Coefficients; // 9 float4 (xyz coefficient, w pad)
-[[vk::binding(1, 1)]] ByteAddressBuffer u_Normals;      // NormalCount float4 (xyz normal)
-[[vk::binding(2, 1)]] RWStructuredBuffer<float4> u_Results; // per-normal irradiance (xyz)
+[[vk::binding(0, 3)]] ByteAddressBuffer u_Coefficients; // 9 float4 (xyz coefficient, w pad)
+[[vk::binding(1, 3)]] ByteAddressBuffer u_Normals;      // NormalCount float4 (xyz normal)
+[[vk::binding(2, 3)]] RWStructuredBuffer<float4> u_Results; // per-normal irradiance (xyz)
 
 struct ShEvalPush
 {

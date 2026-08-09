@@ -15,7 +15,7 @@ struct GpuSpriteRecord
     uint2 Color;       // gain·opacity-folded HDR color: rg (2×f16), b + occluded-fade flag (2×f16)
 };
 
-[[vk::binding(0, 1)]] StructuredBuffer<GpuSpriteRecord> g_Records;
+[[vk::binding(0, 3)]] StructuredBuffer<GpuSpriteRecord> g_Records;
 
 struct PushConstants
 {

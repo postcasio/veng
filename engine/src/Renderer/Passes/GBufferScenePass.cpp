@@ -116,7 +116,7 @@ namespace Veng::Renderer
                     registry.Bind(cmd);
                     cmd.BindDescriptorSets(DescriptorSetBindInfo{
                         .Sets = {plan.DrawDataSet},
-                        .FirstSet = 1,
+                        .FirstSet = 3,
                         .PipelineBindPoint = PipelineBindPoint::Graphics,
                     });
                     cmd.PushConstants(plan.Push);
@@ -173,12 +173,12 @@ namespace Veng::Renderer
                     registry.Bind(cmd);
                     cmd.BindDescriptorSets(DescriptorSetBindInfo{
                         .Sets = {plan.DrawDataSet},
-                        .FirstSet = 1,
+                        .FirstSet = 3,
                         .PipelineBindPoint = PipelineBindPoint::Graphics,
                     });
                     cmd.BindDescriptorSets(DescriptorSetBindInfo{
                         .Sets = {plan.PaletteSet},
-                        .FirstSet = 2,
+                        .FirstSet = 4,
                         .PipelineBindPoint = PipelineBindPoint::Graphics,
                     });
                     cmd.PushConstants(plan.Push);

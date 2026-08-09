@@ -242,7 +242,7 @@ TEST_CASE_FIXTURE(Test::GpuFixture,
                         c.BindPipeline(pl);
                         c.BindDescriptorSets(DescriptorSetBindInfo{
                             .Sets = {set},
-                            .FirstSet = 1,
+                            .FirstSet = 3,
                             .PipelineBindPoint = PipelineBindPoint::Compute,
                         });
                         c.PushConstants(push);
@@ -262,7 +262,7 @@ TEST_CASE_FIXTURE(Test::GpuFixture,
                         c.BindPipeline(pl);
                         c.BindDescriptorSets(DescriptorSetBindInfo{
                             .Sets = {set},
-                            .FirstSet = 1,
+                            .FirstSet = 3,
                             .PipelineBindPoint = PipelineBindPoint::Compute,
                         });
                         c.PushConstants(push);
@@ -330,7 +330,7 @@ TEST_CASE_FIXTURE(Test::GpuFixture,
                     c.BindPipeline(pl);
                     c.BindDescriptorSets(DescriptorSetBindInfo{
                         .Sets = {set},
-                        .FirstSet = 1,
+                        .FirstSet = 3,
                         .PipelineBindPoint = PipelineBindPoint::Compute,
                     });
                     c.PushConstants(push);

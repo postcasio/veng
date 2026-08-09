@@ -889,7 +889,8 @@ namespace Veng::Renderer
             cmd.BindPipeline(m_ComputePipeline);
             cmd.BindDescriptorSets(DescriptorSetBindInfo{
                 .Sets = {state.ComputeSets[region]},
-                .FirstSet = 1, // set 0 reserved for the bindless registry, unused by this dispatch
+                .FirstSet =
+                    3, // sets 0-2 reserved for the typed bindless registries, unused by this dispatch
                 .PipelineBindPoint = PipelineBindPoint::Compute,
             });
             cmd.PushConstants(push);
@@ -983,7 +984,7 @@ namespace Veng::Renderer
                 registry.Bind(cmd);
                 cmd.BindDescriptorSets(DescriptorSetBindInfo{
                     .Sets = {state.RecordSets[region]},
-                    .FirstSet = 1,
+                    .FirstSet = 3,
                     .PipelineBindPoint = PipelineBindPoint::Graphics,
                 });
                 cmd.BindIndexBuffer(m_QuadIndexBuffer);
@@ -1019,7 +1020,7 @@ namespace Veng::Renderer
                 registry.Bind(cmd);
                 cmd.BindDescriptorSets(DescriptorSetBindInfo{
                     .Sets = {state.SpriteSets[region]},
-                    .FirstSet = 1,
+                    .FirstSet = 3,
                     .PipelineBindPoint = PipelineBindPoint::Graphics,
                 });
                 cmd.BindIndexBuffer(m_QuadIndexBuffer);
@@ -1049,7 +1050,7 @@ namespace Veng::Renderer
                 registry.Bind(cmd);
                 cmd.BindDescriptorSets(DescriptorSetBindInfo{
                     .Sets = {state.AggregateSets[region]},
-                    .FirstSet = 1,
+                    .FirstSet = 3,
                     .PipelineBindPoint = PipelineBindPoint::Graphics,
                 });
                 cmd.BindIndexBuffer(m_QuadIndexBuffer);

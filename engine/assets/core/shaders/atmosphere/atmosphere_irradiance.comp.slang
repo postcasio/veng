@@ -6,9 +6,9 @@
 // irradiance image (write-only storage). Off the bindless registry.
 #include "atmosphere_common.slang"
 
-[[vk::binding(0, 1)]] Texture3D<float4> g_Scattering;
-[[vk::binding(1, 1)]] SamplerState g_Sampler;
-[[vk::binding(2, 1)]] [format("rgba16f")] RWTexture2D<float4> g_Irradiance;
+[[vk::binding(0, 3)]] Texture3D<float4> g_Scattering;
+[[vk::binding(1, 3)]] SamplerState g_Sampler;
+[[vk::binding(2, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Irradiance;
 
 struct PushConstants
 {

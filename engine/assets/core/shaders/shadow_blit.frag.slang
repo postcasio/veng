@@ -6,8 +6,8 @@
 // shadow-map debug view. The atlas is off bindless, so it reaches this blit through
 // a dedicated set (set 1): an ordinary (non-comparison) sampler so the raw stored
 // depth is returned, not a compare result.
-[[vk::binding(0, 1)]] Texture2D g_ShadowAtlas;
-[[vk::binding(1, 1)]] SamplerState g_ShadowSampler;
+[[vk::binding(0, 3)]] Texture2D g_ShadowAtlas;
+[[vk::binding(1, 3)]] SamplerState g_ShadowSampler;
 
 struct VSOutput
 {

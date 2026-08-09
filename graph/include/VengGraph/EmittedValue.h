@@ -33,6 +33,8 @@ namespace VengGraph
     {
         /// @brief A bindless sampled-image handle slot (`uint`); its .vmat row is a texture.
         TextureHandle,
+        /// @brief A bindless 3D sampled-image (volume) handle slot (`uint`); its .vmat row is a volume.
+        VolumeHandle,
         /// @brief A bindless sampler handle slot (`uint`); its .vmat row is a sampler.
         SamplerHandle,
         /// @brief An exposed or engine-bound scalar/vector param; its .vmat row is a float/vecN.

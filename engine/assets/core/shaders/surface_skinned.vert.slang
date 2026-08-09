@@ -22,9 +22,9 @@ struct VSInput
 };
 
 // The per-instance skinning palette: each bone's GlobalInverse * modelBone * InverseBind
-// matrix, indexed by DrawData.PaletteBase + boneIndex. Vertex-stage only, off the static
-// set-1 layout (a dedicated set 2 the renderer binds for skinned draws).
-[[vk::binding(0, 2)]] StructuredBuffer<float4x4> g_Palette;
+// matrix, indexed by DrawData.PaletteBase + boneIndex. Vertex-stage only, above the static
+// path's DrawData set (a dedicated set 4 the renderer binds for skinned draws).
+[[vk::binding(0, 4)]] StructuredBuffer<float4x4> g_Palette;
 
 [shader("vertex")]
 SurfaceFragmentInput vsMain(VSInput input)

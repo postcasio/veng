@@ -162,7 +162,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
             // Set 0 is reserved for the bindless registry; the hand-built set binds at 1.
             cmd.BindDescriptorSets({
                 .Sets = {set},
-                .FirstSet = 1,
+                .FirstSet = 3,
                 .PipelineBindPoint = PipelineBindPoint::Compute,
             });
             cmd.PushConstants(ShEvalPush{.NormalCount = normalCount});

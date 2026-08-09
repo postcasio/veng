@@ -13,9 +13,9 @@
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
 
-[[vk::binding(0, 1)]] Texture3D<float4> g_Scattering;
-[[vk::binding(1, 1)]] Texture2D<float4> g_Transmittance;
-[[vk::binding(2, 1)]] SamplerState g_AtmosphereSampler;
+[[vk::binding(0, 3)]] Texture3D<float4> g_Scattering;
+[[vk::binding(1, 3)]] Texture2D<float4> g_Transmittance;
+[[vk::binding(2, 3)]] SamplerState g_AtmosphereSampler;
 
 struct PushConstants
 {

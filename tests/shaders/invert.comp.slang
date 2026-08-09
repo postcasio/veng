@@ -2,8 +2,8 @@
 // the destination storage image, one texel per invocation. Set 0 is reserved
 // for the bindless registry, so the storage images bind on set 1; the test's
 // hand-built layout matches these bindings.
-[[vk::binding(0, 1)]] [format("rgba8")] RWTexture2D<float4> u_Source;
-[[vk::binding(1, 1)]] [format("rgba8")] RWTexture2D<float4> u_Destination;
+[[vk::binding(0, 3)]] [format("rgba8")] RWTexture2D<float4> u_Source;
+[[vk::binding(1, 3)]] [format("rgba8")] RWTexture2D<float4> u_Destination;
 
 [shader("compute")]
 [numthreads(1, 1, 1)]

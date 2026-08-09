@@ -390,7 +390,7 @@ namespace Veng::Renderer
         cmd.BindPipeline(m_TransmittancePipeline);
         cmd.BindDescriptorSets(DescriptorSetBindInfo{
             .Sets = {m_TransmittanceSet},
-            .FirstSet = 1,
+            .FirstSet = 3,
             .PipelineBindPoint = PipelineBindPoint::Compute,
         });
         cmd.PushConstants(push);
@@ -402,7 +402,7 @@ namespace Veng::Renderer
         cmd.BindPipeline(m_SinglePipeline);
         cmd.BindDescriptorSets(DescriptorSetBindInfo{
             .Sets = {m_SingleSet},
-            .FirstSet = 1,
+            .FirstSet = 3,
             .PipelineBindPoint = PipelineBindPoint::Compute,
         });
         cmd.PushConstants(push);
@@ -423,7 +423,7 @@ namespace Veng::Renderer
             cmd.PrepareForAccess(destStorage, AccessKind::StorageWrite);
             cmd.BindDescriptorSets(DescriptorSetBindInfo{
                 .Sets = {set},
-                .FirstSet = 1,
+                .FirstSet = 3,
                 .PipelineBindPoint = PipelineBindPoint::Compute,
             });
             cmd.PushConstants(push);
@@ -443,7 +443,7 @@ namespace Veng::Renderer
         cmd.BindPipeline(m_IrradiancePipeline);
         cmd.BindDescriptorSets(DescriptorSetBindInfo{
             .Sets = {m_IrradianceSet},
-            .FirstSet = 1,
+            .FirstSet = 3,
             .PipelineBindPoint = PipelineBindPoint::Compute,
         });
         cmd.PushConstants(push);

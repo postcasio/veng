@@ -16,7 +16,7 @@ struct GpuLineVertex
     float Width;      // ribbon thickness in screen pixels
 };
 
-[[vk::binding(0, 1)]] StructuredBuffer<GpuLineVertex> g_Lines;
+[[vk::binding(0, 3)]] StructuredBuffer<GpuLineVertex> g_Lines;
 
 struct PushConstants
 {

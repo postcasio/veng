@@ -15,10 +15,12 @@ namespace Veng::Renderer
         return *m_Native;
     }
 
-    /// @brief Constructs a Vulkan pipeline layout, prepending the bindless registry's set-0 layout.
+    /// @brief Constructs a Vulkan pipeline layout, prepending the typed bindless registry set layouts.
     ///
-    /// Set 0 is reserved for the bindless registry across every pipeline layout; author-declared
-    /// sets shift to 1+.
+    /// Sets 0-2 are reserved for the typed bindless registries across every pipeline layout — the
+    /// 2D array at 0, the 3D (volume) array at 1, the cube array at 2 — so author-declared sets
+    /// shift to BindlessRegistry::FirstUserSet (3). A pipeline sampling only 2D still carries the
+    /// 3D and cube set layouts, which costs nothing to bind and lets any material index them.
     /// @param context  The owning render context.
     /// @param info     Layout configuration including descriptor set layouts and push constant ranges.
     PipelineLayout::PipelineLayout(Context& context, const PipelineLayoutInfo& info)
@@ -26,10 +28,13 @@ namespace Veng::Renderer
           m_DescriptorSetLayouts(info.DescriptorSetLayouts),
           m_PushConstantRanges(info.PushConstantRanges)
     {
+        const BindlessRegistry& registry = context.GetBindlessRegistry();
+
         vector<vk::DescriptorSetLayout> descriptorSetLayouts;
-        descriptorSetLayouts.reserve(m_DescriptorSetLayouts.size() + 1);
-        descriptorSetLayouts.push_back(
-            GetVkDescriptorSetLayout(*context.GetBindlessRegistry().GetSet0Layout()));
+        descriptorSetLayouts.reserve(m_DescriptorSetLayouts.size() + BindlessRegistry::SetCount);
+        descriptorSetLayouts.push_back(GetVkDescriptorSetLayout(*registry.GetSet0Layout()));
+        descriptorSetLayouts.push_back(GetVkDescriptorSetLayout(*registry.GetVolumeSetLayout()));
+        descriptorSetLayouts.push_back(GetVkDescriptorSetLayout(*registry.GetCubeSetLayout()));
 
         for (const auto& descriptorSetLayout : m_DescriptorSetLayouts)
         {

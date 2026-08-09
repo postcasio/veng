@@ -7,7 +7,7 @@
 // bindless registry).
 #include "atmosphere_common.slang"
 
-[[vk::binding(0, 1)]] [format("rgba16f")] RWTexture2D<float4> g_Transmittance;
+[[vk::binding(0, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Transmittance;
 
 struct PushConstants
 {

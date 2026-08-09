@@ -2,11 +2,12 @@
 // GroupBindingsBySet are pure data->data transforms — no Context, no device — so
 // the lookup, the push-constant mapping, and the descriptor-set grouping that
 // BuildDescriptorSetLayouts builds on are testable without a GPU. The set-numbering
-// asserts GroupBindingsBySet enforces (set 0 reserved, contiguous sets) are pinned
-// by the death band.
+// asserts GroupBindingsBySet enforces (sets 0-2 reserved for the typed bindless
+// registries, contiguous author sets from FirstUserSet) are pinned by the death band.
 
 #include <doctest/doctest.h>
 
+#include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/ShaderInterface.h>
 
 using namespace Veng;
@@ -61,28 +62,30 @@ TEST_CASE("ShaderInterface::BuildPushConstantRanges maps each block to a range")
 TEST_CASE("ShaderInterface::GroupBindingsBySet partitions bindings per set in set order")
 {
     ShaderInterface iface;
-    // Two bindings in set 1, one in set 2 — declared out of set order to prove the
-    // grouping keys on Set, not declaration order.
+    // Two bindings in the first author set, one in the next — declared out of set order to
+    // prove the grouping keys on Set, not declaration order. Author sets start at FirstUserSet
+    // (sets below it are the typed bindless registries).
+    constexpr u32 base = BindlessRegistry::FirstUserSet;
     iface.Bindings = {
-        Binding("A", 1, 0, DescriptorType::UniformBuffer),
-        Binding("C", 2, 0, DescriptorType::StorageImage),
-        Binding("B", 1, 1, DescriptorType::CombinedImageSampler),
+        Binding("A", base, 0, DescriptorType::UniformBuffer),
+        Binding("C", base + 1, 0, DescriptorType::StorageImage),
+        Binding("B", base, 1, DescriptorType::CombinedImageSampler),
     };
 
     const vector<vector<DescriptorBinding>> bySet = iface.GroupBindingsBySet();
 
-    // Element i holds set (i + 1)'s bindings.
+    // Element i holds set (i + FirstUserSet)'s bindings.
     REQUIRE(bySet.size() == 2);
     REQUIRE(bySet[0].size() == 2);
     REQUIRE(bySet[1].size() == 1);
 
-    // Set 1: the two bindings, in declaration order, with their fields carried over.
+    // The first author set: the two bindings, in declaration order, fields carried over.
     CHECK(bySet[0][0].Binding == 0);
     CHECK(bySet[0][0].Type == DescriptorType::UniformBuffer);
     CHECK(bySet[0][1].Binding == 1);
     CHECK(bySet[0][1].Type == DescriptorType::CombinedImageSampler);
 
-    // Set 2: the single storage-image binding.
+    // The next author set: the single storage-image binding.
     CHECK(bySet[1][0].Binding == 0);
     CHECK(bySet[1][0].Type == DescriptorType::StorageImage);
 }

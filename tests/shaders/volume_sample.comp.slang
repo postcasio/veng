@@ -5,8 +5,8 @@
 // bindless registry; the sampled source (binding 0) and storage destination
 // (binding 1) bind on set 1, matching the test's hand-built layout. Drives the
 // 3D sampled-image read path (the MoltenVK 3D-storage probe).
-[[vk::binding(0, 1)]] Sampler3D u_Source;
-[[vk::binding(1, 1)]] [format("rgba16f")] RWTexture3D<float4> u_Destination;
+[[vk::binding(0, 3)]] Sampler3D u_Source;
+[[vk::binding(1, 3)]] [format("rgba16f")] RWTexture3D<float4> u_Destination;
 
 struct VolumePush
 {

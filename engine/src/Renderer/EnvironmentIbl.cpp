@@ -389,7 +389,7 @@ namespace Veng::Renderer
         cmd.BindPipeline(m_BrdfPipeline);
         cmd.BindDescriptorSets(DescriptorSetBindInfo{
             .Sets = {m_BrdfSet},
-            .FirstSet = 1,
+            .FirstSet = 3,
             .PipelineBindPoint = PipelineBindPoint::Compute,
         });
         cmd.PushConstants(BrdfPush{.Size = BrdfLutSize, .SampleCount = BrdfSamples});
@@ -413,7 +413,7 @@ namespace Veng::Renderer
         cmd.BindPipeline(m_EquirectPipeline);
         cmd.BindDescriptorSets(DescriptorSetBindInfo{
             .Sets = {m_EquirectSet},
-            .FirstSet = 1,
+            .FirstSet = 3,
             .PipelineBindPoint = PipelineBindPoint::Compute,
         });
         cmd.PushConstants(EquirectPush{
@@ -492,7 +492,7 @@ namespace Veng::Renderer
         cmd.BindPipeline(m_IrradiancePipeline);
         cmd.BindDescriptorSets(DescriptorSetBindInfo{
             .Sets = {m_IrradianceSet},
-            .FirstSet = 1,
+            .FirstSet = 3,
             .PipelineBindPoint = PipelineBindPoint::Compute,
         });
         cmd.PushConstants(IrradiancePush{.FaceSize = IrradianceSize});
@@ -510,7 +510,7 @@ namespace Veng::Renderer
             cmd.PrepareForAccess(m_PrefilterStorageViews[mip], AccessKind::StorageWrite);
             cmd.BindDescriptorSets(DescriptorSetBindInfo{
                 .Sets = {m_PrefilterSets[mip]},
-                .FirstSet = 1,
+                .FirstSet = 3,
                 .PipelineBindPoint = PipelineBindPoint::Compute,
             });
             cmd.PushConstants(PrefilterPush{
@@ -542,12 +542,12 @@ namespace Veng::Renderer
             vec3 C;
         };
         constexpr std::array<FaceBasis, CubeFaces> faceBases = {{
-            {{0, 0, -1}, {0, -1, 0}, {1, 0, 0}},  // +X
-            {{0, 0, 1}, {0, -1, 0}, {-1, 0, 0}},  // -X
-            {{1, 0, 0}, {0, 0, 1}, {0, 1, 0}},    // +Y
-            {{1, 0, 0}, {0, 0, -1}, {0, -1, 0}},  // -Y
-            {{1, 0, 0}, {0, -1, 0}, {0, 0, 1}},   // +Z
-            {{-1, 0, 0}, {0, -1, 0}, {0, 0, -1}}, // -Z
+            {.A = {0, 0, -1}, .B = {0, -1, 0}, .C = {1, 0, 0}},  // +X
+            {.A = {0, 0, 1}, .B = {0, -1, 0}, .C = {-1, 0, 0}},  // -X
+            {.A = {1, 0, 0}, .B = {0, 0, 1}, .C = {0, 1, 0}},    // +Y
+            {.A = {1, 0, 0}, .B = {0, 0, -1}, .C = {0, -1, 0}},  // -Y
+            {.A = {1, 0, 0}, .B = {0, -1, 0}, .C = {0, 0, 1}},   // +Z
+            {.A = {-1, 0, 0}, .B = {0, -1, 0}, .C = {0, 0, -1}}, // -Z
         }};
 
         const auto* halves = reinterpret_cast<const u16*>(cubeTexels.data());

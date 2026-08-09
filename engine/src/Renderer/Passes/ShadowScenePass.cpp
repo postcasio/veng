@@ -313,7 +313,7 @@ namespace Veng::Renderer
                             cmd.BindPipeline(m_SkinnedPipeline);
                             cmd.BindDescriptorSets(DescriptorSetBindInfo{
                                 .Sets = {view.SkinningPalette},
-                                .FirstSet = 1,
+                                .FirstSet = 3,
                                 .PipelineBindPoint = PipelineBindPoint::Graphics,
                             });
                             const Mesh* lastSkinned = nullptr;

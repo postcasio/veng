@@ -11,9 +11,9 @@
 // Set 0 is reserved across every pipeline layout for the bindless registry; this closed
 // producer->consumer chain binds its own resources on set 1: a sampled source mip, the
 // clamp-to-edge linear sampler, and a single storage destination mip.
-[[vk::binding(0, 1)]] Texture2D<float4> g_Source;
-[[vk::binding(1, 1)]] SamplerState g_Sampler;
-[[vk::binding(2, 1)]] [format("rgba16f")] RWTexture2D<float4> g_Dest;
+[[vk::binding(0, 3)]] Texture2D<float4> g_Source;
+[[vk::binding(1, 3)]] SamplerState g_Sampler;
+[[vk::binding(2, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Dest;
 
 struct PushConstants
 {

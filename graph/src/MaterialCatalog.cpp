@@ -183,6 +183,39 @@ namespace VengGraph
             types.TextureSample = catalog.Register(std::move(type));
         }
 
+        // --- TextureSample3D: a vec3 UVW in (defaulting to the origin), Color (vec4) out ---
+        // The 3D sibling of TextureSample: it samples a volume through a VolumeHandle slot into
+        // g_Volumes (the typed bindless volume set) instead of a Texture2D through set 0. The
+        // sampled 3D texture is carried as the same AssetHandle property; a node with none is a
+        // runtime-bound handle a consumer writes with SetVolumeHandle.
+        {
+            NodeType type;
+            type.Name = TextureSample3DTypeName;
+            type.Inputs = {
+                PinDesc{.Name = TextureSample3DUVPin, .Type = ValuePin(TypeIdOf<Veng::vec3>())},
+            };
+            type.Outputs = {
+                PinDesc{.Name = TextureSampleColorPin, .Type = ValuePin(TypeIdOf<Veng::vec4>())},
+            };
+            type.Properties = {
+                Veng::FieldDescriptor{
+                    .Name = TextureSampleTextureProperty,
+                    .Type = TypeIdOf<Veng::AssetHandle<Veng::Texture>>(),
+                    .Class = Veng::FieldClass::AssetHandle,
+                    .Offset = offsetof(TextureSampleProps, Texture),
+                },
+                Veng::FieldDescriptor{
+                    .Name = NodeNameProperty,
+                    .Type = TypeIdOf<Veng::string>(),
+                    .Class = Veng::FieldClass::String,
+                    .Offset = offsetof(TextureSampleProps, Name),
+                    .Hidden = true,
+                },
+            };
+            type.PropertySize = sizeof(TextureSampleProps);
+            types.TextureSample3D = catalog.Register(std::move(type));
+        }
+
         // --- Param: typed Value (vec4) out, vec4 Value property ---
         {
             NodeType type;
@@ -294,6 +327,58 @@ namespace VengGraph
                 fmt::format("g_Textures[NonUniformResourceIndex(p.{})].Sample("
                             "g_Samplers[NonUniformResourceIndex(p.{})], {})",
                             textureField, samplerField, uv);
+            return {EmittedValue{.Expr = expr, .Type = ValuePin(vec4Type), .IsConst = false}};
+        };
+
+        // A TextureSample3D samples the bindless volume named by its VolumeHandle slot (into
+        // g_Volumes, the typed 3D set) with the shared sampler named by its paired slot,
+        // mirroring TextureSample but with SampleLevel(..., 0) since a 3D volume has no
+        // gradient-driven mip chain here. The UVW input defaults to the origin when unconnected.
+        emit.Emitters[types.TextureSample3D.Value] =
+            [vec4Type](std::span<const EmittedValue> inputs, std::span<const std::byte> props,
+                       EmitContext& ctx) -> Veng::vector<EmittedValue>
+        {
+            Veng::u64 textureId = 0;
+            if (props.size() >= offsetof(TextureSampleProps, Texture) + sizeof(Veng::u64))
+            {
+                std::memcpy(&textureId, props.data() + offsetof(TextureSampleProps, Texture),
+                            sizeof(textureId));
+            }
+            NodeName nameBuffer;
+            if (props.size() >= offsetof(TextureSampleProps, Name) + sizeof(NodeName))
+            {
+                std::memcpy(&nameBuffer, props.data() + offsetof(TextureSampleProps, Name),
+                            sizeof(nameBuffer));
+            }
+
+            const Veng::string authored = NameOf(nameBuffer);
+            const Veng::string volumeField =
+                authored.empty() ? fmt::format("{}_Volume", ctx.NodeKey) : authored;
+            const Veng::string samplerField = authored.empty()
+                                                  ? fmt::format("{}_Sampler", ctx.NodeKey)
+                                                  : fmt::format("{}Sampler", authored);
+
+            ctx.ParamFields.push_back(EmittedParamField{.Name = volumeField,
+                                                        .SlangType = "uint",
+                                                        .Kind = EmittedFieldKind::VolumeHandle,
+                                                        .Alignment = 4,
+                                                        .ComponentCount = 1,
+                                                        .IsUint = true,
+                                                        .TextureId = textureId});
+            ctx.ParamFields.push_back(EmittedParamField{.Name = samplerField,
+                                                        .SlangType = "uint",
+                                                        .Kind = EmittedFieldKind::SamplerHandle,
+                                                        .Alignment = 4,
+                                                        .ComponentCount = 1,
+                                                        .IsUint = true,
+                                                        .SamplerTexture = volumeField});
+
+            const Veng::string uvw =
+                inputs.empty() ? Veng::string("float3(0, 0, 0)") : inputs[0].Expr;
+            const Veng::string expr =
+                fmt::format("g_Volumes[NonUniformResourceIndex(p.{})].SampleLevel("
+                            "g_Samplers[NonUniformResourceIndex(p.{})], {}, 0)",
+                            volumeField, samplerField, uvw);
             return {EmittedValue{.Expr = expr, .Type = ValuePin(vec4Type), .IsConst = false}};
         };
 

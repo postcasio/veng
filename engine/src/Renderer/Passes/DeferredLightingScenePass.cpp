@@ -74,16 +74,17 @@ namespace Veng::Renderer
                 cmd.SetScissor({0, 0}, renderExtent);
                 registry.Bind(cmd);
 
-                // Bind set 1 (the shadow system: both atlases, comparison sampler, and
-                // both ring-buffered dynamic uniforms) and set 2 (the IBL maps + sampler,
-                // always valid). The shadow rings are renderer-owned and framesInFlight-deep,
-                // so their dynamic offset is the frame-in-flight index — not the shared
-                // view-constants slot, which rings per viewport render. The IBL set has no
-                // dynamic descriptors so the offsets still map to set 1's two in binding order.
+                // Bind set 3 (the shadow system: both atlases, comparison sampler, and
+                // both ring-buffered dynamic uniforms) and set 4 (the IBL maps + sampler,
+                // always valid) — the two author sets above the typed bindless registries.
+                // The shadow rings are renderer-owned and framesInFlight-deep, so their
+                // dynamic offset is the frame-in-flight index — not the shared view-constants
+                // slot, which rings per viewport render. The IBL set has no dynamic descriptors
+                // so the offsets still map to set 3's two in binding order.
                 const u32 frameSlot = m_Context.GetCurrentFrameInFlight();
                 cmd.BindDescriptorSets(DescriptorSetBindInfo{
                     .Sets = {shadowSet, iblSet},
-                    .FirstSet = 1,
+                    .FirstSet = 3,
                     .PipelineBindPoint = PipelineBindPoint::Graphics,
                     .DynamicOffsets = {frameSlot * shadowRingStride,
                                        frameSlot * punctualRingStride},

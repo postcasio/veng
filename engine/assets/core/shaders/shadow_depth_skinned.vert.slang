@@ -26,7 +26,7 @@ struct ShadowPushConstants
     uint     PaletteBase; // base offset of this instance's bone matrices in g_Palette
 };
 
-[[vk::binding(0, 1)]] StructuredBuffer<float4x4> g_Palette;
+[[vk::binding(0, 3)]] StructuredBuffer<float4x4> g_Palette;
 [[vk::push_constant]] ConstantBuffer<ShadowPushConstants> g_PC;
 
 [shader("vertex")]

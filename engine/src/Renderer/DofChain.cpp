@@ -502,7 +502,7 @@ namespace Veng::Renderer
                         cmd.BindPipeline(pipeline);
                         cmd.BindDescriptorSets(DescriptorSetBindInfo{
                             .Sets = {set},
-                            .FirstSet = 1, // set 0 is reserved for the bindless registry
+                            .FirstSet = 3, // sets 0-2 are the typed bindless registries
                             .PipelineBindPoint = PipelineBindPoint::Compute,
                         });
                         cmd.PushConstants(DofPrefilterPush{
@@ -538,7 +538,7 @@ namespace Veng::Renderer
                         cmd.BindPipeline(pipeline);
                         cmd.BindDescriptorSets(DescriptorSetBindInfo{
                             .Sets = {set},
-                            .FirstSet = 1,
+                            .FirstSet = 3,
                             .PipelineBindPoint = PipelineBindPoint::Compute,
                         });
                         cmd.PushConstants(DofTilePush{
@@ -599,7 +599,7 @@ namespace Veng::Renderer
                         cmd.BindPipeline(pipeline);
                         cmd.BindDescriptorSets(DescriptorSetBindInfo{
                             .Sets = {set},
-                            .FirstSet = 1,
+                            .FirstSet = 3,
                             .PipelineBindPoint = PipelineBindPoint::Compute,
                         });
                         cmd.PushConstants(DofGatherPush{
@@ -650,7 +650,7 @@ namespace Veng::Renderer
                         cmd.BindPipeline(pipeline);
                         cmd.BindDescriptorSets(DescriptorSetBindInfo{
                             .Sets = {set},
-                            .FirstSet = 1,
+                            .FirstSet = 3,
                             .PipelineBindPoint = PipelineBindPoint::Compute,
                         });
                         cmd.PushConstants(DofFillPush{.DestExtent = halfValid});

@@ -35,10 +35,10 @@
 // renderer-owned set). Irradiance is the diffuse term; the prefiltered cube + the BRDF
 // LUT are the split-sum specular term. Binding 0 (the radiance cube) is the skybox pass's
 // and is unused here. Always bound and valid; sampling is gated on the IblEnabled push flag.
-[[vk::binding(1, 2)]] TextureCube g_Irradiance;
-[[vk::binding(2, 2)]] TextureCube g_Prefilter;
-[[vk::binding(3, 2)]] Texture2D g_BrdfLut;
-[[vk::binding(4, 2)]] SamplerState g_IblSampler;
+[[vk::binding(1, 4)]] TextureCube g_Irradiance;
+[[vk::binding(2, 4)]] TextureCube g_Prefilter;
+[[vk::binding(3, 4)]] Texture2D g_BrdfLut;
+[[vk::binding(4, 4)]] SamplerState g_IblSampler;
 
 static const uint LightStride = 96;
 static const uint AreaVertexStride = 16;

@@ -496,8 +496,8 @@ namespace
 
     void RunShaderSetZeroReserved()
     {
-        // A binding targeting set 0 trips the reserved-set assert: set 0 is the
-        // bindless registry's. No device needed — grouping is pure logic.
+        // A binding targeting set 0 trips the reserved-set assert: sets 0-2 are the typed
+        // bindless registries'. No device needed — grouping is pure logic.
         ShaderInterface iface;
         iface.Bindings = {{.Name = "Bad", .Set = 0, .Binding = 0}};
         (void)iface.GroupBindingsBySet();
@@ -505,10 +505,11 @@ namespace
 
     void RunShaderNonContiguousSet()
     {
-        // Sets 1 and 3 declared with a gap at 2 trips the contiguous-set assert.
+        // Author sets 3 and 5 declared with a gap at 4 trips the contiguous-set assert (both are
+        // at or above FirstUserSet, so the reserved-set assert passes first).
         ShaderInterface iface;
-        iface.Bindings = {{.Name = "A", .Set = 1, .Binding = 0},
-                          {.Name = "C", .Set = 3, .Binding = 0}};
+        iface.Bindings = {{.Name = "A", .Set = 3, .Binding = 0},
+                          {.Name = "C", .Set = 5, .Binding = 0}};
         (void)iface.GroupBindingsBySet();
     }
 }

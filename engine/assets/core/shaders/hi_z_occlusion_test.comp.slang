@@ -17,9 +17,9 @@ struct Candidate
     float4 BoundsMax;
 };
 
-[[vk::binding(0, 1)]] Texture2D<float> g_HiZ;
-[[vk::binding(1, 1)]] StructuredBuffer<Candidate> g_Candidates;
-[[vk::binding(2, 1)]] RWStructuredBuffer<uint> g_Visibility;
+[[vk::binding(0, 3)]] Texture2D<float> g_HiZ;
+[[vk::binding(1, 3)]] StructuredBuffer<Candidate> g_Candidates;
+[[vk::binding(2, 3)]] RWStructuredBuffer<uint> g_Visibility;
 
 struct PushConstants
 {

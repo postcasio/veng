@@ -325,7 +325,7 @@ namespace Veng::Renderer
                         registry.Bind(cmd);
                         cmd.BindDescriptorSets(DescriptorSetBindInfo{
                             .Sets = {m_LineSets[frame]},
-                            .FirstSet = 1,
+                            .FirstSet = 3,
                             .PipelineBindPoint = PipelineBindPoint::Graphics,
                         });
                         cmd.PushConstants(push);
@@ -340,7 +340,7 @@ namespace Veng::Renderer
                         registry.Bind(cmd);
                         cmd.BindDescriptorSets(DescriptorSetBindInfo{
                             .Sets = {m_BillboardSets[frame]},
-                            .FirstSet = 1,
+                            .FirstSet = 3,
                             .PipelineBindPoint = PipelineBindPoint::Graphics,
                         });
                         cmd.PushConstants(push);
@@ -536,7 +536,7 @@ namespace Veng::Renderer
                     registry.Bind(cmd);
                     cmd.BindDescriptorSets(DescriptorSetBindInfo{
                         .Sets = {m_Sets[m_Context.GetCurrentFrameInFlight()]},
-                        .FirstSet = 1,
+                        .FirstSet = 3,
                         .PipelineBindPoint = PipelineBindPoint::Graphics,
                     });
                     cmd.PushConstants(push);

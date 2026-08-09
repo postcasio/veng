@@ -338,6 +338,49 @@ TEST_CASE("CompileMaterialGraph: a shared TextureSample emits one temp, sampled 
     CHECK(Contains(src, "float4 n"));
 }
 
+TEST_CASE("CompileMaterialGraph: a TextureSample3D samples a volume and emits a volume field")
+{
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::Surface);
+
+    // The 3D node exists beside the 2D one and carries its own emit-fn.
+    REQUIRE(types.TextureSample3D.Value != 0u);
+    CHECK(emit.Find(types.TextureSample3D) != nullptr);
+
+    NodeGraph graph = MakeGraph(catalog);
+    const NodeId output = graph.AddNode(types.MaterialOutput);
+    const NodeId sample = graph.AddNode(types.TextureSample3D);
+
+    // TextureSample3D (vec4) → Albedo (vec4).
+    REQUIRE(graph.Connect(PinRef{.Node = sample, .Pin = 0}, PinRef{.Node = output, .Pin = 0})
+                .has_value());
+
+    const Veng::Result<GeneratedFragment> r =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::Surface);
+    REQUIRE(r.has_value());
+    const Veng::string& src = r->Source;
+
+    // It samples the typed 3D bindless array through a VolumeHandle slot with SampleLevel, never
+    // the 2D g_Textures array, and the UVW defaults to the origin when unconnected.
+    CHECK(Contains(src, "g_Volumes[NonUniformResourceIndex(p."));
+    CHECK(Contains(src, ".SampleLevel(g_Samplers[NonUniformResourceIndex(p."));
+    CHECK(Contains(src, "float3(0,0,0)")); // the unconnected UVW pin's zero-literal default
+
+    // The emitted MaterialParams carry a uint volume slot; the .vmat field list lowers it to a
+    // "volume" row beside the paired "sampler" row.
+    bool haveVolume = false;
+    bool haveSampler = false;
+    for (const CompiledField& field : r->Fields)
+    {
+        haveVolume = haveVolume || field.Type == "volume";
+        haveSampler = haveSampler || field.Type == "sampler";
+    }
+    CHECK(haveVolume);
+    CHECK(haveSampler);
+}
+
 TEST_CASE("CompileMaterialGraph: an unreached node never emits (dead-code elimination)")
 {
     NodeCatalog catalog;

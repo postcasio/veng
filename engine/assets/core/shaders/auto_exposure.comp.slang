@@ -7,9 +7,9 @@
 // one frame later, averages bins 1..255 (ignoring the black bin) and eases the tonemap exposure
 // toward that value — so a predominantly-black scene with sparse highlights meters on its lit
 // content instead of collapsing to the floor. This pass only measures; it applies nothing.
-[[vk::binding(0, 1)]] Texture2D<float4> g_Hdr;
-[[vk::binding(1, 1)]] SamplerState g_Sampler;
-[[vk::binding(2, 1)]] RWStructuredBuffer<uint> g_Histogram;
+[[vk::binding(0, 3)]] Texture2D<float4> g_Hdr;
+[[vk::binding(1, 3)]] SamplerState g_Sampler;
+[[vk::binding(2, 3)]] RWStructuredBuffer<uint> g_Histogram;
 
 struct PushConstants
 {

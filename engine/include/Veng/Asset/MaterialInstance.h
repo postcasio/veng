@@ -133,6 +133,19 @@ namespace Veng
         /// @param handle The bindless storage-buffer handle to bind.
         void SetStorageBufferHandle(std::string_view name, Renderer::StorageBufferHandle handle);
 
+        /// @brief Writes a raw bindless volume (3D sampled-image) index into a VolumeHandle field by name.
+        ///
+        /// The 3D counterpart of SetTextureHandle: binds a runtime-registered volume to a material.
+        /// The game builds a VolumeField (or any Type3D ImageView), registers it with
+        /// BindlessRegistry::RegisterVolume to get a VolumeHandle, and sets it here; the shader
+        /// samples it through the typed g_Volumes[] array. The field carries no cooked default — it
+        /// is runtime-bound. Keeps no asset resident; the caller owns the resource and its bindless
+        /// registration. The write lands in the ring-buffered block's current frame region, so it
+        /// is cheap and frame-safe.
+        /// @param name   The VolumeHandle field to write.
+        /// @param handle The bindless volume handle to bind.
+        void SetVolumeHandle(std::string_view name, Renderer::VolumeHandle handle);
+
         /// @brief Returns the instance's slot index in the registry's per-material SSBO array.
         [[nodiscard]] u32 GetIndex() const { return m_Handle.Index; }
 

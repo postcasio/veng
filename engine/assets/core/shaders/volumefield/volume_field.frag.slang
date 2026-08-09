@@ -14,8 +14,8 @@
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
 
-[[vk::binding(0, 1)]] Texture3D<float4> g_Volume;
-[[vk::binding(1, 1)]] SamplerState g_VolumeSampler;
+[[vk::binding(0, 3)]] Texture3D<float4> g_Volume;
+[[vk::binding(1, 3)]] SamplerState g_VolumeSampler;
 
 struct PushConstants
 {

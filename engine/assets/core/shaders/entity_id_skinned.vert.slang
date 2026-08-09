@@ -21,7 +21,7 @@ struct VSOutput
     nointerpolation uint v_EntityIndex : TEXCOORD0;
 };
 
-[[vk::binding(0, 2)]] StructuredBuffer<float4x4> g_Palette;
+[[vk::binding(0, 4)]] StructuredBuffer<float4x4> g_Palette;
 
 [shader("vertex")]
 VSOutput vsMain(VSInput input)

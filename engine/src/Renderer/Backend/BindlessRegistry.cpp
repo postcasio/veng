@@ -157,6 +157,37 @@ namespace Veng::Renderer
                                                    .Layout = m_Layout,
                                                });
 
+        // The typed sets: one homogeneous arrayed binding each, built exactly as set 0's texture
+        // array is. Keeping each array a single view type is what keeps a non-2D descriptor out of
+        // set 0's Metal argument buffer — the MoltenVK case the typed sets exist to sidestep.
+        m_VolumeLayout = DescriptorSetLayout::Create(
+            context, {
+                         .Name = "Bindless Volume Set Layout",
+                         .Bindings = {{.Binding = TypedSetBinding,
+                                       .Type = DescriptorType::SampledImage,
+                                       .Count = MaxVolumes,
+                                       .Stages = ShaderStage::All,
+                                       .Bindless = true}},
+                     });
+        m_VolumeSet = DescriptorSet::Create(context, {
+                                                         .Name = "Bindless Volume Set",
+                                                         .Layout = m_VolumeLayout,
+                                                     });
+
+        m_CubeLayout = DescriptorSetLayout::Create(
+            context, {
+                         .Name = "Bindless Cube Set Layout",
+                         .Bindings = {{.Binding = TypedSetBinding,
+                                       .Type = DescriptorType::SampledImage,
+                                       .Count = MaxCubes,
+                                       .Stages = ShaderStage::All,
+                                       .Bindless = true}},
+                     });
+        m_CubeSet = DescriptorSet::Create(context, {
+                                                       .Name = "Bindless Cube Set",
+                                                       .Layout = m_CubeLayout,
+                                                   });
+
         m_FramesInFlight = context.GetMaxFramesInFlight();
 
         // Ring-buffered by framesInFlight; each frame writes its own region while
@@ -208,6 +239,8 @@ namespace Veng::Renderer
         m_Set->Write(AreaVertexBinding, m_AreaVertexBuffer);
 
         m_Textures.Init(MaxTextures, m_FramesInFlight);
+        m_Volumes.Init(MaxVolumes, m_FramesInFlight);
+        m_Cubes.Init(MaxCubes, m_FramesInFlight);
         m_Samplers.Init(MaxSamplers, m_FramesInFlight);
         m_StorageImages.Init(MaxStorageImages, m_FramesInFlight);
         m_StorageBuffers.Init(MaxStorageBuffers, m_FramesInFlight);
@@ -227,6 +260,44 @@ namespace Veng::Renderer
         const vk::WriteDescriptorSet write{
             .dstSet = GetVkDescriptorSet(*m_Set),
             .dstBinding = TextureBinding,
+            .dstArrayElement = index,
+            .descriptorCount = 1,
+            .descriptorType = ToVk(DescriptorType::SampledImage),
+            .pImageInfo = &imageInfo,
+        };
+
+        GetVkDevice(m_Context).updateDescriptorSets(write, {});
+    }
+
+    void BindlessRegistry::WriteVolume(u32 index, const Ref<ImageView>& view) const
+    {
+        const vk::DescriptorImageInfo imageInfo{
+            .imageView = GetVkImageView(*view),
+            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+        };
+
+        const vk::WriteDescriptorSet write{
+            .dstSet = GetVkDescriptorSet(*m_VolumeSet),
+            .dstBinding = TypedSetBinding,
+            .dstArrayElement = index,
+            .descriptorCount = 1,
+            .descriptorType = ToVk(DescriptorType::SampledImage),
+            .pImageInfo = &imageInfo,
+        };
+
+        GetVkDevice(m_Context).updateDescriptorSets(write, {});
+    }
+
+    void BindlessRegistry::WriteCube(u32 index, const Ref<ImageView>& view) const
+    {
+        const vk::DescriptorImageInfo imageInfo{
+            .imageView = GetVkImageView(*view),
+            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+        };
+
+        const vk::WriteDescriptorSet write{
+            .dstSet = GetVkDescriptorSet(*m_CubeSet),
+            .dstBinding = TypedSetBinding,
             .dstArrayElement = index,
             .descriptorCount = 1,
             .descriptorType = ToVk(DescriptorType::SampledImage),
@@ -297,9 +368,36 @@ namespace Veng::Renderer
 
     TextureHandle BindlessRegistry::Register(const Ref<ImageView>& sampled)
     {
+        VE_ASSERT(sampled->GetViewType() == ImageViewType::Type2D,
+                  "BindlessRegistry::Register: view '{}' is not Type2D — a 3D view uses "
+                  "RegisterVolume and a cube view RegisterCube, so no non-2D descriptor enters "
+                  "set 0's argument buffer",
+                  sampled->GetName());
         const u32 index = m_Textures.Allocate(sampled, "texture");
         WriteTexture(index, sampled);
         return TextureHandle{index};
+    }
+
+    VolumeHandle BindlessRegistry::RegisterVolume(const Ref<ImageView>& volume)
+    {
+        VE_ASSERT(volume->GetViewType() == ImageViewType::Type3D,
+                  "BindlessRegistry::RegisterVolume: view '{}' is not Type3D — the volume set's "
+                  "array is uniformly 3D",
+                  volume->GetName());
+        const u32 index = m_Volumes.Allocate(volume, "volume");
+        WriteVolume(index, volume);
+        return VolumeHandle{index};
+    }
+
+    CubeHandle BindlessRegistry::RegisterCube(const Ref<ImageView>& cube)
+    {
+        VE_ASSERT(cube->GetViewType() == ImageViewType::Cube,
+                  "BindlessRegistry::RegisterCube: view '{}' is not Cube — the cube set's "
+                  "array is uniformly cube",
+                  cube->GetName());
+        const u32 index = m_Cubes.Allocate(cube, "cube");
+        WriteCube(index, cube);
+        return CubeHandle{index};
     }
 
     SamplerHandle BindlessRegistry::Register(const Ref<Sampler>& sampler)
@@ -395,6 +493,24 @@ namespace Veng::Renderer
         m_Textures.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
     }
 
+    void BindlessRegistry::Release(VolumeHandle handle)
+    {
+        if (!handle.IsValid())
+        {
+            return;
+        }
+        m_Volumes.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
+    }
+
+    void BindlessRegistry::Release(CubeHandle handle)
+    {
+        if (!handle.IsValid())
+        {
+            return;
+        }
+        m_Cubes.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
+    }
+
     void BindlessRegistry::Release(SamplerHandle handle)
     {
         if (!handle.IsValid())
@@ -447,6 +563,8 @@ namespace Veng::Renderer
     {
         return BindlessCapacity{
             .Textures = static_cast<u32>(m_Textures.Free.size()),
+            .Volumes = static_cast<u32>(m_Volumes.Free.size()),
+            .Cubes = static_cast<u32>(m_Cubes.Free.size()),
             .Samplers = static_cast<u32>(m_Samplers.Free.size()),
             .StorageImages = static_cast<u32>(m_StorageImages.Free.size()),
             .StorageBuffers = static_cast<u32>(m_StorageBuffers.Free.size()),
@@ -457,7 +575,7 @@ namespace Veng::Renderer
     void BindlessRegistry::Bind(CommandBuffer& cmd, PipelineBindPoint bindPoint) const
     {
         cmd.BindDescriptorSets({
-            .Sets = {m_Set},
+            .Sets = {m_Set, m_VolumeSet, m_CubeSet},
             .FirstSet = 0,
             .PipelineBindPoint = bindPoint,
         });
@@ -555,6 +673,8 @@ namespace Veng::Renderer
     void BindlessRegistry::OnFrameAcquired(u32 frameInFlight)
     {
         m_Textures.OnFrameAcquired(frameInFlight);
+        m_Volumes.OnFrameAcquired(frameInFlight);
+        m_Cubes.OnFrameAcquired(frameInFlight);
         m_Samplers.OnFrameAcquired(frameInFlight);
         m_StorageImages.OnFrameAcquired(frameInFlight);
         m_StorageBuffers.OnFrameAcquired(frameInFlight);

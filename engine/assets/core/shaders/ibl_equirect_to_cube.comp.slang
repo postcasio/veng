@@ -7,7 +7,7 @@
 // the destination is a single storage layer set bound on set 1.
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::binding(0, 1)]] [format("rgba16f")] RWTexture2DArray<float4> g_DestCube;
+[[vk::binding(0, 3)]] [format("rgba16f")] RWTexture2DArray<float4> g_DestCube;
 
 struct PushConstants
 {

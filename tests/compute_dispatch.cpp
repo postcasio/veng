@@ -244,7 +244,7 @@ int main()
                             cmd.BindPipeline(computePipeline);
                             cmd.BindDescriptorSets({
                                 .Sets = {computeSet},
-                                .FirstSet = 1, // set 0 is reserved for the bindless registry
+                                .FirstSet = 3, // sets 0-2 are the typed bindless registries
                                 .PipelineBindPoint = PipelineBindPoint::Compute,
                             });
                             cmd.Dispatch(size, size, 1);
@@ -267,7 +267,7 @@ int main()
                             cmd.SetScissor({0, 0}, {size, size});
                             cmd.BindDescriptorSets(
                                 {.Sets = {sampleSet},
-                                 .FirstSet = 1}); // set 0 is reserved for the bindless registry
+                                 .FirstSet = 3}); // sets 0-2 are the typed bindless registries
                             cmd.DrawFullscreenTriangle();
                         });
 

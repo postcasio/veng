@@ -18,9 +18,9 @@ struct ShadowConstants
     float4   CascadeDepthRange;            // per-cascade render ortho depth extent, world units
 };
 
-[[vk::binding(0, 1)]] Texture2D g_ShadowAtlas;
-[[vk::binding(1, 1)]] SamplerComparisonState g_ShadowSampler;
-[[vk::binding(2, 1)]] ConstantBuffer<ShadowConstants> g_Shadow;
+[[vk::binding(0, 3)]] Texture2D g_ShadowAtlas;
+[[vk::binding(1, 3)]] SamplerComparisonState g_ShadowSampler;
+[[vk::binding(2, 3)]] ConstantBuffer<ShadowConstants> g_Shadow;
 
 // The shadow system also carries a bounded set of punctual (point/spot) shadows.
 // MaxShadowedPunctual lights get a record; the lighting pass reads light.Cone.z as
@@ -45,8 +45,8 @@ struct PunctualShadows
     float4               AtlasParams; // x 1/tileRes (per-tile texel size), yzw pad
 };
 
-[[vk::binding(3, 1)]] ConstantBuffer<PunctualShadows> g_Punctual;
-[[vk::binding(4, 1)]] Texture2D g_PunctualAtlas;
+[[vk::binding(3, 3)]] ConstantBuffer<PunctualShadows> g_Punctual;
+[[vk::binding(4, 3)]] Texture2D g_PunctualAtlas;
 
 // The PCF tap grid half-extent: a (2*Radius+1)² kernel of comparison taps, each
 // offset by the atlas texel size and individually hardware-filtered, widening the

@@ -15,7 +15,7 @@ struct GpuAggregateSplat
     float4 Color;      // flux-normalized per-pixel color (rgb), HDR
 };
 
-[[vk::binding(0, 1)]] StructuredBuffer<GpuAggregateSplat> g_Splats;
+[[vk::binding(0, 3)]] StructuredBuffer<GpuAggregateSplat> g_Splats;
 
 struct PushConstants
 {

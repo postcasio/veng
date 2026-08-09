@@ -94,7 +94,7 @@ namespace Veng::Renderer
                     // The scattering + transmittance LUTs + sampler ride the atmosphere set (set 1).
                     cmd.BindDescriptorSets(DescriptorSetBindInfo{
                         .Sets = {atmosphereSet},
-                        .FirstSet = 1,
+                        .FirstSet = 3,
                         .PipelineBindPoint = PipelineBindPoint::Graphics,
                     });
 
@@ -221,7 +221,7 @@ namespace Veng::Renderer
                     const ScenePassContext ctx = Wrap(inner);
                     CommandBuffer& cmd = ctx.Cmd();
                     const SceneView& view = ctx.View();
-                    MaterialInstance& material = *m_Material.Get();
+                    const MaterialInstance& material = *m_Material.Get();
                     const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
                     const uvec2 renderExtent = view.RenderExtent;

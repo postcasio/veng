@@ -296,7 +296,7 @@ TEST_CASE_FIXTURE(Test::GpuFixture, "Hi-Z reduction matches the CPU reference (o
                         c.BindPipeline(pl);
                         c.BindDescriptorSets(DescriptorSetBindInfo{
                             .Sets = {set},
-                            .FirstSet = 1,
+                            .FirstSet = 3,
                             .PipelineBindPoint = PipelineBindPoint::Compute,
                         });
                         c.PushConstants(push);

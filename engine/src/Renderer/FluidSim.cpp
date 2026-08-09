@@ -392,7 +392,7 @@ namespace Veng::Renderer
         cmd.BindPipeline(pipeline);
         cmd.BindDescriptorSets(DescriptorSetBindInfo{
             .Sets = {set},
-            .FirstSet = 1,
+            .FirstSet = 3,
             .PipelineBindPoint = PipelineBindPoint::Compute,
         });
         cmd.PushConstants(FluidPush{

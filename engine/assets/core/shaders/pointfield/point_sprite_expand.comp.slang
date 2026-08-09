@@ -57,7 +57,7 @@ struct DrawIndexedIndirectCommand
 // The resident points are a tightly-packed 20-byte stride (float3 + uint + float), matching the CPU
 // FieldPoint byte-for-byte. Read through a ByteAddressBuffer at an explicit 20-byte stride so the
 // element layout cannot drift from the CPU's on a std430 float3-alignment interpretation.
-[[vk::binding(0, 1)]] ByteAddressBuffer g_Points;
+[[vk::binding(0, 3)]] ByteAddressBuffer g_Points;
 
 static const uint FieldPointStride = 20;
 
@@ -70,12 +70,12 @@ GpuFieldPoint LoadPoint(uint index)
     p.Size = asfloat(g_Points.Load(base + 16));
     return p;
 }
-[[vk::binding(1, 1)]] StructuredBuffer<GpuDrawRun> g_Runs;
-[[vk::binding(2, 1)]] RWStructuredBuffer<GpuSpriteRecord> g_Records;
+[[vk::binding(1, 3)]] StructuredBuffer<GpuDrawRun> g_Runs;
+[[vk::binding(2, 3)]] RWStructuredBuffer<GpuSpriteRecord> g_Records;
 // The args buffer is byte-addressed so IndexCount (word 0 of the VkDrawIndexedIndirectCommand) can
 // be updated with a scalar atomic — an atomic on a StructuredBuffer struct member is not portable.
-[[vk::binding(3, 1)]] RWByteAddressBuffer g_Args;
-[[vk::binding(4, 1)]] RWStructuredBuffer<uint> g_Cursor; // [0] = survivor append cursor
+[[vk::binding(3, 3)]] RWByteAddressBuffer g_Args;
+[[vk::binding(4, 3)]] RWStructuredBuffer<uint> g_Cursor; // [0] = survivor append cursor
 
 struct PushConstants
 {

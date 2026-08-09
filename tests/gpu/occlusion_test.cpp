@@ -291,7 +291,7 @@ namespace
                             c.BindPipeline(pl);
                             c.BindDescriptorSets(DescriptorSetBindInfo{
                                 .Sets = {set},
-                                .FirstSet = 1,
+                                .FirstSet = 3,
                                 .PipelineBindPoint = PipelineBindPoint::Compute,
                             });
                             c.PushConstants(push);
@@ -315,7 +315,7 @@ namespace
                         c.BindPipeline(pl);
                         c.BindDescriptorSets(DescriptorSetBindInfo{
                             .Sets = {set},
-                            .FirstSet = 1,
+                            .FirstSet = 3,
                             .PipelineBindPoint = PipelineBindPoint::Compute,
                         });
                         c.PushConstants(push);

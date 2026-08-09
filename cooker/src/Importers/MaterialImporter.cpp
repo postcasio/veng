@@ -438,8 +438,9 @@ namespace Veng::Cook
                     fmt::format("material importer: duplicate declared field '{}'", decl.Name));
             }
 
-            const vector<string> AllowedTypes = {"texture", "sampler", "float", "vec2",
-                                                 "vec3",    "vec4",    "uint",  "storagebuffer"};
+            const vector<string> AllowedTypes = {"texture", "volume", "sampler",
+                                                 "float",   "vec2",   "vec3",
+                                                 "vec4",    "uint",   "storagebuffer"};
             if (std::ranges::find(AllowedTypes, decl.Type) == AllowedTypes.end())
             {
                 return std::unexpected(fmt::format(
@@ -496,6 +497,12 @@ namespace Veng::Cook
                 // A storage-buffer field is always runtime-bound: the game registers a buffer
                 // and writes its bindless index per frame via SetStorageBufferHandle. It carries
                 // no cooked default, so nothing more is parsed here.
+            }
+            else if (decl.Type == "volume")
+            {
+                // A volume field is always runtime-bound: the game builds a 3D texture, registers
+                // it, and writes its bindless index per frame via SetVolumeHandle. No cooked
+                // default (there is no cooked 3D-texture asset), so nothing more is parsed here.
             }
             else
             {
@@ -576,7 +583,8 @@ namespace Veng::Cook
             CookedMaterialField cookedField{};
             SetName(cookedField.Name, decl.Name);
 
-            if (decl.Type == "texture" || decl.Type == "sampler" || decl.Type == "storagebuffer")
+            if (decl.Type == "texture" || decl.Type == "volume" || decl.Type == "sampler" ||
+                decl.Type == "storagebuffer")
             {
                 // Handle fields are uint members of the one block.
                 auto it = blockByName.find(decl.Name);
@@ -605,6 +613,13 @@ namespace Veng::Cook
                     // A runtime-bound storage-buffer handle (Kind 3): no cooked asset, its
                     // bindless index written per frame via SetStorageBufferHandle.
                     cookedField.Kind = 3;
+                    cookedField.TextureId = 0;
+                }
+                else if (decl.Type == "volume")
+                {
+                    // A runtime-bound 3D sampled-image (volume) handle (Kind 4): no cooked 3D
+                    // texture asset, its bindless index written per frame via SetVolumeHandle.
+                    cookedField.Kind = 4;
                     cookedField.TextureId = 0;
                 }
                 else if (decl.Type == "texture")
@@ -638,14 +653,18 @@ namespace Veng::Cook
                 }
                 else
                 {
-                    // Look up the referenced texture field by name among declared fields.
+                    // Look up the referenced texture-or-volume field by name among declared
+                    // fields — a sampler pairs with a 2D texture or a 3D volume alike.
                     auto texDeclIt = declaredByName.find(decl.SamplerTextureName);
-                    if (texDeclIt == declaredByName.end() ||
-                        declaredFields[texDeclIt->second].Type != "texture")
+                    const bool refIsSampled =
+                        texDeclIt != declaredByName.end() &&
+                        (declaredFields[texDeclIt->second].Type == "texture" ||
+                         declaredFields[texDeclIt->second].Type == "volume");
+                    if (!refIsSampled)
                     {
                         return std::unexpected(fmt::format(
                             "material importer: sampler field '{}' references '{}' which is not a "
-                            "declared texture field",
+                            "declared texture or volume field",
                             decl.Name, decl.SamplerTextureName));
                     }
 

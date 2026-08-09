@@ -284,7 +284,7 @@ namespace Veng
     /// @brief The current material-format version.
     ///
     /// Bumped on any layout change; the loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedMaterialVersion = 7u;
+    inline constexpr u32 CookedMaterialVersion = 8u;
 
     /// @brief Cooked header for a material asset.
     ///
@@ -343,8 +343,9 @@ namespace Veng
     ///
     /// Param fields (Kind 0) carry their value pre-packed at Offset. Handle fields (Kind 1/2)
     /// carry an AssetId in TextureId that the loader resolves to a bindless handle and writes
-    /// as a u32 at Offset. A storage-buffer handle (Kind 3) is always runtime-bound (TextureId 0)
-    /// — the game writes its bindless index per frame. Offset is within the one block.
+    /// as a u32 at Offset. A storage-buffer handle (Kind 3) and a volume handle (Kind 4) are
+    /// always runtime-bound (TextureId 0) — the game writes the bindless index per frame. Offset
+    /// is within the one block.
     struct CookedMaterialField
     {
         /// @brief Nul-terminated field name, at most ShaderNameCapacity - 1 bytes.
@@ -353,9 +354,9 @@ namespace Veng
         u32 Offset = 0;
         /// @brief Byte size of the field.
         u32 Size = 0;
-        /// @brief Field kind: 0 = param value, 1 = sampled-image handle, 2 = sampler handle, 3 = storage-buffer handle.
+        /// @brief Field kind: 0 = param value, 1 = sampled-image handle, 2 = sampler handle, 3 = storage-buffer handle, 4 = volume (3D sampled-image) handle.
         u32 Kind = 0;
-        /// @brief AssetId for Kinds 1/2 (resolved to a bindless handle at load time); 0 for params and storage-buffer handles.
+        /// @brief AssetId for Kinds 1/2 (resolved to a bindless handle at load time); 0 for params, storage-buffer, and volume handles.
         u64 TextureId = 0;
     };
 

@@ -17,6 +17,7 @@
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Asset/HexId.h>
 #include <Veng/Cook/JsonFile.h>
+#include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Types.h>
 
 #include "GraphShaderSource.h"
@@ -398,10 +399,12 @@ namespace Veng::Cook
                     continue;
                 }
 
-                // Set 0 is the bindless registry — recognized and excluded
-                // from the declared interface; author bindings live in sets >= 1.
+                // Sets 0-2 are the typed bindless registries (2D, 3D, cube), prepended to every
+                // pipeline layout — recognized and excluded from the declared interface; author
+                // bindings live in sets >= FirstUserSet. A material that samples g_Volumes reflects
+                // a set-1 binding, which is dropped here so its layout is not double-declared.
                 const u32 set = param->getBindingSpace();
-                if (set == 0)
+                if (set < Veng::Renderer::BindlessRegistry::FirstUserSet)
                 {
                     continue;
                 }

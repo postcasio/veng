@@ -11,12 +11,12 @@
 //
 // Set 0 is reserved for the bindless registry; this closed producer->consumer chain binds its
 // own resources on set 1.
-[[vk::binding(0, 1)]] Texture2D<float4> g_Color;
-[[vk::binding(1, 1)]] Texture2D<float> g_Depth;
-[[vk::binding(2, 1)]] SamplerState g_Sampler;
-[[vk::binding(3, 1)]] [format("rgba16f")] RWTexture2D<float4> g_Near;
-[[vk::binding(4, 1)]] [format("rgba16f")] RWTexture2D<float4> g_Far;
-[[vk::binding(5, 1)]] [format("rg16f")] RWTexture2D<float2> g_Coc;
+[[vk::binding(0, 3)]] Texture2D<float4> g_Color;
+[[vk::binding(1, 3)]] Texture2D<float> g_Depth;
+[[vk::binding(2, 3)]] SamplerState g_Sampler;
+[[vk::binding(3, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Near;
+[[vk::binding(4, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Far;
+[[vk::binding(5, 3)]] [format("rg16f")] RWTexture2D<float2> g_Coc;
 
 struct PushConstants
 {

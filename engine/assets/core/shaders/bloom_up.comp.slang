@@ -10,9 +10,9 @@
 //
 // Set 0 is the bindless registry; set 1 carries the closed resources: the sampled
 // coarser source, the clamp-to-edge linear sampler, and the storage destination level.
-[[vk::binding(0, 1)]] Texture2D<float4> g_Source;
-[[vk::binding(1, 1)]] SamplerState g_Sampler;
-[[vk::binding(2, 1)]] [format("rgba16f")] RWTexture2D<float4> g_Dest;
+[[vk::binding(0, 3)]] Texture2D<float4> g_Source;
+[[vk::binding(1, 3)]] SamplerState g_Sampler;
+[[vk::binding(2, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Dest;
 
 struct PushConstants
 {

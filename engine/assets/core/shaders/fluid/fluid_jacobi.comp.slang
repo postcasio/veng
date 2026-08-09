@@ -4,10 +4,10 @@
 // the Neumann condition a wall wants.
 #include "fluid_common.slang"
 
-[[vk::binding(0, 1)]] Texture2D<float4> g_Pressure;
-[[vk::binding(1, 1)]] Texture2D<float4> g_Divergence;
-[[vk::binding(2, 1)]] [format("r32f")] RWTexture2D<float> g_Dest;
-[[vk::binding(3, 1)]] StructuredBuffer<float> g_RowMetric;
+[[vk::binding(0, 3)]] Texture2D<float4> g_Pressure;
+[[vk::binding(1, 3)]] Texture2D<float4> g_Divergence;
+[[vk::binding(2, 3)]] [format("r32f")] RWTexture2D<float> g_Dest;
+[[vk::binding(3, 3)]] StructuredBuffer<float> g_RowMetric;
 
 [shader("compute")]
 [numthreads(8, 8, 1)]

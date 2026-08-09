@@ -17,7 +17,7 @@ struct GpuBillboard
     uint Pad2;
 };
 
-[[vk::binding(0, 1)]] StructuredBuffer<GpuBillboard> g_Billboards;
+[[vk::binding(0, 3)]] StructuredBuffer<GpuBillboard> g_Billboards;
 
 struct PushConstants
 {

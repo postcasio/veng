@@ -29,6 +29,10 @@ static const uint MaterialParamStride = 1024;
 // across a draw (one material → one handle), so a load needs no NonUniformResourceIndex.
 [[vk::binding(3, 0)]] ByteAddressBuffer g_Buffers[];
 [[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
+// The 3D sampled-image bindless array (the volume set, set 1): a material samples a volume
+// through a VolumeHandle slot, the 3D counterpart of g_Textures. Its own homogeneous set keeps
+// a Texture3D descriptor out of set 0's Metal argument buffer on MoltenVK.
+[[vk::binding(0, 1)]] Texture3D g_Volumes[];
 
 // Per-draw record indexed by the candidate id, std430-identical to the engine's
 // DrawData (Veng/Renderer/SceneRenderer's GpuDrawData). The geometry pass uploads
@@ -51,12 +55,13 @@ struct DrawData
     float4x4 PrevWorld;      // previous frame's model matrix (TAA velocity; equals World with no motion)
 };
 
-// The per-draw data SSBO (set 1, binding 0). Off the set-0 bindless registry — a
-// closed producer→consumer per-frame buffer needs no global registration, and a
-// dedicated set sidesteps the set-0 storage-buffer argument-buffer path on MoltenVK.
+// The per-draw data SSBO (set 3, binding 0 — the first author set, above the typed bindless
+// registries at 0-2). Off the bindless registries — a closed producer→consumer per-frame buffer
+// needs no global registration, and a dedicated set sidesteps the storage-buffer argument-buffer
+// path on MoltenVK.
 // Ring-buffered for frames-in-flight; the current frame's region base is folded into
 // the candidate id by the pushed FrameBase, exactly as the material block selector is.
-[[vk::binding(0, 1)]] StructuredBuffer<DrawData> g_DrawData;
+[[vk::binding(0, 3)]] StructuredBuffer<DrawData> g_DrawData;
 
 DrawData LoadDrawData(uint candidateId)
 {

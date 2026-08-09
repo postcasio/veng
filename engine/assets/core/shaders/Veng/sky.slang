@@ -26,6 +26,10 @@ static const uint MaterialParamStride = 1024;
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
 [[vk::binding(3, 0)]] ByteAddressBuffer g_Buffers[];
 [[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
+// The 3D sampled-image bindless array (the volume set, set 1): a material samples a volume
+// through a VolumeHandle slot, the 3D counterpart of g_Textures. Its own homogeneous set keeps
+// a Texture3D descriptor out of set 0's Metal argument buffer on MoltenVK.
+[[vk::binding(0, 1)]] Texture3D g_Volumes[];
 
 // The Sky fragment's per-draw push block: the material selector at offset 0 (the
 // frame-folded param-block index), plus the g-buffer depth handle, its sampler, and the

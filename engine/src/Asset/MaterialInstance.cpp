@@ -372,4 +372,25 @@ namespace Veng
 
         UploadParams();
     }
+
+    void MaterialInstance::SetVolumeHandle(std::string_view name, Renderer::VolumeHandle handle)
+    {
+        const MaterialField* field = FindField(name);
+        VE_ASSERT(field != nullptr,
+                  "MaterialInstance::SetVolumeHandle: field '{}' not found in instance '{}'", name,
+                  m_Name);
+        VE_ASSERT(field->Kind == MaterialField::FieldKind::VolumeHandle,
+                  "MaterialInstance::SetVolumeHandle: field '{}' in instance '{}' is not a "
+                  "VolumeHandle (Kind={})",
+                  name, m_Name, static_cast<u32>(field->Kind));
+        VE_ASSERT(field->Offset + sizeof(u32) <= m_Block.size(),
+                  "MaterialInstance::SetVolumeHandle: field '{}' offset {} + 4 exceeds block "
+                  "size {}",
+                  name, field->Offset, m_Block.size());
+
+        const u32 index = handle.Index;
+        std::memcpy(m_Block.data() + field->Offset, &index, sizeof(u32));
+
+        UploadParams();
+    }
 }

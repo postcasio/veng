@@ -174,7 +174,7 @@ namespace Veng::Renderer
                     m_Context.GetBindlessRegistry().Bind(cmd);
                     cmd.BindDescriptorSets(DescriptorSetBindInfo{
                         .Sets = {shadowSet},
-                        .FirstSet = 1,
+                        .FirstSet = 3,
                         .PipelineBindPoint = PipelineBindPoint::Graphics,
                     });
                     cmd.DrawFullscreenTriangle();

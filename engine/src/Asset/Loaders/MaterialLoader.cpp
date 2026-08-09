@@ -76,8 +76,8 @@ namespace Veng
     namespace
     {
         // Build the material's pipeline layout from the (now-resident)
-        // vertex/fragment shader interfaces — set 0 reserved for the bindless
-        // registry, author-declared sets shifted to 1+, the merged push-constant
+        // vertex/fragment shader interfaces — sets 0-2 reserved for the typed bindless
+        // registries, author-declared sets shifted to 3+, the merged push-constant
         // ranges. A drifted shader (no selector push-constant range at the
         // domain's offset) is a recoverable Corrupt failure.
         Result<Ref<Renderer::PipelineLayout>> BuildPipelineLayout(Renderer::Context& context,
@@ -88,15 +88,15 @@ namespace Veng
             const Renderer::ShaderInterface& vsInterface = vsAsset.Interface;
             const Renderer::ShaderInterface& fsInterface = fsAsset.Interface;
 
-            // PipelineLayout::Create prepends the bindless set-0 layout itself, so the
-            // author-declared sets start at index 0 here and land at set 1+ in the layout.
+            // PipelineLayout::Create prepends the typed bindless set layouts (0-2) itself, so the
+            // author-declared sets start at index 0 here and land at set 3+ in the layout.
             vector<Ref<Renderer::DescriptorSetLayout>> descLayouts;
             {
                 // Merge the vertex and fragment reflected bindings into one interface,
                 // unioning by (Set, Binding) and OR-ing the stages — a binding both stages
                 // declare (the per-draw DrawData SSBO the surface vertex stage reads, also
                 // pulled into the fragment's reflection through the shared header) must be a
-                // single set-1 layout, not two clashing sets. Then build the set layouts once.
+                // single set-3 layout, not two clashing sets. Then build the set layouts once.
                 Renderer::ShaderInterface merged;
                 merged.Bindings = vsInterface.Bindings;
                 for (const Renderer::ShaderBinding& incoming : fsInterface.Bindings)
@@ -426,18 +426,22 @@ namespace Veng
             case 3:
                 kind = Veng::MaterialField::FieldKind::StorageBufferHandle;
                 break;
+            case 4:
+                kind = Veng::MaterialField::FieldKind::VolumeHandle;
+                break;
             default:
                 return std::unexpected(
                     Corrupt(id, fmt::format("material: field {} '{}' has unrecognized Kind {}", i,
                                             BridgeName(cf.Name), cf.Kind)));
             }
 
-            // Storage-buffer handles are always runtime-bound (no cooked asset) — they
-            // resolve like a runtime-bound texture handle: a uint slot the game writes
-            // per frame via SetStorageBufferHandle, with no dependency to load.
+            // Storage-buffer and volume handles are always runtime-bound (no cooked asset) — they
+            // resolve like a runtime-bound texture handle: a uint slot the game writes per frame
+            // via SetStorageBufferHandle / SetVolumeHandle, with no dependency to load.
             const bool isHandle = kind == Veng::MaterialField::FieldKind::TextureHandle ||
                                   kind == Veng::MaterialField::FieldKind::SamplerHandle ||
-                                  kind == Veng::MaterialField::FieldKind::StorageBufferHandle;
+                                  kind == Veng::MaterialField::FieldKind::StorageBufferHandle ||
+                                  kind == Veng::MaterialField::FieldKind::VolumeHandle;
 
             if (isHandle)
             {

@@ -10,8 +10,8 @@
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
 
-[[vk::binding(0, 1)]] TextureCube g_Radiance;
-[[vk::binding(4, 1)]] SamplerState g_IblSampler;
+[[vk::binding(0, 3)]] TextureCube g_Radiance;
+[[vk::binding(4, 3)]] SamplerState g_IblSampler;
 
 struct PushConstants
 {

@@ -2,7 +2,7 @@
 // Each texel (x = NdotV, y = roughness) stores the GGX scale/bias pair (A, B) the lighting
 // pass combines with the Fresnel term: specular = prefiltered * (F0 * A + B). Generated
 // once at renderer construction.
-[[vk::binding(0, 1)]] [format("rg16f")] RWTexture2D<float2> g_Dest;
+[[vk::binding(0, 3)]] [format("rg16f")] RWTexture2D<float2> g_Dest;
 
 struct PushConstants
 {

@@ -54,6 +54,13 @@ namespace Veng::Renderer
         /// @brief Returns the texel format of the viewed image.
         [[nodiscard]] Format GetFormat() const { return m_Format; }
 
+        /// @brief Returns the view's dimensionality (2D, 3D, cube, …).
+        ///
+        /// The bindless registry routes a Register by this: a view is placed into the
+        /// homogeneous typed set for its dimensionality, so no non-2D descriptor ever enters
+        /// the 2D argument buffer.
+        [[nodiscard]] ImageViewType GetViewType() const { return m_ViewType; }
+
         /// @brief Returns the image this view was created from.
         [[nodiscard]] Ref<Image> GetImage() const { return m_Image; }
 
@@ -84,6 +91,7 @@ namespace Veng::Renderer
         Context& m_Context;
         string m_Name;
         Format m_Format;
+        ImageViewType m_ViewType;
         u32 m_BaseMipLevel;
         u32 m_MipLevels;
         u32 m_BaseArrayLayer;

@@ -74,7 +74,7 @@ namespace Veng::Renderer
                     // The radiance cube + linear sampler ride the IBL set (set 1 here).
                     cmd.BindDescriptorSets(DescriptorSetBindInfo{
                         .Sets = {iblSet},
-                        .FirstSet = 1,
+                        .FirstSet = 3,
                         .PipelineBindPoint = PipelineBindPoint::Graphics,
                     });
 

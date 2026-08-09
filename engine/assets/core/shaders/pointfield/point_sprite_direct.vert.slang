@@ -23,7 +23,7 @@ struct GpuFieldPoint
 // FieldPoint byte-for-byte. Read through a ByteAddressBuffer at an explicit 20-byte stride so the
 // element layout cannot drift from the CPU's on a std430 float3-alignment interpretation (a
 // StructuredBuffer<GpuFieldPoint> would round the float3 up to a 16-byte member and shear the read).
-[[vk::binding(0, 1)]] ByteAddressBuffer g_Points;
+[[vk::binding(0, 3)]] ByteAddressBuffer g_Points;
 
 static const uint FieldPointStride = 20;
 

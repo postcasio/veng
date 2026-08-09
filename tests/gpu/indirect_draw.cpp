@@ -278,7 +278,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                         // the cull's storage buffer is the author-declared set 1.
                         ctx.Cmd().BindDescriptorSets(
                             {.Sets = {cullSet},
-                             .FirstSet = 1,
+                             .FirstSet = 3,
                              .PipelineBindPoint = PipelineBindPoint::Compute});
                         ctx.Cmd().Dispatch(1, 1, 1);
                     });

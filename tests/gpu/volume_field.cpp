@@ -12,6 +12,7 @@
 #include <doctest/doctest.h>
 
 #include <Veng/Math/AABB.h>
+#include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
@@ -68,7 +69,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(field != nullptr);
 
     // The resource carries the bounds, resolution, and format verbatim, and exposes a live view
-    // and sampler (no bindless registration, complete on return).
+    // and sampler (complete on return; bindless registration is the separate opt-in Finalize).
     CHECK(field->GetResolution() == uvec3(W, H, D));
     CHECK(field->GetFormat() == Format::RGBA16Sfloat);
     CHECK(field->GetBounds().Min == data.Bounds.Min);
@@ -83,6 +84,38 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const std::vector<u8> back = field->GetImage()->Download();
     REQUIRE(back.size() == voxels.size());
     CHECK(std::memcmp(back.data(), voxels.data(), voxels.size()) == 0);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "VolumeField::Finalize registers the view into the typed bindless volume set")
+{
+    // Finalize is the acquire step a bindless-sampled volume needs: it registers the 3D view into
+    // the volume set (yielding a valid VolumeHandle), takes a shared sampler (a valid SamplerHandle),
+    // and enqueues a first-use bindless acquire. The registration is proved by the volume set's
+    // free-slot count dropping by exactly one, with the 2D array untouched — the state-level guard
+    // that a bindless volume never lands in set 0.
+    const BindlessRegistry& bindless = Context.GetBindlessRegistry();
+
+    VolumeFieldData data;
+    data.Name = "Finalize Volume";
+    data.Resolution = {4, 4, 4};
+    data.Format = Format::RGBA16Sfloat;
+    data.Bounds = AABB{.Min = vec3(0.0f), .Max = vec3(1.0f)};
+    const std::vector<u8> voxels = KnownVoxels(data.ExpectedByteSize());
+    data.Voxels = voxels;
+
+    const Ref<VolumeField> field = VolumeField::BuildSync(Context, data);
+    REQUIRE(field != nullptr);
+    CHECK_FALSE(field->GetHandle().IsValid()); // not registered until Finalize
+
+    const BindlessCapacity before = bindless.GetFreeSlots();
+    field->Finalize();
+
+    CHECK(field->GetHandle().IsValid());
+    CHECK(field->GetSamplerHandle().IsValid());
+    const BindlessCapacity after = bindless.GetFreeSlots();
+    CHECK(after.Volumes == before.Volumes - 1);
+    CHECK(after.Textures == before.Textures); // the 2D array is untouched
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,

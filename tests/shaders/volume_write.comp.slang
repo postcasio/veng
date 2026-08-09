@@ -3,7 +3,7 @@
 // bindless registry, so the storage image binds on set 1; the test's hand-built
 // layout matches this binding. Drives the 3D storage-image write path (the
 // MoltenVK 3D-storage probe).
-[[vk::binding(0, 1)]] [format("rgba16f")] RWTexture3D<float4> u_Volume;
+[[vk::binding(0, 3)]] [format("rgba16f")] RWTexture3D<float4> u_Volume;
 
 struct VolumePush
 {

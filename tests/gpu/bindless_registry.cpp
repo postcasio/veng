@@ -300,3 +300,58 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(bindless.GetFreeSlots().Samplers == before.Samplers - 1);
     CHECK(repeating.Get()->GetSamplerHandle().Index != sharedSlot);
 }
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "bindless registry: a typed registry holds exactly its own view type")
+{
+    // The homogeneity invariant is the whole point of the typed sets: a 3D view registers into the
+    // volume set and a cube view into the cube set, each leaving the 2D array untouched — which is
+    // what keeps a non-2D descriptor out of set 0's Metal argument buffer. Proved by the free-slot
+    // accounting: registering into one set decrements that set's count and no other.
+    BindlessRegistry& bindless = Context.GetBindlessRegistry();
+
+    const Ref<Image> volumeImage =
+        Image::Create(Context, {
+                                   .Name = "Homogeneity Volume",
+                                   .Extent = {4, 4, 4},
+                                   .Format = Format::RGBA16Sfloat,
+                                   .Type = ImageType::Type3D,
+                                   .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
+                               });
+    const Ref<ImageView> volumeView =
+        ImageView::Create(Context, {.Name = "Homogeneity Volume View",
+                                    .Image = volumeImage,
+                                    .ViewType = ImageViewType::Type3D});
+
+    const Ref<Image> cubeImage =
+        Image::Create(Context, {
+                                   .Name = "Homogeneity Cube",
+                                   .Extent = {4, 4, 1},
+                                   .Layers = 6,
+                                   .Format = Format::RGBA16Sfloat,
+                                   .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
+                               });
+    const Ref<ImageView> cubeView = ImageView::Create(Context, {.Name = "Homogeneity Cube View",
+                                                                .Image = cubeImage,
+                                                                .ViewType = ImageViewType::Cube,
+                                                                .ArrayLayers = 6});
+
+    const BindlessCapacity before = bindless.GetFreeSlots();
+
+    const VolumeHandle volume = bindless.RegisterVolume(volumeView);
+    REQUIRE(volume.IsValid());
+    const BindlessCapacity afterVolume = bindless.GetFreeSlots();
+    CHECK(afterVolume.Volumes == before.Volumes - 1);
+    CHECK(afterVolume.Textures == before.Textures); // the 2D array is untouched
+    CHECK(afterVolume.Cubes == before.Cubes);
+
+    const CubeHandle cube = bindless.RegisterCube(cubeView);
+    REQUIRE(cube.IsValid());
+    const BindlessCapacity afterCube = bindless.GetFreeSlots();
+    CHECK(afterCube.Cubes == before.Cubes - 1);
+    CHECK(afterCube.Volumes == afterVolume.Volumes); // the volume array is untouched
+    CHECK(afterCube.Textures == before.Textures);
+
+    bindless.Release(volume);
+    bindless.Release(cube);
+}

@@ -6,10 +6,10 @@
 // Set 0 is the bindless registry; set 1 carries the closed composite resources: two
 // sampled inputs (HDR at binding 0, bloom mip 0 at binding 1), the clamp-to-edge linear
 // sampler, and the storage result at binding 3.
-[[vk::binding(0, 1)]] Texture2D<float4> g_Hdr;
-[[vk::binding(1, 1)]] Texture2D<float4> g_Bloom;
-[[vk::binding(2, 1)]] SamplerState g_Sampler;
-[[vk::binding(3, 1)]] [format("rgba16f")] RWTexture2D<float4> g_Dest;
+[[vk::binding(0, 3)]] Texture2D<float4> g_Hdr;
+[[vk::binding(1, 3)]] Texture2D<float4> g_Bloom;
+[[vk::binding(2, 3)]] SamplerState g_Sampler;
+[[vk::binding(3, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Dest;
 
 struct PushConstants
 {

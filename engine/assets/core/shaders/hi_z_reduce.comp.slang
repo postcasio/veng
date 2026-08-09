@@ -12,8 +12,8 @@
 //
 // Set 0 is reserved across every pipeline layout for the bindless registry; this
 // closed producer→consumer reduction binds its own resources on set 1.
-[[vk::binding(0, 1)]] Texture2D<float> g_Source;
-[[vk::binding(1, 1)]] [format("r32f")] RWTexture2D<float> g_Dest;
+[[vk::binding(0, 3)]] Texture2D<float> g_Source;
+[[vk::binding(1, 3)]] [format("r32f")] RWTexture2D<float> g_Dest;
 
 struct PushConstants
 {

@@ -11,9 +11,9 @@
 //
 // Set 0 is reserved for the bindless registry; this stage binds the shared sampled-source +
 // sampler + storage-destination set on set 1.
-[[vk::binding(0, 1)]] Texture2D<float2> g_Coc;
-[[vk::binding(1, 1)]] SamplerState g_Sampler;
-[[vk::binding(2, 1)]] [format("rgba16f")] RWTexture2D<float4> g_Dest;
+[[vk::binding(0, 3)]] Texture2D<float2> g_Coc;
+[[vk::binding(1, 3)]] SamplerState g_Sampler;
+[[vk::binding(2, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Dest;
 
 static const int TileSize = 8;
 

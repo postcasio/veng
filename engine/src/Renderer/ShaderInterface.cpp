@@ -1,6 +1,7 @@
 #include <Veng/Renderer/ShaderInterface.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/DescriptorSetLayout.h>
 
 #include <fmt/format.h>
@@ -46,21 +47,25 @@ namespace Veng::Renderer
             return {};
         }
 
+        // Sets [0, FirstUserSet) are the typed bindless registries, prepended to every pipeline
+        // layout; author-declared sets begin at FirstUserSet.
+        constexpr u32 base = BindlessRegistry::FirstUserSet;
+
         u32 maxSet = 0;
         for (const ShaderBinding& binding : Bindings)
         {
-            VE_ASSERT(binding.Set >= 1,
+            VE_ASSERT(binding.Set >= base,
                       "ShaderInterface::GroupBindingsBySet: binding '{}' targets set {} — "
-                      "set 0 is reserved for the bindless registry",
-                      binding.Name, binding.Set);
+                      "sets 0-{} are reserved for the typed bindless registries",
+                      binding.Name, binding.Set, base - 1);
             maxSet = std::max(maxSet, binding.Set);
         }
 
-        // bindingsBySet[i] holds the bindings declared for set (i + 1).
-        vector<vector<DescriptorBinding>> bindingsBySet(maxSet);
+        // bindingsBySet[i] holds the bindings declared for set (i + base).
+        vector<vector<DescriptorBinding>> bindingsBySet(maxSet - base + 1);
         for (const ShaderBinding& binding : Bindings)
         {
-            bindingsBySet[binding.Set - 1].push_back(DescriptorBinding{
+            bindingsBySet[binding.Set - base].push_back(DescriptorBinding{
                 .Binding = binding.Binding,
                 .Type = binding.Type,
                 .Count = binding.Count,
@@ -68,12 +73,12 @@ namespace Veng::Renderer
             });
         }
 
-        for (u32 set = 1; set <= maxSet; ++set)
+        for (u32 set = base; set <= maxSet; ++set)
         {
-            VE_ASSERT(!bindingsBySet[set - 1].empty(),
+            VE_ASSERT(!bindingsBySet[set - base].empty(),
                       "ShaderInterface::GroupBindingsBySet: set {} has no bindings — "
-                      "declared sets must be contiguous starting at 1",
-                      set);
+                      "declared sets must be contiguous starting at {}",
+                      set, base);
         }
 
         return bindingsBySet;
@@ -88,12 +93,15 @@ namespace Veng::Renderer
         vector<Ref<DescriptorSetLayout>> layouts;
         layouts.reserve(setCount);
 
-        for (u32 set = 1; set <= setCount; ++set)
+        // The layouts are contiguous, prepended after the typed bindless sets, so element i lands
+        // at set (FirstUserSet + i); name it by that actual set index.
+        for (u32 i = 0; i < setCount; ++i)
         {
             layouts.push_back(DescriptorSetLayout::Create(
                 context, DescriptorSetLayoutInfo{
-                             .Name = fmt::format("{} Set {}", namePrefix, set),
-                             .Bindings = bindingsBySet[set - 1],
+                             .Name = fmt::format("{} Set {}", namePrefix,
+                                                 BindlessRegistry::FirstUserSet + i),
+                             .Bindings = bindingsBySet[i],
                          }));
         }
 

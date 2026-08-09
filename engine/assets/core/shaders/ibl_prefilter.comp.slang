@@ -4,9 +4,9 @@
 // vector at a roughness-derived LOD.
 //
 // Source radiance cube and destination prefilter mip both bind on set 1.
-[[vk::binding(0, 1)]] TextureCube g_Env;
-[[vk::binding(1, 1)]] SamplerState g_Sampler;
-[[vk::binding(2, 1)]] [format("rgba16f")] RWTexture2DArray<float4> g_Dest;
+[[vk::binding(0, 3)]] TextureCube g_Env;
+[[vk::binding(1, 3)]] SamplerState g_Sampler;
+[[vk::binding(2, 3)]] [format("rgba16f")] RWTexture2DArray<float4> g_Dest;
 
 struct PushConstants
 {

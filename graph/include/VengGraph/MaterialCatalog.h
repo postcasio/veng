@@ -60,6 +60,8 @@ namespace VengGraph
     {
         /// @brief Catalog id of the TextureSample node type.
         NodeTypeId TextureSample;
+        /// @brief Catalog id of the TextureSample3D node type.
+        NodeTypeId TextureSample3D;
         /// @brief Catalog id of the Param node type.
         NodeTypeId Param;
         /// @brief Catalog id of the MaterialOutput node type.
@@ -82,6 +84,8 @@ namespace VengGraph
 
     /// @brief Stable serialized name of the TextureSample node type.
     inline constexpr const char* TextureSampleTypeName = "TextureSample";
+    /// @brief Stable serialized name of the TextureSample3D node type.
+    inline constexpr const char* TextureSample3DTypeName = "TextureSample3D";
     /// @brief Stable serialized name of the Param node type.
     inline constexpr const char* ParamTypeName = "Param";
     /// @brief Stable serialized name of the MaterialOutput node type.
@@ -93,6 +97,8 @@ namespace VengGraph
     inline constexpr const char* TextureSampleUVPin = "UV";
     /// @brief Texture asset-handle property name on a TextureSample node.
     inline constexpr const char* TextureSampleTextureProperty = "Texture";
+    /// @brief Optional 3D UV input pin name on a TextureSample3D node.
+    inline constexpr const char* TextureSample3DUVPin = "UVW";
 
     /// @brief Output value pin name on a Param node.
     inline constexpr const char* ParamValuePin = "Value";

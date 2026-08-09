@@ -198,7 +198,7 @@ namespace Veng::Renderer
 
             cmd.BindDescriptorSets(DescriptorSetBindInfo{
                 .Sets = {SetFor(field)},
-                .FirstSet = 1, // set 0 is the bindless registry, bound once above
+                .FirstSet = 3, // sets 0-2 are the bindless registries, bound once above
                 .PipelineBindPoint = PipelineBindPoint::Graphics,
             });
             cmd.PushConstants(VolumeFieldPush{

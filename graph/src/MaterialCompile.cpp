@@ -375,6 +375,11 @@ namespace VengGraph
                 generatedFields.push_back(CompiledField{
                     .Name = field.Name, .Type = "texture", .TextureId = field.TextureId});
                 break;
+            case EmittedFieldKind::VolumeHandle:
+                // A volume handle is always runtime-bound (no cooked 3D-texture asset), so the
+                // row carries no id — the consumer writes its VolumeHandle with SetVolumeHandle.
+                generatedFields.push_back(CompiledField{.Name = field.Name, .Type = "volume"});
+                break;
             case EmittedFieldKind::SamplerHandle:
                 generatedFields.push_back(CompiledField{
                     .Name = field.Name, .Type = "sampler", .SamplerTexture = field.SamplerTexture});
@@ -423,6 +428,10 @@ namespace VengGraph
             if (field.Type == "texture")
             {
                 entry["id"] = Veng::FormatAssetId(Veng::AssetId{.Value = field.TextureId});
+            }
+            else if (field.Type == "volume")
+            {
+                // Runtime-bound: no cooked id, the consumer writes the handle each frame.
             }
             else if (field.Type == "sampler")
             {

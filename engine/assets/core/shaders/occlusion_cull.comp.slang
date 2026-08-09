@@ -37,10 +37,10 @@ struct DrawIndexedIndirectCommand
     uint FirstInstance;
 };
 
-[[vk::binding(0, 1)]] Texture2D<float> g_HiZ;
-[[vk::binding(1, 1)]] StructuredBuffer<CullCandidate> g_Candidates;
-[[vk::binding(2, 1)]] RWStructuredBuffer<DrawIndexedIndirectCommand> g_Commands;
-[[vk::binding(3, 1)]] RWStructuredBuffer<uint> g_DrawCount; // [0] survivor count for the stat
+[[vk::binding(0, 3)]] Texture2D<float> g_HiZ;
+[[vk::binding(1, 3)]] StructuredBuffer<CullCandidate> g_Candidates;
+[[vk::binding(2, 3)]] RWStructuredBuffer<DrawIndexedIndirectCommand> g_Commands;
+[[vk::binding(3, 3)]] RWStructuredBuffer<uint> g_DrawCount; // [0] survivor count for the stat
 
 struct PushConstants
 {

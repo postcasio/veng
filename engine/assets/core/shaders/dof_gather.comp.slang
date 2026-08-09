@@ -14,10 +14,10 @@
 // view state, and no missed clamp may ever produce an unbounded GPU loop.
 //
 // Set 0 is reserved for the bindless registry; this stage binds its own set 1.
-[[vk::binding(0, 1)]] Texture2D<float4> g_Layer;
-[[vk::binding(1, 1)]] Texture2D<float4> g_Tiles;
-[[vk::binding(2, 1)]] SamplerState g_Sampler;
-[[vk::binding(3, 1)]] [format("rgba16f")] RWTexture2D<float4> g_Dest;
+[[vk::binding(0, 3)]] Texture2D<float4> g_Layer;
+[[vk::binding(1, 3)]] Texture2D<float4> g_Tiles;
+[[vk::binding(2, 3)]] SamplerState g_Sampler;
+[[vk::binding(3, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Dest;
 
 static const uint MaxRings = 8;
 static const float Tau = 6.28318530718;

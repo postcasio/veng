@@ -43,6 +43,36 @@ namespace Veng::Renderer
         [[nodiscard]] bool IsValid() const { return Index != Invalid; }
     };
 
+    /// @brief Slot index into the 3D sampled-image array (the volume set, binding 0).
+    ///
+    /// Indexes `Texture3D g_Volumes[]` in the shader. A 3D view lives in its own homogeneous
+    /// set, never set 0: a non-2D descriptor mistranslates inside set 0's Metal argument buffer
+    /// on MoltenVK, so keeping the array uniformly 3D is what sidesteps that case.
+    struct VolumeHandle
+    {
+        /// @brief Sentinel for an unregistered volume.
+        static constexpr u32 Invalid = ~0u;
+        /// @brief Slot in the 3D sampled-image array.
+        u32 Index = Invalid;
+        /// @brief Returns true if the handle names a registered volume slot.
+        [[nodiscard]] bool IsValid() const { return Index != Invalid; }
+    };
+
+    /// @brief Slot index into the cube sampled-image array (the cube set, binding 0).
+    ///
+    /// Indexes `TextureCube g_Cubes[]` in the shader. A cube view lives in its own homogeneous
+    /// set for the same reason a 3D view does — a cube descriptor in set 0's Metal argument
+    /// buffer is the same MoltenVK case a typed set avoids.
+    struct CubeHandle
+    {
+        /// @brief Sentinel for an unregistered cube.
+        static constexpr u32 Invalid = ~0u;
+        /// @brief Slot in the cube sampled-image array.
+        u32 Index = Invalid;
+        /// @brief Returns true if the handle names a registered cube slot.
+        [[nodiscard]] bool IsValid() const { return Index != Invalid; }
+    };
+
     /// @brief Slot index into the sampler array (set 0, binding SamplerBinding).
     ///
     /// Indexes `sampler u_Samplers[]` in the shader.
@@ -110,6 +140,10 @@ namespace Veng::Renderer
     {
         /// @brief Free slots in the sampled-image array, of MaxTextures.
         u32 Textures = 0;
+        /// @brief Free slots in the 3D sampled-image (volume) array, of MaxVolumes.
+        u32 Volumes = 0;
+        /// @brief Free slots in the cube sampled-image array, of MaxCubes.
+        u32 Cubes = 0;
         /// @brief Free slots in the sampler array, of MaxSamplers.
         u32 Samplers = 0;
         /// @brief Free slots in the storage-image array, of MaxStorageImages.
@@ -150,8 +184,26 @@ namespace Veng::Renderer
         BindlessRegistry(const BindlessRegistry&) = delete;
         BindlessRegistry& operator=(const BindlessRegistry&) = delete;
 
-        /// @brief Registers a sampled image view and returns its handle.
+        /// @brief Registers a 2D sampled image view and returns its handle.
+        ///
+        /// @pre The view is a Type2D view — the set-0 array is uniformly 2D, and a non-2D view
+        /// belongs in RegisterVolume / RegisterCube (asserted).
         [[nodiscard]] TextureHandle Register(const Ref<ImageView>& sampled);
+
+        /// @brief Registers a 3D sampled image view into the volume set and returns its handle.
+        ///
+        /// The 3D counterpart of Register: the view joins the homogeneous `Texture3D g_Volumes[]`
+        /// array (its own descriptor set), never set 0, so no non-2D descriptor enters the 2D
+        /// argument buffer. Same slot-allocator + deferred-release model as the 2D array.
+        /// @pre The view is a Type3D view (asserted).
+        [[nodiscard]] VolumeHandle RegisterVolume(const Ref<ImageView>& volume);
+
+        /// @brief Registers a cube sampled image view into the cube set and returns its handle.
+        ///
+        /// The cube counterpart of Register: the view joins the homogeneous `TextureCube g_Cubes[]`
+        /// array (its own descriptor set), never set 0.
+        /// @pre The view is a Cube view (asserted).
+        [[nodiscard]] CubeHandle RegisterCube(const Ref<ImageView>& cube);
 
         /// @brief Registers a sampler and returns its handle.
         ///
@@ -223,6 +275,12 @@ namespace Veng::Renderer
         /// @brief Deferred release of a texture handle. A default-constructed (invalid) handle is a no-op.
         void Release(TextureHandle handle);
 
+        /// @brief Deferred release of a volume handle. A default-constructed (invalid) handle is a no-op.
+        void Release(VolumeHandle handle);
+
+        /// @brief Deferred release of a cube handle. A default-constructed (invalid) handle is a no-op.
+        void Release(CubeHandle handle);
+
         /// @brief Deferred release of a sampler handle. A default-constructed (invalid) handle is a no-op.
         ///
         /// The handle must be one Register(const Ref<Sampler>&) returned. A slot AcquireSampler
@@ -239,9 +297,11 @@ namespace Veng::Renderer
         /// @brief Deferred release of a material handle. A default-constructed (invalid) handle is a no-op.
         void Release(MaterialHandle handle);
 
-        /// @brief Binds the registry's set 0 at the given bind point.
+        /// @brief Binds the registry's typed bindless sets (2D at 0, 3D at 1, cube at 2) at the given bind point.
         ///
-        /// Call once per pipeline bind, not per draw.
+        /// Call once per pipeline bind, not per draw. Every PipelineLayout prepends all three set
+        /// layouts, so a pipeline sampling only 2D still carries the (empty-of-its-concern) 3D and
+        /// cube sets and this one call binds them together.
         /// @param cmd       The command buffer to record the bind into.
         /// @param bindPoint The pipeline bind point (default Graphics).
         void Bind(CommandBuffer& cmd,
@@ -351,13 +411,45 @@ namespace Veng::Renderer
         /// @return The free slot counts, sampled at the moment of the call.
         [[nodiscard]] BindlessCapacity GetFreeSlots() const;
 
-        /// @brief Returns the descriptor set layout for set 0.
+        /// @brief Returns the descriptor set layout for set 0 (the 2D sampled-image array).
         [[nodiscard]] const Ref<DescriptorSetLayout>& GetSet0Layout() const { return m_Layout; }
+
+        /// @brief Returns the descriptor set layout for the volume set (the 3D sampled-image array).
+        [[nodiscard]] const Ref<DescriptorSetLayout>& GetVolumeSetLayout() const
+        {
+            return m_VolumeLayout;
+        }
+
+        /// @brief Returns the descriptor set layout for the cube set (the cube sampled-image array).
+        [[nodiscard]] const Ref<DescriptorSetLayout>& GetCubeSetLayout() const
+        {
+            return m_CubeLayout;
+        }
 
         /// @brief Called by Context::AcquireNextFrame() to reclaim slots released while
         /// frame-in-flight slot `frameInFlight` was last current.
         /// @param frameInFlight The frame-in-flight index now being made current.
         void OnFrameAcquired(u32 frameInFlight);
+
+        /// @brief The number of typed bindless descriptor sets prepended to every pipeline layout.
+        ///
+        /// Set 0 is the 2D sampled-image array, set 1 the 3D (volume) array, set 2 the cube array.
+        /// PipelineLayout::Create prepends exactly these, so author-declared and dedicated per-draw
+        /// sets start at FirstUserSet.
+        static constexpr u32 SetCount = 3;
+
+        /// @brief The first descriptor-set index available to author-declared / dedicated sets.
+        ///
+        /// Every pipeline layout reserves sets [0, SetCount) for the typed bindless registries, so a
+        /// reflected material's own sets, and every hand-authored pass's dedicated set, begin here.
+        static constexpr u32 FirstUserSet = SetCount;
+
+        /// @brief The set index of the 3D (volume) sampled-image array.
+        static constexpr u32 VolumeSet = 1;
+        /// @brief The set index of the cube sampled-image array.
+        static constexpr u32 CubeSet = 2;
+        /// @brief Binding index of the sole arrayed binding within the volume and cube sets.
+        static constexpr u32 TypedSetBinding = 0;
 
         /// @brief Binding index for the sampled-image array.
         static constexpr u32 TextureBinding = 0;
@@ -378,6 +470,14 @@ namespace Veng::Renderer
 
         /// @brief Maximum registered sampled images.
         static constexpr u32 MaxTextures = 1024;
+        /// @brief Maximum registered 3D sampled images (volumes).
+        ///
+        /// A volume is a heavyweight 3D texture and few are live at once, so the cap is a fraction
+        /// of the 2D array's. The array is partiallyBound, so unused slots cost only their descriptor
+        /// count, not memory for an image.
+        static constexpr u32 MaxVolumes = 256;
+        /// @brief Maximum registered cube sampled images.
+        static constexpr u32 MaxCubes = 128;
         /// @brief Maximum registered samplers.
         ///
         /// An eighth of MaxTextures, because a sampler is a pure state object and the array counts
@@ -507,8 +607,12 @@ namespace Veng::Renderer
             void OnFrameAcquired(u32 frameInFlight);
         };
 
-        /// @brief Writes a sampled image view into the descriptor set at the given texture slot.
+        /// @brief Writes a 2D sampled image view into the descriptor set at the given texture slot.
         void WriteTexture(u32 index, const Ref<ImageView>& view) const;
+        /// @brief Writes a 3D sampled image view into the volume set at the given slot.
+        void WriteVolume(u32 index, const Ref<ImageView>& view) const;
+        /// @brief Writes a cube sampled image view into the cube set at the given slot.
+        void WriteCube(u32 index, const Ref<ImageView>& view) const;
         /// @brief Writes a sampler into the descriptor set at the given sampler slot.
         void WriteSampler(u32 index, const Ref<Sampler>& sampler) const;
         /// @brief Writes a storage image view into the descriptor set at the given storage slot.
@@ -523,8 +627,21 @@ namespace Veng::Renderer
         /// @brief The descriptor set for set 0.
         Ref<DescriptorSet> m_Set;
 
+        /// @brief The descriptor set layout for the volume set (the 3D sampled-image array).
+        Ref<DescriptorSetLayout> m_VolumeLayout;
+        /// @brief The descriptor set for the volume set.
+        Ref<DescriptorSet> m_VolumeSet;
+        /// @brief The descriptor set layout for the cube set (the cube sampled-image array).
+        Ref<DescriptorSetLayout> m_CubeLayout;
+        /// @brief The descriptor set for the cube set.
+        Ref<DescriptorSet> m_CubeSet;
+
         /// @brief Slot allocator for the sampled-image array.
         SlotArray m_Textures;
+        /// @brief Slot allocator for the 3D sampled-image (volume) array.
+        SlotArray m_Volumes;
+        /// @brief Slot allocator for the cube sampled-image array.
+        SlotArray m_Cubes;
         /// @brief Slot allocator for the sampler array.
         SlotArray m_Samplers;
 

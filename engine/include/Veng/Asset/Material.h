@@ -66,7 +66,9 @@ namespace Veng
             TextureHandle = 1,
             SamplerHandle = 2,
             /// @brief A runtime-bound byte-address storage-buffer slot (experimental); no cooked default.
-            StorageBufferHandle = 3
+            StorageBufferHandle = 3,
+            /// @brief A runtime-bound 3D sampled-image (volume) slot into the typed bindless volume set; no cooked default.
+            VolumeHandle = 4
         };
 
         /// @brief Field name; matched by SetTexture/SetParam.

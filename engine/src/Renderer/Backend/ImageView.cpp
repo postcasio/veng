@@ -20,7 +20,7 @@ namespace Veng::Renderer
     /// @param info     View configuration including the source image, view type, and mip/layer range.
     ImageView::ImageView(Context& context, const ImageViewInfo& info)
         : m_Context(context), m_Name(info.Name), m_Format(info.Image->GetFormat()),
-          m_BaseMipLevel(info.BaseMipLevel), m_MipLevels(info.MipLevels),
+          m_ViewType(info.ViewType), m_BaseMipLevel(info.BaseMipLevel), m_MipLevels(info.MipLevels),
           m_BaseArrayLayer(info.BaseArrayLayer), m_ArrayLayers(info.ArrayLayers),
           m_Native(CreateUnique<Native>()), m_Image(info.Image)
     {

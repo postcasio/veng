@@ -6,8 +6,8 @@
 // including this; the destination format must match the caller's image exactly.
 #include "fluid_common.slang"
 
-[[vk::binding(0, 1)]] Texture2D<float4> g_Source;
-[[vk::binding(1, 1)]] [format(FLUID_STORE_FORMAT)] RWTexture2D<FLUID_STORE_TYPE> g_Dest;
+[[vk::binding(0, 3)]] Texture2D<float4> g_Source;
+[[vk::binding(1, 3)]] [format(FLUID_STORE_FORMAT)] RWTexture2D<FLUID_STORE_TYPE> g_Dest;
 
 [shader("compute")]
 [numthreads(8, 8, 1)]

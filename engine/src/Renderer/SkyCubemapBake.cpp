@@ -553,7 +553,7 @@ namespace Veng::Renderer
             registry.Bind(cmd);
             cmd.BindDescriptorSets(DescriptorSetBindInfo{
                 .Sets = {atmosphereSet},
-                .FirstSet = 1,
+                .FirstSet = 3,
                 .PipelineBindPoint = PipelineBindPoint::Graphics,
             });
             cmd.PushConstants(AtmosphereSkyPushConstants{
@@ -714,7 +714,7 @@ namespace Veng::Renderer
         registry.Bind(cmd);
         cmd.BindDescriptorSets(DescriptorSetBindInfo{
             .Sets = {atmosphereSet},
-            .FirstSet = 1,
+            .FirstSet = 3,
             .PipelineBindPoint = PipelineBindPoint::Graphics,
         });
         cmd.PushConstants(AtmosphereSkyPushConstants{

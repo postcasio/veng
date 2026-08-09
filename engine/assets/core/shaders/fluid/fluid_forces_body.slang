@@ -8,12 +8,12 @@
 // than one kernel.
 #include "fluid_common.slang"
 
-[[vk::binding(0, 1)]] Texture2D<float4> g_Curl;
-[[vk::binding(1, 1)]] Texture2D<float4> g_Source;
-[[vk::binding(2, 1)]] Texture2D<float4> g_Target;
-[[vk::binding(3, 1)]] Texture2D<float4> g_Damping;
-[[vk::binding(4, 1)]] [format(FLUID_FORCES_FORMAT)] RWTexture2D<FLUID_FORCES_TYPE> g_Dest;
-[[vk::binding(5, 1)]] StructuredBuffer<float> g_RowMetric;
+[[vk::binding(0, 3)]] Texture2D<float4> g_Curl;
+[[vk::binding(1, 3)]] Texture2D<float4> g_Source;
+[[vk::binding(2, 3)]] Texture2D<float4> g_Target;
+[[vk::binding(3, 3)]] Texture2D<float4> g_Damping;
+[[vk::binding(4, 3)]] [format(FLUID_FORCES_FORMAT)] RWTexture2D<FLUID_FORCES_TYPE> g_Dest;
+[[vk::binding(5, 3)]] StructuredBuffer<float> g_RowMetric;
 
 [shader("compute")]
 [numthreads(8, 8, 1)]

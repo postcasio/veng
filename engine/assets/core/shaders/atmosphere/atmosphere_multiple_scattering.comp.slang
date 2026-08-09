@@ -9,10 +9,10 @@
 // shared sampler, and the next-total destination 3D volume (write-only storage). Off bindless.
 #include "atmosphere_common.slang"
 
-[[vk::binding(0, 1)]] Texture3D<float4> g_PrevTotal;
-[[vk::binding(1, 1)]] Texture2D<float4> g_Transmittance;
-[[vk::binding(2, 1)]] SamplerState g_Sampler;
-[[vk::binding(3, 1)]] [format("rgba16f")] RWTexture3D<float4> g_NextTotal;
+[[vk::binding(0, 3)]] Texture3D<float4> g_PrevTotal;
+[[vk::binding(1, 3)]] Texture2D<float4> g_Transmittance;
+[[vk::binding(2, 3)]] SamplerState g_Sampler;
+[[vk::binding(3, 3)]] [format("rgba16f")] RWTexture3D<float4> g_NextTotal;
 
 struct PushConstants
 {

@@ -4,6 +4,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Math/AABB.h>
+#include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/FormatInfo.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Types.h>
@@ -95,11 +96,14 @@ namespace Veng::Renderer
     /// world-space AABB the texture maps onto. Built once from CPU voxel data through the async
     /// Build factory (or the blocking BuildSync) and sampled many frames by a ray-march pass.
     ///
-    /// Unlike Texture it is **not** bindless-registered and has no Finalize() step: it binds
-    /// through a dedicated per-pass descriptor set (a non-2D descriptor in set 0's Metal argument
-    /// buffer is a MoltenVK risk the engine refuses), so the built object is complete the instant
-    /// the build task resolves. Ref-counted (a pass and a component both hold one); the factories
-    /// are the only construction path.
+    /// The dedicated per-pass march (VolumeScenePass) binds the view + sampler through its own
+    /// descriptor set and needs no registration. For a **material** to sample the volume, call
+    /// Finalize() once on the render thread: it registers the view into the typed bindless volume
+    /// set (its own homogeneous set, never set 0, so no non-2D descriptor enters set 0's Metal
+    /// argument buffer on MoltenVK), takes a shared sampler, and enqueues the first-use bindless
+    /// acquire — the Texture::Finalize model, which is what makes an async-Build volume safe to
+    /// sample bindlessly. Ref-counted (a pass and a component both hold one); the factories are the
+    /// only construction path.
     class VolumeField
     {
     public:
@@ -135,6 +139,25 @@ namespace Veng::Renderer
         VolumeField(const VolumeField&) = delete;
         VolumeField& operator=(const VolumeField&) = delete;
 
+        /// @brief Registers the volume into the typed bindless volume set for material sampling.
+        ///
+        /// The VolumeField counterpart of Texture::Finalize: registers the 3D view into the
+        /// bindless volume set (yielding a VolumeHandle), acquires a shared sampler for the field's
+        /// sampling description (yielding a SamplerHandle), and enqueues a bindless acquire so the
+        /// per-frame drain transitions the view to ShaderReadOnly on the graphics queue and folds
+        /// in the transfer-timeline wait before any pass samples it — the step that makes an
+        /// async-Build volume safe for a bindless-sampled material. Idempotent-guarded (asserts if
+        /// already registered). Render-thread only (the bindless cache and acquire queue are the
+        /// render thread's). A field sampled only through the dedicated march pass needs no
+        /// Finalize.
+        void Finalize();
+
+        /// @brief Returns the bindless volume handle, valid only after Finalize().
+        [[nodiscard]] VolumeHandle GetHandle() const { return m_Handle; }
+
+        /// @brief Returns the bindless shared-sampler handle, valid only after Finalize().
+        [[nodiscard]] SamplerHandle GetSamplerHandle() const { return m_SamplerHandle; }
+
         /// @brief Returns the field's debug name.
         [[nodiscard]] const string& GetName() const { return m_Name; }
 
@@ -169,6 +192,8 @@ namespace Veng::Renderer
         [[nodiscard]] static Ref<VolumeField> CreateResources(Context& context,
                                                               const VolumeFieldData& data);
 
+        /// @brief The owning render context; used for bindless registration and its deferred release.
+        Context* m_Context = nullptr;
         /// @brief Debug name.
         string m_Name;
         /// @brief Volume texture dimensions in voxels.
@@ -183,5 +208,13 @@ namespace Veng::Renderer
         Ref<ImageView> m_View;
         /// @brief The sampler a sampling pass binds.
         Ref<Sampler> m_Sampler;
+        /// @brief The sampling description, kept so Finalize can acquire a shared bindless sampler.
+        SamplerInfo m_SamplerInfo;
+        /// @brief The bindless volume handle; valid only after Finalize().
+        VolumeHandle m_Handle;
+        /// @brief The bindless shared-sampler handle; valid only after Finalize().
+        SamplerHandle m_SamplerHandle;
+        /// @brief True once Finalize has registered the view into the bindless volume set.
+        bool m_Registered = false;
     };
 }
