@@ -465,15 +465,15 @@ camera clobbering the region the first's draws still read at submit. The shared 
 buffer rings the same way.
 
 **`MaxViewsPerFrame` (32) is a budget spent against, not a contract.** Its consumers are the
-registered viewports (one slot each), one face per driven scene capture, one face per amortized
+registered viewports (one slot each), one face per driven scene capture, and one face per amortized
 sky-bake tick (the display cube fills through `GeneratedTextureService`, so a dirty sky claims one
-slot per tick spread across frames, not six in one), and the SH tier's cold-start readback (six
-slots, only on the first SH frame, whose synchronous seed bakes its own six) —
-so ordinary content can want more than one frame holds, and the ceiling is sized by memory the whole
-ring pays (`framesInFlight * MaxViewsPerFrame` regions of ~6 KB). `TryBeginView` therefore **returns
-false rather than asserting** when the budget is spent, warning once, and each consumer degrades:
-`SceneRenderer::Execute` records nothing and its target keeps the last frame's content, the SH cold
-seed is skipped and retried on a frame with room (until then the tier lights from no coefficients),
+slot per tick spread across frames, not six in one) — so ordinary content can want more than one
+frame holds, and the ceiling is sized by memory the whole
+ring pays (`framesInFlight * MaxViewsPerFrame` regions of ~6 KB). The SH ambient tier reads its
+coefficients back off the amortized display cube through `AsyncReadback` (a copy, not a view render),
+so it claims no view slots of its own — only the display bake's ticks do. `TryBeginView` therefore
+**returns false rather than asserting** when the budget is spent, warning once, and each consumer
+degrades: `SceneRenderer::Execute` records nothing and its target keeps the last frame's content,
 and `ViewportCompositor::RenderRegistered` reserves one slot per registered
 viewport before driving the captures at all — so **captures give way before viewports do**, a missing
 reflection over a stale window. An over-budget capture set is driven **round-robin** across frames

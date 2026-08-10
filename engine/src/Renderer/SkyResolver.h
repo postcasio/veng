@@ -81,22 +81,21 @@ namespace Veng::Renderer
         /// the imported output so GetOutput() stays valid.
         [[nodiscard]] bool NeedsRecompile() const { return m_NeedsRecompile; }
 
-        /// @brief Records the atmosphere LUT gate and the baked-sky cube + SH projection.
+        /// @brief Records the atmosphere LUT gate, the baked-sky cube request/copy, and the SH readback.
         ///
-        /// The pre-graph generation that must run before the frame's registry.TryBeginView(): the
-        /// procedural-atmosphere LUTs (regenerated only on a param change, a baked atmosphere on its
-        /// own immediate-submit path), the baked material/atmosphere cube bake (on the dirty signal),
-        /// the SH-tier readback projection, the IBL-tier convolution, and the environment-sky SH
-        /// projection. The bake writes six face view-constants regions into distinct view slots, so
-        /// it must precede the frame's own TryBeginView.
+        /// The pre-graph sky generation, recorded ahead of the graph the sky and lighting passes
+        /// replay: the procedural-atmosphere LUTs (regenerated only on a param change, a baked
+        /// atmosphere on its own immediate-submit path), the amortized material/atmosphere cube bake
+        /// (requested on the dirty signal, its completed scratch cube copied into the displayed cube),
+        /// the SH-tier deferred readback projection, the IBL-tier convolution, and the environment-sky
+        /// SH projection.
         ///
-        /// A bake is all-or-nothing against the frame's remaining view budget: a frame with fewer
-        /// slots left than the bake needs skips it whole and leaves the sky dirty, so the next frame
-        /// with room bakes it rather than a half-filled cube being marked clean.
+        /// The amortized bake's six face renders run one per tick in the GeneratedTextureService pump
+        /// (BeginFrame), so they claim their view slots there; this records only the bake request, the
+        /// completion-copy, and the non-blocking SH readback, and claims no view slots of its own.
         /// @param cmd         The frame command buffer the direct-path generation records into.
         /// @param view        The resolved SceneView (atmosphere params, sky material, sun direction).
         /// @param skyPipeline The renderer-owned atmosphere sky pipeline the atmosphere bake renders through.
-        /// @pre Must run before registry.TryBeginView() — the bake claims view slots the frame then reads.
         void RecordPreBeginView(CommandBuffer& cmd, const SceneView& view,
                                 const Ref<GraphicsPipeline>& skyPipeline);
 
@@ -222,10 +221,9 @@ namespace Veng::Renderer
 
         /// @brief Whether the displayed bake cube has ever been filled with valid radiance.
         ///
-        /// False until the SH cold seed bakes it in place or the first amortized bake lands and is
-        /// copied in. Gates the lighting tiers off an undefined cube: the SH readback and the IBL
-        /// convolution only read the displayed cube once it holds a real bake. Cleared when the
-        /// resolved source stops being baked.
+        /// False until the first amortized bake lands and is copied in. Gates the lighting tiers off
+        /// an undefined cube: the SH readback and the IBL convolution only read the displayed cube
+        /// once it holds a real bake. Cleared when the resolved source stops being baked.
         bool m_DisplayCubeValid = false;
 
         /// @brief Whether the current bake cube's IBL convolution is up to date; gates re-convolution.

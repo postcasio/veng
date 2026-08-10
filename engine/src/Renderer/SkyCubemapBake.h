@@ -48,8 +48,9 @@ namespace Veng::Renderer
     /// GeneratedTextureService tick rather than six draws in one frame, and RecordAmortized copies
     /// the finished scratch cube into the displayed one on completion — so a dirty sky never blocks
     /// a frame on six fullscreen sky evaluations, and the previous cube stands until the new lands.
-    /// The scratch cube is the reason VRAM is two cubes, not one; only the displayed one carries the
-    /// reduction chain.
+    /// The scratch cube is the reason VRAM is two full-size cubes, not one; only the displayed one
+    /// carries the reduction chain down to the SH readback level, which the SH ambient tier reads
+    /// back without blocking through RecordReductionMips + AsyncReadback.
     class SkyCubemapBake
     {
     public:
@@ -104,24 +105,6 @@ namespace Veng::Renderer
         /// @pre The frame's remaining view budget covers CubeFaces slots — the caller reserves them.
         void Bake(CommandBuffer& cmd, const MaterialInstance& material);
 
-        /// @brief Bakes `material` and returns a host-side snapshot of the reduced radiance faces.
-        ///
-        /// The blocking readback the SH ambient arm seeds its first frame from: bakes into the owned
-        /// cube through a self-contained immediate submit, reduces it to `ShReadbackFaceSize` through
-        /// the box-averaging blit chain, copies the reduced level's six layers into one
-        /// tightly-packed RGBA16F buffer (layer-major), and blocks until the download completes — so
-        /// the returned bytes are the freshly-baked radiance regardless of any frame command
-        /// buffer's ordering. Overwrites the cube in place, so a later Bake into the frame command
-        /// buffer still points the skybox at the current radiance. Reserved for the SH tier's cold
-        /// start, where no prior coefficients exist to defer to; the steady path reads the display
-        /// bake's cube back without blocking through RecordReductionMips + AsyncReadback.
-        /// @param material The resident Sky-domain material to bake.
-        /// @return The six reduced cube faces, layer-major, RGBA16F (`GetShReadbackFaceSize()`²
-        ///         texels each).
-        /// @pre material's domain is MaterialDomain::Sky and its param block is uploaded this frame.
-        /// @pre The frame's remaining view budget covers CubeFaces slots — the caller reserves them.
-        [[nodiscard]] vector<u8> BakeAndDownload(const MaterialInstance& material);
-
         /// @brief Records the six face renders of the procedural atmosphere into the radiance cube.
         ///
         /// The atmosphere sibling of Bake: runs the atmosphere sky fragment (via `pipeline`, built
@@ -142,30 +125,6 @@ namespace Veng::Renderer
         void BakeAtmosphere(CommandBuffer& cmd, const Ref<GraphicsPipeline>& pipeline,
                             const Ref<DescriptorSet>& atmosphereSet, const Atmosphere& atmosphere,
                             const vec3& sunDirection, f32 intensity);
-
-        /// @brief Bakes the atmosphere and returns a host-side snapshot of the reduced radiance faces.
-        ///
-        /// The blocking readback the SH ambient arm seeds its first frame from: bakes the atmosphere
-        /// into the owned cube through a self-contained immediate submit, reduces it to
-        /// `ShReadbackFaceSize` through the box-averaging blit chain, copies the reduced level's six
-        /// layers into one tightly-packed RGBA16F buffer (layer-major), and blocks until the
-        /// download completes — so the returned bytes are the freshly-baked radiance regardless of
-        /// any frame command buffer's ordering. Overwrites the cube in place, so a later
-        /// BakeAtmosphere into the frame command buffer still points the skybox at the current
-        /// radiance.
-        /// @param pipeline      The atmosphere sky pipeline, built against the cube-face format.
-        /// @param atmosphereSet The renderer's atmosphere LUT set (scattering/transmittance/sampler).
-        /// @param atmosphere    The atmosphere parameters the LUTs were generated for.
-        /// @param sunDirection  The normalized toward-sun direction.
-        /// @param intensity     Scales the baked sky radiance + sun disc.
-        /// @return The six reduced cube faces, layer-major, RGBA16F (`GetShReadbackFaceSize()`²
-        ///         texels each).
-        /// @pre `atmosphereSet`'s LUTs were generated for `atmosphere`.
-        /// @pre The frame's remaining view budget covers CubeFaces slots — the caller reserves them.
-        [[nodiscard]] vector<u8> BakeAtmosphereAndDownload(const Ref<GraphicsPipeline>& pipeline,
-                                                           const Ref<DescriptorSet>& atmosphereSet,
-                                                           const Atmosphere& atmosphere,
-                                                           const vec3& sunDirection, f32 intensity);
 
         /// @brief Reduces the baked cube to the SH readback level through a box-averaging blit chain.
         ///
@@ -264,14 +223,39 @@ namespace Veng::Renderer
         /// @brief Builds the per-face graphics pipeline from the bound material's shaders, once per identity.
         void EnsurePipeline(const MaterialInstance& material);
 
-        /// @brief Records one material face render into the scratch cube (the amortized tick body).
-        void RecordScratchFace(CommandBuffer& cmd, const MaterialInstance& material, u32 face);
+        /// @brief Records one material face render into a target face view at a given size.
+        ///
+        /// The shared body of every material bake — the display cube (Bake) and the scratch cube (the
+        /// amortized tick) — differing only in which face view is the target and at what edge length.
+        /// Claims one view slot for the face basis, draws the material fragment through it, and leaves
+        /// the face in a color-attachment layout; the caller owns any whole-cube transition after the
+        /// loop.
+        /// @param cmd      The command buffer the face render is recorded into.
+        /// @param material The resident Sky-domain material to bake; its pipeline must be ensured.
+        /// @param faceView The single-layer color target for this face.
+        /// @param faceSize The face edge length in texels (the target's extent).
+        /// @param face     The cube face index, selecting its fixed view-ray basis.
+        void RecordMaterialFace(CommandBuffer& cmd, const MaterialInstance& material,
+                                const Ref<ImageView>& faceView, u32 faceSize, u32 face);
 
-        /// @brief Records one atmosphere face render into the scratch cube (the amortized tick body).
-        void RecordScratchAtmosphereFace(CommandBuffer& cmd, const Ref<GraphicsPipeline>& pipeline,
-                                         const Ref<DescriptorSet>& atmosphereSet,
-                                         const Atmosphere& atmosphere, const vec3& sunDirection,
-                                         f32 intensity, u32 face);
+        /// @brief Records one atmosphere face render into a target face view at a given size.
+        ///
+        /// The atmosphere sibling of RecordMaterialFace, shared by the display cube and the scratch
+        /// cube.
+        /// @param cmd           The command buffer the face render is recorded into.
+        /// @param pipeline      The atmosphere sky pipeline, built against the cube-face format.
+        /// @param atmosphereSet The renderer's atmosphere LUT set.
+        /// @param atmosphere    The atmosphere parameters the LUTs were generated for.
+        /// @param sunDirection  The normalized toward-sun direction.
+        /// @param intensity     Scales the baked sky radiance + sun disc.
+        /// @param faceView      The single-layer color target for this face.
+        /// @param faceSize      The face edge length in texels (the target's extent).
+        /// @param face          The cube face index, selecting its fixed view-ray basis.
+        void RecordAtmosphereFace(CommandBuffer& cmd, const Ref<GraphicsPipeline>& pipeline,
+                                  const Ref<DescriptorSet>& atmosphereSet,
+                                  const Atmosphere& atmosphere, const vec3& sunDirection,
+                                  f32 intensity, const Ref<ImageView>& faceView, u32 faceSize,
+                                  u32 face);
 
         /// @brief Supersedes any in-flight/landed bake and resets the amortization state to idle.
         void CancelBake();

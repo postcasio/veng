@@ -9,7 +9,6 @@
 #include <Veng/Assert.h>
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Renderer/BindlessRegistry.h>
-#include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DescriptorSet.h>
@@ -297,9 +296,7 @@ namespace Veng::Renderer
 
         // Clear the displayed cube to black and leave it sampled, so the skybox pass samples a
         // defined cube from the very first frame — the amortized fill lands a bake into it a few
-        // frames later, and before that there is nothing baked to show. The synchronous bake used to
-        // fill it in the frame it was first sampled; the amortized fill does not, so it is seeded
-        // here instead.
+        // frames later, and before that there is nothing baked to show.
         m_Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
             {
@@ -354,61 +351,63 @@ namespace Veng::Renderer
         m_PipelineMaterialIndex = material.GetIndex();
     }
 
-    void SkyCubemapBake::Bake(CommandBuffer& cmd, const MaterialInstance& material)
+    void SkyCubemapBake::RecordMaterialFace(CommandBuffer& cmd, const MaterialInstance& material,
+                                            const Ref<ImageView>& faceView, const u32 faceSize,
+                                            const u32 face)
     {
-        EnsurePipeline(material);
-
         BindlessRegistry& registry = m_Context.GetBindlessRegistry();
         const u32 selector = material.GetMaterialSelector();
 
-        // Render each face into its single-layer view with the face's fixed basis in the view
-        // constants and the far-plane stand-in in the depth slot. Each face claims its own view slot
-        // so the six face constants coexist; the material fragment reconstructs the ray from the slot
-        // the face pushes. The caller reserved the whole cube's slots, so a refused claim here is a
-        // broken precondition rather than a budget the frame can degrade against.
+        // Claim a view slot for the face's fixed basis and draw the material fragment through it, with
+        // the far-plane stand-in in the depth slot so SkyIsBackground passes. A caller recording the
+        // whole cube reserves its slots up front, so a refused claim is a broken precondition.
+        const bool claimed = registry.TryBeginView();
+        VE_ASSERT(claimed,
+                  "SkyCubemapBake: the frame's view budget is spent; a bake claims one view "
+                  "slot per face and the caller must reserve them");
+        ViewConstantsRegion region{};
+        region.InvViewProj = m_FaceInvViewProj[face];
+        // The face basis is already a pure direction mapping with no camera translation in it, so it
+        // is its own rotation-only inverse and serves SkyViewDirection unchanged.
+        region.InvViewRotProj = m_FaceInvViewProj[face];
+        region.CameraPosition = vec4(0.0f);
+        region.RenderScaleUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+        region.MaxValidUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+        registry.WriteViewConstants(std::as_bytes(std::span(&region, 1)));
+        const u32 viewIndex = registry.GetCurrentViewConstantsIndex();
+
+        cmd.PrepareForAccess(faceView, AccessKind::ColorAttachment);
+        cmd.BeginRendering({
+            .Extent = {faceSize, faceSize},
+            .ColorAttachments = {{
+                .ImageView = faceView,
+                .LoadOp = LoadOp::Clear,
+                .StoreOp = StoreOp::Store,
+                .ClearValue = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+            }},
+        });
+        cmd.BindPipeline(m_Pipeline);
+        cmd.SetViewport({0, 0}, {faceSize, faceSize});
+        cmd.SetScissor({0, 0}, {faceSize, faceSize});
+        registry.Bind(cmd);
+        cmd.PushConstants(SkyMaterialPushConstants{
+            .MaterialIndex = selector,
+            .DepthTexture = m_DepthHandle.Index,
+            .DepthSampler = m_DepthSamplerHandle.Index,
+            .ViewConstantsIndex = viewIndex,
+        });
+        cmd.DrawFullscreenTriangle();
+        cmd.EndRendering();
+        ++m_FaceRendersRecorded;
+    }
+
+    void SkyCubemapBake::Bake(CommandBuffer& cmd, const MaterialInstance& material)
+    {
+        EnsurePipeline(material);
         for (u32 face = 0; face < CubeFaces; ++face)
         {
-            const bool claimed = registry.TryBeginView();
-            VE_ASSERT(claimed,
-                      "SkyCubemapBake::Bake: the frame's view budget does not cover {} cube faces; "
-                      "the caller must reserve them before recording a bake",
-                      CubeFaces);
-            ViewConstantsRegion region{};
-            region.InvViewProj = m_FaceInvViewProj[face];
-            // The face basis is already a pure direction mapping with no camera translation in it,
-            // so it is its own rotation-only inverse and serves SkyViewDirection unchanged.
-            region.InvViewRotProj = m_FaceInvViewProj[face];
-            region.CameraPosition = vec4(0.0f);
-            region.RenderScaleUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
-            region.MaxValidUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
-            registry.WriteViewConstants(std::as_bytes(std::span(&region, 1)));
-            const u32 viewIndex = registry.GetCurrentViewConstantsIndex();
-
-            cmd.PrepareForAccess(m_FaceViews[face], AccessKind::ColorAttachment);
-            cmd.BeginRendering({
-                .Extent = {m_FaceSize, m_FaceSize},
-                .ColorAttachments = {{
-                    .ImageView = m_FaceViews[face],
-                    .LoadOp = LoadOp::Clear,
-                    .StoreOp = StoreOp::Store,
-                    .ClearValue = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
-                }},
-            });
-            cmd.BindPipeline(m_Pipeline);
-            cmd.SetViewport({0, 0}, {m_FaceSize, m_FaceSize});
-            cmd.SetScissor({0, 0}, {m_FaceSize, m_FaceSize});
-            registry.Bind(cmd);
-            cmd.PushConstants(SkyMaterialPushConstants{
-                .MaterialIndex = selector,
-                .DepthTexture = m_DepthHandle.Index,
-                .DepthSampler = m_DepthSamplerHandle.Index,
-                .ViewConstantsIndex = viewIndex,
-            });
-            cmd.DrawFullscreenTriangle();
-            cmd.EndRendering();
+            RecordMaterialFace(cmd, material, m_FaceViews[face], m_FaceSize, face);
         }
-        m_FaceRendersRecorded += CubeFaces;
-
         // Leave the whole cube in a sampled layout for the skybox pass that samples it this frame.
         cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
     }
@@ -466,184 +465,28 @@ namespace Veng::Renderer
         cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
     }
 
-    vector<u8> SkyCubemapBake::BakeAndDownload(const MaterialInstance& material)
-    {
-        const u32 readbackSize = GetShReadbackFaceSize();
-        const usize faceBytes = static_cast<usize>(readbackSize) * readbackSize * 8; // RGBA16F
-        const Ref<Buffer> staging = Buffer::Create(m_Context, {
-                                                                  .Name = "Sky Bake SH Readback",
-                                                                  .Size = faceBytes * CubeFaces,
-                                                                  .Usage = BufferUsage::TransferDst,
-                                                              });
-
-        // A self-contained submit: bake the six faces, reduce them to the readback level, copy that
-        // level's six layers into the staging buffer (layer-major), and restore the sampled layout —
-        // so the download reads the radiance this submit just produced, independent of the frame
-        // command buffer. Blocks (ImmediateCommands submits + waits), bounded by the cold-start gate.
-        m_Context.ImmediateCommands(
-            [&](CommandBuffer& cmd)
-            {
-                Bake(cmd, material);
-                RecordReductionMips(cmd);
-                cmd.PrepareForAccess(m_MipViews[m_ShReadbackMip], AccessKind::TransferSrc);
-                const vk::BufferImageCopy region{
-                    .bufferOffset = 0,
-                    .bufferRowLength = 0,
-                    .bufferImageHeight = 0,
-                    .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                         .mipLevel = m_ShReadbackMip,
-                                         .baseArrayLayer = 0,
-                                         .layerCount = CubeFaces},
-                    .imageOffset = {.x = 0, .y = 0, .z = 0},
-                    .imageExtent = {.width = readbackSize, .height = readbackSize, .depth = 1},
-                };
-                GetVkCommandBuffer(cmd).copyImageToBuffer(GetVkImage(*m_CubeImage),
-                                                          vk::ImageLayout::eTransferSrcOptimal,
-                                                          GetVkBuffer(*staging), 1, &region);
-                cmd.PrepareForAccess(m_MipViews[m_ShReadbackMip], AccessKind::Sample);
-            });
-
-        return staging->Download();
-    }
-
-    void SkyCubemapBake::BakeAtmosphere(CommandBuffer& cmd, const Ref<GraphicsPipeline>& pipeline,
-                                        const Ref<DescriptorSet>& atmosphereSet,
-                                        const Atmosphere& atmosphere, const vec3& sunDirection,
-                                        const f32 intensity)
+    void SkyCubemapBake::RecordAtmosphereFace(CommandBuffer& cmd,
+                                              const Ref<GraphicsPipeline>& pipeline,
+                                              const Ref<DescriptorSet>& atmosphereSet,
+                                              const Atmosphere& atmosphere,
+                                              const vec3& sunDirection, const f32 intensity,
+                                              const Ref<ImageView>& faceView, const u32 faceSize,
+                                              const u32 face)
     {
         BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
-        // Render each face into its single-layer view with the face's fixed basis in the view
-        // constants and the far-plane stand-in in the depth slot. Each face claims its own view slot
-        // so the six face constants coexist; the atmosphere fragment reconstructs the ray from the
-        // slot the face pushes and samples the LUT set bound at set 1. The caller reserved the whole
-        // cube's slots, so a refused claim here is a broken precondition, not a budget to degrade
-        // against.
-        for (u32 face = 0; face < CubeFaces; ++face)
-        {
-            const bool claimed = registry.TryBeginView();
-            VE_ASSERT(claimed,
-                      "SkyCubemapBake::BakeAtmosphere: the frame's view budget does not cover {} "
-                      "cube faces; the caller must reserve them before recording a bake",
-                      CubeFaces);
-            ViewConstantsRegion region{};
-            region.InvViewProj = m_FaceInvViewProj[face];
-            // The face basis is already a pure direction mapping with no camera translation in it,
-            // so it is its own rotation-only inverse and serves SkyViewDirection unchanged.
-            region.InvViewRotProj = m_FaceInvViewProj[face];
-            region.CameraPosition = vec4(0.0f);
-            region.RenderScaleUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
-            region.MaxValidUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
-            registry.WriteViewConstants(std::as_bytes(std::span(&region, 1)));
-            const u32 viewIndex = registry.GetCurrentViewConstantsIndex();
-
-            cmd.PrepareForAccess(m_FaceViews[face], AccessKind::ColorAttachment);
-            cmd.BeginRendering({
-                .Extent = {m_FaceSize, m_FaceSize},
-                .ColorAttachments = {{
-                    .ImageView = m_FaceViews[face],
-                    .LoadOp = LoadOp::Clear,
-                    .StoreOp = StoreOp::Store,
-                    .ClearValue = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
-                }},
-            });
-            cmd.BindPipeline(pipeline);
-            cmd.SetViewport({0, 0}, {m_FaceSize, m_FaceSize});
-            cmd.SetScissor({0, 0}, {m_FaceSize, m_FaceSize});
-            registry.Bind(cmd);
-            cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                .Sets = {atmosphereSet},
-                .FirstSet = 3,
-                .PipelineBindPoint = PipelineBindPoint::Graphics,
-            });
-            cmd.PushConstants(AtmosphereSkyPushConstants{
-                .DepthTexture = m_DepthHandle.Index,
-                .Sampler = m_DepthSamplerHandle.Index,
-                .ViewConstantsIndex = viewIndex,
-                .Enabled = 1u,
-                .SunDirection = sunDirection,
-                .Intensity = intensity,
-                .RayleighScattering = atmosphere.RayleighScattering,
-                .RayleighHeight = atmosphere.RayleighHeight,
-                .MieScattering = atmosphere.MieScattering,
-                .MieExtinction = atmosphere.MieExtinction,
-                .OzoneAbsorption = atmosphere.OzoneAbsorption,
-                .MieHeight = atmosphere.MieHeight,
-                .MieAnisotropy = atmosphere.MieAnisotropy,
-                .OzoneCenter = atmosphere.OzoneCenter,
-                .OzoneWidth = atmosphere.OzoneWidth,
-                .PlanetRadius = atmosphere.PlanetRadius,
-                .AtmosphereRadius = atmosphere.AtmosphereRadius,
-                .SunAngularRadius = atmosphere.SunAngularRadius,
-                .SunIrradiance = atmosphere.SunIrradiance,
-            });
-            cmd.DrawFullscreenTriangle();
-            cmd.EndRendering();
-        }
-        m_FaceRendersRecorded += CubeFaces;
-
-        // Leave the whole cube in a sampled layout for the skybox pass that samples it this frame.
-        cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
-    }
-
-    vector<u8> SkyCubemapBake::BakeAtmosphereAndDownload(const Ref<GraphicsPipeline>& pipeline,
-                                                         const Ref<DescriptorSet>& atmosphereSet,
-                                                         const Atmosphere& atmosphere,
-                                                         const vec3& sunDirection,
-                                                         const f32 intensity)
-    {
-        const u32 readbackSize = GetShReadbackFaceSize();
-        const usize faceBytes = static_cast<usize>(readbackSize) * readbackSize * 8; // RGBA16F
-        const Ref<Buffer> staging = Buffer::Create(m_Context, {
-                                                                  .Name = "Sky Bake SH Readback",
-                                                                  .Size = faceBytes * CubeFaces,
-                                                                  .Usage = BufferUsage::TransferDst,
-                                                              });
-
-        // A self-contained submit mirroring BakeAndDownload's material path: bake the six atmosphere
-        // faces, reduce them to the readback level, copy that level's six layers (layer-major), and
-        // restore the sampled layout — so the download reads the radiance this submit just produced.
-        m_Context.ImmediateCommands(
-            [&](CommandBuffer& cmd)
-            {
-                BakeAtmosphere(cmd, pipeline, atmosphereSet, atmosphere, sunDirection, intensity);
-                RecordReductionMips(cmd);
-                cmd.PrepareForAccess(m_MipViews[m_ShReadbackMip], AccessKind::TransferSrc);
-                const vk::BufferImageCopy region{
-                    .bufferOffset = 0,
-                    .bufferRowLength = 0,
-                    .bufferImageHeight = 0,
-                    .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                         .mipLevel = m_ShReadbackMip,
-                                         .baseArrayLayer = 0,
-                                         .layerCount = CubeFaces},
-                    .imageOffset = {.x = 0, .y = 0, .z = 0},
-                    .imageExtent = {.width = readbackSize, .height = readbackSize, .depth = 1},
-                };
-                GetVkCommandBuffer(cmd).copyImageToBuffer(GetVkImage(*m_CubeImage),
-                                                          vk::ImageLayout::eTransferSrcOptimal,
-                                                          GetVkBuffer(*staging), 1, &region);
-                cmd.PrepareForAccess(m_MipViews[m_ShReadbackMip], AccessKind::Sample);
-            });
-
-        return staging->Download();
-    }
-
-    void SkyCubemapBake::RecordScratchFace(CommandBuffer& cmd, const MaterialInstance& material,
-                                           const u32 face)
-    {
-        BindlessRegistry& registry = m_Context.GetBindlessRegistry();
-        const u32 selector = material.GetMaterialSelector();
-
-        // One face's worth of Bake, into the scratch cube: claim a view slot for the face basis and
-        // draw the material fragment through it. Recorded from a service tick at the top of the
-        // frame, where the view budget is freshly reset, so the single claim is affordable.
+        // Claim a view slot for the face's fixed basis and draw the atmosphere fragment through it,
+        // sampling the LUT set bound at set 3, with the far-plane stand-in in the depth slot. A caller
+        // recording the whole cube reserves its slots up front, so a refused claim is a broken
+        // precondition.
         const bool claimed = registry.TryBeginView();
         VE_ASSERT(claimed,
-                  "SkyCubemapBake::RecordScratchFace: the frame's view budget is spent; an "
-                  "amortized bake claims one view slot per tick");
+                  "SkyCubemapBake: the frame's view budget is spent; a bake claims one view "
+                  "slot per face and the caller must reserve them");
         ViewConstantsRegion region{};
         region.InvViewProj = m_FaceInvViewProj[face];
+        // The face basis is already a pure direction mapping with no camera translation in it, so it
+        // is its own rotation-only inverse and serves SkyViewDirection unchanged.
         region.InvViewRotProj = m_FaceInvViewProj[face];
         region.CameraPosition = vec4(0.0f);
         region.RenderScaleUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
@@ -651,66 +494,19 @@ namespace Veng::Renderer
         registry.WriteViewConstants(std::as_bytes(std::span(&region, 1)));
         const u32 viewIndex = registry.GetCurrentViewConstantsIndex();
 
-        cmd.PrepareForAccess(m_ScratchFaceViews[face], AccessKind::ColorAttachment);
+        cmd.PrepareForAccess(faceView, AccessKind::ColorAttachment);
         cmd.BeginRendering({
-            .Extent = {m_FaceSize, m_FaceSize},
+            .Extent = {faceSize, faceSize},
             .ColorAttachments = {{
-                .ImageView = m_ScratchFaceViews[face],
-                .LoadOp = LoadOp::Clear,
-                .StoreOp = StoreOp::Store,
-                .ClearValue = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
-            }},
-        });
-        cmd.BindPipeline(m_Pipeline);
-        cmd.SetViewport({0, 0}, {m_FaceSize, m_FaceSize});
-        cmd.SetScissor({0, 0}, {m_FaceSize, m_FaceSize});
-        registry.Bind(cmd);
-        cmd.PushConstants(SkyMaterialPushConstants{
-            .MaterialIndex = selector,
-            .DepthTexture = m_DepthHandle.Index,
-            .DepthSampler = m_DepthSamplerHandle.Index,
-            .ViewConstantsIndex = viewIndex,
-        });
-        cmd.DrawFullscreenTriangle();
-        cmd.EndRendering();
-        ++m_FaceRendersRecorded;
-    }
-
-    void SkyCubemapBake::RecordScratchAtmosphereFace(CommandBuffer& cmd,
-                                                     const Ref<GraphicsPipeline>& pipeline,
-                                                     const Ref<DescriptorSet>& atmosphereSet,
-                                                     const Atmosphere& atmosphere,
-                                                     const vec3& sunDirection, const f32 intensity,
-                                                     const u32 face)
-    {
-        BindlessRegistry& registry = m_Context.GetBindlessRegistry();
-
-        const bool claimed = registry.TryBeginView();
-        VE_ASSERT(claimed,
-                  "SkyCubemapBake::RecordScratchAtmosphereFace: the frame's view budget is spent; "
-                  "an amortized bake claims one view slot per tick");
-        ViewConstantsRegion region{};
-        region.InvViewProj = m_FaceInvViewProj[face];
-        region.InvViewRotProj = m_FaceInvViewProj[face];
-        region.CameraPosition = vec4(0.0f);
-        region.RenderScaleUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
-        region.MaxValidUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
-        registry.WriteViewConstants(std::as_bytes(std::span(&region, 1)));
-        const u32 viewIndex = registry.GetCurrentViewConstantsIndex();
-
-        cmd.PrepareForAccess(m_ScratchFaceViews[face], AccessKind::ColorAttachment);
-        cmd.BeginRendering({
-            .Extent = {m_FaceSize, m_FaceSize},
-            .ColorAttachments = {{
-                .ImageView = m_ScratchFaceViews[face],
+                .ImageView = faceView,
                 .LoadOp = LoadOp::Clear,
                 .StoreOp = StoreOp::Store,
                 .ClearValue = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
             }},
         });
         cmd.BindPipeline(pipeline);
-        cmd.SetViewport({0, 0}, {m_FaceSize, m_FaceSize});
-        cmd.SetScissor({0, 0}, {m_FaceSize, m_FaceSize});
+        cmd.SetViewport({0, 0}, {faceSize, faceSize});
+        cmd.SetScissor({0, 0}, {faceSize, faceSize});
         registry.Bind(cmd);
         cmd.BindDescriptorSets(DescriptorSetBindInfo{
             .Sets = {atmosphereSet},
@@ -741,6 +537,20 @@ namespace Veng::Renderer
         cmd.DrawFullscreenTriangle();
         cmd.EndRendering();
         ++m_FaceRendersRecorded;
+    }
+
+    void SkyCubemapBake::BakeAtmosphere(CommandBuffer& cmd, const Ref<GraphicsPipeline>& pipeline,
+                                        const Ref<DescriptorSet>& atmosphereSet,
+                                        const Atmosphere& atmosphere, const vec3& sunDirection,
+                                        const f32 intensity)
+    {
+        for (u32 face = 0; face < CubeFaces; ++face)
+        {
+            RecordAtmosphereFace(cmd, pipeline, atmosphereSet, atmosphere, sunDirection, intensity,
+                                 m_FaceViews[face], m_FaceSize, face);
+        }
+        // Leave the whole cube in a sampled layout for the skybox pass that samples it this frame.
+        cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
     }
 
     void SkyCubemapBake::AbandonBake()
@@ -778,7 +588,10 @@ namespace Veng::Renderer
             .TickCount = CubeFaces,
             .OnTick =
                 [this, materialPtr](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
-            { RecordScratchFace(cmd, *materialPtr, context.TickIndex); },
+            {
+                RecordMaterialFace(cmd, *materialPtr, m_ScratchFaceViews[context.TickIndex],
+                                   m_FaceSize, context.TickIndex);
+            },
             .OnComplete = [this](const GeneratedTextureResult&)
             { m_BakeState = BakeState::Landed; },
         };
@@ -807,8 +620,9 @@ namespace Veng::Renderer
                 [this, pipeline, atmosphereSet, atmosphere, sunDirection,
                  intensity](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
             {
-                RecordScratchAtmosphereFace(cmd, pipeline, atmosphereSet, atmosphere, sunDirection,
-                                            intensity, context.TickIndex);
+                RecordAtmosphereFace(cmd, pipeline, atmosphereSet, atmosphere, sunDirection,
+                                     intensity, m_ScratchFaceViews[context.TickIndex], m_FaceSize,
+                                     context.TickIndex);
             },
             .OnComplete = [this](const GeneratedTextureResult&)
             { m_BakeState = BakeState::Landed; },

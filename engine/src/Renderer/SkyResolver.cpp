@@ -247,30 +247,6 @@ namespace Veng::Renderer
                             view.SunDirection != m_LastBakedAtmosphereSun;
             }
 
-            // The SH tier's cold start: on the very first SH frame no coefficients have been
-            // projected and the amortized display bake has not landed, so a single synchronous
-            // reduced-cube readback seeds them — and, baking into the displayed cube in place, gives
-            // the first SH frame a valid sky rather than an empty one. Its immediate submit records
-            // barriers off the persistent image-layout tracker, so it must see the tracker as the
-            // last completed bake left it. Bounded to the first SH activation (every later re-bake
-            // reads the amortized display cube back deferred); it claims its own six view slots, so
-            // it only runs on a frame with room, retrying otherwise.
-            const bool shColdSeed = m_ResolvedSkyLighting == SkyLighting::SH && !m_SkyShValid;
-            if (shColdSeed &&
-                m_Context.GetBindlessRegistry().GetRemainingViews() >= SkyCubemapBake::CubeFaces)
-            {
-                const vector<u8> faces =
-                    bakedMaterial
-                        ? m_SkyBake->BakeAndDownload(*material)
-                        : m_SkyBake->BakeAtmosphereAndDownload(skyPipeline, m_Atmosphere->GetSet(),
-                                                               view.Atmosphere, view.SunDirection,
-                                                               view.AtmosphereIntensity);
-                m_SkySh = EnvironmentIbl::ProjectCubeToIrradianceSh(
-                    faces, m_SkyBake->GetShReadbackFaceSize());
-                m_SkyShValid = true;
-                m_DisplayCubeValid = true;
-            }
-
             // Request the amortized display bake on the dirty signal; the fill spreads across the
             // frame budget and the previous cube stands until it lands.
             if (bakeDirty)
@@ -301,11 +277,14 @@ namespace Veng::Renderer
                 m_DisplayCubeValid = true;
             }
 
-            // The steady-state SH readback: a landed bake's own displayed cube is read back reduced,
-            // without blocking, the projection deferred a frame or two — so a static or occasionally
-            // re-baked SH sky costs one bake. Skipped when the cold seed already produced this
-            // frame's coefficients.
-            if (landed && m_ResolvedSkyLighting == SkyLighting::SH && !shColdSeed)
+            // The SH readback: a landed bake's own displayed cube is read back reduced, without
+            // blocking the render thread, the projection deferred a frame or two — so a static or
+            // occasionally re-baked SH sky costs one bake. This covers the tier's cold start too: the
+            // first landed bake is read back the same way, so the SH ambient arrives a few frames
+            // after the initial amortized display bake lands rather than through a blocking seed.
+            // Until it does, m_SkySh is zero and the scene lights from a flat ambient — a brief,
+            // usually-imperceptible latency at first entry, in place of a first-frame hitch.
+            if (landed && m_ResolvedSkyLighting == SkyLighting::SH)
             {
                 BeginDeferredShReadback(cmd);
             }

@@ -343,15 +343,6 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const vec3 minusX = EvalIrradiance(sh, vec3(-1, 0, 0));
     CHECK(plusX.r > minusX.r);
     CHECK(plusX.r > 0.0f);
-
-    // BakeAndDownload is the SH tier's cold-start readback: it bakes the same cube, reduces it to
-    // the readback level, and returns that radiance, so its projection matches the full-face one
-    // within the reduction + round-trip.
-    const vector<u8> selfContained = bake->BakeAndDownload(*material.Get());
-    const Sh9 shSelf =
-        EnvironmentIbl::ProjectCubeToIrradianceSh(selfContained, bake->GetShReadbackFaceSize());
-    const vec3 plusXSelf = EvalIrradiance(shSelf, vec3(1, 0, 0));
-    CHECK(plusXSelf.r == doctest::Approx(plusX.r).epsilon(0.05));
 }
 
 namespace
@@ -402,8 +393,7 @@ namespace
     }
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "sky bake: a dirty SH-tier re-bake records one bake, not two")
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "sky bake: a dirty SH-tier re-bake records one bake")
 {
     RegisterBuiltinTypes(Types);
     AssetManager assets(Context, Tasks, Types);
@@ -415,9 +405,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const Unique<SkyCubemapBake> bake =
         SkyCubemapBake::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
 
-    // The steady-state SH path: one display bake fills the cube, and the reduced readback reads that
-    // same cube back (RecordReductionMips + a deferred copy, no face render), so a dirty SH sky
-    // costs one bake — six face renders.
+    // The SH path costs one bake: one display bake fills the cube, and the reduced readback reads
+    // that same cube back (RecordReductionMips + a deferred copy, no face render), so a dirty SH sky
+    // — including the tier's cold start — never bakes the cube a second time to seed its coefficients.
     const u64 beforeSteady = bake->GetFaceRendersRecorded();
     Context.ImmediateCommands(
         [&](CommandBuffer& cmd)
@@ -426,13 +416,6 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
             bake->RecordReductionMips(cmd);
         });
     CHECK(bake->GetFaceRendersRecorded() - beforeSteady == SkyCubemapBake::CubeFaces);
-
-    // The superseded readback baked the cube a second time: a display bake plus a self-contained
-    // readback bake was twelve face renders for one dirty signal, which the deferred path removes.
-    const u64 beforeCold = bake->GetFaceRendersRecorded();
-    Context.ImmediateCommands([&](CommandBuffer& cmd) { bake->Bake(cmd, *material.Get()); });
-    (void)bake->BakeAndDownload(*material.Get());
-    CHECK(bake->GetFaceRendersRecorded() - beforeCold == 2 * SkyCubemapBake::CubeFaces);
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,

@@ -1241,12 +1241,12 @@ namespace Veng::Renderer
 
         BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
-        // The sky-resolve subsystem records its pre-graph generation before the frame's view claim:
-        // the atmosphere LUT gate (a baked atmosphere on its own immediate-submit path), the request
-        // and completion-copy of the amortized baked-sky cube, the SH-tier cold seed and readback
-        // projection, the IBL-tier convolution, and the environment-sky SH projection. The SH cold
-        // seed writes six face view-constants regions into distinct view slots, so it must run ahead
-        // of the frame's own TryBeginView below.
+        // The sky-resolve subsystem records its pre-graph generation ahead of the graph replay: the
+        // atmosphere LUT gate (a baked atmosphere on its own immediate-submit path), the request and
+        // completion-copy of the amortized baked-sky cube, the SH-tier deferred readback projection,
+        // the IBL-tier convolution, and the environment-sky SH projection. The amortized bake's face
+        // renders claim their view slots in the GeneratedTextureService pump (BeginFrame), not here;
+        // this records only the request, the completion-copy, and the readback, so it claims none.
         m_SkyResolver->RecordPreBeginView(cmd, resolvedView, m_SkyPipeline);
 
         // Claim this Execute's view slot before any shared-buffer write below: the view-constants
