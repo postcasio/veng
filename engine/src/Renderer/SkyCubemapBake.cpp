@@ -324,7 +324,12 @@ namespace Veng::Renderer
 
     void SkyCubemapBake::EnsurePipeline(const MaterialInstance& material)
     {
-        if (m_Pipeline && m_PipelineMaterialIndex == material.GetIndex())
+        // The bake pipeline depends only on the material's shader modules, its layout, and the fixed
+        // cube-face format — never the instance's params, which ride the push range and the bindless
+        // block — so every instance of one Sky material shares it. Key the cache on the fragment
+        // module: a second instance of the same material (another world's copy) then reuses the
+        // pipeline instead of recompiling the sky shader, which the per-instance index forced.
+        if (m_Pipeline && m_PipelineFragment == material.GetFragmentModule().get())
         {
             return;
         }
@@ -348,7 +353,7 @@ namespace Veng::Renderer
                         {.Stage = ShaderStage::Fragment, .Module = material.GetFragmentModule()},
                     },
             });
-        m_PipelineMaterialIndex = material.GetIndex();
+        m_PipelineFragment = material.GetFragmentModule().get();
     }
 
     void SkyCubemapBake::RecordMaterialFace(CommandBuffer& cmd, const MaterialInstance& material,

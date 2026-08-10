@@ -17,6 +17,7 @@ namespace Veng::Renderer
     class Context;
     class CommandBuffer;
     class GraphicsPipeline;
+    class ShaderModule;
     class Image;
     class ImageView;
     class Sampler;
@@ -304,7 +305,12 @@ namespace Veng::Renderer
         Ref<DescriptorSet> m_ConsumerSet; // the skybox pass binds this to sample the baked cube
 
         Ref<GraphicsPipeline> m_Pipeline; // the material's fragment against the cube-face format
-        u32 m_PipelineMaterialIndex = ~0u;
+        // The fragment module the pipeline was built from — the pipeline's one material-dependent
+        // input, shared by every instance of a Sky material. Keyed on it (not the material's instance
+        // index) so a fresh instance of the same material reuses the pipeline instead of recompiling
+        // the sky shader. Non-owning: valid to compare only while m_Pipeline (which holds the module)
+        // is alive.
+        const ShaderModule* m_PipelineFragment = nullptr;
 
         // The six per-face InvViewProj matrices: each maps a fullscreen [0,1]² UV to the face's
         // world direction, matching the cube image-view layer order so shared edges agree.
