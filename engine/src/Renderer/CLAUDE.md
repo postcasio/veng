@@ -418,7 +418,8 @@ so **what you see and what lights the scene agree by construction**: an environm
 (equirect→cube), a `MaterialSky` or `AtmosphereSky` in `SkyMode::Baked` bakes to a cube
 (`SkyCubemapBake`, six fullscreen face renders over a fixed per-face basis + a 1×1 far-plane
 stand-in depth, re-baked on the source's dirty signal — amortized through `GeneratedTextureService`
-one face per tick, the previous cube standing until the new one lands), and both display through the one
+one scissor-clipped **tile** of a face per tick, so the per-frame GPU cost is bounded by tile area
+rather than a whole heavy face, the previous cube standing until the new one lands), and both display through the one
 **`SkyboxScenePass`** (a fullscreen pass compositing the cube over the cleared-depth background,
 `discard`ing foreground, writing the same scene-color target lighting wrote so the sky resolves,
 reflects, and tonemaps with the scene). `SkyMode::Direct` keeps the per-pixel passes as the
@@ -465,9 +466,9 @@ camera clobbering the region the first's draws still read at submit. The shared 
 buffer rings the same way.
 
 **`MaxViewsPerFrame` (32) is a budget spent against, not a contract.** Its consumers are the
-registered viewports (one slot each), one face per driven scene capture, and one face per amortized
-sky-bake tick (the display cube fills through `GeneratedTextureService`, so a dirty sky claims one
-slot per tick spread across frames, not six in one) — so ordinary content can want more than one
+registered viewports (one slot each), one face per driven scene capture, and one slot per amortized
+sky-bake tick — a single tile of a face (the display cube fills through `GeneratedTextureService`, so
+a dirty sky claims one slot per tick spread across frames, not six in one) — so ordinary content can want more than one
 frame holds, and the ceiling is sized by memory the whole
 ring pays (`framesInFlight * MaxViewsPerFrame` regions of ~6 KB). The SH ambient tier reads its
 coefficients back off the amortized display cube through `AsyncReadback` (a copy, not a view render),

@@ -466,8 +466,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "sky bake: an amortized bake fills its cube one face per tick, not six draws in "
-                  "one frame")
+                  "sky bake: an amortized bake fills its cube one tile per tick, spread across "
+                  "frames, not the whole cube in one frame")
 {
     RegisterBuiltinTypes(Types);
     AssetManager assets(Context, Tasks, Types);
@@ -475,34 +475,40 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     const Unique<EnvironmentIbl> ibl = EnvironmentIbl::Create(Context, assets);
 
-    constexpr u32 FaceSize = 64;
+    // A face larger than the 256-texel tile, and deliberately not a whole multiple of it, so each
+    // face is a grid of tiles including a clamped last row/column (384 -> a 256 tile + a 128 tile
+    // per axis, 2x2 = 4 tiles a face): the tiled amortization path — the scissor-clipped tile draw,
+    // the clamped last tile, and the per-tile view basis — is genuinely exercised.
+    constexpr u32 FaceSize = 384;
     const Unique<SkyCubemapBake> bake =
         SkyCubemapBake::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
+    REQUIRE(bake->GetTilesPerFace() > 1);
+    const u64 totalTicks = SkyCubemapBake::CubeFaces * bake->GetTilesPerFace();
 
     GeneratedTextureService& service = Context.GetGeneratedTextures();
-    // A budget of one tick is amortization at its most granular: one face may be recorded per
-    // frame, so the property under test — the six faces spread across ticks rather than landing in
-    // one frame — shows as one face render per pumped frame.
+    // A budget of one tick is amortization at its most granular: one tile may be recorded per frame,
+    // so the property under test — the tiles spread across ticks rather than the whole cube landing
+    // in one frame — shows as exactly one tile render per pumped frame.
     service.SetTickBudget(1);
 
     const u64 before = bake->GetFaceRendersRecorded();
     bake->RequestBake(service, *material.Get());
     CHECK(bake->IsBakePending());
-    // The request records nothing itself: the six draws are the service's to spend, not this frame's.
+    // The request records nothing itself: the tile draws are the service's to spend, not this frame's.
     CHECK(bake->GetFaceRendersRecorded() == before);
 
-    for (u32 face = 0; face < SkyCubemapBake::CubeFaces; ++face)
+    for (u64 tick = 0; tick < totalTicks; ++tick)
     {
-        CHECK(bake->GetFaceRendersRecorded() - before == face);
+        CHECK(bake->GetFaceRendersRecorded() - before == tick);
         CHECK(bake->IsBakePending());
         Context.BeginFrame();
         Context.EndFrame();
-        // Exactly one more face than last frame — never the whole cube in one frame.
-        CHECK(bake->GetFaceRendersRecorded() - before == face + 1);
+        // Exactly one more tile than last frame — never the whole cube (or a whole face) in one.
+        CHECK(bake->GetFaceRendersRecorded() - before == tick + 1);
     }
 
-    // Every face rendered, one per frame, and the fill is done.
-    CHECK(bake->GetFaceRendersRecorded() - before == SkyCubemapBake::CubeFaces);
+    // Every tile rendered, one per frame, and the fill is done.
+    CHECK(bake->GetFaceRendersRecorded() - before == totalTicks);
     CHECK_FALSE(bake->IsBakePending());
 
     // The completed scratch cube copies into the displayed cube once, on a recorded frame; a second
@@ -512,14 +518,16 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(copied);
     Context.ImmediateCommands([&](CommandBuffer& cmd) { CHECK_FALSE(bake->RecordAmortized(cmd)); });
 
-    // And the displayed cube the copy filled carries the material's analytic radiance, so the
-    // amortized path produced the same cube a synchronous bake would — read a spread of texels.
+    // And the displayed cube the copy filled carries the material's analytic radiance — the same
+    // cube a synchronous whole-face bake would produce. Read texels straddling the tile boundaries
+    // (255/256 either side of the 256-texel seam) as well as tile interiors: a tile rendered with a
+    // wrong basis or clipped to the wrong region would break exactly at a boundary.
     const vector<u8> faces = DownloadCube(Context, *bake);
     constexpr f32 Eps = 0.02f;
     for (u32 face = 0; face < 6; ++face)
     {
-        for (const uvec2 t : {uvec2(FaceSize / 4, FaceSize / 4), uvec2(FaceSize / 2, FaceSize / 2),
-                              uvec2(3 * FaceSize / 4, 3 * FaceSize / 4)})
+        for (const uvec2 t : {uvec2(100, 100), uvec2(255, 255), uvec2(256, 256), uvec2(255, 256),
+                              uvec2(256, 255), uvec2(340, 340)})
         {
             const vec2 uv((static_cast<f32>(t.x) + 0.5f) / static_cast<f32>(FaceSize),
                           (static_cast<f32>(t.y) + 0.5f) / static_cast<f32>(FaceSize));

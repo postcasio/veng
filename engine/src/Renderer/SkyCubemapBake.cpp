@@ -141,6 +141,41 @@ namespace Veng::Renderer
             return mip;
         }
 
+        // Edge length in texels of one amortization tile. Each amortized bake tick renders one tile
+        // of a face through a scissor-clipped fullscreen draw, so the per-tick (and thus per-frame)
+        // GPU cost is bounded by tile area rather than face area — a heavy per-texel sky fragment (a
+        // volumetric ray-march) over a full 1024² face is otherwise one enormous dispatch. Smaller
+        // tiles bound the per-frame cost tighter but take more frames for a re-baked sky to appear
+        // (the previous cube stands meanwhile); 256 — 16 tiles per 1024² face — is the balance.
+        constexpr u32 SkyBakeTilePixels = 256;
+
+        // Tiles along one face axis at the given face size: ceil(faceSize / tile), so the last tile
+        // is clamped when the face is not a whole multiple of the tile.
+        constexpr u32 TilesPerFaceAxis(const u32 faceSize)
+        {
+            return (faceSize + SkyBakeTilePixels - 1) / SkyBakeTilePixels;
+        }
+
+        // A tile's pixel rect within a face: its top-left offset and its extent, the extent clamped
+        // to the face so the last row/column tile of a non-multiple face covers only real texels.
+        struct TileRect
+        {
+            uvec2 Offset;
+            uvec2 Extent;
+        };
+
+        TileRect TileRectFor(const u32 tile, const u32 tilesPerAxis, const u32 faceSize)
+        {
+            const u32 tileX = tile % tilesPerAxis;
+            const u32 tileY = tile / tilesPerAxis;
+            const uvec2 offset{tileX * SkyBakeTilePixels, tileY * SkyBakeTilePixels};
+            return {
+                .Offset = offset,
+                .Extent = {std::min(SkyBakeTilePixels, faceSize - offset.x),
+                           std::min(SkyBakeTilePixels, faceSize - offset.y)},
+            };
+        }
+
         std::array<mat4, SkyCubemapBake::CubeFaces> BuildFaceMatrices()
         {
             return {
@@ -165,7 +200,9 @@ namespace Veng::Renderer
     SkyCubemapBake::SkyCubemapBake(Context& context, const Ref<DescriptorSetLayout>& consumerLayout,
                                    const Format sceneColorFormat, const u32 faceSize)
         : m_Context(context), m_SceneColorFormat(sceneColorFormat), m_FaceSize(faceSize),
-          m_ShReadbackMip(ComputeShReadbackMip(faceSize)), m_FaceInvViewProj(BuildFaceMatrices())
+          m_ShReadbackMip(ComputeShReadbackMip(faceSize)),
+          m_TilesPerAxis(TilesPerFaceAxis(faceSize)),
+          m_TilesPerFace(m_TilesPerAxis * m_TilesPerAxis), m_FaceInvViewProj(BuildFaceMatrices())
     {
         // The radiance cube: six layers rendered as color attachments, sampled as a cube. Uses the
         // scene-color format so the baked radiance round-trips the skybox sampler with no conversion.
@@ -356,44 +393,75 @@ namespace Veng::Renderer
         m_PipelineFragment = material.GetFragmentModule().get();
     }
 
-    void SkyCubemapBake::RecordMaterialFace(CommandBuffer& cmd, const MaterialInstance& material,
-                                            const Ref<ImageView>& faceView, const u32 faceSize,
-                                            const u32 face)
+    u32 SkyCubemapBake::AcquireFaceViewSlot(CommandBuffer& cmd, const u32 face,
+                                            const bool faceFirst)
     {
         BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+
+        // One view slot per face, reused by that face's tiles within a single recording (one frame's
+        // command buffer). Every tile of a face writes the identical face basis, so one slot serves
+        // them all — bounding a whole-cube bake to CubeFaces view slots per frame regardless of how
+        // many tiles it renders or how many run in one pump (an UnlimitedTickBudget re-bake of a
+        // large face would otherwise claim one slot per tile, far past MaxViewsPerFrame). A fresh
+        // slot is claimed at the face's first tile and whenever a new frame's command buffer starts
+        // — an amortized face split across frames re-claims each frame, since a slot claimed in a
+        // prior frame is not this frame's to reference. Frames-in-flight is >= 2, so consecutive
+        // frames never share a command buffer and the reuse branch is never taken across a frame
+        // boundary.
+        if (faceFirst || &cmd != m_LastTileCmd || face != m_LastTileFace)
+        {
+            const bool claimed = registry.TryBeginView();
+            VE_ASSERT(claimed,
+                      "SkyCubemapBake: the frame's view budget is spent; a bake claims one view "
+                      "slot per face and the caller must reserve them");
+            ViewConstantsRegion region{};
+            region.InvViewProj = m_FaceInvViewProj[face];
+            // The face basis is already a pure direction mapping with no camera translation in it, so
+            // it is its own rotation-only inverse and serves SkyViewDirection unchanged.
+            region.InvViewRotProj = m_FaceInvViewProj[face];
+            region.CameraPosition = vec4(0.0f);
+            region.RenderScaleUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+            region.MaxValidUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+            registry.WriteViewConstants(std::as_bytes(std::span(&region, 1)));
+            m_LastTileViewIndex = registry.GetCurrentViewConstantsIndex();
+            m_LastTileCmd = &cmd;
+            m_LastTileFace = face;
+        }
+        return m_LastTileViewIndex;
+    }
+
+    void SkyCubemapBake::RecordMaterialRegion(CommandBuffer& cmd, const MaterialInstance& material,
+                                              const Ref<ImageView>& faceView, const u32 faceSize,
+                                              const u32 face, const uvec2 tileOffset,
+                                              const uvec2 tileExtent, const bool clear)
+    {
+        const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
         const u32 selector = material.GetMaterialSelector();
 
-        // Claim a view slot for the face's fixed basis and draw the material fragment through it, with
-        // the far-plane stand-in in the depth slot so SkyIsBackground passes. A caller recording the
-        // whole cube reserves its slots up front, so a refused claim is a broken precondition.
-        const bool claimed = registry.TryBeginView();
-        VE_ASSERT(claimed,
-                  "SkyCubemapBake: the frame's view budget is spent; a bake claims one view "
-                  "slot per face and the caller must reserve them");
-        ViewConstantsRegion region{};
-        region.InvViewProj = m_FaceInvViewProj[face];
-        // The face basis is already a pure direction mapping with no camera translation in it, so it
-        // is its own rotation-only inverse and serves SkyViewDirection unchanged.
-        region.InvViewRotProj = m_FaceInvViewProj[face];
-        region.CameraPosition = vec4(0.0f);
-        region.RenderScaleUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
-        region.MaxValidUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
-        registry.WriteViewConstants(std::as_bytes(std::span(&region, 1)));
-        const u32 viewIndex = registry.GetCurrentViewConstantsIndex();
+        // Draw the material fragment through the face's fixed basis, with the far-plane stand-in in
+        // the depth slot so SkyIsBackground passes.
+        const u32 viewIndex = AcquireFaceViewSlot(cmd, face, clear);
 
         cmd.PrepareForAccess(faceView, AccessKind::ColorAttachment);
+        // Render-area = the tile, so a Clear touches only this tile (a whole-face Clear would erase
+        // tiles already baked into this face); Clear the face's first tile, Load every later one.
         cmd.BeginRendering({
-            .Extent = {faceSize, faceSize},
+            .Offset = {static_cast<i32>(tileOffset.x), static_cast<i32>(tileOffset.y)},
+            .Extent = tileExtent,
             .ColorAttachments = {{
                 .ImageView = faceView,
-                .LoadOp = LoadOp::Clear,
+                .LoadOp = clear ? LoadOp::Clear : LoadOp::Load,
                 .StoreOp = StoreOp::Store,
                 .ClearValue = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
             }},
         });
         cmd.BindPipeline(m_Pipeline);
+        // Viewport spans the whole face so the SV_Position → UV → world-direction mapping is the
+        // full-face one; the tile render-area + scissor clip the fullscreen triangle to this tile's
+        // texels, each computing the same cube direction it would in a whole-face draw.
         cmd.SetViewport({0, 0}, {faceSize, faceSize});
-        cmd.SetScissor({0, 0}, {faceSize, faceSize});
+        cmd.SetScissor({static_cast<i32>(tileOffset.x), static_cast<i32>(tileOffset.y)},
+                       tileExtent);
         registry.Bind(cmd);
         cmd.PushConstants(SkyMaterialPushConstants{
             .MaterialIndex = selector,
@@ -409,9 +477,11 @@ namespace Veng::Renderer
     void SkyCubemapBake::Bake(CommandBuffer& cmd, const MaterialInstance& material)
     {
         EnsurePipeline(material);
+        // The synchronous path renders whole faces: one region draw per face covering it, Clear.
         for (u32 face = 0; face < CubeFaces; ++face)
         {
-            RecordMaterialFace(cmd, material, m_FaceViews[face], m_FaceSize, face);
+            RecordMaterialRegion(cmd, material, m_FaceViews[face], m_FaceSize, face, {0, 0},
+                                 {m_FaceSize, m_FaceSize}, true);
         }
         // Leave the whole cube in a sampled layout for the skybox pass that samples it this frame.
         cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
@@ -470,48 +540,40 @@ namespace Veng::Renderer
         cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
     }
 
-    void SkyCubemapBake::RecordAtmosphereFace(CommandBuffer& cmd,
-                                              const Ref<GraphicsPipeline>& pipeline,
-                                              const Ref<DescriptorSet>& atmosphereSet,
-                                              const Atmosphere& atmosphere,
-                                              const vec3& sunDirection, const f32 intensity,
-                                              const Ref<ImageView>& faceView, const u32 faceSize,
-                                              const u32 face)
+    void SkyCubemapBake::RecordAtmosphereRegion(CommandBuffer& cmd,
+                                                const Ref<GraphicsPipeline>& pipeline,
+                                                const Ref<DescriptorSet>& atmosphereSet,
+                                                const Atmosphere& atmosphere,
+                                                const vec3& sunDirection, const f32 intensity,
+                                                const Ref<ImageView>& faceView, const u32 faceSize,
+                                                const u32 face, const uvec2 tileOffset,
+                                                const uvec2 tileExtent, const bool clear)
     {
-        BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+        const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
-        // Claim a view slot for the face's fixed basis and draw the atmosphere fragment through it,
-        // sampling the LUT set bound at set 3, with the far-plane stand-in in the depth slot. A caller
-        // recording the whole cube reserves its slots up front, so a refused claim is a broken
-        // precondition.
-        const bool claimed = registry.TryBeginView();
-        VE_ASSERT(claimed,
-                  "SkyCubemapBake: the frame's view budget is spent; a bake claims one view "
-                  "slot per face and the caller must reserve them");
-        ViewConstantsRegion region{};
-        region.InvViewProj = m_FaceInvViewProj[face];
-        // The face basis is already a pure direction mapping with no camera translation in it, so it
-        // is its own rotation-only inverse and serves SkyViewDirection unchanged.
-        region.InvViewRotProj = m_FaceInvViewProj[face];
-        region.CameraPosition = vec4(0.0f);
-        region.RenderScaleUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
-        region.MaxValidUV = vec4(1.0f, 1.0f, 1.0f, 1.0f);
-        registry.WriteViewConstants(std::as_bytes(std::span(&region, 1)));
-        const u32 viewIndex = registry.GetCurrentViewConstantsIndex();
+        // Draw the atmosphere fragment through the face's fixed basis, sampling the LUT set bound at
+        // set 3, with the far-plane stand-in in the depth slot.
+        const u32 viewIndex = AcquireFaceViewSlot(cmd, face, clear);
 
         cmd.PrepareForAccess(faceView, AccessKind::ColorAttachment);
+        // Render-area = the tile, so a Clear touches only this tile (a whole-face Clear would erase
+        // tiles already baked into this face); Clear the face's first tile, Load every later one.
         cmd.BeginRendering({
-            .Extent = {faceSize, faceSize},
+            .Offset = {static_cast<i32>(tileOffset.x), static_cast<i32>(tileOffset.y)},
+            .Extent = tileExtent,
             .ColorAttachments = {{
                 .ImageView = faceView,
-                .LoadOp = LoadOp::Clear,
+                .LoadOp = clear ? LoadOp::Clear : LoadOp::Load,
                 .StoreOp = StoreOp::Store,
                 .ClearValue = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
             }},
         });
         cmd.BindPipeline(pipeline);
+        // Viewport spans the whole face so the SV_Position → UV → world-direction mapping is the
+        // full-face one; the tile render-area + scissor clip the fullscreen triangle to this tile.
         cmd.SetViewport({0, 0}, {faceSize, faceSize});
-        cmd.SetScissor({0, 0}, {faceSize, faceSize});
+        cmd.SetScissor({static_cast<i32>(tileOffset.x), static_cast<i32>(tileOffset.y)},
+                       tileExtent);
         registry.Bind(cmd);
         cmd.BindDescriptorSets(DescriptorSetBindInfo{
             .Sets = {atmosphereSet},
@@ -549,10 +611,12 @@ namespace Veng::Renderer
                                         const Atmosphere& atmosphere, const vec3& sunDirection,
                                         const f32 intensity)
     {
+        // The synchronous path renders whole faces: one region draw per face covering it, Clear.
         for (u32 face = 0; face < CubeFaces; ++face)
         {
-            RecordAtmosphereFace(cmd, pipeline, atmosphereSet, atmosphere, sunDirection, intensity,
-                                 m_FaceViews[face], m_FaceSize, face);
+            RecordAtmosphereRegion(cmd, pipeline, atmosphereSet, atmosphere, sunDirection,
+                                   intensity, m_FaceViews[face], m_FaceSize, face, {0, 0},
+                                   {m_FaceSize, m_FaceSize}, true);
         }
         // Leave the whole cube in a sampled layout for the skybox pass that samples it this frame.
         cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
@@ -590,12 +654,16 @@ namespace Veng::Renderer
                 .ProducerAccess = AccessKind::ColorAttachment,
                 .SampledViewType = ImageViewType::Cube,
             }},
-            .TickCount = CubeFaces,
+            .TickCount = CubeFaces * m_TilesPerFace,
             .OnTick =
                 [this, materialPtr](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
             {
-                RecordMaterialFace(cmd, *materialPtr, m_ScratchFaceViews[context.TickIndex],
-                                   m_FaceSize, context.TickIndex);
+                // One tile per tick: TickIndex enumerates (face, tile) in face-major order.
+                const u32 face = context.TickIndex / m_TilesPerFace;
+                const u32 tile = context.TickIndex % m_TilesPerFace;
+                const TileRect rect = TileRectFor(tile, m_TilesPerAxis, m_FaceSize);
+                RecordMaterialRegion(cmd, *materialPtr, m_ScratchFaceViews[face], m_FaceSize, face,
+                                     rect.Offset, rect.Extent, tile == 0);
             },
             .OnComplete = [this](const GeneratedTextureResult&)
             { m_BakeState = BakeState::Landed; },
@@ -620,14 +688,18 @@ namespace Veng::Renderer
                 .ProducerAccess = AccessKind::ColorAttachment,
                 .SampledViewType = ImageViewType::Cube,
             }},
-            .TickCount = CubeFaces,
+            .TickCount = CubeFaces * m_TilesPerFace,
             .OnTick =
                 [this, pipeline, atmosphereSet, atmosphere, sunDirection,
                  intensity](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
             {
-                RecordAtmosphereFace(cmd, pipeline, atmosphereSet, atmosphere, sunDirection,
-                                     intensity, m_ScratchFaceViews[context.TickIndex], m_FaceSize,
-                                     context.TickIndex);
+                // One tile per tick: TickIndex enumerates (face, tile) in face-major order.
+                const u32 face = context.TickIndex / m_TilesPerFace;
+                const u32 tile = context.TickIndex % m_TilesPerFace;
+                const TileRect rect = TileRectFor(tile, m_TilesPerAxis, m_FaceSize);
+                RecordAtmosphereRegion(cmd, pipeline, atmosphereSet, atmosphere, sunDirection,
+                                       intensity, m_ScratchFaceViews[face], m_FaceSize, face,
+                                       rect.Offset, rect.Extent, tile == 0);
             },
             .OnComplete = [this](const GeneratedTextureResult&)
             { m_BakeState = BakeState::Landed; },
