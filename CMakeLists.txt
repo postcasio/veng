@@ -924,6 +924,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/punctual_shadows.cpp
             tests/unit/hi_z_history.cpp
             tests/unit/frame_topology.cpp
+            tests/unit/sky_bake_gate.cpp
             tests/unit/generated_texture_queue.cpp
             tests/unit/fluid_sim_config.cpp
             tests/unit/flow_field.cpp

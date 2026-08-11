@@ -40,6 +40,7 @@ namespace Veng::Renderer
         {
             const auto* material = static_cast<const MaterialSky*>(source);
             view.SkyMaterial = material->Material;
+            view.SkyBakeKey = material->BakeKey;
             view.EnvironmentIntensity = sky->Intensity;
             // A baked material sky lights via the SH tier, so Intensity scales its ambient exactly
             // as it scales the atmosphere's; setting only EnvironmentIntensity left the SH knob dead.

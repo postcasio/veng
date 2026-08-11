@@ -219,11 +219,21 @@ namespace Veng::Renderer
         /// pointer compare misses — the material analogue of the atmosphere's param dirty gate.
         u32 m_LastBakedSkyMaterialRevision = 0;
 
+        /// @brief The content key the material cube was last baked for; gates a keyed re-bake.
+        ///
+        /// Only consulted when the resolved MaterialSky carries a nonzero BakeKey: the re-bake then
+        /// keys on this instead of the instance pointer/revision, so two worlds authoring distinct
+        /// instances of equal-content material share one bake. Zero when no keyed bake has landed
+        /// (or the source stopped baking), so the first keyed material re-bakes.
+        u64 m_LastBakedSkyKey = 0;
+
         /// @brief Whether the displayed bake cube has ever been filled with valid radiance.
         ///
         /// False until the first amortized bake lands and is copied in. Gates the lighting tiers off
         /// an undefined cube: the SH readback and the IBL convolution only read the displayed cube
-        /// once it holds a real bake. Cleared when the resolved source stops being baked.
+        /// once it holds a real bake. It tracks the cube's contents, not the currently-resolved
+        /// source, so it is not cleared when a source merely stops baking — the cube still holds its
+        /// last bake, which a returning equal-key source reuses without re-baking.
         bool m_DisplayCubeValid = false;
 
         /// @brief Whether the current bake cube's IBL convolution is up to date; gates re-convolution.

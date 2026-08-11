@@ -184,6 +184,15 @@ namespace Veng::Renderer
         /// deferring the lighting-tier readback until the bake lands polls this.
         [[nodiscard]] bool IsBakePending() const { return m_BakeState == BakeState::Pending; }
 
+        /// @brief Whether an amortized bake is outstanding — filling, or completed but not yet copied.
+        ///
+        /// True from RequestBake until RecordAmortized has copied the finished scratch cube into the
+        /// displayed one — i.e. the Pending fill *and* the one-frame Landed gap before the copy. A
+        /// caller that re-requests a bake whenever no valid display cube stands must poll this rather
+        /// than IsBakePending: re-requesting during the Landed gap would supersede the finished bake
+        /// before RecordAmortized copies it, so the display cube would never be filled.
+        [[nodiscard]] bool IsBakeOutstanding() const { return m_BakeState != BakeState::Idle; }
+
         /// @brief Copies a just-landed amortized bake into the displayed cube, once.
         ///
         /// Records nothing until an amortized bake has completed; on the frame after completion it

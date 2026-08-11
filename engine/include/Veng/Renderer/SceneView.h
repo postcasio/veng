@@ -234,6 +234,13 @@ namespace Veng::Renderer
         /// ray and the g-buffer depth mask. It fills the background only — it feeds no lighting.
         AssetHandle<MaterialInstance> SkyMaterial;
 
+        /// @brief Content key gating a baked material sky's re-bake; 0 uses the material-identity gate.
+        ///
+        /// Filled from the resolved MaterialSky source's BakeKey. When nonzero, the sky resolver
+        /// re-bakes the radiance cube only when this changes, so two worlds authoring equal-content
+        /// material instances share one bake (see MaterialSky::BakeKey).
+        u64 SkyBakeKey = 0;
+
         /// @brief Bloom bright-pass luminance knee; pushed to the downsample compute each Execute.
         ///
         /// The soft-knee threshold the HDR → mip 0 downsample applies, display-referred: it is

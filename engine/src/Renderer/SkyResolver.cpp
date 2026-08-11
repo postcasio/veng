@@ -1,6 +1,7 @@
 #include "SkyResolver.h"
 
 #include "EnvironmentIbl.h"
+#include "SkyBakeGate.h"
 #include "SkyCubemapBake.h"
 #include "AtmospherePrecompute.h"
 #include "SkySourceResolve.h"
@@ -94,6 +95,7 @@ namespace Veng::Renderer
         view.AtmosphereIntensity = 1.0f;
         view.Atmosphere = Atmosphere{};
         view.SkyMaterial = {};
+        view.SkyBakeKey = 0;
         view.SkylightIntensity = 1.0f;
 
         // The toward-sun direction is derived from the scene's first directional light (a sun
@@ -235,10 +237,14 @@ namespace Veng::Renderer
             bool bakeDirty = false;
             if (bakedMaterial)
             {
-                // The instance may be reused in place — its params/star buffer rewritten while the
-                // pointer stays the same — so a revision change re-bakes as a swap does.
-                bakeDirty = material != m_LastBakedSkyMaterial ||
-                            material->GetRevision() != m_LastBakedSkyMaterialRevision;
+                // The content-key / material-identity gate — see ShouldRebakeMaterialSky. Keyed, it
+                // survives a transient no-sky world-swap gap and shares one bake across equal-content
+                // worlds; unkeyed (every authored sky), it re-bakes on a material swap or revision.
+                bakeDirty = ShouldRebakeMaterialSky(
+                    view.SkyBakeKey, m_LastBakedSkyKey, m_DisplayCubeValid,
+                    m_SkyBake->IsBakeOutstanding(), material, m_LastBakedSkyMaterial,
+                    material != nullptr ? material->GetRevision() : 0,
+                    m_LastBakedSkyMaterialRevision);
             }
             else
             {
@@ -266,6 +272,7 @@ namespace Veng::Renderer
                 }
                 m_LastBakedSkyMaterial = material;
                 m_LastBakedSkyMaterialRevision = material != nullptr ? material->GetRevision() : 0;
+                m_LastBakedSkyKey = view.SkyBakeKey;
             }
 
             // A completed bake copies its scratch cube into the displayed cube this frame, then the
@@ -308,12 +315,18 @@ namespace Veng::Renderer
         }
         else
         {
-            // The source stopped being baked: drop any bake in flight and forget the displayed cube.
+            // The source stopped being baked: drop any bake in flight. The displayed cube's
+            // validity and its content key are NOT forgotten here: the cube physically still holds
+            // its last landed bake, and a baked source can vanish for a frame or two mid-world-swap
+            // (before the destination world authors its Sky) — clearing the key/validity then would
+            // force an equal-content sky to re-bake on the far side of every swap. A genuine switch
+            // to a non-cube-backed source unwires the skybox-cube pass (the recompile), so the stale
+            // validity is never displayed; a later baked source re-bakes when its key differs, or
+            // when no valid cube stands (both covered by the bake gate above).
             m_SkyBake->AbandonBake();
             m_LastBakedSkyMaterial = nullptr;
             m_SkyCubeConvolved = false;
             m_BakedAtmosphereValid = false;
-            m_DisplayCubeValid = false;
         }
 
         // An environment sky on the SH tier lights the diffuse term from its radiance cube — the
