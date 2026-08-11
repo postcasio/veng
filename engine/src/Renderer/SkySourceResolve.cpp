@@ -40,7 +40,6 @@ namespace Veng::Renderer
         {
             const auto* material = static_cast<const MaterialSky*>(source);
             view.SkyMaterial = material->Material;
-            view.SkyBakeKey = material->BakeKey;
             view.EnvironmentIntensity = sky->Intensity;
             // A baked material sky lights via the SH tier, so Intensity scales its ambient exactly
             // as it scales the atmosphere's; setting only EnvironmentIntensity left the SH knob dead.
@@ -50,6 +49,19 @@ namespace Veng::Renderer
             // per pixel every frame. The two render the same sky; the author picks per the sky's
             // dynamics and the renderer honors it (no silent switch).
             resolved.Baked = material->Mode == SkyMode::Baked;
+        }
+        else if (active == TypeIdOf<CubeSky>())
+        {
+            const auto* cube = static_cast<const CubeSky*>(source);
+            view.SkyCube = cube->Cube.get();
+            view.EnvironmentIntensity = sky->Intensity;
+            // A baked cube lights through the same radiance cube the skybox samples, so Intensity
+            // scales its ambient exactly as a baked material sky's does.
+            view.SkylightIntensity = sky->Intensity;
+            resolved.Kind = SkySourceKind::Cube;
+            // A CubeSky is always a baked cube (a caller-owned radiance cube); it is never a direct
+            // per-pixel source, so it always drives the skybox path and can light the scene.
+            resolved.Baked = true;
         }
         return resolved;
     }

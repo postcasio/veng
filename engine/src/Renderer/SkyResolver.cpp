@@ -1,10 +1,11 @@
 #include "SkyResolver.h"
 
 #include "EnvironmentIbl.h"
-#include "SkyBakeGate.h"
-#include "SkyCubemapBake.h"
 #include "AtmospherePrecompute.h"
 #include "SkySourceResolve.h"
+
+#include <Veng/Renderer/BakedSkyCube.h>
+#include <Veng/Renderer/DescriptorSet.h>
 
 #include <algorithm>
 #include <span>
@@ -72,7 +73,7 @@ namespace Veng::Renderer
         // binding, so a baked material sky samples through the same skybox pipeline. The cube renders
         // at HdrFormat (the scene-color format) so its radiance round-trips the skybox sampler.
         m_SkyBake =
-            SkyCubemapBake::Create(m_Context, m_Ibl->GetSetLayout(), HdrFormat, SkyBakeFaceSize);
+            BakedSkyCube::Create(m_Context, m_Ibl->GetSetLayout(), HdrFormat, SkyBakeFaceSize);
     }
 
     SkyResolver::~SkyResolver()
@@ -84,13 +85,14 @@ namespace Veng::Renderer
         {
             readback.Cancel(handle);
         }
+    }
 
-        // Retract any cube this resolver published so no other renderer adopts it once its owning
-        // cube is gone (this resolver owns the SkyCubemapBake that backs the published view).
-        if (m_PublishedKey != 0)
-        {
-            m_Context.GetSkyRadianceCubes().Remove(m_PublishedKey);
-        }
+    const Ref<DescriptorSet>& SkyResolver::GetSkyConsumerSet() const
+    {
+        // The resolved baked cube's set — its own for a baked material/atmosphere, the borrowed
+        // cube's for a CubeSky. Falls back to the owned cube's set when nothing baked is resolved (the
+        // renderer only binds this when the topology says the sky is baked, so the fallback is inert).
+        return m_ResolvedCube != nullptr ? m_ResolvedCube->GetSet() : m_SkyBake->GetSet();
     }
 
     void SkyResolver::Resolve(SceneView& view)
@@ -102,7 +104,7 @@ namespace Veng::Renderer
         view.AtmosphereIntensity = 1.0f;
         view.Atmosphere = Atmosphere{};
         view.SkyMaterial = {};
-        view.SkyBakeKey = 0;
+        view.SkyCube = nullptr;
         view.SkylightIntensity = 1.0f;
 
         // The toward-sun direction is derived from the scene's first directional light (a sun
@@ -150,7 +152,7 @@ namespace Veng::Renderer
         // to light from). A direct source with a lighting tier therefore degrades to background-only
         // — bake to light — logged once. None is always display-only.
         const bool cubeBacked =
-            kind == SkySourceKind::Environment ||
+            kind == SkySourceKind::Environment || kind == SkySourceKind::Cube ||
             ((kind == SkySourceKind::Material || kind == SkySourceKind::Atmosphere) && baked);
         const bool tierActive = lighting == SkyLighting::None || cubeBacked;
         if (!tierActive && !m_UnsupportedTierWarned)
@@ -169,11 +171,21 @@ namespace Veng::Renderer
         // frame boundary the pass set flips at, reusing the imported output (identity preserved). A
         // direct↔baked flip is a resolved-source change: the same recompile a kind change drives.
         // The renderer consults NeedsRecompile() and does the Rebuild itself.
+        // The baked cube this frame samples: a CubeSky borrows the caller's, a baked
+        // material/atmosphere uses the resolver's own, everything else has none. The skybox consumer
+        // set is bound at Rebuild from this, so a change to which cube is resolved recompiles.
+        const bool ownedBaked =
+            (kind == SkySourceKind::Material || kind == SkySourceKind::Atmosphere) && baked;
+        m_ResolvedCube = kind == SkySourceKind::Cube ? view.SkyCube
+                         : ownedBaked                ? m_SkyBake.get()
+                                                     : nullptr;
+
         m_NeedsRecompile = kind != m_ResolvedSkyKind || resolvedLighting != m_ResolvedSkyLighting ||
-                           baked != m_ResolvedSkyBaked;
+                           baked != m_ResolvedSkyBaked || m_ResolvedCube != m_LastResolvedCube;
         m_ResolvedSkyKind = kind;
         m_ResolvedSkyLighting = resolvedLighting;
         m_ResolvedSkyBaked = baked;
+        m_LastResolvedCube = m_ResolvedCube;
     }
 
     void SkyResolver::RecordPreBeginView(CommandBuffer& cmd, const SceneView& view,
@@ -222,132 +234,96 @@ namespace Veng::Renderer
             }
         }
 
-        // Bake a baked-mode sky into its radiance cube on the sky dirty signal. Every baked source —
-        // an authored material or the procedural atmosphere — fills the same cube; display and any
-        // ambient tier then read that one cube, so they agree by construction. The display bake is
-        // amortized through GeneratedTextureService: on the dirty signal a job fills a scratch cube
-        // one face per tick, and RecordAmortized copies it into the displayed cube once every face
-        // is rendered — so a jump never blocks a frame on six fullscreen sky evaluations, and the
-        // previous cube keeps being sampled until the new one lands. A direct or no-sky source bakes
-        // nothing.
+        // Establish this frame's baked cube. A MaterialSky/AtmosphereSky in SkyMode::Baked bakes into
+        // the resolver's own cube on the sky dirty signal; a CubeSky borrows a cube the caller bakes
+        // itself. The active cube is m_ResolvedCube (owned or borrowed) — the skybox samples it, the
+        // lighting tiers derive from it, and its amortized fill lands the same way for either. A
+        // direct or no-sky source bakes nothing. The bake is amortized through GeneratedTextureService:
+        // a job fills a scratch cube one tile per tick and RecordAmortized copies it into the displayed
+        // cube once complete, so a jump never blocks a frame on six fullscreen sky evaluations and the
+        // previous cube keeps being sampled until the new one lands.
         const bool bakedMaterial = m_ResolvedSkyKind == SkySourceKind::Material &&
                                    m_ResolvedSkyBaked && view.SkyMaterial.IsLoaded();
         const bool bakedAtmosphere =
             m_ResolvedSkyKind == SkySourceKind::Atmosphere && m_ResolvedSkyBaked;
-        const bool baking = bakedMaterial || bakedAtmosphere;
+        const bool ownedBaked = (m_ResolvedSkyKind == SkySourceKind::Material ||
+                                 m_ResolvedSkyKind == SkySourceKind::Atmosphere) &&
+                                m_ResolvedSkyBaked;
 
-        if (baking)
+        // Request a re-bake of the resolver's own cube on the dirty signal — the material's instance
+        // or in-place revision changing, or the atmosphere's params/sun changing.
+        if (bakedMaterial)
         {
-            // The dirty signal: for a material, its resolved instance changing; for the atmosphere,
-            // its params or the sun direction changing (both feed the baked sky radiance + disc).
-            const MaterialInstance* material = bakedMaterial ? view.SkyMaterial.Get() : nullptr;
-            bool bakeDirty = false;
-            if (bakedMaterial)
-            {
-                // The content-key / material-identity gate — see ShouldRebakeMaterialSky. Keyed, it
-                // survives a transient no-sky world-swap gap and shares one bake across equal-content
-                // worlds; unkeyed (every authored sky), it re-bakes on a material swap or revision.
-                bakeDirty = ShouldRebakeMaterialSky(
-                    view.SkyBakeKey, m_LastBakedSkyKey, m_DisplayCubeValid,
-                    m_SkyBake->IsBakeOutstanding(), material, m_LastBakedSkyMaterial,
-                    material != nullptr ? material->GetRevision() : 0,
-                    m_LastBakedSkyMaterialRevision);
-            }
-            else
-            {
-                bakeDirty = !m_BakedAtmosphereValid ||
-                            !AtmosphereEquals(view.Atmosphere, m_LastBakedAtmosphere) ||
-                            view.SunDirection != m_LastBakedAtmosphereSun;
-            }
-
-            // Establish this frame's cube on the dirty signal — by adopting a cube another renderer
-            // already baked for this key when one is published, else by requesting an amortized bake
-            // (the fill spreads across the frame budget and the previous cube stands until it lands).
+            const MaterialInstance* material = view.SkyMaterial.Get();
+            const bool bakeDirty =
+                material != m_LastBakedSkyMaterial ||
+                (material != nullptr && material->GetRevision() != m_LastBakedSkyMaterialRevision);
             if (bakeDirty)
             {
-                // Our previously-published cube no longer describes the sky we are about to
-                // (re)establish, so retract it before adopting or baking a different one. A transient
-                // no-sky gap does not reach here (bakeDirty is only set while baking), so a keyed
-                // sky's publication stands across a world swap for the next renderer to adopt.
-                if (m_PublishedKey != 0 && m_PublishedKey != view.SkyBakeKey)
-                {
-                    m_Context.GetSkyRadianceCubes().Remove(m_PublishedKey);
-                    m_PublishedKey = 0;
-                }
-
-                // Adopt a cube already published for this key — one blit instead of the per-face
-                // march. Only a keyed material sky can adopt (the key is the shared identity), the
-                // sizes must match, and it must not be our own cube (a self-copy). Everything else
-                // bakes.
-                const SkyRadianceCube* const shared =
-                    (bakedMaterial && view.SkyBakeKey != 0)
-                        ? m_Context.GetSkyRadianceCubes().Find(view.SkyBakeKey)
-                        : nullptr;
-                const bool adopt = shared != nullptr &&
-                                   shared->FaceSize == m_SkyBake->GetFaceSize() &&
-                                   shared->View != m_SkyBake->GetCubeView();
-
-                if (adopt)
-                {
-                    m_SkyBake->CopyFrom(cmd, shared->View, shared->FaceSize);
-                    m_DisplayCubeValid = true;
-                }
-                else if (bakedMaterial)
-                {
-                    m_SkyBake->RequestBake(m_Context.GetGeneratedTextures(), *material);
-                }
-                else
-                {
-                    m_SkyBake->RequestBakeAtmosphere(m_Context.GetGeneratedTextures(), skyPipeline,
-                                                     m_Atmosphere->GetSet(), view.Atmosphere,
-                                                     view.SunDirection, view.AtmosphereIntensity);
-                    m_LastBakedAtmosphere = view.Atmosphere;
-                    m_LastBakedAtmosphereSun = view.SunDirection;
-                    m_BakedAtmosphereValid = true;
-                }
+                m_SkyBake->RequestBake(m_Context.GetGeneratedTextures(), *material);
                 m_LastBakedSkyMaterial = material;
                 m_LastBakedSkyMaterialRevision = material != nullptr ? material->GetRevision() : 0;
-                m_LastBakedSkyKey = view.SkyBakeKey;
             }
-
-            // A completed bake copies its scratch cube into the displayed cube this frame, then the
-            // lighting tiers refresh from the freshly-copied cube. Recorded before the graph the
-            // skybox and lighting passes sample it through.
-            const bool landed = m_SkyBake->RecordAmortized(cmd);
-            if (landed)
+        }
+        else if (bakedAtmosphere)
+        {
+            const bool bakeDirty = !m_BakedAtmosphereValid ||
+                                   !AtmosphereEquals(view.Atmosphere, m_LastBakedAtmosphere) ||
+                                   view.SunDirection != m_LastBakedAtmosphereSun;
+            if (bakeDirty)
             {
-                m_DisplayCubeValid = true;
-                // Publish the freshly-baked cube so the other renderers showing this world's sky
-                // adopt it by copy rather than each baking it. Only a keyed bake shares.
-                if (m_LastBakedSkyKey != 0)
-                {
-                    m_Context.GetSkyRadianceCubes().Publish(
-                        m_LastBakedSkyKey, m_SkyBake->GetCubeView(), m_SkyBake->GetFaceSize());
-                    m_PublishedKey = m_LastBakedSkyKey;
-                }
+                m_SkyBake->RequestBakeAtmosphere(m_Context.GetGeneratedTextures(), skyPipeline,
+                                                 m_Atmosphere->GetSet(), view.Atmosphere,
+                                                 view.SunDirection, view.AtmosphereIntensity);
+                m_LastBakedAtmosphere = view.Atmosphere;
+                m_LastBakedAtmosphereSun = view.SunDirection;
+                m_BakedAtmosphereValid = true;
             }
+        }
 
-            // The SH readback: a landed bake's own displayed cube is read back reduced, without
-            // blocking the render thread, the projection deferred a frame or two — so a static or
-            // occasionally re-baked SH sky costs one bake. This covers the tier's cold start too: the
-            // first landed bake is read back the same way, so the SH ambient arrives a few frames
-            // after the initial amortized display bake lands rather than through a blocking seed.
-            // Until it does, m_SkySh is zero and the scene lights from a flat ambient — a brief,
-            // usually-imperceptible latency at first entry, in place of a first-frame hitch.
-            if (landed && m_ResolvedSkyLighting == SkyLighting::SH)
+        // Not owning a bake this frame (a CubeSky borrow, an environment, a direct/no source): drop
+        // any owned bake in flight. The owned cube keeps its last content, so a returning owned sky
+        // re-bakes on its own dirty gate rather than losing it here.
+        if (!ownedBaked)
+        {
+            m_SkyBake->AbandonBake();
+            m_LastBakedSkyMaterial = nullptr;
+            m_BakedAtmosphereValid = false;
+        }
+
+        if (m_ResolvedCube != nullptr)
+        {
+            // Drive the amortized copy of a completed bake into the displayed cube. Idempotent — for a
+            // shared cube several renderers call this and the first with a landed bake does the copy,
+            // the rest no-op — and a landed copy advances the cube's revision.
+            m_ResolvedCube->RecordAmortized(cmd);
+
+            // Re-derive the lighting tiers off the cube when its content changed — the revision moved
+            // (a fresh bake landed, this resolver's own or, for a shared cube, another renderer's) or
+            // this resolver switched to a different cube — and only once the cube holds a real bake.
+            const bool cubeChanged = m_ResolvedCube != m_LastDerivedCube ||
+                                     m_ResolvedCube->GetRevision() != m_LastSeenCubeRevision;
+            m_LastDerivedCube = m_ResolvedCube;
+            m_LastSeenCubeRevision = m_ResolvedCube->GetRevision();
+
+            // The SH readback: the cube is read back reduced, without blocking the render thread, the
+            // projection deferred a frame or two — so a static or occasionally re-baked SH sky costs
+            // one bake, and the SH ambient arrives a few frames after the first bake lands.
+            if (m_ResolvedCube->IsBaked() && m_ResolvedSkyLighting == SkyLighting::SH &&
+                cubeChanged)
             {
                 BeginDeferredShReadback(cmd);
             }
 
-            // IBL convolves the displayed cube into the split-sum maps when it changes (a bake
-            // landed) or on first entry to the tier with a valid cube — a static sky pays it once.
+            // IBL convolves the cube into the split-sum maps when its content changes or on first
+            // entry to the tier with a real bake — a static sky pays it once.
             if (m_ResolvedSkyLighting == SkyLighting::IBL)
             {
-                if (m_DisplayCubeValid && (landed || !m_SkyCubeConvolved))
+                if (m_ResolvedCube->IsBaked() && (cubeChanged || !m_SkyCubeConvolved))
                 {
                     m_Ibl->EnsureInitialized(cmd);
-                    m_Ibl->GenerateFromCube(cmd, m_SkyBake->GetCubeView(),
-                                            m_SkyBake->GetFaceSize());
+                    m_Ibl->GenerateFromCube(cmd, m_ResolvedCube->GetCubeView(),
+                                            m_ResolvedCube->GetFaceSize());
                     m_SkyCubeConvolved = true;
                 }
             }
@@ -358,18 +334,7 @@ namespace Veng::Renderer
         }
         else
         {
-            // The source stopped being baked: drop any bake in flight. The displayed cube's
-            // validity and its content key are NOT forgotten here: the cube physically still holds
-            // its last landed bake, and a baked source can vanish for a frame or two mid-world-swap
-            // (before the destination world authors its Sky) — clearing the key/validity then would
-            // force an equal-content sky to re-bake on the far side of every swap. A genuine switch
-            // to a non-cube-backed source unwires the skybox-cube pass (the recompile), so the stale
-            // validity is never displayed; a later baked source re-bakes when its key differs, or
-            // when no valid cube stands (both covered by the bake gate above).
-            m_SkyBake->AbandonBake();
-            m_LastBakedSkyMaterial = nullptr;
             m_SkyCubeConvolved = false;
-            m_BakedAtmosphereValid = false;
         }
 
         // An environment sky on the SH tier lights the diffuse term from its radiance cube — the
@@ -406,23 +371,23 @@ namespace Veng::Renderer
         }
         m_ShReadback.Handles.clear();
 
-        // Reduce the just-baked display cube to the readback level in this frame's command buffer.
-        m_SkyBake->RecordReductionMips(cmd);
+        // Reduce the resolved cube (owned or borrowed) to the readback level in this command buffer.
+        m_ResolvedCube->RecordReductionMips(cmd);
 
-        const u32 faceSize = m_SkyBake->GetShReadbackFaceSize();
+        const u32 faceSize = m_ResolvedCube->GetShReadbackFaceSize();
         const usize faceBytes = static_cast<usize>(faceSize) * faceSize * 8; // RGBA16F
         m_ShReadback.FaceSize = faceSize;
-        m_ShReadback.Faces.assign(faceBytes * SkyCubemapBake::CubeFaces, 0);
-        m_ShReadback.Remaining = SkyCubemapBake::CubeFaces;
+        m_ShReadback.Faces.assign(faceBytes * BakedSkyCube::CubeFaces, 0);
+        m_ShReadback.Remaining = BakedSkyCube::CubeFaces;
 
         // One non-blocking readback per face of the reduced level; the completions land together a
         // few frames on, accumulate the faces layer-major, and reproject once the last arrives.
-        for (u32 face = 0; face < SkyCubemapBake::CubeFaces; ++face)
+        for (u32 face = 0; face < BakedSkyCube::CubeFaces; ++face)
         {
             const AsyncReadbackHandle handle = readback.Request({
                 .Name = "Sky SH Readback",
-                .Image = m_SkyBake->GetCubeImage(),
-                .MipLevel = m_SkyBake->GetShReadbackMipLevel(),
+                .Image = m_ResolvedCube->GetCubeImage(),
+                .MipLevel = m_ResolvedCube->GetShReadbackMipLevel(),
                 .ArrayLayer = face,
                 .RestoreTo = AccessKind::Sample,
                 .OnComplete =

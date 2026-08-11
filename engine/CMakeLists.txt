@@ -302,7 +302,7 @@ add_library(veng SHARED
         src/Renderer/GpuCullSystem.cpp
         src/Renderer/PickingSystem.cpp
         src/Renderer/Passes/SkyboxScenePass.cpp
-        src/Renderer/SkyCubemapBake.cpp
+        src/Renderer/BakedSkyCube.cpp
         src/Renderer/SkyResolver.cpp
         src/Renderer/SkySourceResolve.cpp
         src/Renderer/AtmospherePrecompute.cpp

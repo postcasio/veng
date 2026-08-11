@@ -1,4 +1,4 @@
-#include "SkyCubemapBake.h"
+#include <Veng/Renderer/BakedSkyCube.h>
 
 #include <algorithm>
 #include <atomic>
@@ -31,7 +31,7 @@ namespace Veng::Renderer
         constexpr u32 RadianceBinding = 0;
         constexpr u32 SamplerBinding = 4;
 
-        // A process-unique key per bake instance, so two SkyCubemapBakes sharing one context's
+        // A process-unique key per bake instance, so two BakedSkyCubes sharing one context's
         // generated-texture service never collide on the service's key space.
         GeneratedTextureKey NextSkyBakeJobKey()
         {
@@ -133,7 +133,7 @@ namespace Veng::Renderer
         {
             u32 mip = 0;
             u32 size = faceSize;
-            while (size > SkyCubemapBake::ShReadbackFaceSize && (size % 2 == 0))
+            while (size > BakedSkyCube::ShReadbackFaceSize && (size % 2 == 0))
             {
                 size /= 2;
                 ++mip;
@@ -176,7 +176,7 @@ namespace Veng::Renderer
             };
         }
 
-        std::array<mat4, SkyCubemapBake::CubeFaces> BuildFaceMatrices()
+        std::array<mat4, BakedSkyCube::CubeFaces> BuildFaceMatrices()
         {
             return {
                 FaceInvViewProj({0, 0, -1}, {0, -1, 0}, {1, 0, 0}),  // +X
@@ -189,16 +189,16 @@ namespace Veng::Renderer
         }
     }
 
-    Unique<SkyCubemapBake> SkyCubemapBake::Create(Context& context,
-                                                  const Ref<DescriptorSetLayout>& consumerLayout,
-                                                  const Format sceneColorFormat, const u32 faceSize)
+    Unique<BakedSkyCube> BakedSkyCube::Create(Context& context,
+                                              const Ref<DescriptorSetLayout>& consumerLayout,
+                                              const Format sceneColorFormat, const u32 faceSize)
     {
-        return Unique<SkyCubemapBake>(
-            new SkyCubemapBake(context, consumerLayout, sceneColorFormat, faceSize));
+        return Unique<BakedSkyCube>(
+            new BakedSkyCube(context, consumerLayout, sceneColorFormat, faceSize));
     }
 
-    SkyCubemapBake::SkyCubemapBake(Context& context, const Ref<DescriptorSetLayout>& consumerLayout,
-                                   const Format sceneColorFormat, const u32 faceSize)
+    BakedSkyCube::BakedSkyCube(Context& context, const Ref<DescriptorSetLayout>& consumerLayout,
+                               const Format sceneColorFormat, const u32 faceSize)
         : m_Context(context), m_SceneColorFormat(sceneColorFormat), m_FaceSize(faceSize),
           m_ShReadbackMip(ComputeShReadbackMip(faceSize)),
           m_TilesPerAxis(TilesPerFaceAxis(faceSize)),
@@ -351,7 +351,7 @@ namespace Veng::Renderer
             });
     }
 
-    SkyCubemapBake::~SkyCubemapBake()
+    BakedSkyCube::~BakedSkyCube()
     {
         // Tear down any amortized bake still in flight so its tick/completion callbacks — which
         // capture this — never fire after it is gone.
@@ -359,7 +359,7 @@ namespace Veng::Renderer
         m_Context.GetBindlessRegistry().Release(m_DepthHandle);
     }
 
-    void SkyCubemapBake::EnsurePipeline(const MaterialInstance& material)
+    void BakedSkyCube::EnsurePipeline(const MaterialInstance& material)
     {
         // The bake pipeline depends only on the material's shader modules, its layout, and the fixed
         // cube-face format — never the instance's params, which ride the push range and the bindless
@@ -372,7 +372,7 @@ namespace Veng::Renderer
         }
 
         VE_ASSERT(material.GetDomain() == MaterialDomain::Sky,
-                  "SkyCubemapBake: material '{}' is not a Sky material", material.GetName());
+                  "BakedSkyCube: material '{}' is not a Sky material", material.GetName());
 
         // The material's own fragment + the fullscreen vertex, against the cube-face color format.
         // The layout (set 0 reserved, the sky push range) comes from the material loader, so the
@@ -393,8 +393,7 @@ namespace Veng::Renderer
         m_PipelineFragment = material.GetFragmentModule().get();
     }
 
-    u32 SkyCubemapBake::AcquireFaceViewSlot(CommandBuffer& cmd, const u32 face,
-                                            const bool faceFirst)
+    u32 BakedSkyCube::AcquireFaceViewSlot(CommandBuffer& cmd, const u32 face, const bool faceFirst)
     {
         BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
@@ -412,7 +411,7 @@ namespace Veng::Renderer
         {
             const bool claimed = registry.TryBeginView();
             VE_ASSERT(claimed,
-                      "SkyCubemapBake: the frame's view budget is spent; a bake claims one view "
+                      "BakedSkyCube: the frame's view budget is spent; a bake claims one view "
                       "slot per face and the caller must reserve them");
             ViewConstantsRegion region{};
             region.InvViewProj = m_FaceInvViewProj[face];
@@ -430,10 +429,10 @@ namespace Veng::Renderer
         return m_LastTileViewIndex;
     }
 
-    void SkyCubemapBake::RecordMaterialRegion(CommandBuffer& cmd, const MaterialInstance& material,
-                                              const Ref<ImageView>& faceView, const u32 faceSize,
-                                              const u32 face, const uvec2 tileOffset,
-                                              const uvec2 tileExtent, const bool clear)
+    void BakedSkyCube::RecordMaterialRegion(CommandBuffer& cmd, const MaterialInstance& material,
+                                            const Ref<ImageView>& faceView, const u32 faceSize,
+                                            const u32 face, const uvec2 tileOffset,
+                                            const uvec2 tileExtent, const bool clear)
     {
         const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
         const u32 selector = material.GetMaterialSelector();
@@ -474,7 +473,7 @@ namespace Veng::Renderer
         ++m_FaceRendersRecorded;
     }
 
-    void SkyCubemapBake::Bake(CommandBuffer& cmd, const MaterialInstance& material)
+    void BakedSkyCube::Bake(CommandBuffer& cmd, const MaterialInstance& material)
     {
         EnsurePipeline(material);
         // The synchronous path renders whole faces: one region draw per face covering it, Clear.
@@ -487,7 +486,7 @@ namespace Veng::Renderer
         cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
     }
 
-    void SkyCubemapBake::RecordReductionMips(CommandBuffer& cmd)
+    void BakedSkyCube::RecordReductionMips(CommandBuffer& cmd)
     {
         // The display face already sits at or below the readback size; the readback reads mip 0.
         if (m_ShReadbackMip == 0)
@@ -540,14 +539,14 @@ namespace Veng::Renderer
         cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
     }
 
-    void SkyCubemapBake::RecordAtmosphereRegion(CommandBuffer& cmd,
-                                                const Ref<GraphicsPipeline>& pipeline,
-                                                const Ref<DescriptorSet>& atmosphereSet,
-                                                const Atmosphere& atmosphere,
-                                                const vec3& sunDirection, const f32 intensity,
-                                                const Ref<ImageView>& faceView, const u32 faceSize,
-                                                const u32 face, const uvec2 tileOffset,
-                                                const uvec2 tileExtent, const bool clear)
+    void BakedSkyCube::RecordAtmosphereRegion(CommandBuffer& cmd,
+                                              const Ref<GraphicsPipeline>& pipeline,
+                                              const Ref<DescriptorSet>& atmosphereSet,
+                                              const Atmosphere& atmosphere,
+                                              const vec3& sunDirection, const f32 intensity,
+                                              const Ref<ImageView>& faceView, const u32 faceSize,
+                                              const u32 face, const uvec2 tileOffset,
+                                              const uvec2 tileExtent, const bool clear)
     {
         const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
@@ -606,10 +605,10 @@ namespace Veng::Renderer
         ++m_FaceRendersRecorded;
     }
 
-    void SkyCubemapBake::BakeAtmosphere(CommandBuffer& cmd, const Ref<GraphicsPipeline>& pipeline,
-                                        const Ref<DescriptorSet>& atmosphereSet,
-                                        const Atmosphere& atmosphere, const vec3& sunDirection,
-                                        const f32 intensity)
+    void BakedSkyCube::BakeAtmosphere(CommandBuffer& cmd, const Ref<GraphicsPipeline>& pipeline,
+                                      const Ref<DescriptorSet>& atmosphereSet,
+                                      const Atmosphere& atmosphere, const vec3& sunDirection,
+                                      const f32 intensity)
     {
         // The synchronous path renders whole faces: one region draw per face covering it, Clear.
         for (u32 face = 0; face < CubeFaces; ++face)
@@ -622,12 +621,12 @@ namespace Veng::Renderer
         cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
     }
 
-    void SkyCubemapBake::AbandonBake()
+    void BakedSkyCube::AbandonBake()
     {
         CancelBake();
     }
 
-    void SkyCubemapBake::CancelBake()
+    void BakedSkyCube::CancelBake()
     {
         if (m_BakeState != BakeState::Idle)
         {
@@ -636,8 +635,8 @@ namespace Veng::Renderer
         }
     }
 
-    void SkyCubemapBake::RequestBake(GeneratedTextureService& service,
-                                     const MaterialInstance& material)
+    void BakedSkyCube::RequestBake(GeneratedTextureService& service,
+                                   const MaterialInstance& material)
     {
         EnsurePipeline(material);
 
@@ -672,11 +671,11 @@ namespace Veng::Renderer
         m_BakeState = BakeState::Pending;
     }
 
-    void SkyCubemapBake::RequestBakeAtmosphere(GeneratedTextureService& service,
-                                               const Ref<GraphicsPipeline>& pipeline,
-                                               const Ref<DescriptorSet>& atmosphereSet,
-                                               const Atmosphere& atmosphere,
-                                               const vec3& sunDirection, const f32 intensity)
+    void BakedSkyCube::RequestBakeAtmosphere(GeneratedTextureService& service,
+                                             const Ref<GraphicsPipeline>& pipeline,
+                                             const Ref<DescriptorSet>& atmosphereSet,
+                                             const Atmosphere& atmosphere, const vec3& sunDirection,
+                                             const f32 intensity)
     {
         CancelBake();
 
@@ -708,43 +707,7 @@ namespace Veng::Renderer
         m_BakeState = BakeState::Pending;
     }
 
-    void SkyCubemapBake::CopyFrom(CommandBuffer& cmd, const Ref<ImageView>& sourceView,
-                                  const u32 sourceFace)
-    {
-        VE_ASSERT(sourceFace == m_FaceSize,
-                  "SkyCubemapBake::CopyFrom: source face {} != this cube's face {}", sourceFace,
-                  m_FaceSize);
-
-        // Adopting a finished cube supersedes any bake this instance had in flight.
-        CancelBake();
-
-        // Copy the source cube's six faces into this cube's mip 0 in one step, mirroring the
-        // scratch->displayed copy in RecordAmortized. The source is another SkyCubemapBake's
-        // displayed cube (sampled); it is transitioned to a transfer source and restored to sampled
-        // so its owner samples it unchanged next frame.
-        cmd.PrepareForAccess(sourceView, AccessKind::TransferSrc);
-        cmd.PrepareForAccess(m_MipViews[0], AccessKind::TransferDst);
-        const vk::ImageCopy copy{
-            .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                               .mipLevel = 0,
-                               .baseArrayLayer = 0,
-                               .layerCount = CubeFaces},
-            .srcOffset = {.x = 0, .y = 0, .z = 0},
-            .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                               .mipLevel = 0,
-                               .baseArrayLayer = 0,
-                               .layerCount = CubeFaces},
-            .dstOffset = {.x = 0, .y = 0, .z = 0},
-            .extent = {.width = m_FaceSize, .height = m_FaceSize, .depth = 1},
-        };
-        GetVkCommandBuffer(cmd).copyImage(
-            GetVkImage(*sourceView->GetImage()), vk::ImageLayout::eTransferSrcOptimal,
-            GetVkImage(*m_CubeImage), vk::ImageLayout::eTransferDstOptimal, 1, &copy);
-        cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
-        cmd.PrepareForAccess(sourceView, AccessKind::Sample);
-    }
-
-    bool SkyCubemapBake::RecordAmortized(CommandBuffer& cmd)
+    bool BakedSkyCube::RecordAmortized(CommandBuffer& cmd)
     {
         if (m_BakeState != BakeState::Landed)
         {
@@ -779,6 +742,46 @@ namespace Veng::Renderer
         // so the key is free for the next re-bake.
         m_Context.GetGeneratedTextures().Release(m_JobKey);
         m_BakeState = BakeState::Idle;
+        // A fresh bake is now displayed: advance the revision so every renderer sampling this cube
+        // re-derives its IBL/SH from the new content (see GetRevision).
+        ++m_Revision;
         return true;
+    }
+
+    Ref<DescriptorSetLayout> BakedSkyCube::CreateConsumerSetLayout(Context& context)
+    {
+        // The radiance/irradiance/prefilter cubes at 0/1/2, the BRDF LUT at 3, the linear sampler at
+        // 4 — the image-based-lighting consumer set's shape. A baked cube writes only the radiance
+        // (0) and the sampler (4); the skybox pipeline binds the whole layout, so a baked cube's set
+        // and the IBL lighting set must share it. This is its one definition; EnvironmentIbl builds
+        // its own consumer set against this, and a service that owns a cube without a SceneRenderer
+        // creates a compatible layout here.
+        return DescriptorSetLayout::Create(context,
+                                           {
+                                               .Name = "Sky Radiance Consumer Set Layout",
+                                               .Bindings =
+                                                   {
+                                                       {.Binding = 0,
+                                                        .Type = DescriptorType::SampledImage,
+                                                        .Count = 1,
+                                                        .Stages = ShaderStage::Fragment},
+                                                       {.Binding = 1,
+                                                        .Type = DescriptorType::SampledImage,
+                                                        .Count = 1,
+                                                        .Stages = ShaderStage::Fragment},
+                                                       {.Binding = 2,
+                                                        .Type = DescriptorType::SampledImage,
+                                                        .Count = 1,
+                                                        .Stages = ShaderStage::Fragment},
+                                                       {.Binding = 3,
+                                                        .Type = DescriptorType::SampledImage,
+                                                        .Count = 1,
+                                                        .Stages = ShaderStage::Fragment},
+                                                       {.Binding = 4,
+                                                        .Type = DescriptorType::Sampler,
+                                                        .Count = 1,
+                                                        .Stages = ShaderStage::Fragment},
+                                                   },
+                                           });
     }
 }

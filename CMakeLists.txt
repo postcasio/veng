@@ -924,7 +924,6 @@ if (VENG_BUILD_TESTS)
             tests/unit/punctual_shadows.cpp
             tests/unit/hi_z_history.cpp
             tests/unit/frame_topology.cpp
-            tests/unit/sky_bake_gate.cpp
             tests/unit/generated_texture_queue.cpp
             tests/unit/fluid_sim_config.cpp
             tests/unit/flow_field.cpp
@@ -1663,9 +1662,9 @@ if (VENG_BUILD_TESTS)
             glfw
             GPUOpen::VulkanMemoryAllocator
     )
-    # sky_bake.cpp exercises the renderer-internal SkyCubemapBake directly (reading back the
-    # baked cube faces for the seam-continuity oracle), so this target sees engine/src — the
-    # private renderer headers, whose symbols the shared lib exports by default visibility.
+    # sky_bake.cpp exercises BakedSkyCube directly (reading back the baked cube faces for the
+    # seam-continuity oracle) and includes renderer-internal headers (EnvironmentIbl), so this
+    # target sees engine/src — the private renderer headers the shared lib exports by default.
     target_include_directories(veng_test_gpu PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/engine/src)
     # bindless_registry.cpp and texture_loader.cpp draw with the test shaders
     # (fullscreen.vert + bindless_sample.frag), loaded by id from the cooked pack.

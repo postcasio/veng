@@ -28,7 +28,7 @@ namespace Veng::Renderer
     /// @brief A caller-chosen identity for a generated-texture job (mirrors GeneratedTextureService).
     using GeneratedTextureKey = u64;
 
-    /// @brief Bakes a fullscreen sky evaluation into an owned radiance cubemap the skybox path samples.
+    /// @brief A caller-ownable baked sky radiance cube several renderers and worlds can share.
     ///
     /// Renders a Sky-domain material's fragment, or the procedural-atmosphere sky fragment, into
     /// the six faces of a radiance cube — the synchronous Bake with one fullscreen draw per face,
@@ -39,6 +39,14 @@ namespace Veng::Renderer
     /// forced everywhere (a 1×1 far-plane stand-in depth image bound in the depth slot, so every
     /// pixel passes the background test). The fragment's param block and bound handles bind exactly
     /// as in the direct path; the fragment is unchanged and unaware it is baked.
+    ///
+    /// It is public and ownable so one bake can be **shared**: a SceneRenderer's SkyResolver owns one
+    /// for a MaterialSky/AtmosphereSky in SkyMode::Baked, and a caller (a game service baking one sky
+    /// for a system) owns one that every renderer showing that sky samples through a Scene `CubeSky`
+    /// source — one bake for a main viewport and its capture probes, and for the several worlds a
+    /// system spans, instead of a per-renderer re-bake on every world swap. `GetRevision` advances
+    /// each time a fresh bake lands, so every renderer sampling the cube re-derives its IBL/SH from it
+    /// without a per-renderer dirty signal.
     ///
     /// The displayed cube is created off the bindless registry the way the IBL radiance image is;
     /// the synchronous Bake records on the caller's dirty signal (the source swapped or its
@@ -55,7 +63,7 @@ namespace Veng::Renderer
     /// The scratch cube is the reason VRAM is two full-size cubes, not one; only the displayed one
     /// carries the reduction chain down to the SH readback level, which the SH ambient tier reads
     /// back without blocking through RecordReductionMips + AsyncReadback.
-    class SkyCubemapBake
+    class BakedSkyCube
     {
     public:
         /// @brief Creates the cube target, the 1×1 stand-in depth, and the per-face bake pipelines.
@@ -67,16 +75,29 @@ namespace Veng::Renderer
         ///                       cube target renders at this format so the baked radiance round-trips
         ///                       the skybox sampler with no conversion.
         /// @param faceSize      Cube face edge length in texels.
-        /// @return A new SkyCubemapBake.
-        static Unique<SkyCubemapBake> Create(Context& context,
-                                             const Ref<DescriptorSetLayout>& consumerLayout,
-                                             Format sceneColorFormat, u32 faceSize);
+        /// @return A new BakedSkyCube.
+        static Unique<BakedSkyCube> Create(Context& context,
+                                           const Ref<DescriptorSetLayout>& consumerLayout,
+                                           Format sceneColorFormat, u32 faceSize);
+
+        /// @brief Creates the descriptor-set layout a baked cube's consumer set (and the skybox
+        ///        pipeline that binds it) is built against — the single definition of that shape.
+        ///
+        /// The skybox samples the baked radiance cube through the radiance/sampler bindings of the
+        /// image-based-lighting consumer set, so a baked cube's consumer set and the IBL lighting set
+        /// share one layout shape; this is where that shape lives. A caller that owns a BakedSkyCube
+        /// without a SceneRenderer — a service that bakes one sky for several renderers to sample —
+        /// creates a compatible layout here to pass to Create; two layouts with identical bindings
+        /// are interchangeable, so the cube it fills binds into any renderer's skybox pipeline.
+        /// @param context The render context the layout is created on.
+        /// @return The consumer set layout.
+        static Ref<DescriptorSetLayout> CreateConsumerSetLayout(Context& context);
 
         /// @brief Destroys all owned resources through the deferred-destruction retire path.
-        ~SkyCubemapBake();
+        ~BakedSkyCube();
 
-        SkyCubemapBake(const SkyCubemapBake&) = delete;
-        SkyCubemapBake& operator=(const SkyCubemapBake&) = delete;
+        BakedSkyCube(const BakedSkyCube&) = delete;
+        BakedSkyCube& operator=(const BakedSkyCube&) = delete;
 
         /// @brief Faces in the radiance cube.
         ///
@@ -184,15 +205,6 @@ namespace Veng::Renderer
         /// deferring the lighting-tier readback until the bake lands polls this.
         [[nodiscard]] bool IsBakePending() const { return m_BakeState == BakeState::Pending; }
 
-        /// @brief Whether an amortized bake is outstanding — filling, or completed but not yet copied.
-        ///
-        /// True from RequestBake until RecordAmortized has copied the finished scratch cube into the
-        /// displayed one — i.e. the Pending fill *and* the one-frame Landed gap before the copy. A
-        /// caller that re-requests a bake whenever no valid display cube stands must poll this rather
-        /// than IsBakePending: re-requesting during the Landed gap would supersede the finished bake
-        /// before RecordAmortized copies it, so the display cube would never be filled.
-        [[nodiscard]] bool IsBakeOutstanding() const { return m_BakeState != BakeState::Idle; }
-
         /// @brief Copies a just-landed amortized bake into the displayed cube, once.
         ///
         /// Records nothing until an amortized bake has completed; on the frame after completion it
@@ -204,19 +216,17 @@ namespace Veng::Renderer
         /// @return True on the one frame the displayed cube was refreshed from a completed bake.
         bool RecordAmortized(CommandBuffer& cmd);
 
-        /// @brief Fills the displayed cube by copying an equal-size cube another bake already produced.
+        /// @brief A revision that advances each time a completed bake lands in the displayed cube.
         ///
-        /// The adopt path (see Context's SkyRadianceCubeRegistry): a renderer showing a sky another
-        /// renderer already baked copies that finished cube into its own displayed cube in one blit,
-        /// rather than running the per-face march again. Supersedes any bake this instance had in
-        /// flight. Records into @p cmd before the graph the skybox pass samples the cube; leaves this
-        /// cube sampled and restores the source cube to a sampled layout for its owner. The caller
-        /// marks its display cube valid after this returns.
-        /// @param cmd        The command buffer the copy is recorded into.
-        /// @param sourceView The source cube's sampled view (all six faces, mip 0).
-        /// @param sourceFace The source cube's face edge length; must equal GetFaceSize().
-        /// @pre sourceFace == GetFaceSize() — a mismatched cube is not copied.
-        void CopyFrom(CommandBuffer& cmd, const Ref<ImageView>& sourceView, u32 sourceFace);
+        /// RecordAmortized bumps it on the frame it copies a finished bake across. A renderer that
+        /// samples this cube — its owner, or another renderer borrowing a shared one — re-derives
+        /// whatever it convolves from the cube (the IBL split-sum maps, the SH ambient) when this
+        /// moves, so a re-bake refreshes every consumer's lighting without a per-consumer dirty
+        /// signal. Zero until the first bake lands.
+        [[nodiscard]] u64 GetRevision() const { return m_Revision; }
+
+        /// @brief Whether any bake has landed (else the displayed cube is the initial black clear).
+        [[nodiscard]] bool IsBaked() const { return m_Revision != 0; }
 
         /// @brief The consumer descriptor set the skybox pass binds to sample the baked cube.
         ///
@@ -254,8 +264,8 @@ namespace Veng::Renderer
         [[nodiscard]] u64 GetFaceRendersRecorded() const { return m_FaceRendersRecorded; }
 
     private:
-        SkyCubemapBake(Context& context, const Ref<DescriptorSetLayout>& consumerLayout,
-                       Format sceneColorFormat, u32 faceSize);
+        BakedSkyCube(Context& context, const Ref<DescriptorSetLayout>& consumerLayout,
+                     Format sceneColorFormat, u32 faceSize);
 
         /// @brief Builds the per-face graphics pipeline from the bound material's shaders, once per identity.
         void EnsurePipeline(const MaterialInstance& material);
@@ -354,6 +364,10 @@ namespace Veng::Renderer
         // the same content is idempotent while a genuine change supersedes.
         GeneratedTextureKey m_JobKey;
         BakeState m_BakeState = BakeState::Idle;
+
+        // Advances each time RecordAmortized copies a finished bake into the displayed cube; a
+        // consumer re-derives its IBL/SH from the cube when it moves. See GetRevision.
+        u64 m_Revision = 0;
 
         Ref<Image> m_DepthImage;     // 1×1 stand-in, holds the far-plane value (1.0)
         Ref<ImageView> m_DepthView;  // sampled as a color texture by the fragment's depth read

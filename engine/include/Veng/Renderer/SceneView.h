@@ -35,6 +35,7 @@ namespace Veng::Renderer
 {
     class Context;
     class DescriptorSet;
+    class BakedSkyCube;
 
     /// @brief Construction parameters for SceneRenderer.
     struct SceneRendererInfo
@@ -234,12 +235,12 @@ namespace Veng::Renderer
         /// ray and the g-buffer depth mask. It fills the background only — it feeds no lighting.
         AssetHandle<MaterialInstance> SkyMaterial;
 
-        /// @brief Content key gating a baked material sky's re-bake; 0 uses the material-identity gate.
+        /// @brief Caller-owned baked radiance cube a CubeSky source samples; null for none.
         ///
-        /// Filled from the resolved MaterialSky source's BakeKey. When nonzero, the sky resolver
-        /// re-bakes the radiance cube only when this changes, so two worlds authoring equal-content
-        /// material instances share one bake (see MaterialSky::BakeKey).
-        u64 SkyBakeKey = 0;
+        /// Filled from the resolved CubeSky source. The sky resolver samples this cube for the skybox
+        /// and derives its lighting tiers from it, baking nothing itself — the shared-sky path where
+        /// one baked cube serves several renderers and worlds (see Scene CubeSky, BakedSkyCube).
+        BakedSkyCube* SkyCube = nullptr;
 
         /// @brief Bloom bright-pass luminance knee; pushed to the downsample compute each Execute.
         ///

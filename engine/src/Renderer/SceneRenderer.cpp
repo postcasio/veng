@@ -28,7 +28,7 @@
 #include "Passes/VolumeScenePass.h"
 #include "ShadowSystem.h"
 #include "RefractionGrab.h"
-#include "SkyCubemapBake.h"
+#include <Veng/Renderer/BakedSkyCube.h>
 #include "SceneRendererIds.h"
 #include "SkyResolver.h"
 #include "DofChain.h"
@@ -229,10 +229,10 @@ namespace Veng::Renderer
         *m_Topology = next;
         m_SkyResolver->SetSkylightActive(m_Topology->SkylightWanted);
 
-        // The skybox pass samples the IBL radiance set for an environment sky, or the bake's
-        // consumer set (same radiance binding) for a baked material/atmosphere sky.
+        // The skybox pass samples the IBL radiance set for an environment sky, or the resolved baked
+        // cube's consumer set (same radiance binding) for a baked material/atmosphere sky or a CubeSky.
         const Ref<DescriptorSet> skyboxSet = m_Topology->BakedSkyWanted
-                                                 ? m_SkyResolver->GetSkyBake().GetSet()
+                                                 ? m_SkyResolver->GetSkyConsumerSet()
                                                  : m_SkyResolver->GetIbl().GetSet();
 
         RenderGraph graph(m_Context);

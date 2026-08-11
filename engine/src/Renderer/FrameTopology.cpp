@@ -42,16 +42,17 @@ namespace Veng::Renderer
         // The sky pass topology is driven by the resolved Sky component, not a consumer toggle, and
         // reduces to one rule: a source fills the radiance cube (static) or composites direct
         // (dynamic), and the cube-backed sources share one display path. Every cube-backed source —
-        // an environment (its own radiance cube), or a baked material/atmosphere (the bake cube) —
-        // displays through the cubemap skybox pass; the two direct per-pixel passes
-        // (SkyMaterialScenePass for a direct material, SkyScenePass for a direct atmosphere) survive
-        // only as the authored dynamic modes. The SH skylight arm folds into the lighting pass for
-        // any cube-backed source on the SH tier; the resolver's own skylight-active flag then gates
-        // the per-frame upload.
+        // an environment (its own radiance cube), a baked material/atmosphere (the bake cube), or a
+        // CubeSky (a caller-owned baked cube) — displays through the cubemap skybox pass; the two
+        // direct per-pixel passes (SkyMaterialScenePass for a direct material, SkyScenePass for a
+        // direct atmosphere) survive only as the authored dynamic modes. The SH skylight arm folds
+        // into the lighting pass for any cube-backed source on the SH tier; the resolver's own
+        // skylight-active flag then gates the per-frame upload.
         topology.BakedSkyWanted =
             topology.SceneComposited &&
-            (sky.Kind == SkySourceKind::Material || sky.Kind == SkySourceKind::Atmosphere) &&
-            sky.IsBaked;
+            (((sky.Kind == SkySourceKind::Material || sky.Kind == SkySourceKind::Atmosphere) &&
+              sky.IsBaked) ||
+             sky.Kind == SkySourceKind::Cube);
         topology.CubeBacked =
             (topology.SceneComposited && sky.Kind == SkySourceKind::Environment) ||
             topology.BakedSkyWanted;

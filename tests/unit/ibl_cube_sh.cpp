@@ -22,7 +22,7 @@
 #include <Veng/Math/SphericalHarmonics.h>
 
 #include "Renderer/EnvironmentIbl.h"
-#include "Renderer/SkyCubemapBake.h"
+#include <Veng/Renderer/BakedSkyCube.h>
 
 using namespace Veng;
 using namespace Veng::Renderer;
@@ -193,7 +193,7 @@ TEST_CASE(
     // whose per-field projection is a multi-second walk that belongs to a one-time sweep, not a
     // checked-in unit case (a larger reference only tightens the agreement asserted here).
     constexpr u32 DisplaySize = 256;
-    constexpr u32 ReducedSize = SkyCubemapBake::ShReadbackFaceSize;
+    constexpr u32 ReducedSize = BakedSkyCube::ShReadbackFaceSize;
 
     struct Field
     {
@@ -240,8 +240,8 @@ TEST_CASE("ProjectCubeToIrradianceSh: a constant cube is resolution-independent 
     // wrong (unwritten or mis-reduced) level, whose radiance would not be this constant, fails.
     constexpr vec3 L(0.4f, 0.7f, 1.0f);
     const Sh9 reduced = EnvironmentIbl::ProjectCubeToIrradianceSh(
-        MakeCube(SkyCubemapBake::ShReadbackFaceSize, [&](vec3) { return L; }),
-        SkyCubemapBake::ShReadbackFaceSize);
+        MakeCube(BakedSkyCube::ShReadbackFaceSize, [&](vec3) { return L; }),
+        BakedSkyCube::ShReadbackFaceSize);
     const Sh9 display =
         EnvironmentIbl::ProjectCubeToIrradianceSh(MakeCube(256, [&](vec3) { return L; }), 256);
 

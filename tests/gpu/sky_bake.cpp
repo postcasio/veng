@@ -1,6 +1,6 @@
 // The Sky material → radiance cubemap bake. Cooks an analytic Sky-domain material whose
 // radiance is a continuous, known function of the world view direction (0.5 + 0.5·dir), bakes
-// it into the renderer-internal SkyCubemapBake radiance cube, and reads the six faces back to
+// it into the renderer-internal BakedSkyCube radiance cube, and reads the six faces back to
 // assert:
 //
 //   1. Seam continuity across all twelve cube edges — adjacent faces must agree exactly along
@@ -57,7 +57,7 @@
 #include <Veng/Scene/Scene.h>
 
 #include "Renderer/EnvironmentIbl.h"
-#include "Renderer/SkyCubemapBake.h"
+#include <Veng/Renderer/BakedSkyCube.h>
 
 using namespace Veng;
 using namespace Veng::Renderer;
@@ -67,7 +67,7 @@ namespace
     constexpr AssetId AnalyticSkyInstanceId{0x00000000000024A1ULL};
 
     // The world direction a face texel reconstructs, matching ibl_equirect_to_cube's FaceDirection
-    // and the InvViewProj basis SkyCubemapBake builds — the seam/radiance oracle's ground truth.
+    // and the InvViewProj basis BakedSkyCube builds — the seam/radiance oracle's ground truth.
     vec3 FaceDirection(u32 face, vec2 uv)
     {
         const vec2 st = uv * 2.0f - 1.0f;
@@ -108,7 +108,7 @@ namespace
     // Downloads all six cube layers (Image::Download reads only layer 0). Transitions the cube to
     // TransferSrc, copies the six layers into one tightly-packed staging buffer (layer-major), and
     // restores the sampled layout — the seam/radiance oracle reads every face.
-    vector<u8> DownloadCube(Context& context, SkyCubemapBake& bake)
+    vector<u8> DownloadCube(Context& context, BakedSkyCube& bake)
     {
         const u32 faceSize = bake.GetFaceSize();
         const usize faceBytes = static_cast<usize>(faceSize) * faceSize * 8; // RGBA16F
@@ -195,36 +195,6 @@ namespace
     }
 }
 
-TEST_CASE_FIXTURE(
-    Veng::Test::GpuFixture,
-    "sky bake: CopyFrom fills a cube from another bake's finished cube, texel-identical")
-{
-    RegisterBuiltinTypes(Types);
-    AssetManager assets(Context, Tasks, Types);
-    const AssetHandle<MaterialInstance> material = CookAndLoadAnalyticSky(assets);
-    const Unique<EnvironmentIbl> ibl = EnvironmentIbl::Create(Context, assets);
-
-    constexpr u32 FaceSize = 64;
-    const Unique<SkyCubemapBake> src =
-        SkyCubemapBake::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
-    const Unique<SkyCubemapBake> dst =
-        SkyCubemapBake::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
-
-    // The source bakes; the destination adopts it by copy (the shared-cube path) rather than baking.
-    Context.ImmediateCommands([&](CommandBuffer& cmd) { src->Bake(cmd, *material.Get()); });
-    Context.ImmediateCommands([&](CommandBuffer& cmd)
-                              { dst->CopyFrom(cmd, src->GetCubeView(), src->GetFaceSize()); });
-
-    // A copyImage is bit-exact, so the adopted cube's texels are byte-identical to the source's —
-    // the destination shows the source's sky without having baked it.
-    const vector<u8> srcFaces = DownloadCube(Context, *src);
-    const vector<u8> dstFaces = DownloadCube(Context, *dst);
-    REQUIRE(srcFaces.size() == dstFaces.size());
-    CHECK(srcFaces == dstFaces);
-    // CopyFrom does not record a face bake (it is a copy, not a march).
-    CHECK(dst->GetFaceRendersRecorded() == 0);
-}
-
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "sky bake: an analytic Sky material bakes to a seamless radiance cube matching "
                   "its per-direction radiance, re-baking in place")
@@ -238,8 +208,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const Unique<EnvironmentIbl> ibl = EnvironmentIbl::Create(Context, assets);
 
     constexpr u32 FaceSize = 64;
-    const Unique<SkyCubemapBake> bake =
-        SkyCubemapBake::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
+    const Unique<BakedSkyCube> bake =
+        BakedSkyCube::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
 
     // The bake reads the material's ring-buffered param block, written into the current frame's
     // region eagerly on register, so it is resident without a frame acquire. Bake claims one view
@@ -357,8 +327,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const Unique<EnvironmentIbl> ibl = EnvironmentIbl::Create(Context, assets);
 
     constexpr u32 FaceSize = 64;
-    const Unique<SkyCubemapBake> bake =
-        SkyCubemapBake::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
+    const Unique<BakedSkyCube> bake =
+        BakedSkyCube::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
 
     // Bake into the one cube, then read it back and project it to the irradiance SH the cheap
     // ambient arm evaluates — the same cube the skybox display path samples through GetSet().
@@ -380,7 +350,7 @@ namespace
     // Downloads a specific mip level of every cube layer into one tightly-packed staging buffer
     // (layer-major). DownloadCube's mip-agnostic sibling — the reduction/readback level tests read
     // both the display level (mip 0) and the reduced readback level.
-    vector<u8> DownloadCubeLevel(Context& context, SkyCubemapBake& bake, u32 mip, u32 faceSize)
+    vector<u8> DownloadCubeLevel(Context& context, BakedSkyCube& bake, u32 mip, u32 faceSize)
     {
         const usize faceBytes = static_cast<usize>(faceSize) * faceSize * 8; // RGBA16F
         const Ref<Buffer> staging = Buffer::Create(context, {
@@ -432,8 +402,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "sky bake: a dirty SH-tier re-bake rec
     const Unique<EnvironmentIbl> ibl = EnvironmentIbl::Create(Context, assets);
 
     constexpr u32 FaceSize = 64;
-    const Unique<SkyCubemapBake> bake =
-        SkyCubemapBake::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
+    const Unique<BakedSkyCube> bake =
+        BakedSkyCube::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
 
     // The SH path costs one bake: one display bake fills the cube, and the reduced readback reads
     // that same cube back (RecordReductionMips + a deferred copy, no face render), so a dirty SH sky
@@ -445,7 +415,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "sky bake: a dirty SH-tier re-bake rec
             bake->Bake(cmd, *material.Get());
             bake->RecordReductionMips(cmd);
         });
-    CHECK(bake->GetFaceRendersRecorded() - beforeSteady == SkyCubemapBake::CubeFaces);
+    CHECK(bake->GetFaceRendersRecorded() - beforeSteady == BakedSkyCube::CubeFaces);
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
@@ -460,9 +430,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // A display face larger than the readback size, so the reduction actually runs (256 -> 128 ->
     // 64): two halving blits to the readback level.
     constexpr u32 FaceSize = 256;
-    const Unique<SkyCubemapBake> bake =
-        SkyCubemapBake::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
-    CHECK(bake->GetShReadbackFaceSize() == SkyCubemapBake::ShReadbackFaceSize);
+    const Unique<BakedSkyCube> bake =
+        BakedSkyCube::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
+    CHECK(bake->GetShReadbackFaceSize() == BakedSkyCube::ShReadbackFaceSize);
     CHECK(bake->GetShReadbackMipLevel() == 2);
 
     // Bake the display face and reduce it, then project both the display level and the reduced
@@ -510,16 +480,20 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // per axis, 2x2 = 4 tiles a face): the tiled amortization path — the scissor-clipped tile draw,
     // the clamped last tile, and the per-tile view basis — is genuinely exercised.
     constexpr u32 FaceSize = 384;
-    const Unique<SkyCubemapBake> bake =
-        SkyCubemapBake::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
+    const Unique<BakedSkyCube> bake =
+        BakedSkyCube::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
     REQUIRE(bake->GetTilesPerFace() > 1);
-    const u64 totalTicks = SkyCubemapBake::CubeFaces * bake->GetTilesPerFace();
+    const u64 totalTicks = BakedSkyCube::CubeFaces * bake->GetTilesPerFace();
 
     GeneratedTextureService& service = Context.GetGeneratedTextures();
     // A budget of one tick is amortization at its most granular: one tile may be recorded per frame,
     // so the property under test — the tiles spread across ticks rather than the whole cube landing
     // in one frame — shows as exactly one tile render per pumped frame.
     service.SetTickBudget(1);
+
+    // A fresh cube holds the initial black clear: not baked, revision zero.
+    CHECK_FALSE(bake->IsBaked());
+    CHECK(bake->GetRevision() == 0);
 
     const u64 before = bake->GetFaceRendersRecorded();
     bake->RequestBake(service, *material.Get());
@@ -547,6 +521,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     Context.ImmediateCommands([&](CommandBuffer& cmd) { copied = bake->RecordAmortized(cmd); });
     CHECK(copied);
     Context.ImmediateCommands([&](CommandBuffer& cmd) { CHECK_FALSE(bake->RecordAmortized(cmd)); });
+
+    // The landed copy marks the cube baked and advances its revision once — the signal a renderer
+    // sampling this cube (its owner, or another borrowing a shared one) re-derives its IBL/SH on.
+    CHECK(bake->IsBaked());
+    CHECK(bake->GetRevision() == 1);
 
     // And the displayed cube the copy filled carries the material's analytic radiance — the same
     // cube a synchronous whole-face bake would produce. Read texels straddling the tile boundaries

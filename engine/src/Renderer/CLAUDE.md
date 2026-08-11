@@ -69,7 +69,7 @@ The renderer is split along three conventions, and a new battery follows all of 
   precedent: `ShadowSystem`, `BloomPyramid`, `AutoExposureMeter`, `TaaResolve`, `SsrChain`,
   `DofChain`,
   `RefractionGrab`, `GpuCullSystem`, `PickingSystem`, and `SkyResolver` (which itself owns the
-  three sky radiance-cube helpers `EnvironmentIbl` / `AtmospherePrecompute` / `SkyCubemapBake`).
+  three sky radiance-cube helpers `EnvironmentIbl` / `AtmospherePrecompute` / `BakedSkyCube`).
   A subsystem owns its full vertical slice — its `Create`/recreate path, its `Declare*`
   contribution, its per-frame work — and **releases its own bindless handles in its own
   destructor**, so `~SceneRenderer`'s hand-list holds only the spine handles.
@@ -408,7 +408,8 @@ flat-ambient path and renders unchanged.
 **The sky is one component, and every sky source is a radiance-cube producer.** The scene carries
 one author-opt-in **`Sky` component** (`Veng/Scene/Components.h`): a **source** (`SkySource`
 variant — `EnvironmentSky` an environment map, `AtmosphereSky` the procedural atmosphere,
-`MaterialSky` an authored Sky-domain material), an `Intensity`, and a **lighting tier**
+`MaterialSky` an authored Sky-domain material, `CubeSky` a caller-owned already-baked radiance
+cube), an `Intensity`, and a **lighting tier**
 (`SkyLighting` — `None` display-only, `SH` a spherical-harmonic diffuse ambient, `IBL` the full
 split-sum). The renderer **resolves this component itself each `Execute`** (`ResolveSky`,
 `TryGetFirst<Sky>` — the lights model, no consumer mapping call or topology toggle) and recompiles
@@ -416,7 +417,7 @@ its own pass set at the frame boundary when the resolved source-kind / tier / ba
 Every source produces the **same radiance cube** the skybox samples and the IBL convolution reads,
 so **what you see and what lights the scene agree by construction**: an environment is a cube
 (equirect→cube), a `MaterialSky` or `AtmosphereSky` in `SkyMode::Baked` bakes to a cube
-(`SkyCubemapBake`, six fullscreen face renders over a fixed per-face basis + a 1×1 far-plane
+(`BakedSkyCube`, six fullscreen face renders over a fixed per-face basis + a 1×1 far-plane
 stand-in depth, re-baked on the source's dirty signal — amortized through `GeneratedTextureService`
 one scissor-clipped **tile** of a face per tick, so the per-frame GPU cost is bounded by tile area
 rather than a whole heavy face, the previous cube standing until the new one lands), and both display through the one
@@ -435,6 +436,20 @@ per-frame push values (no recompile). (The cooked `EnvironmentMap` asset — the
 radiance/irradiance/prefiltered/BRDF maps — is `AssetTypes::Environment`; the `EnvironmentSky`
 source is the scene-authoring front-end that references it.)
 
+**A baked cube is a `BakedSkyCube`, and it is ownable so one bake can be shared.** For a
+`MaterialSky`/`AtmosphereSky` in `SkyMode::Baked` the resolver owns its own `BakedSkyCube` and bakes
+it on the source's dirty signal — the ordinary path. The **`CubeSky`** source instead points the
+`Sky` component at a `BakedSkyCube` **a caller owns and bakes itself**: the resolver samples it for
+the skybox and derives its IBL/SH from it, but **bakes nothing**. This is the shared-sky path — one
+bake serves a main viewport *and* its capture probes (a canopy reflection), and the several worlds a
+system spans (two flight regimes), so a world swap costs no re-bake. `BakedSkyCube::GetRevision`
+advances each time a fresh bake lands (in the resolver's own cube, or — for a shared cube — another
+renderer's), and each resolver re-derives its IBL/SH when the revision it last saw moves; the copy of
+a completed bake into the displayed cube (`RecordAmortized`) is idempotent, so several renderers
+sharing one cube drive it and the first with a landed bake does the copy. There is no engine-side
+registry or content-key dedup: sharing is the caller owning one cube and pointing several `CubeSky`
+sources at it — a consumer that wants one sky per some content key owns the cube and the key.
+
 ### A sky reconstructs its ray without the camera's translation
 
 `SkyViewDirection` (`Veng/sky.slang`) reads **`InvViewRotProj`** — the inverse of
@@ -449,7 +464,7 @@ shimmers worse looking away from the origin than toward it.
 Measured on a consumer at one solar radius per scene unit: at 3,400 units from the origin a
 stationary view's sky differed by 1.7/255 frame to frame with 2.3% of pixels moving more than 16
 levels; through the rotation-only inverse it is pixel-identical, and stays so at 80,000 units. The
-matrix is jittered with `Proj`, so it still agrees with what was rasterized. `SkyCubemapBake` writes
+matrix is jittered with `Proj`, so it still agrees with what was rasterized. `BakedSkyCube` writes
 its face basis into both fields — that basis is already a pure direction mapping with no translation
 in it.
 
@@ -1053,7 +1068,7 @@ layered, mipped targets — so the service records into the frame command buffer
 barriers, exactly as `AtmospherePrecompute` already does, just budgeted. `AtmospherePrecompute`,
 `EnvironmentIbl` and the picking readback are in-tree hand-rollings of its parts; they keep their
 current shapes, and are named here because they are what the API was shaped against rather than
-because anything migrates. `SkyCubemapBake` is the exception that does route through it: its display
+because anything migrates. `BakedSkyCube` is the exception that does route through it: its display
 bake fills a scratch cube one face per tick as a service job, so a dirty baked sky never blocks a
 frame on six fullscreen sky evaluations and the previous cube stands until the new one lands.
 

@@ -26,6 +26,11 @@ namespace Veng
     class InputMappingContext;
     struct Animation;
 
+    namespace Renderer
+    {
+        class BakedSkyCube;
+    }
+
     /// @brief Human-readable label for an entity.
     ///
     /// Display and logging only; never an identity key.
@@ -937,26 +942,29 @@ namespace Veng
         AssetHandle<MaterialInstance> Material;
         /// @brief Whether the material is composited per pixel (Direct) or baked to a cube (Baked).
         SkyMode Mode = SkyMode::Baked;
-        /// @brief Optional caller-set content key gating the baked-cube re-bake; 0 disables it.
-        ///
-        /// When nonzero, the renderer re-bakes the radiance cube only when this key changes, ignoring
-        /// the material instance's identity and revision. It lets two scenes that author **distinct**
-        /// material instances of the **same** baked content (e.g. one shared sky reached from two
-        /// worlds) share a single bake — a world swap that re-authors an equal-content material then
-        /// costs no re-bake, where the identity gate would re-bake on every swap. The caller sets it
-        /// to a stable hash of everything the bake depends on, so any genuine change still re-bakes.
-        /// Runtime-only: never reflected, cooked, or serialized (no VE_FIELD), so it defaults to 0 —
-        /// the material-identity gate — for every authored sky. It is not a live-tuning input the
-        /// renderer diffs beyond equality, so a wrong-but-stable key would wrongly skip a real change.
-        u64 BakeKey = 0;
     };
 
-    /// @brief The active source of a Sky component: environment map, atmosphere, or material.
+    /// @brief Sky source: a caller-owned, already-baked radiance cube fills the sky.
+    ///
+    /// One alternative of the SkySource variant. Where a MaterialSky in SkyMode::Baked has the
+    /// renderer bake the cube per SceneRenderer, a CubeSky points the renderer at a Renderer::BakedSkyCube
+    /// the caller owns and bakes itself: the skybox samples it and the lighting tiers derive from it,
+    /// but the renderer bakes nothing. It is the shared-sky path — one baked cube several renderers
+    /// (a main viewport and its capture probes) and several worlds (two flight regimes of a system)
+    /// all sample, so a world swap costs no re-bake. A null Cube is a no-op. Runtime-only: the Ref is
+    /// never reflected, cooked, or serialized (no VE_FIELD), so a CubeSky is only ever set at runtime.
+    struct CubeSky
+    {
+        /// @brief The caller-owned baked radiance cube the sky samples; runtime-only, never serialized.
+        Ref<Renderer::BakedSkyCube> Cube;
+    };
+
+    /// @brief The active source of a Sky component: environment map, atmosphere, material, or baked cube.
     ///
     /// The active alternative selects the sky kind and carries that kind's parameters. Empty means
     /// no sky (the flat-ambient fallback). The renderer resolves the active alternative per frame
     /// and recompiles its own pass set when the source kind changes.
-    using SkySource = Variant<EnvironmentSky, AtmosphereSky, MaterialSky>;
+    using SkySource = Variant<EnvironmentSky, AtmosphereSky, MaterialSky, CubeSky>;
 
     /// @brief How the sky lights the scene, beyond displaying it.
     ///
@@ -1501,6 +1509,11 @@ VE_REFLECT_END();
 VE_REFLECT(::Veng::MaterialSky, 0x278971B85ADDA928ULL)
 VE_FIELD(Material, .DisplayName = "Material")
 VE_FIELD(Mode, .DisplayName = "Mode")
+VE_REFLECT_END();
+
+// CubeSky carries only a runtime-only Ref (no VE_FIELD): reflected so the SkySource variant can
+// enumerate it, but it is never serialized — a CubeSky is set at runtime, never authored.
+VE_REFLECT(::Veng::CubeSky, 0x363CB1B30EC3016FULL)
 VE_REFLECT_END();
 
 VE_ENUM(::Veng::SkyLighting, 0xB2C6211BC808C7BDULL)

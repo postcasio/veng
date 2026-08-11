@@ -8,7 +8,6 @@
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
-#include <Veng/Renderer/SkyRadianceCubeRegistry.h>
 #include <Veng/Renderer/ViewportRegistry.h>
 
 namespace Veng
@@ -464,14 +463,6 @@ namespace Veng::Renderer
         /// context is destroyed. See ViewportRegistry.h.
         [[nodiscard]] ViewportRegistry& GetViewportRegistry() { return m_ViewportRegistry; }
 
-        /// @brief Returns the shared baked-sky radiance-cube registry.
-        ///
-        /// Maps a sky content key to a published baked radiance cube so the several SceneRenderers
-        /// that show one world's sky (the main viewport and each SceneCapture of it) share a single
-        /// bake — one publishes, the rest adopt by copy. Device-independent state (a map of Refs),
-        /// valid for the whole Context lifetime. See SkyRadianceCubeRegistry.h.
-        [[nodiscard]] SkyRadianceCubeRegistry& GetSkyRadianceCubes() { return m_SkyRadianceCubes; }
-
         /// @brief Queues a one-time graphics-queue acquire and shader-read transition for a
         /// bindless-sampled resource that has just gone resident.
         ///
@@ -560,8 +551,6 @@ namespace Veng::Renderer
         /// the whole Context lifetime and outlives every Viewport that mints into it, so a viewport
         /// retiring in its destructor always reaches a live registry.
         ViewportRegistry m_ViewportRegistry;
-
-        SkyRadianceCubeRegistry m_SkyRadianceCubes;
 
         /// @brief The generated-texture service, created in Initialize and pumped by BeginFrame.
         ///

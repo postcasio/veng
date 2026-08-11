@@ -23,5 +23,7 @@ namespace Veng::Renderer
         Atmosphere,
         /// @brief A MaterialSky source: the SkyMaterialScenePass runs the authored material.
         Material,
+        /// @brief A CubeSky source: the cubemap SkyboxScenePass samples a caller-owned baked cube.
+        Cube,
     };
 }

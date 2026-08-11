@@ -1,6 +1,7 @@
 .DS_Store
 /build/
 /build-debug/
+/build-debug-profiling/
 /build-debug-off/
 .idea
 imgui.ini

@@ -22,7 +22,8 @@ namespace Veng::Renderer
     class GraphicsPipeline;
     class EnvironmentIbl;
     class AtmospherePrecompute;
-    class SkyCubemapBake;
+    class BakedSkyCube;
+    class DescriptorSet;
 
     /// @brief Owns the sky-resolve state machine and the three sky radiance-cube helpers.
     ///
@@ -30,7 +31,7 @@ namespace Veng::Renderer
     /// this subsystem is that resolve plus the generation work it drives before the graph replays.
     /// It owns the three sky helpers the sky sources produce their radiance cube through — the
     /// image-based-lighting maps (EnvironmentIbl), the procedural-atmosphere LUTs
-    /// (AtmospherePrecompute), and the baked-sky cube (SkyCubemapBake) — plus the whole state
+    /// (AtmospherePrecompute), and the baked-sky cube (BakedSkyCube) — plus the whole state
     /// machine: the resolved source-kind/tier/bake-mode trio the frame-boundary recompile compares
     /// against, every once-per-change dirty gate (the last environment, the last baked
     /// material/atmosphere, the SH environment, the atmosphere LUTs), the projected skylight SH, and
@@ -143,8 +144,12 @@ namespace Veng::Renderer
         /// @brief The procedural-atmosphere precompute LUTs the sky pass samples.
         [[nodiscard]] AtmospherePrecompute& GetAtmosphere() const { return *m_Atmosphere; }
 
-        /// @brief The baked-sky radiance cube the skybox path samples for a baked source.
-        [[nodiscard]] SkyCubemapBake& GetSkyBake() const { return *m_SkyBake; }
+        /// @brief The consumer set the skybox pass binds for the resolved baked cube (owned or borrowed).
+        ///
+        /// For a MaterialSky/AtmosphereSky in SkyMode::Baked this is the resolver's own bake cube's
+        /// set; for a CubeSky it is the caller-owned cube's set. The renderer binds it into the skybox
+        /// pipeline at Rebuild, so a change to which cube is resolved trips NeedsRecompile.
+        [[nodiscard]] const Ref<DescriptorSet>& GetSkyConsumerSet() const;
 
     private:
         SkyResolver(Context& context, AssetManager& assets);
@@ -180,7 +185,33 @@ namespace Veng::Renderer
         /// Owns one radiance cube (at a fixed face resolution), the 1×1 far-plane stand-in depth,
         /// and a consumer set matching the IBL radiance binding. Bake records on the sky dirty
         /// signal; the skybox pass binds GetSet() when the resolved sky is a baked source.
-        Unique<SkyCubemapBake> m_SkyBake;
+        Unique<BakedSkyCube> m_SkyBake;
+
+        /// @brief The baked cube the current resolve samples: the owned m_SkyBake, a borrowed CubeSky
+        ///        cube, or null. Set each Resolve; the skybox consumer set and the recompile read it.
+        ///
+        /// Non-owning, non-const: the resolver drives the cube's amortized copy (RecordAmortized),
+        /// which for a borrowed shared cube is how its bake lands.
+        BakedSkyCube* m_ResolvedCube = nullptr;
+
+        /// @brief The resolved cube the current pass set was built against; a change trips the recompile.
+        ///
+        /// The skybox consumer set is bound at Rebuild, so switching to a different cube (a CubeSky
+        /// pointing at a new resource, or owned↔borrowed) must recompile to rebind it.
+        BakedSkyCube* m_LastResolvedCube = nullptr;
+
+        /// @brief The cube the lighting tiers last derived from; a change forces a re-derive.
+        ///
+        /// Distinct from the revision below: switching to a different cube whose revision happens to
+        /// match the last seen one must still re-convolve the IBL/SH from the new cube's content.
+        BakedSkyCube* m_LastDerivedCube = nullptr;
+
+        /// @brief The resolved cube's revision at the last IBL/SH derive; a change re-derives them.
+        ///
+        /// A cube's revision advances when a fresh bake lands in it (its owner's or, for a shared
+        /// cube, another renderer's), so comparing it drives this resolver's IBL convolution / SH
+        /// readback off the shared cube without a per-resolver bake signal.
+        u64 m_LastSeenCubeRevision = 0;
 
         /// @brief The resolved sky kind the current pass set was built for; gates the recompile.
         ///
@@ -218,30 +249,6 @@ namespace Veng::Renderer
         /// unchanged) advances its revision, so comparing it detects an in-place content change the
         /// pointer compare misses — the material analogue of the atmosphere's param dirty gate.
         u32 m_LastBakedSkyMaterialRevision = 0;
-
-        /// @brief The content key the material cube was last baked for; gates a keyed re-bake.
-        ///
-        /// Only consulted when the resolved MaterialSky carries a nonzero BakeKey: the re-bake then
-        /// keys on this instead of the instance pointer/revision, so two worlds authoring distinct
-        /// instances of equal-content material share one bake. Zero when no keyed bake has landed
-        /// (or the source stopped baking), so the first keyed material re-bakes.
-        u64 m_LastBakedSkyKey = 0;
-
-        /// @brief The key this resolver currently has published in the shared radiance-cube registry.
-        ///
-        /// Nonzero only after a keyed bake this resolver ran landed and was published for other
-        /// renderers to adopt. Retracted when this resolver's key changes and when it is destroyed,
-        /// so an adopter never copies a cube whose publisher is gone or whose content has moved on.
-        u64 m_PublishedKey = 0;
-
-        /// @brief Whether the displayed bake cube has ever been filled with valid radiance.
-        ///
-        /// False until the first amortized bake lands and is copied in. Gates the lighting tiers off
-        /// an undefined cube: the SH readback and the IBL convolution only read the displayed cube
-        /// once it holds a real bake. It tracks the cube's contents, not the currently-resolved
-        /// source, so it is not cleared when a source merely stops baking — the cube still holds its
-        /// last bake, which a returning equal-key source reuses without re-baking.
-        bool m_DisplayCubeValid = false;
 
         /// @brief Whether the current bake cube's IBL convolution is up to date; gates re-convolution.
         ///

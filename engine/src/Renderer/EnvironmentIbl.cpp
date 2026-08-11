@@ -9,6 +9,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Environment.h>
 #include <Veng/Asset/Shader.h>
+#include <Veng/Renderer/BakedSkyCube.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
@@ -327,34 +328,9 @@ namespace Veng::Renderer
         m_BrdfSet->Write(0, m_BrdfStorageView);
 
         // The consumer set the lighting pass binds (set 2): radiance/irradiance/prefilter cubes,
-        // the BRDF LUT, and the linear sampler.
-        m_ConsumerSetLayout = DescriptorSetLayout::Create(
-            m_Context, {
-                           .Name = "IBL Consumer Set Layout",
-                           .Bindings =
-                               {
-                                   {.Binding = 0,
-                                    .Type = DescriptorType::SampledImage,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Fragment},
-                                   {.Binding = 1,
-                                    .Type = DescriptorType::SampledImage,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Fragment},
-                                   {.Binding = 2,
-                                    .Type = DescriptorType::SampledImage,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Fragment},
-                                   {.Binding = 3,
-                                    .Type = DescriptorType::SampledImage,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Fragment},
-                                   {.Binding = 4,
-                                    .Type = DescriptorType::Sampler,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Fragment},
-                               },
-                       });
+        // the BRDF LUT, and the linear sampler. Its shape is shared with a baked sky cube's consumer
+        // set (the skybox samples the baked radiance through the same layout), so it has one home.
+        m_ConsumerSetLayout = BakedSkyCube::CreateConsumerSetLayout(m_Context);
         m_ConsumerSet = DescriptorSet::Create(
             m_Context, {.Name = "IBL Consumer Set", .Layout = m_ConsumerSetLayout});
         m_ConsumerSet->Write(0, m_RadianceCubeView);
@@ -532,7 +508,7 @@ namespace Veng::Renderer
                   "ProjectCubeToIrradianceSh: cube snapshot size mismatches faceSize");
 
         // The six faces' world-direction bases, matching ibl_equirect_to_cube's FaceDirection and
-        // the SkyCubemapBake InvViewProj layout — a texel's (face, uv) maps to its world direction.
+        // the BakedSkyCube InvViewProj layout — a texel's (face, uv) maps to its world direction.
         // Column A scales st.x, B scales st.y, C is the face center; the direction is A·st.x +
         // B·st.y + C, normalized.
         struct FaceBasis
