@@ -84,6 +84,13 @@ namespace Veng::Renderer
         {
             readback.Cancel(handle);
         }
+
+        // Retract any cube this resolver published so no other renderer adopts it once its owning
+        // cube is gone (this resolver owns the SkyCubemapBake that backs the published view).
+        if (m_PublishedKey != 0)
+        {
+            m_Context.GetSkyRadianceCubes().Remove(m_PublishedKey);
+        }
     }
 
     void SkyResolver::Resolve(SceneView& view)
@@ -253,11 +260,39 @@ namespace Veng::Renderer
                             view.SunDirection != m_LastBakedAtmosphereSun;
             }
 
-            // Request the amortized display bake on the dirty signal; the fill spreads across the
-            // frame budget and the previous cube stands until it lands.
+            // Establish this frame's cube on the dirty signal — by adopting a cube another renderer
+            // already baked for this key when one is published, else by requesting an amortized bake
+            // (the fill spreads across the frame budget and the previous cube stands until it lands).
             if (bakeDirty)
             {
-                if (bakedMaterial)
+                // Our previously-published cube no longer describes the sky we are about to
+                // (re)establish, so retract it before adopting or baking a different one. A transient
+                // no-sky gap does not reach here (bakeDirty is only set while baking), so a keyed
+                // sky's publication stands across a world swap for the next renderer to adopt.
+                if (m_PublishedKey != 0 && m_PublishedKey != view.SkyBakeKey)
+                {
+                    m_Context.GetSkyRadianceCubes().Remove(m_PublishedKey);
+                    m_PublishedKey = 0;
+                }
+
+                // Adopt a cube already published for this key — one blit instead of the per-face
+                // march. Only a keyed material sky can adopt (the key is the shared identity), the
+                // sizes must match, and it must not be our own cube (a self-copy). Everything else
+                // bakes.
+                const SkyRadianceCube* const shared =
+                    (bakedMaterial && view.SkyBakeKey != 0)
+                        ? m_Context.GetSkyRadianceCubes().Find(view.SkyBakeKey)
+                        : nullptr;
+                const bool adopt = shared != nullptr &&
+                                   shared->FaceSize == m_SkyBake->GetFaceSize() &&
+                                   shared->View != m_SkyBake->GetCubeView();
+
+                if (adopt)
+                {
+                    m_SkyBake->CopyFrom(cmd, shared->View, shared->FaceSize);
+                    m_DisplayCubeValid = true;
+                }
+                else if (bakedMaterial)
                 {
                     m_SkyBake->RequestBake(m_Context.GetGeneratedTextures(), *material);
                 }
@@ -282,6 +317,14 @@ namespace Veng::Renderer
             if (landed)
             {
                 m_DisplayCubeValid = true;
+                // Publish the freshly-baked cube so the other renderers showing this world's sky
+                // adopt it by copy rather than each baking it. Only a keyed bake shares.
+                if (m_LastBakedSkyKey != 0)
+                {
+                    m_Context.GetSkyRadianceCubes().Publish(
+                        m_LastBakedSkyKey, m_SkyBake->GetCubeView(), m_SkyBake->GetFaceSize());
+                    m_PublishedKey = m_LastBakedSkyKey;
+                }
             }
 
             // The SH readback: a landed bake's own displayed cube is read back reduced, without

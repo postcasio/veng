@@ -708,6 +708,42 @@ namespace Veng::Renderer
         m_BakeState = BakeState::Pending;
     }
 
+    void SkyCubemapBake::CopyFrom(CommandBuffer& cmd, const Ref<ImageView>& sourceView,
+                                  const u32 sourceFace)
+    {
+        VE_ASSERT(sourceFace == m_FaceSize,
+                  "SkyCubemapBake::CopyFrom: source face {} != this cube's face {}", sourceFace,
+                  m_FaceSize);
+
+        // Adopting a finished cube supersedes any bake this instance had in flight.
+        CancelBake();
+
+        // Copy the source cube's six faces into this cube's mip 0 in one step, mirroring the
+        // scratch->displayed copy in RecordAmortized. The source is another SkyCubemapBake's
+        // displayed cube (sampled); it is transitioned to a transfer source and restored to sampled
+        // so its owner samples it unchanged next frame.
+        cmd.PrepareForAccess(sourceView, AccessKind::TransferSrc);
+        cmd.PrepareForAccess(m_MipViews[0], AccessKind::TransferDst);
+        const vk::ImageCopy copy{
+            .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                               .mipLevel = 0,
+                               .baseArrayLayer = 0,
+                               .layerCount = CubeFaces},
+            .srcOffset = {.x = 0, .y = 0, .z = 0},
+            .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                               .mipLevel = 0,
+                               .baseArrayLayer = 0,
+                               .layerCount = CubeFaces},
+            .dstOffset = {.x = 0, .y = 0, .z = 0},
+            .extent = {.width = m_FaceSize, .height = m_FaceSize, .depth = 1},
+        };
+        GetVkCommandBuffer(cmd).copyImage(
+            GetVkImage(*sourceView->GetImage()), vk::ImageLayout::eTransferSrcOptimal,
+            GetVkImage(*m_CubeImage), vk::ImageLayout::eTransferDstOptimal, 1, &copy);
+        cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
+        cmd.PrepareForAccess(sourceView, AccessKind::Sample);
+    }
+
     bool SkyCubemapBake::RecordAmortized(CommandBuffer& cmd)
     {
         if (m_BakeState != BakeState::Landed)

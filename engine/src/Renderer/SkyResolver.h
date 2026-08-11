@@ -227,6 +227,13 @@ namespace Veng::Renderer
         /// (or the source stopped baking), so the first keyed material re-bakes.
         u64 m_LastBakedSkyKey = 0;
 
+        /// @brief The key this resolver currently has published in the shared radiance-cube registry.
+        ///
+        /// Nonzero only after a keyed bake this resolver ran landed and was published for other
+        /// renderers to adopt. Retracted when this resolver's key changes and when it is destroyed,
+        /// so an adopter never copies a cube whose publisher is gone or whose content has moved on.
+        u64 m_PublishedKey = 0;
+
         /// @brief Whether the displayed bake cube has ever been filled with valid radiance.
         ///
         /// False until the first amortized bake lands and is copied in. Gates the lighting tiers off

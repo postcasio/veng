@@ -204,6 +204,20 @@ namespace Veng::Renderer
         /// @return True on the one frame the displayed cube was refreshed from a completed bake.
         bool RecordAmortized(CommandBuffer& cmd);
 
+        /// @brief Fills the displayed cube by copying an equal-size cube another bake already produced.
+        ///
+        /// The adopt path (see Context's SkyRadianceCubeRegistry): a renderer showing a sky another
+        /// renderer already baked copies that finished cube into its own displayed cube in one blit,
+        /// rather than running the per-face march again. Supersedes any bake this instance had in
+        /// flight. Records into @p cmd before the graph the skybox pass samples the cube; leaves this
+        /// cube sampled and restores the source cube to a sampled layout for its owner. The caller
+        /// marks its display cube valid after this returns.
+        /// @param cmd        The command buffer the copy is recorded into.
+        /// @param sourceView The source cube's sampled view (all six faces, mip 0).
+        /// @param sourceFace The source cube's face edge length; must equal GetFaceSize().
+        /// @pre sourceFace == GetFaceSize() — a mismatched cube is not copied.
+        void CopyFrom(CommandBuffer& cmd, const Ref<ImageView>& sourceView, u32 sourceFace);
+
         /// @brief The consumer descriptor set the skybox pass binds to sample the baked cube.
         ///
         /// Matches the IBL consumer set's radiance binding (binding 0 the cube, binding 4 the

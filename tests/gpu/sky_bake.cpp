@@ -195,6 +195,36 @@ namespace
     }
 }
 
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "sky bake: CopyFrom fills a cube from another bake's finished cube, texel-identical")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const AssetHandle<MaterialInstance> material = CookAndLoadAnalyticSky(assets);
+    const Unique<EnvironmentIbl> ibl = EnvironmentIbl::Create(Context, assets);
+
+    constexpr u32 FaceSize = 64;
+    const Unique<SkyCubemapBake> src =
+        SkyCubemapBake::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
+    const Unique<SkyCubemapBake> dst =
+        SkyCubemapBake::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
+
+    // The source bakes; the destination adopts it by copy (the shared-cube path) rather than baking.
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { src->Bake(cmd, *material.Get()); });
+    Context.ImmediateCommands([&](CommandBuffer& cmd)
+                              { dst->CopyFrom(cmd, src->GetCubeView(), src->GetFaceSize()); });
+
+    // A copyImage is bit-exact, so the adopted cube's texels are byte-identical to the source's —
+    // the destination shows the source's sky without having baked it.
+    const vector<u8> srcFaces = DownloadCube(Context, *src);
+    const vector<u8> dstFaces = DownloadCube(Context, *dst);
+    REQUIRE(srcFaces.size() == dstFaces.size());
+    CHECK(srcFaces == dstFaces);
+    // CopyFrom does not record a face bake (it is a copy, not a march).
+    CHECK(dst->GetFaceRendersRecorded() == 0);
+}
+
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "sky bake: an analytic Sky material bakes to a seamless radiance cube matching "
                   "its per-direction radiance, re-baking in place")
