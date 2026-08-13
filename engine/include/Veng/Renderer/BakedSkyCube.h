@@ -137,6 +137,18 @@ namespace Veng::Renderer
             /// @brief How this layer blends onto the layers beneath it. The first layer clears the
             ///        face, so its blend is typically Opaque; later layers Load and blend.
             BlendState Blend = BlendState::Opaque();
+            /// @brief Bakes this layer at a reduced face resolution, then bilinear-upsamples it into
+            ///        the full-resolution cube as the base the finer layers composite over.
+            ///
+            /// A power-of-two divisor of the face size (1 = full resolution, the default). A smooth,
+            /// low-frequency base layer — one whose per-pixel fragment is expensive but whose result
+            /// varies slowly across the sky — need not be evaluated at full face resolution: baking it
+            /// into a coarser scratch cube and upsampling cuts its fragment count by the divisor
+            /// squared while the detail layers stay full resolution. Only the **first** layer may set a
+            /// divisor above 1: it is the opaque base, promoted into the cube by an upsampling blit
+            /// that replaces (rather than blends) the region, so a later layer — which Loads and blends
+            /// over what is already there — must be full resolution.
+            u32 FaceSizeDivisor = 1;
         };
 
         /// @brief Records the six face renders of `material` into the radiance cube.
@@ -336,6 +348,23 @@ namespace Veng::Renderer
         /// @param layers The ordered layer stack.
         void EnsureLayerPipelines(std::span<const SkyBakeLayer> layers);
 
+        /// @brief Ensures the coarse scratch cube exists at the given face size, allocating on change.
+        ///
+        /// The reduced-resolution base layer renders into this cube before it is upsampled into the
+        /// full-resolution scratch. Reallocates only when the requested face size differs from the last,
+        /// so a caller baking at a fixed divisor pays one allocation.
+        /// @param coarseFaceSize The coarse cube's face edge length in texels (m_FaceSize / divisor).
+        void EnsureCoarseScratch(u32 coarseFaceSize);
+
+        /// @brief Bilinear-upsamples the coarse scratch cube into the full scratch cube.
+        ///
+        /// The promotion of a reduced-resolution base layer: one blit upsamples all six coarse faces
+        /// into the full-resolution scratch faces with a linear filter, replacing their contents — the
+        /// base the finer layers then Load and blend over. Whole-image transitions (not per-face), so
+        /// it composes with the service's per-tick whole-image producer-access transition.
+        /// @param cmd The command buffer the blit is recorded into.
+        void RecordCoarsePromote(CommandBuffer& cmd);
+
         /// @brief Claims (or reuses) the view slot carrying a face's basis, for a tile about to draw.
         ///
         /// Every tile of a face writes the identical face basis, so one view slot serves them all: a
@@ -426,6 +455,17 @@ namespace Veng::Renderer
         Ref<Image> m_ScratchImage;
         Ref<ImageView> m_ScratchView; // all six layers, mip 0 — for the copy's layout transitions
         std::array<Ref<ImageView>, CubeFaces> m_ScratchFaceViews; // one single-layer view per face
+
+        // The coarse scratch cube a reduced-resolution base layer (SkyBakeLayer::FaceSizeDivisor > 1)
+        // renders into, upsampled into m_ScratchImage by a blit before the finer layers composite over
+        // it. Allocated lazily at the divisor a bake first asks for, and reallocated only if a later
+        // bake asks for a different one — so a caller baking at a fixed divisor allocates it once.
+        Ref<Image> m_CoarseScratchImage;
+        Ref<ImageView>
+            m_CoarseScratchView; // all six layers, mip 0 — for the promote blit's transition
+        std::array<Ref<ImageView>, CubeFaces> m_CoarseScratchFaceViews;
+        u32 m_CoarseFaceSize =
+            0; // the coarse cube's face edge, 0 until a divisor > 1 bake allocates it
 
         // The amortized bake's service job key (unique per instance) and its lifecycle state. The
         // material path also records the resolved instance's identity + revision so a re-request for

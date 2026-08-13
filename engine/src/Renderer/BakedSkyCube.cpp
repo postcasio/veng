@@ -268,17 +268,18 @@ namespace Veng::Renderer
 
         // The scratch cube an amortized bake fills a face at a time. Mip 0 only — it is copied into
         // the displayed cube (which owns the reduction chain) once every face has been rendered, so
-        // it needs no mips of its own. TransferSrc for that copy; the service ORs in the rest.
-        m_ScratchImage = Image::Create(m_Context, {
-                                                      .Name = "Sky Bake Scratch Cube",
-                                                      .Extent = {m_FaceSize, m_FaceSize, 1},
-                                                      .MipLevels = 1,
-                                                      .Layers = CubeFaces,
-                                                      .Format = m_SceneColorFormat,
-                                                      .Usage = ImageUsage::Sampled |
-                                                               ImageUsage::ColorAttachment |
-                                                               ImageUsage::TransferSrc,
-                                                  });
+        // it needs no mips of its own. TransferSrc for that copy; TransferDst so a reduced-resolution
+        // base layer's coarse cube can be upsampled into it by a blit; the service ORs in the rest.
+        m_ScratchImage = Image::Create(
+            m_Context, {
+                           .Name = "Sky Bake Scratch Cube",
+                           .Extent = {m_FaceSize, m_FaceSize, 1},
+                           .MipLevels = 1,
+                           .Layers = CubeFaces,
+                           .Format = m_SceneColorFormat,
+                           .Usage = ImageUsage::Sampled | ImageUsage::ColorAttachment |
+                                    ImageUsage::TransferSrc | ImageUsage::TransferDst,
+                       });
         m_ScratchView = ImageView::Create(m_Context, {
                                                          .Name = "Sky Bake Scratch Cube View",
                                                          .Image = m_ScratchImage,
@@ -431,6 +432,78 @@ namespace Veng::Renderer
         }
     }
 
+    void BakedSkyCube::EnsureCoarseScratch(const u32 coarseFaceSize)
+    {
+        if (m_CoarseScratchImage && m_CoarseFaceSize == coarseFaceSize)
+        {
+            return;
+        }
+        // The first coarse bake, or a bake at a different divisor: (re)create the coarse cube through
+        // the retire path, so a prior one the GPU may still be reading is dropped safely. Rendered into
+        // (ColorAttachment) then upsampled out of (TransferSrc); never sampled, so no Sampled usage.
+        m_CoarseFaceSize = coarseFaceSize;
+        m_CoarseScratchImage = Image::Create(
+            m_Context, {
+                           .Name = "Sky Bake Coarse Scratch Cube",
+                           .Extent = {coarseFaceSize, coarseFaceSize, 1},
+                           .MipLevels = 1,
+                           .Layers = CubeFaces,
+                           .Format = m_SceneColorFormat,
+                           .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                       });
+        m_CoarseScratchView =
+            ImageView::Create(m_Context, {
+                                             .Name = "Sky Bake Coarse Scratch Cube View",
+                                             .Image = m_CoarseScratchImage,
+                                             .ViewType = ImageViewType::Array2D,
+                                             .ArrayLayers = CubeFaces,
+                                         });
+        for (u32 face = 0; face < CubeFaces; ++face)
+        {
+            m_CoarseScratchFaceViews[face] = ImageView::Create(
+                m_Context, {
+                               .Name = fmt::format("Sky Bake Coarse Scratch Face {} View", face),
+                               .Image = m_CoarseScratchImage,
+                               .ViewType = ImageViewType::Type2D,
+                               .BaseArrayLayer = face,
+                               .ArrayLayers = 1,
+                           });
+        }
+    }
+
+    void BakedSkyCube::RecordCoarsePromote(CommandBuffer& cmd)
+    {
+        // Upsample all six coarse faces into the full-resolution scratch in one blit with a linear
+        // filter, replacing their contents — the base the finer layers Load and blend over. Whole-image
+        // transitions match the service's per-tick whole-image producer-access transition, so the
+        // promote does not fight it face-by-face; one blit over all layers is the RecordReductionMips
+        // pattern.
+        cmd.PrepareForAccess(m_CoarseScratchView, AccessKind::TransferSrc);
+        cmd.PrepareForAccess(m_ScratchView, AccessKind::TransferDst);
+        const vk::ImageBlit blit{
+            .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                               .mipLevel = 0,
+                               .baseArrayLayer = 0,
+                               .layerCount = CubeFaces},
+            .srcOffsets = {{vk::Offset3D{.x = 0, .y = 0, .z = 0},
+                            vk::Offset3D{.x = static_cast<i32>(m_CoarseFaceSize),
+                                         .y = static_cast<i32>(m_CoarseFaceSize),
+                                         .z = 1}}},
+            .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                               .mipLevel = 0,
+                               .baseArrayLayer = 0,
+                               .layerCount = CubeFaces},
+            .dstOffsets = {{vk::Offset3D{.x = 0, .y = 0, .z = 0},
+                            vk::Offset3D{.x = static_cast<i32>(m_FaceSize),
+                                         .y = static_cast<i32>(m_FaceSize),
+                                         .z = 1}}},
+        };
+        GetVkCommandBuffer(cmd).blitImage(
+            GetVkImage(*m_CoarseScratchImage), vk::ImageLayout::eTransferSrcOptimal,
+            GetVkImage(*m_ScratchImage), vk::ImageLayout::eTransferDstOptimal, 1, &blit,
+            vk::Filter::eLinear);
+    }
+
     u32 BakedSkyCube::AcquireFaceViewSlot(CommandBuffer& cmd, const u32 face, const bool faceFirst)
     {
         BindlessRegistry& registry = m_Context.GetBindlessRegistry();
@@ -532,6 +605,14 @@ namespace Veng::Renderer
     void BakedSkyCube::Bake(CommandBuffer& cmd, const std::span<const SkyBakeLayer> layers)
     {
         EnsureLayerPipelines(layers);
+        // A reduced-resolution base is amortized-path only: the promote is an extra scratch cube and a
+        // blit that the whole-face synchronous path does not carry, and the sync path is a reference
+        // convenience the amortized RequestBake is the shipping route past.
+        for (const SkyBakeLayer& layer : layers)
+        {
+            VE_ASSERT(layer.FaceSizeDivisor <= 1,
+                      "BakedSkyCube::Bake: FaceSizeDivisor > 1 needs the amortized RequestBake");
+        }
         // The synchronous layered path renders whole faces, layer by layer: the first layer clears
         // each face, every later layer Loads and blends over it, so the finished cube is the
         // composite. Layer-major so a face's clear precedes every blend onto it.
@@ -732,6 +813,45 @@ namespace Veng::Renderer
         }
         const u32 perLayer = CubeFaces * m_TilesPerFace;
 
+        // The base layer (layer 0, the opaque clear) may bake at a reduced resolution, upsampled into
+        // the full cube before the finer layers composite over it; only it may, because the promote is
+        // a replacing blit the later blended layers must Load over at full resolution.
+        const u32 baseDivisor = std::max(layers[0].FaceSizeDivisor, 1u);
+        VE_ASSERT(
+            (baseDivisor & (baseDivisor - 1)) == 0 && m_FaceSize % baseDivisor == 0,
+            "BakedSkyCube::RequestBake: base FaceSizeDivisor {} must be a power of two dividing "
+            "the face size {}",
+            baseDivisor, m_FaceSize);
+        for (usize i = 1; i < layers.size(); ++i)
+        {
+            VE_ASSERT(layers[i].FaceSizeDivisor <= 1,
+                      "BakedSkyCube::RequestBake: only the base layer may set FaceSizeDivisor > 1 "
+                      "(layer {} set {})",
+                      i, layers[i].FaceSizeDivisor);
+        }
+
+        // A full-resolution base renders straight into the scratch cube, layer-major: TickIndex
+        // enumerates (layer, face, tile). A reduced base runs three phases — the base into the coarse
+        // cube, one upsample-blit per face, then the finer layers full-res over the promoted base — so
+        // its fragment count falls by the divisor squared while the detail layers stay sharp.
+        u32 baseTicks = perLayer;
+        u32 coarseFaceSize = m_FaceSize;
+        u32 coarseTilesPerAxis = m_TilesPerAxis;
+        u32 coarseTilesPerFace = m_TilesPerFace;
+        u32 promoteTicks = 0;
+        if (baseDivisor > 1)
+        {
+            coarseFaceSize = m_FaceSize / baseDivisor;
+            EnsureCoarseScratch(coarseFaceSize);
+            coarseTilesPerAxis = TilesPerFaceAxis(coarseFaceSize);
+            coarseTilesPerFace = coarseTilesPerAxis * coarseTilesPerAxis;
+            baseTicks = CubeFaces * coarseTilesPerFace;
+            promoteTicks = 1;
+        }
+        const u32 tickCount = baseDivisor > 1 ? baseTicks + promoteTicks +
+                                                    static_cast<u32>(layers.size() - 1) * perLayer
+                                              : static_cast<u32>(layers.size()) * perLayer;
+
         GeneratedTextureRequest request{
             .Key = m_JobKey,
             .Name = "Sky Bake",
@@ -740,22 +860,54 @@ namespace Veng::Renderer
                 .ProducerAccess = AccessKind::ColorAttachment,
                 .SampledViewType = ImageViewType::Cube,
             }},
-            .TickCount = static_cast<u32>(layers.size()) * perLayer,
+            .TickCount = tickCount,
             .OnTick =
-                [this, render = std::move(render),
-                 perLayer](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
+                [this, render = std::move(render), perLayer, baseDivisor, coarseFaceSize,
+                 coarseTilesPerAxis, coarseTilesPerFace, baseTicks,
+                 promoteTicks](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
             {
-                // One tile per tick, layer-major: TickIndex enumerates (layer, face, tile), so every
-                // face of a layer is filled before the next layer blends over it. The first layer's
-                // first tile of each face clears; every later tile and layer Loads and blends.
-                const u32 layer = context.TickIndex / perLayer;
-                const u32 within = context.TickIndex % perLayer;
+                const u32 idx = context.TickIndex;
+                if (baseDivisor <= 1)
+                {
+                    // One tile per tick, layer-major: every face of a layer is filled before the next
+                    // blends over it. The first layer's first tile of each face clears; the rest Load.
+                    const u32 layer = idx / perLayer;
+                    const u32 within = idx % perLayer;
+                    const u32 face = within / m_TilesPerFace;
+                    const u32 tile = within % m_TilesPerFace;
+                    const TileRect rect = TileRectFor(tile, m_TilesPerAxis, m_FaceSize);
+                    RecordMaterialRegion(cmd, render[layer].Pipeline, *render[layer].Material,
+                                         m_ScratchFaceViews[face], m_FaceSize, face, rect.Offset,
+                                         rect.Extent, layer == 0 && tile == 0);
+                    return;
+                }
+                // Phase 1: the base layer into the coarse cube (its own tile grid; first tile clears).
+                if (idx < baseTicks)
+                {
+                    const u32 face = idx / coarseTilesPerFace;
+                    const u32 tile = idx % coarseTilesPerFace;
+                    const TileRect rect = TileRectFor(tile, coarseTilesPerAxis, coarseFaceSize);
+                    RecordMaterialRegion(cmd, render[0].Pipeline, *render[0].Material,
+                                         m_CoarseScratchFaceViews[face], coarseFaceSize, face,
+                                         rect.Offset, rect.Extent, tile == 0);
+                    return;
+                }
+                // Phase 2: one blit upsamples the whole coarse cube into the full scratch as the base.
+                if (idx < baseTicks + promoteTicks)
+                {
+                    RecordCoarsePromote(cmd);
+                    return;
+                }
+                // Phase 3: the finer layers full-res over the promoted base, Loading and blending.
+                const u32 j = idx - baseTicks - promoteTicks;
+                const u32 layer = 1 + j / perLayer;
+                const u32 within = j % perLayer;
                 const u32 face = within / m_TilesPerFace;
                 const u32 tile = within % m_TilesPerFace;
                 const TileRect rect = TileRectFor(tile, m_TilesPerAxis, m_FaceSize);
                 RecordMaterialRegion(cmd, render[layer].Pipeline, *render[layer].Material,
                                      m_ScratchFaceViews[face], m_FaceSize, face, rect.Offset,
-                                     rect.Extent, layer == 0 && tile == 0);
+                                     rect.Extent, false);
             },
             .OnComplete = [this](const GeneratedTextureResult&)
             { m_BakeState = BakeState::Landed; },

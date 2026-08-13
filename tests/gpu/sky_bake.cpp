@@ -597,6 +597,72 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     }
 }
 
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "sky bake: a reduced-resolution base layer bakes coarse, upsamples into the cube, "
+    "and the finer layers composite over it")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const AssetHandle<MaterialInstance> material = CookAndLoadAnalyticSky(assets);
+
+    const Unique<EnvironmentIbl> ibl = EnvironmentIbl::Create(Context, assets);
+
+    constexpr u32 FaceSize = 64;
+    const Unique<BakedSkyCube> bake =
+        BakedSkyCube::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
+
+    // The base layer (the one analytic material, radiance 0.5 + 0.5·dir) bakes at half the face
+    // resolution — a 32² coarse cube — upsampled into the full cube, then an additive full-resolution
+    // layer of the same material over it. The composite is therefore 1.0 + dir just as the full-
+    // resolution layered bake is, which pins that the coarse base ran (not black), that the overlay
+    // Loaded and blended additively over the upsampled base (not overwrote it, not left it bare), and
+    // that the promote landed the base into the cube the overlay drew into.
+    const std::array<BakedSkyCube::SkyBakeLayer, 2> layers = {{
+        {.Material = material.Get(), .Blend = BlendState::Opaque(), .FaceSizeDivisor = 2},
+        {.Material = material.Get(), .Blend = BlendState::Additive()},
+    }};
+
+    GeneratedTextureService& service = Context.GetGeneratedTextures();
+    service.SetTickBudget(1);
+    bake->RequestBake(service, std::span<const BakedSkyCube::SkyBakeLayer>(layers));
+    CHECK(bake->IsBakePending());
+
+    // The reduced-base schedule is three phases: 6 base tiles (one 32² face is one tile) + 1 promote
+    // blit (all six faces at once) + 6 full-resolution overlay tiles = 13 ticks at a budget of one
+    // tick per frame. A bake that ignored the divisor and ran both layers full-resolution would take
+    // 12. Counting the frames to completion distinguishes the coarse path having run from the divisor
+    // being silently dropped.
+    u64 frames = 0;
+    while (bake->IsBakePending() && frames < 64)
+    {
+        Context.BeginFrame();
+        Context.EndFrame();
+        ++frames;
+    }
+    CHECK(frames == 13);
+    CHECK_FALSE(bake->IsBakePending());
+
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { CHECK(bake->RecordAmortized(cmd)); });
+    CHECK(bake->IsBaked());
+
+    // The upsampled base carries a bilinear slack against the full-resolution analytic value, so read
+    // interior texels (away from the gnomonic-distorted face edges) and allow a small epsilon.
+    const vector<u8> faces = DownloadCube(Context, *bake);
+    constexpr f32 Eps = 0.04f;
+    for (u32 face = 0; face < 6; ++face)
+    {
+        for (const uvec2 t : {uvec2(24, 24), uvec2(32, 32), uvec2(40, 40), uvec2(28, 36)})
+        {
+            const vec2 uv((static_cast<f32>(t.x) + 0.5f) / static_cast<f32>(FaceSize),
+                          (static_cast<f32>(t.y) + 0.5f) / static_cast<f32>(FaceSize));
+            const vec3 expected = 1.0f + FaceDirection(face, uv);
+            const vec3 actual = DecodeTexel(faces, FaceSize, face, t.x, t.y);
+            CHECK(glm::length(actual - expected) < Eps);
+        }
+    }
+}
+
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "sky bake: a baked material sky renders through the skybox path and matches the "
                   "same material rendered direct, flipping mode with an internal recompile")
