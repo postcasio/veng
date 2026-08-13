@@ -176,6 +176,16 @@ namespace Veng::Renderer
             };
         }
 
+        // Field-wise blend-state equality, so a layered bake reuses a cached pipeline when its layer's
+        // blend is unchanged. BlendState is a plain aggregate with no operator==.
+        bool BlendEqual(const BlendState& a, const BlendState& b)
+        {
+            return a.Enable == b.Enable && a.SrcColorFactor == b.SrcColorFactor &&
+                   a.DstColorFactor == b.DstColorFactor && a.ColorOp == b.ColorOp &&
+                   a.SrcAlphaFactor == b.SrcAlphaFactor && a.DstAlphaFactor == b.DstAlphaFactor &&
+                   a.AlphaOp == b.AlphaOp;
+        }
+
         std::array<mat4, BakedSkyCube::CubeFaces> BuildFaceMatrices()
         {
             return {
@@ -359,6 +369,30 @@ namespace Veng::Renderer
         m_Context.GetBindlessRegistry().Release(m_DepthHandle);
     }
 
+    Ref<GraphicsPipeline> BakedSkyCube::CreateBakePipeline(const MaterialInstance& material,
+                                                           const BlendState& blend)
+    {
+        VE_ASSERT(material.GetDomain() == MaterialDomain::Sky,
+                  "BakedSkyCube: material '{}' is not a Sky material", material.GetName());
+
+        // The material's own fragment + the fullscreen vertex, against the cube-face color format with
+        // the layer's blend on the one attachment. The layout (set 0 reserved, the sky push range)
+        // comes from the material loader, so the fragment binds and pushes exactly as in the direct
+        // path — it is unchanged and unaware of the bake.
+        return GraphicsPipeline::Create(
+            m_Context,
+            {
+                .Name = fmt::format("Sky Bake Pipeline ({})", material.GetName()),
+                .ColorAttachments = {{.Format = m_SceneColorFormat, .Blend = blend}},
+                .PipelineLayout = material.GetPipelineLayout(),
+                .ShaderStages =
+                    {
+                        {.Stage = ShaderStage::Vertex, .Module = material.GetVertexModule()},
+                        {.Stage = ShaderStage::Fragment, .Module = material.GetFragmentModule()},
+                    },
+            });
+    }
+
     void BakedSkyCube::EnsurePipeline(const MaterialInstance& material)
     {
         // The bake pipeline depends only on the material's shader modules, its layout, and the fixed
@@ -371,26 +405,30 @@ namespace Veng::Renderer
             return;
         }
 
-        VE_ASSERT(material.GetDomain() == MaterialDomain::Sky,
-                  "BakedSkyCube: material '{}' is not a Sky material", material.GetName());
-
-        // The material's own fragment + the fullscreen vertex, against the cube-face color format.
-        // The layout (set 0 reserved, the sky push range) comes from the material loader, so the
-        // fragment binds and pushes exactly as in the direct path — it is unchanged and unaware of
-        // the bake.
-        m_Pipeline = GraphicsPipeline::Create(
-            m_Context,
-            {
-                .Name = fmt::format("Sky Bake Pipeline ({})", material.GetName()),
-                .ColorAttachments = {{.Format = m_SceneColorFormat}},
-                .PipelineLayout = material.GetPipelineLayout(),
-                .ShaderStages =
-                    {
-                        {.Stage = ShaderStage::Vertex, .Module = material.GetVertexModule()},
-                        {.Stage = ShaderStage::Fragment, .Module = material.GetFragmentModule()},
-                    },
-            });
+        m_Pipeline = CreateBakePipeline(material, BlendState::Opaque());
         m_PipelineFragment = material.GetFragmentModule().get();
+    }
+
+    void BakedSkyCube::EnsureLayerPipelines(const std::span<const SkyBakeLayer> layers)
+    {
+        m_LayerPipelines.resize(layers.size());
+        for (usize i = 0; i < layers.size(); ++i)
+        {
+            const SkyBakeLayer& layer = layers[i];
+            VE_ASSERT(layer.Material != nullptr, "BakedSkyCube: bake layer {} has no material", i);
+            const ShaderModule* const fragment = layer.Material->GetFragmentModule().get();
+            LayerPipeline& slot = m_LayerPipelines[i];
+            // Reuse the slot's pipeline when the layer's fragment and blend are unchanged — a re-bake
+            // of the same stack recompiles no sky shader, the same reuse EnsurePipeline gives the
+            // single-material path.
+            if (slot.Pipeline && slot.Fragment == fragment && BlendEqual(slot.Blend, layer.Blend))
+            {
+                continue;
+            }
+            slot.Pipeline = CreateBakePipeline(*layer.Material, layer.Blend);
+            slot.Fragment = fragment;
+            slot.Blend = layer.Blend;
+        }
     }
 
     u32 BakedSkyCube::AcquireFaceViewSlot(CommandBuffer& cmd, const u32 face, const bool faceFirst)
@@ -429,7 +467,9 @@ namespace Veng::Renderer
         return m_LastTileViewIndex;
     }
 
-    void BakedSkyCube::RecordMaterialRegion(CommandBuffer& cmd, const MaterialInstance& material,
+    void BakedSkyCube::RecordMaterialRegion(CommandBuffer& cmd,
+                                            const Ref<GraphicsPipeline>& pipeline,
+                                            const MaterialInstance& material,
                                             const Ref<ImageView>& faceView, const u32 faceSize,
                                             const u32 face, const uvec2 tileOffset,
                                             const uvec2 tileExtent, const bool clear)
@@ -438,8 +478,11 @@ namespace Veng::Renderer
         const u32 selector = material.GetMaterialSelector();
 
         // Draw the material fragment through the face's fixed basis, with the far-plane stand-in in
-        // the depth slot so SkyIsBackground passes.
-        const u32 viewIndex = AcquireFaceViewSlot(cmd, face, clear);
+        // the depth slot so SkyIsBackground passes. A fresh view slot is claimed at the face's first
+        // tile (offset 0,0) — which under a layered bake is not the layer that clears, so the claim is
+        // keyed on the tile, not the clear.
+        const bool faceFirst = tileOffset.x == 0 && tileOffset.y == 0;
+        const u32 viewIndex = AcquireFaceViewSlot(cmd, face, faceFirst);
 
         cmd.PrepareForAccess(faceView, AccessKind::ColorAttachment);
         // Render-area = the tile, so a Clear touches only this tile (a whole-face Clear would erase
@@ -454,7 +497,7 @@ namespace Veng::Renderer
                 .ClearValue = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
             }},
         });
-        cmd.BindPipeline(m_Pipeline);
+        cmd.BindPipeline(pipeline);
         // Viewport spans the whole face so the SV_Position → UV → world-direction mapping is the
         // full-face one; the tile render-area + scissor clip the fullscreen triangle to this tile's
         // texels, each computing the same cube direction it would in a whole-face draw.
@@ -479,8 +522,27 @@ namespace Veng::Renderer
         // The synchronous path renders whole faces: one region draw per face covering it, Clear.
         for (u32 face = 0; face < CubeFaces; ++face)
         {
-            RecordMaterialRegion(cmd, material, m_FaceViews[face], m_FaceSize, face, {0, 0},
-                                 {m_FaceSize, m_FaceSize}, true);
+            RecordMaterialRegion(cmd, m_Pipeline, material, m_FaceViews[face], m_FaceSize, face,
+                                 {0, 0}, {m_FaceSize, m_FaceSize}, true);
+        }
+        // Leave the whole cube in a sampled layout for the skybox pass that samples it this frame.
+        cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
+    }
+
+    void BakedSkyCube::Bake(CommandBuffer& cmd, const std::span<const SkyBakeLayer> layers)
+    {
+        EnsureLayerPipelines(layers);
+        // The synchronous layered path renders whole faces, layer by layer: the first layer clears
+        // each face, every later layer Loads and blends over it, so the finished cube is the
+        // composite. Layer-major so a face's clear precedes every blend onto it.
+        for (usize layer = 0; layer < layers.size(); ++layer)
+        {
+            for (u32 face = 0; face < CubeFaces; ++face)
+            {
+                RecordMaterialRegion(cmd, m_LayerPipelines[layer].Pipeline, *layers[layer].Material,
+                                     m_FaceViews[face], m_FaceSize, face, {0, 0},
+                                     {m_FaceSize, m_FaceSize}, layer == 0);
+            }
         }
         // Leave the whole cube in a sampled layout for the skybox pass that samples it this frame.
         cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
@@ -638,13 +700,38 @@ namespace Veng::Renderer
     void BakedSkyCube::RequestBake(GeneratedTextureService& service,
                                    const MaterialInstance& material)
     {
-        EnsurePipeline(material);
+        // The single-material bake is one opaque layer that clears the cube — the layered path's
+        // degenerate case.
+        const SkyBakeLayer layer{.Material = &material, .Blend = BlendState::Opaque()};
+        RequestBake(service, std::span<const SkyBakeLayer>(&layer, 1));
+    }
+
+    void BakedSkyCube::RequestBake(GeneratedTextureService& service,
+                                   const std::span<const SkyBakeLayer> layers)
+    {
+        VE_ASSERT(!layers.empty(), "BakedSkyCube::RequestBake: a bake needs at least one layer");
+        EnsureLayerPipelines(layers);
 
         // Supersede whatever bake is outstanding: a fresh dirty signal wants the newest content in
         // the scratch cube, not a completed or half-filled older one.
         CancelBake();
 
-        const MaterialInstance* materialPtr = &material;
+        // Resolve each layer's (pipeline, material) and capture the list by value, so the tick lambda
+        // is decoupled from m_LayerPipelines — a superseding request rebuilds that in place, but this
+        // job (cancelled by the same request) holds its own resolved pipelines.
+        struct LayerRender
+        {
+            Ref<GraphicsPipeline> Pipeline;
+            const MaterialInstance* Material;
+        };
+        vector<LayerRender> render;
+        render.reserve(layers.size());
+        for (usize i = 0; i < layers.size(); ++i)
+        {
+            render.push_back({m_LayerPipelines[i].Pipeline, layers[i].Material});
+        }
+        const u32 perLayer = CubeFaces * m_TilesPerFace;
+
         GeneratedTextureRequest request{
             .Key = m_JobKey,
             .Name = "Sky Bake",
@@ -653,16 +740,22 @@ namespace Veng::Renderer
                 .ProducerAccess = AccessKind::ColorAttachment,
                 .SampledViewType = ImageViewType::Cube,
             }},
-            .TickCount = CubeFaces * m_TilesPerFace,
+            .TickCount = static_cast<u32>(layers.size()) * perLayer,
             .OnTick =
-                [this, materialPtr](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
+                [this, render = std::move(render),
+                 perLayer](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
             {
-                // One tile per tick: TickIndex enumerates (face, tile) in face-major order.
-                const u32 face = context.TickIndex / m_TilesPerFace;
-                const u32 tile = context.TickIndex % m_TilesPerFace;
+                // One tile per tick, layer-major: TickIndex enumerates (layer, face, tile), so every
+                // face of a layer is filled before the next layer blends over it. The first layer's
+                // first tile of each face clears; every later tile and layer Loads and blends.
+                const u32 layer = context.TickIndex / perLayer;
+                const u32 within = context.TickIndex % perLayer;
+                const u32 face = within / m_TilesPerFace;
+                const u32 tile = within % m_TilesPerFace;
                 const TileRect rect = TileRectFor(tile, m_TilesPerAxis, m_FaceSize);
-                RecordMaterialRegion(cmd, *materialPtr, m_ScratchFaceViews[face], m_FaceSize, face,
-                                     rect.Offset, rect.Extent, tile == 0);
+                RecordMaterialRegion(cmd, render[layer].Pipeline, *render[layer].Material,
+                                     m_ScratchFaceViews[face], m_FaceSize, face, rect.Offset,
+                                     rect.Extent, layer == 0 && tile == 0);
             },
             .OnComplete = [this](const GeneratedTextureResult&)
             { m_BakeState = BakeState::Landed; },

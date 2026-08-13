@@ -4,8 +4,10 @@
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Renderer/BindlessRegistry.h>
+#include <Veng/Renderer/Types.h>
 
 #include <array>
+#include <span>
 
 namespace Veng
 {
@@ -118,6 +120,25 @@ namespace Veng::Renderer
         /// at any face resolution, so the reduction is a partial evaluation of the same integral.
         static constexpr u32 ShReadbackFaceSize = 64;
 
+        /// @brief One layer of a composited bake: a material's fragment and how it blends over the
+        ///        layers already in the cube.
+        ///
+        /// A layered bake renders its layers in order into each face — the first clearing the face,
+        /// each later one Loading and blending over the accumulated result — so the finished cube is
+        /// their composite. Splitting a heavy sky into layers (a dust backdrop, an over-attenuating
+        /// nebula overlay, an additive star overlay) keeps each fragment's shader small, and the
+        /// framebuffer blend does the compositing with no read of the in-progress cube: an emissive
+        /// overlay uses `(ONE, SRC_ALPHA)` (add its light, attenuate the backdrop behind it by its
+        /// alpha) and a pure light overlay uses Additive.
+        struct SkyBakeLayer
+        {
+            /// @brief The resident Sky-domain material whose fragment fills this layer.
+            const MaterialInstance* Material = nullptr;
+            /// @brief How this layer blends onto the layers beneath it. The first layer clears the
+            ///        face, so its blend is typically Opaque; later layers Load and blend.
+            BlendState Blend = BlendState::Opaque();
+        };
+
         /// @brief Records the six face renders of `material` into the radiance cube.
         ///
         /// The caller gates this on its sky dirty signal; each call overwrites the cube in place.
@@ -130,6 +151,18 @@ namespace Veng::Renderer
         /// @pre material's domain is MaterialDomain::Sky and its param block is uploaded this frame.
         /// @pre The frame's remaining view budget covers CubeFaces slots — the caller reserves them.
         void Bake(CommandBuffer& cmd, const MaterialInstance& material);
+
+        /// @brief Records the six face renders of a composited layer stack into the radiance cube.
+        ///
+        /// The layered counterpart to the single-material Bake: renders `layers` in order into each
+        /// face, the first clearing it and each later one blending over the result. Records into
+        /// `cmd` before the graph that samples the cube.
+        /// @param cmd    The command buffer the face renders are recorded into.
+        /// @param layers The ordered layer stack; each layer's material must be resident with its
+        ///               param block uploaded this frame.
+        /// @pre Every layer's material is a MaterialDomain::Sky material.
+        /// @pre The frame's remaining view budget covers CubeFaces slots — the caller reserves them.
+        void Bake(CommandBuffer& cmd, std::span<const SkyBakeLayer> layers);
 
         /// @brief Records the six face renders of the procedural atmosphere into the radiance cube.
         ///
@@ -177,6 +210,20 @@ namespace Veng::Renderer
         /// @param material The resident Sky-domain material to bake.
         /// @pre material's domain is MaterialDomain::Sky and its param block is uploaded this frame.
         void RequestBake(GeneratedTextureService& service, const MaterialInstance& material);
+
+        /// @brief Requests an amortized composited bake of a layer stack into the scratch cube.
+        ///
+        /// The layered counterpart to the single-material RequestBake: the job fills the scratch cube
+        /// one tile of one layer's face per tick — every layer of the cube marched at bake time, the
+        /// layers composited by the framebuffer blend rather than by a re-read of the cube — spread
+        /// across the frame budget, so a heavy multi-layer sky never blocks a frame. RecordAmortized
+        /// copies the finished composite into the displayed cube on completion. Supersedes any bake
+        /// still in flight.
+        /// @param service The service the job runs through.
+        /// @param layers  The ordered layer stack; each layer's material must stay resident with its
+        ///                param block uploaded until the bake completes.
+        /// @pre Every layer's material is a MaterialDomain::Sky material.
+        void RequestBake(GeneratedTextureService& service, std::span<const SkyBakeLayer> layers);
 
         /// @brief Requests an amortized bake of the procedural atmosphere into the scratch cube.
         ///
@@ -270,6 +317,25 @@ namespace Veng::Renderer
         /// @brief Builds the per-face graphics pipeline from the bound material's shaders, once per identity.
         void EnsurePipeline(const MaterialInstance& material);
 
+        /// @brief Builds one bake pipeline from a material's shaders against the cube-face format.
+        ///
+        /// The shared body of EnsurePipeline and EnsureLayerPipelines: the material's own fragment +
+        /// the fullscreen vertex, its pipeline layout, and the given blend state on the one cube-face
+        /// color attachment.
+        /// @param material The Sky-domain material whose shaders + layout the pipeline is built from.
+        /// @param blend    The blend state for the cube-face color attachment.
+        /// @return The bake pipeline.
+        [[nodiscard]] Ref<GraphicsPipeline> CreateBakePipeline(const MaterialInstance& material,
+                                                               const BlendState& blend);
+
+        /// @brief Builds/refreshes the per-layer bake pipelines to match a layer stack, once per change.
+        ///
+        /// Sizes m_LayerPipelines to the stack and rebuilds a layer's pipeline when its material's
+        /// fragment module or its blend state differs from what the slot last held, so a re-request of
+        /// the same layers reuses the pipelines instead of recompiling the sky shaders.
+        /// @param layers The ordered layer stack.
+        void EnsureLayerPipelines(std::span<const SkyBakeLayer> layers);
+
         /// @brief Claims (or reuses) the view slot carrying a face's basis, for a tile about to draw.
         ///
         /// Every tile of a face writes the identical face basis, so one view slot serves them all: a
@@ -292,16 +358,18 @@ namespace Veng::Renderer
         /// scissor clipped to the tile, so only the tile's texels shade. Leaves the face in a
         /// color-attachment layout; the caller owns any whole-cube transition after the loop.
         /// @param cmd        The command buffer the tile render is recorded into.
-        /// @param material   The resident Sky-domain material to bake; its pipeline must be ensured.
+        /// @param pipeline   The bake pipeline to bind (its blend state carries the layer's compositing).
+        /// @param material   The resident Sky-domain material to bake; supplies the selector it pushes.
         /// @param faceView   The single-layer color target for this face.
         /// @param faceSize   The face edge length in texels (the viewport extent).
         /// @param face       The cube face index, selecting its fixed view-ray basis.
         /// @param tileOffset The tile's top-left pixel offset within the face.
         /// @param tileExtent The tile's pixel extent (clamped to the face on the last row/column).
-        /// @param clear      Clear the tile's render-area (the face's first tile) or Load it.
-        void RecordMaterialRegion(CommandBuffer& cmd, const MaterialInstance& material,
-                                  const Ref<ImageView>& faceView, u32 faceSize, u32 face,
-                                  uvec2 tileOffset, uvec2 tileExtent, bool clear);
+        /// @param clear      Clear the tile's render-area (the first layer's first tile) or Load it.
+        void RecordMaterialRegion(CommandBuffer& cmd, const Ref<GraphicsPipeline>& pipeline,
+                                  const MaterialInstance& material, const Ref<ImageView>& faceView,
+                                  u32 faceSize, u32 face, uvec2 tileOffset, uvec2 tileExtent,
+                                  bool clear);
 
         /// @brief Records one atmosphere tile render into a target face view.
         ///
@@ -384,6 +452,17 @@ namespace Veng::Renderer
         // the sky shader. Non-owning: valid to compare only while m_Pipeline (which holds the module)
         // is alive.
         const ShaderModule* m_PipelineFragment = nullptr;
+
+        // One cached bake pipeline per layer of a layered bake. Keyed on the layer's fragment module
+        // and blend, so a re-request of the same stack reuses the pipelines rather than recompiling
+        // the sky shaders. Non-owning Fragment pointer, compared only while its Pipeline is alive.
+        struct LayerPipeline
+        {
+            Ref<GraphicsPipeline> Pipeline;
+            const ShaderModule* Fragment = nullptr;
+            BlendState Blend;
+        };
+        vector<LayerPipeline> m_LayerPipelines;
 
         // The six per-face InvViewProj matrices: each maps a fullscreen [0,1]² UV to the face's
         // world direction, matching the cube image-view layer order so shared edges agree.

@@ -316,6 +316,56 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     }
 }
 
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "sky bake: a layered bake composites its layers by their blend — an additive layer "
+    "over an opaque one sums, the first layer clearing")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const AssetHandle<MaterialInstance> material = CookAndLoadAnalyticSky(assets);
+
+    const Unique<EnvironmentIbl> ibl = EnvironmentIbl::Create(Context, assets);
+
+    constexpr u32 FaceSize = 64;
+    const Unique<BakedSkyCube> bake =
+        BakedSkyCube::Create(Context, ibl->GetSetLayout(), Format::RGBA16Sfloat, FaceSize);
+
+    // Two layers of the one analytic material (radiance 0.5 + 0.5·dir): an opaque base that clears
+    // the face, then an additive layer over it. The composite must therefore be twice the single
+    // bake — 1.0 + dir — which pins three things at once: the second layer runs (the stack is not
+    // truncated to one), it Loads rather than clears (a clearing second layer would erase the base
+    // and leave 0.5 + 0.5·dir), and its blend is Additive (an opaque second layer would overwrite,
+    // also leaving 0.5 + 0.5·dir). So the single value 1.0 + dir distinguishes every failure mode.
+    const std::array<BakedSkyCube::SkyBakeLayer, 2> layers = {{
+        {.Material = material.Get(), .Blend = BlendState::Opaque()},
+        {.Material = material.Get(), .Blend = BlendState::Additive()},
+    }};
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        { bake->Bake(cmd, std::span<const BakedSkyCube::SkyBakeLayer>(layers)); });
+
+    const vector<u8> faces = DownloadCube(Context, *bake);
+    REQUIRE(faces.size() == static_cast<usize>(FaceSize) * FaceSize * 6 * 8);
+
+    constexpr f32 Eps = 0.02f;
+    for (u32 face = 0; face < 6; ++face)
+    {
+        for (u32 y = 0; y < FaceSize; ++y)
+        {
+            for (u32 x = 0; x < FaceSize; ++x)
+            {
+                const vec2 uv((static_cast<f32>(x) + 0.5f) / static_cast<f32>(FaceSize),
+                              (static_cast<f32>(y) + 0.5f) / static_cast<f32>(FaceSize));
+                // 2·(0.5 + 0.5·dir) = 1.0 + dir, the additive-over-opaque composite.
+                const vec3 expected = 1.0f + FaceDirection(face, uv);
+                const vec3 actual = DecodeTexel(faces, FaceSize, face, x, y);
+                REQUIRE(glm::length(actual - expected) < Eps);
+            }
+        }
+    }
+}
+
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "sky bake: the baked cube feeds the cube→SH ambient projection — display and "
                   "ambient read the one cube")
