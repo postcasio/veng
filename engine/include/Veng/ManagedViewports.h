@@ -165,9 +165,10 @@ namespace Veng
         /// viewport, re-resolving its seat in the destination, and re-seeding the viewport's render
         /// settings and @p knobs from the destination's authored LevelRenderSettings when it carries
         /// one), then evaluates each present-on-ready rebind — applying it once its destination is
-        /// ready, or abandoning it (surfaced through GetAbandonedPresentWorld) once it exceeds the
-        /// ready timeout or its destination vanishes mid-wait. The runner resolves the departed and
-        /// destination worlds; @p delta advances each pending present-on-ready request's wait clock.
+        /// ready, retrying a timed-out wait up to PresentReadyAttempts, or abandoning it (surfaced
+        /// through GetAbandonedPresentWorld) once the attempts are spent or its destination
+        /// vanishes mid-wait. The runner resolves the departed and destination worlds; @p delta
+        /// advances each pending present-on-ready request's wait clock.
         /// @param runner  The runner the departed/destination worlds resolve through.
         /// @param delta   The wall-clock frame delta in seconds, accruing toward the ready timeout.
         /// @param knobs   The per-frame view knobs the managed viewports render with, re-seeded by a
@@ -271,11 +272,12 @@ namespace Veng
         /// simulation started, its spawn residency batch resident, and its clock has ticked at least
         /// once), then the rebind applies in one frame — the departed world's overlays detach and the
         /// seat re-resolves atomically, with no empty-world frame between. Superseded by any later
-        /// rebind of the same index (last wins), and abandoned (surfaced through
-        /// GetAbandonedPresentWorld) either once it exceeds the ready timeout or if its destination
-        /// vanishes before it is ready (idle-reaped or closed out from under the wait), so a
-        /// destination that never readies does not strand the viewport presenting the old world
-        /// forever. The pending destination is observable through GetPendingViewportWorld. A no-op for an
+        /// rebind of the same index (last wins). A timed-out wait retries with a fresh clock up to
+        /// PresentReadyAttempts — a transient stall clears with no consumer recovery loop — and is
+        /// abandoned (surfaced through GetAbandonedPresentWorld) once the attempts are spent, or
+        /// immediately if its destination vanishes before it is ready (idle-reaped or closed out
+        /// from under the wait), so a destination that never readies does not strand the viewport
+        /// presenting the old world forever. The pending destination is observable through GetPendingViewportWorld. A no-op for an
         /// out-of-range index (dropped at apply).
         /// @param index  The managed viewport index (0 the primary).
         /// @param world  The world to present once it is ready.
@@ -443,6 +445,8 @@ namespace Veng
             WorldInstanceId World;
             /// @brief Seconds spent waiting for readiness, accrued toward the ready timeout.
             f32 Waited = 0.0f;
+            /// @brief Timed-out waits already retried; the wait abandons past PresentReadyAttempts.
+            u32 Attempts = 0;
         };
 
         /// @brief Present-on-ready rebinds, held until their destination readies, times out, or closes.
@@ -461,7 +465,16 @@ namespace Veng
         ///        the index is superseded.
         vector<AbandonedPresent> m_AbandonedPresents;
 
-        /// @brief Seconds a present-on-ready rebind waits for readiness before it is abandoned.
+        /// @brief Seconds a present-on-ready rebind waits for readiness before a retry or abandon.
         static constexpr f32 PresentReadyTimeoutSeconds = 15.0f;
+
+        /// @brief Timed-out waits one present-on-ready rebind spends before it is abandoned.
+        ///
+        /// The common cause of a wait exceeding the timeout is a transient stall (asset residency,
+        /// a cold load) that clears on a later attempt, so the wait restarts its clock a bounded
+        /// number of times before the abandonment surfaces — the consumer writes no recovery loop.
+        /// A destination that vanishes mid-wait (idle-reaped or closed) abandons immediately: a
+        /// closed world's id never resolves again, so a retry cannot succeed.
+        static constexpr u32 PresentReadyAttempts = 3;
     };
 }

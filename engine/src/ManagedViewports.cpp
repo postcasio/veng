@@ -201,9 +201,24 @@ namespace Veng
             it->Waited += delta;
             if (it->Waited >= PresentReadyTimeoutSeconds)
             {
-                Log::Warn("Managed viewport {} present-on-ready to world {} timed out after {}s; "
-                          "abandoning and keeping the current world.",
-                          it->Index, it->World.Value, it->Waited);
+                // A timed-out wait retries before it abandons: the common cause is a transient
+                // stall that clears on a later attempt, so the clock restarts up to the attempt
+                // budget and only a persistently un-ready destination surfaces as abandoned.
+                if (it->Attempts + 1 < PresentReadyAttempts)
+                {
+                    ++it->Attempts;
+                    it->Waited = 0.0f;
+                    Log::Warn("Managed viewport {} present-on-ready to world {} has not readied "
+                              "within {}s; retrying the wait (attempt {} of {}).",
+                              it->Index, it->World.Value, PresentReadyTimeoutSeconds,
+                              it->Attempts + 1, PresentReadyAttempts);
+                    ++it;
+                    continue;
+                }
+                Log::Warn("Managed viewport {} present-on-ready to world {} stayed unready across "
+                          "{} attempts of {}s; abandoning and keeping the current world.",
+                          it->Index, it->World.Value, PresentReadyAttempts,
+                          PresentReadyTimeoutSeconds);
                 m_AbandonedPresents.push_back({.Index = it->Index, .World = it->World});
                 it = m_PendingReadyRebinds.erase(it);
                 continue;

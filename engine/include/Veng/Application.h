@@ -802,8 +802,11 @@ namespace Veng
         /// @brief Returns the destination a present-on-ready rebind abandoned, else invalid.
         ///
         /// Forwards to ManagedViewportSet::GetAbandonedPresentWorld: the failure surface of
-        /// RebindManagedViewportWhenReady reporting every non-completion — a destination that timed out
-        /// or vanished mid-wait — so a caller can react rather than presenting the old world forever.
+        /// RebindManagedViewportWhenReady reporting every terminal non-completion — a destination
+        /// that stayed unready across the bounded retries, or vanished mid-wait — so a caller can
+        /// react rather than presenting the old world forever. The retries themselves are the
+        /// engine's (see ManagedViewportSet::PresentReadyAttempts); by the time this reports, the
+        /// wait has already been given every chance.
         /// @param index  The managed viewport index (0 the primary).
         /// @return The abandoned destination world, or an invalid handle when none was abandoned.
         [[nodiscard]] WorldInstanceId GetAbandonedManagedPresentWorld(usize index) const;

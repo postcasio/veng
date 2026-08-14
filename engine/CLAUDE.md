@@ -176,10 +176,12 @@ counts as presented and is not reaped in its own rebind gap). **`RebindManagedVi
 world)`** is the front-door / world-jump path: it holds the viewport on its current world until the
 destination is **ready** (resolves, its scene installed, its simulation started, its `World::Pending`
 residency batch resident, and its clock ticked ≥ 1), then swaps in one frame — no empty-world frame,
-no consumer polling loop. It is superseded by any later rebind of the same index (last wins), and
-**abandoned** (surfaced through `GetAbandonedManagedPresentWorld(index)`) either **on a ready timeout**
-or if its **destination vanishes mid-wait** (idle-reaped or closed out from under the wait), so a
-never-ready or reaped destination does not strand the viewport on the old world. `ManagedViewportSet` carries the same surface (`GetViewportWorld` /
+no consumer polling loop. It is superseded by any later rebind of the same index (last wins); a **timed-out wait retries with
+a fresh clock** up to `PresentReadyAttempts`, so a transient stall clears with no consumer recovery
+loop, and the rebind is **abandoned** (surfaced through `GetAbandonedManagedPresentWorld(index)`)
+either **once the attempts are spent** or immediately if its **destination vanishes mid-wait**
+(idle-reaped or closed out from under the wait), so a never-ready or reaped destination does not
+strand the viewport on the old world. `ManagedViewportSet` carries the same surface (`GetViewportWorld` /
 `GetPendingViewportWorld` / `RebindWorldWhenReady` / `GetAbandonedPresentWorld`).
 
 **`Application` optionally bootstraps and drives worlds through the `WorldRunner`.** Set
