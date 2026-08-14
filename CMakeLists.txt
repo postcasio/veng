@@ -1020,6 +1020,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/persistence_account.cpp
             tests/unit/persistence_save_slots.cpp
             tests/unit/persistence_store_patterns.cpp
+            tests/unit/store_checkpoint.cpp
             tests/unit/derived_data_cache.cpp
             tests/unit/runtime_requests.cpp
             tests/unit/ui_modal.cpp

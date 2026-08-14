@@ -205,6 +205,20 @@ the whole `T` — so a consumer holding several independently-updated fields ins
 still reads that type back and modifies it before calling. Stating it the other way round would
 promise something the helper does not do.
 
+## The store checkpoint
+
+`Veng/Persistence/StoreCheckpoint.h` is the consumer-side cadence every store-backed application
+otherwise re-implements: on the interval (`Update(delta)`) and on demand (`CheckpointNow` — a save
+action, the exit path), capture every live world of a `WorldRunner` into the store, then flush the
+slot atomically. The store resolves per checkpoint through a source — the same source shape the
+session binding takes, and for the same reason — so a null-resolving source is the no-op posture
+and a save-slot switch needs no rebinding. The two halves carry the `Checkpoint/Capture` and
+`Checkpoint/Flush` profiler scopes, and `LastCostMs` keeps their wall-clock costs as plain state,
+because a panel's cost readout must hold a value in every build configuration and the profiler's
+per-frame aggregates cannot carry that (they zero for a frame the scope did not run in, and do not
+exist under `VE_PROFILE=OFF`). `tests/unit/store_checkpoint.cpp` pins the whole-runner capture, the
+durable flush, and the cadence.
+
 ## The session-store binding
 
 `Veng/Persistence/SessionStore.h` is the store backing the engine ships for `SessionRegistry`'s
