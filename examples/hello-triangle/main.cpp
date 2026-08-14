@@ -644,72 +644,64 @@ private:
     f32 m_Phase = 0.0f;
 };
 
-class HelloTriangleApp final : public Application
+class HelloTriangleApp final : public Application, public GameNetPolicy
 {
 public:
     HelloTriangleApp(ApplicationInfo info, TypeRegistry& types, SystemRegistry& systems)
-        : Application(WithIdentity(std::move(info), this), types, systems)
+        : Application(WithFrontDoor(std::move(info)), types, systems)
     {
     }
 
-private:
-    // Wires the sample's account identity into the net knobs: a stable hash of the --name launch
-    // token, so a relaunch with the same name reattaches as the same account; with no name it
-    // falls through to the engine's process-random ephemeral default. Also supplies the session
-    // pose capture: at disconnect (and the save checkpoint) the engine asks the game to encode the
-    // departing seat's pawn pose, and delivers it back on reattach — so a returning player stands
-    // where they left, not at the spawn point. The hooks capture the app because they are evaluated
-    // after bootstrap; only the pointer is taken here, never dereferenced during construction.
-    static ApplicationInfo WithIdentity(ApplicationInfo info, HelloTriangleApp* app)
+    // The sample's account identity: a stable hash of the --name launch token, so a relaunch with
+    // the same name reattaches as the same account; with no name, the engine's process-random
+    // ephemeral default. Registered through SetNetPolicy, so it runs on the constructed app.
+    [[nodiscard]] Net::AccountId Identity() override
     {
-        if (info.Net)
-        {
-            // The connect-and-enter front door (HT_ENTER=<host>): the client names the world it
-            // enters on connect rather than auto-joining the default key, so the granted join
-            // installs a fresh runner world and presents through the engine's present-on-ready
-            // rebind — a scripted stand-in for a menu's "join into world X" button.
-            if (std::getenv("HT_ENTER") != nullptr)
-            {
-                info.Net->AutoJoinDefaultWorld = false;
-            }
-            info.Net->Identity = [app]() -> Net::AccountId
-            {
-                const optional<string>& name = app->GetLaunchArguments().Name;
-                return name.has_value() ? AccountFromName(*name) : Net::GenerateAccountId();
-            };
-            info.Net->CaptureTravelPose = [app](const WorldInstanceId world,
-                                                const Entity seat) -> Net::Blob
-            { return app->CapturePawnPose(world, seat); };
-        }
-        return info;
+        const optional<string>& name = GetLaunchArguments().Name;
+        return name.has_value() ? AccountFromName(*name) : Net::GenerateAccountId();
     }
 
     // Encodes the seat's possessed pawn Transform as the session pose payload — the game-defined
     // half of pose durability (the engine moves the bytes, never reads them). An unpawned or gone
-    // seat yields an empty payload, leaving the record's last pose standing.
-    [[nodiscard]] Net::Blob CapturePawnPose(const WorldInstanceId world, const Entity seat)
+    // seat yields nullopt, leaving the record's last pose standing.
+    [[nodiscard]] optional<Net::Blob> CaptureTravelPose(const WorldInstanceId world,
+                                                        const Entity seat) override
     {
         const World* resolved = GetWorldRunner().ResolveWorld(world);
         if (resolved == nullptr)
         {
-            return {};
+            return std::nullopt;
         }
         const Scene& scene = resolved->GetScene();
         if (seat.IsNull() || !scene.IsAlive(seat))
         {
-            return {};
+            return std::nullopt;
         }
         const auto* possesses = scene.TryGet<Possesses>(seat);
         if (possesses == nullptr || possesses->Pawn.IsNull() || !scene.IsAlive(possesses->Pawn))
         {
-            return {};
+            return std::nullopt;
         }
         const auto* transform = scene.TryGet<Transform>(possesses->Pawn);
         if (transform == nullptr)
         {
-            return {};
+            return std::nullopt;
         }
         return Net::EncodeBlobRecord(*transform, GetTypeRegistry());
+    }
+
+private:
+    // The connect-and-enter front door (HT_ENTER=<host>): the client names the world it enters on
+    // connect rather than auto-joining the default key, so the granted join installs a fresh
+    // runner world and presents through the engine's present-on-ready rebind — a scripted stand-in
+    // for a menu's "join into world X" button. A knob, not a hook, so it stays on the info.
+    static ApplicationInfo WithFrontDoor(ApplicationInfo info)
+    {
+        if (info.Net && std::getenv("HT_ENTER") != nullptr)
+        {
+            info.Net->AutoJoinDefaultWorld = false;
+        }
+        return info;
     }
 
     // Decodes a session pose payload back onto a freshly spawned pawn — the reattach arrival. A
@@ -730,6 +722,10 @@ private:
 protected:
     void OnInitialize() override
     {
+        // The app is its own net policy (Identity, CaptureTravelPose): registration precedes the
+        // world bootstrap, so the identity resolution and session registry consult the overrides.
+        SetNetPolicy(this);
+
         m_SmokeOutput = std::getenv("HT_SMOKE");
         m_DeferRestore = std::getenv("HT_DEFER_RESTORE") != nullptr;
 

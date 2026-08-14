@@ -131,9 +131,10 @@ namespace Veng::Net
         ///
         /// The engine cannot serialize game pose, so the consumer encodes it: invoked at disconnect
         /// and at the save checkpoint with the account's gameplay world and its seat entity there;
-        /// the result overwrites the record's Gameplay.Pose. Unset, the pose stays the last
-        /// travel's (arrival) pose.
-        function<Blob(WorldInstanceId, Entity)> CaptureTravelPose;
+        /// the result overwrites the record's Gameplay.Pose. Returning nullopt — a gone or unpawned
+        /// seat with nothing newer to say — keeps the record's pose standing, exactly as leaving the
+        /// hook unset does for every capture.
+        function<optional<Blob>(WorldInstanceId, Entity)> CaptureTravelPose;
         /// @brief Loads an account's persisted durability blob; unset keeps records process-lifetime.
         ///
         /// Invoked once per account on its first admission; nullopt means no persisted record. The

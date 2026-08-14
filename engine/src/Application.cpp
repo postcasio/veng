@@ -386,12 +386,16 @@ namespace Veng
         if (!(m_Info.Headless && m_LaunchArgs.Server))
         {
             const GameNetInfo net = m_Info.Net.value_or(GameNetInfo{});
-            m_LocalAccount = net.Identity ? net.Identity() : Net::GenerateAccountId();
+            m_LocalAccount = m_NetPolicy != nullptr ? m_NetPolicy->Identity()
+                             : net.Identity         ? net.Identity()
+                                                    : Net::GenerateAccountId();
             VE_ASSERT(m_LocalAccount.IsValid(),
-                      "GameNetInfo::Identity returned the invalid account id");
+                      "the identity hook returned the invalid account id");
             // The account's opaque profile resolves beside its id, so the local player presents one
             // value whether the process connects, listens, or runs standalone.
-            m_LocalProfile = net.PresentProfile ? net.PresentProfile() : Net::Blob{};
+            m_LocalProfile = m_NetPolicy != nullptr ? m_NetPolicy->PresentProfile()
+                             : net.PresentProfile   ? net.PresentProfile()
+                                                    : Net::Blob{};
         }
 
         // A --level override selects a different level from the project's mounted packs; without
@@ -591,12 +595,21 @@ namespace Veng
         // The hosted managed world ticks Server-tier — its Sim owns and advances authoritative state.
         m_Net->WorldRoles[m_ManagedWorld.Value] = NetRole::Server;
 
+        function<optional<Net::AccountId>(Net::ConnectionId, const Net::AccountId&)> admit =
+            net.AdmitAccount;
+        if (m_NetPolicy != nullptr)
+        {
+            admit = [policy = m_NetPolicy](const Net::ConnectionId connection,
+                                           const Net::AccountId& presented)
+            { return policy->AdmitAccount(connection, presented); };
+        }
+
         Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
             .Server = Net::ServerInfo{.Port = net.Port,
                                       .MaxConnections = net.MaxConnections,
                                       // The game's account admission (verify/normalize/refuse); the
                                       // unset default accepts as presented (the LAN-trust posture).
-                                      .AdmitAccount = net.AdmitAccount,
+                                      .AdmitAccount = admit,
                                       .NetSim = m_LaunchArgs.NetSim},
             .WorldId = m_ManagedWorld,
             .World = m_WorldRunner->ResolveWorld(m_ManagedWorld)->GetScene(),
@@ -686,6 +699,30 @@ namespace Veng
         }
         m_Net->Client = std::move(*client);
 
+        // The per-key client hooks the mounted host resolves each join through; a registered policy
+        // supersedes the closures, its nullopt returns falling back to the same shared envelope and
+        // tolerances an unset closure threads onto every join.
+        function<Net::ContentDigest(const Net::WorldKey&, const Net::Blob&)> worldDigest =
+            net.ClientWorldDigest;
+        function<Net::QuantizationSettings(const Net::WorldKey&)> worldQuantization =
+            net.ClientWorldQuantization;
+        function<Net::ReconcileTolerances(const Net::WorldKey&)> worldTolerances =
+            net.ClientWorldTolerances;
+        if (m_NetPolicy != nullptr)
+        {
+            GameNetPolicy* const policy = m_NetPolicy;
+            const Net::QuantizationSettings sharedQuantization{.PositionQuantum =
+                                                                   net.PositionQuantum,
+                                                               .PositionExtent = net.PositionExtent,
+                                                               .RotationBits = net.RotationBits};
+            worldDigest = [policy](const Net::WorldKey& key, const Net::Blob& payload)
+            { return policy->ClientWorldDigest(key, payload); };
+            worldQuantization = [policy, sharedQuantization](const Net::WorldKey& key)
+            { return policy->ClientWorldQuantization(key).value_or(sharedQuantization); };
+            worldTolerances = [policy](const Net::WorldKey& key)
+            { return policy->ClientWorldTolerances(key).value_or(Net::ReconcileTolerances{}); };
+        }
+
         m_Net->ClientHost = ClientHost::Create(ClientHostInfo{
             .Client = *m_Net->Client,
             .Assets = *m_AssetManager,
@@ -695,7 +732,7 @@ namespace Veng
             // The client mirror of the server's factory-supplied digest: yields the digest this client
             // expects for the key it joins, validated against the reply's echo. Unset (the default)
             // presents the zero digest.
-            .WorldDigest = net.ClientWorldDigest,
+            .WorldDigest = worldDigest,
             .LoadLevel = [this](const AssetId id) -> Scene* { return LoadClientLevel(id); },
             .OpenEmptyWorld = [this]() -> Scene* { return OpenEmptyClientWorld(); },
             .ResolvePrefab = [this](const AssetId id) -> Ref<Prefab>
@@ -741,7 +778,7 @@ namespace Veng
             // Per-key reconcile tolerances, unset by default (every join uses the shared value): a
             // world in a non-metre unit supplies its own so its client does not reconcile unbounded
             // drift as "matched".
-            .WorldTolerances = net.ClientWorldTolerances,
+            .WorldTolerances = worldTolerances,
             // The controller converts RTT/jitter to a tick lead at the sim rate; its margin carries
             // the snapshot-cadence staleness plus the two-tick buffered-input cushion beyond the
             // round-trip estimate. The world drive reads its target to seed and slew the sim clock.
@@ -755,7 +792,7 @@ namespace Veng
             .Quantization = Net::QuantizationSettings{.PositionQuantum = net.PositionQuantum,
                                                       .PositionExtent = net.PositionExtent,
                                                       .RotationBits = net.RotationBits},
-            .WorldQuantization = net.ClientWorldQuantization,
+            .WorldQuantization = worldQuantization,
             // A make-before-break directed travel leaves its departed join once the destination is
             // ready: close that join's runner world, dropping its net state — the "leave" of this plan.
             .OnLeaveWorld = [this](const Net::JoinId join) { CloseJoinedWorld(join); },
@@ -863,19 +900,28 @@ namespace Veng
         m_Net.reset();
     }
 
+    void Application::SetNetPolicy(GameNetPolicy* const policy)
+    {
+        // The directory build is the first point the hooks are threaded onward, so a policy arriving
+        // after it exists would be silently partial — the deadline the registration doc names.
+        VE_ASSERT(m_Directory == nullptr && m_Net == nullptr,
+                  "SetNetPolicy must run before the world bootstrap (OnInitialize at the latest)");
+        m_NetPolicy = policy;
+    }
+
     void Application::BuildWorldDirectory()
     {
         const GameNetInfo net = m_Info.Net.value_or(GameNetInfo{});
         // The session registry lives beside the directory in every role: standalone travels record
         // into it, and a mounted ServerHost borrows it (ServerHostInfo::Sessions).
-        m_Sessions = Net::SessionRegistry::Create(Net::SessionRegistryInfo{
+        Net::SessionRegistryInfo sessions{
             .Types = &m_TypeRegistry,
             .TransformOnReattach = net.TransformOnReattach,
             .CaptureTravelPose = net.CaptureTravelPose,
             .LoadSession = net.LoadSession,
             .SaveSession = net.SaveSession,
-        });
-        m_Directory = WorldDirectory::Create(WorldDirectoryInfo{
+        };
+        WorldDirectoryInfo directory{
             .MaxHostedWorlds = net.MaxHostedWorlds,
             .MaxJoinedWorldsPerConnection = net.MaxJoinedWorldsPerConnection,
             .MaxPlayersPerInstance = net.MaxPlayersPerInstance,
@@ -885,7 +931,40 @@ namespace Veng
             .WorldFactory = net.WorldFactory,
             .Placement = net.Placement,
             .CloseWorld = net.CloseWorld,
-        });
+        };
+        // A registered policy supersedes the hook closures wholesale: every hook routes to the
+        // policy object, whose defaults reproduce the unset-closure behavior. The close hook is the
+        // one reshaped seam — the closure owns the whole close when set, the policy is notified and
+        // the runner teardown stays engine-owned.
+        if (m_NetPolicy != nullptr)
+        {
+            GameNetPolicy* const policy = m_NetPolicy;
+            sessions.TransformOnReattach = [policy](Net::SessionRecord record)
+            { return policy->TransformOnReattach(std::move(record)); };
+            sessions.CaptureTravelPose = [policy](const WorldInstanceId world, const Entity seat)
+            { return policy->CaptureTravelPose(world, seat); };
+            sessions.LoadSession = [policy](const Net::AccountId account)
+            { return policy->LoadSession(account); };
+            sessions.SaveSession =
+                [policy](const Net::AccountId account, const std::span<const std::byte> bytes)
+            { policy->SaveSession(account, bytes); };
+            directory.Authorize = [policy](const Net::JoinRequestInfo& request)
+            { return policy->AuthorizeJoin(request); };
+            directory.WorldFactory = [policy](const Net::JoinRequestInfo& request,
+                                              const Net::WorldKey& key, const Net::Blob& payload)
+            { return policy->ResolveWorld(request, key, payload); };
+            directory.Placement = [policy](const Net::JoinRequestInfo& request,
+                                           const std::span<const WorldPlacement> buckets)
+            { return policy->PlaceJoin(request, buckets); };
+            directory.CloseWorld =
+                [policy, runner = m_WorldRunner.get()](const WorldInstanceId world)
+            {
+                policy->OnWorldClosing(world);
+                runner->CloseWorld(world);
+            };
+        }
+        m_Sessions = Net::SessionRegistry::Create(sessions);
+        m_Directory = WorldDirectory::Create(directory);
         // The managed world is a never-reaped bucket: "you start here" is just its being pre-registered,
         // not app bookkeeping — the home-star special case dies.
         if (m_ManagedWorld.IsValid())

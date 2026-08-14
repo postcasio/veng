@@ -485,7 +485,13 @@ the quantization/keyframe knobs, `InterestRadius`/`InterestPolicy`, the client `
 identity hooks `Identity` / `AdmitAccount`, plus
 the hosting hooks `WorldFactory` / `Authorize` / `Placement` / `MaxPlayersPerInstance` / `CloseWorld`
 and the `MaxHostedWorlds` / `MaxJoinedWorldsPerConnection` / `IdleKeepWarmDwell` caps) tunes the hosts;
-**activation is a launch flag or a runtime call**. `LaunchArguments` parses `--server` (listen server)
+**activation is a launch flag or a runtime call**. The function hooks have a second, stateful posture:
+**`GameNetPolicy`** (`Veng/Application.h`) is an interface whose virtuals mirror them one for one with
+the unset-closure behavior as each default, registered via `Application::SetNetPolicy` from
+`OnInitialize` — for a game whose answers live in real services built after the application exists,
+instead of closures capturing a deferred application slot. A registered policy supersedes the hook
+closures wholesale (the knobs and `PredictionPolicy`/`InterestPolicy` stay on `GameNetInfo`);
+hello-triangle's `Identity`/`CaptureTravelPose` overrides are the exemplar. `LaunchArguments` parses `--server` (listen server)
 `[--headless]` (dedicated — Sim + net pump, no render tail), the first-class **`--dedicated`** (the
 honest name for `--server --headless`), `--join <host[:port]>` (client), **`--no-render`** (drop the
 render tail on a headless run whose frames nothing reads — a headless *client* has no `ServerHost` and

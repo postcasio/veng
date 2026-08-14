@@ -243,8 +243,10 @@ namespace Veng
         ///
         /// The engine cannot serialize game pose, so the game encodes it: invoked at disconnect and
         /// at the save checkpoint with the account's gameplay world and its seat entity there, and
-        /// the result is delivered back on reattach. See Net::SessionRegistryInfo::CaptureTravelPose.
-        function<Net::Blob(WorldInstanceId, Entity)> CaptureTravelPose;
+        /// the result is delivered back on reattach. Returning nullopt keeps the record's last pose
+        /// standing (a gone or unpawned seat has nothing newer to say), exactly as leaving the hook
+        /// unset does for every capture. See Net::SessionRegistryInfo::CaptureTravelPose.
+        function<optional<Net::Blob>(WorldInstanceId, Entity)> CaptureTravelPose;
         /// @brief Loads an account's persisted session blob on first admit; unset keeps records process-lifetime.
         ///
         /// The durability hook pair's read half: the engine owns when (first admission) and what
@@ -311,6 +313,132 @@ namespace Veng
         u32 MaxJoinedWorldsPerConnection = 8;
         /// @brief Seconds a factory-opened world with no live joins is held warm before it is reaped.
         f64 IdleKeepWarmDwell = 5.0;
+    };
+
+    /// @brief The game's net policy as one overridable object — the stateful mirror of GameNetInfo's hooks.
+    ///
+    /// GameNetInfo's function hooks serve the zero-config consumer: each is a free-standing closure,
+    /// built into ApplicationInfo before the application exists, which forces a game whose answers
+    /// live in real services (a store, a world factory, per-account state) to capture a deferred
+    /// application slot and null-check it in every hook. This interface is the other posture: the
+    /// game implements it as an object constructed *after* the application and its services exist,
+    /// holding real references, and registers it with Application::SetNetPolicy before the world
+    /// bootstrap. A registered policy supersedes the corresponding GameNetInfo hook fields wholesale;
+    /// the numeric knobs and the entity-selection rules (PredictionPolicy, InterestPolicy) remain
+    /// GameNetInfo's either way.
+    ///
+    /// Every method's default reproduces the behavior its unset GameNetInfo counterpart selects, so
+    /// a policy overrides only the questions it answers — with one deliberate exception: PlaceJoin's
+    /// default is pure first-bucket convergence, the MaxPlayersPerInstance = 0 built-in, and a game
+    /// capping instance fill under a policy supplies its own placement rule (the knob drives only
+    /// the closure path's built-in). Each method's contract — when it runs, what rides in, what the
+    /// return means — is documented on its GameNetInfo counterpart and not restated here.
+    class VE_API GameNetPolicy
+    {
+    public:
+        virtual ~GameNetPolicy() = default;
+
+        /// @brief The local player's account identity; defaults to minting a process-random ephemeral id.
+        /// @see GameNetInfo::Identity
+        [[nodiscard]] virtual Net::AccountId Identity() { return Net::GenerateAccountId(); }
+
+        /// @brief The local account's opaque admission profile; defaults to presenting none.
+        /// @see GameNetInfo::PresentProfile
+        [[nodiscard]] virtual Net::Blob PresentProfile() { return {}; }
+
+        /// @brief Admits or normalizes a presented account; defaults to accepting it as presented.
+        /// @see GameNetInfo::AdmitAccount
+        [[nodiscard]] virtual optional<Net::AccountId> AdmitAccount(Net::ConnectionId connection,
+                                                                    const Net::AccountId& presented)
+        {
+            return presented;
+        }
+
+        /// @brief Authorizes a world-join request; defaults to allowing all.
+        /// @see GameNetInfo::Authorize
+        [[nodiscard]] virtual bool AuthorizeJoin(const Net::JoinRequestInfo& request)
+        {
+            return true;
+        }
+
+        /// @brief Materializes a server world for a joined WorldKey; defaults to resolving none.
+        /// @see GameNetInfo::WorldFactory
+        [[nodiscard]] virtual optional<ServerWorldResolution>
+        ResolveWorld(const Net::JoinRequestInfo& request, const Net::WorldKey& key,
+                     const Net::Blob& payload)
+        {
+            return std::nullopt;
+        }
+
+        /// @brief Selects the live bucket a join lands in; defaults to first-bucket convergence.
+        ///
+        /// Nullopt opens a fresh bucket through ResolveWorld — so the default converges every
+        /// joiner of a key on its first live instance, the MaxPlayersPerInstance = 0 built-in.
+        /// @see GameNetInfo::Placement
+        [[nodiscard]] virtual optional<WorldInstanceId>
+        PlaceJoin(const Net::JoinRequestInfo& request,
+                  const std::span<const WorldPlacement> buckets)
+        {
+            return buckets.empty() ? std::nullopt
+                                   : optional<WorldInstanceId>{buckets.front().World};
+        }
+
+        /// @brief The capture point before a factory-opened world's teardown; defaults to nothing.
+        ///
+        /// Unlike GameNetInfo::CloseWorld — which owns the whole close when set — this is a
+        /// notification: the engine closes the world through its runner after the policy returns,
+        /// so an override captures persistent state and never tears the world down itself.
+        virtual void OnWorldClosing(const WorldInstanceId world) {}
+
+        /// @brief The content digest the client expects for a joined WorldKey; defaults to the zero digest.
+        /// @see GameNetInfo::ClientWorldDigest
+        [[nodiscard]] virtual Net::ContentDigest ClientWorldDigest(const Net::WorldKey& key,
+                                                                   const Net::Blob& payload)
+        {
+            return {};
+        }
+
+        /// @brief The spatial dequantization grid a joined WorldKey decodes with; nullopt (the default) uses the shared envelope.
+        /// @see GameNetInfo::ClientWorldQuantization
+        [[nodiscard]] virtual optional<Net::QuantizationSettings>
+        ClientWorldQuantization(const Net::WorldKey& key)
+        {
+            return std::nullopt;
+        }
+
+        /// @brief The reconcile tolerances a joined WorldKey uses; nullopt (the default) uses the shared value.
+        /// @see GameNetInfo::ClientWorldTolerances
+        [[nodiscard]] virtual optional<Net::ReconcileTolerances>
+        ClientWorldTolerances(const Net::WorldKey& key)
+        {
+            return std::nullopt;
+        }
+
+        /// @brief Rewrites an account's session record as its reattach begins; defaults to restoring it as recorded.
+        /// @see GameNetInfo::TransformOnReattach
+        [[nodiscard]] virtual Net::SessionRecord TransformOnReattach(Net::SessionRecord record)
+        {
+            return record;
+        }
+
+        /// @brief Encodes an account's current gameplay pose; nullopt (the default) keeps the last travel's.
+        /// @see GameNetInfo::CaptureTravelPose
+        [[nodiscard]] virtual optional<Net::Blob> CaptureTravelPose(const WorldInstanceId world,
+                                                                    const Entity seat)
+        {
+            return std::nullopt;
+        }
+
+        /// @brief Loads an account's persisted session blob; nullopt (the default) starts it fresh.
+        /// @see GameNetInfo::LoadSession
+        [[nodiscard]] virtual optional<vector<std::byte>> LoadSession(const Net::AccountId& account)
+        {
+            return std::nullopt;
+        }
+
+        /// @brief Persists an account's session blob; defaults to keeping records process-lifetime.
+        /// @see GameNetInfo::SaveSession
+        virtual void SaveSession(const Net::AccountId& account, std::span<const std::byte> bytes) {}
     };
 
     /// @brief Construction parameters for Application.
@@ -893,6 +1021,17 @@ namespace Veng
         /// gone the world reaps after its dwell. A no-op for a key the process holds no warm pin on.
         /// @param key  The warm-held world to release.
         void ReleaseWorldWarm(const Net::WorldKey& key);
+
+        /// @brief Registers the game's net policy, superseding GameNetInfo's hook closures.
+        ///
+        /// Call from OnInitialize at the latest: the policy is consulted at every later hook
+        /// consumption point — the identity resolution and directory/session-registry build at the
+        /// world bootstrap, and each host mount — and registering one after the directory exists is
+        /// asserted against, since the hooks already threaded would ignore it. The object is
+        /// borrowed and must outlive Run. Null detaches nothing: registration is one-way, a
+        /// simplification the assert already implies.
+        /// @param policy  The game's policy object; borrowed for the application's lifetime.
+        void SetNetPolicy(GameNetPolicy* policy);
 
         /// @brief Restores the local account's session — the standalone continue, on demand.
         ///
@@ -1541,6 +1680,13 @@ namespace Veng
         Net::AccountId m_LocalAccount;
         /// @brief The local account's opaque profile (GetLocalProfile); empty when none is presented.
         Net::Blob m_LocalProfile;
+
+        /// @brief The game's registered net policy (SetNetPolicy); null runs the GameNetInfo closures.
+        ///
+        /// Borrowed, never owned. Read at the hook consumption points (the bootstrap identity
+        /// resolution, the directory/session-registry build, each host mount), all of which run
+        /// after OnInitialize — which is what makes OnInitialize the registration deadline.
+        GameNetPolicy* m_NetPolicy = nullptr;
 
         /// @brief The standing memberships the local player holds, each pinned present in the directory.
         ///

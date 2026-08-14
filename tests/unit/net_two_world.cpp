@@ -4850,7 +4850,8 @@ namespace
                                                  .LevelId = LevelId};
                 },
                 .TransformOnReattach = std::move(hooks.Transform),
-                .CaptureTravelPose = [this](const WorldInstanceId world, const Entity seat) -> Blob
+                .CaptureTravelPose = [this](const WorldInstanceId world,
+                                            const Entity seat) -> optional<Blob>
                 {
                     ++Captures;
                     CapturedWorld = world;

@@ -180,8 +180,13 @@ namespace Veng::Net
         {
             return;
         }
-        entry->Record.Gameplay.Pose = s.Info.CaptureTravelPose(world, seat);
-        entry->Dirty = true;
+        // Nullopt is "nothing newer to say" (a gone or unpawned seat): the record's last pose
+        // stands, so a capture can never erase a pose it could not improve on.
+        if (optional<Blob> pose = s.Info.CaptureTravelPose(world, seat); pose.has_value())
+        {
+            entry->Record.Gameplay.Pose = std::move(*pose);
+            entry->Dirty = true;
+        }
     }
 
     void SessionRegistry::ClearGameplay(const AccountId& account)

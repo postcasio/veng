@@ -182,3 +182,34 @@ TEST_CASE("A source resolving to no store leaves session records memory-only")
     CHECK(registry->Find(account) == nullptr);
     CHECK(std::filesystem::is_empty(slot.Dir));
 }
+
+TEST_CASE("A pose capture returning nullopt keeps the recorded pose; a value overwrites it")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+
+    // The hook's answer for the next capture: nullopt is "nothing newer to say".
+    optional<Net::Blob> nextCapture;
+    const Unique<Net::SessionRegistry> registry =
+        Net::SessionRegistry::Create(Net::SessionRegistryInfo{
+            .Types = &types,
+            .CaptureTravelPose = [&](WorldInstanceId, Entity) { return nextCapture; },
+        });
+
+    const Net::AccountId account{.Lo = 7, .Hi = 7};
+    const Net::Blob arrival = MakeBlob(0x5E55000000000003ULL, {1, 2, 3});
+    registry->RecordGameplay(account, Net::WorldKey::FromU64(0x91),
+                             MakeBlob(0x5E55000000000004ULL, {9}), arrival);
+
+    registry->CaptureGameplayPose(account, WorldInstanceId{.Value = 1}, Entity::Null);
+    REQUIRE(registry->Find(account) != nullptr);
+    CHECK(registry->Find(account)->Gameplay.Pose == arrival);
+
+    nextCapture = MakeBlob(0x5E55000000000005ULL, {4, 5, 6});
+    registry->CaptureGameplayPose(account, WorldInstanceId{.Value = 1}, Entity::Null);
+    CHECK(registry->Find(account)->Gameplay.Pose == *nextCapture);
+
+    nextCapture.reset();
+    registry->CaptureGameplayPose(account, WorldInstanceId{.Value = 1}, Entity::Null);
+    CHECK(registry->Find(account)->Gameplay.Pose == MakeBlob(0x5E55000000000005ULL, {4, 5, 6}));
+}

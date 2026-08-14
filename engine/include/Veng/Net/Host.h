@@ -220,7 +220,7 @@ namespace Veng
         /// @brief Encodes an account's gameplay pose at disconnect and the save checkpoint; unset keeps the last.
         ///
         /// Read only when Sessions is unset. See SessionRegistryInfo::CaptureTravelPose.
-        function<Net::Blob(WorldInstanceId, Entity)> CaptureTravelPose;
+        function<optional<Net::Blob>(WorldInstanceId, Entity)> CaptureTravelPose;
         /// @brief Loads an account's persisted session blob on first admit; unset keeps records process-lifetime.
         ///
         /// Read only when Sessions is unset. See SessionRegistryInfo::LoadSession.
