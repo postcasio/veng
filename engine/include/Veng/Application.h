@@ -767,6 +767,18 @@ namespace Veng
         /// @param world  The world to present once it is ready.
         void RebindManagedViewportWhenReady(usize index, WorldInstanceId world);
 
+        /// @brief Sets the consumer predicate every present-on-ready rebind must also satisfy.
+        ///
+        /// Forwards to ManagedViewportSet::SetPresentReadyGate. The engine's own readiness test is
+        /// necessary but not always sufficient: a consumer whose destination world runs per-world work
+        /// that must finish before the first visible frame — a bake, a stream, a generation pass —
+        /// answers here, and the outgoing world stays presented meanwhile. The wait clock keeps
+        /// running while the gate refuses, so a gate that never opens abandons through the ordinary
+        /// timeout path (GetAbandonedManagedPresentWorld) rather than stranding the viewport. An empty
+        /// function (the default) presents on the engine's test alone.
+        /// @param gate  The predicate, or an empty function to remove the gate.
+        void SetWorldPresentReadyGate(WorldPresentReadyGate gate);
+
         /// @brief Returns the world a managed viewport currently presents (its applied binding).
         ///
         /// Forwards to ManagedViewportSet::GetViewportWorld. An in-flight rebind is not reflected until

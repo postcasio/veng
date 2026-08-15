@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/ManagedViewports.h>
 #include <Veng/World.h>
 #include <Veng/Scene/Entity.h>
 
@@ -31,4 +32,16 @@ namespace Veng
     /// @param world   The world to test.
     /// @return True once the world is fully ready to present.
     [[nodiscard]] bool IsWorldPresentable(const WorldRunner& runner, WorldInstanceId world);
+
+    /// @brief Returns whether a world is presentable to both the engine and a consumer's gate.
+    ///
+    /// The composed present-on-ready test: the engine's own readiness above, and — only once that
+    /// passes — @p gate's answer for the resolved world, so a consumer holds the swap for per-world
+    /// work of its own. An empty gate reduces this to IsWorldPresentable exactly.
+    /// @param runner  The runner the world resolves through.
+    /// @param world   The world to test.
+    /// @param gate    The consumer predicate, or an empty function for the engine's test alone.
+    /// @return True once both tests pass.
+    [[nodiscard]] bool IsWorldPresentable(const WorldRunner& runner, WorldInstanceId world,
+                                          const WorldPresentReadyGate& gate);
 }

@@ -27,6 +27,18 @@ namespace Veng::Renderer
 
 namespace Veng
 {
+    /// @brief A consumer predicate deciding whether a world is ready to be presented.
+    ///
+    /// The extension point of the present-on-ready path: the engine's own readiness (the destination
+    /// resolves, its scene is installed, its simulation started, its residency batch resident, its
+    /// clock ticked once) is necessary but need not be sufficient — a consumer whose world carries
+    /// per-world work of its own that must finish before the first visible frame answers here. It is
+    /// consulted only after the engine's own test passes, once per waiting rebind per frame, and only
+    /// for a present-on-ready rebind; an unset gate presents on the engine's test alone.
+    /// @param world  The destination world, already engine-ready; its Id and scene are readable.
+    /// @return True once the consumer considers @p world ready to become visible.
+    using WorldPresentReadyGate = function<bool(const World& world)>;
+
     /// @brief Configuration for one engine-owned managed viewport, naming its world and seat.
     ///
     /// An element of ApplicationInfo::ManagedViewports (or the singular ApplicationInfo::ManagedViewport)
@@ -165,7 +177,8 @@ namespace Veng
         /// viewport, re-resolving its seat in the destination, and re-seeding the viewport's render
         /// settings and @p knobs from the destination's authored LevelRenderSettings when it carries
         /// one), then evaluates each present-on-ready rebind — applying it once its destination is
-        /// ready, retrying a timed-out wait up to PresentReadyAttempts, or abandoning it (surfaced
+        /// ready (the engine's own test and any SetPresentReadyGate predicate both passing),
+        /// retrying a timed-out wait up to PresentReadyAttempts, or abandoning it (surfaced
         /// through GetAbandonedPresentWorld) once the attempts are spent or its destination
         /// vanishes mid-wait. The runner resolves the departed and destination worlds; @p delta
         /// advances each pending present-on-ready request's wait clock.
@@ -282,6 +295,17 @@ namespace Veng
         /// @param index  The managed viewport index (0 the primary).
         /// @param world  The world to present once it is ready.
         void RebindWorldWhenReady(usize index, WorldInstanceId world);
+
+        /// @brief Sets the consumer predicate every present-on-ready rebind must also satisfy.
+        ///
+        /// Composes with the engine's own readiness rather than replacing it: a waiting rebind swaps
+        /// once IsWorldPresentable passes **and** this gate returns true for the destination, so a
+        /// consumer holds the outgoing world up while its own per-world work (a bake, a stream, a
+        /// generation pass) finishes. The wait clock keeps running while the gate refuses, so a gate
+        /// that never opens abandons through the ordinary timeout path rather than stranding the
+        /// viewport. Set to an empty function to present on the engine's test alone (the default).
+        /// @param gate  The predicate, or an empty function to remove the gate.
+        void SetPresentReadyGate(WorldPresentReadyGate gate);
 
         /// @brief Registers a non-owning presented viewport bound to a world, driven beside the set.
         ///
@@ -441,7 +465,7 @@ namespace Veng
         {
             /// @brief The managed viewport index to rebind once the world is ready.
             usize Index = 0;
-            /// @brief The destination world, applied only once IsWorldPresentable reports it ready.
+            /// @brief The destination world, applied once IsWorldPresentable and the gate report it ready.
             WorldInstanceId World;
             /// @brief Seconds spent waiting for readiness, accrued toward the ready timeout.
             f32 Waited = 0.0f;
@@ -451,6 +475,9 @@ namespace Veng
 
         /// @brief Present-on-ready rebinds, held until their destination readies, times out, or closes.
         vector<PendingReadyRebind> m_PendingReadyRebinds;
+
+        /// @brief The consumer readiness predicate composed onto every present-on-ready wait; may be empty.
+        WorldPresentReadyGate m_PresentReadyGate;
 
         /// @brief One abandoned present-on-ready destination: the index it targeted and its world.
         struct AbandonedPresent

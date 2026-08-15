@@ -63,6 +63,18 @@ namespace Veng
         return resolved->Pending.IsResident() && resolved->Clock.GetTick() >= 1;
     }
 
+    bool IsWorldPresentable(const WorldRunner& runner, const WorldInstanceId world,
+                            const WorldPresentReadyGate& gate)
+    {
+        if (!IsWorldPresentable(runner, world))
+        {
+            return false;
+        }
+        // The gate runs only past the engine's own test, so a consumer predicate may read the
+        // destination's scene without checking it is installed.
+        return !gate || gate(*runner.ResolveWorld(world));
+    }
+
     ManagedViewportSet::ManagedViewportSet(Renderer::Context& context, AssetManager& assets,
                                            Renderer::ViewportCompositor& compositor,
                                            InputRouter& router, GuiDriverRegistry* const drivers)
@@ -192,7 +204,7 @@ namespace Veng
                 it = m_PendingReadyRebinds.erase(it);
                 continue;
             }
-            if (IsWorldPresentable(runner, it->World))
+            if (IsWorldPresentable(runner, it->World, m_PresentReadyGate))
             {
                 ApplyCompleteRebind(it->Index, it->World, runner, knobs);
                 it = m_PendingReadyRebinds.erase(it);
@@ -261,6 +273,11 @@ namespace Veng
     {
         SupersedePending(index);
         m_PendingReadyRebinds.push_back({.Index = index, .World = world});
+    }
+
+    void ManagedViewportSet::SetPresentReadyGate(WorldPresentReadyGate gate)
+    {
+        m_PresentReadyGate = std::move(gate);
     }
 
     void ManagedViewportSet::ApplyCompleteRebind(const usize index, const WorldInstanceId world,

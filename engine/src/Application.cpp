@@ -1812,6 +1812,11 @@ namespace Veng
         m_ManagedViewports->RebindWorldWhenReady(index, world);
     }
 
+    void Application::SetWorldPresentReadyGate(WorldPresentReadyGate gate)
+    {
+        m_ManagedViewports->SetPresentReadyGate(std::move(gate));
+    }
+
     WorldInstanceId Application::GetManagedViewportWorld(const usize index) const
     {
         return m_ManagedViewports->GetViewportWorld(index);

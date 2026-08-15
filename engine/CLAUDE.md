@@ -184,6 +184,17 @@ either **once the attempts are spent** or immediately if its **destination vanis
 strand the viewport on the old world. `ManagedViewportSet` carries the same surface (`GetViewportWorld` /
 `GetPendingViewportWorld` / `RebindWorldWhenReady` / `GetAbandonedPresentWorld`).
 
+**The engine's readiness is necessary, and a consumer may say it is not sufficient.**
+**`SetWorldPresentReadyGate(gate)`** (`ManagedViewportSet::SetPresentReadyGate`) installs a
+`WorldPresentReadyGate` — a `bool(const World&)` predicate the present-on-ready path consults *after*
+its own test passes, once per waiting rebind per frame. A destination world runs its systems from the
+moment it opens, whether or not anything presents it, so per-world work that must finish before the
+first visible frame (a bake, a stream, a generation pass) is already progressing during the wait; the
+gate is how a consumer says it has not finished yet, and the outgoing world stays up meanwhile. The
+wait clock keeps running while the gate refuses, so a gate that never opens abandons through the
+timeout path above rather than stranding the viewport. An unset gate (the default) presents on the
+engine's test alone.
+
 **`Application` optionally bootstraps and drives worlds through the `WorldRunner`.** Set
 `ApplicationInfo::World` (`GameWorldInfo { path Project; }`) and `Application` runs the game: it reads
 the **cooked project** (`<name>.vengproj`) beside the executable (`ReadCookedProject`) and mounts each

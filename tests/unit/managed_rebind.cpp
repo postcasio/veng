@@ -5,7 +5,8 @@
 //  - ResolvePresentationSeat: the seat a viewport re-points to on a rebind — the bound Viewer when it
 //    still resolves in the destination scene, else the scene's sole/first Viewer, else none;
 //  - IsWorldPresentable: the present-on-ready gate — a world is presentable only once it resolves, its
-//    simulation has started, its residency batch is resident, and its clock has ticked at least once;
+//    simulation has started, its residency batch is resident, and its clock has ticked at least once,
+//    plus the composition of a consumer's own WorldPresentReadyGate onto that answer;
 //  - GuiOverlay::Detach: idempotent, and a no-op on an undriven overlay (no host, no attach).
 //
 // The router plumbing, viewport document attach/detach observed through GetAttachedDocuments, cursor
@@ -176,6 +177,60 @@ TEST_CASE("IsWorldPresentable gates on resolve, started sim, residency, and a fi
 
         runner.CloseWorld(world);
         CHECK_FALSE(IsWorldPresentable(runner, world));
+    }
+}
+
+TEST_CASE("A consumer present-ready gate composes onto the engine's readiness rather than "
+          "replacing it")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    ContextStorage storage;
+
+    const WorldInstanceId world = runner.OpenWorld(StartedEmptyWorld(storage));
+
+    SUBCASE("An empty gate reduces the composed test to the engine's own")
+    {
+        const WorldPresentReadyGate none;
+        CHECK_FALSE(IsWorldPresentable(runner, world, none));
+        runner.Tick(OneStep(storage));
+        CHECK(IsWorldPresentable(runner, world, none));
+    }
+
+    SUBCASE("A refusing gate holds an engine-ready world back")
+    {
+        runner.Tick(OneStep(storage));
+        REQUIRE(IsWorldPresentable(runner, world));
+
+        bool open = false;
+        const WorldPresentReadyGate gate = [&open](const World&) { return open; };
+        CHECK_FALSE(IsWorldPresentable(runner, world, gate));
+
+        open = true;
+        CHECK(IsWorldPresentable(runner, world, gate));
+    }
+
+    SUBCASE("The gate is not consulted for a world the engine has not readied, and sees its id")
+    {
+        u32 calls = 0;
+        WorldInstanceId seen;
+        const WorldPresentReadyGate gate = [&calls, &seen](const World& candidate)
+        {
+            ++calls;
+            seen = candidate.Id;
+            return true;
+        };
+
+        // Still at tick 0: the engine's test fails first, so an accepting gate cannot present it.
+        CHECK_FALSE(IsWorldPresentable(runner, world, gate));
+        CHECK(calls == 0);
+
+        runner.Tick(OneStep(storage));
+        CHECK(IsWorldPresentable(runner, world, gate));
+        CHECK(calls == 1);
+        CHECK(seen == world);
     }
 }
 
