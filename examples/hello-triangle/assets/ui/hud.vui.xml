@@ -6,6 +6,7 @@
   <Panel class="ticks">
     <Text class="tick" count="8">${n:02}</Text>
   </Panel>
+  <Panel class="readout"/>
   <ScrollView class="picker">
     <Button class="row" count="6" onClick="openChannel">channel ${n:02}</Button>
   </ScrollView>

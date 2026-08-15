@@ -1262,6 +1262,30 @@ namespace Veng::Gui
         m_Dirty = true;
     }
 
+    void Document::SetPinnedPosition(Element& element, const vec2 topLeft)
+    {
+        // Position and position type only: an auto-sized element writes no size, so folding one
+        // into the unchanged-test would fail on every call and re-solve the whole tree per frame.
+        const Style& base = element.BaseStyle;
+        const bool unchanged = base.Position == PositionType::Absolute &&
+                               base.Inset.Left == topLeft.x && base.Inset.Top == topLeft.y &&
+                               !PositionInsets::IsSet(base.Inset.Right) &&
+                               !PositionInsets::IsSet(base.Inset.Bottom);
+        if (unchanged)
+        {
+            return;
+        }
+
+        const auto place = [&](Style& style)
+        {
+            style.Position = PositionType::Absolute;
+            style.Inset = {.Left = topLeft.x, .Top = topLeft.y};
+        };
+        place(element.BaseStyle);
+        place(element.ComputedStyle);
+        m_Dirty = true;
+    }
+
     void Document::SetAnimations(Element& element, vector<StyleAnimation> animations)
     {
         element.Animations = std::move(animations);

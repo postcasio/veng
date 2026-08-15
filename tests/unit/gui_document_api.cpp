@@ -1,7 +1,7 @@
-// The Document convenience API: FindById lookup, the paint-only setters and SetPlacement (the
-// layout-dirty discrimination), pointer-events hit-test transparency, anchored absolute
-// positioning through unset inset edges, style animations, and style-property bindings.
-// Device-free — panels only, no font resource.
+// The Document convenience API: FindById lookup, the paint-only setters and the two pin forms
+// (SetPlacement / SetPinnedPosition, and their layout-dirty discrimination), pointer-events
+// hit-test transparency, anchored absolute positioning through unset inset edges, style
+// animations, and style-property bindings. Device-free — a stub text measurer, no font resource.
 
 #include <cmath>
 
@@ -79,6 +79,109 @@ TEST_CASE("gui document: SetPlacement pins a rect and re-dirties layout only on 
     CHECK(doc.IsDirty());
     doc.Solve(vec2(200.0f, 200.0f));
     CheckRect(panel.Layout, 60.0f, 30.0f, 50.0f, 40.0f);
+}
+
+TEST_CASE("gui document: SetPinnedPosition pins a position and sizes the element to its content")
+{
+    Document doc;
+
+    // A deterministic measurer: 10px per character, 20px per line — the auto size under test.
+    doc.SetTextMeasurer([](string_view text, const Style&, optional<f32>) -> vec2
+                        { return vec2(static_cast<f32>(text.size()) * 10.0f, 20.0f); });
+
+    Element& card = doc.Add(doc.Root(), ElementKind::Panel);
+    doc.SetStyle(card,
+                 []
+                 {
+                     Style style;
+                     style.Padding = Insets::All(6.0f);
+                     style.BorderStyle.Width = 3.0f;
+                     return style;
+                 }());
+    Element& label = doc.Add(card, ElementKind::Text);
+    doc.SetText(label, "HELLO"); // 5 chars -> 50px of content.
+
+    doc.SetPinnedPosition(card, vec2(20.0f, 30.0f));
+    doc.Solve(vec2(200.0f, 200.0f));
+
+    // The measured content plus the card's own border and padding, which the border box includes.
+    CheckRect(card.Layout, 20.0f, 30.0f, 68.0f, 38.0f);
+    CHECK(!doc.IsDirty());
+
+    // Re-pinning the same position is free even though the element carries no written size.
+    doc.SetPinnedPosition(card, vec2(20.0f, 30.0f));
+    CHECK(!doc.IsDirty());
+
+    // Longer content re-measures on the next solve; the pinned corner does not move.
+    doc.SetText(label, "HELLOWORLD");
+    doc.Solve(vec2(200.0f, 200.0f));
+    CheckRect(card.Layout, 20.0f, 30.0f, 118.0f, 38.0f);
+
+    // Moving the pin re-dirties and re-solves at the new corner, still content-sized.
+    doc.SetPinnedPosition(card, vec2(50.0f, 30.0f));
+    CHECK(doc.IsDirty());
+    doc.Solve(vec2(200.0f, 200.0f));
+    CheckRect(card.Layout, 50.0f, 30.0f, 118.0f, 38.0f);
+}
+
+TEST_CASE("gui document: an authored size survives SetPinnedPosition, and SetPlacement replaces it")
+{
+    Document doc;
+    Element& panel = doc.Add(doc.Root(), ElementKind::Panel);
+    doc.SetStyle(panel,
+                 []
+                 {
+                     Style style;
+                     style.Width = Length::Points(120.0f);
+                     style.Height = Length::Points(24.0f);
+                     return style;
+                 }());
+
+    // Pinning by position alone leaves the authored length in place.
+    doc.SetPinnedPosition(panel, vec2(10.0f, 10.0f));
+    doc.Solve(vec2(200.0f, 200.0f));
+    CheckRect(panel.Layout, 10.0f, 10.0f, 120.0f, 24.0f);
+
+    // The three-argument form still wins over an authored size, unchanged.
+    doc.SetPlacement(panel, vec2(10.0f, 10.0f), vec2(40.0f, 40.0f));
+    doc.Solve(vec2(200.0f, 200.0f));
+    CheckRect(panel.Layout, 10.0f, 10.0f, 40.0f, 40.0f);
+
+    // And it wrote that size into the base style, so the two forms are not interchangeable on one
+    // element: pinning by position afterwards keeps the fixed extent rather than restoring 120x24.
+    doc.SetPinnedPosition(panel, vec2(70.0f, 10.0f));
+    doc.Solve(vec2(200.0f, 200.0f));
+    CheckRect(panel.Layout, 70.0f, 10.0f, 40.0f, 40.0f);
+}
+
+TEST_CASE("gui layout: a pinned auto-sized element sizes to its row, its children still auto")
+{
+    Document doc;
+    doc.SetTextMeasurer([](string_view text, const Style&, optional<f32>) -> vec2
+                        { return vec2(static_cast<f32>(text.size()) * 10.0f, 20.0f); });
+
+    Element& strip = doc.Add(doc.Root(), ElementKind::Panel);
+    doc.SetStyle(strip,
+                 []
+                 {
+                     Style style;
+                     style.Direction = FlexDirection::Row;
+                     style.AlignItems = Align::FlexStart;
+                     return style;
+                 }());
+    Element& first = doc.Add(strip, ElementKind::Text);
+    doc.SetText(first, "AB"); // 20px
+    Element& second = doc.Add(strip, ElementKind::Text);
+    doc.SetText(second, "CDE"); // 30px
+
+    doc.SetPinnedPosition(strip, vec2(5.0f, 5.0f));
+    doc.Solve(vec2(200.0f, 200.0f));
+
+    // The absolutely-positioned parent measures its row, and each child keeps its own measured
+    // extent rather than being stretched by the pin.
+    CheckRect(strip.Layout, 5.0f, 5.0f, 50.0f, 20.0f);
+    CheckRect(first.Layout, 5.0f, 5.0f, 20.0f, 20.0f);
+    CheckRect(second.Layout, 25.0f, 5.0f, 30.0f, 20.0f);
 }
 
 TEST_CASE("gui document: paint-only setters change the live style without a layout re-solve")

@@ -888,6 +888,15 @@ if (const auto p = GetManagedViewports().Get(0)->WorldToDocument(targetWorldPos)
 The engine owns the coordinate bridge and the clamp; the projection policy (which world point,
 what rejection margin) stays yours.
 
+**Pin without a size when the content decides the width.** `SetPlacement` takes a fixed extent, so
+a marker whose label you do not control forces you to invent one. `SetPinnedPosition(*card, pos)`
+pins the corner and leaves `width`/`height` at whatever the style resolved — `auto` by default, so
+the card is exactly as wide as what it says, and an authored `width` in the stylesheet still wins.
+Read the resulting extent back from `card->Layout` after the next `Solve`; a caller that needs it
+*before* placing (to clamp) uses the previous frame's rect, which only moves when the content does.
+The two forms are not interchangeable on one element: `SetPlacement` writes a fixed size into the
+base style, so an element pinned by rect once keeps that size until a `SetStyle` clears it.
+
 ## 5. Make it interactive
 
 A document is **display-only by default** — its bindings update and it draws, but it

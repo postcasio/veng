@@ -586,6 +586,19 @@ card/label into bounds; the projection policy and rejection margins stay the gam
 paths support them: `SetText` early-outs on unchanged text, `SetImageUv` is a paint-only
 atlas-flipbook setter, and `SetRotation` a paint-only per-frame angle.
 
+**Pinning comes in two forms, and only one of them names a size.** `SetPlacement(element, topLeft,
+size)` writes an absolute position *and* a fixed `Points` extent; `SetPinnedPosition(element,
+topLeft)` writes the position and leaves `Width`/`Height` alone, so an element declaring neither is
+sized from its content the way any in-flow element is, and one whose style authored a length keeps
+it. Both re-dirty layout only on a real change, but the tests differ: the rect form compares
+position *and* the size it wrote, while the position form compares **position and position type
+only** — an auto-sized element has no written size to compare, so folding one in would re-dirty
+every frame and cost a full re-solve on a caller that re-pins each frame. Their writes both land in
+`BaseStyle`, which makes them **not interchangeable on one element**: an element pinned once by rect
+carries that `Points` size forever, and switching it to content sizing takes a `SetStyle`. A caller
+that needs the resulting extent reads `Element::Layout` after the next `Solve` — the measurement
+already exists, so no measure-without-solving entry point does.
+
 ## Two placements: the screen-space overlay and the world-space surface
 
 A document composited per-viewport over the scene is a **screen-space overlay** (above): it

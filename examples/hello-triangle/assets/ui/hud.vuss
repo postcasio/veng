@@ -68,6 +68,13 @@
     margin: 0 6px 0 0;
 }
 
+/* A reserved strip the app pins its channel caption into. The slot fixes the space; the caption
+   inside it declares no width, so it is exactly as wide as the label it carries. */
+.readout {
+    height: 17px;
+    margin: 6px 0 0 0;
+}
+
 /* A short scrolling strip of channel rows, deliberately too small to hold all six: clicking a row
    opens a dropdown from the driver into the document's popup layer, which lays out against the
    document extent and paints with no inherited scissor — so the menu covers the rows below it and

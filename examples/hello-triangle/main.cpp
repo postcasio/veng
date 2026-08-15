@@ -494,7 +494,9 @@ VE_SYSTEM(SpawnPlayerRule, 0x70CCE23C99D1C3A1ULL, "Spawn Player Rule");
 // a dropdown into the document's popup stack, which lays out against the document extent, paints
 // after the whole main tree with no inherited scissor, and hit-tests ahead of it. The rows live in
 // a short scrolling picker, so the menu escapes that clip and covers the HUD below it — neither of
-// which an absolute-positioned child could do.
+// which an absolute-positioned child could do. The channel it picks is echoed in a caption pinned
+// into the markup's reserved slot by position alone, so the caption fits a label whose length the
+// markup never declared.
 class HudDriver final : public GuiDriver
 {
 public:
@@ -504,6 +506,23 @@ public:
         m_Ticks = document.FindAllByClass("tick");
         m_Menu = {};
         m_Anchor = {};
+        m_Readout = nullptr;
+
+        // The channel caption the markup reserves a slot for. It is placed by position alone, so
+        // the app never invents a width for a label whose length it does not control.
+        const vector<Gui::Element*> slot = document.FindAllByClass("readout");
+        if (!slot.empty())
+        {
+            m_Slot = slot.front();
+            m_Readout = &document.Add(*m_Slot, Gui::ElementKind::Text);
+            Gui::Style caption;
+            caption.TextSize = 11.0f;
+            caption.TextColor = vec4(0.055f, 0.063f, 0.078f, 1.0f);
+            caption.Background = vec4(0.31f, 0.639f, 1.0f, 0.85f);
+            caption.Padding = Gui::Insets{.Left = 4.0f, .Top = 1.0f, .Right = 4.0f, .Bottom = 1.0f};
+            caption.Radii = Gui::CornerRadii::All(3.0f);
+            document.SetStyle(*m_Readout, caption);
+        }
 
         m_Context.SetHandler("openChannel", [this](Gui::Element& row) { OpenChannelMenu(row); });
         m_Context.SetHandler("chooseChannel",
@@ -529,6 +548,17 @@ public:
         for (usize i = 0; i < m_Ticks.size(); i++)
         {
             frame.Document.SetTextColor(*m_Ticks[i], i == active ? accent : idle);
+        }
+
+        // The caption rides under the lit tick and reads whatever channel was last picked, so its
+        // corner moves three times a second while its width is whatever its label measures. Both
+        // coordinates come out of the previous solve; SetPinnedPosition writes no size, and skips
+        // the re-dirty on the frames where the sweep has not advanced.
+        if (m_Readout != nullptr)
+        {
+            frame.Document.SetText(*m_Readout, m_Choice.empty() ? "no channel" : m_Choice);
+            frame.Document.SetPinnedPosition(
+                *m_Readout, vec2(m_Ticks[active]->Layout.Min.x - m_Slot->Layout.Min.x, 0.0f));
         }
     }
 
@@ -587,6 +617,7 @@ private:
         {
             document.SetText(*row, fmt::format("{} \xc2\xb7 {}", m_AnchorLabel, option.Text));
         }
+        m_Choice = fmt::format("{} \xc2\xb7 {}", m_AnchorLabel, option.Text);
         document.ClosePopup(m_Menu);
         m_Menu = {};
         m_Anchor = {};
@@ -595,10 +626,13 @@ private:
     Gui::Document* m_Document = nullptr;
     Gui::BindingContext m_Context;
     vector<Gui::Element*> m_Ticks;
+    Gui::Element* m_Slot = nullptr;
+    Gui::Element* m_Readout = nullptr;
     f32 m_Phase = 0.0f;
     Gui::PopupId m_Menu;
     Gui::ElementHandle m_Anchor;
     string m_AnchorLabel;
+    string m_Choice;
 };
 
 VE_GUI_DRIVER(HudDriver, 0xE46A19EB6642A7D3ULL, "HUD");

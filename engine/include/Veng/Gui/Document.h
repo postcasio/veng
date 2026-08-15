@@ -283,7 +283,25 @@ namespace Veng::Gui
         /// @param element  The element to pin; its position type becomes Absolute.
         /// @param topLeft  The element's top-left corner, in parent-space pixels.
         /// @param size     The element's fixed size, in pixels.
+        /// @see SetPinnedPosition
         void SetPlacement(Element& element, vec2 topLeft, vec2 size);
+
+        /// @brief Pins an element absolutely at a position, leaving its size to the layout.
+        ///
+        /// The position-only form of the pin idiom: absolute position, Left/Top insets at topLeft
+        /// (Right/Bottom left unset), and Width/Height untouched — so an element declaring neither
+        /// is sized from its content, and one whose style authored a length keeps that length.
+        /// Layout is marked dirty only when the position or the position type moved; the size is
+        /// no part of that test, since an auto-sized element has no written size to compare. Read
+        /// the resulting extent back from Element::Layout after the next Solve.
+        ///
+        /// @warning The two pin forms are not interchangeable on one element. SetPlacement writes
+        /// a fixed Points size into the base style, so an element pinned through it once keeps
+        /// that size here; restore an authored or Auto size with SetStyle before switching.
+        /// @param element  The element to pin; its position type becomes Absolute.
+        /// @param topLeft  The element's top-left corner, in parent-space pixels.
+        /// @see SetPlacement
+        void SetPinnedPosition(Element& element, vec2 topLeft);
 
         /// @brief Sets an element's interaction-state mask, re-resolving its live style.
         ///
