@@ -479,10 +479,11 @@ namespace
 
     constexpr AssetId ChildPrefabId{0x00C0FFEE00000001ULL};
     constexpr AssetId ParentPrefabId{0x00C0FFEE00000002ULL};
+    constexpr AssetId GrandparentPrefabId{0x00C0FFEE00000003ULL};
 }
 
 TEST_CASE_FIXTURE(PrefabFixture,
-                  "A nesting entity expands its prefab, parents its roots and keeps its hierarchy")
+                  "A nesting entity is its expansion's root and keeps the body's hierarchy")
 {
     // The body: a root "body" with one child "limb" under it.
     const BlobEntity child[] = {
@@ -507,21 +508,20 @@ TEST_CASE_FIXTURE(PrefabFixture,
 
     const vector<Entity> roots = (*loaded)->SpawnInto(*Stage, *Assets).Roots;
 
-    // Both of the parent's own entities are roots; the expansion's root is not — it hangs under
-    // the nesting entity.
+    // Both of the parent's own entities are roots, and the nesting one *is* the body — no
+    // container between them.
     REQUIRE(roots.size() == 2);
     CHECK(Stage->Get<Name>(roots[0]).Value == "scene");
+    CHECK(Stage->Get<Name>(roots[1]).Value == "body");
 
-    vector<Entity> nested;
-    Stage->ForEachChild(roots[1], [&](Entity entity) { nested.push_back(entity); });
-    REQUIRE(nested.size() == 1);
-    CHECK(Stage->Get<Name>(nested[0]).Value == "body");
+    // The child prefab's own hierarchy survived becoming the nesting entity's.
+    vector<Entity> children;
+    Stage->ForEachChild(roots[1], [&](Entity entity) { children.push_back(entity); });
+    REQUIRE(children.size() == 1);
+    CHECK(Stage->Get<Name>(children[0]).Value == "limb");
 
-    // The child prefab's own hierarchy survived the re-parenting.
-    vector<Entity> grandchildren;
-    Stage->ForEachChild(nested[0], [&](Entity entity) { grandchildren.push_back(entity); });
-    REQUIRE(grandchildren.size() == 1);
-    CHECK(Stage->Get<Name>(grandchildren[0]).Value == "limb");
+    // Three authored entities, three spawned entities.
+    CHECK(Stage->EntityCount() == 3);
 }
 
 TEST_CASE_FIXTURE(PrefabFixture,
@@ -548,16 +548,126 @@ TEST_CASE_FIXTURE(PrefabFixture,
     const vector<Entity> roots = (*loaded)->SpawnInto(*Stage, *Assets).Roots;
     REQUIRE(roots.size() == 1);
 
-    vector<Entity> nested;
-    Stage->ForEachChild(roots[0], [&](Entity entity) { nested.push_back(entity); });
-    REQUIRE(nested.size() == 1);
+    CHECK(Stage->Get<Name>(roots[0]).Value == "placed");
+    CHECK(Stage->Get<Transform>(roots[0]).Position == vec3{9.0f, 0.0f, 0.0f});
 
-    CHECK(Stage->Get<Name>(nested[0]).Value == "placed");
-    CHECK(Stage->Get<Transform>(nested[0]).Position == vec3{9.0f, 0.0f, 0.0f});
+    // The placement and the body are one entity: nothing hangs below it, and the spawn left no
+    // container beside it.
+    usize children = 0;
+    Stage->ForEachChild(roots[0], [&](Entity) { ++children; });
+    CHECK(children == 0);
+    CHECK(Stage->EntityCount() == 1);
+}
 
-    // The nesting entity itself stays the bare container the overrides were lifted off.
-    CHECK(Stage->TryGet<Name>(roots[0]) == nullptr);
-    CHECK(Stage->TryGet<Transform>(roots[0]) == nullptr);
+TEST_CASE_FIXTURE(PrefabFixture,
+                  "A prefab nesting a prefab that nests one composes onto one entity")
+{
+    Transform inner;
+    inner.Position = vec3{1.0f, 0.0f, 0.0f};
+    Transform middle;
+    middle.Position = vec3{2.0f, 0.0f, 0.0f};
+
+    // The innermost body says what the thing is; each level above it replaces one of its
+    // components and leaves the rest standing.
+    const BlobEntity child[] = {
+        {.Components = {MakeComponent(Types, Name{"inner"}), MakeComponent(Types, inner),
+                        MakeComponent(Types, Authority{.Tier = Tier::Local})}}};
+    const BlobEntity parent[] = {
+        {.Components = {MakeComponent(Types, middle)}, .NestedPrefab = ChildPrefabId.Value}};
+    const BlobEntity grandparent[] = {{.Components = {MakeComponent(Types, Name{"outer"})},
+                                       .NestedPrefab = ParentPrefabId.Value}};
+
+    ArchiveWriter writer;
+    writer.Add(ChildPrefabId, AssetTypes::Prefab, PrefabBlob(child));
+    writer.Add(ParentPrefabId, AssetTypes::Prefab, PrefabBlob(parent));
+    writer.Add(GrandparentPrefabId, AssetTypes::Prefab, PrefabBlob(grandparent));
+    const MountHandle mount = Assets->MountMemory(writer.Build(), "nested_two_tiers");
+
+    const AssetResult<AssetHandle<Prefab>> loaded = Assets->LoadSync<Prefab>(GrandparentPrefabId);
+    REQUIRE(loaded.has_value());
+
+    const vector<Entity> roots = (*loaded)->SpawnInto(*Stage, *Assets).Roots;
+    REQUIRE(roots.size() == 1);
+
+    // One entity carries all three levels, each component from the outermost level that authored
+    // it: the grandparent's name, the parent's transform, the child's authority.
+    CHECK(Stage->EntityCount() == 1);
+    CHECK(Stage->Get<Name>(roots[0]).Value == "outer");
+    CHECK(Stage->Get<Transform>(roots[0]).Position == vec3{2.0f, 0.0f, 0.0f});
+    CHECK(Stage->Get<Authority>(roots[0]).Tier == Tier::Local);
+}
+
+TEST_CASE_FIXTURE(PrefabFixture,
+                  "A nesting entity whose expansion is empty still carries its records")
+{
+    // Two ways an expansion materializes nothing: a prefab with no entities at all, and one whose
+    // every entity a client-mode load skips as server-authoritative.
+    const BlobEntity parent[] = {{.Components = {MakeComponent(Types, Name{"placed"})},
+                                  .NestedPrefab = ChildPrefabId.Value}};
+
+    SUBCASE("an empty prefab")
+    {
+        ArchiveWriter writer;
+        writer.Add(ChildPrefabId, AssetTypes::Prefab, PrefabBlob(std::span<const BlobEntity>{}));
+        writer.Add(ParentPrefabId, AssetTypes::Prefab, PrefabBlob(parent));
+        const MountHandle mount = Assets->MountMemory(writer.Build(), "nested_empty");
+
+        const AssetResult<AssetHandle<Prefab>> loaded = Assets->LoadSync<Prefab>(ParentPrefabId);
+        REQUIRE(loaded.has_value());
+
+        const vector<Entity> roots = (*loaded)->SpawnInto(*Stage, *Assets).Roots;
+        REQUIRE(roots.size() == 1);
+        CHECK(Stage->Get<Name>(roots[0]).Value == "placed");
+        CHECK(Stage->EntityCount() == 1);
+    }
+
+    SUBCASE("a body skipped whole by a client-mode load")
+    {
+        // No Authority is the authored default (Server), so the body's one entity is skipped.
+        const BlobEntity child[] = {{.Components = {MakeComponent(Types, Name{"body"})}}};
+
+        ArchiveWriter writer;
+        writer.Add(ChildPrefabId, AssetTypes::Prefab, PrefabBlob(child));
+        writer.Add(ParentPrefabId, AssetTypes::Prefab, PrefabBlob(parent));
+        const MountHandle mount = Assets->MountMemory(writer.Build(), "nested_skipped_body");
+
+        const AssetResult<AssetHandle<Prefab>> loaded = Assets->LoadSync<Prefab>(ParentPrefabId);
+        REQUIRE(loaded.has_value());
+
+        const vector<Entity> roots =
+            (*loaded)
+                ->SpawnInto(*Stage, *Assets, Prefab::SpawnOptions{.SkipServerAuthoritative = true})
+                .Roots;
+        REQUIRE(roots.size() == 1);
+        CHECK(Stage->Get<Name>(roots[0]).Value == "placed");
+        CHECK(Stage->EntityCount() == 1);
+    }
+}
+
+TEST_CASE_FIXTURE(PrefabFixture, "A Reference to a nesting entity resolves to the composed entity")
+{
+    const BlobEntity child[] = {{.Components = {MakeComponent(Types, Name{"body"})}}};
+    // Entity 0 points at entity 1, which is the nesting entity — so the link must land on the
+    // thing the nest produced, not on something standing in front of it.
+    const BlobEntity parent[] = {
+        {.Components = {MakeComponent(Types, Link{.Target = Entity{.Index = 1, .Generation = 0}})}},
+        {.NestedPrefab = ChildPrefabId.Value},
+    };
+
+    ArchiveWriter writer;
+    writer.Add(ChildPrefabId, AssetTypes::Prefab, PrefabBlob(child));
+    writer.Add(ParentPrefabId, AssetTypes::Prefab, PrefabBlob(parent));
+    const MountHandle mount = Assets->MountMemory(writer.Build(), "nested_reference");
+
+    const AssetResult<AssetHandle<Prefab>> loaded = Assets->LoadSync<Prefab>(ParentPrefabId);
+    REQUIRE(loaded.has_value());
+
+    const vector<Entity> roots = (*loaded)->SpawnInto(*Stage, *Assets).Roots;
+    REQUIRE(roots.size() == 2);
+
+    const Entity target = Stage->Get<Link>(roots[0]).Target;
+    CHECK(target == roots[1]);
+    CHECK(Stage->Get<Name>(target).Value == "body");
 }
 
 TEST_CASE_FIXTURE(PrefabFixture, "Spawning a nesting prefab twice yields independent copies")
@@ -579,21 +689,15 @@ TEST_CASE_FIXTURE(PrefabFixture, "Spawning a nesting prefab twice yields indepen
     REQUIRE(second.size() == 1);
     CHECK(first[0] != second[0]);
 
-    const auto soleChild = [&](Entity entity)
-    {
-        vector<Entity> children;
-        Stage->ForEachChild(entity, [&](Entity child) { children.push_back(child); });
-        REQUIRE(children.size() == 1);
-        return children[0];
-    };
-
-    Stage->Get<Name>(soleChild(first[0])).Value = "mutated";
-    CHECK(Stage->Get<Name>(soleChild(second[0])).Value == "body");
+    Stage->Get<Name>(first[0]).Value = "mutated";
+    CHECK(Stage->Get<Name>(second[0]).Value == "body");
 }
 
-TEST_CASE_FIXTURE(PrefabFixture, "A nested root's PrefabSource names the prefab that authored it")
+TEST_CASE_FIXTURE(PrefabFixture, "A spawned root's PrefabSource names the prefab that composed it")
 {
-    const BlobEntity child[] = {{.Components = {MakeComponent(Types, Name{"body"})}}};
+    // A body with two roots: the first becomes the nesting entity, the second hangs under it.
+    const BlobEntity child[] = {{.Components = {MakeComponent(Types, Name{"body"})}},
+                                {.Components = {MakeComponent(Types, Name{"sibling"})}}};
     const BlobEntity parent[] = {{.NestedPrefab = ChildPrefabId.Value}};
 
     ArchiveWriter writer;
@@ -606,12 +710,17 @@ TEST_CASE_FIXTURE(PrefabFixture, "A nested root's PrefabSource names the prefab 
 
     const vector<Entity> roots = (*loaded)->SpawnInto(*Stage, *Assets).Roots;
     REQUIRE(roots.size() == 1);
+
+    // The composed root is reproduced by the prefab whose overrides it carries — the outer one.
+    CHECK(Stage->Get<Name>(roots[0]).Value == "body");
     CHECK(Stage->Get<PrefabSource>(roots[0]).Prefab == ParentPrefabId);
 
-    vector<Entity> nested;
-    Stage->ForEachChild(roots[0], [&](Entity entity) { nested.push_back(entity); });
-    REQUIRE(nested.size() == 1);
-    CHECK(Stage->Get<PrefabSource>(nested[0]).Prefab == ChildPrefabId);
+    // The expansion's other root the outer prefab did not compose onto keeps the body's own id.
+    vector<Entity> children;
+    Stage->ForEachChild(roots[0], [&](Entity entity) { children.push_back(entity); });
+    REQUIRE(children.size() == 1);
+    CHECK(Stage->Get<Name>(children[0]).Value == "sibling");
+    CHECK(Stage->Get<PrefabSource>(children[0]).Prefab == ChildPrefabId);
 }
 
 TEST_CASE_FIXTURE(PrefabFixture, "A nested spawn's pending handles ride the parent's batch")

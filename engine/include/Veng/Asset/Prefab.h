@@ -44,9 +44,9 @@ namespace Veng
             /// @brief The prefab that is this entity's body, or the invalid id for a plain entity.
             ///
             /// A valid id makes this a nesting entity: SpawnInto expands that prefab into the same
-            /// scene, parents its roots under this entity, and applies Components as
-            /// whole-component overrides on the expansion's first root. The named prefab is an
-            /// ordinary load-time dependency, kept resident for this prefab's lifetime.
+            /// scene, this entity *is* the expansion's first root, and Components are applied to
+            /// it as whole-component overrides. The named prefab is an ordinary load-time
+            /// dependency, kept resident for this prefab's lifetime.
             AssetId NestedPrefab;
         };
 
@@ -95,14 +95,16 @@ namespace Veng
         /// (children kept in authored order). Spawning twice produces two independent copies.
         ///
         /// A nesting entity (one whose PrefabEntity::NestedPrefab is valid) expands its named
-        /// prefab through this same call, recursively: the expansion's roots are parented under
-        /// the nesting entity in authored order, and the nesting entity's own component records
-        /// are applied as **whole-component** overrides on the expansion's first root — a
-        /// component the root does not carry is added, one it carries is replaced outright. The
-        /// one exception is Hierarchy, which stays on the nesting entity: it names an entity in
-        /// *this* prefab's table, and the expansion's roots take their parent from the nesting
-        /// entity rather than from an override. Each spawned root keeps the PrefabSource of the
-        /// prefab that authored it, so a nested root names the nested prefab.
+        /// prefab through this same call, recursively, and **becomes that expansion's first
+        /// root**: its own component records are applied to that entity as **whole-component**
+        /// overrides — a component the root does not carry is added, one it carries is replaced
+        /// outright — and the expansion's remaining roots are parented under it. One authored
+        /// entity is therefore one spawned entity, which is what lets a prefab nesting a prefab
+        /// that itself nests one compose onto a single entity, and what makes a Reference field
+        /// naming a nesting entity resolve to the composed thing. An expansion that materializes
+        /// nothing (an empty prefab, or every authored entity skipped) leaves a plain entity
+        /// carrying the records. Each spawned root keeps the PrefabSource of the outermost prefab
+        /// that spawned it as a root.
         ///
         /// The batch holds the handles this spawn left pending — in practice the recipe-built
         /// meshes (a non-empty MeshRenderer.Source streams in async), since the prefab loader

@@ -324,23 +324,35 @@ single pass as a cooked load — there is no second spawn pass and no resolver s
 key beside `components` — `"prefab": "0x…"` — naming the prefab that is that entity's **body**. The
 named prefab is an **ordinary load-time dependency** (`PrefabLoader` fans it out beside the embedded
 `AssetHandle` fields and keeps it resident), and `Prefab::SpawnInto` **recurses**: it spawns the
-named prefab into the same scene, parents its roots under the nesting entity in authored order, and
-applies the nesting entity's component records as **whole-component overrides** on the expansion's
-first root — a component the root does not carry is added, one it carries is replaced outright.
-There is **no field-level merge**: a partial record has no defined meaning against a record the
-child authored, and whole-component replacement is what an authored placement wants (the child says
-what the thing *is*, the parent says where it sits). `Hierarchy` is the one component that stays on
-the nesting entity — it names an entity in the *parent's* table, and the expansion's roots take
-their parent from the nesting entity. Each spawn's `ResidencyBatch` absorbs every expansion's
-(`ResidencyBatch::Merge`), so one `SpawnResult` still reports everything the spawn left pending, and
-`SpawnOptions::SkipServerAuthoritative` flows through the recursion so a client-mode load skips
-authoritative entities at every depth. A nesting entity is never itself skipped: it authors no body
-of its own.
+named prefab into the same scene and **the nesting entity is that expansion's first root** — the
+nesting entity's component records are applied to it as **whole-component overrides** (a component
+the root does not carry is added, one it carries is replaced outright), and any further roots the
+expansion had are parented under it. There is **no field-level merge**: a partial record has no
+defined meaning against a record the child authored, and whole-component replacement is what an
+authored placement wants (the child says what the thing *is*, the parent says where it sits). Each
+spawn's `ResidencyBatch` absorbs every expansion's (`ResidencyBatch::Merge`), so one `SpawnResult`
+still reports everything the spawn left pending, and `SpawnOptions::SkipServerAuthoritative` flows
+through the recursion so a client-mode load skips authoritative entities at every depth. A nesting
+entity is never itself skipped: it authors no body of its own.
+
+**One authored entity is one spawned entity, and that is what makes nesting compose.** The nesting
+entity is not a container standing in front of its body — it *is* the body's root — so a prefab
+nesting a prefab that itself nests one lands every level's records on a single entity, a `Reference`
+field naming a nesting entity resolves to the composed thing, and a single-tier nest leaves no
+componentless entity behind. Two consequences to author against: an expansion that materializes
+nothing (an empty prefab, or one whose every entity a client-mode load skipped) leaves a plain entity
+carrying the nesting entity's records and nothing else — so **a prefab meant to survive a client-mode
+load authors its own `Veng::Authority`**, exactly as any other authored entity must, since a body is
+authored content and the skip pass reads it as such; and `Hierarchy` is no longer exempt from the
+override rule, because the nesting entity's parent edge and the expansion root's are now one edge —
+`ReplaceComponent` resets only its authored `Parent` field, leaving the scene's derived child links
+into the expansion intact.
 
 Two properties fall out of expanding at spawn rather than flattening at cook:
 
-- **`PrefabSource` keeps naming the prefab that authored each root**, so a nested root names the
-  nested prefab and replication reads the right provenance.
+- **`PrefabSource` names the outermost prefab that spawned an entity as one of its roots**, which is
+  the id that reproduces it with every level's overrides applied — what replication instantiates
+  from. A nested root the outer prefab did not compose onto keeps the nested prefab's own id.
 - **A parent never goes stale behind its child.** A flattened parent would need a cook-time
   dependency edge to avoid exactly the silent staleness the asset system is built to prevent.
 

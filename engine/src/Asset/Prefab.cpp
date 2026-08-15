@@ -134,6 +134,11 @@ namespace Veng
         // An override replaces a whole component rather than merging into the fields the nested
         // prefab authored, so an existing one is reset to its default state before it is read
         // into. Returns the slot to read the override record into.
+        //
+        // Hierarchy is reset in its authored field alone: FirstChild/PrevSibling/NextSibling are
+        // the scene's own derived links — here, onto the children the expansion already gave this
+        // entity — not authored data, and clearing them would drop that subtree out of the child
+        // list while its members still point back at their parent.
         void* ReplaceComponent(Scene& scene, Entity entity, TypeId type, const TypeInfo& info)
         {
             void* existing = scene.TryGetComponent(entity, type);
@@ -141,10 +146,29 @@ namespace Veng
             {
                 return scene.AddComponent(entity, type);
             }
+            if (type == TypeIdOf<Hierarchy>())
+            {
+                static_cast<Hierarchy*>(existing)->Parent = Entity::Null;
+                return existing;
+            }
             info.Destruct(existing);
             info.DefaultConstruct(existing);
             return existing;
         }
+
+        // A component the populate pass wrote, revisited by the resolve pass once every entity
+        // exists. The slot pointer is deliberately not kept: a later AddComponent may reallocate
+        // its pool, so the component is re-fetched from the entity and type.
+        struct PopulatedComponent
+        {
+            // The entity the component was written onto.
+            Entity Target;
+            // The component's type.
+            TypeId Type;
+            // Whether it was written as a nesting entity's override, and so sits outside the
+            // final residency sweep over this prefab's plain entities.
+            bool Override;
+        };
 
         // True when a prefab entity is server-authoritative: it carries an Authority whose Tier is
         // Server, or it carries no Authority at all (the authored default is Server). The client-mode
@@ -206,25 +230,36 @@ namespace Veng
             }
         }
 
-        // 1. Create every non-skipped entity first, so a Reference field (which may
-        //    point forward) always resolves to a created handle.
-        vector<Entity> spawned;
-        spawned.reserve(m_Entities.size());
-        for (usize i = 0; i < m_Entities.size(); ++i)
-        {
-            spawned.push_back(skip[i] ? Entity::Null : scene.CreateEntity());
-        }
-
         // The handles this spawn leaves pending, including every nested expansion's own — so one
         // SpawnResult still reports everything a spawn left pending.
         ResidencyBatch pending;
 
-        // 2. Populate each entity's components, then remap references / rehydrate
-        //    handles once every entity exists. A Hierarchy component's serialized
-        //    Parent edge now holds the remapped spawned entity; its sibling/child
-        //    links are derived and rebuilt below. A nesting entity instead expands its
-        //    named prefab here and reads its records onto the expansion's first root.
+        // 1. Create every non-skipped plain entity, so a Reference field (which may point forward)
+        //    has a handle to resolve to. A nesting entity is not created: it *is* its expansion's
+        //    first root, so its slot is filled by the expansion in the pass below.
+        vector<Entity> spawned(m_Entities.size(), Entity::Null);
+        for (usize i = 0; i < m_Entities.size(); ++i)
+        {
+            if (!skip[i] && !m_Entities[i].NestedPrefab.IsValid())
+            {
+                spawned[i] = scene.CreateEntity();
+            }
+        }
+
+        // 2. Expand each nesting entity's body and populate every entity's components, in
+        //    authoring order — so the order components enter their pools, and therefore the order
+        //    the systems reading them iterate, is the order the prefab was written in.
+        //
+        //    A nesting entity takes its expansion's first root as its own identity, and its records
+        //    are applied there as whole-component overrides. One authored entity is therefore one
+        //    spawned entity, which is what lets an outer prefab's records compose onto a body that
+        //    itself nests one, and what makes a Reference naming a nesting entity resolve to the
+        //    composed thing rather than to a container in front of it. The expansion's remaining
+        //    roots are parented under it below. An expansion that materializes nothing (an empty
+        //    prefab, or every authored entity skipped) falls back to a plain entity, leaving the
+        //    nesting entity itself as the thing its records describe.
         vector<vector<Entity>> nestedRoots(m_Entities.size());
+        vector<PopulatedComponent> populated;
         for (usize i = 0; i < m_Entities.size(); ++i)
         {
             if (skip[i])
@@ -232,25 +267,25 @@ namespace Veng
                 continue;
             }
             const PrefabEntity& prefabEntity = m_Entities[i];
-            const Entity entity = spawned[i];
             const bool nesting = prefabEntity.NestedPrefab.IsValid();
 
-            // The overrides land on the expansion's first root; an expansion that materialized
-            // nothing (an empty prefab, or every authored entity skipped) leaves the nesting
-            // entity itself as the thing they describe.
-            Entity overridden = entity;
             if (nesting)
             {
                 SpawnResult nested = NestedBody(manager, prefabEntity.NestedPrefab)
                                          .SpawnInto(scene, manager, options);
                 pending.Merge(std::move(nested.Pending));
-                nestedRoots[i] = std::move(nested.Roots);
-                if (!nestedRoots[i].empty())
+                if (nested.Roots.empty())
                 {
-                    overridden = nestedRoots[i].front();
+                    spawned[i] = scene.CreateEntity();
+                }
+                else
+                {
+                    spawned[i] = nested.Roots.front();
+                    nestedRoots[i].assign(nested.Roots.begin() + 1, nested.Roots.end());
                 }
             }
 
+            const Entity entity = spawned[i];
             for (const Component& component : prefabEntity.Components)
             {
                 // The cook validated each component against a registered
@@ -262,50 +297,59 @@ namespace Veng
 
                 const TypeInfo& typeInfo = registry.Info(component.Type);
 
-                // Hierarchy names an entity in *this* prefab's table, so it stays on the nesting
-                // entity — the expansion's roots take their parent from that entity below.
-                const Entity host =
-                    (nesting && component.Type != TypeIdOf<Hierarchy>()) ? overridden : entity;
-
-                void* slot = nesting ? ReplaceComponent(scene, host, component.Type, typeInfo)
-                                     : scene.AddComponent(host, component.Type);
+                void* slot = nesting ? ReplaceComponent(scene, entity, component.Type, typeInfo)
+                                     : scene.AddComponent(entity, component.Type);
 
                 // The prefab loader validated this record at load; a read failure
                 // here would be an engine invariant violation, not bad data.
                 ReadFields(component.Record, slot, typeInfo, registry).value();
-                Resolve(slot, typeInfo, registry, spawned, manager);
-
-                // A MeshRenderer's inline recipe source builds into its Mesh through the
-                // ordinary async load path, yielding a pending handle exactly like the
-                // cooked-mesh dependency a sibling entity would carry.
-                if (component.Type == TypeIdOf<MeshRenderer>())
-                {
-                    auto& renderer = *static_cast<MeshRenderer*>(slot);
-                    if (renderer.Source.ActiveType() != InvalidTypeId)
-                    {
-                        renderer.Mesh = BuildPrimitiveMesh(manager, renderer.Source);
-                    }
-                }
-
-                // An override written onto an expansion's root is outside the final sweep below,
-                // which walks this prefab's own entities.
-                if (host != entity)
-                {
-                    CollectPendingHandles(slot, typeInfo, registry, pending);
-                }
+                populated.emplace_back(entity, component.Type, nesting);
             }
         }
 
-        // 3. Rebuild the intrusive sibling/child links from the parent edges, in
+        // 3. Remap references and rehydrate handles, now that every entity exists — including the
+        //    ones an expansion created above, which is why this is a pass of its own rather than
+        //    part of the populate. Each slot is re-fetched: a later AddComponent may have
+        //    reallocated its pool.
+        for (const PopulatedComponent& entry : populated)
+        {
+            const TypeInfo& typeInfo = registry.Info(entry.Type);
+            void* slot = scene.TryGetComponent(entry.Target, entry.Type);
+            Resolve(slot, typeInfo, registry, spawned, manager);
+
+            // A MeshRenderer's inline recipe source builds into its Mesh through the
+            // ordinary async load path, yielding a pending handle exactly like the
+            // cooked-mesh dependency a sibling entity would carry.
+            if (entry.Type == TypeIdOf<MeshRenderer>())
+            {
+                auto& renderer = *static_cast<MeshRenderer*>(slot);
+                if (renderer.Source.ActiveType() != InvalidTypeId)
+                {
+                    renderer.Mesh = BuildPrimitiveMesh(manager, renderer.Source);
+                }
+            }
+
+            // A nesting entity is outside the final sweep below — its expansion's own spawn
+            // already reported what that left pending — so an override's handles are collected
+            // here instead.
+            if (entry.Override)
+            {
+                CollectPendingHandles(slot, typeInfo, registry, pending);
+            }
+        }
+
+        // 4. Rebuild the intrusive sibling/child links from the parent edges, in
         //    authoring order so appending preserves authored child order.
         //
-        //    ReadFields pre-set each Hierarchy's Parent (a reflected field) but left
-        //    the derived FirstChild/PrevSibling/NextSibling links null. Capture every
-        //    parent target, then clear the half-set Parent edges before linking: with
-        //    Parent still set but the links null, SetParent's UnlinkFromSiblings would
-        //    treat the child as the head of its parent's list and drop a prior sibling
-        //    sharing that parent. Clearing first lets SetParent build from a clean
-        //    slate. Roots — no Hierarchy or a null parent edge — are returned in order.
+        //    ReadFields pre-set each Hierarchy's Parent (a reflected field) and left the
+        //    derived FirstChild/PrevSibling/NextSibling links as they were — null on a
+        //    fresh entity. Capture every parent target, then clear the half-set Parent
+        //    edges before linking: with Parent still set but the sibling links null,
+        //    SetParent's UnlinkFromSiblings would treat the child as the head of its
+        //    parent's list and drop a prior sibling sharing that parent. Clearing first
+        //    lets SetParent build from a clean slate; a nesting entity's existing child
+        //    links into its own expansion are untouched by it. Roots — no Hierarchy or a
+        //    null parent edge — are returned in order.
         vector<Entity> parents(spawned.size());
         for (usize i = 0; i < spawned.size(); ++i)
         {
@@ -337,10 +381,8 @@ namespace Veng
             }
         }
 
-        // Each expansion's roots hang under their nesting entity, appended in authored order.
-        // This runs after the pass above: with the nesting entity's child list already holding a
-        // nested root, that pass's UnlinkFromSiblings would treat a freshly linked authored child
-        // as the head of the list and drop the nested root out of it.
+        // An expansion whose first root the nesting entity became may have had further roots
+        // beside it; those hang under it, after this prefab's own authored children.
         for (usize i = 0; i < nestedRoots.size(); ++i)
         {
             for (const Entity root : nestedRoots[i])
@@ -350,21 +392,33 @@ namespace Veng
         }
 
         // Record spawn provenance on each root. A runtime-built prefab carries no addressable id, so
-        // there is nothing to record and none is added.
+        // there is nothing to record and none is added. A root that is also a nesting entity already
+        // carries its expansion's provenance; this prefab's records override that expansion, so this
+        // is the id that reproduces the entity.
         if (m_SourceId.IsValid())
         {
             for (const Entity root : roots)
             {
-                scene.Add<PrefabSource>(root, PrefabSource{.Prefab = m_SourceId});
+                if (auto* existing = scene.TryGet<PrefabSource>(root))
+                {
+                    existing->Prefab = m_SourceId;
+                }
+                else
+                {
+                    scene.Add<PrefabSource>(root, PrefabSource{.Prefab = m_SourceId});
+                }
             }
         }
 
         // Collect the handles this spawn left pending — the recipe-built meshes, plus any cooked
         // handle a future loader path leaves unresolved. Walk the live components (rehydrated and
-        // recipe-built above), not the cooked records, so the batch reflects the spawned state.
-        for (const Entity entity : spawned)
+        // recipe-built above), not the cooked records, so the batch reflects the spawned state. A
+        // nesting entity is skipped: its expansion's own spawn swept it, and its overrides were
+        // collected as they were written, so sweeping it again would count both twice.
+        for (usize i = 0; i < spawned.size(); ++i)
         {
-            if (entity.IsNull())
+            const Entity entity = spawned[i];
+            if (entity.IsNull() || m_Entities[i].NestedPrefab.IsValid())
             {
                 continue;
             }
