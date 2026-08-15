@@ -1,0 +1,65 @@
+{
+  "entities": [
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Physics Cube"
+        },
+        "::Veng::Transform": {
+          "Position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::MeshRenderer": {
+          "Source": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 0.6,
+              "Material": "0xB52845655C9A9646"
+            }
+          }
+        },
+        "::Veng::RigidBody": {
+          "Motion": "Dynamic",
+          "Layer": "Moving",
+          "Mass": 12.0,
+          "LinearDamping": 0.05,
+          "AngularDamping": 0.05,
+          "SyncTransform": true
+        },
+        "::Veng::Collider": {
+          "Shape": "Box",
+          "Extents": [
+            0.3,
+            0.3,
+            0.3
+          ],
+          "Offset": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "Friction": 0.5,
+          "Restitution": 0.05
+        },
+        "::Veng::Authority": {
+          "Tier": "Local",
+          "Owner": 0
+        }
+      }
+    }
+  ]
+}

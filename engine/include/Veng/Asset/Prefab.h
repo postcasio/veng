@@ -40,6 +40,14 @@ namespace Veng
         {
             /// @brief The entity's components, in authored order.
             vector<Component> Components;
+
+            /// @brief The prefab that is this entity's body, or the invalid id for a plain entity.
+            ///
+            /// A valid id makes this a nesting entity: SpawnInto expands that prefab into the same
+            /// scene, parents its roots under this entity, and applies Components as
+            /// whole-component overrides on the expansion's first root. The named prefab is an
+            /// ordinary load-time dependency, kept resident for this prefab's lifetime.
+            AssetId NestedPrefab;
         };
 
         /// @brief Options selecting which of a prefab's authored entities a spawn materializes.
@@ -86,11 +94,22 @@ namespace Veng
         /// rebuilds the intrusive Hierarchy sibling/child links from each entity's parent edge
         /// (children kept in authored order). Spawning twice produces two independent copies.
         ///
+        /// A nesting entity (one whose PrefabEntity::NestedPrefab is valid) expands its named
+        /// prefab through this same call, recursively: the expansion's roots are parented under
+        /// the nesting entity in authored order, and the nesting entity's own component records
+        /// are applied as **whole-component** overrides on the expansion's first root — a
+        /// component the root does not carry is added, one it carries is replaced outright. The
+        /// one exception is Hierarchy, which stays on the nesting entity: it names an entity in
+        /// *this* prefab's table, and the expansion's roots take their parent from the nesting
+        /// entity rather than from an override. Each spawned root keeps the PrefabSource of the
+        /// prefab that authored it, so a nested root names the nested prefab.
+        ///
         /// The batch holds the handles this spawn left pending — in practice the recipe-built
         /// meshes (a non-empty MeshRenderer.Source streams in async), since the prefab loader
-        /// already asserted every cooked embedded dependency resident before spawn. The caller
-        /// owns the batch and decides whether to wait on it (a loading screen, the smoke path)
-        /// or let the content stream in over frames.
+        /// already asserted every cooked embedded dependency resident before spawn — merged with
+        /// every nested expansion's own batch, so one SpawnResult still reports everything the
+        /// spawn left pending. The caller owns the batch and decides whether to wait on it (a
+        /// loading screen, the smoke path) or let the content stream in over frames.
         /// @param scene    The scene the entities are created in.
         /// @param manager  The asset manager rehydration and recipe builds resolve through.
         /// @return The spawned roots and the residency batch this spawn introduced.

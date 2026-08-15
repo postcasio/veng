@@ -116,6 +116,36 @@ namespace Veng
 
     namespace
     {
+        // Resolve a nesting entity's body: the named prefab, which the loader kept resident as an
+        // ordinary dependency. A missing or mistyped entry is a loader/registry invariant
+        // violation past the validated cook, not a recoverable case.
+        const Prefab& NestedBody(AssetManager& manager, AssetId id)
+        {
+            const Ref<Detail::AssetCacheEntry> entry = manager.CachedEntry(id);
+            VE_ASSERT(entry != nullptr && entry->Resource != nullptr,
+                      "Prefab::SpawnInto: nested prefab {} is not resident — the prefab loader "
+                      "should have loaded it as a dependency",
+                      id.Value);
+            VE_ASSERT(entry->Type == AssetTypes::Prefab,
+                      "Prefab::SpawnInto: nested asset {} is not a prefab", id.Value);
+            return *static_cast<const Prefab*>(entry->Resource.get());
+        }
+
+        // An override replaces a whole component rather than merging into the fields the nested
+        // prefab authored, so an existing one is reset to its default state before it is read
+        // into. Returns the slot to read the override record into.
+        void* ReplaceComponent(Scene& scene, Entity entity, TypeId type, const TypeInfo& info)
+        {
+            void* existing = scene.TryGetComponent(entity, type);
+            if (existing == nullptr)
+            {
+                return scene.AddComponent(entity, type);
+            }
+            info.Destruct(existing);
+            info.DefaultConstruct(existing);
+            return existing;
+        }
+
         // True when a prefab entity is server-authoritative: it carries an Authority whose Tier is
         // Server, or it carries no Authority at all (the authored default is Server). The client-mode
         // load skips exactly these — they arrive from the spawn stream instead.
@@ -164,12 +194,15 @@ namespace Veng
         const TypeRegistry& registry = scene.GetTypeRegistry();
 
         // A skipped entity's slot stays Entity::Null so index-keyed reference remaps read null.
+        // A nesting entity is never itself skipped: it authors no body of its own, and the
+        // authority of the entities its prefab declares is decided inside that prefab's spawn.
         vector<bool> skip(m_Entities.size(), false);
         if (options.SkipServerAuthoritative)
         {
             for (usize i = 0; i < m_Entities.size(); ++i)
             {
-                skip[i] = IsServerAuthoritative(m_Entities[i], registry);
+                skip[i] = !m_Entities[i].NestedPrefab.IsValid() &&
+                          IsServerAuthoritative(m_Entities[i], registry);
             }
         }
 
@@ -182,10 +215,16 @@ namespace Veng
             spawned.push_back(skip[i] ? Entity::Null : scene.CreateEntity());
         }
 
+        // The handles this spawn leaves pending, including every nested expansion's own — so one
+        // SpawnResult still reports everything a spawn left pending.
+        ResidencyBatch pending;
+
         // 2. Populate each entity's components, then remap references / rehydrate
         //    handles once every entity exists. A Hierarchy component's serialized
         //    Parent edge now holds the remapped spawned entity; its sibling/child
-        //    links are derived and rebuilt below.
+        //    links are derived and rebuilt below. A nesting entity instead expands its
+        //    named prefab here and reads its records onto the expansion's first root.
+        vector<vector<Entity>> nestedRoots(m_Entities.size());
         for (usize i = 0; i < m_Entities.size(); ++i)
         {
             if (skip[i])
@@ -194,6 +233,23 @@ namespace Veng
             }
             const PrefabEntity& prefabEntity = m_Entities[i];
             const Entity entity = spawned[i];
+            const bool nesting = prefabEntity.NestedPrefab.IsValid();
+
+            // The overrides land on the expansion's first root; an expansion that materialized
+            // nothing (an empty prefab, or every authored entity skipped) leaves the nesting
+            // entity itself as the thing they describe.
+            Entity overridden = entity;
+            if (nesting)
+            {
+                SpawnResult nested = NestedBody(manager, prefabEntity.NestedPrefab)
+                                         .SpawnInto(scene, manager, options);
+                pending.Merge(std::move(nested.Pending));
+                nestedRoots[i] = std::move(nested.Roots);
+                if (!nestedRoots[i].empty())
+                {
+                    overridden = nestedRoots[i].front();
+                }
+            }
 
             for (const Component& component : prefabEntity.Components)
             {
@@ -206,7 +262,13 @@ namespace Veng
 
                 const TypeInfo& typeInfo = registry.Info(component.Type);
 
-                void* slot = scene.AddComponent(entity, component.Type);
+                // Hierarchy names an entity in *this* prefab's table, so it stays on the nesting
+                // entity — the expansion's roots take their parent from that entity below.
+                const Entity host =
+                    (nesting && component.Type != TypeIdOf<Hierarchy>()) ? overridden : entity;
+
+                void* slot = nesting ? ReplaceComponent(scene, host, component.Type, typeInfo)
+                                     : scene.AddComponent(host, component.Type);
 
                 // The prefab loader validated this record at load; a read failure
                 // here would be an engine invariant violation, not bad data.
@@ -223,6 +285,13 @@ namespace Veng
                     {
                         renderer.Mesh = BuildPrimitiveMesh(manager, renderer.Source);
                     }
+                }
+
+                // An override written onto an expansion's root is outside the final sweep below,
+                // which walks this prefab's own entities.
+                if (host != entity)
+                {
+                    CollectPendingHandles(slot, typeInfo, registry, pending);
                 }
             }
         }
@@ -268,6 +337,18 @@ namespace Veng
             }
         }
 
+        // Each expansion's roots hang under their nesting entity, appended in authored order.
+        // This runs after the pass above: with the nesting entity's child list already holding a
+        // nested root, that pass's UnlinkFromSiblings would treat a freshly linked authored child
+        // as the head of the list and drop the nested root out of it.
+        for (usize i = 0; i < nestedRoots.size(); ++i)
+        {
+            for (const Entity root : nestedRoots[i])
+            {
+                scene.SetParent(root, spawned[i]);
+            }
+        }
+
         // Record spawn provenance on each root. A runtime-built prefab carries no addressable id, so
         // there is nothing to record and none is added.
         if (m_SourceId.IsValid())
@@ -281,7 +362,6 @@ namespace Veng
         // Collect the handles this spawn left pending — the recipe-built meshes, plus any cooked
         // handle a future loader path leaves unresolved. Walk the live components (rehydrated and
         // recipe-built above), not the cooked records, so the batch reflects the spawned state.
-        ResidencyBatch pending;
         for (const Entity entity : spawned)
         {
             if (entity.IsNull())

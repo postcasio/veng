@@ -102,6 +102,11 @@
       "source": "prefabs/player.prefab.json"
     },
     {
+      "id": "0x180A3A7E15E909BA",
+      "type": "Prefab",
+      "source": "prefabs/physics_cube.prefab.json"
+    },
+    {
       "id": "0xA123F30FD219F2D5",
       "type": "Prefab",
       "source": "prefabs/scene.prefab.json"

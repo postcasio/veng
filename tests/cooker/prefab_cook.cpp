@@ -121,6 +121,51 @@ namespace
 
         return packPath;
     }
+
+    // Writes one prefab document per element of `documents` (prefab i taking id `BaseId + i`)
+    // plus a pack naming them all, and returns the pack path. Lets a nesting edge — and a cycle
+    // — be authored between prefabs the same cook resolves.
+    constexpr u64 BaseId = 7100;
+
+    path WritePrefabPack(const string& name, std::span<const json> documents)
+    {
+        const path dir = Veng::TestSupport::TempDir();
+
+        json pack;
+        pack["version"] = 1;
+        pack["assets"] = json::array();
+
+        for (usize i = 0; i < documents.size(); ++i)
+        {
+            const string stem = fmt::format("{}_{}", name, i);
+            std::ofstream(dir / (stem + ".prefab.json")) << documents[i].dump();
+
+            json asset;
+            asset["id"] = FormatHexId(BaseId + i);
+            asset["type"] = "Prefab";
+            asset["source"] = stem + ".prefab.json";
+            pack["assets"].push_back(asset);
+        }
+
+        const path packPath = dir / (name + ".pack.json");
+        std::ofstream(packPath) << pack.dump();
+        return packPath;
+    }
+
+    // A prefab document holding a single entity, optionally naming another prefab as its body.
+    json OneEntityDocument(const json& components, const optional<u64> nested = std::nullopt)
+    {
+        json entity;
+        if (nested)
+        {
+            entity["prefab"] = FormatHexId(*nested);
+        }
+        entity["components"] = components;
+
+        json document;
+        document["entities"] = json::array({entity});
+        return document;
+    }
 }
 
 TEST_CASE("prefab cook: happy path — header, component TypeIds, record round-trip")
@@ -164,6 +209,11 @@ TEST_CASE("prefab cook: happy path — header, component TypeIds, record round-t
     CHECK(entityTable[1].FirstComponent == 4);
     CHECK(entityTable[1].ComponentCount == 2);
 
+    // The nesting key is optional, so a prefab authored without one cooks its entity table, its
+    // component table and its records exactly as it did before nesting existed.
+    CHECK(entityTable[0].NestedPrefab == 0);
+    CHECK(entityTable[1].NestedPrefab == 0);
+
     // Locate components by TypeId within Root's run.
     auto findComponent = [&](u32 first, u32 count, TypeId id) -> const CookedPrefabComponent*
     {
@@ -187,7 +237,7 @@ TEST_CASE("prefab cook: happy path — header, component TypeIds, record round-t
     // --- Round-trip Transform via ReadFields ---
     Transform decodedTransform;
     (void)ReadFields(std::span<const u8>(records + transform->RecordOffset, transform->RecordSize),
-               &decodedTransform, types.Info(TypeIdOf<Transform>()), types);
+                     &decodedTransform, types.Info(TypeIdOf<Transform>()), types);
     CHECK(decodedTransform.Position == vec3(1, 2, 3));
     // The quat JSON array is storage order [x,y,z,w]; [0,0,0,1] is the identity.
     CHECK(decodedTransform.Rotation == quat(1, 0, 0, 0)); // glm quat(w,x,y,z) — identity
@@ -195,14 +245,15 @@ TEST_CASE("prefab cook: happy path — header, component TypeIds, record round-t
 
     // --- Round-trip MeshRenderer's AssetHandle id (offset 0 = AssetId) ---
     MeshRenderer decodedRenderer;
-    (void)ReadFields(std::span<const u8>(records + meshRenderer->RecordOffset, meshRenderer->RecordSize),
-               &decodedRenderer, types.Info(TypeIdOf<MeshRenderer>()), types);
+    (void)ReadFields(
+        std::span<const u8>(records + meshRenderer->RecordOffset, meshRenderer->RecordSize),
+        &decodedRenderer, types.Info(TypeIdOf<MeshRenderer>()), types);
     CHECK(decodedRenderer.Mesh.Id().Value == 8001ULL);
 
     // --- Round-trip Spinner via a mirror (the cooker has no compile-time type) ---
     SpinnerMirror decodedSpinner;
     (void)ReadFields(std::span<const u8>(records + spinner->RecordOffset, spinner->RecordSize),
-               &decodedSpinner, types.Info(SpinnerTypeId), types);
+                     &decodedSpinner, types.Info(SpinnerTypeId), types);
     CHECK(decodedSpinner.SpeedRadiansPerSec == doctest::Approx(1.5f));
     CHECK(decodedSpinner.Axis == vec3(0, 0, 1));
 
@@ -212,7 +263,7 @@ TEST_CASE("prefab cook: happy path — header, component TypeIds, record round-t
     REQUIRE(hierarchy != nullptr);
     Hierarchy decodedHierarchy;
     (void)ReadFields(std::span<const u8>(records + hierarchy->RecordOffset, hierarchy->RecordSize),
-               &decodedHierarchy, types.Info(TypeIdOf<Hierarchy>()), types);
+                     &decodedHierarchy, types.Info(TypeIdOf<Hierarchy>()), types);
     CHECK(decodedHierarchy.Parent.Index == 0u);
     CHECK(decodedHierarchy.Parent.Generation == 0u);
 }
@@ -304,7 +355,7 @@ TEST_CASE("prefab cook: an omitted field keeps its default value")
 
     Transform decoded;
     (void)ReadFields(std::span<const u8>(records + component->RecordOffset, component->RecordSize),
-               &decoded, types.Info(TypeIdOf<Transform>()), types);
+                     &decoded, types.Info(TypeIdOf<Transform>()), types);
     CHECK(decoded.Position == vec3(5, 6, 7));
     CHECK(decoded.Scale == vec3(1, 1, 1)); // the default survived
 }
@@ -345,7 +396,7 @@ TEST_CASE("prefab cook: a null entity reference stays Entity::Null")
 
     Hierarchy decoded;
     (void)ReadFields(std::span<const u8>(records + component->RecordOffset, component->RecordSize),
-               &decoded, types.Info(TypeIdOf<Hierarchy>()), types);
+                     &decoded, types.Info(TypeIdOf<Hierarchy>()), types);
     CHECK(decoded.Parent == Entity::Null);
 }
 
@@ -504,4 +555,93 @@ TEST_CASE("prefab cook: an InputContextStack AssetHandle array round-trips its c
     REQUIRE(decoded.Active.size() == 2);
     CHECK(decoded.Active[0].Id().Value == ContextA);
     CHECK(decoded.Active[1].Id().Value == ContextB);
+}
+
+TEST_CASE("prefab cook: a nesting entity records its child's id and keeps its override records")
+{
+    const LoadedModuleTypes module = LoadRegistry();
+    const TypeRegistry& types = module.Types;
+
+    json transform;
+    transform["Position"] = json::array({4.0, 5.0, 6.0});
+    json overrides;
+    overrides["::Veng::Transform"] = transform;
+
+    const json documents[] = {
+        OneEntityDocument(overrides, BaseId + 1), // the nesting parent
+        OneEntityDocument(json::object()),        // the body it names
+    };
+    const path packJson = WritePrefabPack("prefab_nesting", documents);
+
+    const Result<vector<u8>> blobResult = CookPrefab(packJson, &types, {}, AssetId{BaseId});
+    REQUIRE_MESSAGE(blobResult.has_value(),
+                    "cook failed: ", blobResult ? string{} : blobResult.error());
+
+    const vector<u8>& blob = *blobResult;
+    CookedPrefabHeader header{};
+    std::memcpy(&header, blob.data(), sizeof(header));
+    REQUIRE(header.EntityCount == 1);
+    REQUIRE(header.ComponentCount == 1);
+
+    const auto* entityTable =
+        reinterpret_cast<const CookedPrefabEntity*>(blob.data() + sizeof(CookedPrefabHeader));
+    CHECK(entityTable[0].NestedPrefab == BaseId + 1);
+
+    // The override records cook exactly as an ordinary entity's components do.
+    const auto* component = reinterpret_cast<const CookedPrefabComponent*>(
+        blob.data() + sizeof(CookedPrefabHeader) + sizeof(CookedPrefabEntity));
+    const u8* records = blob.data() + sizeof(CookedPrefabHeader) + sizeof(CookedPrefabEntity) +
+                        sizeof(CookedPrefabComponent);
+    CHECK(component->TypeId == TypeIdOf<Transform>());
+
+    Transform decoded;
+    (void)ReadFields(std::span<const u8>(records + component->RecordOffset, component->RecordSize),
+                     &decoded, types.Info(TypeIdOf<Transform>()), types);
+    CHECK(decoded.Position == vec3(4, 5, 6));
+}
+
+TEST_CASE("prefab cook: nesting a prefab the cook cannot resolve is a located error")
+{
+    const LoadedModuleTypes module = LoadRegistry();
+
+    const json documents[] = {OneEntityDocument(json::object(), 0xDEADBEEFULL)};
+    const path packJson = WritePrefabPack("prefab_nesting_missing", documents);
+
+    const Result<vector<u8>> blob = CookPrefab(packJson, &module.Types, {}, AssetId{BaseId});
+    REQUIRE_FALSE(blob.has_value());
+    CHECK(blob.error().find("cannot resolve") != string::npos);
+    CHECK(blob.error().find("0x00000000DEADBEEF") != string::npos);
+}
+
+TEST_CASE("prefab cook: a prefab nesting itself is a located error naming the cycle")
+{
+    const LoadedModuleTypes module = LoadRegistry();
+
+    const json documents[] = {OneEntityDocument(json::object(), BaseId)};
+    const path packJson = WritePrefabPack("prefab_nesting_self", documents);
+
+    const Result<vector<u8>> blob = CookPrefab(packJson, &module.Types, {}, AssetId{BaseId});
+    REQUIRE_FALSE(blob.has_value());
+    CHECK(blob.error().find("transitively contains it") != string::npos);
+    CHECK(blob.error().find("prefab_nesting_self_0.prefab.json -> ") != string::npos);
+}
+
+TEST_CASE("prefab cook: a three-deep nesting cycle is a located error naming the path")
+{
+    const LoadedModuleTypes module = LoadRegistry();
+
+    // 0 -> 1 -> 2 -> 0.
+    const json documents[] = {
+        OneEntityDocument(json::object(), BaseId + 1),
+        OneEntityDocument(json::object(), BaseId + 2),
+        OneEntityDocument(json::object(), BaseId),
+    };
+    const path packJson = WritePrefabPack("prefab_nesting_cycle", documents);
+
+    const Result<vector<u8>> blob = CookPrefab(packJson, &module.Types, {}, AssetId{BaseId});
+    REQUIRE_FALSE(blob.has_value());
+    CHECK(blob.error().find("transitively contains it") != string::npos);
+    CHECK(blob.error().find("prefab_nesting_cycle_0.prefab.json") != string::npos);
+    CHECK(blob.error().find("prefab_nesting_cycle_1.prefab.json") != string::npos);
+    CHECK(blob.error().find("prefab_nesting_cycle_2.prefab.json") != string::npos);
 }

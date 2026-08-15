@@ -3,6 +3,7 @@
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -96,6 +97,148 @@ namespace Veng::Cook
             const auto* p = reinterpret_cast<const u8*>(&value);
             out.insert(out.end(), p, p + sizeof(T));
         }
+
+        // A resolved nesting edge: the prefab an entity names as its body, and where its source
+        // lives. The invalid id means the entity named none.
+        struct NestedRef
+        {
+            AssetId Id;
+            path Source;
+        };
+
+        // Reads an entity's optional "prefab" key and resolves it to that prefab's source file.
+        // A malformed, unresolvable, or wrong-typed id is a located error.
+        Result<NestedRef> ReadNestedRef(const string& file, usize entityIndex,
+                                        const json& entityJson,
+                                        const function<optional<ResolvedSource>(AssetId)>& resolve,
+                                        const AssetTypeRegistry& assetTypes)
+        {
+            if (!entityJson.contains("prefab"))
+            {
+                return NestedRef{};
+            }
+
+            const json& value = entityJson["prefab"];
+            if (!value.is_string())
+            {
+                return std::unexpected(
+                    fmt::format("prefab importer: '{}': entity[{}] 'prefab' must be a hex id "
+                                "string naming the prefab that is this entity's body",
+                                file, entityIndex));
+            }
+
+            const optional<AssetId> parsed = ParseAssetId(value.get<string>());
+            if (!parsed || !parsed->IsValid())
+            {
+                return std::unexpected(
+                    fmt::format("prefab importer: '{}': entity[{}] 'prefab' is a malformed or "
+                                "zero hex id '{}'",
+                                file, entityIndex, value.get<string>()));
+            }
+
+            // A nesting edge must resolve: the cook walks it to reject a cycle, which it cannot
+            // do for an id whose source it cannot reach. That is stricter than the AssetHandle
+            // policy beside it, where residency is the runtime's job.
+            const optional<ResolvedSource> resolved = resolve(*parsed);
+            if (!resolved)
+            {
+                return std::unexpected(fmt::format(
+                    "prefab importer: '{}': entity[{}] 'prefab' names asset {} which this cook "
+                    "cannot resolve — add it to the pack, or pass its pack with --reference",
+                    file, entityIndex, FormatAssetId(*parsed)));
+            }
+            if (resolved->Type != AssetTypes::Prefab)
+            {
+                return std::unexpected(fmt::format(
+                    "prefab importer: '{}': entity[{}] 'prefab' names asset {} which resolves to "
+                    "type {}, not a prefab",
+                    file, entityIndex, FormatAssetId(*parsed), assetTypes.GetName(resolved->Type)));
+            }
+
+            return NestedRef{.Id = *parsed, .Source = resolved->AbsolutePath};
+        }
+
+        // Depth-first walk of the nesting edges reachable from one prefab source, failing on a
+        // prefab that transitively names itself — which would recurse forever at spawn. `chain`
+        // is the path from the cooked prefab down to `source`, and names the cycle in the error.
+        VoidResult CheckNoNestingCycle(const path& source, const json& document,
+                                       vector<path>& chain, vector<path>& acyclic,
+                                       const function<optional<ResolvedSource>(AssetId)>& resolve,
+                                       const AssetTypeRegistry& assetTypes,
+                                       const function<void(const path&)>& recordDependency)
+        {
+            if (!document.contains("entities") || !document["entities"].is_array())
+            {
+                return {};
+            }
+
+            chain.push_back(source);
+            for (usize i = 0; i < document["entities"].size(); ++i)
+            {
+                const json& entityJson = document["entities"][i];
+                if (!entityJson.is_object())
+                {
+                    continue;
+                }
+
+                const Result<NestedRef> nested =
+                    ReadNestedRef(source.string(), i, entityJson, resolve, assetTypes);
+                if (!nested)
+                {
+                    return std::unexpected(nested.error());
+                }
+                if (!nested->Id.IsValid())
+                {
+                    continue;
+                }
+
+                if (std::ranges::find(chain, nested->Source) != chain.end())
+                {
+                    string cycle;
+                    for (const path& step : chain)
+                    {
+                        cycle += step.string();
+                        cycle += " -> ";
+                    }
+                    cycle += nested->Source.string();
+                    return std::unexpected(
+                        fmt::format("prefab importer: '{}': entity[{}] nests a prefab that "
+                                    "transitively contains it: {}",
+                                    source.string(), i, cycle));
+                }
+
+                // A prefab reached twice through different branches is walked once: the chain
+                // above already proved it reaches no ancestor of its own.
+                if (std::ranges::find(acyclic, nested->Source) != acyclic.end())
+                {
+                    continue;
+                }
+
+                // The child's own source decides whether this prefab is part of a cycle, so a
+                // change to it must re-run this cook even though its bytes never enter the blob.
+                if (recordDependency)
+                {
+                    recordDependency(nested->Source);
+                }
+
+                const Result<json> child = ReadJsonFile(nested->Source, "prefab importer");
+                if (!child)
+                {
+                    return std::unexpected(child.error());
+                }
+
+                const VoidResult descended = CheckNoNestingCycle(
+                    nested->Source, *child, chain, acyclic, resolve, assetTypes, recordDependency);
+                if (!descended)
+                {
+                    return descended;
+                }
+                acyclic.push_back(nested->Source);
+            }
+            chain.pop_back();
+
+            return {};
+        }
     }
 
     Result<vector<u8>> PrefabImporter::Cook(const CookContext& context, const json& entry) const
@@ -140,6 +283,20 @@ namespace Veng::Cook
             context.Resolve ? context.Resolve
                             : function<optional<ResolvedSource>(AssetId)>(
                                   [](AssetId) -> optional<ResolvedSource> { return std::nullopt; });
+
+        // A prefab that transitively names itself would recurse forever at spawn, so the nesting
+        // edges are walked before anything is encoded.
+        {
+            vector<path> chain;
+            vector<path> acyclic;
+            const VoidResult acyclicResult =
+                CheckNoNestingCycle(prefabPath, prefab, chain, acyclic, resolve,
+                                    *context.AssetTypes, context.RecordDependency);
+            if (!acyclicResult)
+            {
+                return std::unexpected(acyclicResult.error());
+            }
+        }
 
         // --- 2. Cook each entity's components ---
 
@@ -188,9 +345,19 @@ namespace Veng::Cook
                 }
             }
 
+            // The optional "prefab" key names the prefab that is this entity's body; the
+            // entity's own components then read as overrides over that expansion.
+            const Result<NestedRef> nested =
+                ReadNestedRef(file, entityIndex, entityJson, resolve, *context.AssetTypes);
+            if (!nested)
+            {
+                return std::unexpected(nested.error());
+            }
+
             CookedPrefabEntity cookedEntity{};
             cookedEntity.FirstComponent = static_cast<u32>(componentTable.size());
             cookedEntity.ComponentCount = 0;
+            cookedEntity.NestedPrefab = nested->Id.Value;
 
             if (entityJson.contains("components"))
             {

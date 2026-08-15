@@ -27,6 +27,10 @@ exemplar, built as part of the engine tree via `add_subdirectory`.
   golden capture (viewport 0's output) is byte-identical; net launches skip the second world so the
   hosted/joined world stays the sole world. Two views is well within both fixed ceilings — 32 view slots
   per frame (`MaxViewsPerFrame`) and 16 presented placements (`MaxPresented`).
+- **It is the live consumer of nested prefabs.** The physics stack's five cubes are five nesting
+  entities in `prefabs/scene.prefab.json`, each naming `prefabs/physics_cube.prefab.json` as its
+  body and overriding only the `Name` and `Transform` that place it — the authored composition the
+  scene previously spelled as five copies of the same mesh/rigid-body/collider subtree.
 - **It is the live consumer of mesh sockets.** `OnWorldLoaded` loads `meshes/socket_slab.gltf`'s
   cooked mesh — a slab whose model authors two named empties — places it beside the physics stack,
   and parents a cube to its `Mount_Top` socket through `AttachToSocket`. Nothing in the C++ names

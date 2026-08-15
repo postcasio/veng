@@ -537,6 +537,19 @@ prefab-local entity index. Everything else — the entity/component table walk, 
 resolution against the registry, and the `WriteFields` blob emission — stays the
 importer's own.
 
+An entity may also carry an optional **`"prefab"`** key beside `components`, a hex id naming the
+prefab that is that entity's **body**; its own components then read as whole-component overrides
+over that expansion (the runtime half is
+[engine/src/Asset/CLAUDE.md](../engine/src/Asset/CLAUDE.md)). The importer records the id in
+`CookedPrefabEntity::NestedPrefab` and holds it to a stricter standard than the `AssetHandle` policy
+beside it: the id **must resolve** through `CookContext::Resolve` and must resolve to a
+`AssetTypes::Prefab`, because the cook then **walks the nesting edges** depth-first from the prefab
+being cooked and fails with the offending path when one transitively names itself — a cycle would
+otherwise leave a blob that recurses forever at spawn. Each source the walk reads is recorded as a
+cook dependency, so a child gaining a cycle re-runs its parents' cook even though the child's bytes
+never enter their blobs. `CookedPrefabVersion` is **2** for the added field; a prefab authoring no
+nesting key cooks the component table and record blob it always did, with the field zero.
+
 A **`FieldClass::Variant`** field is authored as `{ "type": <fully-qualified name>, "value":
 {…fields…} }`; the walker matches `"type"` against each of the variant's alternatives by
 its `TypeInfo.QualifiedName` (`TypeNameMatches`, strict — a leading `::` is tolerated but a

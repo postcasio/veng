@@ -224,6 +224,14 @@ namespace Veng
 
             Prefab::PrefabEntity entity;
             entity.Components.reserve(ce.ComponentCount);
+            entity.NestedPrefab = AssetId{ce.NestedPrefab};
+
+            // A nesting entity's body is an ordinary load-time dependency, resolved and kept
+            // resident exactly like an embedded AssetHandle field's target.
+            if (entity.NestedPrefab.IsValid())
+            {
+                handleDeps.push_back(HandleDep{.Id = ce.NestedPrefab, .Type = AssetTypes::Prefab});
+            }
 
             for (u32 c = 0; c < ce.ComponentCount; ++c)
             {

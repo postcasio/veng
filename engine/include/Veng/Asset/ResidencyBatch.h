@@ -3,6 +3,8 @@
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetHandle.h>
 
+#include <iterator>
+
 namespace Veng
 {
     class TaskSystem;
@@ -87,6 +89,18 @@ namespace Veng
             {
                 m_Pending.push_back(std::move(entry));
             }
+        }
+
+        /// @brief Absorbs another batch's pending entries, leaving it empty.
+        ///
+        /// A spawn that expands nested prefabs produces one batch per expansion; merging them
+        /// keeps the promise that a spawn's single batch reports everything it left pending.
+        /// @param other  The batch to absorb; empty afterwards.
+        void Merge(ResidencyBatch&& other)
+        {
+            m_Pending.insert(m_Pending.end(), std::make_move_iterator(other.m_Pending.begin()),
+                             std::make_move_iterator(other.m_Pending.end()));
+            other.m_Pending.clear();
         }
 
         /// @brief Returns true once every tracked asset is resident (an empty batch is resident).

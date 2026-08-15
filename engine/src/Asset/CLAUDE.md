@@ -320,6 +320,39 @@ primitive gains no asset-system dependency. The per-component populate loop also
 rehydrates the cooked-handle fields, so a recipe resolves to a pending handle through the same
 single pass as a cooked load — there is no second spawn pass and no resolver seam.
 
+**A prefab can stand inside another prefab.** An entity in a `*.prefab.json` may carry one optional
+key beside `components` — `"prefab": "0x…"` — naming the prefab that is that entity's **body**. The
+named prefab is an **ordinary load-time dependency** (`PrefabLoader` fans it out beside the embedded
+`AssetHandle` fields and keeps it resident), and `Prefab::SpawnInto` **recurses**: it spawns the
+named prefab into the same scene, parents its roots under the nesting entity in authored order, and
+applies the nesting entity's component records as **whole-component overrides** on the expansion's
+first root — a component the root does not carry is added, one it carries is replaced outright.
+There is **no field-level merge**: a partial record has no defined meaning against a record the
+child authored, and whole-component replacement is what an authored placement wants (the child says
+what the thing *is*, the parent says where it sits). `Hierarchy` is the one component that stays on
+the nesting entity — it names an entity in the *parent's* table, and the expansion's roots take
+their parent from the nesting entity. Each spawn's `ResidencyBatch` absorbs every expansion's
+(`ResidencyBatch::Merge`), so one `SpawnResult` still reports everything the spawn left pending, and
+`SpawnOptions::SkipServerAuthoritative` flows through the recursion so a client-mode load skips
+authoritative entities at every depth. A nesting entity is never itself skipped: it authors no body
+of its own.
+
+Two properties fall out of expanding at spawn rather than flattening at cook:
+
+- **`PrefabSource` keeps naming the prefab that authored each root**, so a nested root names the
+  nested prefab and replication reads the right provenance.
+- **A parent never goes stale behind its child.** A flattened parent would need a cook-time
+  dependency edge to avoid exactly the silent staleness the asset system is built to prevent.
+
+**Entity references stay prefab-local.** A `Reference` field cooks to an index into its *own*
+prefab's entity table and is remapped within its own nesting level, so a parent cannot name an
+entity inside its child and a child cannot name one in its parent — the property that makes a prefab
+reusable wherever it is instanced. A prefab that transitively names itself is a **cook error**
+([cooker/CLAUDE.md](../../../cooker/CLAUDE.md)), which is what keeps the runtime recursion finite.
+The editor spawns a prefab into a live document scene and round-trips it back to `*.prefab.json`; it
+does not yet author or preserve a nesting edge, so it treats a nested subtree as it treats any
+spawned entity and saves it flattened.
+
 ## Shaders & materials
 
 The offline shader compile + reflection and `.vmat` validation run in the cooker

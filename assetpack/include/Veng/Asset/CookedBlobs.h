@@ -417,7 +417,7 @@ namespace Veng
     /// @brief The current prefab-format version.
     ///
     /// Bumped on any layout change; the loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedPrefabVersion = 1u;
+    inline constexpr u32 CookedPrefabVersion = 2u;
 
     /// @brief Cooked header for a prefab asset.
     ///
@@ -437,7 +437,12 @@ namespace Veng
     /// CookedPrefabEntity[]) in the Entity's Index slot, with Generation written as 0; the loader
     /// remaps it to the spawned handle. The reserved index Entity::Null.Index (~0u) is a null
     /// reference the loader leaves null — never a valid prefab-local index, so null and an
-    /// intra-prefab reference never collide.
+    /// intra-prefab reference never collide. A reference never crosses a nesting boundary: each
+    /// prefab's indices address its own entity table only.
+    ///
+    /// An entity whose CookedPrefabEntity::NestedPrefab is non-zero takes another prefab as its
+    /// body: that prefab is a load-time dependency, expanded at spawn, and this entity's component
+    /// records are the overrides applied over the expansion.
     struct CookedPrefabHeader
     {
         /// @brief Must equal CookedPrefabVersion; the loader rejects mismatches.
@@ -457,6 +462,12 @@ namespace Veng
         u32 FirstComponent = 0;
         /// @brief Number of components belonging to this entity.
         u32 ComponentCount = 0;
+        /// @brief AssetId of the prefab that is this entity's body, or 0 for an ordinary entity.
+        ///
+        /// Non-zero makes this a nesting entity: the named prefab is spawned into the same scene
+        /// and its roots are parented under this one, with this entity's component run applied as
+        /// whole-component overrides on the expansion's first root.
+        u64 NestedPrefab = 0;
     };
 
     /// @brief One component entry in the cooked prefab's component table.
