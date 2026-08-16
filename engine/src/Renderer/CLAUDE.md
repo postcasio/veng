@@ -253,26 +253,16 @@ beside `ShadowCascades.h`. Each shadow view culls its casters through `SceneBroa
 against **its own** frustum — the camera frustum for the g-buffer, each cascade's light frustum,
 each spot's frustum, each cube face's frustum.
 
-**Set 1 is a general shadow system**, not just the directional one: the directional cascade atlas,
-the punctual shadow atlas, a **shared** immutable comparison sampler (hardware `SampleCmp`), the
-per-frame `ShadowConstants` block (the directional cascade matrices + splits + params) bound as a
-**dynamic uniform**, and the `PunctualShadowBlock` (the per-light shadow records — view-proj(s),
-tile rects, type) ringed beside it. All of set 1 is held **off the set-0 bindless registry**,
-where a comparison sampler mistranslates inside the Metal argument buffer on MoltenVK and a closed
-producer→consumer resource needs no global registration. The set-0 view-constants block stays
-trimmed to material-facing camera/view state. A `GpuLight`'s shadow **slot** (an index into the
-punctual record array, or `-1` for unshadowed) rides the `Cone.zw` padding, keeping `LightStride`
-fixed. `CascadeCount`, `CascadeSplitLambda`, and `ShadowResolution` (default 1024) are the
-directional CSM knobs; `PunctualShadows` (the on/off toggle) and `PunctualShadowResolution` (the
-per-tile edge length) are the punctual knobs; `DebugView::Cascades` tints each fragment by the
-cascade it selects and `DebugView::PunctualShadows` blits the punctual atlas. **A Translucent submesh casts no shadow.** Both shadow passes gate each candidate on
-`Renderer::CastsShadow` (`src/Renderer/DrawGather.h`): a resident material that is not
-`MaterialDomain::Translucent`. The domain writes no opaque depth, is drawn after the lighting it
-would have to occlude, and is documented as never occluding another translucent, so rasterizing a
-solid shadow from it contradicts every other way it behaves. Alpha-cut and stained-glass casters are
-a separate capability — both need the shadow pass to *shade* rather than to rasterize depth. This
-per-light shadow cull is the **prime consumer of the BVH broadphase** — one tree queried many times (`N`
-spot frustums + `6N` cube faces per frame, on top of the camera and cascade queries).
+**Both arms are opt-out per light, through `Light::CastsShadows`.** It defaults true, so a light
+shadows unless it says otherwise; cleared, the light is passed over for an atlas slot *before* the
+slot counter moves and is not eligible to drive the cascade as a near-parallel area light. The
+reason it exists is that the slots are scarce and assigned in iteration order: only
+`MaxShadowedPunctual` lights get one and the rest silently get none, so a light that does not need
+a shadow and cannot say so takes the arm from one that does. The case it is for is a **fill
+light** — one standing in for the emission of a surface that is already drawn, or filling a volume
+with no occluder worth resolving — which wants its contribution and not its silhouette. Such a
+light is also the worst case for the arm it would take: a perspective tile fit to the whole scene
+bound has least to spend exactly where a near light needs most.
 
 ### Bloom
 

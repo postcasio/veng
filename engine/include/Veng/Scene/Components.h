@@ -384,6 +384,23 @@ namespace Veng
         f32 Radius{1.0f};
         /// @brief Whether a Rect or Polygon area light emits from both faces.
         bool TwoSided{false};
+        /// @brief Whether this light is given a shadow map.
+        ///
+        /// True by default, so a light shadows unless it says otherwise. Clearing it takes the
+        /// light out of every shadow arm at once: it is passed over for a punctual/area atlas slot,
+        /// and it is not eligible to drive the cascade as a near-parallel area light.
+        ///
+        /// **The shadow arms are a scarce resource, and a light is often not worth one.** Only
+        /// MaxShadowedPunctual point/spot/area lights are slotted per frame and the rest silently
+        /// carry no shadow at all — so a light that does not need one and does not say so takes a
+        /// slot from one that does, on nothing better than iteration order. The case this exists
+        /// for is a **fill light**: one standing in for the emission of a surface that is already
+        /// drawn, or filling a volume that has no occluder worth resolving. Such a light wants its
+        /// contribution and not its silhouette, and a perspective tile fit to the whole scene bound
+        /// resolves that silhouette badly at close range anyway — near geometry lands in the few
+        /// texels nearest the light's own position, where a tile stretched across a large bound has
+        /// the least to spend.
+        bool CastsShadows{true};
         /// @brief Convex polygon vertices in entity-local space, wound CCW about local +Z (Polygon).
         vector<vec3> PolygonVertices;
     };
@@ -1339,6 +1356,7 @@ VE_FIELD(TwoSided, .DisplayName = "Two Sided",
                               self.Type == ::Veng::LightType::Polygon))
 VE_ARRAY_FIELD(PolygonVertices, .DisplayName = "Polygon Vertices",
                .VisibleIf = VE_WHEN(self.Type == ::Veng::LightType::Polygon))
+VE_FIELD(CastsShadows, .DisplayName = "Casts Shadows")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::PlayerInput, 0x5401D36B1EF55045ULL)

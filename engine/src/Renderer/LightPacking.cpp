@@ -77,8 +77,12 @@ namespace Veng::Renderer
             // diverges across the scene (near-parallel). The parallel cascade projection fits its
             // resolution to the camera view, so it shadows a large scene far better than the area
             // light's single perspective tile. cascadeShadowed marks the area case for the shader.
+            //
+            // A light that declines shadows is passed over here as well as for a punctual slot: the
+            // cascade is a shadow arm like any other, and selecting a non-casting light for it would
+            // aim the whole scene's cascade at a light that then shades unshadowed.
             bool cascadeShadowed = false;
-            if (!result.HaveDirectional)
+            if (!result.HaveDirectional && light.CastsShadows)
             {
                 if (light.Type == LightType::Directional)
                 {
@@ -98,12 +102,15 @@ namespace Veng::Renderer
                 }
             }
 
-            // Assign a shadow slot to the first MaxShadowedPunctual point/spot/area lights;
-            // the rest carry -1. With punctual shadows off all lights carry -1. Point uses six
-            // cube faces; spot and area use a single perspective map (area aimed along Direction,
-            // softened per-light-size by PCSS in the lighting pass).
+            // Assign a shadow slot to the first MaxShadowedPunctual point/spot/area lights that ask
+            // for one; the rest carry -1. With punctual shadows off all lights carry -1. Point uses
+            // six cube faces; spot and area use a single perspective map (area aimed along
+            // Direction, softened per-light-size by PCSS in the lighting pass). A light that
+            // declines shadows is skipped before the counter moves, so it costs a slot no more than
+            // it costs a tile — which is the point of declining.
             f32 shadowSlot = -1.0f;
-            if (punctualShadows && result.PunctualCount < MaxShadowedPunctual && !cascadeShadowed &&
+            if (punctualShadows && light.CastsShadows &&
+                result.PunctualCount < MaxShadowedPunctual && !cascadeShadowed &&
                 (light.Type == LightType::Point || light.Type == LightType::Spot || isArea))
             {
                 const u32 slot = result.PunctualCount;

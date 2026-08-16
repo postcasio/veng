@@ -301,3 +301,59 @@ TEST_CASE("PackSceneLights: the punctual depth bias is texel-scaled and clamped"
     CHECK(packed.PunctualRecords[0].Params.w == doctest::Approx(0.01f));   // clamped to ceiling
     CHECK(packed.PunctualRecords[1].Params.w == doctest::Approx(0.0005f)); // clamped to floor
 }
+
+TEST_CASE("PackSceneLights: a light that declines shadows takes no slot and yields it to the next")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+    const Unique<Scene> scene = Scene::Create(types);
+
+    // Exactly as many casters as there are slots, preceded by a light that wants none. The
+    // declining light is *first*, so a skip that still moved the counter would starve the last
+    // caster — which is the failure this exists to prevent, and it is invisible in a picture.
+    AddLight(*scene, Light{.Type = LightType::Point, .Range = 5.0f, .CastsShadows = false});
+    for (u32 i = 0; i < MaxShadowedPunctual; ++i)
+    {
+        AddLight(*scene, Light{.Type = LightType::Point, .Range = 5.0f},
+                 vec3(static_cast<f32>(i + 1), 0.0f, 0.0f));
+    }
+
+    const PackedSceneLights packed = PackSceneLights(*scene, true, 1024);
+
+    REQUIRE(packed.LightCount == MaxShadowedPunctual + 1);
+    CHECK(packed.PunctualCount == MaxShadowedPunctual);
+
+    // The decliner is unshadowed and every caster behind it is slotted.
+    CHECK(packed.Lights[0].Cone.z < 0.0f);
+    for (u32 i = 1; i < packed.LightCount; ++i)
+    {
+        CHECK(packed.Lights[i].Cone.z >= 0.0f);
+    }
+}
+
+TEST_CASE("PackSceneLights: a non-casting area light is not selected to drive the cascade")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+    const Unique<Scene> scene = Scene::Create(types);
+
+    // The same geometry the cascade route keys on above — a small bound subtending a tiny angle
+    // from a distant light — with the light declining shadows.
+    AddLight(*scene, Light{.Type = LightType::Sphere,
+                           .Direction = vec3(0.0f, 0.0f, -1.0f),
+                           .Range = 10000.0f,
+                           .Radius = 50.0f,
+                           .CastsShadows = false});
+    const AABB farBounds{.Min = vec3(-2.0f, -2.0f, -102.0f), .Max = vec3(2.0f, 2.0f, -98.0f)};
+
+    const PackedSceneLights packed = PackSceneLights(*scene, true, 1024, farBounds);
+
+    REQUIRE(packed.LightCount == 1);
+    // Neither arm claims it: no cascade selection, and no punctual tile either.
+    CHECK_FALSE(packed.HaveDirectional);
+    CHECK(packed.PunctualCount == 0);
+    CHECK(packed.Lights[0].Cone.z < 0.0f);
+    // And the shader is told it is not cascade-shadowed (flag bit 1 clear), so it shades unshadowed
+    // rather than sampling a cascade fit to some other light's direction.
+    CHECK((static_cast<int>(packed.Lights[0].Cone.w) & 2) == 0);
+}
