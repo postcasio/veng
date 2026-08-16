@@ -564,13 +564,10 @@ namespace Veng::Renderer
         const f32 projScale =
             std::abs(view.Camera.Projection()[1][1]) * static_cast<f32>(renderExtent.y) * 0.5f;
 
-        // The clip-space corner basis: the projected camera right/up axes (the View matrix's first
-        // two rows). The expansion shader offsets each corner by these, so the CPU derives them once.
-        const mat4 viewMatrix = view.Camera.View();
-        const vec3 right(viewMatrix[0][0], viewMatrix[0][1], viewMatrix[0][2]);
-        const vec3 up(viewMatrix[1][0], viewMatrix[1][1], viewMatrix[1][2]);
-        const vec4 clipRight = viewProj * vec4(right, 0.0f);
-        const vec4 clipUp = viewProj * vec4(up, 0.0f);
+        // The clip-space corner basis: the projected camera right/up axes. The expansion shader
+        // offsets each corner by these, so the CPU derives them once.
+        const vec4 clipRight = viewProj * vec4(view.Camera.GetRight(), 0.0f);
+        const vec4 clipUp = viewProj * vec4(view.Camera.GetUp(), 0.0f);
 
         for (const PointField* field : *m_Fields)
         {

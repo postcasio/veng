@@ -109,6 +109,18 @@ namespace Veng
         /// @brief Returns the camera's world-space position (the translation column of the view's inverse).
         [[nodiscard]] vec3 GetPosition() const { return vec3(glm::inverse(m_View)[3]); }
 
+        /// @brief Returns the camera's world-space right axis — the view matrix's first row.
+        ///
+        /// The view rotates world space into the camera's basis, so its **rows** are the camera's
+        /// axes expressed in world space. A column is the transpose's row: the world axis expressed
+        /// in *view* space, which is still a unit vector orthogonal to the other two, so a basis
+        /// built from columns is silently plausible rather than visibly wrong. That is what these
+        /// accessors exist to stop — a view-plane billboard spanned by columns stays a valid quad
+        /// and simply faces the wrong way, and only at a size where its orientation is legible.
+        [[nodiscard]] vec3 GetRight() const { return {m_View[0][0], m_View[1][0], m_View[2][0]}; }
+        /// @brief Returns the camera's world-space up axis — the view matrix's second row.
+        [[nodiscard]] vec3 GetUp() const { return {m_View[0][1], m_View[1][1], m_View[2][1]}; }
+
         /// @brief Returns the near clip distance.
         ///
         /// Recovering near/far from the projection matrix is fiddly under the Y-flip,

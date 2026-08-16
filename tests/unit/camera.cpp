@@ -8,6 +8,7 @@
 #include <doctest/doctest.h>
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/euler_angles.hpp>
 
 #include <Veng/Reflection/JsonSerialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -124,6 +125,28 @@ TEST_CASE("SetViewFromWorld is the world matrix's inverse and recovers position"
     CHECK(MatrixApprox(camera.View(), glm::inverse(world)));
     // The position is the world's translation column regardless of rotation.
     CHECK(VecApprox(camera.GetPosition(), eye));
+}
+
+TEST_CASE("the camera's right and up axes are the view's rows, not its columns")
+{
+    // A rotation about all three axes, so the view's rows and columns differ in every component —
+    // an axis-aligned pose cannot tell a transposed basis from a correct one.
+    const mat4 world =
+        glm::translate(mat4{1.0f}, vec3{2.0f, -1.0f, 4.0f}) *
+        glm::eulerAngleYXZ(glm::radians(37.0f), glm::radians(-21.0f), glm::radians(14.0f));
+
+    CameraView camera;
+    camera.SetViewFromWorld(world);
+
+    // The world matrix's basis columns are the camera's axes in world space, which is what the
+    // view's rows recover.
+    CHECK(VecApprox(camera.GetRight(), vec3(world[0])));
+    CHECK(VecApprox(camera.GetUp(), vec3(world[1])));
+
+    // The transposed read is orthonormal too, which is why it fails silently rather than loudly:
+    // assert the basis is the one that actually tracks the pose.
+    const mat4 view = camera.View();
+    CHECK(glm::length(vec3(view[0][0], view[0][1], view[0][2]) - camera.GetRight()) > 0.1f);
 }
 
 TEST_CASE("ViewProjection composes Projection * View")
