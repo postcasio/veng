@@ -1248,13 +1248,26 @@ namespace Veng::Renderer
             }
         }
 
-        vk::PhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures{.dynamicRendering =
-                                                                                vk::True};
+        // A vertex stage that reads SV_VertexID compiles to SPIR-V declaring the DrawParameters
+        // capability: the HLSL semantic is draw-relative, so the translation subtracts BaseVertex
+        // and needs the builtin to read it. Nothing about the shader asks for the feature by name,
+        // which is why its absence surfaces as a validation error at module creation rather than at
+        // compile — enable it wherever the device has it.
+        vk::PhysicalDeviceShaderDrawParametersFeatures shaderDrawParametersFeatures{};
+
+        vk::PhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeatures{
+            .pNext = &shaderDrawParametersFeatures, .dynamicRendering = vk::True};
 
         vk::PhysicalDeviceFeatures2 features2{.pNext = &dynamicRenderingFeatures,
                                               .features = deviceFeatures};
 
         PhysicalDevice.getFeatures2(&features2);
+
+        // getFeatures2 overwrites the chain with what the device reports, so the request is made
+        // after it rather than in the initializer. It is required rather than opportunistic: every
+        // vertex stage reading SV_VertexID needs it, so a device without it cannot run the engine
+        // at all and should fail loudly at device creation rather than silently later.
+        shaderDrawParametersFeatures.shaderDrawParameters = vk::True;
 
         // The GPU-driven cull issues a multiDrawIndirect command buffer and carries each
         // candidate's index in the command's firstInstance (read back as an instance-rate
