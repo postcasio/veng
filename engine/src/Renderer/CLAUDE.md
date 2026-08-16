@@ -264,6 +264,57 @@ with no occluder worth resolving — which wants its contribution and not its si
 light is also the worst case for the arm it would take: a perspective tile fit to the whole scene
 bound has least to spend exactly where a near light needs most.
 
+### The scene-gizmo layer
+
+**Most of what a scene holds draws nothing**, and `Veng/Renderer/SceneGizmos.h` is the one pass
+that draws a stand-in for it: `DrawSceneGizmos(scene, debugDraw, groups, style)` accumulates into
+a `DebugDraw` like any other consumer, so it is called once per frame the layer should appear and
+the renderer's own pass rasterizes it. Pure scene-query plus glm — no device, no asset loads,
+nothing retained — which is what makes it unit-testable and what lets the editor and a game's
+debug view show the identical layer.
+
+The families are the `SceneGizmo` bits: **Lights, Cameras, Colliders, Sockets, Interaction,
+Audio, Probes, Empties**. They are selectable because a scene carrying hundreds of one kind is
+unreadable while a different question is being asked of it. `SceneGizmoGroupTable()` pairs each
+bit with a name and a description **so a consumer's selection interface is the engine's own list**
+— a family added here appears in every consumer's checkboxes with no change on the consuming side,
+and `tests/unit/scene_gizmos.cpp` holds the table to covering every family exactly once.
+
+**A light's stand-in is the light's own packed geometry, not a second derivation of it.** A rect
+area light's outline is the four corners of `Width × Height` in local XY through the entity's
+world matrix — the same construction `PackSceneLights` uses for the area-vertex buffer the shader
+integrates — and the same case asserts, point for point, that the two agree through a parented,
+doubly-rotated chain. That is the property the layer is worth anything for: an emitter that is not
+where it appears to be becomes a visible disagreement rather than a shading mystery.
+
+**Icons are the consumer's and the engine ships none**, matching `DebugDraw::DrawBillboard`, which
+takes a bindless slot rather than art. An invalid handle in `SceneGizmoStyle` draws a small
+wireframe marker in the icon's place, so a consumer with no icon art still reads every position
+and orientation and loses only the pictogram. `SceneGizmoStyle::Pickable` writes each billboard's
+entity pick id, which is what makes an icon selectable in an editor viewport and is inert in a
+viewport running no picking pass.
+
+**Set 1 is a general shadow system**, not just the directional one: the directional cascade atlas,
+the punctual shadow atlas, a **shared** immutable comparison sampler (hardware `SampleCmp`), the
+per-frame `ShadowConstants` block (the directional cascade matrices + splits + params) bound as a
+**dynamic uniform**, and the `PunctualShadowBlock` (the per-light shadow records — view-proj(s),
+tile rects, type) ringed beside it. All of set 1 is held **off the set-0 bindless registry**,
+where a comparison sampler mistranslates inside the Metal argument buffer on MoltenVK and a closed
+producer→consumer resource needs no global registration. The set-0 view-constants block stays
+trimmed to material-facing camera/view state. A `GpuLight`'s shadow **slot** (an index into the
+punctual record array, or `-1` for unshadowed) rides the `Cone.zw` padding, keeping `LightStride`
+fixed. `CascadeCount`, `CascadeSplitLambda`, and `ShadowResolution` (default 1024) are the
+directional CSM knobs; `PunctualShadows` (the on/off toggle) and `PunctualShadowResolution` (the
+per-tile edge length) are the punctual knobs; `DebugView::Cascades` tints each fragment by the
+cascade it selects and `DebugView::PunctualShadows` blits the punctual atlas. **A Translucent submesh casts no shadow.** Both shadow passes gate each candidate on
+`Renderer::CastsShadow` (`src/Renderer/DrawGather.h`): a resident material that is not
+`MaterialDomain::Translucent`. The domain writes no opaque depth, is drawn after the lighting it
+would have to occlude, and is documented as never occluding another translucent, so rasterizing a
+solid shadow from it contradicts every other way it behaves. Alpha-cut and stained-glass casters are
+a separate capability — both need the shadow pass to *shade* rather than to rasterize depth. This
+per-light shadow cull is the **prime consumer of the BVH broadphase** — one tree queried many times (`N`
+spot frustums + `6N` cube faces per frame, on top of the camera and cascade queries).
+
 ### Bloom
 
 **Bloom is a compute mip-pyramid battery**, a fixed engine pass like SSAO and the shadow atlas —

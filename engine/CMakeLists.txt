@@ -261,6 +261,7 @@ add_library(veng SHARED
         src/Renderer/Passes/PostProcessScenePass.cpp
         src/Renderer/DebugBlitPipelines.cpp
         src/Renderer/DebugDraw.cpp
+        src/Renderer/SceneGizmos.cpp
         src/Renderer/Passes/DebugDrawScenePass.cpp
         src/Renderer/PointField.cpp
         src/Renderer/Passes/PointFieldScenePass.cpp

@@ -2,6 +2,8 @@
 
 #include "EditorIcons.h"
 
+#include <Veng/Renderer/SceneGizmos.h>
+
 #include <Veng/Application.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Mesh.h>
@@ -40,8 +42,6 @@ namespace VengEditor
         constexpr AssetId CameraIconId{0x010CD6BC54B24B5DULL};
 
         // Linear-RGBA gizmo colors.
-        constexpr vec4 LightGizmoColor{1.0f, 0.85f, 0.4f, 1.0f};
-        constexpr vec4 CameraGizmoColor{0.5f, 0.8f, 1.0f, 1.0f};
         // World-unit edge length of an icon billboard.
         constexpr f32 IconSize = 0.6f;
     }
@@ -162,128 +162,21 @@ namespace VengEditor
             return;
         }
 
-        Renderer::DebugDraw& debug = m_Viewport->GetDebugDraw();
-
-        // Lights: an icon billboard plus a wireframe of the falloff volume.
-        for (auto [entity, transform, light] : m_Ctx.Scene->View<Transform, Light>())
-        {
-            const vec3 position = vec3(WorldMatrix(*m_Ctx.Scene, entity)[3]);
-
-            if (m_LightIcon.IsLoaded())
-            {
-                // The pick id is the entity's packed slot index + 1 (0 = not pickable), the same
-                // encoding the mesh id pass writes; clicking the icon selects this entity.
-                debug.DrawBillboard(position, IconSize, m_LightIcon.Get()->GetHandle(),
-                                    LightGizmoColor, entity.Index + 1u);
-            }
-
-            switch (light.Type)
-            {
-            case LightType::Point:
-                debug.DrawSphere(position, light.Range, LightGizmoColor);
-                break;
-            case LightType::Spot:
-            {
-                // A spot cone: a ring at the falloff range plus four edges to the apex,
-                // sized by the outer half-angle. The light's Direction is the cone axis.
-                const vec3 axis = glm::length(light.Direction) > 0.0f
-                                      ? glm::normalize(light.Direction)
-                                      : vec3(0.0f, -1.0f, 0.0f);
-                const f32 coneRadius = light.Range * std::tan(light.OuterCone);
-                const vec3 center = position + axis * light.Range;
-
-                // Build a basis around the axis for the cone ring.
-                const vec3 up =
-                    std::abs(axis.y) < 0.99f ? vec3(0.0f, 1.0f, 0.0f) : vec3(1.0f, 0.0f, 0.0f);
-                const vec3 right = glm::normalize(glm::cross(axis, up));
-                const vec3 bitangent = glm::cross(axis, right);
-
-                constexpr u32 segments = 24;
-                vec3 prev{};
-                for (u32 i = 0; i <= segments; ++i)
-                {
-                    const f32 a =
-                        glm::two_pi<f32>() * static_cast<f32>(i) / static_cast<f32>(segments);
-                    const vec3 point =
-                        center + coneRadius * (std::cos(a) * right + std::sin(a) * bitangent);
-                    if (i > 0)
-                    {
-                        debug.DrawLine(prev, point, LightGizmoColor);
-                    }
-                    if (i % (segments / 4) == 0)
-                    {
-                        debug.DrawLine(position, point, LightGizmoColor);
-                    }
-                    prev = point;
-                }
-                break;
-            }
-            case LightType::Directional:
-                // A directional light has no position-bound volume; a short arrow shows its axis.
-                {
-                    const vec3 axis = glm::length(light.Direction) > 0.0f
-                                          ? glm::normalize(light.Direction)
-                                          : vec3(0.0f, -1.0f, 0.0f);
-                    debug.DrawLine(position, position + axis * 1.5f, LightGizmoColor);
-                }
-                break;
-            case LightType::Rect:
-                // The rect area light's Width × Height plane, oriented by the transform, plus a
-                // short stub along the emitting normal (local +Z).
-                {
-                    const mat4 world = WorldMatrix(*m_Ctx.Scene, entity);
-                    const f32 hw = light.Width * 0.5f;
-                    const f32 hh = light.Height * 0.5f;
-                    const vec3 c0 = vec3(world * vec4(-hw, -hh, 0.0f, 1.0f));
-                    const vec3 c1 = vec3(world * vec4(hw, -hh, 0.0f, 1.0f));
-                    const vec3 c2 = vec3(world * vec4(hw, hh, 0.0f, 1.0f));
-                    const vec3 c3 = vec3(world * vec4(-hw, hh, 0.0f, 1.0f));
-                    debug.DrawLine(c0, c1, LightGizmoColor);
-                    debug.DrawLine(c1, c2, LightGizmoColor);
-                    debug.DrawLine(c2, c3, LightGizmoColor);
-                    debug.DrawLine(c3, c0, LightGizmoColor);
-                    const vec3 n = glm::normalize(vec3(world[2]));
-                    debug.DrawLine(position, position + n * 0.5f, LightGizmoColor);
-                }
-                break;
-            case LightType::Sphere:
-                // The sphere area light's emitting body at its authored radius.
-                debug.DrawSphere(position, light.Radius, LightGizmoColor);
-                break;
-            case LightType::Polygon:
-                // The polygon area light's outline, its vertices oriented by the transform.
-                {
-                    const mat4 world = WorldMatrix(*m_Ctx.Scene, entity);
-                    const usize count = light.PolygonVertices.size();
-                    for (usize i = 0; i < count; ++i)
-                    {
-                        const vec3 a = vec3(world * vec4(light.PolygonVertices[i], 1.0f));
-                        const vec3 b =
-                            vec3(world * vec4(light.PolygonVertices[(i + 1) % count], 1.0f));
-                        debug.DrawLine(a, b, LightGizmoColor);
-                    }
-                }
-                break;
-            }
-        }
-
-        // Cameras: an icon billboard plus the view frustum (clamped far so it stays readable).
-        for (auto [entity, transform, camera] : m_Ctx.Scene->View<Transform, Camera>())
-        {
-            const mat4 world = WorldMatrix(*m_Ctx.Scene, entity);
-            const vec3 position = vec3(world[3]);
-
-            if (m_CameraIcon.IsLoaded())
-            {
-                debug.DrawBillboard(position, IconSize, m_CameraIcon.Get()->GetHandle(),
-                                    CameraGizmoColor, entity.Index + 1u);
-            }
-
-            Camera gizmoCamera = camera;
-            gizmoCamera.Far = glm::min(camera.Far, camera.Near + 5.0f);
-            const CameraView view = MakeCameraView(gizmoCamera, 16.0f / 9.0f, world);
-            debug.DrawFrustum(glm::inverse(view.ViewProjection()), CameraGizmoColor);
-        }
+        // The whole layer is the engine's, so an editor viewport and a game's debug view show the
+        // same stand-ins for the same content. The editor's part is the art it ships and the
+        // picking: a billboard carrying its entity's pick id is what makes a light selectable by
+        // clicking its icon, which a game drawing the layer to look at has no use for.
+        const Renderer::SceneGizmoStyle style{
+            .LightIcon =
+                m_LightIcon.IsLoaded() ? m_LightIcon.Get()->GetHandle() : Renderer::TextureHandle{},
+            .CameraIcon = m_CameraIcon.IsLoaded() ? m_CameraIcon.Get()->GetHandle()
+                                                  : Renderer::TextureHandle{},
+            .IconSize = IconSize,
+            .Pickable = true,
+        };
+        Renderer::DrawSceneGizmos(*m_Ctx.Scene, m_Viewport->GetDebugDraw(),
+                                  Renderer::SceneGizmo::Lights | Renderer::SceneGizmo::Cameras,
+                                  style);
     }
 
     void SceneViewportPanel::HandleClickToSelect(const bool hovered, const bool consumed)

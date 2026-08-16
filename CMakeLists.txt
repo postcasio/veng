@@ -885,6 +885,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/seat_routing_integration.cpp
             tests/unit/seat_focus.cpp
             tests/unit/light_packing.cpp
+            tests/unit/scene_gizmos.cpp
             tests/unit/sky_ambient.cpp
             tests/unit/shader_interface.cpp
             tests/unit/surface_shader_contract.cpp
