@@ -149,6 +149,23 @@ namespace Veng::Cook
             sortPriority = vmat["sortPriority"].get<i32>();
         }
 
+        // --- 1e. Parse the optional bloom-mask flag (default false) ---
+
+        // Set by a Translucent material whose fragment returns TranslucentBloomOutput — a second
+        // color output naming the glow the surface wants apart from how bright it is. Accepted on
+        // any domain but read only by the translucent pass, which enables the mask attachment's
+        // writes for a declaring material's pipeline alone.
+        bool bloomMask = false;
+        if (vmat.contains("bloomMask"))
+        {
+            if (!vmat["bloomMask"].is_boolean())
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': 'bloomMask' must be a boolean", vmatPath.string()));
+            }
+            bloomMask = vmat["bloomMask"].get<bool>();
+        }
+
         // --- 2. Validate and resolve shader references ---
 
         if (!vmat.contains("shaders") || !vmat["shaders"].is_object())
@@ -286,7 +303,8 @@ namespace Veng::Cook
         // float2 SV_Target3 (screen-space motion vector) + float3 SV_Target4 (HDR emissive).
         // PostProcess: single float4 SV_Target0. Sky: single float4 SV_Target0 (background
         // radiance, not a g-buffer MRT). Translucent: single float4 SV_Target0 (final HDR color +
-        // alpha, forward-blended into the scene, not a g-buffer MRT). GuiFill: single float4
+        // alpha, forward-blended into the scene, not a g-buffer MRT), plus a float SV_Target1 when
+        // the material declares "bloomMask". GuiFill: single float4
         // SV_Target0 (premultiplied UI fill). Mismatch is a located cook error. An SV_Depth
         // member is not a color target and never reaches this check — the reflection drops it,
         // so any domain may write depth alongside its targets.
@@ -337,15 +355,27 @@ namespace Veng::Cook
             // A Translucent material outputs final HDR color + alpha into the single scene-color
             // target, forward-blended, not the g-buffer MRT — a single float4 SV_Target0. A
             // fragment that writes the g-buffer set (or any further target) violates the contract.
-            const bool ok = outputs->size() == 1 && (*outputs)[0].TargetIndex == 0 &&
-                            (*outputs)[0].IsFloat && (*outputs)[0].ComponentCount == 4;
-            if (!ok)
+            // Declaring "bloomMask" adds exactly one more: a scalar float SV_Target1 carrying the
+            // glow strength the surface asks for apart from its luminance. The two must agree —
+            // the pass enables the mask attachment's writes from the flag, so a flag without the
+            // output writes undefined values into the mask and an output without the flag is
+            // silently discarded.
+            const bool colorOk = !outputs->empty() && (*outputs)[0].TargetIndex == 0 &&
+                                 (*outputs)[0].IsFloat && (*outputs)[0].ComponentCount == 4;
+            const bool maskOk =
+                !bloomMask ? outputs->size() == 1
+                           : outputs->size() == 2 && (*outputs)[1].TargetIndex == 1 &&
+                                 (*outputs)[1].IsFloat && (*outputs)[1].ComponentCount == 1;
+            if (!colorOk || !maskOk)
             {
                 return std::unexpected(fmt::format(
                     "material importer: '{}': translucent material must write a single float4 "
-                    "SV_Target0 (HDR color + alpha) and no further targets — not the g-buffer MRT; "
-                    "its fragment shader does not",
-                    vmatPath.string()));
+                    "SV_Target0 (HDR color + alpha){} — not the g-buffer MRT; its fragment shader "
+                    "does not",
+                    vmatPath.string(),
+                    bloomMask ? " plus a float SV_Target1 (the bloom mask it declares) and no "
+                                "further targets"
+                              : " and no further targets"));
             }
         }
         else if (domainValue == MaterialDomain::GuiFill)
@@ -758,6 +788,7 @@ namespace Veng::Cook
         header.Domain = domain;
         header.CullMode = cull;
         header.SortPriority = sortPriority;
+        header.BloomMask = bloomMask ? 1u : 0u;
         header.FieldCount = static_cast<u32>(fields.size());
         header.BlockBytes = blockReflected->Size;
 

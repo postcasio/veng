@@ -25,6 +25,17 @@ namespace Veng::Renderer
     /// The renderer builds the SSAO pipeline against this format, and SsaoScenePass owns the image.
     inline constexpr Format SsaoFormat = Format::R8Unorm;
 
+    /// @brief Single-channel unorm format for the bloom-mask target.
+    ///
+    /// The mask is a [0,1] glow strength a forward material writes beside its color, so eight bits
+    /// carry it: one step is 0.4 % of a bloom multiplier. Unorm also bounds the additive blend the
+    /// translucent pass writes it under, so overlapping declaring surfaces saturate instead of
+    /// wrapping.
+    inline constexpr Format BloomMaskFormat = Format::R8Unorm;
+
+    /// @brief Usage the bloom-mask target is allocated with: written as a color attachment, sampled by the bloom down-sweep.
+    inline constexpr ImageUsage BloomMaskUsage = ImageUsage::ColorAttachment | ImageUsage::Sampled;
+
     /// @brief Maximum per-submesh candidates a frame's per-draw / cull buffers hold.
     ///
     /// The fixed candidate maximum: the indirect buffer covers this many slots, culled ones

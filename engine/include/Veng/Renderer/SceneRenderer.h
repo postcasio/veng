@@ -366,6 +366,8 @@ namespace Veng::Renderer
         void CreateLtcResources();
         /// @brief Recreates the HDR image/view at the current extent and (re-)registers it into bindless.
         void CreateHdr();
+        /// @brief Recreates the bloom-mask image/view at the current extent and (re-)registers it into bindless.
+        void CreateBloomMask();
         /// @brief Builds the engine-owned fullscreen pipelines and loads the core PostProcess materials.
         ///
         /// Called once at Create; the lighting pipeline writes the HDR format, the debug-blit pipelines
@@ -518,6 +520,17 @@ namespace Veng::Renderer
         /// @brief View over m_HdrImage.
         Ref<ImageView> m_HdrView;
 
+        /// @brief Bloom-mask target: the glow strength a forward material asks for apart from its radiance.
+        ///
+        /// Full extent, single-channel unorm, renderer-owned and imported like the g-buffer. The
+        /// forward translucent pass clears it and a declaring material writes it as SV_Target1; the
+        /// bloom pyramid's level-0 dispatch takes the larger of it and the luminance bright-pass,
+        /// so a surface can seed the pyramid at any strength while staying inside the range the
+        /// tone curve renders in full saturation.
+        Ref<Image> m_BloomMaskImage;
+        /// @brief View over m_BloomMaskImage.
+        Ref<ImageView> m_BloomMaskView;
+
         /// @brief Per-object screen-space motion vector target — g-buffer channel G3.
         ///
         /// RG16Sfloat, full extent. The surface pass writes it as SV_Target3 alongside the
@@ -603,6 +616,8 @@ namespace Veng::Renderer
         TextureHandle m_DepthHandle;
         /// @brief Bindless slot for the HDR view.
         TextureHandle m_HdrHandle;
+        /// @brief Bindless slot for the bloom-mask view; the bloom down-sweep samples it through the registry.
+        TextureHandle m_BloomMaskHandle;
         /// @brief Bindless slot of the linear clamp sampler the fullscreen passes read the g-buffer
         /// and HDR target through, shared out of the registry across every SceneRenderer.
         SamplerHandle m_SamplerHandle;
@@ -831,6 +846,11 @@ namespace Veng::Renderer
         MipChainId m_BloomChainId;
         /// @brief Imported id for the bloom composite result.
         ResourceId m_BloomResultId;
+        /// @brief Imported id for the bloom-mask target the translucent pass writes and the down-sweep reads.
+        ///
+        /// Invalid when bloom is off, which is what takes the mask attachment off the translucent
+        /// pass: nothing would read it.
+        ResourceId m_BloomMaskId;
         /// @brief Imported buffer id for the auto-exposure histogram buffer.
         ResourceId m_AutoExposureId;
         /// @brief Imported id for the directional shadow atlas.

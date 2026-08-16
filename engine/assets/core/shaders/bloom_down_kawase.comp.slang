@@ -10,18 +10,35 @@
 // the plain 5-tap average. A push flag selects the path; the bright-pass + Karis wrap the
 // kernel rather than the reverse, so both bloom kernels share a stable mip 0.
 //
+// Mip 0 also takes the larger of that luminance bright-pass and the authored bloom mask, a
+// screen-space target a forward material writes alongside its color to name the glow it wants
+// independently of how bright it is. The mask is gathered through the same taps and the same
+// Karis weights as the color, so the two stay in register, and the pyramid is still seeded with
+// the filtered scene *color* — a masked surface halos in its own hue.
+//
 // Set 0 is reserved across every pipeline layout for the bindless registry; this closed
 // producer->consumer chain binds its own resources on set 1: a sampled source mip, the
-// clamp-to-edge linear sampler, and a single storage destination mip.
+// clamp-to-edge linear sampler, and a single storage destination mip. The mask is the one
+// resource read off the registry instead — it belongs to the renderer, not to this chain.
+[[vk::binding(0, 0)]] Texture2D g_Textures[];
+[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+
 [[vk::binding(0, 3)]] Texture2D<float4> g_Source;
 [[vk::binding(1, 3)]] SamplerState g_Sampler;
 [[vk::binding(2, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Dest;
 
+// The block the down sweep pushes, shared with the COD kernel: both downsample pipelines are
+// built against one layout, so this mirrors bloom_down.comp's block field for field.
 struct PushConstants
 {
-    uint2 DestExtent;    // destination mip dimensions in texels
-    float BrightPass;    // 1.0 = level-0 bright-pass + Karis, 0.0 = plain downsample
-    float Threshold;     // bright-pass luminance knee (level 0 only)
+    uint2  DestExtent;     // destination mip dimensions in texels (the valid sub-rect)
+    float2 SourceScaleUV;  // source validExtent/allocExtent (dynamic-resolution sub-rect)
+    float2 SourceMaxUV;    // source (validExtent-0.5)/allocExtent (bilinear-tap clamp)
+    float  BrightPass;     // 1.0 = level-0 bright-pass + Karis, 0.0 = plain downsample
+    float  Threshold;      // bright-pass luminance knee (level 0 only)
+    uint   MaskTexture;    // bindless slot of the bloom-mask target (level 0 only)
+    uint   MaskSampler;    // bindless slot of the sampler the mask is read through
+    uint   MaskEnabled;    // 1 = fold the mask in, 0 = the two slots above are unset
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
@@ -39,9 +56,21 @@ float KarisWeight(float3 c)
     return 1.0 / (1.0 + Luma(c));
 }
 
+// The source is rendered into a dynamic-resolution sub-rect; map the valid-space UV into the
+// source's valid region and clamp so a bilinear tap never bleeds past it (identity at scale 1.0).
 float3 SampleSource(float2 uv)
 {
-    return g_Source.SampleLevel(g_Sampler, uv, 0.0).rgb;
+    float2 physical = min(uv * g_PC.SourceScaleUV, g_PC.SourceMaxUV);
+    return g_Source.SampleLevel(g_Sampler, physical, 0.0).rgb;
+}
+
+// The bloom mask at the same valid-space UV as SampleSource, through the same sub-rect mapping.
+float SampleMask(float2 uv)
+{
+    float2 physical = min(uv * g_PC.SourceScaleUV, g_PC.SourceMaxUV);
+    return g_Textures[g_PC.MaskTexture]
+        .SampleLevel(g_Samplers[g_PC.MaskSampler], physical, 0.0)
+        .r;
 }
 
 [shader("compute")]
@@ -81,7 +110,22 @@ void csMain(uint3 id : SV_DispatchThreadID)
         // surface near the knee fades in rather than popping (the standard shape).
         float knee = max(g_PC.Threshold, 1e-4);
         float soft = saturate((Luma(result) - knee) / knee);
-        result *= soft * soft;
+        float gain = soft * soft;
+
+        if (g_PC.MaskEnabled != 0)
+        {
+            // The mask through the same five taps and the same Karis weights the color took.
+            float mc = SampleMask(uv);
+            float mtl = SampleMask(uv + float2(-1, -1) * o);
+            float mtr = SampleMask(uv + float2(1, -1) * o);
+            float mbl = SampleMask(uv + float2(-1, 1) * o);
+            float mbr = SampleMask(uv + float2(1, 1) * o);
+
+            float mask = (mc * wc + mtl * wtl + mtr * wtr + mbl * wbl + mbr * wbr) / wsum;
+            gain = max(gain, mask);
+        }
+
+        result *= gain;
     }
     else
     {

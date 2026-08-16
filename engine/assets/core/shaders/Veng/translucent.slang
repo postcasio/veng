@@ -10,7 +10,8 @@
 // own struct to pack its fields at the reflected offsets — so it is not part of this contract).
 //
 // A Translucent material's fragment stage outputs a single float4 SV_Target0: HDR linear color in
-// rgb and coverage in a — or a TranslucentDepthOutput below, which adds a fragment-written depth. The forward translucent pass draws it into the lit HDR scene-color target
+// rgb and coverage in a — or one of the structs below, which add a fragment-written depth
+// (TranslucentDepthOutput) or a bloom mask (TranslucentBloomOutput). The forward translucent pass draws it into the lit HDR scene-color target
 // after deferred lighting and the sky composite and before the bloom/tonemap tail, so translucents
 // bloom and tonemap with the scene. The pass depth-TESTs against the opaque depth buffer with depth
 // writes OFF (a translucent surface never occludes another), sorts submeshes back-to-front by view
@@ -41,6 +42,34 @@ struct TranslucentDepthOutput
 {
     float4 Color : SV_Target0;  // HDR linear color in rgb, coverage in a (un-premultiplied)
     float  Depth : SV_Depth;
+};
+
+// The Translucent output with a bloom mask. A fragment returns this instead of a bare float4
+// SV_Target0 when the surface should bloom by a strength it names rather than by how bright it
+// is — a display, an instrument face, an emissive decal, any surface a viewer should see glow
+// without its core reading as white.
+//
+// Bloom's bright-pass normally derives its own mask from the filtered scene luminance, so the
+// only way to raise a surface's glow is to raise the radiance it emits — and past the tone
+// curve's shoulder that spends its hue instead, since every channel compresses toward the white
+// point together. The mask breaks the two apart: level 0 of the bloom pyramid takes the larger
+// of the luminance bright-pass and this mask, so a surface can stay inside the range the
+// tonemapper renders in full saturation and still seed the pyramid at any strength, which makes
+// the halo carry the surface's own color.
+//
+// The mask is a coverage-weighted quantity, because the pass blends the color it accompanies by
+// that same coverage: a fragment covering a fraction of its pixel contributes that fraction of
+// its color to the lit target, so it must contribute that fraction of its mask. A material that
+// recovers a straight (un-premultiplied) color from a premultiplied source multiplies the mask
+// back by coverage on the way out, or its antialiased edges glow less than its interiors.
+//
+// The mask target is cleared each frame and written only by materials that author it — a
+// material declares `"bloomMask": true` and the pass enables the second attachment's writes for
+// its pipeline alone, so a translucent material that returns a bare float4 is unaffected.
+struct TranslucentBloomOutput
+{
+    float4 Color     : SV_Target0;  // HDR linear color in rgb, coverage in a (un-premultiplied)
+    float  BloomMask : SV_Target1;  // [0,1] bloom strength, weighted by the same coverage
 };
 
 // True when the pre-translucent scene-color copy is populated this frame (the renderer's

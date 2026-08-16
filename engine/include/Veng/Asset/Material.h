@@ -110,6 +110,13 @@ namespace Veng
         /// of depth (an overlay plane, a reticle). Ignored outside the Translucent domain.
         i32 SortPriority = 0;
 
+        /// @brief Whether the fragment stage writes the bloom mask as its second color output.
+        ///
+        /// A Translucent material returning TranslucentBloomOutput sets this, and the translucent
+        /// pass enables the mask attachment's writes for its pipeline alone; every other pipeline
+        /// in the pass leaves the mask untouched. Ignored outside the Translucent domain.
+        bool WritesBloomMask = false;
+
         /// @brief Null for PostProcess materials (built by the pass).
         Ref<Renderer::GraphicsPipeline> Pipeline;
 
@@ -169,6 +176,13 @@ namespace Veng
         /// The translucent pass sorts its draws back-to-front within ascending priority
         /// groups, so a higher-priority material draws over every lower-priority one.
         [[nodiscard]] i32 GetSortPriority() const { return m_SortPriority; }
+
+        /// @brief Returns whether the fragment stage writes the bloom mask as its second color output.
+        ///
+        /// The translucent pass enables the mask attachment's writes for this material's pipeline
+        /// and leaves them off for every other, so a material that declares no SV_Target1 cannot
+        /// write undefined values into the mask.
+        [[nodiscard]] bool IsBloomMaskWriter() const { return m_WritesBloomMask; }
 
         /// @brief Returns the built graphics pipeline, or null for a pass-built domain (PostProcess, Sky, Translucent, GuiFill).
         [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetPipeline() const
@@ -288,6 +302,7 @@ namespace Veng
         MaterialDomain m_Domain = MaterialDomain::Surface;
         Renderer::CullMode m_CullMode = Renderer::CullMode::Back;
         i32 m_SortPriority = 0;
+        bool m_WritesBloomMask = false;
         Ref<Renderer::GraphicsPipeline> m_Pipeline;
         Ref<Renderer::GraphicsPipeline> m_SkinnedPipeline;
         Ref<Renderer::PipelineLayout> m_PipelineLayout;

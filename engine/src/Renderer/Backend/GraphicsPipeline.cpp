@@ -145,7 +145,12 @@ namespace Veng::Renderer
 
         for (auto& attachment : info.ColorAttachments)
         {
-            blendAttachments.push_back(ToVk(attachment.Blend));
+            vk::PipelineColorBlendAttachmentState state = ToVk(attachment.Blend);
+            if (!attachment.Write)
+            {
+                state.colorWriteMask = {};
+            }
+            blendAttachments.push_back(state);
         }
 
         const vk::PipelineColorBlendStateCreateInfo colorBlendState = {

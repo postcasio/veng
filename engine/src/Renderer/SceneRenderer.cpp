@@ -178,6 +178,7 @@ namespace Veng::Renderer
         CreateLtcResources();
         CreateCullResources();
         CreateHdr();
+        CreateBloomMask();
         m_Taa->Resize(m_Extent, m_Settings.TAA);
         // The pyramid's level-0 source and composite sets bind the fresh HDR view.
         m_Bloom->Resize(m_Extent, m_HdrView);
@@ -196,7 +197,7 @@ namespace Veng::Renderer
     SceneRenderer::~SceneRenderer()
     {
         // Invariant: this hand-list holds only the spine handles the renderer registers directly —
-        // the g-buffer channels, HDR, LTC LUTs, and the shared sampler. Every battery subsystem
+        // the g-buffer channels, HDR, the bloom mask, LTC LUTs, and the shared sampler. Every battery subsystem
         // (shadows, bloom, SSR, GPU cull, picking, sky, ...) owns and releases its own bindless
         // handles in its own destructor, so a new subsystem handle never has to be appended here.
         // Released before their images retire.
@@ -206,6 +207,7 @@ namespace Veng::Renderer
         bindless.Release(m_OrmHandle);
         bindless.Release(m_DepthHandle);
         bindless.Release(m_HdrHandle);
+        bindless.Release(m_BloomMaskHandle);
         bindless.Release(m_VelocityHandle);
         bindless.Release(m_EmissiveHandle);
         bindless.Release(m_LtcMatHandle);
@@ -352,6 +354,13 @@ namespace Veng::Renderer
             m_BloomChainId =
                 graph.ImportImageMips("SceneRenderer Bloom Pyramid", m_Bloom->GetMipCount());
             m_BloomResultId = graph.Import("SceneRenderer Bloom Result");
+            // The mask is wired with the sweep that reads it: with bloom off nothing consumes it,
+            // so the translucent pass drops the attachment rather than clearing a dead target.
+            m_BloomMaskId = graph.Import("SceneRenderer Bloom Mask");
+        }
+        else
+        {
+            m_BloomMaskId = ResourceId{};
         }
 
         m_AutoExposureId = ResourceId{};
@@ -528,7 +537,8 @@ namespace Veng::Renderer
             }
             m_Passes.push_back(CreateUnique<TranslucentScenePass>(
                 m_Context, m_Extent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
-                m_RefractionSceneId, m_RefractionDepthId, HdrFormat));
+                m_RefractionSceneId, m_RefractionDepthId, HdrFormat, m_BloomMaskId,
+                BloomMaskFormat));
 
             // TAA resolves the lit target into the HDR target the tail samples, so it sits
             // between lighting and the bloom/tonemap tail.
@@ -701,7 +711,8 @@ namespace Veng::Renderer
             }
             m_Passes.push_back(CreateUnique<TranslucentScenePass>(
                 m_Context, m_Extent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
-                m_RefractionSceneId, m_RefractionDepthId, HdrFormat));
+                m_RefractionSceneId, m_RefractionDepthId, HdrFormat, m_BloomMaskId,
+                BloomMaskFormat));
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
                 m_Context, m_DebugBlits->Albedo, m_Extent, FullscreenBlitScenePass::Source::Bloom));
             break;
@@ -847,7 +858,8 @@ namespace Veng::Renderer
                 if (m_Topology->BloomActive)
                 {
                     m_Bloom->Declare(graph, m_HdrId, m_BloomChainId, m_BloomResultId,
-                                     *m_AutoExposure);
+                                     *m_AutoExposure, m_BloomMaskId, m_BloomMaskHandle,
+                                     m_SamplerHandle);
                 }
                 if (m_Topology->AutoExposureActive)
                 {
@@ -1096,6 +1108,7 @@ namespace Veng::Renderer
         CreateOutput();
         CreateGBuffer();
         CreateHdr();
+        CreateBloomMask();
         m_Taa->Resize(m_Extent, m_Settings.TAA);
         m_Bloom->Resize(m_Extent, m_HdrView);
         m_Ssr->Recreate(m_Settings, m_Extent, m_DepthView, m_GpuCull->GetHiZReduceSetLayout(),
@@ -1513,6 +1526,7 @@ namespace Veng::Renderer
                 bindings.push_back({m_BloomChainId.Level(level), bloomMips[level]});
             }
             bindings.push_back({m_BloomResultId, m_Bloom->GetResultView()});
+            bindings.push_back({m_BloomMaskId, m_BloomMaskView});
         }
         if (m_Topology->AutoExposureActive)
         {

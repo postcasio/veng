@@ -445,4 +445,26 @@ namespace Veng::Renderer
 
         m_HdrHandle = bindless.Register(m_HdrView);
     }
+
+    // The bloom mask: a full-extent single-channel target the forward translucent pass clears and a
+    // declaring material writes beside its color, sampled by the bloom pyramid's level-0 dispatch
+    // through bindless. It is renderer-owned and imported like the g-buffer rather than a graph
+    // transient, because the sweep reads it off the registry rather than off the bloom chain's own
+    // descriptor set.
+    void SceneRenderer::CreateBloomMask()
+    {
+        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
+        bindless.Release(m_BloomMaskHandle);
+
+        m_BloomMaskImage = Image::Create(m_Context, {
+                                                        .Name = "SceneRenderer Bloom Mask",
+                                                        .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                        .Format = BloomMaskFormat,
+                                                        .Usage = BloomMaskUsage,
+                                                    });
+        m_BloomMaskView = ImageView::Create(
+            m_Context, {.Name = "SceneRenderer Bloom Mask View", .Image = m_BloomMaskImage});
+
+        m_BloomMaskHandle = bindless.Register(m_BloomMaskView);
+    }
 }

@@ -31,6 +31,13 @@ namespace Veng::Renderer
     /// parent's pipeline, the set-0 bindless registry, and the shared set-1 DrawData SSBO, then
     /// reads its per-draw record and material selector from DrawData by the instance-rate
     /// candidate id, exactly like a static surface draw.
+    ///
+    /// The pass also owns the bloom mask, a second color attachment it clears at pass begin and a
+    /// declaring material writes as SV_Target1 — the glow strength a surface asks for apart from
+    /// how bright it is, which the bloom pyramid's level 0 folds in. The attachment is bound for
+    /// every pipeline the pass records (a render-pass instance and its pipelines must agree on the
+    /// attachment count) and its writes are enabled only on the pipelines whose material declares
+    /// the output, so a material returning a bare float4 leaves the mask alone.
     class TranslucentScenePass final : public ScenePass
     {
     public:
@@ -43,12 +50,15 @@ namespace Veng::Renderer
         /// @param sceneColorId Refraction scene-color intermediate, or invalid when off.
         /// @param sceneDepthId Refraction depth intermediate, or invalid when off.
         /// @param targetFormat Color format the per-parent pipelines target.
+        /// @param maskId       The bloom-mask target, or invalid when the frame wires none.
+        /// @param maskFormat   Color format of the bloom-mask attachment.
         TranslucentScenePass(Context& context, uvec2 extent, const TranslucentDrawPlan* plan,
                              ResourceId targetId, ResourceId depthId, ResourceId sceneColorId,
-                             ResourceId sceneDepthId, Format targetFormat)
+                             ResourceId sceneDepthId, Format targetFormat, ResourceId maskId,
+                             Format maskFormat)
             : m_Context(context), m_Extent(extent), m_Plan(plan), m_TargetId(targetId),
               m_DepthId(depthId), m_SceneColorId(sceneColorId), m_SceneDepthId(sceneDepthId),
-              m_TargetFormat(targetFormat)
+              m_TargetFormat(targetFormat), m_MaskId(maskId), m_MaskFormat(maskFormat)
         {
         }
 
@@ -80,6 +90,10 @@ namespace Veng::Renderer
         ResourceId m_SceneDepthId;
         /// @brief Color format the per-parent pipelines target.
         Format m_TargetFormat;
+        /// @brief The bloom-mask target (invalid when the frame wires none).
+        ResourceId m_MaskId;
+        /// @brief Color format of the bloom-mask attachment.
+        Format m_MaskFormat;
         // Per-parent pipeline cache; mutable so PipelineFor can lazily populate it from the
         // const record callback.
         mutable std::unordered_map<const Material*, Ref<GraphicsPipeline>> m_Pipelines;

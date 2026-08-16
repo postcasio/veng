@@ -8,9 +8,21 @@
 // weighted by 1/(1+luma)) so a single firefly pixel cannot drive a flickering bloom.
 // Deeper levels use the plain 13-tap average. A push flag selects the path.
 //
+// Mip 0 also takes the larger of that luminance bright-pass and the authored bloom mask, a
+// screen-space target a forward material writes alongside its color to name the glow it wants
+// independently of how bright it is. The mask is gathered through the same kernel and the same
+// Karis weights as the color, so the two stay in register: a stroke thin enough to be averaged
+// down by the 13 taps has its mask averaged down by exactly as much. The seeded pyramid still
+// carries the filtered scene *color*, so a masked surface halos in its own hue rather than in
+// the white its radiance would have to reach to cross the knee.
+//
 // Set 0 is reserved across every pipeline layout for the bindless registry; this closed
 // producer->consumer chain binds its own resources on set 1: a sampled source mip, the
-// clamp-to-edge linear sampler, and a single storage destination mip.
+// clamp-to-edge linear sampler, and a single storage destination mip. The mask is the one
+// resource read off the registry instead — it belongs to the renderer, not to this chain.
+[[vk::binding(0, 0)]] Texture2D g_Textures[];
+[[vk::binding(1, 0)]] SamplerState g_Samplers[];
+
 [[vk::binding(0, 3)]] Texture2D<float4> g_Source;
 [[vk::binding(1, 3)]] SamplerState g_Sampler;
 [[vk::binding(2, 3)]] [format("rgba16f")] RWTexture2D<float4> g_Dest;
@@ -22,6 +34,9 @@ struct PushConstants
     float2 SourceMaxUV;    // source (validExtent-0.5)/allocExtent (bilinear-tap clamp)
     float  BrightPass;     // 1.0 = level-0 bright-pass + Karis, 0.0 = plain downsample
     float  Threshold;      // bright-pass luminance knee (level 0 only)
+    uint   MaskTexture;    // bindless slot of the bloom-mask target (level 0 only)
+    uint   MaskSampler;    // bindless slot of the sampler the mask is read through
+    uint   MaskEnabled;    // 1 = fold the mask in, 0 = the two slots above are unset
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
@@ -45,6 +60,16 @@ float3 SampleSource(float2 uv)
 {
     float2 physical = min(uv * g_PC.SourceScaleUV, g_PC.SourceMaxUV);
     return g_Source.SampleLevel(g_Sampler, physical, 0.0).rgb;
+}
+
+// The bloom mask at the same valid-space UV as SampleSource, through the same sub-rect mapping:
+// the mask target is written by the same pass that wrote the color, at the same resolution.
+float SampleMask(float2 uv)
+{
+    float2 physical = min(uv * g_PC.SourceScaleUV, g_PC.SourceMaxUV);
+    return g_Textures[g_PC.MaskTexture]
+        .SampleLevel(g_Samplers[g_PC.MaskSampler], physical, 0.0)
+        .r;
 }
 
 [shader("compute")]
@@ -103,7 +128,37 @@ void csMain(uint3 id : SV_DispatchThreadID)
         // surface near the knee fades in rather than popping (the standard shape).
         float knee = max(g_PC.Threshold, 1e-4);
         float soft = saturate((Luma(result) - knee) / knee);
-        result *= soft * soft;
+        float gain = soft * soft;
+
+        if (g_PC.MaskEnabled != 0)
+        {
+            // The mask through the same 13 taps, the same 2x2 groups and the same Karis
+            // weights the color took, so the two are the same average of the same footprint.
+            float ma = SampleMask(uv + float2(-2, -2) * o);
+            float mb = SampleMask(uv + float2(0, -2) * o);
+            float mc = SampleMask(uv + float2(2, -2) * o);
+            float md = SampleMask(uv + float2(-2, 0) * o);
+            float me = SampleMask(uv + float2(0, 0) * o);
+            float mf = SampleMask(uv + float2(2, 0) * o);
+            float mg = SampleMask(uv + float2(-2, 2) * o);
+            float mh = SampleMask(uv + float2(0, 2) * o);
+            float mi = SampleMask(uv + float2(2, 2) * o);
+            float mj = SampleMask(uv + float2(-1, -1) * o);
+            float mk = SampleMask(uv + float2(1, -1) * o);
+            float ml = SampleMask(uv + float2(-1, 1) * o);
+            float mm = SampleMask(uv + float2(1, 1) * o);
+
+            float m0 = (mj + mk + ml + mm) * 0.25;
+            float m1 = (ma + mb + md + me) * 0.25;
+            float m2 = (mb + mc + me + mf) * 0.25;
+            float m3 = (md + me + mg + mh) * 0.25;
+            float m4 = (me + mf + mh + mi) * 0.25;
+
+            float mask = (m0 * w0 + m1 * w1 + m2 * w2 + m3 * w3 + m4 * w4) / wsum;
+            gain = max(gain, mask);
+        }
+
+        result *= gain;
     }
     else
     {

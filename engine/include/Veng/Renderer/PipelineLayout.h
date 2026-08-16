@@ -24,6 +24,14 @@ namespace Veng::Renderer
         Format Format = Format::Undefined;
         /// @brief Blend mode (default opaque).
         BlendState Blend = BlendState::Opaque();
+        /// @brief Whether the fragment stage's output reaches this attachment.
+        ///
+        /// False zeroes the attachment's color write mask, so the attachment keeps whatever it
+        /// held. A pass carrying an optional extra target binds it for every pipeline it records
+        /// — a render-pass instance and the pipelines drawn in it must agree on the attachment
+        /// count — and clears this on the pipelines whose fragment stage declares no output for
+        /// that slot, whose writes would otherwise be undefined values.
+        bool Write = true;
     };
 
     /// @brief Describes one push-constant range declared on a pipeline layout.

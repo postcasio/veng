@@ -74,13 +74,21 @@ namespace Veng::Renderer
         /// N-2..0, barrier between levels), then the composite into the result. Per-frame
         /// Threshold / Intensity / Radius ride the compute push, read from the SceneView at record
         /// time; the down-pass threshold divides by @p autoExposure's resolved exposure.
+        ///
+        /// Level 0 additionally takes the larger of its luminance bright-pass and the bloom mask,
+        /// the screen-space target a forward material writes to name the glow it wants apart from
+        /// how bright it is. An invalid mask id or slot leaves level 0 on the bright-pass alone.
         /// @param graph        The renderer's internal graph being rebuilt.
         /// @param hdrId        The HDR target import (level-0 source and composite input).
         /// @param chainId      The per-mip pyramid import the down/up sweep reads and writes.
         /// @param resultId     The composite result import.
         /// @param autoExposure The exposure meter whose resolved exposure scales the threshold.
+        /// @param maskId       The bloom-mask target import, or an invalid id when there is none.
+        /// @param maskHandle   Bindless slot of the bloom-mask target.
+        /// @param maskSampler  Bindless slot of the sampler the mask is read through.
         void Declare(RenderGraph& graph, ResourceId hdrId, MipChainId chainId, ResourceId resultId,
-                     const AutoExposureMeter& autoExposure);
+                     const AutoExposureMeter& autoExposure, ResourceId maskId,
+                     TextureHandle maskHandle, SamplerHandle maskSampler);
 
         /// @brief The composite result the tonemap stage reads when bloom is on.
         [[nodiscard]] const Ref<ImageView>& GetResultView() const { return m_ResultView; }

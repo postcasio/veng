@@ -284,7 +284,7 @@ namespace Veng
     /// @brief The current material-format version.
     ///
     /// Bumped on any layout change; the loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedMaterialVersion = 8u;
+    inline constexpr u32 CookedMaterialVersion = 9u;
 
     /// @brief Cooked header for a material asset.
     ///
@@ -333,6 +333,12 @@ namespace Veng
         /// higher-priority material draws after — over — every lower-priority one regardless
         /// of depth (an overlay plane, a reticle). Ignored outside the Translucent domain.
         i32 SortPriority = 0;
+        /// @brief Whether the fragment stage writes the bloom mask (the "bloomMask" key; default 0).
+        ///
+        /// A Translucent material returning the shader contract's TranslucentBloomOutput cooks
+        /// this as 1, and the translucent pass enables the mask attachment's writes for its
+        /// pipeline alone. Ignored outside the Translucent domain.
+        u32 BloomMask = 0;
         /// @brief Number of CookedMaterialField entries following this header.
         u32 FieldCount = 0;
         /// @brief Byte size of the single parameter block; <= the per-material param stride.

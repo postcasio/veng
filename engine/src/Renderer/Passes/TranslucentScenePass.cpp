@@ -19,21 +19,32 @@ namespace Veng::Renderer
     void TranslucentScenePass::Declare(RenderGraph& graph, const PassIO& /*io*/)
     {
         RenderGraph::PassBuilder builder = graph.AddPass("Scene Translucent");
-        builder
-            .Color({
-                // Alpha-blend into the lit scene color (blend enabled on the pipeline).
-                .Resource = m_TargetId,
-                .Load = LoadOp::Load,
+        builder.Color({
+            // Alpha-blend into the lit scene color (blend enabled on the pipeline).
+            .Resource = m_TargetId,
+            .Load = LoadOp::Load,
+            .Store = StoreOp::Store,
+        });
+        if (m_MaskId.IsValid())
+        {
+            // This pass is the mask's only writer, so it clears the target at begin rather than
+            // costing the frame a separate clear: a pixel no declaring material covers reads 0
+            // and leaves the bloom bright-pass to decide the glow there on its own.
+            builder.Color({
+                .Resource = m_MaskId,
+                .Load = LoadOp::Clear,
                 .Store = StoreOp::Store,
-            })
-            .Depth({
-                // The opaque depth bound read-only (the pipeline disables depth writes):
-                // translucents depth-test against the resolved opaque scene so they are
-                // occluded correctly, without occluding one another.
-                .Resource = m_DepthId,
-                .Load = LoadOp::Load,
-                .Store = StoreOp::Store,
+                .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
             });
+        }
+        builder.Depth({
+            // The opaque depth bound read-only (the pipeline disables depth writes):
+            // translucents depth-test against the resolved opaque scene so they are
+            // occluded correctly, without occluding one another.
+            .Resource = m_DepthId,
+            .Load = LoadOp::Load,
+            .Store = StoreOp::Store,
+        });
         if (m_SceneColorId.IsValid())
         {
             builder.Sample(m_SceneColorId);
@@ -55,11 +66,26 @@ namespace Veng::Renderer
             return it->second;
         }
 
+        vector<PipelineAttachmentInfo> attachments = {
+            {.Format = m_TargetFormat, .Blend = BlendState::AlphaBlend()}};
+        if (m_MaskId.IsValid())
+        {
+            // The mask accumulates additively and its unorm target clamps the sum, so two
+            // declaring surfaces over one pixel take the stronger glow rather than the nearer
+            // one. Writes are off unless this material's fragment declares the output — the
+            // value an undeclared stage would leave in the slot is undefined.
+            attachments.push_back({
+                .Format = m_MaskFormat,
+                .Blend = BlendState::Additive(),
+                .Write = parent->IsBloomMaskWriter(),
+            });
+        }
+
         Ref<GraphicsPipeline> pipeline = GraphicsPipeline::Create(
             m_Context,
             {
                 .Name = fmt::format("Translucent Pipeline ({})", material.GetName()),
-                .ColorAttachments = {{.Format = m_TargetFormat, .Blend = BlendState::AlphaBlend()}},
+                .ColorAttachments = std::move(attachments),
                 .DepthAttachmentFormat = GBuffer::DepthFormat,
                 .VertexBufferLayout = Mesh::CanonicalLayout(),
                 // The surface vertex stage reads the per-draw candidate id as an

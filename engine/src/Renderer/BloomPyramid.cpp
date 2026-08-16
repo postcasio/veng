@@ -47,8 +47,8 @@ namespace Veng::Renderer
         constexpr u32 BloomTileShift = 3;
 
         // The bloom downsample push: the destination mip extent, a level-0 bright-pass
-        // flag (1.0 enables bright-pass + Karis), and the soft-knee threshold. Matches
-        // bloom_down.comp.
+        // flag (1.0 enables bright-pass + Karis), the soft-knee threshold, and the level-0
+        // bloom-mask slots. Matches bloom_down.comp and bloom_down_kawase.comp.
         struct BloomDownPush
         {
             uvec2 DestExtent;
@@ -56,6 +56,9 @@ namespace Veng::Renderer
             vec2 SourceMaxUV;   // source (validExtent-0.5)/allocExtent (bilinear-tap clamp)
             f32 BrightPass;
             f32 Threshold;
+            u32 MaskTexture;
+            u32 MaskSampler;
+            u32 MaskEnabled;
         };
 
         // The bloom upsample push: the destination (finer) mip extent, the source sub-rect
@@ -365,10 +368,16 @@ namespace Veng::Renderer
     }
 
     void BloomPyramid::Declare(RenderGraph& graph, const ResourceId hdrId, const MipChainId chainId,
-                               const ResourceId resultId, const AutoExposureMeter& autoExposure)
+                               const ResourceId resultId, const AutoExposureMeter& autoExposure,
+                               const ResourceId maskId, const TextureHandle maskHandle,
+                               const SamplerHandle maskSampler)
     {
         const u32 mipCount = static_cast<u32>(m_Mips.size());
         const uvec2 allocExtent = m_Extent;
+
+        // The mask is folded in only when the renderer supplied a live target and both slots
+        // resolved; without it level 0 is the luminance bright-pass alone.
+        const bool maskActive = maskId.IsValid() && maskHandle.IsValid() && maskSampler.IsValid();
 
         // Down-sweep: dispatch k samples level k's source (HDR for k=0, mip k-1 otherwise)
         // and writes mip k. Mip 0 fuses the bright-pass + Karis; deeper levels are the plain
@@ -381,6 +390,10 @@ namespace Veng::Renderer
             if (level == 0)
             {
                 builder.Sample(hdrId);
+                if (maskActive)
+                {
+                    builder.Sample(maskId);
+                }
             }
             else
             {
@@ -392,12 +405,16 @@ namespace Veng::Renderer
                 m_Kernel == BloomKernel::Kawase ? m_DownKawasePipeline : m_DownPipeline;
             const Ref<DescriptorSet> set = m_DownSets[level];
             const f32 brightPass = level == 0 ? 1.0f : 0.0f;
+            // Only level 0 bright-passes, so only level 0 reads the mask.
+            const bool levelMask = maskActive && level == 0;
+            Context* context = &m_Context;
             // The source is mip level-1 (the HDR for level 0); its dynamic-resolution sub-rect
             // ratio is at the source's level. Computed at record time from this frame's extent.
             const u32 srcLevel = level == 0 ? 0u : level - 1;
             const AutoExposureMeter* meter = &autoExposure;
             builder.Execute(
-                [pipeline, set, level, srcLevel, allocExtent, brightPass, meter](PassContext& inner)
+                [pipeline, set, level, srcLevel, allocExtent, brightPass, meter, levelMask,
+                 maskHandle, maskSampler, context](PassContext& inner)
                 {
                     const auto* view = static_cast<const SceneView*>(inner.UserData());
                     VE_ASSERT(view != nullptr, "Bloom down pass: null SceneView");
@@ -407,6 +424,12 @@ namespace Veng::Renderer
                         ComputeMipSubRect(view->RenderExtent, allocExtent, srcLevel);
                     CommandBuffer& cmd = inner.Cmd();
                     cmd.BindPipeline(pipeline);
+                    if (levelMask)
+                    {
+                        // The mask is the one bloom input off the registry rather than off the
+                        // chain's own set, so the registry has to be bound for this dispatch.
+                        context->GetBindlessRegistry().Bind(cmd, PipelineBindPoint::Compute);
+                    }
                     cmd.BindDescriptorSets(DescriptorSetBindInfo{
                         .Sets = {set},
                         .FirstSet = 3, // sets 0-2 are the typed bindless registries
@@ -423,6 +446,9 @@ namespace Veng::Renderer
                         // The resolved exposure is the one cross-battery read (from the meter).
                         .Threshold =
                             view->BloomThreshold / std::max(meter->GetResolvedExposure(), 1e-5f),
+                        .MaskTexture = maskHandle.Index,
+                        .MaskSampler = maskSampler.Index,
+                        .MaskEnabled = levelMask ? 1u : 0u,
                     });
                     cmd.Dispatch((dst.ValidExtent.x + 7) / 8, (dst.ValidExtent.y + 7) / 8, 1);
                 });
