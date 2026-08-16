@@ -65,6 +65,7 @@ float3 SampleSource(float2 uv)
 }
 
 // The bloom mask at the same valid-space UV as SampleSource, through the same sub-rect mapping.
+// An amplitude the filtered color is multiplied by, unbounded above 1 — see bloom_down.comp.
 float SampleMask(float2 uv)
 {
     float2 physical = min(uv * g_PC.SourceScaleUV, g_PC.SourceMaxUV);

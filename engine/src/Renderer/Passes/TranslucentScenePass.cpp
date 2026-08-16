@@ -70,10 +70,12 @@ namespace Veng::Renderer
             {.Format = m_TargetFormat, .Blend = BlendState::AlphaBlend()}};
         if (m_MaskId.IsValid())
         {
-            // The mask accumulates additively and its unorm target clamps the sum, so two
-            // declaring surfaces over one pixel take the stronger glow rather than the nearer
-            // one. Writes are off unless this material's fragment declares the output — the
-            // value an undeclared stage would leave in the slot is undefined.
+            // The mask accumulates additively, so two declaring surfaces over one pixel glow by
+            // the sum of the amplitudes they ask for rather than by the nearer one's alone. The
+            // float target does not bound that sum: the mask is an amplitude, and clamping it
+            // would cap a glow at the radiance it was decoupled from. Writes are off unless this
+            // material's fragment declares the output — the value an undeclared stage would leave
+            // in the slot is undefined.
             attachments.push_back({
                 .Format = m_MaskFormat,
                 .Blend = BlendState::Additive(),

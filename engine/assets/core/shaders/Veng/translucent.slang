@@ -57,6 +57,11 @@ struct TranslucentDepthOutput
 // tonemapper renders in full saturation and still seed the pyramid at any strength, which makes
 // the halo carry the surface's own color.
 //
+// **The mask is an amplitude, not a coverage fraction.** Level 0 multiplies the filtered color by
+// it, so 1.0 seeds the pyramid with exactly the surface's own radiance and the values that buy a
+// glow brighter than that radiance are the ones above 1. The target is a float format for that
+// reason, and nothing on the path saturates it.
+//
 // The mask is a coverage-weighted quantity, because the pass blends the color it accompanies by
 // that same coverage: a fragment covering a fraction of its pixel contributes that fraction of
 // its color to the lit target, so it must contribute that fraction of its mask. A material that
@@ -69,7 +74,7 @@ struct TranslucentDepthOutput
 struct TranslucentBloomOutput
 {
     float4 Color     : SV_Target0;  // HDR linear color in rgb, coverage in a (un-premultiplied)
-    float  BloomMask : SV_Target1;  // [0,1] bloom strength, weighted by the same coverage
+    float  BloomMask : SV_Target1;  // bloom amplitude, weighted by the same coverage
 };
 
 // True when the pre-translucent scene-color copy is populated this frame (the renderer's

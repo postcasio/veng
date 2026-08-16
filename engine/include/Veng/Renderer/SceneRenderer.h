@@ -520,13 +520,14 @@ namespace Veng::Renderer
         /// @brief View over m_HdrImage.
         Ref<ImageView> m_HdrView;
 
-        /// @brief Bloom-mask target: the glow strength a forward material asks for apart from its radiance.
+        /// @brief Bloom-mask target: the glow amplitude a forward material asks for apart from its radiance.
         ///
-        /// Full extent, single-channel unorm, renderer-owned and imported like the g-buffer. The
-        /// forward translucent pass clears it and a declaring material writes it as SV_Target1; the
-        /// bloom pyramid's level-0 dispatch takes the larger of it and the luminance bright-pass,
-        /// so a surface can seed the pyramid at any strength while staying inside the range the
-        /// tone curve renders in full saturation.
+        /// Full extent, single-channel half-float, renderer-owned and imported like the g-buffer.
+        /// The forward translucent pass clears it and a declaring material writes it as SV_Target1;
+        /// the bloom pyramid's level-0 dispatch takes the larger of it and the luminance
+        /// bright-pass and multiplies the filtered color by it, so an amplitude above 1 seeds the
+        /// pyramid brighter than the surface's own radiance while that radiance stays inside the
+        /// range the tone curve renders in full saturation.
         Ref<Image> m_BloomMaskImage;
         /// @brief View over m_BloomMaskImage.
         Ref<ImageView> m_BloomMaskView;

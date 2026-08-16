@@ -25,13 +25,16 @@ namespace Veng::Renderer
     /// The renderer builds the SSAO pipeline against this format, and SsaoScenePass owns the image.
     inline constexpr Format SsaoFormat = Format::R8Unorm;
 
-    /// @brief Single-channel unorm format for the bloom-mask target.
+    /// @brief Single-channel half-float format for the bloom-mask target.
     ///
-    /// The mask is a [0,1] glow strength a forward material writes beside its color, so eight bits
-    /// carry it: one step is 0.4 % of a bloom multiplier. Unorm also bounds the additive blend the
-    /// translucent pass writes it under, so overlapping declaring surfaces saturate instead of
-    /// wrapping.
-    inline constexpr Format BloomMaskFormat = Format::R8Unorm;
+    /// The mask is an **amplitude**, not a coverage fraction: it multiplies the filtered scene
+    /// color into level 0 of the bloom pyramid, so a value above 1 seeds a halo brighter than the
+    /// surface's own radiance. That is the whole point of naming a glow apart from a radiance — a
+    /// surface held inside the range the tone curve renders in full saturation still has to reach
+    /// the pyramid at any strength — and a normalized format would cap it at exactly the radiance
+    /// the surface was pulled down to. The additive blend the translucent pass writes it under is
+    /// unbounded here for the same reason.
+    inline constexpr Format BloomMaskFormat = Format::R16Sfloat;
 
     /// @brief Usage the bloom-mask target is allocated with: written as a color attachment, sampled by the bloom down-sweep.
     inline constexpr ImageUsage BloomMaskUsage = ImageUsage::ColorAttachment | ImageUsage::Sampled;

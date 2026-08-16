@@ -16,6 +16,11 @@
 // carries the filtered scene *color*, so a masked surface halos in its own hue rather than in
 // the white its radiance would have to reach to cross the knee.
 //
+// The mask is an **amplitude**: it multiplies the filtered color, so 1.0 seeds the pyramid with
+// the surface's own radiance and anything above 1.0 seeds it brighter. The bright-pass gain it
+// is maxed against saturates at 1.0; the mask deliberately does not, which is why its target is
+// a float format and why nothing here clamps it.
+//
 // Set 0 is reserved across every pipeline layout for the bindless registry; this closed
 // producer->consumer chain binds its own resources on set 1: a sampled source mip, the
 // clamp-to-edge linear sampler, and a single storage destination mip. The mask is the one
