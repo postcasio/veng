@@ -77,12 +77,20 @@ namespace Veng::Gui
             std::ranges::any_of(m_Draws.GetRuns(), [](const DrawRun& run)
                                 { return run.Pipeline == GuiPipeline::Material; });
 
-        // Dirty-gate: re-render only when the layout changed, a transition is animating, or the
-        // target sizing moved. A static document keeps its persistent target content and re-records
-        // nothing. The caller refreshes the document's data bindings ahead of this call, so a moved
-        // binding has already dirtied the layout and is reflected below.
+        // Dirty-gate: re-render only when the layout changed, a paint-only property changed, a
+        // transition is animating, or the target sizing moved. A static document keeps its
+        // persistent target content and re-records nothing. The caller refreshes the document's data
+        // bindings ahead of this call, so a moved binding has already dirtied the layout and is
+        // reflected below.
+        //
+        // The paint flag is not redundant with the layout one: opacity, rotation, background and
+        // text color are written without dirtying layout precisely so a per-frame fade costs no flex
+        // solve, and a gate reading only IsDirty holds the last-painted pixels for as long as the
+        // boxes happen not to move — a fade then appears to do nothing until something unrelated
+        // disturbs the tree.
         const bool needsRender = !m_EverRendered || sizingChanged || document.IsDirty() ||
-                                 document.IsAnimating() || hasMaterialFill;
+                                 document.IsPaintDirty() || document.IsAnimating() ||
+                                 hasMaterialFill;
         if (needsRender)
         {
             const vec2 available(static_cast<f32>(resolution.x), static_cast<f32>(resolution.y));

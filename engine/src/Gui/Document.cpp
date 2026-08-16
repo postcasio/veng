@@ -1205,35 +1205,41 @@ namespace Veng::Gui
     {
         element.BaseStyle.Opacity = opacity;
         element.ComputedStyle.Opacity = opacity;
+        m_PaintDirty = true;
     }
 
     void Document::SetRotation(Element& element, const f32 degrees)
     {
         element.BaseStyle.Rotation = degrees;
         element.ComputedStyle.Rotation = degrees;
+        m_PaintDirty = true;
     }
 
     void Document::SetBackground(Element& element, const vec4 color)
     {
         element.BaseStyle.Background = color;
         element.ComputedStyle.Background = color;
+        m_PaintDirty = true;
     }
 
     void Document::SetBackgroundGradient(Element& element, optional<ResolvedGradient> gradient)
     {
         element.BaseStyle.BackgroundGradient = gradient;
         element.ComputedStyle.BackgroundGradient = std::move(gradient);
+        m_PaintDirty = true;
     }
 
     void Document::SetTextColor(Element& element, const vec4 color)
     {
         element.BaseStyle.TextColor = color;
         element.ComputedStyle.TextColor = color;
+        m_PaintDirty = true;
     }
 
     void Document::SetImageUv(Element& element, const Rect& uv)
     {
         element.ImageUv = uv;
+        m_PaintDirty = true;
     }
 
     void Document::SetPlacement(Element& element, const vec2 topLeft, const vec2 size)
@@ -3362,6 +3368,9 @@ namespace Veng::Gui
         Update(delta);
         Solve(available);
         Build(out);
+        // Build has just read every paint-only property into the draw list, so anything written
+        // before this point is now on screen. Solve clears the layout flag itself.
+        m_PaintDirty = false;
     }
 
     namespace

@@ -391,6 +391,15 @@ namespace Veng::Gui
         /// @brief Returns whether the tree needs a Solve (structure or style changed since the last).
         [[nodiscard]] bool IsDirty() const { return m_Dirty; }
 
+        /// @brief Returns whether a paint-only write has landed since the last Drive.
+        ///
+        /// The paint-only setters (opacity, rotation, background, background gradient, text color,
+        /// image UV) deliberately leave the layout undirtied so a per-frame fade or spin never
+        /// re-runs the flex solve. They still change *pixels*, so a consumer that caches rendered
+        /// output must re-record on this in addition to IsDirty — gating a repaint on the layout
+        /// flag alone holds a stale target for as long as the tree's boxes happen not to move.
+        [[nodiscard]] bool IsPaintDirty() const { return m_PaintDirty; }
+
         /// @brief Returns the topmost visible element whose box contains a document-space point.
         ///
         /// Walks the laid-out tree front-to-back — a later child paints over an earlier one, so the
@@ -1035,6 +1044,9 @@ namespace Veng::Gui
 
         /// @brief Whether structure or style changed since the last Solve.
         bool m_Dirty = true;
+
+        /// @brief Whether a paint-only write landed since the last Drive.
+        bool m_PaintDirty = true;
 
         /// @brief The available size the last Solve ran against; a change re-runs Solve.
         vec2 m_LastAvailable{-1.0f};
