@@ -1,10 +1,12 @@
 // FormatInfo block-geometry test: the split GetFormatBlockInfo arms (BC4 = 8-byte 4x4 block, BC5
 // joins the 16-byte arm) and the BytesForLevel ceil-divide over partial edge blocks. Pure integer
-// arithmetic, no ICD.
+// arithmetic, no ICD. Plus FormatName's coverage of the declared enumerator set.
 
 #include <doctest/doctest.h>
 
 #include <Veng/Renderer/FormatInfo.h>
+
+#include <set>
 
 using namespace Veng;
 using namespace Veng::Renderer;
@@ -41,4 +43,29 @@ TEST_CASE("FormatInfo: BytesForLevel over BC5 and BC4 block counts")
     // BC5 matches the BC7/ASTC 16-byte arm exactly; BC4 is half that.
     CHECK(BytesForLevel(Format::BC5Unorm, 16, 16) == BytesForLevel(Format::BC7Unorm, 16, 16));
     CHECK(BytesForLevel(Format::BC4Unorm, 16, 16) == BytesForLevel(Format::BC5Unorm, 16, 16) / 2);
+}
+
+TEST_CASE("FormatInfo: FormatName covers every declared enumerator, distinctly")
+{
+    // The property that matters is coverage: a format added to Types.h and left out of the switch
+    // reports "Unknown", so a diagnostic silently stops naming it. Walking the declared range
+    // catches that at the point the enumerator is added rather than the day someone reads a dump.
+    // B10G11R11Ufloat is the last declared value; the loop is the whole closed set.
+    constexpr auto Last = static_cast<u32>(Format::B10G11R11Ufloat);
+    std::set<string_view> names;
+    for (u32 value = 0; value <= Last; ++value)
+    {
+        const string_view name = FormatName(static_cast<Format>(value));
+        CHECK(name != "Unknown");
+        names.insert(name);
+    }
+    // Distinct, so a reported name identifies exactly one format.
+    CHECK(names.size() == Last + 1);
+
+    // The name is the C++ spelling, so a dump greps back to the declaration.
+    CHECK(FormatName(Format::BC7Srgb) == "BC7Srgb");
+    CHECK(FormatName(Format::Undefined) == "Undefined");
+
+    // A value past the declared set is named rather than asserted — a diagnostic's contract.
+    CHECK(FormatName(static_cast<Format>(Last + 1)) == "Unknown");
 }

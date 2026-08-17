@@ -314,15 +314,34 @@ family registers from the editor side.
   transfer-source usage on its swap chain images, and is unavailable headless — where there is
   no swap chain and, because ImGui needs a window, no UI overlay to capture),
   `render.list_viewports` (over `McpHost::ViewportNames`), `render.stats` (cull counts +
-  `GetLastGpuFrameTimeMs`), **`render.bindless`** (free slots and capacity for each of the
-  registry's five arrayed bindings, over `BindlessRegistry::GetFreeSlots`). The last takes no
-  viewport: every array has a fixed capacity whose exhaustion is a fatal assert on an otherwise
-  ordinary registration, and nothing warns on the way down, so how much of one is left is worth
-  being able to read from outside. Read across a consumer's own open/close cycle it separates the
-  two ways an array runs out — a count returning to where it started names simultaneous occupancy,
-  one stepping down per cycle names a leak. The PNG encode uses stb_image_write, vendored PRIVATE into
-  `src/Vendor/StbImageWrite.cpp` — never a public header. A null/unknown viewport reports "no
-  viewport".
+  `GetLastGpuFrameTimeMs`), and the two bindless reads below. The PNG encode uses stb_image_write,
+  vendored PRIVATE into `src/Vendor/StbImageWrite.cpp` — never a public header. A null/unknown
+  viewport reports "no viewport".
+
+  **`render.bindless` answers how much is left; `render.bindless_slots` answers what is in there.**
+  Neither takes a viewport — the registry is the context's, not a view's. The first reports free
+  slots and capacity for **all seven** arrayed bindings over `BindlessRegistry::GetFreeSlots`
+  (textures, volumes, cubes, samplers, storage images, storage buffers, materials): every array has a
+  fixed capacity whose exhaustion is a fatal assert on an otherwise ordinary registration, and
+  nothing warns on the way down, so how much of one is left is worth being able to read from
+  outside. Read across a consumer's own open/close cycle it separates the two ways an array runs
+  out — a count returning to where it started names simultaneous occupancy, one stepping down per
+  cycle names a leak.
+
+  The second is what a free count cannot give: `{ array, state?, limit?, cursor? }` over
+  `BindlessRegistry::DescribeSlots`, paginated on the list tools' `nextCursor` idiom, reporting per
+  slot its index, its `BindlessSlotState`, and the resource's own description — an image array's
+  view name, format (`Renderer::FormatName`), image extent, exposed mips and layers, and the
+  tightly-packed bytes those subresources occupy; a storage buffer's name and size; a sampler's
+  name; a material's cached block length. **The question it exists for is "a build at 80 % of
+  `MaxTextures` — is it holding what it needs, or the same atlas nine times?"**, which the occupants
+  distinguish and the count cannot. `state` defaults to **occupied**, since a free slot describes
+  nothing; `pending_release` is reported apart from both because a released slot keeps its `Ref`
+  until its deferred window expires and so is neither free nor a live occupant, which is what
+  explains a free count trailing the unoccupied count. `capacity`, `free` and `matched` describe the
+  whole array rather than the page. Nothing is recorded per slot for this: the description is read
+  back off the `Ref` the registry already keeps to stop a registered resource dangling, so a
+  registration site is untouched and a caller pays only for the call.
 - **`audio.*`** (`src/AudioTools.cpp`, read-only) — `audio.list_voices` reports the presented world's
   live mix over `AudioEngine::GetVoiceInfos`: every active voice's bus, gain, pan/pitch, occlusion,
   reverb send, looping flag, whether it is a clip or a generator, its role

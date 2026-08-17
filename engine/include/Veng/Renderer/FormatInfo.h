@@ -3,8 +3,8 @@
 #include <Veng/Veng.h>
 #include <Veng/Renderer/Types.h>
 
-/// @brief Format block geometry and per-level byte sizing, shared by upload-region math and
-///        the cooked-texture loader's level walk.
+/// @brief Format block geometry, per-level byte sizing, and the enumerator spellings — shared by
+///        upload-region math, the cooked-texture loader's level walk, and diagnostic reporting.
 ///
 /// Block-compressed formats (BC7, ASTC 4x4) store one encoded block per @c BlockWidth x
 /// @c BlockHeight texel tile; uncompressed formats report a 1x1 block, so a single helper sizes
@@ -89,5 +89,81 @@ namespace Veng::Renderer
         const u32 blocksWide = (width + block.BlockWidth - 1) / block.BlockWidth;
         const u32 blocksHigh = (height + block.BlockHeight - 1) / block.BlockHeight;
         return static_cast<usize>(blocksWide) * blocksHigh * block.Bytes;
+    }
+
+    /// @brief Returns the enumerator spelling of @p format, as declared in Renderer/Types.h.
+    ///
+    /// Format is not a reflected enum — it is a cooked-blob-stable vocabulary enum the backend
+    /// maps exhaustively — so a diagnostic that reports a format has no reflection table to name it
+    /// through. This is that name, and it is the C++ spelling rather than a prose description so a
+    /// reported value can be grepped straight back to its declaration. An unmapped value answers
+    /// "Unknown", which is what a diagnostic wants where a switch on a vocabulary enum wants an
+    /// assert.
+    /// @param format The pixel format to name.
+    /// @return The enumerator's name.
+    inline constexpr string_view FormatName(Format format)
+    {
+        switch (format)
+        {
+        case Format::Undefined:
+            return "Undefined";
+        case Format::R8Unorm:
+            return "R8Unorm";
+        case Format::RGBA8Unorm:
+            return "RGBA8Unorm";
+        case Format::RGBA8Srgb:
+            return "RGBA8Srgb";
+        case Format::BGRA8Srgb:
+            return "BGRA8Srgb";
+        case Format::R16Sfloat:
+            return "R16Sfloat";
+        case Format::RGBA16Sfloat:
+            return "RGBA16Sfloat";
+        case Format::R32Sfloat:
+            return "R32Sfloat";
+        case Format::RG32Sfloat:
+            return "RG32Sfloat";
+        case Format::RGB32Sfloat:
+            return "RGB32Sfloat";
+        case Format::RGBA32Sfloat:
+            return "RGBA32Sfloat";
+        case Format::D16Unorm:
+            return "D16Unorm";
+        case Format::D32Sfloat:
+            return "D32Sfloat";
+        case Format::S8Uint:
+            return "S8Uint";
+        case Format::D16UnormS8Uint:
+            return "D16UnormS8Uint";
+        case Format::D24UnormS8Uint:
+            return "D24UnormS8Uint";
+        case Format::D32SfloatS8Uint:
+            return "D32SfloatS8Uint";
+        case Format::X8D24UnormPack32:
+            return "X8D24UnormPack32";
+        case Format::RG16Sfloat:
+            return "RG16Sfloat";
+        case Format::A2B10G10R10Unorm:
+            return "A2B10G10R10Unorm";
+        case Format::RGBA16Uint:
+            return "RGBA16Uint";
+        case Format::BC7Unorm:
+            return "BC7Unorm";
+        case Format::BC7Srgb:
+            return "BC7Srgb";
+        case Format::ASTC4x4Unorm:
+            return "ASTC4x4Unorm";
+        case Format::ASTC4x4Srgb:
+            return "ASTC4x4Srgb";
+        case Format::R32Uint:
+            return "R32Uint";
+        case Format::BC5Unorm:
+            return "BC5Unorm";
+        case Format::BC4Unorm:
+            return "BC4Unorm";
+        case Format::B10G11R11Ufloat:
+            return "B10G11R11Ufloat";
+        }
+        return "Unknown";
     }
 }

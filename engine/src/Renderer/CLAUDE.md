@@ -1335,6 +1335,23 @@ pipeline** for the registry, bound once per pipeline bind (`registry.Bind(cmd)`)
 draws select array elements via push-constant indices. Author-declared descriptor sets shift to
 **set 1+**.
 
+**The registry reports its occupancy, not only its headroom.** `GetFreeSlots()` gives the seven
+arrays' free counts (`BindlessCapacity`); `DescribeSlots(BindlessArray)` gives one array's slots in
+index order, each carrying its `BindlessSlotState` — **`Free` / `Occupied` / `PendingRelease`**, the
+third being a slot whose `Release` window has not expired, which is neither allocatable nor idle and
+is what explains a free count trailing the unoccupied count — plus what the slot holds:
+`BindlessSlot`'s union of the fields the arrays can describe (an `ImageView`'s name, format, the
+image's extent, the mips and layers the view exposes, and their tightly-packed `ImageBytes` from
+`FormatInfo`'s block geometry; a `Buffer`'s name and size; a `Sampler`'s name; a material slot's
+cached block length). **Nothing is recorded per slot for it and no registration site changed**: each
+`SlotArray` is homogeneous in the type its own `Register` took, so the type-erased `Ref` the registry
+already keeps to stop a resource dangling casts back and the description is read off it at call time.
+The question it answers is the one a free count cannot — an array at 80 % of its capacity is either
+holding what it needs or holding one atlas nine times, and only the occupants tell those apart.
+`BindlessArrayName` / `ParseBindlessArray` / `BindlessSlotStateName` are the text vocabulary a
+diagnostic reports and accepts through (`veng::mcp`'s `render.bindless_slots` is the consumer);
+`tests/unit/bindless_slots.cpp` pins the round trip and the capacity mapping device-free.
+
 **Samplers are shared, not registered per resource.** A sampler is pure state — nothing about it
 varies with the image it reads — so `AcquireSampler(const SamplerInfo&)` is the way in: it keys a
 cache on every field the GPU acts on (the debug `Name` excluded, floats compared by bit pattern)

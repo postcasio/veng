@@ -9,10 +9,15 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Renderer/FormatInfo.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/Viewport.h>
 
+#include <fmt/format.h>
 #include <nlohmann/json.hpp>
+
+#include <algorithm>
+#include <charconv>
 
 namespace Veng::Mcp
 {
@@ -34,6 +39,142 @@ namespace Veng::Mcp
         Renderer::Viewport* ResolveViewport(const McpHost& host, const string& name)
         {
             return host.Viewport ? host.Viewport(name) : nullptr;
+        }
+
+        /// @brief Default page size for render.bindless_slots when the caller omits `limit`.
+        ///
+        /// A cap on how much of a 1024-slot array one call dumps into an agent's context; the
+        /// caller pages the tail through nextCursor.
+        constexpr u32 DefaultSlotLimit = 200;
+
+        /// @brief Parses the optional `limit` argument, clamped to the page cap.
+        u32 ParseSlotLimit(const Json& args)
+        {
+            if (!args.is_object() || !args.contains("limit") || !args["limit"].is_number())
+            {
+                return DefaultSlotLimit;
+            }
+            const i64 requested = args["limit"].get<i64>();
+            if (requested <= 0)
+            {
+                return DefaultSlotLimit;
+            }
+            return static_cast<u32>(std::min<i64>(requested, DefaultSlotLimit));
+        }
+
+        /// @brief Parses the opaque `cursor` (the resume slot index), defaulting to 0.
+        u32 ParseSlotCursor(const Json& args)
+        {
+            if (!args.is_object() || !args.contains("cursor"))
+            {
+                return 0;
+            }
+            const Json& cursor = args["cursor"];
+            if (cursor.is_number())
+            {
+                const i64 value = cursor.get<i64>();
+                return value < 0 ? 0 : static_cast<u32>(value);
+            }
+            if (cursor.is_string())
+            {
+                const string text = cursor.get<string>();
+                u64 value = 0;
+                if (std::from_chars(text.data(), text.data() + text.size(), value).ec ==
+                    std::errc{})
+                {
+                    return static_cast<u32>(value);
+                }
+            }
+            return 0;
+        }
+
+        /// @brief Which slot states a call reports: the `state` argument, defaulting to occupied.
+        ///
+        /// Occupied is the default because "what is in there" is the question the tool exists for;
+        /// a free slot carries no description, so listing them is only useful for reading the
+        /// fragmentation of the free list itself.
+        struct SlotFilter
+        {
+            /// @brief Whether an occupied slot is reported.
+            bool Occupied = true;
+            /// @brief Whether a slot inside its deferred-release window is reported.
+            bool PendingRelease = true;
+            /// @brief Whether a free slot is reported.
+            bool Free = false;
+        };
+
+        /// @brief Parses the optional `state` filter, or nothing when it names no known state.
+        optional<SlotFilter> ParseSlotFilter(const Json& args)
+        {
+            if (!args.is_object() || !args.contains("state") || !args["state"].is_string())
+            {
+                return SlotFilter{};
+            }
+            const string state = args["state"].get<string>();
+            if (state == "occupied")
+            {
+                return SlotFilter{};
+            }
+            if (state == "free")
+            {
+                return SlotFilter{.Occupied = false, .PendingRelease = false, .Free = true};
+            }
+            if (state == "pending_release")
+            {
+                return SlotFilter{.Occupied = false, .PendingRelease = true, .Free = false};
+            }
+            if (state == "all")
+            {
+                return SlotFilter{.Occupied = true, .PendingRelease = true, .Free = true};
+            }
+            return std::nullopt;
+        }
+
+        /// @brief Whether @p filter admits a slot in @p state.
+        bool Admits(const SlotFilter& filter, const Renderer::BindlessSlotState state)
+        {
+            switch (state)
+            {
+            case Renderer::BindlessSlotState::Free:
+                return filter.Free;
+            case Renderer::BindlessSlotState::Occupied:
+                return filter.Occupied;
+            case Renderer::BindlessSlotState::PendingRelease:
+                return filter.PendingRelease;
+            }
+            return false;
+        }
+
+        /// @brief One slot as the tool reports it, with the fields its array does not describe left
+        ///        out rather than reported as zeros.
+        Json DescribeSlot(const Renderer::BindlessArray array, const Renderer::BindlessSlot& slot)
+        {
+            Json out{{"index", slot.Index}, {"state", Renderer::BindlessSlotStateName(slot.State)}};
+            if (!slot.Name.empty())
+            {
+                out["name"] = slot.Name;
+            }
+            if (slot.ImageFormat != Renderer::Format::Undefined)
+            {
+                out["format"] = Renderer::FormatName(slot.ImageFormat);
+                out["extent"] = {slot.Extent.x, slot.Extent.y, slot.Extent.z};
+                out["mips"] = slot.MipLevels;
+                out["layers"] = slot.ArrayLayers;
+                out["bytes"] = slot.ImageBytes;
+            }
+            else if (slot.SizeBytes != 0)
+            {
+                // The storage-buffer array reports the buffer's size; the material table reports
+                // its cached block's length. Both are the slot's own byte count, so one key.
+                out["bytes"] = slot.SizeBytes;
+            }
+            else if (array == Renderer::BindlessArray::Materials &&
+                     slot.State != Renderer::BindlessSlotState::Free)
+            {
+                // A registered material whose block is empty is a real state, not a missing read.
+                out["bytes"] = 0;
+            }
+            return out;
         }
     }
 
@@ -187,9 +328,10 @@ namespace Veng::Mcp
             McpTool tool;
             tool.Name = "render.bindless";
             tool.Description =
-                "Reports the bindless registry's arrayed bindings: free slots and total capacity "
-                "for textures, samplers, storage images, storage buffers, and materials. Takes no "
-                "arguments.";
+                "Reports the bindless registry's seven arrayed bindings: free slots and total "
+                "capacity for textures, volumes, cubes, samplers, storage images, storage buffers, "
+                "and materials. This is the 'how much is left' read; render.bindless_slots is the "
+                "'what is in there' one. Takes no arguments.";
             tool.InputSchemaJson = R"({"type":"object","properties":{}})";
             tool.Handler = [&host](string_view) -> Result<string>
             {
@@ -198,6 +340,8 @@ namespace Veng::Mcp
                     host.Assets.GetContext().GetBindlessRegistry().GetFreeSlots();
                 return Json{
                     {"textures", {{"free", free.Textures}, {"capacity", Registry::MaxTextures}}},
+                    {"volumes", {{"free", free.Volumes}, {"capacity", Registry::MaxVolumes}}},
+                    {"cubes", {{"free", free.Cubes}, {"capacity", Registry::MaxCubes}}},
                     {"samplers", {{"free", free.Samplers}, {"capacity", Registry::MaxSamplers}}},
                     {"storage_images",
                      {{"free", free.StorageImages}, {"capacity", Registry::MaxStorageImages}}},
@@ -206,6 +350,128 @@ namespace Veng::Mcp
                     {"materials", {{"free", free.Materials}, {"capacity", Registry::MaxMaterials}}},
                 }
                     .dump();
+            };
+            server.RegisterTool(std::move(tool));
+        }
+
+        // render.bindless_slots — what one array actually holds. A free count says a build is at
+        // 80 % of MaxTextures; only the occupants say whether it is holding what it needs or the
+        // same atlas nine times, which is the difference between a budget to raise and a leak to
+        // fix.
+        {
+            McpTool tool;
+            tool.Name = "render.bindless_slots";
+            tool.Description =
+                "Lists the slots of one bindless array with what each holds — the per-slot "
+                "companion to render.bindless's free/capacity summary, and the way to find what is "
+                "occupying an array that is running out. 'array' names it: textures, volumes, "
+                "cubes, samplers, storage_images, storage_buffers, materials. An image array's "
+                "slot reports the view's debug name, its format, the image extent, the mips and "
+                "layers the view exposes, and the tightly-packed bytes those subresources occupy "
+                "(the codec's own footprint, so a compressed texture reports compressed bytes); a "
+                "storage buffer reports its name and size; a sampler its name; a material its "
+                "cached parameter block's length. Optional 'state' filters by slot state — "
+                "'occupied' (the default), 'free', 'pending_release' (released but still inside "
+                "its deferred-release window, which is why a free count can trail the unoccupied "
+                "count), or 'all'. Paginated on { limit, cursor }; 'capacity', 'free' and "
+                "'matched' report the whole array, not the page.";
+            tool.InputSchemaJson = R"({"type":"object","properties":{"array":{"type":"string"},)"
+                                   R"("state":{"type":"string"},"limit":{"type":"integer"},)"
+                                   R"("cursor":{"type":"string"}},"required":["array"]})";
+            tool.Handler = [&host](string_view argsJson) -> Result<string>
+            {
+                const Json args = Json::parse(argsJson, nullptr, false);
+                if (!args.is_object() || !args.contains("array") || !args["array"].is_string())
+                {
+                    return std::unexpected(string{
+                        "'array' is required and names one of: textures, volumes, cubes, samplers, "
+                        "storage_images, storage_buffers, materials"});
+                }
+                const string arrayName = args["array"].get<string>();
+                const optional<Renderer::BindlessArray> array =
+                    Renderer::ParseBindlessArray(arrayName);
+                if (!array)
+                {
+                    return std::unexpected(fmt::format(
+                        "'{}' names no bindless array; expected one of: textures, volumes, cubes, "
+                        "samplers, storage_images, storage_buffers, materials",
+                        arrayName));
+                }
+                const optional<SlotFilter> filter = ParseSlotFilter(args);
+                if (!filter)
+                {
+                    return std::unexpected(
+                        string{"'state' must be one of: occupied, free, pending_release, all"});
+                }
+
+                const Renderer::BindlessRegistry& registry =
+                    host.Assets.GetContext().GetBindlessRegistry();
+                const vector<Renderer::BindlessSlot> slots = registry.DescribeSlots(*array);
+                const u32 cursor = ParseSlotCursor(args);
+                const u32 limit = ParseSlotLimit(args);
+
+                // 'matched' counts the whole array so a page reports how much of the filtered set
+                // it is; the walk therefore counts every slot and only pages the emitted ones.
+                Json items = Json::array();
+                u32 matched = 0;
+                u32 nextCursor = 0;
+                bool more = false;
+                for (const Renderer::BindlessSlot& slot : slots)
+                {
+                    if (!Admits(*filter, slot.State))
+                    {
+                        continue;
+                    }
+                    ++matched;
+                    if (slot.Index < cursor)
+                    {
+                        continue;
+                    }
+                    if (items.size() >= limit)
+                    {
+                        if (!more)
+                        {
+                            more = true;
+                            nextCursor = slot.Index;
+                        }
+                        continue;
+                    }
+                    items.push_back(DescribeSlot(*array, slot));
+                }
+
+                const Renderer::BindlessCapacity free = registry.GetFreeSlots();
+                const u32 freeCount = [&]
+                {
+                    switch (*array)
+                    {
+                    case Renderer::BindlessArray::Textures:
+                        return free.Textures;
+                    case Renderer::BindlessArray::Volumes:
+                        return free.Volumes;
+                    case Renderer::BindlessArray::Cubes:
+                        return free.Cubes;
+                    case Renderer::BindlessArray::Samplers:
+                        return free.Samplers;
+                    case Renderer::BindlessArray::StorageImages:
+                        return free.StorageImages;
+                    case Renderer::BindlessArray::StorageBuffers:
+                        return free.StorageBuffers;
+                    case Renderer::BindlessArray::Materials:
+                        return free.Materials;
+                    }
+                    return 0u;
+                }();
+
+                Json out{{"array", Renderer::BindlessArrayName(*array)},
+                         {"capacity", Renderer::BindlessRegistry::CapacityOf(*array)},
+                         {"free", freeCount},
+                         {"matched", matched},
+                         {"slots", std::move(items)}};
+                if (more)
+                {
+                    out["nextCursor"] = std::to_string(nextCursor);
+                }
+                return out.dump();
             };
             server.RegisterTool(std::move(tool));
         }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <span>
 
 #include <Veng/Veng.h>
@@ -152,6 +153,79 @@ namespace Veng::Renderer
         u32 StorageBuffers = 0;
         /// @brief Free slots in the material block table, of MaxMaterials.
         u32 Materials = 0;
+    };
+
+    /// @brief One of the registry's arrayed bindings, named so a diagnostic can ask about a
+    ///        single array rather than about all of them.
+    ///
+    /// The enumerators are the seven arrays BindlessCapacity counts, in the same order.
+    enum class BindlessArray : u8
+    {
+        /// @brief The 2D sampled-image array (set 0, TextureBinding).
+        Textures,
+        /// @brief The 3D sampled-image array (the volume set).
+        Volumes,
+        /// @brief The cube sampled-image array (the cube set).
+        Cubes,
+        /// @brief The sampler array (set 0, SamplerBinding).
+        Samplers,
+        /// @brief The storage-image array (set 0, StorageImageBinding).
+        StorageImages,
+        /// @brief The byte-address storage-buffer array (set 0, StorageBufferBinding).
+        StorageBuffers,
+        /// @brief The per-material block table.
+        Materials,
+    };
+
+    /// @brief Whether a slot is allocatable, in use, or waiting out its deferred-release window.
+    ///
+    /// The third state is not a transient detail a reader can fold into one of the others: a
+    /// released slot stays unallocatable until AcquireNextFrame has cycled past every
+    /// frame-in-flight that could still be sampling it, so a snapshot showing pending slots
+    /// explains a free count lower than the unoccupied count.
+    enum class BindlessSlotState : u8
+    {
+        /// @brief On the free list — the next Register may be handed this slot.
+        Free,
+        /// @brief Holding a live resource.
+        Occupied,
+        /// @brief Released, still inside its deferred-release window.
+        PendingRelease,
+    };
+
+    /// @brief What one slot of an arrayed binding holds, for a diagnostic read.
+    ///
+    /// A union of the fields the seven arrays can describe, since the array being asked about
+    /// decides which are meaningful: an image array fills the format/extent/mip/layer fields, the
+    /// storage-buffer array fills SizeBytes, the sampler array fills only the name, and the
+    /// material table fills SizeBytes with its cached block's length. A field an array does not
+    /// describe is left at its zero, which is why every one has a zero that reads as absent.
+    struct BindlessSlot
+    {
+        /// @brief The slot's index in its array — the value a handle carries and a shader indexes.
+        u32 Index = 0;
+        /// @brief Whether the slot is free, occupied, or pending release.
+        BindlessSlotState State = BindlessSlotState::Free;
+        /// @brief The resource's own debug name, empty when it carries none or the slot is free.
+        string Name;
+        /// @brief The viewed image's texel format, for an image array.
+        Format ImageFormat = Format::Undefined;
+        /// @brief The viewed image's extent in texels, for an image array.
+        uvec3 Extent{0, 0, 0};
+        /// @brief The mip levels the view exposes, for an image array.
+        u32 MipLevels = 0;
+        /// @brief The array layers the view exposes, for an image array.
+        u32 ArrayLayers = 0;
+        /// @brief The buffer's byte size for the storage-buffer array, or the cached parameter
+        ///        block's length for the material table.
+        u64 SizeBytes = 0;
+        /// @brief The image's tightly-packed byte size across every mip the view exposes, for an
+        ///        image array — what the slot's residency costs, not what it was allocated as.
+        ///
+        /// Derived from the format's block geometry over the extent, so it is the codec's own
+        /// footprint rather than a driver-reported allocation size: a compressed texture reports
+        /// its compressed bytes. Zero for a format FormatInfo does not size.
+        u64 ImageBytes = 0;
     };
 
     /// @brief The global bindless descriptor set: set 0, reserved in every
@@ -411,6 +485,30 @@ namespace Veng::Renderer
         /// @return The free slot counts, sampled at the moment of the call.
         [[nodiscard]] BindlessCapacity GetFreeSlots() const;
 
+        /// @brief Describes every slot of one arrayed binding, in index order.
+        ///
+        /// GetFreeSlots answers *how much* is left; this answers *what is in there*, which is the
+        /// question a free count cannot: a build sitting at 80 % of MaxTextures is either holding
+        /// what it needs or holding the same atlas nine times, and only the occupants distinguish
+        /// them. The description is read back off the Ref the registry already keeps to stop a
+        /// registered resource dangling, so nothing is recorded per slot for this and a caller pays
+        /// only for the call.
+        ///
+        /// The result is one entry per slot of the array's fixed capacity — free slots included, so
+        /// an index in the result is that slot's index — and it is a snapshot of values, borrowing
+        /// nothing.
+        /// @param array  Which arrayed binding to describe.
+        /// @return Its slots, in index order, of the array's capacity.
+        [[nodiscard]] vector<BindlessSlot> DescribeSlots(BindlessArray array) const;
+
+        /// @brief The fixed capacity of one arrayed binding.
+        ///
+        /// The Max* constants keyed by BindlessArray, so a caller iterating the arrays reads a
+        /// capacity the same way it reads slots instead of re-deriving the mapping.
+        /// @param array  Which arrayed binding.
+        /// @return Its capacity in slots.
+        [[nodiscard]] static constexpr u32 CapacityOf(BindlessArray array);
+
         /// @brief Returns the descriptor set layout for set 0 (the 2D sampled-image array).
         [[nodiscard]] const Ref<DescriptorSetLayout>& GetSet0Layout() const { return m_Layout; }
 
@@ -620,6 +718,20 @@ namespace Veng::Renderer
         /// @brief Writes a byte-address storage buffer into the descriptor set at the given buffer slot.
         void WriteStorageBuffer(u32 index, const Ref<Buffer>& buffer) const;
 
+        /// @brief The slot allocator backing one arrayed binding, or null when @p array is unmapped.
+        /// @param array  Which arrayed binding.
+        /// @return Its allocator, borrowed.
+        [[nodiscard]] const SlotArray* SlotsFor(BindlessArray array) const;
+
+        /// @brief Fills @p slot's resource description from the Ref its array holds.
+        ///
+        /// The array decides how the type-erased Ref is read back, since each allocator is
+        /// homogeneous in the type its own Register took.
+        /// @param array     The array the slot belongs to.
+        /// @param resource  The slot's stored resource; a null Ref describes nothing.
+        /// @param slot      The slot to fill; its Index must already be set.
+        void Describe(BindlessArray array, const Ref<void>& resource, BindlessSlot& slot) const;
+
         /// @brief The owning context.
         Context& m_Context;
         /// @brief The descriptor set layout for set 0.
@@ -754,4 +866,96 @@ namespace Veng::Renderer
         /// @brief Latch for the spent-view-budget warning, so it is logged once per registry.
         bool m_ViewBudgetWarned = false;
     };
+
+    constexpr u32 BindlessRegistry::CapacityOf(const BindlessArray array)
+    {
+        switch (array)
+        {
+        case BindlessArray::Textures:
+            return MaxTextures;
+        case BindlessArray::Volumes:
+            return MaxVolumes;
+        case BindlessArray::Cubes:
+            return MaxCubes;
+        case BindlessArray::Samplers:
+            return MaxSamplers;
+        case BindlessArray::StorageImages:
+            return MaxStorageImages;
+        case BindlessArray::StorageBuffers:
+            return MaxStorageBuffers;
+        case BindlessArray::Materials:
+            return MaxMaterials;
+        }
+        return 0;
+    }
+
+    /// @brief The enumerator spelling of @p array, matching the BindlessCapacity field it counts.
+    ///
+    /// BindlessArray is a vocabulary enum rather than a reflected one, so this is how a diagnostic
+    /// names an array. Snake-case, because the names an agent-facing surface reports are keys the
+    /// same surface accepts back — see ParseBindlessArray.
+    /// @param array  Which arrayed binding.
+    /// @return Its name.
+    [[nodiscard]] constexpr string_view BindlessArrayName(const BindlessArray array)
+    {
+        switch (array)
+        {
+        case BindlessArray::Textures:
+            return "textures";
+        case BindlessArray::Volumes:
+            return "volumes";
+        case BindlessArray::Cubes:
+            return "cubes";
+        case BindlessArray::Samplers:
+            return "samplers";
+        case BindlessArray::StorageImages:
+            return "storage_images";
+        case BindlessArray::StorageBuffers:
+            return "storage_buffers";
+        case BindlessArray::Materials:
+            return "materials";
+        }
+        return "unknown";
+    }
+
+    /// @brief Parses an arrayed binding by the name BindlessArrayName gives it.
+    ///
+    /// The inverse of BindlessArrayName, so a caller naming an array in text — an MCP argument, a
+    /// console command — routes through one table rather than its own string comparisons. Matching
+    /// is exact.
+    /// @param name  The array's name.
+    /// @return The array, or nullopt when the name matches none.
+    [[nodiscard]] constexpr optional<BindlessArray> ParseBindlessArray(const string_view name)
+    {
+        constexpr std::array Arrays{
+            BindlessArray::Textures,  BindlessArray::Volumes,       BindlessArray::Cubes,
+            BindlessArray::Samplers,  BindlessArray::StorageImages, BindlessArray::StorageBuffers,
+            BindlessArray::Materials,
+        };
+        for (const BindlessArray array : Arrays)
+        {
+            if (BindlessArrayName(array) == name)
+            {
+                return array;
+            }
+        }
+        return std::nullopt;
+    }
+
+    /// @brief The enumerator spelling of @p state, for a diagnostic that reports one.
+    /// @param state  The slot state.
+    /// @return Its name.
+    [[nodiscard]] constexpr string_view BindlessSlotStateName(const BindlessSlotState state)
+    {
+        switch (state)
+        {
+        case BindlessSlotState::Free:
+            return "free";
+        case BindlessSlotState::Occupied:
+            return "occupied";
+        case BindlessSlotState::PendingRelease:
+            return "pending_release";
+        }
+        return "unknown";
+    }
 }

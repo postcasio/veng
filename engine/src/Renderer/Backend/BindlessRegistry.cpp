@@ -1,5 +1,6 @@
 #include <Veng/Renderer/BindlessRegistry.h>
 
+#include <algorithm>
 #include <bit>
 #include <cstring>
 
@@ -10,6 +11,8 @@
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/DescriptorSetLayout.h>
+#include <Veng/Renderer/FormatInfo.h>
+#include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/Sampler.h>
@@ -27,6 +30,27 @@ namespace Veng::Renderer
         bool SameBits(f32 a, f32 b)
         {
             return std::bit_cast<u32>(a) == std::bit_cast<u32>(b);
+        }
+
+        // The tightly-packed bytes of every subresource a view exposes — the mips from its base,
+        // each level's depth slices, times its layers. The format's block geometry sizes a level, so
+        // a compressed image reports its compressed footprint; a format FormatInfo cannot size
+        // contributes zero rather than a guess.
+        u64 ViewedBytes(const ImageView& view, const Image& image)
+        {
+            const uvec3 extent = image.GetExtent();
+            const Format format = image.GetFormat();
+            u64 bytes = 0;
+            for (u32 i = 0; i < view.GetMipLevels(); ++i)
+            {
+                const u32 level = view.GetBaseMipLevel() + i;
+                const u32 width = std::max(1u, extent.x >> level);
+                const u32 height = std::max(1u, extent.y >> level);
+                const u32 depth = std::max(1u, extent.z >> level);
+                bytes += static_cast<u64>(BytesForLevel(format, width, height)) * depth *
+                         view.GetArrayLayers();
+            }
+            return bytes;
         }
 
         // True when two descriptions ask the GPU for the same sampling. Compared field by field:
@@ -570,6 +594,119 @@ namespace Veng::Renderer
             .StorageBuffers = static_cast<u32>(m_StorageBuffers.Free.size()),
             .Materials = static_cast<u32>(m_Materials.Free.size()),
         };
+    }
+
+    vector<BindlessSlot> BindlessRegistry::DescribeSlots(const BindlessArray array) const
+    {
+        const SlotArray* const slots = SlotsFor(array);
+        VE_ASSERT(slots != nullptr, "BindlessRegistry::DescribeSlots: unmapped BindlessArray {}",
+                  static_cast<u32>(array));
+
+        // Occupied is the default because it is the state with no list to read: a slot is occupied
+        // exactly when neither the free list nor a pending bucket names it.
+        vector<BindlessSlot> described(slots->Slots.size());
+        for (u32 index = 0; index < described.size(); ++index)
+        {
+            described[index].Index = index;
+            described[index].State = BindlessSlotState::Occupied;
+        }
+        for (const u32 index : slots->Free)
+        {
+            described[index].State = BindlessSlotState::Free;
+        }
+        for (const vector<u32>& pending : slots->PendingRelease)
+        {
+            for (const u32 index : pending)
+            {
+                described[index].State = BindlessSlotState::PendingRelease;
+            }
+        }
+
+        // A released slot keeps its Ref until its window expires, so it is described exactly as an
+        // occupied one — which is the point: what a pending slot still holds is what a reader
+        // chasing a slow release wants to see.
+        for (BindlessSlot& slot : described)
+        {
+            if (slot.State == BindlessSlotState::Free)
+            {
+                continue;
+            }
+            Describe(array, slots->Slots[slot.Index], slot);
+        }
+        return described;
+    }
+
+    const BindlessRegistry::SlotArray* BindlessRegistry::SlotsFor(const BindlessArray array) const
+    {
+        switch (array)
+        {
+        case BindlessArray::Textures:
+            return &m_Textures;
+        case BindlessArray::Volumes:
+            return &m_Volumes;
+        case BindlessArray::Cubes:
+            return &m_Cubes;
+        case BindlessArray::Samplers:
+            return &m_Samplers;
+        case BindlessArray::StorageImages:
+            return &m_StorageImages;
+        case BindlessArray::StorageBuffers:
+            return &m_StorageBuffers;
+        case BindlessArray::Materials:
+            return &m_Materials;
+        }
+        return nullptr;
+    }
+
+    void BindlessRegistry::Describe(const BindlessArray array, const Ref<void>& resource,
+                                    BindlessSlot& slot) const
+    {
+        // The material table allocates its slots against an empty Ref — a material is bytes in a
+        // buffer region, not a resource — so its description comes from the CPU-side block cache.
+        if (array == BindlessArray::Materials)
+        {
+            slot.SizeBytes = m_MaterialEntries[slot.Index].Block.size();
+            return;
+        }
+        if (!resource)
+        {
+            return;
+        }
+
+        // Each array is homogeneous in the type it was allocated with, so the void slot casts back
+        // to the type its own Register took.
+        switch (array)
+        {
+        case BindlessArray::Textures:
+        case BindlessArray::Volumes:
+        case BindlessArray::Cubes:
+        case BindlessArray::StorageImages:
+        {
+            const Ref<ImageView> view = std::static_pointer_cast<ImageView>(resource);
+            slot.Name = view->GetName();
+            slot.ImageFormat = view->GetFormat();
+            slot.MipLevels = view->GetMipLevels();
+            slot.ArrayLayers = view->GetArrayLayers();
+            if (const Ref<Image> image = view->GetImage())
+            {
+                slot.Extent = image->GetExtent();
+                slot.ImageBytes = ViewedBytes(*view, *image);
+            }
+            break;
+        }
+        case BindlessArray::Samplers:
+            slot.Name = std::static_pointer_cast<Sampler>(resource)->GetName();
+            break;
+        case BindlessArray::StorageBuffers:
+        {
+            const Ref<Buffer> buffer = std::static_pointer_cast<Buffer>(resource);
+            slot.Name = buffer->GetName();
+            slot.SizeBytes = buffer->GetSize();
+            break;
+        }
+        case BindlessArray::Materials:
+            break;
+        }
     }
 
     void BindlessRegistry::Bind(CommandBuffer& cmd, PipelineBindPoint bindPoint) const
