@@ -1890,6 +1890,16 @@ namespace Veng::Gui
         vector<Element*> moved;
         for (const Unique<Element>& owned : m_Elements)
         {
+            // A scrollbar is never itself a scroll container, whatever style resolves onto it. The
+            // exclusion is load-bearing rather than tidy: a part inherits its host's classes, so a
+            // bare class rule carrying `overflow: scroll` matches the very bar its host created —
+            // and without this the bar would take a bar of its own, whose parts inherit the classes
+            // again, growing the tree a level per frame until the process dies. A stylesheet must
+            // not be able to do that.
+            if (IsScrollBarPart(owned->Kind))
+            {
+                continue;
+            }
             if (IsScrollable(owned->ComputedStyle) != owned->Widget.HasScrollBars)
             {
                 moved.push_back(owned.get());

@@ -498,7 +498,15 @@ inherits its host's classes**, which is what makes it addressable per instance: 
 matches one compound selector with **no descendant combinator**, so `ScrollBar.inventory` reaches a
 particular list's bar where `.inventory ScrollBar` would not parse. They are
 **not authorable**: the cooker's tag table does not accept them, so a `<ScrollBar>` tag is a cook
-error. Presence and visibility are separate: a bar *exists* while its axis is styled `scroll` and
+error.
+
+**Because a part inherits its host's classes, a rule styling a scrollable element must name the
+host's type.** `.inventory { overflow-y: scroll }` matches the bar that rule just asked for, not only
+the list — a bare class selector cannot tell a host from its parts. `List.inventory { … }` can, and
+is the form to write. The engine no longer lets the mistake hang the process (`SyncAllScrollBars`
+skips scrollbar parts outright, since a bar is never itself a scroll container), but the part would
+still take every other declaration in the rule, so the qualified selector is what expresses the
+intent. Presence and visibility are separate: a bar *exists* while its axis is styled `scroll` and
 *hides* when the axis has no travel, so content growing past the box reveals it with no structural
 change. Dragging the thumb scales the pointer delta through the track's slack, and a press on the
 track pages one viewport.

@@ -67,6 +67,17 @@ namespace
             Doc.Solve(vec2(400.0f, 400.0f));
         }
 
+        // Every element under the root, parts included — what a recursively-growing tree moves.
+        [[nodiscard]] static usize CountSubtree(const Element& element)
+        {
+            usize count = 1;
+            for (const Element* child : element.Children)
+            {
+                count += CountSubtree(*child);
+            }
+            return count;
+        }
+
         [[nodiscard]] const Element* Bar(bool vertical) const
         {
             for (const Element* child : View->Children)
@@ -169,6 +180,37 @@ TEST_CASE("gui scroll: a bar exists while the axis is scrollable and hides when 
     fixture.Settle();
     CHECK(fixture.Bar(true) != nullptr);
     CHECK(!fixture.Bar(true)->Visible);
+}
+
+TEST_CASE("gui scroll: a scrollbar never takes scrollbars of its own")
+{
+    // A part inherits its host's classes, so a bare class rule carrying `overflow: scroll` resolves
+    // onto the very bar the host's own rule created. Left unguarded that bar takes a bar, whose
+    // parts inherit the classes again, and the tree grows a level per frame until the process dies —
+    // a stylesheet must not be able to hang the app. So a scrollbar part is excluded from the sync
+    // outright: a bar is never itself a scroll container, whatever style lands on it.
+    ScrollFixture fixture(Overflow::Scroll, Overflow::Scroll);
+
+    const Element* const bar = fixture.Bar(/*vertical=*/true);
+    REQUIRE(bar != nullptr);
+
+    // Style the bar exactly as an inherited class rule would, then run several frames: the count is
+    // what a growing tree moves, so it is asserted after settling rather than per frame.
+    Style scrolling = bar->ComputedStyle;
+    scrolling.OverflowX = Overflow::Scroll;
+    scrolling.OverflowY = Overflow::Scroll;
+    fixture.Doc.SetStyle(const_cast<Element&>(*bar), scrolling);
+
+    const usize before = ScrollFixture::CountSubtree(fixture.Doc.Root());
+    for (int frame = 0; frame < 8; ++frame)
+    {
+        fixture.Settle();
+    }
+    CHECK(ScrollFixture::CountSubtree(fixture.Doc.Root()) == before);
+
+    // And the bar's own children are still just its thumb — no bar of its own was made.
+    CHECK(std::ranges::none_of(bar->Children, [](const Element* child)
+                               { return child->Kind == ElementKind::ScrollBar; }));
 }
 
 TEST_CASE("gui scroll: turning the axis un-scrollable drops the bar entirely")
