@@ -510,3 +510,52 @@ TEST_CASE("gui widget parts: pressing a vertical Slider's thumb drives it bottom
     doc.DispatchPointer(move);
     CHECK(doc.GetWidgetValue(slider) == doctest::Approx(10.0f));
 }
+
+TEST_CASE("gui scroll: a row inside a scroll container is still clickable")
+{
+    // The container claims its descendants' presses so a drag over a row pans the list. That
+    // capture must not eat the row's click: the release hit-tests the row while the capture holds
+    // the container, so a click read off the capture would never fire for anything in a list.
+    ScrollFixture fixture(Overflow::Hidden, Overflow::Scroll);
+
+    Element& row = fixture.Doc.Add(*fixture.Content, ElementKind::Button);
+    Style style;
+    style.Width = Length{.Kind = LengthKind::Percent, .Value = 100.0f};
+    style.Height = Points(80.0f);
+    style.FlexShrink = 0.0f;
+    fixture.Doc.SetStyle(row, style);
+    row.Bindings["onClick"] = "pick";
+    fixture.Settle();
+
+    BindingContext context;
+    const TypeRegistry registry;
+    fixture.Doc.BindContext(&context, &registry);
+    int picks = 0;
+    context.SetHandler("pick", [&](Element&) { ++picks; });
+
+    const vec2 point = row.Layout.Center();
+    PointerEvent down{.Kind = PointerEventKind::Down, .Position = point};
+    fixture.Doc.DispatchPointer(down);
+
+    // The container took the capture, and the row wears the pressed state anyway — otherwise a row
+    // in a list is the one control that never lights under the finger.
+    CHECK((fixture.View->State & ElementState::Active) == ElementState::Active);
+    CHECK((row.State & ElementState::Active) == ElementState::Active);
+
+    PointerEvent up{.Kind = PointerEventKind::Up, .Position = point};
+    fixture.Doc.DispatchPointer(up);
+    CHECK(picks == 1);
+    CHECK((row.State & ElementState::Active) == ElementState::None);
+
+    // A press that scrolled the list is a scroll and not a pick, even released over the same row:
+    // the content moving is what tells the two gestures apart.
+    fixture.Doc.DispatchPointer(down);
+    PointerEvent drag{.Kind = PointerEventKind::Move, .Position = point - vec2(0.0f, 20.0f)};
+    fixture.Doc.DispatchPointer(drag);
+    CHECK(fixture.View->Widget.ScrollOffset.y == doctest::Approx(20.0f));
+    fixture.Settle();
+
+    PointerEvent release{.Kind = PointerEventKind::Up, .Position = row.Layout.Center()};
+    fixture.Doc.DispatchPointer(release);
+    CHECK(picks == 1);
+}

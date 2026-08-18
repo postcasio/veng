@@ -470,6 +470,17 @@ covers. The hit-test already walks children before self, so `children` only supp
 `none` keeps its subtree prune, which is the cheaper form a decorative group wants. The enumerator is
 **appended**, so `None` keeps its ordinal and no cooked blob version moves.
 
+**Hover is a property of a box, and every box the pointer is inside is hovered** — the element
+under it, every ancestor containing it (CSS's own rule), and the **pointer-transparent content that
+element draws**. The last term is what a composite control needs: a row spelled as a `Button`
+wrapping its own `Text` children cannot restyle those children on hover otherwise, because a
+`pointer-events: none` subtree is pruned from hit-testing outright, so nothing in it can ever be a
+hit target and nothing in it could carry the state on its own — and the selector grammar has no
+descendant combinator to reach it with either. Its host's state is the only state it has, which is
+the same projection `Selected` already makes across an item slot. A descendant that *is* reachable
+is left alone: it is hovered when the pointer is over it, and marking it because a sibling is would
+be a different claim.
+
 **Gameplay asks whether the UI owns the pointer through `PointerRouting::OverUi`.** Consuming a
 pointer *event* does not suppress a held-button *action* — a camera orbiting on a held mouse button
 reads the action pipeline, which the Gui never sees — so the router publishes the answer instead:
@@ -510,6 +521,17 @@ intent. Presence and visibility are separate: a bar *exists* while its axis is s
 *hides* when the axis has no travel, so content growing past the box reveals it with no structural
 change. Dragging the thumb scales the pointer delta through the track's slack, and a press on the
 track pages one viewport.
+
+**A scrollable element captures its descendants' presses, and a click is still read off the element
+the press landed on.** The capture is what lets a drag begun over a row pan the list rather than
+work the row; taking the *click* from it as well would mean nothing inside a scroll container could
+ever be clicked, since the release hit-tests the row while the capture holds the container and the
+two never match. So the press records both — the claimant, which owns the drag, and its own hit
+target, which owns the click — and each wears `:active`, so a row lights under the finger like any
+other control. What the capture does legitimately consume is a press that *became* a scroll: a
+gesture that actually moved the content completes no click, even when released over the row it
+started on. The content moving is the test, rather than how far the pointer travelled, because it is
+the gesture itself rather than a threshold standing in for one.
 
 **`scrollbar: overlay | gutter`** decides whether the bars float over the content (the default,
 reserving nothing) or the content box shrinks to reserve a stable gutter. The reserved width is the

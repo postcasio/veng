@@ -2583,7 +2583,11 @@ namespace Veng::Gui
             }
             const vec2 delta = m_LastScrollPointer - event.Position;
             m_LastScrollPointer = event.Position;
+            const vec2 before = element.Widget.ScrollOffset;
             ScrollBy(element, delta);
+            // The content moved, so this press is a scroll and not a click on whatever it started
+            // over — the release reads this to decline the click it would otherwise complete.
+            m_PressPanned = m_PressPanned || element.Widget.ScrollOffset != before;
             return true;
         }
 
@@ -3440,6 +3444,58 @@ namespace Veng::Gui
         return nullptr;
     }
 
+    void Document::SetHovered(Element* const target)
+    {
+        for (Element* const previous : m_Hovered)
+        {
+            SetState(*previous, WithBit(previous->State, ElementState::Hovered, false));
+        }
+        m_Hovered.clear();
+        m_HoverTarget = target;
+        if (target == nullptr)
+        {
+            return;
+        }
+
+        // Hover is a property of a **box**, so every box the pointer is inside is hovered: the
+        // element under it, every ancestor containing it, and the pointer-transparent content that
+        // element draws.
+        //
+        // The last term is what a composite control needs. A row that is one button spelled as a
+        // button wrapping the texts inside it cannot restyle those texts on hover otherwise: a
+        // `pointer-events: none` subtree is pruned from hit-testing outright, so nothing in it can
+        // ever be a hit target and nothing in it could carry the bit on its own — and the selector
+        // grammar has no descendant combinator to reach it with either. So its host's state is the
+        // only state it has, which is the same move `Selected` already makes across an item slot.
+        // A descendant that *is* reachable is skipped: it is hovered when the pointer is over it,
+        // and marking it because a sibling is would be a different claim entirely.
+        const auto mark = [this](Element& element)
+        {
+            SetState(element, WithBit(element.State, ElementState::Hovered, true));
+            m_Hovered.push_back(&element);
+        };
+        const auto markContent = [&mark](auto&& self, Element& element) -> void
+        {
+            mark(element);
+            for (Element* const child : element.Children)
+            {
+                self(self, *child);
+            }
+        };
+        mark(*target);
+        for (Element* const child : target->Children)
+        {
+            if (child->ComputedStyle.Pointer == PointerEvents::None)
+            {
+                markContent(markContent, *child);
+            }
+        }
+        for (Element* ancestor = target->Parent; ancestor != nullptr; ancestor = ancestor->Parent)
+        {
+            mark(*ancestor);
+        }
+    }
+
     Element* Document::HitTest(vec2 point)
     {
         // Popups paint over the main tree, so they claim the pointer over it: try the stack
@@ -3602,6 +3658,11 @@ namespace Veng::Gui
         {
             m_PressTarget = nullptr;
         }
+        if (m_PressOrigin == &element)
+        {
+            m_PressOrigin = nullptr;
+        }
+        std::erase(m_Hovered, &element);
     }
 
     void Document::BindContext(BindingContext* context, const TypeRegistry* registry)
@@ -4345,18 +4406,20 @@ namespace Veng::Gui
             CloseAllPopups();
 
             // Display-only documents hold no hover/press/focus state; drop any live interaction.
-            if (m_HoverTarget != nullptr)
-            {
-                SetState(*m_HoverTarget,
-                         WithBit(m_HoverTarget->State, ElementState::Hovered, false));
-                m_HoverTarget = nullptr;
-            }
+            SetHovered(nullptr);
             if (m_PressTarget != nullptr)
             {
                 SetState(*m_PressTarget,
                          WithBit(m_PressTarget->State, ElementState::Active, false));
                 m_PressTarget = nullptr;
             }
+            if (m_PressOrigin != nullptr)
+            {
+                SetState(*m_PressOrigin,
+                         WithBit(m_PressOrigin->State, ElementState::Active, false));
+                m_PressOrigin = nullptr;
+            }
+            m_PressPanned = false;
             SetFocus(nullptr);
         }
     }
@@ -4374,17 +4437,7 @@ namespace Veng::Gui
         // the Hovered state a styling layer reads.
         if (target != m_HoverTarget)
         {
-            if (m_HoverTarget != nullptr)
-            {
-                SetState(*m_HoverTarget,
-                         WithBit(m_HoverTarget->State, ElementState::Hovered, false));
-            }
-            m_HoverTarget = target;
-            if (m_HoverTarget != nullptr)
-            {
-                SetState(*m_HoverTarget,
-                         WithBit(m_HoverTarget->State, ElementState::Hovered, true));
-            }
+            SetHovered(target);
         }
 
         event.Target = target;
@@ -4432,8 +4485,18 @@ namespace Veng::Gui
             }
 
             m_PressTarget = pressTarget;
+            m_PressOrigin = target;
+            m_PressPanned = false;
             m_LastScrollPointer = event.Position;
             SetState(*pressTarget, WithBit(pressTarget->State, ElementState::Active, true));
+            // The claimant took the capture, but the thing under the pointer is what was pressed —
+            // so it wears the pressed state too. Without this a row inside a scrolling list is the
+            // one control on screen that never lights under the finger, because its list holds the
+            // capture that the styling reads.
+            if (target != pressTarget)
+            {
+                SetState(*target, WithBit(target->State, ElementState::Active, true));
+            }
             if (pressTarget->Focusable)
             {
                 SetFocus(pressTarget);
@@ -4479,8 +4542,22 @@ namespace Veng::Gui
                 SetState(*m_PressTarget,
                          WithBit(m_PressTarget->State, ElementState::Active, false));
             }
-            // A press and its release on the same element is a click.
-            if (m_PressTarget != nullptr && m_PressTarget == target)
+            if (m_PressOrigin != nullptr && m_PressOrigin != m_PressTarget)
+            {
+                SetState(*m_PressOrigin,
+                         WithBit(m_PressOrigin->State, ElementState::Active, false));
+            }
+            // A press and its release on the same element is a click — on the element the press
+            // *landed* on, which is not always the one that captured it. A scrollable element
+            // claims its descendants' presses so a drag pans, and reading the click off the
+            // claimant would mean no row inside a scrolling list could ever be clicked: the
+            // release hit-tests the row, the capture holds the list, and the two never match.
+            //
+            // What the capture legitimately consumes is a press that *became* a scroll. So a pan
+            // that actually moved the content cancels the click, which is what separates flicking
+            // a list from picking an item out of it, and is why the pan is tracked rather than the
+            // pointer's travel: the content moving is the gesture happening.
+            if (m_PressOrigin != nullptr && m_PressOrigin == target && !m_PressPanned)
             {
                 PointerEvent click{.Kind = PointerEventKind::Click,
                                    .Button = event.Button,
@@ -4514,6 +4591,8 @@ namespace Veng::Gui
                 consumed = true;
             }
             m_PressTarget = nullptr;
+            m_PressOrigin = nullptr;
+            m_PressPanned = false;
         }
 
         return consumed || target != nullptr;

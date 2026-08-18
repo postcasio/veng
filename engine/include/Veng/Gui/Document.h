@@ -818,6 +818,14 @@ namespace Veng::Gui
         /// @brief Recursive front-to-back hit-test honoring the ancestor clip chain.
         [[nodiscard]] Element* HitTestElement(Element& element, vec2 point, optional<Rect> clip);
 
+        /// @brief Moves the Hovered bit to the boxes the pointer is inside, clearing the last set.
+        ///
+        /// The hovered set is @p target, its ancestors, and the pointer-transparent content it
+        /// draws — every box that contains the pointer, plus content that cannot be hovered on its
+        /// own because hit-testing is pruned from it.
+        /// @param target  The element under the pointer, or null to clear the hover entirely.
+        void SetHovered(Element* target);
+
         /// @brief Resolves and writes one element's bindings against the bound data object.
         void ResolveElementBindings(Element& element);
 
@@ -1101,14 +1109,42 @@ namespace Veng::Gui
         /// ramp texture whether they were cascaded at instantiate or later.
         map<const StyleGradient*, ResolvedGradient> m_GradientCache;
 
-        /// @brief The element a pointer press landed on, awaiting a release to complete a click.
+        /// @brief The element that captured a pointer press, awaiting a release to complete a click.
+        ///
+        /// The *claimant*, which for a press inside a scrollable element is that element rather than
+        /// the thing under the pointer — the capture is what makes a drag started over a row pan the
+        /// list. Which element the release clicks is m_PressOrigin's business, not this one's.
         Element* m_PressTarget = nullptr;
+
+        /// @brief The element the press actually landed on — the subject of the click it completes.
+        ///
+        /// Distinct from m_PressTarget exactly when an ancestor captured the press: a scrollable
+        /// list claims its rows' presses so a drag pans, and without a separate record of what was
+        /// pressed the release would find no element that both went down and came up, and the row's
+        /// onClick would never fire. Cleared with the press.
+        Element* m_PressOrigin = nullptr;
 
         /// @brief The element the pointer last hovered, tracked so a move emits Enter/Leave.
         Element* m_HoverTarget = nullptr;
 
+        /// @brief Every element currently carrying the Hovered bit — the target's box and its host's.
+        ///
+        /// Hover is a property of a *box*, so the set is the element under the pointer, every
+        /// ancestor containing it, and the pointer-transparent content that element draws — content
+        /// that is pruned from hit-testing outright and so could never carry the bit on its own.
+        /// Kept as a list rather than recomputed when the hover leaves, because a repeater re-sync
+        /// may have moved the tree between the two walks.
+        vector<Element*> m_Hovered;
+
         /// @brief The pointer position the last ScrollView drag sampled, for a per-move pan delta.
         vec2 m_LastScrollPointer{0.0f};
+
+        /// @brief Whether the live press has scrolled its capturing element's content.
+        ///
+        /// What separates a click from a scroll: both are a press and a release over the same row,
+        /// and the only difference is whether the list moved in between. Set the moment a captured
+        /// pan changes the offset, so a drag that ends over the row it began on completes no click.
+        bool m_PressPanned = false;
 
         /// @brief Whether the document routes input (hit-tests, takes focus) or is display-only.
         bool m_Interactive = false;

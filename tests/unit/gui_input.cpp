@@ -385,3 +385,45 @@ TEST_CASE("gui input: pointer-events children passes the element through but kee
     CHECK(doc.HitTest(vec2(100, 100)) == &root);
     CHECK(doc.HitTest(vec2(20, 20)) == &root);
 }
+
+TEST_CASE("gui events: hover marks every box the pointer is inside")
+{
+    // A composite control — a button spelled as a button wrapping its own texts — is the case this
+    // exists for: the texts are pointer-transparent, so they can never be a hit target and could
+    // never carry the bit on their own, and the selector grammar has no way to reach them from the
+    // host's rule. Their host's hover is the only hover they have.
+    Document doc;
+    doc.SetInteractive(true);
+
+    Element& root = doc.Root();
+    PlaceAt(root, {0, 0}, {200, 200});
+    Element& row = doc.Add(root, ElementKind::Button);
+    PlaceAt(row, {0, 0}, {200, 60});
+    Element& label = doc.Add(row, ElementKind::Text);
+    PlaceAt(label, {0, 0}, {100, 60});
+    Element& stamp = doc.Add(row, ElementKind::Text);
+    PlaceAt(stamp, {100, 0}, {100, 60});
+
+    Style transparent;
+    transparent.Pointer = PointerEvents::None;
+    doc.SetStyle(label, transparent);
+    doc.SetStyle(stamp, transparent);
+    doc.Update(0.0f);
+
+    // Over the left text: the row is the hit target, and both of its texts take its state — the
+    // one under the pointer and the one beside it alike, since neither has a state of its own.
+    PointerEvent move{.Kind = PointerEventKind::Move, .Position = vec2(50, 30)};
+    doc.DispatchPointer(move);
+    CHECK((row.State & ElementState::Hovered) == ElementState::Hovered);
+    CHECK((label.State & ElementState::Hovered) == ElementState::Hovered);
+    CHECK((stamp.State & ElementState::Hovered) == ElementState::Hovered);
+    // Every ancestor containing the pointer is hovered too, which is CSS's own rule.
+    CHECK((root.State & ElementState::Hovered) == ElementState::Hovered);
+
+    // Off the row: the whole set clears, ancestors and content together.
+    PointerEvent away{.Kind = PointerEventKind::Move, .Position = vec2(50, 150)};
+    doc.DispatchPointer(away);
+    CHECK((row.State & ElementState::Hovered) == ElementState::None);
+    CHECK((label.State & ElementState::Hovered) == ElementState::None);
+    CHECK((stamp.State & ElementState::Hovered) == ElementState::None);
+}
