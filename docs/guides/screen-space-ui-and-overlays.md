@@ -151,8 +151,9 @@ instantiates *with the document* and destroys *with it*. A `GuiOverlay` names on
 
 A `GuiDriver` (`Veng/Gui/Driver.h`) has two hooks — `OnInstantiate` (resolve elements and bind
 the driver's own `Gui::BindingContext`, re-run on any re-instantiate) and `OnUpdate` (once per
-frame while attached, handed a `GuiDriverFrame { Document, Scene, Seat, Delta, View }` with the
-claiming viewport's real view). The template's `TemplateOverlayDriver` in
+frame while attached, handed a `GuiDriverFrame { Document, Scene, Owner, Seat, Delta, Alpha, View }`
+with the claiming viewport's real view, the entity the driven component sits on, and the render
+gather's interpolation fraction). The template's `TemplateOverlayDriver` in
 [`main.cpp`](../../examples/template/main.cpp) is the live reference — it seeds its model from the
 populate-hook snapshot, binds the dismiss handler, and publishes the button press to a drained
 channel:
@@ -192,6 +193,15 @@ and never advances authoritative simulation. It is a presentation binding, not a
 gameplay stays components + systems (see
 [Writing gameplay systems](writing-gameplay-systems.md)). Registering the driver requires the
 module ABI at **version 6** — the `GuiDriverRegistry` is the host member whose addition bumped it.
+
+**A `GuiSurface` names a driver the same way**, in the same reflected `Driver` field, resolved
+against the same registry — so a document on a world mesh (a cockpit pane, a monitor) binds through
+a driver rather than a find-and-bind system too. The one difference is *when* it runs: a surface is
+sampled by the scene it sits in, so its driver runs **ahead** of the render gather (an overlay's runs
+after), and what a surface driver stamps is read by that same frame's render. Its claim rule reads
+the surface's own `Seat`, falling back to the sole/primary presenter, and it decides only which
+viewport runs the driver — the document itself is one document in the world and is rendered by every
+presenting viewport.
 
 ### Multi-viewport: which viewport claims an overlay is decided by seat
 

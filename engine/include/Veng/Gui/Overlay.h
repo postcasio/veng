@@ -146,8 +146,9 @@ namespace Veng
         /// @param viewport  The claiming viewport to present the document on.
         /// @param assets    The asset manager the document recipe and its fonts load through.
         /// @param scene     The presented scene the overlay lives in, handed to the driver.
+        /// @param owner     The entity carrying this overlay, handed to the driver as its instance.
         /// @param drivers   The driver catalog the Driver id resolves against, or nullptr (undriven).
-        void Drive(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene,
+        void Drive(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene, Entity owner,
                    GuiDriverRegistry* drivers) const;
 
         /// @brief Detaches the presented document from a viewport's layer stack — the inverse of Drive.

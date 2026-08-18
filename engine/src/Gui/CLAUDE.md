@@ -623,7 +623,8 @@ HDR color a `GuiSurface` needs is authored with the cooker's **`rgb()` / `rgba()
 syntax (a component may exceed 1.0, distinct from sRGB hex) and the HDR gradient ramp. The engine
 drives every `GuiSurface` in a viewport's bound scene into its target ahead of the scene render, so
 a panel authored as prefab data needs no per-frame game code; its document data-binds like any
-other (`{obj.field}`). The surface **declares its sibling `MeshRenderer` required** (`VE_REQUIRES`),
+other (`{obj.field}`) and names its own `GuiDriver` in the reflected `Driver` field beside
+`GuiOverlay`'s (see the driver section below). The surface **declares its sibling `MeshRenderer` required** (`VE_REQUIRES`),
 the mesh being where the document lands, so `Scene::RemoveComponent` refuses to strip the renderer
 while the surface is beside it — see [../Scene/CLAUDE.md](../Scene/CLAUDE.md), "The ECS world".
 Because a bright emissive core desaturates through the scene tonemapper, a saturated hot value
@@ -686,24 +687,42 @@ goes); `Detach` covers the other case — a viewport stops presenting a world th
 rebind), where the engine detaches the departed scene's overlays without waiting on component
 teardown.
 
-### The `GuiOverlay` driver — per-instance presentation binding
+### The driver — per-instance presentation binding
 
 The game owns only the data binding, and the **ergonomic path for it is a driver**, not a
 find-and-bind system. A **`GuiDriver`** (`Veng/Gui/Driver.h`) is a named, registered, per-instance
-presentation binding the engine instantiates from `GuiOverlay` data. `VE_GUI_DRIVER(Type, 0x…ULL,
-"Name")` mints a `GuiDriverId` (a `u64` leaf in the `SystemId`/`ActionId` id family, minted with
+presentation binding the engine instantiates from component data — from a `GuiOverlay` or a
+`GuiSurface`, which carry the same reflected `Driver` field and resolve it the same way.
+`VE_GUI_DRIVER(Type, 0x…ULL, "Name")` mints a `GuiDriverId` (a `u64` leaf in the `SystemId`/`ActionId` id family, minted with
 `vengc generate-id`); a module registers the driver into the host-owned **`GuiDriverRegistry`**
 (`Veng/Gui/DriverRegistry.h`, mirroring `SystemRegistry` — register/enumerate-without-instantiating/
 duplicate-id-fatal, GPU-free/cooker-safe) reached through `VengModuleHost::Drivers` (the member whose
 addition **bumped `VENG_MODULE_ABI_VERSION` 5 → 6**). A `GuiOverlay` names one in its reflected
-`Driver` field (`GuiDriverId::Null` = undriven, the status quo). `GuiOverlay::Drive` instantiates the
-named driver on the first drive, owns it in the runtime (destroyed with it), re-runs `OnInstantiate`
-whenever the document (re)instantiates — exactly like `SetOnInstantiate` — and calls `OnUpdate` each
-drive with a `GuiDriverFrame { Document, Scene, Seat, Delta, View }` carrying the claiming viewport's
-real view. Two claimed instances of one overlay (split-screen) are **two driver instances with
-independent view-models**, so the per-instance state a per-world binding system would key by entity
-dissolves. `OnInstantiate` resolves elements and binds the driver's `Gui::BindingContext` through
-`Document::BindContext(context)` (the registry-free overload — the document supplies its own).
+`Driver` field (`GuiDriverId::Null` = undriven, the status quo). The component's `Drive` instantiates
+the named driver on the first drive, owns it in the runtime (destroyed with it), re-runs
+`OnInstantiate` whenever the document (re)instantiates — exactly like `SetOnInstantiate` — and calls
+`OnUpdate` each drive with a `GuiDriverFrame { Document, Scene, Owner, Seat, Delta, Alpha, View }`
+carrying the claiming viewport's real view. `Owner` is the entity the driven component sits on, so a
+driver reads its own authored configuration and its siblings (its config component, its
+`MeshRenderer`, its `Transform`) rather than searching the scene for itself; `Alpha` is the render
+gather's own interpolation fraction, so a driver placing a marker against a moving body reads the
+pose being drawn rather than the tick pose. Two claimed instances of one overlay (split-screen) are
+**two driver instances with independent view-models**, so the per-instance state a per-world binding
+system would key by entity dissolves. `OnInstantiate` resolves elements and binds the driver's
+`Gui::BindingContext` through `Document::BindContext(context)` (the registry-free overload — the
+document supplies its own).
+
+**Where in the frame a driver runs differs between the two components, and it is the one asymmetry.**
+An overlay composites *after* the scene, so `DriveOverlays` runs after the render gather and what its
+driver stamps is read by the **next** frame's gather. A surface is sampled **by** the scene, so its
+document has to be current before the gather — `RenderSurfaces` therefore drives it (and its driver)
+*ahead* of `Execute`, and what a surface driver stamps is read by the **same** frame's gather. Neither
+may add or remove the component it is driven from, which would disturb the `View<>` walk it is
+running inside. The other difference is what the claim decides: an overlay is *presented* by the
+viewport that claims it, while a surface's document is one document on one mesh in the world and is
+rendered by **every** presenting viewport — `Viewport::ClaimsSurface` (the surface's own `Seat`, else
+the sole/primary presenter) decides only which viewport owns the per-frame **driver** update, so a
+scene shown twice does not update one view-model twice.
 
 **The boundary is concrete and checkable.** A driver reads scene state, stamps request/command
 components, and beyond those may write **only a component tagged `VE_VIEW_OUTPUT`**

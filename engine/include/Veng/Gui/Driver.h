@@ -17,45 +17,66 @@ namespace Veng
     /// @brief Stable identity of a registered GuiDriver, authored exactly like a SystemId/ActionId.
     ///
     /// A GuiDriver subclass declares one through VE_GUI_DRIVER; GuiDriverRegistry keys its catalog on
-    /// it and a GuiOverlay names the driver it wants by it. A u64 leaf in the SystemId/ActionId id
-    /// family, minted with `vengc generate-id` (a hardcoded literal for engine drivers). Null is the
-    /// reserved empty id — an overlay whose Driver is Null is undriven, the status quo.
+    /// it and a GuiOverlay/GuiSurface names the driver it wants by it. A u64 leaf in the
+    /// SystemId/ActionId id family, minted with `vengc generate-id` (a hardcoded literal for engine
+    /// drivers). Null is the reserved empty id — a component whose Driver is Null is undriven.
     enum class GuiDriverId : u64
     {
-        /// @brief The empty id, distinct from every minted driver id; an undriven overlay.
+        /// @brief The empty id, distinct from every minted driver id; an undriven component.
         Null = 0
     };
 
     /// @brief The per-frame services a GuiDriver's OnUpdate reads.
     ///
-    /// Borrowed for the duration of the call. Assembled by GuiOverlay::Drive from the claiming
-    /// viewport, so a driver reads the presenting viewport's real view (camera/region/UI scale) and
-    /// the scene it lives in without holding a Renderer::Viewport. The scene is mutable: a driver may
-    /// read scene state and stamp request/command components and ViewOutput-tagged components (see
-    /// the driver boundary below), but never a replicated or Sim-input component.
+    /// Borrowed for the duration of the call. Assembled by the driven component's Drive from the
+    /// claiming viewport, so a driver reads the presenting viewport's real view (camera/region/UI
+    /// scale) and the scene it lives in without holding a Renderer::Viewport. The scene is mutable: a
+    /// driver may read scene state and stamp request/command components and ViewOutput-tagged
+    /// components (see the driver boundary below), but never a replicated or Sim-input component.
     struct GuiDriverFrame
     {
-        /// @brief The live document this driver drives (the overlay's instantiated tree).
+        /// @brief The live document this driver drives (the driven component's instantiated tree).
         Gui::Document& Document;
-        /// @brief The presented scene the overlay lives in; mutable within the driver boundary.
+        /// @brief The presented scene the driven component lives in; mutable within the driver boundary.
         Scene& Scene;
+        /// @brief The entity carrying the driven GuiOverlay/GuiSurface — the driver's own instance.
+        ///
+        /// What makes a driver's authored configuration reachable: the component the driver was
+        /// named on sits here, so its siblings on the same entity (its own config component, its
+        /// MeshRenderer, its Transform) are read through the scene rather than searched for. Never
+        /// null while a driver runs — a driver exists because a component on this entity named it.
+        Entity Owner = Entity::Null;
         /// @brief The claiming viewport's bound seat, or Entity::Null when the viewport is unbound.
         Entity Seat = Entity::Null;
         /// @brief Frame delta time in seconds.
         f32 Delta = 0.0f;
+        /// @brief Interpolation fraction into the next Sim tick, in [0, 1) — the render gather's own.
+        ///
+        /// The fraction the gather blends each drawn entity's transform by, so a driver placing a
+        /// marker against a moving body reads the pose the renderer is drawing this frame rather
+        /// than the tick pose it will be drawn ahead of. Zero for a static or un-ticked scene.
+        f32 Alpha = 0.0f;
         /// @brief The presenting viewport's resolved camera, region, and UI scale this frame.
         SystemViewInfo View;
     };
 
-    /// @brief A named, per-instance presentation binding the engine drives from GuiOverlay data.
+    /// @brief A named, per-instance presentation binding the engine drives from component data.
     ///
     /// The ergonomic path for binding a HUD: a driver owns its Gui::BindingContext / view-model and
     /// the one-time element resolution a consumer otherwise hand-rolls in a find-and-bind system.
-    /// GuiOverlay::Drive instantiates the driver named by the overlay's Driver id, owns it for the
-    /// runtime's lifetime, re-runs OnInstantiate whenever the document (re)instantiates, and calls
-    /// OnUpdate each drive. Two claimed instances of one overlay (split-screen) are two driver
-    /// instances with independent view-models, so the per-instance state a per-world system would
-    /// have keyed by entity dissolves.
+    /// Both document-carrying components name one: GuiOverlay (screen space) and GuiSurface (a
+    /// document on a world mesh). Their Drive instantiates the driver named by the component's Driver
+    /// id, owns it for the runtime's lifetime, re-runs OnInstantiate whenever the document
+    /// (re)instantiates, and calls OnUpdate each drive. Two claimed instances of one overlay
+    /// (split-screen) are two driver instances with independent view-models, so the per-instance
+    /// state a per-world system would have keyed by entity dissolves.
+    ///
+    /// **Where in the frame the driver runs differs between the two, and it is the one asymmetry.**
+    /// An overlay composites after the scene, so its driver runs after the render gather and its
+    /// component stamps are read by the next frame's gather. A surface is sampled *by* the scene, so
+    /// its document must be rendered before the gather and its driver therefore runs ahead of it —
+    /// the same frame's render sees what it stamped. Neither may add or remove the component it is
+    /// driven from, which would disturb the walk it is being driven inside.
     ///
     /// The boundary is concrete and checkable: a driver reads scene state, stamps request/command
     /// components, and beyond those may write only a component tagged VE_VIEW_OUTPUT — derived,
@@ -75,7 +96,7 @@ namespace Veng
         /// (exactly like GuiOverlay::SetOnInstantiate), so cached element pointers stay valid. The
         /// default does nothing.
         /// @param document  The freshly instantiated live document.
-        /// @param scene     The presented scene the overlay lives in.
+        /// @param scene     The presented scene the driven component lives in.
         /// @param seat      The claiming viewport's seat, or Entity::Null when unbound.
         virtual void OnInstantiate(Gui::Document& document, Scene& scene, Entity seat)
         {
@@ -88,7 +109,7 @@ namespace Veng
         ///
         /// Where a driver feeds its view-model and stamps its request/command/ViewOutput components.
         /// The default does nothing.
-        /// @param frame  The per-frame services (document, scene, seat, delta, resolved view).
+        /// @param frame  The per-frame services (document, scene, owner, seat, timing, resolved view).
         virtual void OnUpdate(const GuiDriverFrame& frame) { (void)frame; }
     };
 

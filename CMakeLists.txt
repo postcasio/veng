@@ -1007,6 +1007,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_placement.cpp
             tests/unit/gui_popup.cpp
             tests/unit/gui_overlay_component.cpp
+            tests/unit/gui_surface_component.cpp
             tests/unit/gui_driver_registry.cpp
             tests/unit/level_render_settings.cpp
             tests/unit/capture_surface_component.cpp

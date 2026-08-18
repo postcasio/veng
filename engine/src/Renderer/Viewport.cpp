@@ -467,7 +467,12 @@ namespace Veng::Renderer
             return;
         }
 
-        const Scene& world = *m_ViewState.World;
+        // The ViewState borrows the presented scene const for rendering; a driven surface's driver is
+        // the sanctioned point that reads view state and stamps request/view-output components, so
+        // hand it a mutable scene here. Unlike an overlay's, this runs *ahead* of the render gather —
+        // a surface is sampled by the scene it sits in, so its document must be current before the
+        // gather — and a driver stamps no GuiSurface, so the walk below is undisturbed.
+        auto& world = const_cast<Scene&>(*m_ViewState.World);
         for (auto [entity, surface] : world.View<GuiSurface>())
         {
             // Take the document sampler on the first surface encountered, so a scene without any
@@ -501,9 +506,39 @@ namespace Veng::Renderer
                 }
             }
 
+            // Every presenting viewport renders the surface's document — it is one document on one
+            // mesh in the world, not a per-viewport presentation — but exactly one drives its
+            // driver, so a scene shown twice does not update one view-model twice.
+            GuiSurfaceDriveContext driver;
+            if (ClaimsSurface(world, surface))
+            {
+                driver = GuiSurfaceDriveContext{
+                    .World = &world,
+                    .Drivers = m_GuiDrivers,
+                    .Owner = entity,
+                    .Seat = m_Seat,
+                    .Alpha = m_ViewState.Alpha,
+                    .View = SystemViewInfo{.Camera = m_ViewState.Camera,
+                                           .Region = m_Region,
+                                           .UiScale = m_UiScale},
+                };
+            }
+
             surface.Drive(m_Context, m_Assets, cmd, m_SurfaceSamplerHandle, material,
-                          m_ViewState.Delta);
+                          m_ViewState.Delta, driver);
         }
+    }
+
+    bool Viewport::ClaimsSurface(const Scene& world, const GuiSurface& surface) const
+    {
+        // A surface's seat is the one it already names for input (GuiSurface::Seat); a surface that
+        // names none is claimed by the sole/primary presenter, so a single-viewport cockpit drives
+        // unchanged.
+        if (!surface.Seat.IsNull())
+        {
+            return surface.Seat == m_Seat;
+        }
+        return IsPrimaryPresenterOf(world);
     }
 
     bool Viewport::IsPrimaryPresenterOf(const Scene& world) const
@@ -556,7 +591,7 @@ namespace Veng::Renderer
         {
             if (ClaimsOverlay(world, entity, overlay))
             {
-                overlay.Drive(*this, m_Assets, world, m_GuiDrivers);
+                overlay.Drive(*this, m_Assets, world, entity, m_GuiDrivers);
             }
         }
     }

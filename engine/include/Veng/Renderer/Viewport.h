@@ -21,6 +21,7 @@ namespace Veng
     class AssetManager;
     class GuiDriverRegistry;
     struct GuiOverlay;
+    struct GuiSurface;
 }
 
 namespace Veng::Gui
@@ -473,6 +474,10 @@ namespace Veng::Renderer
         /// Zero before any ViewState is pushed.
         [[nodiscard]] f32 GetViewDelta() const { return m_ViewState.Delta; }
 
+        /// @brief The interpolation fraction the render gather blends drawn transforms by, in [0, 1).
+        /// @return The pushed ViewState's Alpha; zero for a static or un-ticked scene.
+        [[nodiscard]] f32 GetViewAlpha() const { return m_ViewState.Alpha; }
+
         /// @brief Maps a window point into this viewport's region as normalized coordinates.
         ///
         /// Hit-tests windowPoint (window framebuffer pixels) against GetRegion(); on a hit,
@@ -754,8 +759,23 @@ namespace Veng::Renderer
         /// MeshRenderer material — recorded before the owned SceneRenderer's Execute, so the panel
         /// texture is shader-readable when the translucent/emissive pass samples it. A no-op when the
         /// scene holds no GuiSurface. Lazily creates the surface pass and sampler on first use.
+        ///
+        /// A surface this viewport claims (ClaimsSurface) additionally has its named GuiDriver run
+        /// here, which is why this walk takes the scene mutably — and why a driver's component stamps
+        /// are read by the same frame's gather, where an overlay driver's are read by the next.
         /// @param cmd  The command buffer the document renders record into.
         void RenderSurfaces(CommandBuffer& cmd);
+
+        /// @brief Whether this viewport drives @p surface's GuiDriver, deciding the driver by seat.
+        ///
+        /// A surface naming a Seat is driven by the viewport whose GetSeat matches it; one naming
+        /// none by the sole/primary presenter (IsPrimaryPresenterOf). The surface's *document* is
+        /// still rendered by every presenting viewport — the claim decides only which of them owns
+        /// the per-frame driver update.
+        /// @param world    The scene the surface lives in.
+        /// @param surface  The surface to test.
+        /// @return True when this viewport should drive the surface's driver this frame.
+        [[nodiscard]] bool ClaimsSurface(const Scene& world, const GuiSurface& surface) const;
 
         /// @brief Drives the GuiOverlay components this viewport claims onto its layer stack.
         ///

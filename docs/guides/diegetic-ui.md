@@ -75,6 +75,12 @@ entity with. It is authored as prefab data beside a `MeshRenderer`:
   clamped on drive so the derived extent is at least one pixel and no larger than the
   device's `maxImageDimension2D`.
 - `Domain` selects how the document texture becomes scene light (below).
+- `Driver` (default undriven) names a registered `GuiDriver` the engine instantiates with this
+  surface's document and drives each frame — the ergonomic path for a panel whose content is
+  computed rather than data-bound. It is the same field, catalog, and contract `GuiOverlay`
+  carries; the surface's is run by the viewport that claims it, **ahead** of the render gather, so
+  what the driver writes is what this frame's panel shows. See
+  [Screen-space UI and overlays](screen-space-ui-and-overlays.md#the-ergonomic-path--a-per-instance-guidriver).
 
 The engine drives every `GuiSurface` in a viewport's bound scene into its target **ahead
 of** the scene render, so a data-authored panel needs **no per-frame game code**. Its

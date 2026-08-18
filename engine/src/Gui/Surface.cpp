@@ -6,7 +6,10 @@
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/DocumentHost.h>
 #include <Veng/Gui/DocumentTexture.h>
+#include <Veng/Gui/Driver.h>
+#include <Veng/Gui/DriverRegistry.h>
 #include <Veng/Gui/UIDocument.h>
+#include <Veng/Log.h>
 #include <Veng/Renderer/Context.h>
 
 namespace Veng
@@ -20,6 +23,10 @@ namespace Veng
         Gui::DocumentTexture Texture;
         /// @brief A document injected through SetDocument before the host exists, adopted on first Drive.
         Unique<Gui::Document> Pending;
+        /// @brief The instantiated presentation driver, or null when the surface is undriven.
+        Unique<GuiDriver> Driver;
+        /// @brief The document the driver was last OnInstantiate'd against; detects a re-instantiate.
+        Gui::Document* DriverDocument = nullptr;
         /// @brief Whether the emissive material's white default has been applied once.
         bool EmissiveSeeded = false;
     };
@@ -123,7 +130,8 @@ namespace Veng
 
     bool GuiSurface::Drive(Renderer::Context& context, AssetManager& assets,
                            Renderer::CommandBuffer& cmd, Renderer::SamplerHandle sampler,
-                           MaterialInstance* material, f32 delta) const
+                           MaterialInstance* material, f32 delta,
+                           const GuiSurfaceDriveContext& driver) const
     {
         VE_ASSERT(Resolution.x > 0 && Resolution.y > 0,
                   "GuiSurface::Drive: Resolution must be positive (got {}x{})", Resolution.x,
@@ -171,6 +179,10 @@ namespace Veng
             }
         }
 
+        // Feed the named driver before the core refreshes its bindings, so what the driver wrote is
+        // what this frame's bindings read and what the dirty-gate below sees.
+        DriveDriver(runtime, driver, delta);
+
         // Drive the core (refresh bindings, expose the live tree), then render it into the HDR target
         // dirty-gated. UpdateBindings precedes the texture's dirty check, so a moved binding re-renders.
         Gui::Document* const document = runtime.Host->Drive();
@@ -189,5 +201,49 @@ namespace Veng
         }
 
         return rendered;
+    }
+
+    void GuiSurface::DriveDriver(GuiSurfaceRuntime& runtime, const GuiSurfaceDriveContext& services,
+                                 const f32 delta) const
+    {
+        // Undriven is the common case and every one of these is a legitimate way to spell it: no
+        // driver named, no scene or catalog (a viewport that does not claim this surface), or a
+        // document that has not instantiated yet.
+        Gui::Document* const document = runtime.Host->Get();
+        if (Driver == GuiDriverId::Null || services.World == nullptr ||
+            services.Drivers == nullptr || document == nullptr)
+        {
+            return;
+        }
+
+        if (runtime.Driver == nullptr)
+        {
+            runtime.Driver = services.Drivers->Instantiate(Driver);
+            runtime.DriverDocument = nullptr;
+            if (runtime.Driver == nullptr)
+            {
+                Log::Warn("GuiSurface names GuiDriver {:#018x}, which no registered driver claims; "
+                          "leaving the surface undriven.",
+                          static_cast<u64>(Driver));
+                return;
+            }
+        }
+
+        // Re-run OnInstantiate whenever the live document changed identity, so cached element
+        // pointers stay valid — the same contract SetOnInstantiate carries.
+        if (document != runtime.DriverDocument)
+        {
+            runtime.Driver->OnInstantiate(*document, *services.World, services.Seat);
+            runtime.DriverDocument = document;
+        }
+        runtime.Driver->OnUpdate(GuiDriverFrame{
+            .Document = *document,
+            .Scene = *services.World,
+            .Owner = services.Owner,
+            .Seat = services.Seat,
+            .Delta = delta,
+            .Alpha = services.Alpha,
+            .View = services.View,
+        });
     }
 }

@@ -105,7 +105,7 @@ namespace Veng
     }
 
     void GuiOverlay::Drive(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene,
-                           GuiDriverRegistry* const drivers) const
+                           const Entity owner, GuiDriverRegistry* const drivers) const
     {
         EnsureHost(assets);
         GuiOverlayRuntime& runtime = *Runtime;
@@ -147,8 +147,10 @@ namespace Veng
             runtime.Driver->OnUpdate(GuiDriverFrame{
                 .Document = *document,
                 .Scene = scene,
+                .Owner = owner,
                 .Seat = viewport.GetSeat(),
                 .Delta = viewport.GetViewDelta(),
+                .Alpha = viewport.GetViewAlpha(),
                 .View = SystemViewInfo{.Camera = viewport.GetPresentedCamera(),
                                        .Region = viewport.GetRegion(),
                                        .UiScale = viewport.GetUiScale()},

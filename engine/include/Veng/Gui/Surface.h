@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetHandle.h>
+#include <Veng/Gui/Driver.h>
 #include <Veng/Gui/UIDocument.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Renderer/BindlessRegistry.h>
@@ -11,7 +12,9 @@
 namespace Veng
 {
     class AssetManager;
+    class GuiDriverRegistry;
     class MaterialInstance;
+    class Scene;
 
     namespace Gui
     {
@@ -40,6 +43,31 @@ namespace Veng
         ///        document handle and writes it into the emissive g-buffer channel over an opaque
         ///        lit surface, so the panel occludes what is behind it (and carries motion vectors).
         OpaqueEmissive,
+    };
+
+    /// @brief What a GuiSurface's Drive needs to run its named GuiDriver, beyond the render arguments.
+    ///
+    /// Assembled by the driving viewport for the surface it claims, and empty (World or Drivers null)
+    /// for every other drive — a viewport that does not claim the surface still renders its document,
+    /// so the two jobs are separated here rather than by skipping the drive. A surface whose Driver is
+    /// Null ignores this entirely.
+    struct GuiSurfaceDriveContext
+    {
+        /// @brief The presented scene the surface lives in; null leaves the surface undriven.
+        ///
+        /// Mutable because a driver stamps request/command and ViewOutput components (the driver
+        /// boundary in Veng/Gui/Driver.h), while the render path borrows the scene const.
+        Scene* World = nullptr;
+        /// @brief The catalog the Driver id resolves against; null leaves the surface undriven.
+        GuiDriverRegistry* Drivers = nullptr;
+        /// @brief The entity carrying this surface — the driver's own instance, handed to it verbatim.
+        Entity Owner = Entity::Null;
+        /// @brief The seat the driven document answers to, for the driver's frame.
+        Entity Seat = Entity::Null;
+        /// @brief Interpolation fraction into the next Sim tick, in [0, 1) — the render gather's own.
+        f32 Alpha = 0.0f;
+        /// @brief The presenting viewport's resolved camera, region, and UI scale this frame.
+        SystemViewInfo View;
     };
 
     /// @brief Runtime GPU state a GuiSurface materializes lazily; defined in Surface.cpp.
@@ -110,6 +138,16 @@ namespace Veng
         /// @brief Which material path turns the document's HDR texture into scene light.
         GuiSurfaceDomain Domain = GuiSurfaceDomain::Translucent;
 
+        /// @brief The presentation driver instantiated with this surface's document; Null = undriven.
+        ///
+        /// Names a driver in the host-owned GuiDriverRegistry (see Veng/Gui/Driver.h), exactly as
+        /// GuiOverlay does. When set and the claiming viewport resolves it, Drive instantiates the
+        /// driver once, owns it for the runtime's lifetime, re-runs OnInstantiate on any document
+        /// re-instantiate, and calls OnUpdate each drive — ahead of the document's own render, so what
+        /// the driver writes is what this frame's panel shows. Null (the default) leaves the surface
+        /// undriven; a consumer drives the document it borrows through GetDocument instead.
+        GuiDriverId Driver = GuiDriverId::Null;
+
         /// @brief The Viewer entity whose devices drive this panel when it is interactive.
         ///
         /// A world panel has no host viewport to inherit a seat from, so the game names one
@@ -149,15 +187,34 @@ namespace Veng
         /// GetOutputHandle onto @p material for the surface's domain. Records into @p cmd ahead of the
         /// scene pass that samples the panel, so the producer-before-consumer handoff needs no extra
         /// barrier. Each surface owns its GuiScenePass, so its per-frame geometry ring is never shared.
+        /// When @p driver names a scene and a driver catalog and this surface's Driver resolves, the
+        /// driver runs between the document's instantiate and its render: OnInstantiate on the first
+        /// drive and on any re-instantiate, then OnUpdate. It therefore runs *before* the scene's
+        /// render gather — a surface is sampled by the scene it sits in, so its document has to be
+        /// current before the scene is gathered, and what a driver stamps is read by that same gather.
         /// @param context   The render context the target and runtime allocate on.
         /// @param assets    The asset manager the GuiScenePass and a cooked Document recipe load through.
         /// @param cmd       The command buffer the document render records into.
         /// @param sampler   The bindless sampler bound alongside the document handle.
         /// @param material  The sibling mesh material to bind the handle onto; null skips binding.
         /// @param delta     The frame time step, in seconds, forwarded to the document drive.
+        /// @param driver    The driver services for the viewport claiming this surface; empty = undriven.
         /// @return True when this Drive re-recorded the document, false when the dirty-gate skipped it.
         bool Drive(Renderer::Context& context, AssetManager& assets, Renderer::CommandBuffer& cmd,
-                   Renderer::SamplerHandle sampler, MaterialInstance* material, f32 delta) const;
+                   Renderer::SamplerHandle sampler, MaterialInstance* material, f32 delta,
+                   const GuiSurfaceDriveContext& driver = {}) const;
+
+    private:
+        /// @brief Instantiates the named driver on first use and runs its OnInstantiate/OnUpdate.
+        ///
+        /// A no-op for an undriven surface, for a drive whose services name no scene or catalog, and
+        /// before the document instantiates. An id no registered driver claims is logged once and
+        /// leaves the surface undriven — a recoverable miss, never an abort.
+        /// @param runtime   This surface's materialized runtime.
+        /// @param services  The driver services for this drive.
+        /// @param delta     The frame time step, in seconds, handed to the driver's frame.
+        void DriveDriver(GuiSurfaceRuntime& runtime, const GuiSurfaceDriveContext& services,
+                         f32 delta) const;
     };
 }
 
@@ -171,6 +228,7 @@ VE_FIELD(Document, .DisplayName = "Document")
 VE_FIELD(Resolution, .DisplayName = "Resolution", .Display = {.Min = 1})
 VE_FIELD(PixelScale, .DisplayName = "Pixel Scale", .Display = {.Min = 0.25, .Max = 4.0})
 VE_FIELD(Domain, .DisplayName = "Domain")
+VE_FIELD(Driver, .DisplayName = "Driver")
 VE_FIELD(Seat, .DisplayName = "Seat")
 VE_REFLECT_END();
 

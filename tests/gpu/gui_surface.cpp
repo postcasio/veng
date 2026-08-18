@@ -29,6 +29,8 @@
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Gui/Document.h>
+#include <Veng/Gui/Driver.h>
+#include <Veng/Gui/DriverRegistry.h>
 #include <Veng/Gui/Element.h>
 #include <Veng/Gui/RenderTarget.h>
 #include <Veng/Gui/Style.h>
@@ -182,6 +184,40 @@ namespace
         return scene;
     }
 
+    // What the panel driver recorded on its most recent run. File-scope because the surface owns the
+    // driver instance and hands no route back to it; exactly one instance runs per case.
+    struct DriverTrace
+    {
+        int Instantiates = 0;
+        int Updates = 0;
+        Entity Owner;
+        f32 Alpha = -1.0f;
+        uvec2 RegionExtent{0};
+    };
+
+    DriverTrace g_Trace;
+
+    // Recolors the document's glowing child on every update, so the panel's pixels prove the driver
+    // ran *before* the document's dirty-gated record rather than after it.
+    struct PanelDriver final : GuiDriver
+    {
+        void OnInstantiate(Gui::Document&, Scene&, Entity) override { ++g_Trace.Instantiates; }
+
+        void OnUpdate(const GuiDriverFrame& frame) override
+        {
+            ++g_Trace.Updates;
+            g_Trace.Owner = frame.Owner;
+            g_Trace.Alpha = frame.Alpha;
+            g_Trace.RegionExtent = frame.View.Region.Extent;
+
+            Gui::Element& root = frame.Document.Root();
+            REQUIRE(root.Children.size() == 1);
+            Gui::Style style = root.Children[0]->BaseStyle;
+            style.Background = vec4(Glow.g * static_cast<f32>(g_Trace.Updates), 0.0f, 0.0f, 1.0f);
+            frame.Document.SetStyle(*root.Children[0], style);
+        }
+    };
+
     Unique<Viewport> MakeViewport(Context& context, AssetManager& assets)
     {
         return Viewport::Create({
@@ -193,6 +229,8 @@ namespace
         });
     }
 }
+
+VE_GUI_DRIVER(PanelDriver, 0x9E1C0F2A73B4D586ULL, "Panel");
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "gui surface: a translucent panel is self-radiant and see-through, an opaque "
@@ -351,4 +389,62 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     document->Add(document->Root(), Gui::ElementKind::Panel);
     RenderFrame();
     CHECK(scene->Get<GuiSurface>(panelEntity).WasRenderedLastDrive());
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "gui surface: a named driver is instantiated once and drives the panel each frame")
+{
+    RegisterBuiltinTypes(Types);
+    g_Trace = DriverTrace{};
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookGuiSurfacePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> translucent =
+        assets.LoadSync<MaterialInstance>(TranslucentInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> brick =
+        assets.LoadSync<MaterialInstance>(BrickInstance);
+    REQUIRE(translucent.has_value());
+    REQUIRE(brick.has_value());
+
+    vector<Ref<Mesh>> meshes;
+    Entity panelEntity;
+    const Unique<Scene> scene =
+        BuildPanelScene(Context, assets, Types, GuiSurfaceDomain::Translucent, *translucent, *brick,
+                        meshes, panelEntity);
+    scene->Get<GuiSurface>(panelEntity).Driver = GuiDriverIdOf<PanelDriver>();
+
+    GuiDriverRegistry drivers;
+    drivers.Register<PanelDriver>();
+
+    const Unique<Viewport> viewport = MakeViewport(Context, assets);
+    viewport->SetGuiDriverRegistry(&drivers);
+    const auto RenderFrame = [&](const f32 alpha)
+    {
+        viewport->SetViewState(
+            {.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f, .Alpha = alpha});
+        Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
+    };
+
+    RenderFrame(0.25f);
+    RenderFrame(0.5f);
+
+    // Instantiated once against the live document, updated every drive, and handed this viewport's
+    // own frame: the entity the surface sits on, the render gather's interpolation alpha, its region.
+    CHECK(g_Trace.Instantiates == 1);
+    CHECK(g_Trace.Updates == 2);
+    CHECK(g_Trace.Owner == panelEntity);
+    CHECK(g_Trace.Alpha == doctest::Approx(0.5f));
+    CHECK(g_Trace.RegionExtent == Extent);
+
+    // The driver runs ahead of the document's record, so its style write is in the target the scene
+    // samples: the child is red on both channels the fixture's cyan document never writes.
+    const GuiSurface& surface = scene->Get<GuiSurface>(panelEntity);
+    REQUIRE(surface.GetTarget() != nullptr);
+    CHECK(surface.WasRenderedLastDrive());
+    const vector<u8> pixels = surface.GetTarget()->GetOutput()->GetImage()->Download();
+    const vec4 center = DecodeTexel(pixels, PanelRes.x, PanelRes.x / 2, PanelRes.y / 2);
+    CHECK(center.r > 1.0f);
+    CHECK(center.g < 0.01f);
 }
