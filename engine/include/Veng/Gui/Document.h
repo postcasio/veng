@@ -415,6 +415,22 @@ namespace Veng::Gui
         ///          decor is styled `pointer-events: none` in practice.
         [[nodiscard]] Element* HitTest(vec2 point);
 
+        /// @brief Routes a wheel turn to the scrollable box under the pointer.
+        ///
+        /// The delta is in document points and in content space: a positive y scrolls the content
+        /// **down** (the offset grows), which is the opposite sign from a wheel's own "away from the
+        /// user" axis, so the input seam flips it once rather than every scrollable guessing.
+        ///
+        /// It goes to the nearest scrollable ancestor of the element under the pointer that can
+        /// still move that way; a box already at that end declines and the turn passes outward to
+        /// whatever contains it. Returns false when nothing under the pointer can move, so a caller
+        /// can hand an unconsumed wheel to whatever else was going to read it. A no-op on a
+        /// display-only document.
+        /// @param point  The pointer position, in document points.
+        /// @param delta  The content-space scroll delta, in document points.
+        /// @return Whether a scrollable box took the turn.
+        bool DispatchScroll(vec2 point, vec2 delta);
+
         /// @brief Binds the reflection/handler context every binding and named handler resolves against.
         ///
         /// A `{obj.field}` binding resolves its field path against the context's data object through
@@ -818,11 +834,20 @@ namespace Veng::Gui
         /// @brief Recursive front-to-back hit-test honoring the ancestor clip chain.
         [[nodiscard]] Element* HitTestElement(Element& element, vec2 point, optional<Rect> clip);
 
+        /// @brief The insets an element's content box is held inside: its padding and any gutter.
+        ///
+        /// One definition for the layout push and the scroll range, which have to agree: a gutter
+        /// reserves a bar's thickness as extra padding on the edge it sits against, and a scrollable
+        /// region that did not count the same reservation would end its content under the bar.
+        /// @param element  The element whose content insets are wanted.
+        /// @return The authored padding, plus each reserved bar's thickness on its own edge.
+        [[nodiscard]] Insets ContentPadding(const Element& element) const;
+
         /// @brief Moves the Hovered bit to the boxes the pointer is inside, clearing the last set.
         ///
-        /// The hovered set is @p target, its ancestors, and the pointer-transparent content it
-        /// draws — every box that contains the pointer, plus content that cannot be hovered on its
-        /// own because hit-testing is pruned from it.
+        /// The hovered set is @p target, its whole subtree, and its ancestors — every box that
+        /// contains the pointer, plus the content the target draws, which cannot be hovered on its
+        /// own because it sits behind the deepest hit-testable element.
         /// @param target  The element under the pointer, or null to clear the hover entirely.
         void SetHovered(Element* target);
 
@@ -1129,11 +1154,11 @@ namespace Veng::Gui
 
         /// @brief Every element currently carrying the Hovered bit — the target's box and its host's.
         ///
-        /// Hover is a property of a *box*, so the set is the element under the pointer, every
-        /// ancestor containing it, and the pointer-transparent content that element draws — content
-        /// that is pruned from hit-testing outright and so could never carry the bit on its own.
-        /// Kept as a list rather than recomputed when the hover leaves, because a repeater re-sync
-        /// may have moved the tree between the two walks.
+        /// Hover is a property of a *box*, so the set is the element under the pointer, everything
+        /// that element draws (its content cannot be hovered on its own — it sits behind the deepest
+        /// hit-testable element by construction), and every ancestor containing it. Kept as a list
+        /// rather than recomputed when the hover leaves, because a repeater re-sync may have moved
+        /// the tree between the two walks.
         vector<Element*> m_Hovered;
 
         /// @brief The pointer position the last ScrollView drag sampled, for a per-move pan delta.

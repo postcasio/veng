@@ -238,6 +238,14 @@ namespace Veng::Gui
         bool Vertical = false;
         /// @brief The ScrollView's content offset, in pixels (subtracted from child positions).
         vec2 ScrollOffset{0.0f};
+        /// @brief The offset the solved child boxes were actually shifted by, at the last layout.
+        ///
+        /// Not the same number as ScrollOffset between a scroll and the Solve that follows it: a
+        /// scroll writes the offset and dirties the tree, but the child rects still describe where
+        /// the content sat when they were last read. Measuring the scrollable extent off those
+        /// rects therefore has to undo *this* shift rather than the live one — undoing the live one
+        /// double-counts whatever the offset moved since.
+        vec2 LayoutScrollOffset{0.0f};
         /// @brief The TextInput caret position, as a codepoint index into the element's Text.
         u32 Caret = 0;
         /// @brief The bound-array context version a List last synced its item children against.

@@ -559,3 +559,69 @@ TEST_CASE("gui scroll: a row inside a scroll container is still clickable")
     fixture.Doc.DispatchPointer(release);
     CHECK(picks == 1);
 }
+
+TEST_CASE("gui scroll: the range reaches the content's end however it was travelled")
+{
+    // The children of a scrollable are laid out shifted by its offset, so their solved boxes
+    // measure the content from where it currently sits. A range computed off them without undoing
+    // that shift shrinks as the content scrolls, and the last of it can never be reached.
+    ScrollFixture fixture(Overflow::Hidden, Overflow::Scroll);
+    const f32 travel = 200.0f; // 300 of content in a 100 box.
+
+    // Walked down in small steps, with a real layout between them — the case a single large drag
+    // hides, and the one a wheel or a drag actually produces.
+    for (int step = 0; step < 40; ++step)
+    {
+        fixture.Doc.ScrollBy(*fixture.View, vec2(0.0f, 10.0f));
+        fixture.Settle();
+    }
+    CHECK(fixture.View->Widget.ScrollOffset.y == doctest::Approx(travel));
+
+    // And never past it, from either direction.
+    fixture.Doc.ScrollBy(*fixture.View, vec2(0.0f, 500.0f));
+    CHECK(fixture.View->Widget.ScrollOffset.y == doctest::Approx(travel));
+    for (int step = 0; step < 40; ++step)
+    {
+        fixture.Doc.ScrollBy(*fixture.View, vec2(0.0f, -10.0f));
+        fixture.Settle();
+    }
+    CHECK(fixture.View->Widget.ScrollOffset.y == doctest::Approx(0.0f));
+}
+
+TEST_CASE("gui scroll: the container's far padding is part of the scrollable region")
+{
+    // The last child has to clear the inside of the box the way the first one does; a region that
+    // stops at the content's own end leaves the padding reading as top-only.
+    ScrollFixture fixture(Overflow::Hidden, Overflow::Scroll);
+    Style padded = fixture.View->ComputedStyle;
+    padded.Padding = Insets{.Left = 0.0f, .Top = 12.0f, .Right = 0.0f, .Bottom = 12.0f};
+    fixture.Doc.SetStyle(*fixture.View, padded);
+    fixture.Settle();
+
+    // 300 of content in a 100 box, 12 of padding at each end: the region is 324 and the box 100.
+    fixture.Doc.ScrollBy(*fixture.View, vec2(0.0f, 1000.0f));
+    CHECK(fixture.View->Widget.ScrollOffset.y == doctest::Approx(224.0f));
+}
+
+TEST_CASE("gui scroll: the wheel turns the box under the pointer, and passes it on at the end")
+{
+    ScrollFixture fixture(Overflow::Hidden, Overflow::Scroll);
+    fixture.Doc.SetInteractive(true);
+
+    // A wheel turn is in content space: positive y scrolls down, whatever the device's own sign.
+    const vec2 inside = fixture.View->Layout.Center();
+    CHECK(fixture.Doc.DispatchScroll(inside, vec2(0.0f, 60.0f)));
+    CHECK(fixture.View->Widget.ScrollOffset.y == doctest::Approx(60.0f));
+    CHECK(fixture.Doc.DispatchScroll(inside, vec2(0.0f, -20.0f)));
+    CHECK(fixture.View->Widget.ScrollOffset.y == doctest::Approx(40.0f));
+
+    // An axis with no travel takes nothing, so the turn is left for whatever else reads it.
+    CHECK_FALSE(fixture.Doc.DispatchScroll(inside, vec2(30.0f, 0.0f)));
+
+    // At the end of the travel the box declines, and with nothing containing it that scrolls, the
+    // turn is unconsumed rather than silently swallowed.
+    fixture.Doc.ScrollBy(*fixture.View, vec2(0.0f, 1000.0f));
+    fixture.Settle();
+    CHECK_FALSE(fixture.Doc.DispatchScroll(inside, vec2(0.0f, 60.0f)));
+    CHECK(fixture.Doc.DispatchScroll(inside, vec2(0.0f, -60.0f)));
+}

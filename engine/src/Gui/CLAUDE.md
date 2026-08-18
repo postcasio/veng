@@ -533,6 +533,23 @@ gesture that actually moved the content completes no click, even when released o
 started on. The content moving is the test, rather than how far the pointer travelled, because it is
 the gesture itself rather than a threshold standing in for one.
 
+**The scrollable region is the content plus the container's far padding, measured off the layout the
+children were last read at.** Both halves are load-bearing. A scrollable element's children are laid
+out shifted by its scroll offset, so their solved boxes describe where the content *currently sits* —
+the shift has to come back out (`Widget::LayoutScrollOffset`, the offset those boxes were actually
+read with, which is not the live one between a scroll and the `Solve` after it), or the range shrinks
+by as much as the content has already scrolled and its end is permanently unreachable. And the region
+runs to the far padding edge, gutter included, so the last child clears the inside of the box the way
+the first one does rather than ending flush against the frame.
+
+**The wheel is `Document::DispatchScroll(point, delta)`**, and its delta is in **content space**: a
+positive y scrolls the content down, which is the opposite sign from a wheel's own away-from-the-user
+axis, so `GuiConsumer` flips it once at the input seam rather than every scrollable guessing. The
+turn goes to the nearest scrollable ancestor of the element under the pointer **that can still move
+that way**; a box already at that end declines and the turn passes outward to whatever contains it,
+which is chaining with no chaining policy to author. Nothing left to move returns false, so an
+unconsumed wheel is still available to whatever else was going to read it.
+
 **`scrollbar: overlay | gutter`** decides whether the bars float over the content (the default,
 reserving nothing) or the content box shrinks to reserve a stable gutter. The reserved width is the
 bar's *own* styled thickness, so `ScrollBar { width: 6px }` narrows both the bar and its gutter from

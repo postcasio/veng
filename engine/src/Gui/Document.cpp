@@ -2353,14 +2353,52 @@ namespace Veng::Gui
         }
     }
 
+    Insets Document::ContentPadding(const Element& element) const
+    {
+        // A gutter reserves each scrollable axis's bar thickness out of the content box, as extra
+        // padding on the edge the bar sits against — so the content never flows under the bar. The
+        // space is held whether or not the axis currently overflows, which is what keeps the
+        // content from shifting the moment it grows past the box. An overlay reserves nothing.
+        const Style& style = element.ComputedStyle;
+        Insets padding = style.Padding;
+        if (style.Scrollbar == ScrollbarLayout::Gutter && IsScrollable(style))
+        {
+            if (const Element* const bar = FindScrollBar(element, true); bar != nullptr)
+            {
+                padding.Right += ScrollBarThickness(*bar);
+            }
+            if (const Element* const bar = FindScrollBar(element, false); bar != nullptr)
+            {
+                padding.Bottom += ScrollBarThickness(*bar);
+            }
+        }
+        return padding;
+    }
+
     vec2 Document::ScrollRange(const Element& element) const
     {
         const Style& style = element.ComputedStyle;
+
+        // A scrollable element's children are laid out shifted by its scroll offset, so their solved
+        // boxes measure the content *from where it sat when they were read*. The shift has to come
+        // back out, or the range shrinks by exactly as much as the content has already scrolled —
+        // which leaves the last of it permanently out of reach, and past the halfway point clamps
+        // the offset back down to a value it has already passed.
+        const vec2 scrolled = element.Widget.LayoutScrollOffset;
         vec2 content(0.0f);
         for (const Element* child : ContentChildren(element))
         {
-            content = glm::max(content, child->Layout.Max() - element.Layout.Min);
+            content = glm::max(content, child->Layout.Max() + scrolled - element.Layout.Min);
         }
+
+        // The scrollable region runs to the container's own far content edge — its padding, its
+        // reserved gutter and its border — so the last child clears the inside of the box the way
+        // the first one does. Without it the content's end is flush against the frame and the
+        // element's padding reads as applying only at the top.
+        const f32 border = BorderWidth(style);
+        const Insets padding = ContentPadding(element);
+        content += vec2(padding.Right + border, padding.Bottom + border);
+
         vec2 range = glm::max(content - element.Layout.Size, vec2(0.0f));
         range.x = ScrollsAxis(style.OverflowX) ? range.x : 0.0f;
         range.y = ScrollsAxis(style.OverflowY) ? range.y : 0.0f;
@@ -2791,23 +2829,7 @@ namespace Veng::Gui
         // the border box, which is what every paint site deflates from.
         ApplyEdgeInsets(node, Insets::All(BorderWidth(style)), &YGNodeStyleSetBorder);
 
-        // A gutter reserves each scrollable axis's bar thickness out of the content box, as extra
-        // padding on the edge the bar sits against — so the content never flows under the bar. The
-        // space is held whether or not the axis currently overflows, which is what keeps the
-        // content from shifting the moment it grows past the box. An overlay reserves nothing.
-        Insets padding = style.Padding;
-        if (style.Scrollbar == ScrollbarLayout::Gutter && IsScrollable(style))
-        {
-            if (const Element* const bar = FindScrollBar(element, true); bar != nullptr)
-            {
-                padding.Right += ScrollBarThickness(*bar);
-            }
-            if (const Element* const bar = FindScrollBar(element, false); bar != nullptr)
-            {
-                padding.Bottom += ScrollBarThickness(*bar);
-            }
-        }
-        ApplyEdgeInsets(node, padding, &YGNodeStyleSetPadding);
+        ApplyEdgeInsets(node, ContentPadding(element), &YGNodeStyleSetPadding);
 
         YGNodeStyleSetOverflow(node, IsScrollable(style)   ? YGOverflowScroll
                                      : ClipsContent(style) ? YGOverflowHidden
@@ -2859,10 +2881,13 @@ namespace Veng::Gui
         };
 
         // A scrollable element shifts its content by its scroll offset, so the child origin is its
-        // top-left minus the offset — the content slides under the clip it paints with.
-        const vec2 childOrigin = IsScrollable(element.ComputedStyle)
-                                     ? absoluteMin - element.Widget.ScrollOffset
-                                     : absoluteMin;
+        // top-left minus the offset — the content slides under the clip it paints with. The shift
+        // is recorded beside it, because the rects the children are about to take are the only
+        // measure of the scrollable extent there is, and reading that extent later means undoing
+        // the shift they were actually read with.
+        const bool scrolls = IsScrollable(element.ComputedStyle);
+        element.Widget.LayoutScrollOffset = scrolls ? element.Widget.ScrollOffset : vec2(0.0f);
+        const vec2 childOrigin = scrolls ? absoluteMin - element.Widget.ScrollOffset : absoluteMin;
 
         for (Element* child : element.Children)
         {
@@ -3654,6 +3679,7 @@ namespace Veng::Gui
         {
             m_HoverTarget = nullptr;
         }
+        std::erase(m_Hovered, &element);
         if (m_PressTarget == &element)
         {
             m_PressTarget = nullptr;
@@ -3662,7 +3688,6 @@ namespace Veng::Gui
         {
             m_PressOrigin = nullptr;
         }
-        std::erase(m_Hovered, &element);
     }
 
     void Document::BindContext(BindingContext* context, const TypeRegistry* registry)
@@ -4596,6 +4621,45 @@ namespace Veng::Gui
         }
 
         return consumed || target != nullptr;
+    }
+
+    bool Document::DispatchScroll(const vec2 point, const vec2 delta)
+    {
+        if (!m_Interactive || delta == vec2(0.0f))
+        {
+            return false;
+        }
+        Element* const target = HitTest(point);
+        if (target == nullptr)
+        {
+            return false;
+        }
+
+        // The wheel belongs to the nearest scrollable box under the pointer that can still move the
+        // way it was turned. A box already at that end declines, so the turn passes outward to
+        // whatever contains it — a list scrolled to its bottom goes on scrolling the panel it sits
+        // in — and a document with nothing left to move consumes nothing at all, leaving the wheel
+        // to whatever else was going to read it.
+        for (Element* box = target; box != nullptr; box = box->Parent)
+        {
+            if (!IsScrollable(box->ComputedStyle))
+            {
+                continue;
+            }
+            const vec2 range = ScrollRange(*box);
+            const vec2 offset = box->Widget.ScrollOffset;
+            const auto moves = [](const f32 amount, const f32 at, const f32 extent)
+            { return amount < 0.0f ? at > 0.0f : amount > 0.0f && at < extent; };
+            const bool x = moves(delta.x, offset.x, range.x);
+            const bool y = moves(delta.y, offset.y, range.y);
+            if (!x && !y)
+            {
+                continue;
+            }
+            ScrollBy(*box, vec2(x ? delta.x : 0.0f, y ? delta.y : 0.0f));
+            return true;
+        }
+        return false;
     }
 
     bool Document::RoutePointerPath(PointerEvent& event)

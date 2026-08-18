@@ -54,6 +54,12 @@ namespace Veng::Gui
             return result;
         }
 
+        // One wheel notch, in document points. A fixed distance rather than a fraction of the box
+        // under the pointer: a short list and a tall one should answer the same flick the same way,
+        // where a fraction makes the tall one race. A trackpad reports fractional notches, so a
+        // precise gesture scales down through the same constant.
+        constexpr f32 WheelNotchPoints = 56.0f;
+
         // Maps a navigation key to its NavAction, or nullopt when the key is not a navigation key.
         optional<NavAction> ToNavAction(Key key, bool shift)
         {
@@ -129,7 +135,7 @@ namespace Veng::Gui
         // (a fullscreen game screen registered over the primary viewport), the last-registered
         // viewport is drawn on top, so it owns the pointer.
         if (type == EventType::MouseMoved || type == EventType::MouseButtonPressed ||
-            type == EventType::MouseButtonReleased)
+            type == EventType::MouseButtonReleased || type == EventType::MouseScrolled)
         {
             const ivec2 pixels = PointerPixels();
 
@@ -155,6 +161,28 @@ namespace Veng::Gui
                 // solved at extent / scale), so the physical-pixel point divides by it.
                 const vec2 docPoint =
                     *normalized * vec2(viewport->GetRegion().Extent) / viewport->GetUiScale();
+
+                // A wheel turn is not a pointer event: it names a scrollable box rather than an
+                // element, so it takes the same viewport and document walk and its own dispatch.
+                // The wheel's y is positive away from the user, where a scroll offset grows
+                // downward, so the sign flips here — once, at the seam — rather than in every
+                // scrollable.
+                if (type == EventType::MouseScrolled)
+                {
+                    const vec2 turn = static_cast<const MouseScrolledEvent&>(event).GetOffset();
+                    const vec2 delta = vec2(turn.x, -turn.y) * WheelNotchPoints;
+                    const std::span<Gui::Document* const> scrolled =
+                        viewport->GetAttachedDocuments();
+                    for (auto it = scrolled.rbegin(); it != scrolled.rend(); ++it)
+                    {
+                        Gui::Document* document = *it;
+                        if (document->IsInteractive() && document->DispatchScroll(docPoint, delta))
+                        {
+                            return true;
+                        }
+                    }
+                    break;
+                }
 
                 PointerEvent pointer;
                 pointer.Position = docPoint;
