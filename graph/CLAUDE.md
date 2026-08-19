@@ -72,7 +72,7 @@ topology core stays asset-agnostic.
 **`MaterialOutput`'s sinks are the domain contract.** It emits the domain entry point
 (`GBufferOutput fsMain` for Surface, `float4 fsMain … : SV_Target0` for PostProcess) with defined
 defaults for unconnected sinks (Surface: Albedo `float4(0,0,0,1)`, Normal the geometric
-`input.v_WorldNormal`, ORM `float3(1,1,0)`, Velocity always `ComputeMotionVector(...)`); the
+`input.v_WorldNormal`, ORM `float4(1,1,0,0)`, Velocity always `ComputeMotionVector(...)`); the
 source is prefixed with its domain's contract include (`Veng/surface.slang`,
 `Veng/postprocess.slang`, `Veng/translucent.slang`, or `Veng/guifill.slang`).
 

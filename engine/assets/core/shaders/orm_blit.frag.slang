@@ -1,7 +1,8 @@
 // ORM-channel-visualize fragment stage: samples the packed g-buffer ORM target
-// (G2 — R occlusion, G roughness, B metallic) through the bindless set-0 array and
-// writes one channel as greyscale, selected by the Channel index in the push block
-// (0 = occlusion, 1 = roughness, 2 = metallic). The debug views for the three
+// (G2 — R occlusion, G roughness, B metallic, A surface flags) through the
+// bindless set-0 array and writes one channel as greyscale, selected by the
+// Channel index in the push block (0 = occlusion, 1 = roughness, 2 = metallic;
+// the flags channel has no greyscale reading). The debug views for the three
 // material channels share this one shader, differing only in the pushed Channel.
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];

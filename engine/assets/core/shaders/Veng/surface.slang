@@ -19,6 +19,9 @@ static const uint MaterialParamStride = 1024;
 // view_constants.slang — the single source for the lighting, SSAO, and material shaders.
 #include "../view_constants.slang"
 
+// The ORM alpha channel's flag values and predicates, shared with the deferred lighting pass.
+#include "surface_flags.slang"
+
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
 // The byte-address storage-buffer bindless array (set 0, binding 3): each slot a whole
@@ -80,11 +83,14 @@ DrawData LoadDrawData(uint candidateId)
 // Emissive (G4) is linear HDR radiance the lighting pass adds to the pixel's outgoing
 // light. It is non-negative (unsigned target), and magnitudes author in the HDR chain's
 // exposure-scaled units (the same convention the lit chain, bloom, and tonemap use).
+//
+// ORM's alpha (G2.a) is the surface-flags channel: a material writes 0 there unless it wants
+// one of the flags Veng/surface_flags.slang defines.
 struct GBufferOutput
 {
     float4 Albedo   : SV_Target0;  // rgb sRGB albedo; a unused
     float4 Normal   : SV_Target1;  // world-space normal in xyz
-    float4 ORM      : SV_Target2;  // R occlusion, G roughness, B metallic, A unused
+    float4 ORM      : SV_Target2;  // R occlusion, G roughness, B metallic, A surface flags
     float2 Velocity : SV_Target3;  // screen-space motion vector (curUV - prevUV)
     float3 Emissive : SV_Target4;  // linear HDR emissive radiance (non-negative)
 };
@@ -99,12 +105,14 @@ struct GBufferOutput
 // the fragment has run. And the deferred lighting pass reconstructs world position from the depth
 // attachment, so a written value moves that fragment's reconstructed position along its own view
 // ray — the view vector is unchanged, a directional light is unaffected, and a positional light
-// sees the fragment at the distance the depth names.
+// sees the fragment at the distance the depth names. Where that reconstructed position is a
+// coordinate no geometry in the scene stands at, SurfaceFlagNoShadowReception in ORM's alpha
+// declines the shadow-map lookups taken there.
 struct GBufferDepthOutput
 {
     float4 Albedo   : SV_Target0;
     float4 Normal   : SV_Target1;
-    float4 ORM      : SV_Target2;
+    float4 ORM      : SV_Target2;  // R occlusion, G roughness, B metallic, A surface flags
     float2 Velocity : SV_Target3;
     float3 Emissive : SV_Target4;
     float  Depth    : SV_Depth;

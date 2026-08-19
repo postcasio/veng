@@ -37,10 +37,14 @@ namespace Veng::Renderer
         /// @brief G1 — world-space normal in xyz.
         inline constexpr Format NormalFormat = Format::RGBA16Sfloat;
 
-        /// @brief G2 — packed material params: R=occlusion, G=roughness, B=metallic, A unused.
+        /// @brief G2 — packed material params: R=occlusion, G=roughness, B=metallic,
+        /// A=surface flags.
         ///
-        /// RGBA8: roughness/metallic/occlusion are perceptually fine at 8-bit. The lighting pass
-        /// reads only orm.rgb; the alpha channel carries no data and is available.
+        /// RGBA8: roughness/metallic/occlusion are perceptually fine at 8-bit. The alpha is the
+        /// surface-flags channel a material writes through the values in the core shader header
+        /// `Veng/surface_flags.slang` — today a single flag declining shadow-map reception, for a
+        /// material whose drawn geometry does not stand where its shading says it does. A material
+        /// writing 0 there gets the ordinary shading path.
         inline constexpr Format ORMFormat = Format::RGBA8Unorm;
 
         /// @brief G3 — screen-space motion vector, written by the surface pass.

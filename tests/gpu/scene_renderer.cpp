@@ -2110,6 +2110,113 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// The surface-flags channel (ORM alpha) declining shadow-map reception. The scene above,
+// measured three ways at the one texel the cast shadow falls on: shadowed (the flag clear),
+// with the flag set, and with the shadow system off entirely. Setting the flag must lift that
+// texel out of shadow, and must land it exactly where turning the shadow system off does —
+// the fragment is still lit by the same light, only its atlas lookup is declined.
+//
+// The plane and the caster share one material instance, so setting the flag sets it on both;
+// only the plane's shading is measured, and a caster's contribution to the atlas is written by
+// the shadow pass regardless of what its own fragment stage says.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: a material declining shadow reception is lit as if the "
+                  "shadow map were absent")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_no_shadow_reception.vengpack");
+
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(material.has_value());
+
+    const Ref<Mesh> plane = Mesh::BuildSync(
+        Context, Primitives::Plane(vec2(8.0f), uvec2(1), *material), "Receiver Plane");
+    const Ref<Mesh> caster =
+        Mesh::BuildSync(Context, Primitives::Cube(1.2f, *material), "Shadow Caster");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+
+    const Entity planeEntity = scene->CreateEntity();
+    scene->Add<Transform>(planeEntity);
+    scene->Add<MeshRenderer>(planeEntity).Mesh = assets.Adopt(plane);
+
+    const Entity casterEntity = scene->CreateEntity();
+    scene->Add<Transform>(casterEntity).Position = vec3(0.0f, 1.6f, 0.0f);
+    scene->Add<MeshRenderer>(casterEntity).Mesh = assets.Adopt(caster);
+
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Type = LightType::Directional,
+        .Direction = vec3(0.0f, -1.0f, 0.0f),
+        .Color = vec3(1.0f),
+        .Intensity = 3.0f,
+    };
+
+    constexpr uvec2 extent{128, 128};
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 5.0f, 5.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = true},
+    });
+
+    auto Luma = [&](const vector<u8>& pixels, u32 x, u32 y) -> f32
+    {
+        const vec3 c = DecodeTexel(pixels, extent.x, x, y);
+        return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
+    };
+
+    auto& mat = const_cast<MaterialInstance&>(*material->Get());
+
+    // The flag clear: the ordinary receiver. Locate the shadow as the darkest plane texel down
+    // the center column, below the caster's silhouette.
+    mat.SetParam("SurfaceFlags", 0.0f);
+    const vector<u8> shadowedPixels = RenderOutput(Context, *renderer, *scene, camera);
+
+    const u32 column = extent.x / 2;
+    u32 shadowRow = extent.y * 5 / 8;
+    f32 shadowedLuma = Luma(shadowedPixels, column, shadowRow);
+    for (u32 y = extent.y / 2 + 4; y < extent.y - 4; ++y)
+    {
+        const f32 l = Luma(shadowedPixels, column, y);
+        if (l < shadowedLuma)
+        {
+            shadowedLuma = l;
+            shadowRow = y;
+        }
+    }
+
+    // The flag set: the same geometry, the same light, the same shadow atlas — the lookup
+    // declined.
+    mat.SetParam("SurfaceFlags", 1.0f);
+    const f32 declinedLuma =
+        Luma(RenderOutput(Context, *renderer, *scene, camera), column, shadowRow);
+
+    // The reference: the flag clear again, with the shadow system off, so no atlas exists to
+    // sample. This is the radiance a declined lookup must reproduce.
+    mat.SetParam("SurfaceFlags", 0.0f);
+    renderer->Configure({.Mode = DebugView::Final, .Bloom = false, .Shadows = false});
+    const f32 unshadowedLuma =
+        Luma(RenderOutput(Context, *renderer, *scene, camera), column, shadowRow);
+
+    // The flag lifts the texel out of shadow...
+    CHECK(declinedLuma > shadowedLuma + 0.03f);
+    // ...to exactly the unshadowed radiance: the fragment keeps its lighting and loses only the
+    // occlusion. A flag that skipped the light instead would read black here.
+    CHECK(declinedLuma == doctest::Approx(unshadowedLuma).epsilon(0.02));
+
+    std::filesystem::remove(outArchive);
+}
+
 // The SSAO property assertion (this plan's dedicated property pin beyond the
 // re-blessed golden). A sphere resting on a receiver plane forms a concave contact
 // crease where the plane meets the sphere; screen-space ambient occlusion darkens

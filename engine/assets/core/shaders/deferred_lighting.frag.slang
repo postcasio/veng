@@ -1,6 +1,6 @@
 // Deferred lighting fragment stage: samples the g-buffer (G0 albedo, G1
-// world-space normal, G2 packed occlusion/roughness/metallic, and the
-// depth attachment) through the bindless set-0 array, reconstructs world position
+// world-space normal, G2 packed occlusion/roughness/metallic plus the surface-flags
+// alpha, and the depth attachment) through the bindless set-0 array, reconstructs world position
 // from depth, and evaluates a Cook-Torrance BRDF over a list of typed lights read
 // from the per-frame light buffer. Writes linear HDR.
 //
@@ -22,6 +22,7 @@
 #include "view_constants.slang"
 #include "shadow.slang"
 #include "Veng/sh.slang"
+#include "Veng/surface_flags.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
@@ -401,6 +402,11 @@ float4 fsMain(VSOutput input) : SV_Target
     float occlusion = orm.r;
     float roughness = clamp(orm.g, 0.04, 1.0);
     float metallic  = orm.b;
+    // The surface-flags channel. A fragment whose material declines shadow-map reception is lit
+    // exactly as any other, but every atlas lookup below resolves to full visibility: the world
+    // position reconstructed for it is not where its geometry stands, so any silhouette found at
+    // that coordinate belongs to unrelated geometry.
+    bool declinesShadowMaps = GBufferDeclinesShadowMaps(orm.a);
 
     float normalLength = length(normal);
     float3 N = normalLength > 1e-4 ? normal / normalLength : float3(0.0, 0.0, 0.0);
@@ -455,7 +461,11 @@ float4 fsMain(VSOutput input) : SV_Target
             // projection, fit to the camera view — using its travel direction, not its position.
             // Any other area light samples its punctual perspective tile.
             float areaVisibility;
-            if ((int(light.Cone.w) & 2) != 0)
+            if (declinesShadowMaps)
+            {
+                areaVisibility = 1.0;
+            }
+            else if ((int(light.Cone.w) & 2) != 0)
             {
                 float3 sunL = normalize(-light.DirectionType.xyz);
                 areaVisibility = DirectionalShadowVisibility(worldPos, N, sunL, viewDepth);
@@ -510,7 +520,9 @@ float4 fsMain(VSOutput input) : SV_Target
         // spot light is shadowed by its punctual atlas tile, gated by its shadow slot
         // (Cone.z, -1 = unshadowed). Both sample through hardware SampleCmp.
         float visibility;
-        if (isDirectional)
+        if (declinesShadowMaps)
+            visibility = 1.0;
+        else if (isDirectional)
             visibility = DirectionalShadowVisibility(worldPos, N, L, viewDepth);
         else
         {

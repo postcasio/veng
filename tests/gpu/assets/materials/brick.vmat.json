@@ -59,6 +59,11 @@
       "name": "OcclusionStrength",
       "type": "float",
       "value": 1.0
+    },
+    {
+      "name": "SurfaceFlags",
+      "type": "float",
+      "value": 0.0
     }
   ]
 }

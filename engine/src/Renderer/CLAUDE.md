@@ -682,8 +682,15 @@ final swapchain color, written through a single engine-provided `GBufferOutput` 
 float2 Velocity : SV_Target3; float3 Emissive : SV_Target4;`). Albedo (G0) is sRGB-encoded
 (sampled back as linear); the normal (G1) is the tangent-space-perturbed world normal in a signed
 float format; ORM (G2) packs occlusion (R), roughness (G), and metallic (B) — the
-metallic-roughness PBR channel set — with **the alpha unused and available** (the lighting pass
-reads only `orm.rgb`); velocity (G3, `RG16Sfloat`) is the per-object screen-space motion vector
+metallic-roughness PBR channel set — with **the alpha the surface-flags channel**, whose values and
+predicates live in the core shader header `Veng/surface_flags.slang`: today one flag,
+`SurfaceFlagNoShadowReception`, which a material whose drawn geometry does not stand where its
+shading says it does (an impostor, a sky proxy, a matte-painting shell, a proxy drawn at a
+compressed distance) writes so the lighting pass takes full visibility in place of every shadow
+atlas lookup — the receiving counterpart of `MeshRenderer::CastsShadows = false`, and a material
+property rather than a per-instance one because it describes how the surface shades. A material
+writing 0 there is unaffected. Velocity (G3, `RG16Sfloat`) is the per-object screen-space motion
+vector
 (`curUV - prevUV`) the TAA resolve reprojects through, written by the shared `ComputeMotionVector`
 helper from the vertex stage's unjittered current/previous clip positions; emissive (G4,
 `B10G11R11Ufloat`) is the **linear HDR radiance** the surface fragment authors per pixel —

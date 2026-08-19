@@ -6,6 +6,8 @@
 // and the authored occlusion/roughness/metallic/emissive factors into G2. The
 // deferred-lighting oracle reads back known roughness/metallic values, so this
 // fixture writes the factors directly rather than sampling a packed ORM texture.
+// SurfaceFlags is the g-buffer's ORM alpha authored as a parameter, so a case can drive
+// the surface-flags channel through SetParam without a second material.
 
 // This fixture material's parameter block, reflected by the cooker and read through the
 // engine's set-0 g_MaterialParams at index * MaterialParamStride.
@@ -18,7 +20,7 @@ struct MaterialParams
     float4 BaseColorFactor;
     float4 EmissiveFactor;
     float  MetallicFactor;   float RoughnessFactor;
-    float  OcclusionStrength; float Pad2;
+    float  OcclusionStrength; float SurfaceFlags;
 };
 
 MaterialParams LoadMaterialParams(uint index)
@@ -47,7 +49,7 @@ GBufferOutput fsMain(VSOutput input)
     GBufferOutput output;
     output.Albedo = baseColor * p.BaseColorFactor;
     output.Normal = float4(normalize(input.v_WorldNormal), 0.0);
-    output.ORM = float4(1.0, p.RoughnessFactor, p.MetallicFactor, p.EmissiveFactor.a);
+    output.ORM = float4(1.0, p.RoughnessFactor, p.MetallicFactor, p.SurfaceFlags);
     output.Velocity = ComputeMotionVector(input.v_CurClip, input.v_PrevClip);
     output.Emissive = float3(0.0);
     return output;
