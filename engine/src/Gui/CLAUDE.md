@@ -481,6 +481,14 @@ the same projection `Selected` already makes across an item slot. A descendant t
 is left alone: it is hovered when the pointer is over it, and marking it because a sibling is would
 be a different claim.
 
+**The document reports the pointer state it already tracks.** `GetPointerPosition()` is where the
+last routed event landed in document points, `IsPointerDown()` whether the primary button is held,
+and `GetHoverTarget()` the element under it — the live hover the `:hover` variant follows, not a
+fresh hit-test. Position and button follow the *transition*, not the target, so both track the
+pointer across empty regions and a press that no element takes. That is what a consumer drawing its
+own pointer reads: a game hiding the OS cursor to draw its own needs the pointer in the document's
+coordinates, and the document is the one place that already has it.
+
 **Gameplay asks whether the UI owns the pointer through `PointerRouting::OverUi`.** Consuming a
 pointer *event* does not suppress a held-button *action* — a camera orbiting on a held mouse button
 reads the action pipeline, which the Gui never sees — so the router publishes the answer instead:

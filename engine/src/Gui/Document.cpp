@@ -4445,6 +4445,7 @@ namespace Veng::Gui
                 m_PressOrigin = nullptr;
             }
             m_PressPanned = false;
+            m_PointerDown = false;
             SetFocus(nullptr);
         }
     }
@@ -4454,6 +4455,22 @@ namespace Veng::Gui
         if (!m_Interactive)
         {
             return false;
+        }
+
+        // The pointer state a consumer drawing its own pointer reads, recorded before the routing
+        // decides anything: an event that no element takes still moved the pointer and still
+        // pressed the button, so both are recorded off the transition rather than off a target.
+        m_PointerPosition = event.Position;
+        if (event.Button == PointerButton::Primary)
+        {
+            if (event.Kind == PointerEventKind::Down)
+            {
+                m_PointerDown = true;
+            }
+            else if (event.Kind == PointerEventKind::Up)
+            {
+                m_PointerDown = false;
+            }
         }
 
         Element* target = HitTest(event.Position);

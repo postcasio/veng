@@ -427,3 +427,54 @@ TEST_CASE("gui events: hover marks every box the pointer is inside")
     CHECK((label.State & ElementState::Hovered) == ElementState::None);
     CHECK((stamp.State & ElementState::Hovered) == ElementState::None);
 }
+
+TEST_CASE("gui pointer state: the document reports where the pointer is and whether it is down")
+{
+    // The state a consumer drawing its own pointer reads back off the document — position, the
+    // primary button, and what is under it — rather than re-deriving from the events it never sees.
+    Document doc;
+    doc.SetInteractive(true);
+
+    Element& root = doc.Root();
+    PlaceAt(root, {0, 0}, {200, 200});
+    Element& button = doc.Add(root, ElementKind::Button);
+    PlaceAt(button, {10, 10}, {100, 100});
+
+    // Nothing has moved yet, so there is no position and nothing is held.
+    CHECK(doc.GetPointerPosition() == vec2(0.0f));
+    CHECK_FALSE(doc.IsPointerDown());
+    CHECK(doc.GetHoverTarget() == nullptr);
+
+    PointerEvent overButton{.Kind = PointerEventKind::Move, .Position = vec2(50, 50)};
+    doc.DispatchPointer(overButton);
+    CHECK(doc.GetPointerPosition() == vec2(50, 50));
+    CHECK(doc.GetHoverTarget() == &button);
+
+    // A move that lands on nothing still moves the pointer: the position tracks the event, not the
+    // target, which is what lets a consumer draw a pointer over an empty region.
+    PointerEvent overNothing{.Kind = PointerEventKind::Move, .Position = vec2(150, 150)};
+    doc.DispatchPointer(overNothing);
+    CHECK(doc.GetPointerPosition() == vec2(150, 150));
+    CHECK(doc.GetHoverTarget() == &root);
+
+    // The primary button's transitions raise and lower the flag, wherever they land.
+    PointerEvent down{.Kind = PointerEventKind::Down, .Position = vec2(150, 150)};
+    doc.DispatchPointer(down);
+    CHECK(doc.IsPointerDown());
+    PointerEvent up{.Kind = PointerEventKind::Up, .Position = vec2(150, 150)};
+    doc.DispatchPointer(up);
+    CHECK_FALSE(doc.IsPointerDown());
+
+    // A secondary press is not a click, so it leaves the primary button's state alone.
+    PointerEvent rightDown{.Kind = PointerEventKind::Down,
+                           .Button = PointerButton::Secondary,
+                           .Position = vec2(50, 50)};
+    doc.DispatchPointer(rightDown);
+    CHECK_FALSE(doc.IsPointerDown());
+
+    // Closing interactivity drops the live press with the rest of the interaction state.
+    doc.DispatchPointer(down);
+    CHECK(doc.IsPointerDown());
+    doc.SetInteractive(false);
+    CHECK_FALSE(doc.IsPointerDown());
+}

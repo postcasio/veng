@@ -530,6 +530,31 @@ namespace Veng::Gui
         /// @brief Returns the focused element, or nullptr when nothing holds focus.
         [[nodiscard]] Element* GetFocused() const { return m_Focused; }
 
+        /// @brief Returns the element the pointer is currently over, or nullptr when it is over none.
+        ///
+        /// The live hover target the pointer routing maintains — the same element the Hovered bit
+        /// and the `:hover` variant follow — rather than a fresh hit-test, so a caller reading it
+        /// cannot disagree with what the document is drawing. Null while the pointer is over no
+        /// element, over a `pointer-events: none` region, or outside the document entirely.
+        [[nodiscard]] Element* GetHoverTarget() const { return m_HoverTarget; }
+
+        /// @brief Returns where the last routed pointer event landed, in document points.
+        ///
+        /// The position of the most recent event the input seam handed this document, whether or not
+        /// any element took it — so it tracks the pointer across empty regions as well as over
+        /// content. What a consumer drawing its own pointer reads: the document is the one place
+        /// that already knows where the pointer is in its own coordinates. Zero until the first
+        /// event arrives, and frozen at the last position once the pointer leaves the region.
+        [[nodiscard]] vec2 GetPointerPosition() const { return m_PointerPosition; }
+
+        /// @brief Returns whether the primary pointer button is currently held down.
+        ///
+        /// Follows the Down/Up transitions the routing sees, independent of what the press landed
+        /// on: a press over empty space raises it exactly as a press on a button does. The
+        /// secondary and middle buttons do not, since a click is the primary button's transition.
+        /// False on a display-only document, which routes no pointer at all.
+        [[nodiscard]] bool IsPointerDown() const { return m_PointerDown; }
+
         /// @brief Returns whether the viewport (context) treats this document as display-only.
         ///
         /// A document is **display-only by default**: its bindings update and it draws, but it
@@ -1163,6 +1188,12 @@ namespace Veng::Gui
 
         /// @brief The pointer position the last ScrollView drag sampled, for a per-move pan delta.
         vec2 m_LastScrollPointer{0.0f};
+
+        /// @brief Where the last routed pointer event landed, in document points.
+        vec2 m_PointerPosition{0.0f};
+
+        /// @brief Whether the primary pointer button is held, tracked across Down/Up.
+        bool m_PointerDown = false;
 
         /// @brief Whether the live press has scrolled its capturing element's content.
         ///
