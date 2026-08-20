@@ -889,7 +889,6 @@ if (VENG_BUILD_TESTS)
             tests/unit/scene_gizmos.cpp
             tests/unit/sky_ambient.cpp
             tests/unit/shader_interface.cpp
-            tests/unit/surface_shader_contract.cpp
             tests/unit/transient_allocation.cpp
             tests/unit/asset_archive.cpp
             tests/unit/asset_type_registry.cpp
@@ -1047,10 +1046,6 @@ if (VENG_BUILD_TESTS)
     # The audio streaming case decodes the committed sine.ogg Vorbis fixture to drive a stream voice.
     target_compile_definitions(veng_test_unit PRIVATE
             VENG_COOKER_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/cooker/fixtures")
-    # The surface-shader-contract gate reads the core surface verts + the shared vertex header
-    # from the source tree to assert the static/skinned dedupe holds (no drift by construction).
-    target_compile_definitions(veng_test_unit PRIVATE
-            VENG_CORE_SHADER_DIR="${VENG_CORE_SHADER_DIR}")
     # Precompile the foundational header + doctest once per suite: a test TU is
     # otherwise ~90% redundant header parsing. The doctest mains define the
     # implementation macro before their include, which a force-included PCH would

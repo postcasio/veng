@@ -17,6 +17,16 @@
       ]
     },
     {
+      "name": "EmissiveColor",
+      "type": "vec4",
+      "value": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
       "name": "BaseColor",
       "type": "texture",
       "id": "0xCE49A486C3F39786"
