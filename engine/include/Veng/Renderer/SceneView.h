@@ -300,24 +300,27 @@ namespace Veng::Renderer
         /// and ceilinged again in the gather shader.
         u32 DofRingCount = 4;
 
-        /// @brief RAW (non-tile-remapped) per-cascade world → light-clip transforms this frame.
+        /// @brief RAW (non-tile-remapped) per-set, per-cascade world → light-clip transforms.
         ///
-        /// Computed by the renderer on every Execute from the first directional light (identity
-        /// when there is none). The shadow pass renders cascade k with CascadeViewProj[k] pushed
-        /// and the viewport placing it in its atlas tile. Only [0, CascadeCount) are valid. The
-        /// lighting pass reads the tile-remapped matrices from the set-1 ShadowConstants buffer.
-        /// A caller's values are overwritten.
-        std::array<mat4, MaxCascades> CascadeViewProj{};
-        /// @brief RAW per-cascade caster-cull transforms this frame; near-extended toward the light.
+        /// Computed by the renderer on every Execute, one set per light granted the cascade arm
+        /// (set 0 alone, fit straight down, when there is none). The shadow pass renders set s
+        /// cascade k with CascadeViewProj[s][k] pushed and the viewport placing it in its atlas
+        /// tile. Only [0, CascadeSetCount) × [0, CascadeCount) are valid. The lighting pass reads
+        /// the tile-remapped matrices from the set-1 ShadowConstants buffer. A caller's values are
+        /// overwritten.
+        std::array<std::array<mat4, MaxCascades>, MaxCascadeSets> CascadeViewProj{};
+        /// @brief RAW per-set, per-cascade caster-cull transforms; near-extended toward the light.
         ///
         /// The shadow pass culls casters against these (a caster between the light and the
         /// slice must survive) but renders through CascadeViewProj, whose tight near plane the
         /// depth-clamped pipeline pancakes those casters onto. Identical to CascadeViewProj on
-        /// a device without depth clamp. Only [0, CascadeCount) are valid; a caller's values
-        /// are overwritten.
-        std::array<mat4, MaxCascades> CascadeCullViewProj{};
-        /// @brief Number of valid entries in CascadeViewProj; set by the renderer each Execute.
+        /// a device without depth clamp. Valid over the same range; a caller's values are
+        /// overwritten.
+        std::array<std::array<mat4, MaxCascades>, MaxCascadeSets> CascadeCullViewProj{};
+        /// @brief Number of valid cascades per set; set by the renderer each Execute.
         u32 CascadeCount = 0;
+        /// @brief Number of valid cascade sets; set by the renderer each Execute, at least 1.
+        u32 CascadeSetCount = 0;
 
         /// @brief Shadowed punctual lights selected this frame (the first MaxShadowedPunctual shadow-casting lights).
         ///

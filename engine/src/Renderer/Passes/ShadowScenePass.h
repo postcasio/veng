@@ -23,10 +23,13 @@ namespace Veng::Renderer
 
     /// @brief Cascaded directional-shadow depth pass, owning one D32 atlas and one RenderGraph depth pass.
     ///
-    /// The atlas is a min(Count,2)×ceil(Count/2) grid of ShadowResolution² tiles (1×1 for one
-    /// cascade, 2×1 for two, 2×2 for three or four). Each cascade renders the scene's opaque meshes
-    /// into its tile via a per-cascade viewport with the cascade's raw light-space matrix pushed.
-    /// The grid cell beyond Count keeps the depth=1 clear and is never selected.
+    /// One cascade set occupies a min(Count,2)×ceil(Count/2) grid of ShadowResolution² tiles (1×1
+    /// for one cascade, 2×1 for two, 2×2 for three or four), and MaxCascadeSets of those stack as
+    /// row bands — so the atlas is always sized for the full set budget, and a frame lighting from
+    /// fewer sources simply leaves the upper bands at their clear. Each cascade renders the scene's
+    /// opaque meshes into its tile via a per-cascade viewport with that cascade's raw light-space
+    /// matrix pushed. A tile beyond the frame's cascade or set count keeps the clear and is never
+    /// selected.
     ///
     /// The atlas is off bindless: it is a closed producer→consumer resource delivered to the lighting
     /// pass through a dedicated descriptor set (set 1). GetShadowView exposes the Ref<ImageView>
@@ -51,15 +54,15 @@ namespace Veng::Renderer
         [[nodiscard]] u32 GetCascadeCount() const { return m_CascadeCount; }
 
         /// @brief Number of atlas tile columns. Cascade k maps to tile column k % Columns.
-        [[nodiscard]] u32 GetTileColumns() const { return m_TileColumns; }
+        [[nodiscard]] u32 GetTileColumns() const { return m_Grid.Columns; }
 
-        /// @brief Number of atlas tile rows. Cascade k maps to tile row k / Columns.
-        [[nodiscard]] u32 GetTileRows() const { return m_TileRows; }
+        /// @brief Number of atlas tile rows across every stacked cascade set.
+        [[nodiscard]] u32 GetTileRows() const { return m_Grid.TotalRows(); }
 
-        /// @brief Full atlas extent in pixels (Columns·Resolution × Rows·Resolution).
+        /// @brief Full atlas extent in pixels (Columns·Resolution × TotalRows·Resolution).
         [[nodiscard]] uvec2 GetAtlasExtent() const
         {
-            return {m_TileColumns * m_Resolution, m_TileRows * m_Resolution};
+            return {m_Grid.Columns * m_Resolution, m_Grid.TotalRows() * m_Resolution};
         }
 
         /// @brief Reallocates the atlas when the resolution or cascade count in the settings changed.
@@ -78,8 +81,8 @@ namespace Veng::Renderer
         Context& m_Context;
         u32 m_Resolution;
         u32 m_CascadeCount;
-        u32 m_TileColumns;
-        u32 m_TileRows;
+        /// @brief The atlas tile grid: one set's columns/rows plus the stacked set count.
+        ShadowAtlasGrid m_Grid;
         bool m_FrustumCull = true;
         /// @brief Frustum-query scratch — candidate indices into SceneView::Visible.
         ///

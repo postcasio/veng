@@ -392,9 +392,9 @@ namespace Veng
         ///
         /// **The shadow arms are a scarce resource, and a light is often not worth one.** Only
         /// MaxShadowedPunctual point/spot/area lights are slotted per frame and the rest silently
-        /// carry no shadow at all — so a light that does not need one and does not say so takes a
-        /// slot from one that does, on nothing better than iteration order. The case this exists
-        /// for is a **fill light**: one standing in for the emission of a surface that is already
+        /// carry no shadow at all — and while the packing pass spends the budget on the lights it
+        /// estimates contribute most, a bright light that wants no silhouette still outranks a
+        /// dimmer one that does. The case this exists for is a **fill light**: one standing in for the emission of a surface that is already
         /// drawn, or filling a volume that has no occluder worth resolving. Such a light wants its
         /// contribution and not its silhouette, and a perspective tile fit to the whole scene bound
         /// resolves that silhouette badly at close range anyway — near geometry lands in the few

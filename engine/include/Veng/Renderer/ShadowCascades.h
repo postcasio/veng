@@ -16,6 +16,20 @@ namespace Veng::Renderer
     /// @brief Maximum number of shadow cascades the engine supports.
     inline constexpr u32 MaxCascades = 4;
 
+    /// @brief Maximum number of independent cascade sets the directional shadow atlas carries.
+    ///
+    /// A scene lit by several near-parallel sources shadows from more than one of them: each
+    /// granted source gets its own set of MaxCascades cascades, fit to its own direction, stacked
+    /// as extra tile rows in the one atlas. Two, not more, because a set is the atlas's expensive
+    /// unit: at the default 1024² tile and four cascades one set is a 2048² D32 atlas (16 MiB) and
+    /// each further set adds another 16 MiB plus a full re-render of every caster through four more
+    /// cascade viewports — where a punctual tile costs a sixth of that. Two covers a scene with two
+    /// comparable distant sources, which is the case the single-cascade rule could not express at
+    /// all; a third comparable source is rare enough not to be worth 48 MiB of atlas on every scene
+    /// that has one distant source. A source past the limit is denied the atlas and shades
+    /// unshadowed rather than borrowing another source's cascade.
+    inline constexpr u32 MaxCascadeSets = 2;
+
     /// @brief Output of ComputeCascades: per-cascade matrices and split distances.
     struct CascadeData
     {
@@ -101,45 +115,53 @@ namespace Veng::Renderer
                                               const AABB& sceneBounds,
                                               const CascadeSettings& settings);
 
-    /// @brief Tile layout of the directional shadow atlas for a given cascade count.
+    /// @brief Tile layout of the directional shadow atlas for a cascade count and set count.
     ///
-    /// min(Count,2) columns × ceil(Count/2) rows of square tiles: 1×1 for one cascade,
-    /// 2×1 for two, 2×2 for three or four. A low cascade count pays for no idle tiles.
-    /// Cascade k maps to tile (k % Columns, k / Columns). Both the render pass
-    /// (per-cascade viewport) and the lighting-constant tile remap derive their layout
-    /// from this.
+    /// One set occupies min(Count,2) columns × ceil(Count/2) rows of square tiles: 1×1 for one
+    /// cascade, 2×1 for two, 2×2 for three or four. A low cascade count pays for no idle tiles.
+    /// Cascade k of set s maps to tile (k % Columns, s · Rows + k / Columns) — sets stack as
+    /// further row bands, so the atlas is Columns wide and TotalRows() tall however many sets it
+    /// carries. Both the render pass (per-cascade viewport) and the lighting-constant tile remap
+    /// derive their layout from this.
     struct ShadowAtlasGrid
     {
         /// @brief Number of tile columns in the atlas.
         u32 Columns;
-        /// @brief Number of tile rows in the atlas.
+        /// @brief Number of tile rows one cascade set occupies.
         u32 Rows;
+        /// @brief Number of stacked cascade sets.
+        u32 Sets;
+
+        /// @brief Total tile rows in the atlas: one set's rows times the set count.
+        [[nodiscard]] u32 TotalRows() const { return Rows * Sets; }
     };
 
-    /// @brief Returns the shadow atlas tile grid for the given cascade count.
+    /// @brief Returns the shadow atlas tile grid for the given cascade count and set count.
     /// @param cascadeCount  Requested cascade count; clamped to [1, MaxCascades].
-    [[nodiscard]] inline ShadowAtlasGrid ComputeShadowAtlasGrid(u32 cascadeCount)
+    /// @param setCount      Requested cascade-set count; clamped to [1, MaxCascadeSets].
+    [[nodiscard]] inline ShadowAtlasGrid ComputeShadowAtlasGrid(u32 cascadeCount, u32 setCount)
     {
         const u32 count =
             cascadeCount < 1 ? 1 : (cascadeCount > MaxCascades ? MaxCascades : cascadeCount);
+        const u32 sets = setCount < 1 ? 1 : (setCount > MaxCascadeSets ? MaxCascadeSets : setCount);
         const u32 columns = count < 2 ? count : 2;
         const u32 rows = (count + 1) / 2;
-        return {.Columns = columns, .Rows = rows};
+        return {.Columns = columns, .Rows = rows, .Sets = sets};
     }
 
     /// @brief Bakes an atlas-tile remap into a cascade's world → light-clip matrix.
     ///
-    /// A fragment projected by the result lands in cascade @p cascade's tile of a
-    /// @p columns × @p rows atlas, so the lighting pass samples the correct tile by
-    /// construction. The transform maps NDC.xy in [-1,1] → the tile's window and back
-    /// to the [-1,1] clip the sample's `NDC.xy * 0.5 + 0.5` undoes; Z is left unchanged
-    /// (the depth compare is tile-agnostic). Cascade k maps to tile (k % columns,
-    /// k / columns), matching ComputeShadowAtlasGrid's layout.
+    /// A fragment projected by the result lands in the tile cascade @p cascade of set @p set
+    /// occupies, so the lighting pass samples the correct tile by construction. The transform maps
+    /// NDC.xy in [-1,1] → the tile's window and back to the [-1,1] clip the sample's
+    /// `NDC.xy * 0.5 + 0.5` undoes; Z is left unchanged (the depth compare is tile-agnostic).
+    /// Cascade k of set s maps to tile (k % Columns, s · Rows + k / Columns), matching
+    /// ComputeShadowAtlasGrid's layout.
     /// @param cascadeViewProj  The cascade's world → light-clip matrix.
-    /// @param cascade          Cascade index, used to select the tile.
-    /// @param columns          Atlas tile columns.
-    /// @param rows             Atlas tile rows.
+    /// @param cascade          Cascade index within the set, used to select the tile.
+    /// @param set              Cascade-set index, selecting the atlas row band.
+    /// @param grid             Atlas tile grid the tile is placed in.
     /// @return The tile-remapped world → light-clip matrix.
-    [[nodiscard]] mat4 ComposeTileRemap(const mat4& cascadeViewProj, u32 cascade, u32 columns,
-                                        u32 rows);
+    [[nodiscard]] mat4 ComposeTileRemap(const mat4& cascadeViewProj, u32 cascade, u32 set,
+                                        const ShadowAtlasGrid& grid);
 }

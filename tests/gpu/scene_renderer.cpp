@@ -3255,17 +3255,20 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Transform>(floorEntity);
     scene->Add<MeshRenderer>(floorEntity).Mesh = assets.Adopt(floor);
 
-    // Fill the punctual shadow budget with MaxShadowedPunctual point lights crowded far
-    // off to -X, away from the receiver — they take slots 0..N-1.
+    // Fill the punctual shadow budget with MaxShadowedPunctual point lights that outrank the
+    // spot below on contribution: bright, and standing inside the caster bound so nothing
+    // attenuates them. Their range is short and they sit off to -X, so none of them reaches the
+    // sampled region — they take the slots without taking part in the picture.
     for (u32 i = 0; i < MaxShadowedPunctual; ++i)
     {
         const Entity filler = scene->CreateEntity();
-        scene->Add<Transform>(filler).Position = vec3(-20.0f - static_cast<f32>(i), 5.0f, 0.0f);
+        scene->Add<Transform>(filler).Position =
+            vec3(-5.5f + 0.5f * static_cast<f32>(i), 1.0f, 0.0f);
         scene->Add<Light>(filler) = Light{
             .Type = LightType::Point,
-            .Color = vec3(0.0f),
-            .Intensity = 0.0f,
-            .Range = 1.0f,
+            .Color = vec3(1.0f),
+            .Intensity = 40.0f,
+            .Range = 2.0f,
         };
     }
 

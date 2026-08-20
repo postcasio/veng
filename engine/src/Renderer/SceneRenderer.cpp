@@ -86,35 +86,42 @@ namespace Veng::Renderer
 {
     namespace
     {
-        // Packs the set-1 ShadowConstants block from the fitted cascades: the tile-remapped
+        // Packs the set-1 ShadowConstants block from each fitted cascade set: the tile-remapped
         // cascade view-projections, splits, texel sizes, depth ranges, and the ShadowParams
         // (inverse resolution, blend band, cascade count, enabled flag). shadowEnabled is set
-        // only when the shadow pass is wired and a directional light exists this frame; otherwise
-        // the lighting pass reads full visibility.
+        // only when the shadow pass is wired and some light took a cascade set this frame;
+        // otherwise the lighting pass reads full visibility. Every set splits the same camera
+        // frustum, so the cascade count and the blend band are shared across them.
         ShadowConstantsBlock PackShadowConstants(const SceneRendererSettings& settings,
-                                                 const CascadeData& cascades,
+                                                 const std::span<const CascadeData> sets,
                                                  const bool shadowEnabled)
         {
-            const ShadowAtlasGrid grid = ComputeShadowAtlasGrid(settings.CascadeCount);
+            const ShadowAtlasGrid grid =
+                ComputeShadowAtlasGrid(settings.CascadeCount, MaxCascadeSets);
 
             ShadowConstantsBlock shadowConstants{};
-            for (u32 k = 0; k < cascades.Count && k < MaxCascades; ++k)
+            for (u32 s = 0; s < sets.size() && s < MaxCascadeSets; ++s)
             {
-                shadowConstants.CascadeViewProj[k] =
-                    ComposeTileRemap(cascades.ViewProj[k], k, grid.Columns, grid.Rows);
-                shadowConstants.CascadeSplits[k] = cascades.SplitFar[k];
-                shadowConstants.CascadeTexelSize[k] = cascades.TexelWorldSize[k];
-                shadowConstants.CascadeDepthRange[k] = cascades.DepthRange[k];
+                const CascadeData& cascades = sets[s];
+                CascadeSetBlock& block = shadowConstants.Sets[s];
+                for (u32 k = 0; k < cascades.Count && k < MaxCascades; ++k)
+                {
+                    block.ViewProj[k] = ComposeTileRemap(cascades.ViewProj[k], k, s, grid);
+                    block.Splits[k] = cascades.SplitFar[k];
+                    block.TexelSize[k] = cascades.TexelWorldSize[k];
+                    block.DepthRange[k] = cascades.DepthRange[k];
+                }
             }
             // Blend band: a view-space distance before each cascade's far split where the
             // lighting pass cross-fades into the next cascade. Sized from the first (smallest)
             // cascade so the band never exceeds any cascade's own range.
-            const f32 firstSplit = cascades.Count > 0 ? cascades.SplitFar[0] : 0.0f;
+            const u32 count = sets.empty() ? 0 : sets[0].Count;
+            const f32 firstSplit = count > 0 ? sets[0].SplitFar[0] : 0.0f;
             const f32 blendBand = firstSplit * 0.1f;
 
             shadowConstants.ShadowParams =
                 vec4(1.0f / static_cast<f32>(settings.ShadowResolution), blendBand,
-                     static_cast<f32>(cascades.Count), shadowEnabled ? 1.0f : 0.0f);
+                     static_cast<f32>(count), shadowEnabled ? 1.0f : 0.0f);
             return shadowConstants;
         }
     }
@@ -975,6 +982,19 @@ namespace Veng::Renderer
         }
     }
 
+    void SceneRenderer::ReportDeniedCascades(const u32 denied)
+    {
+        if (denied == 0 || m_CascadeBudgetWarned)
+        {
+            return;
+        }
+        Log::Warn("SceneRenderer: the directional shadow atlas carries {} cascade sets and the "
+                  "scene asked for more; {} shadow-casting directional light(s) shade unshadowed. "
+                  "Later frames drop them without warning again.",
+                  MaxCascadeSets, denied);
+        m_CascadeBudgetWarned = true;
+    }
+
     void SceneRenderer::PrepareDraws(const SceneView& view, const u32 viewConstantsIndex)
     {
         GBufferDrawPlan& plan = m_Internal->Plan;
@@ -1197,14 +1217,16 @@ namespace Veng::Renderer
         const AABB sceneBounds = m_Broadphase.GetSceneBounds();
         const AABB casterBounds = m_Broadphase.GetCasterBounds();
 
-        // Pack every Light entity into the GPU light layout: directional selection,
-        // punctual shadow-slot assignment, and the std430 per-light records. The first
-        // MaxShadowedPunctual point/spot lights are assigned a shadow slot (Cone.z carries
-        // it, -1 = unshadowed); their records ride set-1 binding 3. The caster bound fits each
-        // spot/area light's shadow frustum to the geometry it must shadow.
+        // Pack every Light entity into the GPU light layout: cascade-set and punctual
+        // shadow-slot assignment by estimated contribution, and the std430 per-light records.
+        // A slotted point/spot light carries its slot in Cone.z (-1 = unshadowed) and its
+        // record rides set-1 binding 3. The caster bound both fits each spot/area light's
+        // shadow frustum to the geometry it must shadow and supplies the point the
+        // contribution estimate is evaluated at.
         const PackedSceneLights packed =
             PackSceneLights(view.World, m_Settings.PunctualShadows,
                             m_Settings.PunctualShadowResolution, casterBounds);
+        ReportDeniedCascades(packed.DeniedDirectionalCount);
 
         // Mirror filled records into the GPU block (unused slots stay zeroed → type 0 = "no map").
         // AtlasParams.x = 1/tileRes, used by the lighting pass for inset clamping and PCF.
@@ -1220,22 +1242,34 @@ namespace Veng::Renderer
         // casters); the cascade XY extent comes from the camera frustum slice. With depth
         // clamp the render near stays tight and the shadow pipelines pancake nearer casters
         // onto it — PancakeNear must match the pipelines' DepthClampEnable.
-        const CascadeData cascades =
-            ComputeCascades(view.Camera, packed.DirectionalTravel, casterBounds,
-                            {.Count = m_Settings.CascadeCount,
-                             .Lambda = m_Settings.CascadeSplitLambda,
-                             .Resolution = m_Settings.ShadowResolution,
-                             .MaxDistance = m_Settings.MaxShadowDistance,
-                             .PancakeNear = m_Context.IsDepthClampSupported()});
+        // One fit per granted cascade set; a frame that granted none still fits set 0 (straight
+        // down) so the shadow pass and the constants block always have a valid matrix, which the
+        // ShadowParams enable flag then leaves unsampled.
+        const u32 cascadeSetCount = std::max(packed.CascadeSetCount, 1u);
+        std::array<CascadeData, MaxCascadeSets> cascadeSets{};
+        for (u32 s = 0; s < cascadeSetCount; ++s)
+        {
+            cascadeSets[s] = ComputeCascades(view.Camera, packed.CascadeTravel[s], casterBounds,
+                                             {.Count = m_Settings.CascadeCount,
+                                              .Lambda = m_Settings.CascadeSplitLambda,
+                                              .Resolution = m_Settings.ShadowResolution,
+                                              .MaxDistance = m_Settings.MaxShadowDistance,
+                                              .PancakeNear = m_Context.IsDepthClampSupported()});
+        }
+        const std::span<const CascadeData> cascades(cascadeSets.data(), cascadeSetCount);
 
         // Thread the raw (non-tile-remapped) cascade matrices to the shadow pass,
         // which renders each cascade with its viewport placing it in the atlas tile.
         SceneView resolvedView = view;
         resolvedView.RenderExtent = validExtent;
         resolvedView.LightCount = packed.LightCount;
-        resolvedView.CascadeViewProj = cascades.ViewProj;
-        resolvedView.CascadeCullViewProj = cascades.CullViewProj;
-        resolvedView.CascadeCount = cascades.Count;
+        for (u32 s = 0; s < cascadeSetCount; ++s)
+        {
+            resolvedView.CascadeViewProj[s] = cascadeSets[s].ViewProj;
+            resolvedView.CascadeCullViewProj[s] = cascadeSets[s].CullViewProj;
+        }
+        resolvedView.CascadeCount = cascadeSets[0].Count;
+        resolvedView.CascadeSetCount = cascadeSetCount;
         resolvedView.PunctualShadows = packed.PunctualRecords;
         resolvedView.PunctualShadowCount = packed.PunctualCount;
         resolvedView.PunctualShadowRawViewProj = packed.PunctualRawViewProj;
@@ -1346,11 +1380,11 @@ namespace Veng::Renderer
         const f32 sceneDiagonal = sceneBounds.IsEmpty() ? 0.0f : glm::length(sceneBounds.Size());
         m_GpuCull->EvaluateHistory(currentHiZState, sceneDiagonal);
 
-        // Pack set-1 ShadowConstants: tile-remapped cascade view-projs, splits, and
-        // params. Enabled only when the shadow pass is wired AND a directional light
-        // exists this frame; otherwise the lighting pass reads full visibility.
+        // Pack set-1 ShadowConstants: each set's tile-remapped cascade view-projs, splits, and
+        // the shared params. Enabled only when the shadow pass is wired AND some light took a
+        // cascade set this frame; otherwise the lighting pass reads full visibility.
         const bool shadowEnabled =
-            m_Topology->ShadowActive && m_ShadowPass && packed.HaveDirectional;
+            m_Topology->ShadowActive && m_ShadowPass && packed.CascadeSetCount > 0;
         const ShadowConstantsBlock shadowConstants =
             PackShadowConstants(m_Settings, cascades, shadowEnabled);
 

@@ -44,8 +44,9 @@ namespace Veng::Renderer
 
         /// @brief The largest directional ShadowResolution the device supports.
         ///
-        /// The directional atlas is widest at the largest cascade grid, so a tile larger than the
-        /// device image limit divided by that grid's larger dimension would overflow it.
+        /// The directional atlas is largest at the full cascade grid times the full cascade-set
+        /// budget, so a tile larger than the device image limit divided by that grid's larger
+        /// dimension would overflow it.
         /// @param context The render context whose image limit bounds the atlas.
         /// @return The maximum valid ShadowResolution, in texels.
         [[nodiscard]] static u32 GetMaxShadowResolution(Context& context);

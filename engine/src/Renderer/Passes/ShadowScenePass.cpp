@@ -65,12 +65,9 @@ namespace Veng::Renderer
 
     ShadowScenePass::ShadowScenePass(Context& context, AssetManager& assets, u32 resolution,
                                      u32 cascadeCount)
-        : m_Context(context), m_Resolution(resolution), m_CascadeCount(cascadeCount)
+        : m_Context(context), m_Resolution(resolution), m_CascadeCount(cascadeCount),
+          m_Grid(ComputeShadowAtlasGrid(cascadeCount, MaxCascadeSets))
     {
-        const ShadowAtlasGrid grid = ComputeShadowAtlasGrid(cascadeCount);
-        m_TileColumns = grid.Columns;
-        m_TileRows = grid.Rows;
-
         const AssetResult<AssetHandle<Veng::Shader>> vs =
             assets.LoadSync<Veng::Shader>(ShadowDepthVertId);
         VE_ASSERT(vs.has_value(), "ShadowScenePass: depth vertex shader load failed: {}",
@@ -187,7 +184,8 @@ namespace Veng::Renderer
 
     void ShadowScenePass::CreateAtlas()
     {
-        // Recreate the depth atlas at the current resolution × tile grid.
+        // Recreate the depth atlas at the current resolution × tile grid, which always spans
+        // the full cascade-set budget so a second directional needs no reallocation.
         const uvec2 atlasExtent = GetAtlasExtent();
 
         m_ShadowImage = Image::Create(m_Context, {
@@ -210,7 +208,7 @@ namespace Veng::Renderer
     void ShadowScenePass::Declare(RenderGraph& graph, const PassIO& io)
     {
         const u32 resolution = m_Resolution;
-        const u32 columns = m_TileColumns;
+        const ShadowAtlasGrid grid = m_Grid;
         const u32 cascadeCount = m_CascadeCount;
 
         graph.AddPass("Shadow Depth")
@@ -219,42 +217,49 @@ namespace Veng::Renderer
                 .Load = LoadOp::Clear,
                 .Store = StoreOp::Store,
                 // The whole atlas clears to depth = 0 (reverse-Z far); an unused tile (the
-                // fourth cell at three cascades) keeps this clear and is never selected.
+                // fourth cell at three cascades, or a whole band whose set no light took)
+                // keeps this clear and is never selected.
                 .Clear = ClearDepth{.Depth = 0.0f, .Stencil = 0},
             })
             .Execute(
-                [this, resolution, columns, cascadeCount](PassContext& inner)
+                [this, resolution, grid, cascadeCount](PassContext& inner)
                 {
                     const ScenePassContext ctx = Wrap(inner);
                     CommandBuffer& cmd = ctx.Cmd();
                     const SceneView& view = ctx.View();
                     const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
-                    // Render each cascade into its tile: set the viewport + scissor to the
-                    // tile sub-rect, push cascade k's raw light-space matrix, and draw.
+                    // Render each set's cascades into their tiles: set the viewport + scissor
+                    // to the tile sub-rect, push that cascade's raw light-space matrix, and
+                    // draw. Sets stack as row bands, so a set costs a full re-traversal of the
+                    // casters — which is what bounds MaxCascadeSets.
                     const u32 count =
                         cascadeCount < view.CascadeCount ? cascadeCount : view.CascadeCount;
+                    const u32 sets =
+                        grid.Sets < view.CascadeSetCount ? grid.Sets : view.CascadeSetCount;
 
                     const std::span<const SubMeshCandidate> candidates =
                         view.Broadphase->GetSubMeshCandidates();
 
-                    for (u32 k = 0; k < count; ++k)
+                    for (u32 tile = 0; tile < sets * count; ++tile)
                     {
+                        const u32 set = tile / count;
+                        const u32 k = tile % count;
                         const ivec2 tileOffset{
-                            static_cast<i32>((k % columns) * resolution),
-                            static_cast<i32>((k / columns) * resolution),
+                            static_cast<i32>((k % grid.Columns) * resolution),
+                            static_cast<i32>((set * grid.Rows + k / grid.Columns) * resolution),
                         };
                         cmd.SetViewport(tileOffset, {resolution, resolution});
                         cmd.SetScissor(tileOffset, {resolution, resolution});
 
-                        const mat4 lightViewProj = view.CascadeViewProj[k];
+                        const mat4 lightViewProj = view.CascadeViewProj[set][k];
 
                         // Cull against the near-extended cull matrix, not the render matrix:
                         // an off-screen caster between the light and the slice must survive
                         // the cull so the depth-clamped rasterization can pancake it onto the
                         // render matrix's tight near plane.
                         const Frustum cascadeFrustum =
-                            Frustum::FromViewProjection(view.CascadeCullViewProj[k]);
+                            Frustum::FromViewProjection(view.CascadeCullViewProj[set][k]);
 
                         m_CullScratch.clear();
                         if (m_FrustumCull)

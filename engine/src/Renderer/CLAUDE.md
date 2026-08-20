@@ -233,12 +233,33 @@ each frame, so it needs no cross-frame ring or semaphore.
 
 ### Shadows: directional cascades + the punctual atlas
 
-The directional light is shadowed by **cascaded shadow maps**, and a **bounded set of punctual
+Directional lights are shadowed by **cascaded shadow maps**, and a **bounded set of punctual
 lights** (`MaxShadowedPunctual`) by a **shared punctual shadow atlas**. The directional cascades
 split the camera frustum into depth slices, each cascade fit (bounding-sphere + texel-snapped) to
 its slice and rendered into a depth **atlas** in **one** pass (per-cascade viewports); the
 lighting pass selects the cascade by the fragment's view-space depth, remaps to the atlas tile,
 and **`SampleCmp`s** it through a **hardware comparison sampler** with a boundary cross-fade.
+
+**The cascade atlas carries `MaxCascadeSets` sets, not one.** A set is one near-parallel source's
+cascades, fit to that source's direction; sets stack as further **row bands** of the same atlas, so
+a scene lit by two comparable distant suns shadows from **both** rather than from whichever the
+world iterated first. The atlas is always sized for the full set budget, so a second source needs
+no reallocation and a scene with one leaves the upper band at its clear. Two is the number because
+a set is the atlas's expensive unit — at the default 1024² tile and four cascades one set is a
+2048² D32 atlas (16 MiB) and each further set costs another 16 MiB *and* a full re-traversal of
+every caster through four more cascade viewports, where a punctual tile costs a sixth of the
+memory and one traversal.
+
+**Both budgets are spent by estimated contribution, never by arrival.** `PackSceneLights` scores
+every shadow-casting light by the radiance the lighting pass would apply at the point of the caster
+bound nearest it — a directional's unattenuated radiance, or a punctual light's radiance under the
+shader's own range falloff and inverse square, clamped at its value one world unit out — then walks
+the ranking from the top, handing out cascade sets and atlas slots. **Equal scores keep scene
+iteration order** (a stable sort), which makes the ranking a total order that does not move between
+frames, so two equal lights cannot trade a shadow. A directional the cascade budget cannot seat is
+packed with the `CascadeDenied` flag, counted in `DeniedDirectionalCount`, and warned about once per
+renderer: it shades unshadowed and says so, rather than borrowing a cascade fit to another light's
+direction. A near-parallel *area* light denied a set falls back to its own perspective tile.
 Cascade fit is pure, device-free math (`Renderer::ComputeCascades`,
 `Veng/Renderer/ShadowCascades.h`) over the camera, light direction, and the world-space scene
 bound (the bound only extends each cascade's near plane toward the light to catch off-screen
@@ -254,11 +275,11 @@ against **its own** frustum — the camera frustum for the g-buffer, each cascad
 each spot's frustum, each cube face's frustum.
 
 **Both arms are opt-out per light, through `Light::CastsShadows`.** It defaults true, so a light
-shadows unless it says otherwise; cleared, the light is passed over for an atlas slot *before* the
-slot counter moves and is not eligible to drive the cascade as a near-parallel area light. The
-reason it exists is that the slots are scarce and assigned in iteration order: only
-`MaxShadowedPunctual` lights get one and the rest silently get none, so a light that does not need
-a shadow and cannot say so takes the arm from one that does. The case it is for is a **fill
+shadows unless it says otherwise; cleared, the light scores zero and is passed over for every arm.
+The reason it exists is that the slots are scarce: only `MaxShadowedPunctual` lights get one and
+the rest silently get none, and the contribution ranking does not know intent — a bright light that
+wants no silhouette still outranks a dimmer one that does, so a light that does not need a shadow
+and cannot say so takes the arm from one that does. The case it is for is a **fill
 light** — one standing in for the emission of a surface that is already drawn, or filling a volume
 with no occluder worth resolving — which wants its contribution and not its silhouette. Such a
 light is also the worst case for the arm it would take: a perspective tile fit to the whole scene
@@ -296,15 +317,17 @@ viewport running no picking pass.
 
 **Set 1 is a general shadow system**, not just the directional one: the directional cascade atlas,
 the punctual shadow atlas, a **shared** immutable comparison sampler (hardware `SampleCmp`), the
-per-frame `ShadowConstants` block (the directional cascade matrices + splits + params) bound as a
-**dynamic uniform**, and the `PunctualShadowBlock` (the per-light shadow records — view-proj(s),
+per-frame `ShadowConstants` block (per cascade set: the matrices, splits, texel sizes and depth
+ranges; plus the shared params) bound as a **dynamic uniform**, and the `PunctualShadowBlock` (the per-light shadow records — view-proj(s),
 tile rects, type) ringed beside it. All of set 1 is held **off the set-0 bindless registry**,
 where a comparison sampler mistranslates inside the Metal argument buffer on MoltenVK and a closed
 producer→consumer resource needs no global registration. The set-0 view-constants block stays
 trimmed to material-facing camera/view state. A `GpuLight`'s shadow **slot** (an index into the
-punctual record array, or `-1` for unshadowed) rides the `Cone.zw` padding, keeping `LightStride`
-fixed. `CascadeCount`, `CascadeSplitLambda`, and `ShadowResolution` (default 1024) are the
-directional CSM knobs; `PunctualShadows` (the on/off toggle) and `PunctualShadowResolution` (the
+punctual record array, or `-1` for unshadowed) rides `Cone.z` and its **flags word** — the
+two-sided bit, the area-light cascade arm, the cascade-set index and the cascade denial — rides
+`Cone.w`, keeping `LightStride` fixed; the bit meanings are `Renderer::LightFlags` and its shader
+mirror `Veng/light_flags.slang`. `CascadeCount`, `CascadeSplitLambda`, and `ShadowResolution`
+(default 1024) are the directional CSM knobs; `PunctualShadows` (the on/off toggle) and `PunctualShadowResolution` (the
 per-tile edge length) are the punctual knobs; `DebugView::Cascades` tints each fragment by the
 cascade it selects and `DebugView::PunctualShadows` blits the punctual atlas. **A Translucent submesh casts no shadow.** Both shadow passes gate each candidate on
 `Renderer::CastsShadow` (`src/Renderer/DrawGather.h`): a resident material that is not
@@ -535,8 +558,8 @@ and `ViewportCompositor::RenderRegistered` reserves one slot per registered
 viewport before driving the captures at all — so **captures give way before viewports do**, a missing
 reflection over a stale window. An over-budget capture set is driven **round-robin** across frames
 from a retained cursor (`CaptureRotation.h`, the device-free arithmetic), which costs each map refresh
-latency instead of starving whichever captures registered last. Its stride is **640 bytes**. The shadow system's own state — the
-cascade matrices, splits, and params — rides the **set-1** `ShadowConstants` block instead, so set
+latency instead of starving whichever captures registered last. Its stride is **640 bytes**. The shadow system's own state — each cascade
+set's matrices and splits, and the shared params — rides the **set-1** `ShadowConstants` block instead, so set
 0 stays a lean, material-facing view block (shared by materials, lighting, and SSAO). Push
 constants in the deferred path carry only small per-invocation bindless handle indices and the
 live light count; the typed lights ride a separate ring-buffered light buffer the lighting pass
@@ -567,8 +590,8 @@ world-space `AABB` + resident mesh) and rebuilds the tree **only on a frame the 
 version moved** (or a still-loading mesh became resident) — a static scene rebuilds the tree not
 at all and queries a stable one. The gathered list rides `std::span<const VisibleMesh> Visible` on
 `SceneView`; `SceneBroadphase::Cull` descends the tree once per view — the g-buffer geometry pass
-with the **camera** frustum, the cascaded shadow pass once per cascade with **each cascade's**
-light frustum, each punctual light's view with its own — so the many-view shadow workload queries
+with the **camera** frustum, the cascaded shadow pass once per cascade of every cascade set with
+**each cascade's** light frustum, each punctual light's view with its own — so the many-view shadow workload queries
 **one tree, many times** rather than re-scanning the list per view. A query returns exactly the
 linear scan's per-submesh survivor set (a node wholly outside a frustum rejects its subtree; a
 leaf is accepted on its tight box), so the cull is conservative (an extra draw, never a dropped

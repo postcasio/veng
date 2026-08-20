@@ -41,20 +41,32 @@ namespace Veng::Renderer
     static_assert(sizeof(ViewConstantsBlock) <= BindlessRegistry::ViewConstantsStride,
                   "ViewConstantsBlock must fit one ring-buffered view-constants region");
 
-    // The directional-shadow constants (set 1 binding 2, ring-buffered dynamic
-    // uniform). std140: CascadeViewProj is float4x4[MaxCascades] (16-byte aligned
-    // elements) and the four splits ride one vec4 (avoiding per-element std140 padding).
-    struct ShadowConstantsBlock
+    // One cascade set: one near-parallel light's cascades, fit to that light's direction.
+    // std140: ViewProj is float4x4[MaxCascades] (16-byte aligned elements) and each per-cascade
+    // scalar array rides one vec4 (avoiding per-element std140 padding). 304 bytes, a multiple
+    // of 16, so an array of these is contiguous with no inter-element padding.
+    struct CascadeSetBlock
     {
-        mat4 CascadeViewProj[MaxCascades]; // 256 — tile-remap baked in (for the sample)
-        vec4 CascadeSplits;                // 16  — per-cascade view-space far distance
-        vec4 ShadowParams;                 // 16 — x 1/tileRes, y blend-band, z count, w enabled
-        vec4 CascadeTexelSize;             // 16 — per-cascade world units per shadow texel
-        vec4 CascadeDepthRange; // 16 — per-cascade render ortho depth extent, world units
+        mat4 ViewProj[MaxCascades]; // 256 — tile-remap baked in (for the sample)
+        vec4 Splits;                // 16  — per-cascade view-space far distance
+        vec4 TexelSize;             // 16  — per-cascade world units per shadow texel
+        vec4 DepthRange;            // 16  — per-cascade render ortho depth extent, world units
     };
 
-    static_assert(sizeof(ShadowConstantsBlock) == 320,
-                  "ShadowConstantsBlock must be the std140-packed 320-byte block");
+    static_assert(sizeof(CascadeSetBlock) == 304,
+                  "CascadeSetBlock must be the std140-packed 304-byte set record");
+
+    // The directional-shadow constants (set 1 binding 2, ring-buffered dynamic uniform).
+    // Mirrors shadow.slang's ShadowConstants byte-for-byte.
+    struct ShadowConstantsBlock
+    {
+        CascadeSetBlock Sets[MaxCascadeSets];
+        vec4 ShadowParams; // x 1/tileRes, y blend-band, z cascade count, w enabled
+    };
+
+    static_assert(sizeof(ShadowConstantsBlock) == MaxCascadeSets * 304 + 16,
+                  "ShadowConstantsBlock must be the std140-packed cascade-set array plus the "
+                  "trailing ShadowParams vec4");
 
     // Set 1 binding 3, ring-buffered dynamic uniform. Separate from ShadowConstantsBlock
     // so the directional block's layout is unchanged when punctual records are added.

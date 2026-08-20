@@ -23,6 +23,7 @@
 #include "shadow.slang"
 #include "Veng/sh.slang"
 #include "Veng/surface_flags.slang"
+#include "Veng/light_flags.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
@@ -61,7 +62,7 @@ struct GpuLight
     float4 PositionRange;   // xyz world position, w range
     float4 DirectionType;   // xyz travel direction, w LightType
     float4 ColorIntensity;  // rgb linear color, a intensity
-    float4 Cone;            // x cos(inner), y cos(outer), z shadow slot, w flags (bit0 two-sided)
+    float4 Cone;            // x cos(inner), y cos(outer), z punctual shadow slot, w LightFlag bits
     float4 Area;            // x sphere radius, y poly vertex base, z poly vertex count, w area-shadow slot
     float4 AreaNormal;      // xyz world area normal (Rect/Polygon), w pad
 };
@@ -327,7 +328,7 @@ float3 EvaluateAreaLight(GpuLight light, float3 N, float3 V, float3 P, float3 al
     float3x3 ident = float3x3(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
 
     float type = light.DirectionType.w;
-    bool twoSided = light.Cone.w > 0.5;
+    bool twoSided = LightIsTwoSided(light.Cone.w);
 
     float specSum;
     float diffSum;
@@ -457,7 +458,7 @@ float4 fsMain(VSOutput input) : SV_Target
             float range = max(light.PositionRange.w, 1e-4);
             float rangeFactor = saturate(1.0 - pow(dist / range, 4.0));
             rangeFactor *= rangeFactor;
-            // A near-parallel area light (Cone.w bit 1) is shadowed by the cascade atlas — parallel
+            // A near-parallel area light is shadowed by the cascade set fit to it — parallel
             // projection, fit to the camera view — using its travel direction, not its position.
             // Any other area light samples its punctual perspective tile.
             float areaVisibility;
@@ -465,10 +466,11 @@ float4 fsMain(VSOutput input) : SV_Target
             {
                 areaVisibility = 1.0;
             }
-            else if ((int(light.Cone.w) & 2) != 0)
+            else if (LightIsAreaCascadeShadowed(light.Cone.w))
             {
                 float3 sunL = normalize(-light.DirectionType.xyz);
-                areaVisibility = DirectionalShadowVisibility(worldPos, N, sunL, viewDepth);
+                areaVisibility = DirectionalShadowVisibility(worldPos, N, sunL, viewDepth,
+                                                            LightCascadeSet(light.Cone.w));
             }
             else
             {
@@ -516,14 +518,19 @@ float4 fsMain(VSOutput input) : SV_Target
             }
         }
 
-        // The directional light is shadowed by the cascaded shadow atlas; a point or
-        // spot light is shadowed by its punctual atlas tile, gated by its shadow slot
-        // (Cone.z, -1 = unshadowed). Both sample through hardware SampleCmp.
+        // A directional light is shadowed by the cascade set fit to its direction, unless the
+        // atlas had none left for it (the denied flag), in which case it shades unshadowed
+        // rather than reading a cascade fit to some other light. A point or spot light is
+        // shadowed by its punctual atlas tile, gated by its shadow slot (Cone.z, -1 =
+        // unshadowed). Both sample through hardware SampleCmp.
         float visibility;
         if (declinesShadowMaps)
             visibility = 1.0;
         else if (isDirectional)
-            visibility = DirectionalShadowVisibility(worldPos, N, L, viewDepth);
+            visibility = LightIsCascadeDenied(light.Cone.w)
+                ? 1.0
+                : DirectionalShadowVisibility(worldPos, N, L, viewDepth,
+                                              LightCascadeSet(light.Cone.w));
         else
         {
             int slot = int(light.Cone.z);

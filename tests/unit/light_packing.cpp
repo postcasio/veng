@@ -1,9 +1,9 @@
 // Light-packing unit cases. PackSceneLights is the device-free CPU core of
 // SceneRenderer's per-frame lighting setup (Execute calls it, then uploads the
-// result): directional selection, punctual shadow-slot assignment, cone-cosine
-// packing, and the std430 light layout. Pure scene-query + glm math — no Context,
-// no driver — so the branchy slot/cap/record logic a golden image only exercises
-// incidentally is testable here.
+// result): cascade-set and punctual shadow-slot assignment by estimated contribution,
+// cone-cosine packing, and the std430 light layout. Pure scene-query + glm math — no
+// Context, no driver — so the branchy slot/cap/record logic a golden image only
+// exercises incidentally is testable here.
 
 #include <doctest/doctest.h>
 
@@ -28,6 +28,23 @@ namespace
         types.Register<Light>("Light");
     }
 
+    // The flags word's cascade-set index, decoded exactly as the lighting shader decodes it.
+    u32 CascadeSetOf(const PackedLight& light)
+    {
+        return (static_cast<u32>(light.Cone.w) & LightFlags::CascadeSetMask) >>
+               LightFlags::CascadeSetShift;
+    }
+
+    bool IsCascadeDenied(const PackedLight& light)
+    {
+        return (static_cast<u32>(light.Cone.w) & LightFlags::CascadeDenied) != 0;
+    }
+
+    bool IsAreaCascadeShadowed(const PackedLight& light)
+    {
+        return (static_cast<u32>(light.Cone.w) & LightFlags::AreaCascadeShadowed) != 0;
+    }
+
     // Adds a light at a world position via its Transform (the packer reads the light's
     // position from the entity's world matrix, never the component).
     Entity AddLight(Scene& scene, const Light& light, const vec3& position = vec3(0.0f))
@@ -49,13 +66,14 @@ TEST_CASE("PackSceneLights: an empty scene packs nothing and reports no directio
 
     CHECK(packed.LightCount == 0);
     CHECK(packed.PunctualCount == 0);
-    CHECK_FALSE(packed.HaveDirectional);
+    CHECK(packed.CascadeSetCount == 0);
+    CHECK(packed.DeniedDirectionalCount == 0);
     // The default travel is straight down, so a scene with no light still drives a
-    // sensible directional matrix.
-    CHECK(packed.DirectionalTravel == vec3{0.0f, -1.0f, 0.0f});
+    // sensible cascade matrix.
+    CHECK(packed.CascadeTravel[0] == vec3{0.0f, -1.0f, 0.0f});
 }
 
-TEST_CASE("PackSceneLights: a directional light is selected and packed, never shadow-slotted")
+TEST_CASE("PackSceneLights: a lone directional packs exactly as it did before cascade sets")
 {
     TypeRegistry types;
     RegisterBuiltins(types);
@@ -69,32 +87,187 @@ TEST_CASE("PackSceneLights: a directional light is selected and packed, never sh
     const PackedSceneLights packed = PackSceneLights(*scene, true, 1024);
 
     REQUIRE(packed.LightCount == 1);
-    CHECK(packed.HaveDirectional);
-    CHECK(packed.DirectionalTravel == vec3{0.3f, -0.8f, 0.5f});
+    CHECK(packed.CascadeSetCount == 1);
+    CHECK(packed.CascadeTravel[0] == vec3{0.3f, -0.8f, 0.5f});
 
-    // DirectionType.w carries the LightType (0 == Directional); ColorIntensity.a the intensity.
-    CHECK(packed.Lights[0].DirectionType.w == doctest::Approx(0.0f));
-    CHECK(packed.Lights[0].ColorIntensity.a == doctest::Approx(2.0f));
-    // A directional light is never assigned a punctual shadow slot (Cone.z stays -1).
-    CHECK(packed.Lights[0].Cone.z == doctest::Approx(-1.0f));
+    // The overwhelmingly common scene — one shadow-casting directional — packs the identical
+    // GpuLight it always has: set 0 is the flags word's zero, and the punctual slot stays -1
+    // because a directional never takes an atlas tile. The ranking changed which light gets an
+    // arm, not what a light looks like once it has one.
+    const PackedLight& light = packed.Lights[0];
+    CHECK(light.DirectionType.w == doctest::Approx(0.0f)); // LightType::Directional
+    CHECK(light.ColorIntensity.a == doctest::Approx(2.0f));
+    CHECK(light.Cone.z == doctest::Approx(-1.0f));
+    CHECK(light.Cone.w == doctest::Approx(0.0f));
+    CHECK(light.Area.w == doctest::Approx(-1.0f));
+    CHECK(light.AreaNormal.w == doctest::Approx(0.0f));
     CHECK(packed.PunctualCount == 0);
+    CHECK(packed.DeniedDirectionalCount == 0);
 }
 
-TEST_CASE("PackSceneLights: only the first directional drives the directional travel")
+TEST_CASE("PackSceneLights: two directionals each take a cascade set of their own")
 {
     TypeRegistry types;
     RegisterBuiltins(types);
     const Unique<Scene> scene = Scene::Create(types);
 
-    AddLight(*scene, Light{.Type = LightType::Directional, .Direction = vec3(1.0f, 0.0f, 0.0f)});
-    AddLight(*scene, Light{.Type = LightType::Directional, .Direction = vec3(0.0f, 0.0f, 1.0f)});
+    AddLight(*scene, Light{.Type = LightType::Directional,
+                           .Direction = vec3(1.0f, 0.0f, 0.0f),
+                           .Intensity = 3.0f});
+    AddLight(*scene, Light{.Type = LightType::Directional,
+                           .Direction = vec3(0.0f, 0.0f, 1.0f),
+                           .Intensity = 1.0f});
 
     const PackedSceneLights packed = PackSceneLights(*scene, true, 1024);
 
     REQUIRE(packed.LightCount == 2);
-    CHECK(packed.HaveDirectional);
-    // Iteration is dense insertion order, so the first directional wins.
-    CHECK(packed.DirectionalTravel == vec3{1.0f, 0.0f, 0.0f});
+    REQUIRE(packed.CascadeSetCount == 2);
+    CHECK(packed.DeniedDirectionalCount == 0);
+    // Brightest first: each set is fit to its own light's direction, so a scene with two
+    // comparable suns shadows from both rather than from whichever arrived first.
+    CHECK(packed.CascadeTravel[0] == vec3{1.0f, 0.0f, 0.0f});
+    CHECK(packed.CascadeTravel[1] == vec3{0.0f, 0.0f, 1.0f});
+    // And the two lights name different sets, so neither samples the other's cascade.
+    CHECK(CascadeSetOf(packed.Lights[0]) == 0);
+    CHECK(CascadeSetOf(packed.Lights[1]) == 1);
+    CHECK_FALSE(IsCascadeDenied(packed.Lights[0]));
+    CHECK_FALSE(IsCascadeDenied(packed.Lights[1]));
+}
+
+TEST_CASE("PackSceneLights: entity order does not decide which light drives a cascade set")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+
+    // The same three directionals of clearly different brightness, submitted in three orders.
+    // Every order must produce the same set-0 and set-1 sources, and deny the same light.
+    const std::array<Light, 3> lights{
+        Light{.Type = LightType::Directional,
+              .Direction = vec3(1.0f, 0.0f, 0.0f),
+              .Intensity = 0.25f},
+        Light{
+            .Type = LightType::Directional, .Direction = vec3(0.0f, 1.0f, 0.0f), .Intensity = 8.0f},
+        Light{
+            .Type = LightType::Directional, .Direction = vec3(0.0f, 0.0f, 1.0f), .Intensity = 2.0f},
+    };
+    for (const std::array<u32, 3>& order :
+         {std::array<u32, 3>{0, 1, 2}, std::array<u32, 3>{2, 1, 0}, std::array<u32, 3>{1, 2, 0}})
+    {
+        const Unique<Scene> scene = Scene::Create(types);
+        for (const u32 i : order)
+        {
+            AddLight(*scene, lights[i]);
+        }
+
+        const PackedSceneLights packed = PackSceneLights(*scene, true, 1024);
+        REQUIRE(packed.CascadeSetCount == 2);
+        CHECK(packed.CascadeTravel[0] == vec3{0.0f, 1.0f, 0.0f}); // the 8.0 light
+        CHECK(packed.CascadeTravel[1] == vec3{0.0f, 0.0f, 1.0f}); // the 2.0 light
+        CHECK(packed.DeniedDirectionalCount == 1);
+    }
+}
+
+TEST_CASE("PackSceneLights: a directional past the cascade budget is denied, explicitly")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+    const Unique<Scene> scene = Scene::Create(types);
+
+    // One more shadow-casting directional than there are cascade sets, dimmest last.
+    for (u32 i = 0; i < MaxCascadeSets + 1; ++i)
+    {
+        AddLight(*scene, Light{.Type = LightType::Directional,
+                               .Direction = vec3(0.0f, -1.0f, 0.0f),
+                               .Intensity = 4.0f - static_cast<f32>(i)});
+    }
+
+    const PackedSceneLights packed = PackSceneLights(*scene, true, 1024);
+
+    REQUIRE(packed.LightCount == MaxCascadeSets + 1);
+    CHECK(packed.CascadeSetCount == MaxCascadeSets);
+    CHECK(packed.DeniedDirectionalCount == 1);
+    // The dimmest carries the denial in its own flags word — it shades unshadowed and says so,
+    // rather than reading set 0's cascade, which is fit to a different light's direction.
+    const PackedLight& denied = packed.Lights[MaxCascadeSets];
+    CHECK(IsCascadeDenied(denied));
+    CHECK(CascadeSetOf(denied) == 0);
+    CHECK(denied.Cone.z == doctest::Approx(-1.0f));
+    // A denied directional takes no punctual tile either: a perspective map is not a shadow a
+    // parallel source has.
+    CHECK(packed.PunctualCount == 0);
+}
+
+TEST_CASE("PackSceneLights: the punctual budget goes to the brightest lights, near or far")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+
+    // A dim light created first and a bright one created second, both well inside the bound.
+    const Unique<Scene> equidistant = Scene::Create(types);
+    AddLight(*equidistant, Light{.Type = LightType::Point, .Intensity = 0.1f, .Range = 100.0f},
+             vec3(-4.0f, 0.0f, 0.0f));
+    AddLight(*equidistant, Light{.Type = LightType::Point, .Intensity = 10.0f, .Range = 100.0f},
+             vec3(4.0f, 0.0f, 0.0f));
+    const AABB bounds{.Min = vec3(-5.0f), .Max = vec3(5.0f)};
+
+    // With one slot's worth of budget the bright one would win outright; with the full budget
+    // both are slotted, so the property under test is the *order* they were slotted in — slot 0
+    // is the brighter, whatever order the scene created them in.
+    const PackedSceneLights packed = PackSceneLights(*equidistant, true, 1024, bounds);
+    REQUIRE(packed.PunctualCount == 2);
+    CHECK(packed.Lights[1].Cone.z == doctest::Approx(0.0f)); // the bright one took slot 0
+    CHECK(packed.Lights[0].Cone.z == doctest::Approx(1.0f));
+
+    // And the order tracks distance, not just intensity: pull the bright light far outside the
+    // bound and its inverse-square falloff drops it below the dim one standing in the middle.
+    const Unique<Scene> separated = Scene::Create(types);
+    AddLight(*separated, Light{.Type = LightType::Point, .Intensity = 0.1f, .Range = 1000.0f},
+             vec3(0.0f, 0.0f, 0.0f));
+    AddLight(*separated, Light{.Type = LightType::Point, .Intensity = 10.0f, .Range = 1000.0f},
+             vec3(500.0f, 0.0f, 0.0f));
+    const PackedSceneLights far = PackSceneLights(*separated, true, 1024, bounds);
+    REQUIRE(far.PunctualCount == 2);
+    CHECK(far.Lights[0].Cone.z == doctest::Approx(0.0f)); // the near dim one took slot 0
+    CHECK(far.Lights[1].Cone.z == doctest::Approx(1.0f));
+}
+
+TEST_CASE("PackSceneLights: identically-contributing lights resolve the same way every pack")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+    const Unique<Scene> scene = Scene::Create(types);
+
+    // Two directionals with identical contribution, and one more punctual caster than there are
+    // slots, every one identical: nothing distinguishes them but scene iteration order, which is
+    // the documented tie-break. Repeated packs of an unchanged scene must agree exactly — the
+    // property that keeps a light from flickering between shadowed and unshadowed.
+    AddLight(*scene, Light{.Type = LightType::Directional, .Direction = vec3(1.0f, 0.0f, 0.0f)});
+    AddLight(*scene, Light{.Type = LightType::Directional, .Direction = vec3(0.0f, 0.0f, 1.0f)});
+    for (u32 i = 0; i < MaxShadowedPunctual + 1; ++i)
+    {
+        AddLight(*scene, Light{.Type = LightType::Point}, vec3(0.0f, 0.0f, 0.0f));
+    }
+
+    const PackedSceneLights first = PackSceneLights(*scene, true, 1024);
+    REQUIRE(first.CascadeSetCount == 2);
+    REQUIRE(first.PunctualCount == MaxShadowedPunctual);
+    // The tie-break is iteration order, so it is the *first* of each identical group that wins.
+    CHECK(first.CascadeTravel[0] == vec3{1.0f, 0.0f, 0.0f});
+    CHECK(first.Lights[first.LightCount - 1].Cone.z == doctest::Approx(-1.0f));
+
+    for (u32 repeat = 0; repeat < 3; ++repeat)
+    {
+        const PackedSceneLights again = PackSceneLights(*scene, true, 1024);
+        REQUIRE(again.LightCount == first.LightCount);
+        CHECK(again.CascadeTravel[0] == first.CascadeTravel[0]);
+        CHECK(again.CascadeTravel[1] == first.CascadeTravel[1]);
+        u32 differing = 0;
+        for (u32 i = 0; i < first.LightCount; ++i)
+        {
+            differing += again.Lights[i].Cone == first.Lights[i].Cone ? 0u : 1u;
+        }
+        CHECK(differing == 0);
+    }
 }
 
 TEST_CASE(
@@ -264,12 +437,13 @@ TEST_CASE("PackSceneLights: a far Sphere area light is cascade-routed, not punct
 
     const PackedSceneLights packed = PackSceneLights(*scene, true, 1024, farBounds);
     REQUIRE(packed.LightCount == 1);
-    // It takes no punctual slot and instead drives the directional cascade direction.
+    // It takes no punctual slot and instead drives a cascade set of its own.
     CHECK(packed.PunctualCount == 0);
-    CHECK(packed.HaveDirectional);
-    CHECK(packed.DirectionalTravel == vec3(0.0f, 0.0f, -1.0f));
-    // Cone.w bit 1 marks the light cascade-shadowed for the lighting pass.
-    CHECK((static_cast<int>(packed.Lights[0].Cone.w) & 2) != 0);
+    CHECK(packed.CascadeSetCount == 1);
+    CHECK(packed.CascadeTravel[0] == vec3(0.0f, 0.0f, -1.0f));
+    // The flags word marks the light cascade-shadowed for the lighting pass, since an area
+    // light's shadow arm cannot be read off its type.
+    CHECK(IsAreaCascadeShadowed(packed.Lights[0]));
 
     // The same light over a bound it sits close to (the scene subtends a wide angle) stays on its
     // perspective tile — the direction genuinely diverges, so cascades would be wrong.
@@ -281,7 +455,7 @@ TEST_CASE("PackSceneLights: a far Sphere area light is cascade-routed, not punct
     const AABB nearBounds{.Min = vec3(-60.0f, -60.0f, -80.0f), .Max = vec3(60.0f, 60.0f, -20.0f)};
     const PackedSceneLights nearPacked = PackSceneLights(*near, true, 1024, nearBounds);
     CHECK(nearPacked.PunctualCount == 1);
-    CHECK_FALSE(nearPacked.HaveDirectional);
+    CHECK(nearPacked.CascadeSetCount == 0);
 }
 
 TEST_CASE("PackSceneLights: the punctual depth bias is texel-scaled and clamped")
@@ -349,11 +523,11 @@ TEST_CASE("PackSceneLights: a non-casting area light is not selected to drive th
     const PackedSceneLights packed = PackSceneLights(*scene, true, 1024, farBounds);
 
     REQUIRE(packed.LightCount == 1);
-    // Neither arm claims it: no cascade selection, and no punctual tile either.
-    CHECK_FALSE(packed.HaveDirectional);
+    // Neither arm claims it: no cascade set, and no punctual tile either.
+    CHECK(packed.CascadeSetCount == 0);
     CHECK(packed.PunctualCount == 0);
     CHECK(packed.Lights[0].Cone.z < 0.0f);
-    // And the shader is told it is not cascade-shadowed (flag bit 1 clear), so it shades unshadowed
-    // rather than sampling a cascade fit to some other light's direction.
-    CHECK((static_cast<int>(packed.Lights[0].Cone.w) & 2) == 0);
+    // And the shader is told it is not cascade-shadowed, so it shades unshadowed rather than
+    // sampling a cascade fit to some other light's direction.
+    CHECK_FALSE(IsAreaCascadeShadowed(packed.Lights[0]));
 }

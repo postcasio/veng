@@ -368,13 +368,15 @@ namespace Veng::Renderer
         return data;
     }
 
-    mat4 ComposeTileRemap(const mat4& cascadeViewProj, const u32 cascade, const u32 columns,
-                          const u32 rows)
+    mat4 ComposeTileRemap(const mat4& cascadeViewProj, const u32 cascade, const u32 set,
+                          const ShadowAtlasGrid& grid)
     {
-        const f32 sx = 1.0f / static_cast<f32>(columns);
-        const f32 sy = 1.0f / static_cast<f32>(rows);
-        const f32 col = static_cast<f32>(cascade % columns);
-        const f32 row = static_cast<f32>(cascade / columns);
+        const u32 totalRows = grid.TotalRows();
+        const f32 sx = 1.0f / static_cast<f32>(grid.Columns);
+        const f32 sy = 1.0f / static_cast<f32>(totalRows);
+        const f32 col = static_cast<f32>(cascade % grid.Columns);
+        // Sets stack as row bands: set s starts at row s · Rows.
+        const f32 row = static_cast<f32>(set * grid.Rows + cascade / grid.Columns);
 
         // NDC.xy in [-1,1] → atlas UV in [0,1] → the tile's window, then back to
         // the [-1,1] clip the sample's NDC.xy * 0.5 + 0.5 will undo. Z is left

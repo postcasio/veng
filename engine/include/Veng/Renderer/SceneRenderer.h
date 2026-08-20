@@ -765,12 +765,23 @@ namespace Veng::Renderer
         /// @brief Set once the palette-budget clamp has logged, so the WARN fires only once.
         bool m_PaletteBudgetWarned = false;
 
+        /// @brief Set once the cascade-budget message has logged, so the WARN fires only once.
+        bool m_CascadeBudgetWarned = false;
+
         /// @brief Warns once per renderer, per budget, when the last gather clamped.
         ///
         /// Reads m_DrawBudgetStats after the gather phases have run. An overflowed scene is a
         /// steady state rather than a transient, so each budget's message fires once for the life
         /// of the renderer and the per-frame signal is the stats block itself.
         void ReportDrawBudgetDrops();
+
+        /// @brief Warns once per renderer when a shadow-casting directional was denied a cascade set.
+        ///
+        /// A scene lighting from more near-parallel sources than the atlas carries sets is a
+        /// steady state, so the message fires once for the life of the renderer; the per-frame
+        /// signal is PackedSceneLights::DeniedDirectionalCount and the light's own denied flag.
+        /// @param denied Shadow-casting directionals the last pack could not seat.
+        void ReportDeniedCascades(u32 denied);
 
         /// @brief Allocates the mode-independent per-draw buffers + their descriptor sets.
         ///

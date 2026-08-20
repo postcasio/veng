@@ -216,10 +216,11 @@ namespace Veng::Renderer
 
     u32 ShadowSystem::GetMaxShadowResolution(Context& context)
     {
-        // The directional atlas is widest at the largest cascade grid (2×2 at four
-        // cascades), so a tile larger than the device limit / 2 would overflow it.
-        const ShadowAtlasGrid grid = ComputeShadowAtlasGrid(MaxCascades);
-        const u32 factor = std::max(grid.Columns, grid.Rows);
+        // The directional atlas is largest at the full cascade grid (2×2 at four cascades)
+        // times the full cascade-set budget stacked as row bands, so a tile larger than the
+        // device limit divided by that grid's larger dimension would overflow it.
+        const ShadowAtlasGrid grid = ComputeShadowAtlasGrid(MaxCascades, MaxCascadeSets);
+        const u32 factor = std::max(grid.Columns, grid.TotalRows());
         return context.GetMaxImageDimension2D() / factor;
     }
 

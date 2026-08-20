@@ -437,24 +437,40 @@ TEST_CASE("ComputeCascades: TexelWorldSize and DepthRange are positive and texel
 TEST_CASE("ComputeShadowAtlasGrid: tile layout scales with cascade count")
 {
     // 1 -> 1x1, 2 -> 2x1, 3/4 -> 2x2; counts clamp to [1, MaxCascades].
-    CHECK(ComputeShadowAtlasGrid(1).Columns == 1);
-    CHECK(ComputeShadowAtlasGrid(1).Rows == 1);
-    CHECK(ComputeShadowAtlasGrid(2).Columns == 2);
-    CHECK(ComputeShadowAtlasGrid(2).Rows == 1);
-    CHECK(ComputeShadowAtlasGrid(3).Columns == 2);
-    CHECK(ComputeShadowAtlasGrid(3).Rows == 2);
-    CHECK(ComputeShadowAtlasGrid(4).Columns == 2);
-    CHECK(ComputeShadowAtlasGrid(4).Rows == 2);
+    CHECK(ComputeShadowAtlasGrid(1, 1).Columns == 1);
+    CHECK(ComputeShadowAtlasGrid(1, 1).Rows == 1);
+    CHECK(ComputeShadowAtlasGrid(2, 1).Columns == 2);
+    CHECK(ComputeShadowAtlasGrid(2, 1).Rows == 1);
+    CHECK(ComputeShadowAtlasGrid(3, 1).Columns == 2);
+    CHECK(ComputeShadowAtlasGrid(3, 1).Rows == 2);
+    CHECK(ComputeShadowAtlasGrid(4, 1).Columns == 2);
+    CHECK(ComputeShadowAtlasGrid(4, 1).Rows == 2);
     // Clamp: 0 -> 1, oversized -> MaxCascades's layout.
-    CHECK(ComputeShadowAtlasGrid(0).Columns == 1);
-    CHECK(ComputeShadowAtlasGrid(99).Columns == 2);
+    CHECK(ComputeShadowAtlasGrid(0, 1).Columns == 1);
+    CHECK(ComputeShadowAtlasGrid(99, 1).Columns == 2);
+}
+
+TEST_CASE("ComputeShadowAtlasGrid: cascade sets stack as row bands and clamp to MaxCascadeSets")
+{
+    // A set's own layout does not change with the set count — the sets stack, so only the
+    // total row count grows. Columns stay put, which is what keeps a cascade's column index
+    // independent of which set it belongs to.
+    const ShadowAtlasGrid one = ComputeShadowAtlasGrid(4, 1);
+    const ShadowAtlasGrid two = ComputeShadowAtlasGrid(4, 2);
+    CHECK(one.TotalRows() == one.Rows);
+    CHECK(two.Columns == one.Columns);
+    CHECK(two.Rows == one.Rows);
+    CHECK(two.TotalRows() == 2 * one.Rows);
+    // Clamp: 0 -> 1 set, oversized -> MaxCascadeSets.
+    CHECK(ComputeShadowAtlasGrid(4, 0).Sets == 1);
+    CHECK(ComputeShadowAtlasGrid(4, 99).Sets == MaxCascadeSets);
 }
 
 TEST_CASE("ComposeTileRemap: a 1x1 grid leaves the matrix unchanged")
 {
     // One cascade fills the whole atlas, so its remap is the identity.
     const mat4 vp = glm::perspective(glm::radians(60.0f), 1.5f, 0.1f, 50.0f);
-    const mat4 remapped = ComposeTileRemap(vp, 0, 1, 1);
+    const mat4 remapped = ComposeTileRemap(vp, 0, 0, ComputeShadowAtlasGrid(1, 1));
     for (int c = 0; c < 4; ++c)
     {
         for (int r = 0; r < 4; ++r)
@@ -482,7 +498,7 @@ TEST_CASE("ComposeTileRemap: each cascade's NDC center maps to its tile center i
          {Expect{.cascade = 0, .x = -0.5f, .y = -0.5f}, Expect{.cascade = 1, .x = 0.5f, .y = -0.5f},
           Expect{.cascade = 2, .x = -0.5f, .y = 0.5f}, Expect{.cascade = 3, .x = 0.5f, .y = 0.5f}})
     {
-        const vec4 p = ComposeTileRemap(id, e.cascade, 2, 2) * center;
+        const vec4 p = ComposeTileRemap(id, e.cascade, 0, ComputeShadowAtlasGrid(4, 1)) * center;
         CHECK(p.x == doctest::Approx(e.x));
         CHECK(p.y == doctest::Approx(e.y));
         // Z and W are untouched: the depth compare is tile-agnostic.
@@ -496,8 +512,50 @@ TEST_CASE("ComposeTileRemap: the NDC extent maps fully inside the cascade's tile
     // Cascade 0 of a 2x2 atlas owns the lower-left quadrant: NDC x in [-1,0]. The two
     // NDC.x corners (-1, +1) map to the tile's left and right edges (-1, 0).
     const mat4 id(1.0f);
-    const vec4 left = ComposeTileRemap(id, 0, 2, 2) * vec4(-1.0f, 0.0f, 0.0f, 1.0f);
-    const vec4 right = ComposeTileRemap(id, 0, 2, 2) * vec4(1.0f, 0.0f, 0.0f, 1.0f);
+    const ShadowAtlasGrid grid = ComputeShadowAtlasGrid(4, 1);
+    const vec4 left = ComposeTileRemap(id, 0, 0, grid) * vec4(-1.0f, 0.0f, 0.0f, 1.0f);
+    const vec4 right = ComposeTileRemap(id, 0, 0, grid) * vec4(1.0f, 0.0f, 0.0f, 1.0f);
     CHECK(left.x == doctest::Approx(-1.0f));
     CHECK(right.x == doctest::Approx(0.0f));
+}
+
+TEST_CASE("ComposeTileRemap: a second cascade set lands in its own atlas row band")
+{
+    // Two sets of four cascades tile a 2-column, 4-row atlas: set 0 owns rows 0-1 and set 1
+    // rows 2-3. The same cascade index in the two sets therefore shares a column and differs
+    // in row by exactly one set's height — the property that keeps the two sets from
+    // overwriting each other's depth.
+    const mat4 id(1.0f);
+    const ShadowAtlasGrid grid = ComputeShadowAtlasGrid(4, 2);
+    const vec4 center(0.0f, 0.0f, 0.25f, 1.0f);
+
+    const vec4 first = ComposeTileRemap(id, 0, 0, grid) * center;
+    const vec4 second = ComposeTileRemap(id, 0, 1, grid) * center;
+    CHECK(first.x == doctest::Approx(second.x));
+    // Four rows of NDC height 0.5 each: the band offset is two rows.
+    CHECK(first.y == doctest::Approx(-0.75f));
+    CHECK(second.y == doctest::Approx(0.25f));
+
+    // Every tile of both sets stays inside the atlas, and no two share a centre.
+    vector<vec2> centres;
+    for (u32 set = 0; set < grid.Sets; ++set)
+    {
+        for (u32 k = 0; k < 4; ++k)
+        {
+            const vec4 p = ComposeTileRemap(id, k, set, grid) * center;
+            CHECK(std::abs(p.x) <= 1.0f);
+            CHECK(std::abs(p.y) <= 1.0f);
+            centres.emplace_back(p.x, p.y);
+        }
+    }
+    REQUIRE(centres.size() == 8);
+    u32 duplicates = 0;
+    for (usize a = 0; a < centres.size(); ++a)
+    {
+        for (usize b = a + 1; b < centres.size(); ++b)
+        {
+            duplicates += glm::length(centres[a] - centres[b]) < 1e-4f ? 1u : 0u;
+        }
+    }
+    CHECK(duplicates == 0);
 }

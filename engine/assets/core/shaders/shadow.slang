@@ -1,21 +1,33 @@
 // The dedicated directional-shadow system (set 1, off bindless): the depth atlas,
 // an immutable comparison sampler for hardware SampleCmp, and the per-frame
-// ShadowConstants dynamic uniform. The atlas is one 2D image holding all cascades
-// in tiles; each cascade's ShadowConstants matrix bakes in the tile UV remap, so
-// mul(CascadeViewProj[k], world) lands in cascade k's tile. The atlas is reverse-Z
-// (near→1, far→0), so a lit fragment has the larger depth and the comparison sampler
-// does the greater-or-equal compare in hardware with a 2×2 PCF; this header owns the
+// ShadowConstants dynamic uniform. The atlas is one 2D image holding every cascade of
+// every cascade set in tiles; each cascade's ShadowConstants matrix bakes in the tile UV
+// remap, so mul(Sets[s].ViewProj[k], world) lands in set s cascade k's tile. The atlas is
+// reverse-Z (near→1, far→0), so a lit fragment has the larger depth and the comparison
+// sampler does the greater-or-equal compare in hardware with a 2×2 PCF; this header owns the
 // cascade select, the per-tile SampleCmp with scaled bias + tile-UV clamp, and the
 // cascade-boundary cross-fade.
+//
+// A set is one near-parallel light's cascades, fit to that light's direction. The atlas
+// carries MaxCascadeSets of them, stacked as row bands, so a scene lit by two comparable
+// distant sources shadows from both; a light's set index rides its GpuLight flags word.
 static const uint MaxCascades = 4;
+static const uint MaxCascadeSets = 2;
+
+// One light's cascades. std140 packs this at 304 bytes, a multiple of 16, so the array
+// below is contiguous with no inter-element padding.
+struct CascadeSet
+{
+    float4x4 ViewProj[MaxCascades]; // tile-remap baked in
+    float4   Splits;                // per-cascade view-space far distance
+    float4   TexelSize;             // per-cascade world units per shadow texel
+    float4   DepthRange;            // per-cascade render ortho depth extent, world units
+};
 
 struct ShadowConstants
 {
-    float4x4 CascadeViewProj[MaxCascades]; // tile-remap baked in
-    float4   CascadeSplits;                // per-cascade view-space far distance
-    float4   ShadowParams;                 // x 1/tileRes, y blend-band, z count, w enabled
-    float4   CascadeTexelSize;             // per-cascade world units per shadow texel
-    float4   CascadeDepthRange;            // per-cascade render ortho depth extent, world units
+    CascadeSet Sets[MaxCascadeSets];
+    float4     ShadowParams; // x 1/tileRes, y blend-band, z cascade count, w enabled
 };
 
 [[vk::binding(0, 3)]] Texture2D g_ShadowAtlas;
@@ -54,13 +66,13 @@ struct PunctualShadows
 static const int ShadowPcfRadius = 1;
 
 // Select the cascade by the fragment's view-space depth (positive distance in front
-// of the camera) against the per-cascade far splits. Returns count when the fragment
-// is past the last cascade's far plane (no cascade covers it).
-uint SelectCascade(float viewDepth, uint count)
+// of the camera) against set `set`'s far splits. Returns count when the fragment is
+// past the last cascade's far plane (no cascade covers it).
+uint SelectCascade(float viewDepth, uint count, uint set)
 {
     for (uint i = 0; i < count; ++i)
     {
-        if (viewDepth <= g_Shadow.CascadeSplits[i])
+        if (viewDepth <= g_Shadow.Sets[set].Splits[i])
             return i;
     }
     return count;
@@ -108,26 +120,35 @@ float SampleAtlasTile(Texture2D atlas, SamplerComparisonState cmp, float4x4 tile
     return visibility / weight;
 }
 
-// Sample cascade k's atlas tile with a PCF grid of hardware comparison taps. Acne is
+// Sample cascade k of set `set` with a PCF grid of hardware comparison taps. Acne is
 // held off by two texel-proportional terms, both in world units so they track cascade
 // coarseness and stay independent of the light-space depth range: a normal-offset that
 // displaces the sample point off the surface, and a depth bias converted to the
 // compare's NDC-z through the cascade's actual depth extent.
-float SampleCascade(float3 worldPos, float3 N, float3 L, uint cascade, uint count)
+float SampleCascade(float3 worldPos, float3 N, float3 L, uint cascade, uint count, uint set)
 {
-    float texel = g_Shadow.ShadowParams.x; // 1 / tileRes (atlas-relative texel size)
-
-    // The cascade's tile sub-rect in atlas UV: tile count is min(count,2) columns ×
-    // ceil(count/2) rows, matching the renderer's atlas grid.
+    // The cascade's tile sub-rect in atlas UV: one set is min(count,2) columns ×
+    // ceil(count/2) rows, and the sets stack as further row bands, matching the renderer's
+    // atlas grid.
     uint columns = min(count, 2u);
     uint rows = (count + 1u) / 2u;
-    float2 tileSize = float2(1.0 / float(columns), 1.0 / float(rows));
-    float2 tileMin = float2(float(cascade % columns), float(cascade / columns)) * tileSize;
+    uint totalRows = rows * MaxCascadeSets;
+    float2 tileSize = float2(1.0 / float(columns), 1.0 / float(totalRows));
+    float2 tileMin =
+        float2(float(cascade % columns), float(set * rows + cascade / columns)) * tileSize;
     float2 tileMax = tileMin + tileSize;
+
+    // The PCF tap step and the tile-clamp inset, in atlas UV. ShadowParams.x is one
+    // *tile*-relative texel (1/tileRes); one atlas texel is that scaled by the tile's UV span,
+    // so a tap steps several atlas texels — the spread that widens the penumbra past the
+    // comparison sampler's own 2×2 footprint. The set count divides out of the vertical span, so
+    // the atlas gaining row bands for a second cascade set leaves the footprint where it is.
+    float invTileRes = g_Shadow.ShadowParams.x;
+    float2 texel = float2(invTileRes, invTileRes / float(MaxCascadeSets));
 
     float nDotL = saturate(dot(N, L));
     float slope = clamp(1.0 - nDotL, 0.0, 1.0);
-    float worldPerTexel = g_Shadow.CascadeTexelSize[cascade];
+    float worldPerTexel = g_Shadow.Sets[set].TexelSize[cascade];
 
     // Normal-offset: a PCF tap up to ShadowPcfRadius+1 texels away can land on a
     // depth texel whose world position differs by that many texels across the surface;
@@ -138,19 +159,19 @@ float SampleCascade(float3 worldPos, float3 N, float3 L, uint cascade, uint coun
     // Depth bias: a fraction of a texel of world depth, converted to the NDC-z the
     // hardware compare runs in through this cascade's real depth extent.
     float biasWorld = worldPerTexel * (0.5 + 1.0 * slope);
-    float bias = biasWorld / max(g_Shadow.CascadeDepthRange[cascade], 1e-4);
+    float bias = biasWorld / max(g_Shadow.Sets[set].DepthRange[cascade], 1e-4);
 
-    return SampleAtlasTile(g_ShadowAtlas, g_ShadowSampler, g_Shadow.CascadeViewProj[cascade],
-                           samplePos, bias, float2(texel, texel), tileMin, tileMax);
+    return SampleAtlasTile(g_ShadowAtlas, g_ShadowSampler, g_Shadow.Sets[set].ViewProj[cascade],
+                           samplePos, bias, texel, tileMin, tileMax);
 }
 
-// Cascaded directional-shadow visibility via hardware SampleCmp. Selects the cascade
-// by view-space depth against the per-cascade splits, samples that cascade's atlas
-// tile, and cross-fades into the next cascade within a small blend band before the
-// selected cascade's far split so the resolution change across a cascade edge reads
-// as a gradient, not a hard line. The last cascade fades to full visibility past its
-// far plane. The band width rides ShadowParams.y.
-float DirectionalShadowVisibility(float3 worldPos, float3 N, float3 L, float viewDepth)
+// Cascaded directional-shadow visibility via hardware SampleCmp, for the cascade set fit
+// to this light's direction. Selects the cascade by view-space depth against that set's
+// splits, samples that cascade's atlas tile, and cross-fades into the next cascade within
+// a small blend band before the selected cascade's far split so the resolution change
+// across a cascade edge reads as a gradient, not a hard line. The last cascade fades to
+// full visibility past its far plane. The band width rides ShadowParams.y.
+float DirectionalShadowVisibility(float3 worldPos, float3 N, float3 L, float viewDepth, uint set)
 {
     // ShadowParams.w gates the whole path: 0 when the shadow pass is compiled out,
     // so the term is fully lit and the dummy/zeroed atlas is never meaningfully read.
@@ -161,24 +182,24 @@ float DirectionalShadowVisibility(float3 worldPos, float3 N, float3 L, float vie
     if (count == 0)
         return 1.0;
 
-    uint cascade = SelectCascade(viewDepth, count);
+    uint cascade = SelectCascade(viewDepth, count, set);
     if (cascade >= count)
         return 1.0; // past the last cascade's far plane — unshadowed
 
-    float visibility = SampleCascade(worldPos, N, L, cascade, count);
+    float visibility = SampleCascade(worldPos, N, L, cascade, count, set);
 
     // Cross-fade: within a blend band before this cascade's far split, blend toward
     // the next cascade's sample (or toward full visibility past the last cascade).
     float band = g_Shadow.ShadowParams.y;
     if (band > 1e-5)
     {
-        float farSplit = g_Shadow.CascadeSplits[cascade];
+        float farSplit = g_Shadow.Sets[set].Splits[cascade];
         float bandStart = farSplit - band;
         if (viewDepth > bandStart)
         {
             float t = saturate((viewDepth - bandStart) / band);
             float nextVisibility = (cascade + 1u < count)
-                ? SampleCascade(worldPos, N, L, cascade + 1u, count)
+                ? SampleCascade(worldPos, N, L, cascade + 1u, count, set)
                 : 1.0;
             visibility = lerp(visibility, nextVisibility, t);
         }
@@ -187,7 +208,7 @@ float DirectionalShadowVisibility(float3 worldPos, float3 N, float3 L, float vie
     // Distance fade: shadows dissolve over the last tenth of the shadowed range, so
     // the range cap (MaxShadowDistance, or the fitted far) reads as a gradient rather
     // than a hard edge where the last cascade ends.
-    float lastSplit = g_Shadow.CascadeSplits[count - 1];
+    float lastSplit = g_Shadow.Sets[set].Splits[count - 1];
     float fadeStart = lastSplit * 0.9;
     visibility = lerp(visibility, 1.0,
                       saturate((viewDepth - fadeStart) / max(lastSplit - fadeStart, 1e-4)));
@@ -390,13 +411,14 @@ float AreaShadowSample(int slot, float3 worldPos, float3 N, float3 L, float ligh
 // multiplies into the lit result so each fragment's selected cascade is a colour
 // bucket (0 red, 1 green, 2 blue, 3 yellow). Uses the same view-depth → cascade
 // logic as the shadow sample, so the visualization pins the selection it tints.
+// Set 0's splits, since every set splits the same camera frustum.
 float3 CascadeDebugTint(float viewDepth)
 {
     uint count = uint(g_Shadow.ShadowParams.z);
     if (count == 0)
         return float3(1.0, 1.0, 1.0);
 
-    uint cascade = SelectCascade(viewDepth, count);
+    uint cascade = SelectCascade(viewDepth, count, 0u);
     switch (cascade)
     {
         case 0:  return float3(1.0, 0.25, 0.25); // red — near
