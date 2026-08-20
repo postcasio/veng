@@ -14,11 +14,9 @@
 // fields and pack their values at the reflected offsets, read at index * MaterialParamStride.
 struct MaterialParams
 {
+    float4 Factors;       // authored param
     uint   Albedo;        // bindless sampled-image index (texture handle)
     uint   AlbedoSampler; // bindless sampler index (sampler handle)
-    uint   Pad0;
-    uint   Pad1;
-    float4 Factors;       // authored param
 };
 
 static const uint MaterialParamStride = 1024;

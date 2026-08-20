@@ -5,12 +5,10 @@
 
 struct MaterialParams
 {
-    uint   Albedo;
-    uint   AlbedoSampler;
-    uint   Pad0;
-    uint   Pad1;
     float4 Factors;
     float  Roughness;
+    uint   Albedo;
+    uint   AlbedoSampler;
 };
 
 static const uint MaterialParamStride = 1024;

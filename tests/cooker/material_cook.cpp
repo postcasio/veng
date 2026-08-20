@@ -73,33 +73,37 @@ TEST_CASE("Cooker: cooks a material and validates the cooked blob layout")
     CHECK(header.FieldCount == 3);
     CHECK(header.BlockBytes == 32);
 
-    // Blob: header + 3 fields + 32-byte param block.
+    // Blob: header + 3 fields + 32-byte param block. The fixture's MaterialParams leads with its
+    // float4 and follows with the two handle uints — 16 + 4 + 4 of members, and no alignment hole
+    // between any two of them; the block is 32 because the struct's own size rounds up to its
+    // largest member's alignment, which is a tail beyond every field rather than a gap inside.
     const usize expectedSize = sizeof(CookedMaterialHeader) + 3 * sizeof(CookedMaterialField) + 32;
     REQUIRE(entry->Blob.size() == expectedSize);
 
-    // --- Field table: only the 3 declared fields, pads omitted ---
+    // --- Field table: the 3 declared fields, at the offsets reflection gives them ---
 
     const auto* fieldTable = reinterpret_cast<const CookedMaterialField*>(
         entry->Blob.data() + sizeof(CookedMaterialHeader));
 
-    // Field 0: Albedo — Kind 1 (texture handle), engine offset 0, Size 4, TextureId 2001
+    // Field 0: Albedo — Kind 1 (texture handle), engine offset 16, Size 4, TextureId 2001. The
+    // table is in the material's declaration order; the offsets are the shader's.
     CHECK(std::string_view(fieldTable[0].Name) == "Albedo");
     CHECK(fieldTable[0].Kind == 1u);
-    CHECK(fieldTable[0].Offset == 0u);
+    CHECK(fieldTable[0].Offset == 16u);
     CHECK(fieldTable[0].Size == 4u);
     CHECK(fieldTable[0].TextureId == 2001ULL);
 
-    // Field 1: AlbedoSampler — Kind 2 (sampler handle), engine offset 4, Size 4, TextureId 2001
+    // Field 1: AlbedoSampler — Kind 2 (sampler handle), engine offset 20, Size 4, TextureId 2001
     CHECK(std::string_view(fieldTable[1].Name) == "AlbedoSampler");
     CHECK(fieldTable[1].Kind == 2u);
-    CHECK(fieldTable[1].Offset == 4u);
+    CHECK(fieldTable[1].Offset == 20u);
     CHECK(fieldTable[1].Size == 4u);
     CHECK(fieldTable[1].TextureId == 2001ULL);
 
-    // Field 2: Factors — Kind 0 (float param), block offset 16, Size 16
+    // Field 2: Factors — Kind 0 (float param), block offset 0, Size 16
     CHECK(std::string_view(fieldTable[2].Name) == "Factors");
     CHECK(fieldTable[2].Kind == 0u);
-    CHECK(fieldTable[2].Offset == 16u);
+    CHECK(fieldTable[2].Offset == 0u);
     CHECK(fieldTable[2].Size == 16u);
     CHECK(fieldTable[2].TextureId == 0ULL);
 
@@ -108,15 +112,15 @@ TEST_CASE("Cooker: cooks a material and validates the cooked blob layout")
     const u8* block =
         entry->Blob.data() + sizeof(CookedMaterialHeader) + 3 * sizeof(CookedMaterialField);
 
-    for (usize i = 0; i < 16; ++i)
+    for (usize i = 16; i < 32; ++i)
     {
         CHECK(block[i] == 0u);
     }
 
-    // --- Factors: four f32s at the block offset 16 ---
+    // --- Factors: four f32s at the block offset 0 ---
 
     f32 factors[4];
-    std::memcpy(factors, block + 16, sizeof(factors));
+    std::memcpy(factors, block, sizeof(factors));
 
     CHECK(factors[0] == doctest::Approx(1.0f));
     CHECK(factors[1] == doctest::Approx(0.9f));
@@ -169,6 +173,34 @@ TEST_CASE("Cooker: material cook fails when a textures key has no matching Mater
     std::filesystem::remove(outArchive);
 }
 
+TEST_CASE("Cooker: material cook fails when the shader declares a field the material does not")
+{
+    // The other half of the pairing, and the half that used to fail silently. A field the material
+    // declares and the shader lacks has always been an error. A field the *shader* declares and the
+    // material omits was never reached at all: it stayed zero in the block image, cooked clean, and
+    // the fragment read zero for the life of the asset — and where zero is not inert for that
+    // parameter (a scale, a radius, a count, a coverage) the surface simply drew wrong with nothing
+    // anywhere naming the missing line.
+    //
+    // The rule is now total: every member of MaterialParams has a "fields" entry, with no exemption
+    // for padding, because a struct that needs padding can be ordered so it does not. The fixture
+    // material declares the two handles and omits the Factors its fragment carries.
+    const path packJson = FixtureDir / "material_missing_field.json";
+    const path outArchive =
+        Veng::TestSupport::TempDir() / "veng_cooker_material_missing_field.vengpack";
+
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+
+    const VoidResult result = cooker.CookPack(packJson, outArchive);
+
+    REQUIRE(!result.has_value());
+    // The error names the member left undeclared, which is the whole of what an author needs.
+    CHECK(result.error().find("Factors") != string::npos);
+
+    std::filesystem::remove(outArchive);
+}
+
 TEST_CASE("Cooker: an authored param beyond Factors cooks into the authored block")
 {
     // MaterialParams { uint Albedo; uint AlbedoSampler; uint Pad0; uint Pad1;
@@ -188,7 +220,7 @@ TEST_CASE("Cooker: an authored param beyond Factors cooks into the authored bloc
 
     CHECK(header.FieldCount == 4);
     CHECK(header.Version == CookedMaterialVersion);
-    CHECK(header.BlockBytes >= 36); // handles (16) + Factors (16) + Roughness (4)
+    CHECK(header.BlockBytes >= 28); // Factors (16) + Roughness (4) + two handles (8)
 
     const auto* fieldTable = reinterpret_cast<const CookedMaterialField*>(
         entry->Blob.data() + sizeof(CookedMaterialHeader));
@@ -211,8 +243,8 @@ TEST_CASE("Cooker: an authored param beyond Factors cooks into the authored bloc
     REQUIRE(factors != nullptr);
     CHECK(roughness->Kind == 0u);
     CHECK(roughness->Size == 4u);
-    CHECK(factors->Offset == 16u);
-    CHECK(roughness->Offset == 32u);
+    CHECK(factors->Offset == 0u);
+    CHECK(roughness->Offset == 16u);
 
     const u8* block = entry->Blob.data() + sizeof(CookedMaterialHeader) +
                       header.FieldCount * sizeof(CookedMaterialField);

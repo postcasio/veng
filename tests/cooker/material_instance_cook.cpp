@@ -66,15 +66,12 @@ SurfaceFragmentInput vsMain(VSInput input)
 )";
 
     // A parent fragment exposing BaseColor (texture+sampler) + BaseColorFactor (vec4),
-    // plus an engine-bound-only field that the parent .vmat does NOT declare exposed,
-    // so an instance overriding it is rejected as non-exposed.
     constexpr std::string_view BrickFrag = R"(#include "Veng/surface.slang"
 struct MaterialParams
 {
     float4 BaseColorFactor;
     uint   BaseColor;
     uint   BaseColorSampler;
-    uint   EngineBound;
 };
 [shader("fragment")]
 GBufferOutput fsMain(SurfaceFragmentInput input)
@@ -131,8 +128,8 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
         pngOut.write(reinterpret_cast<const char*>(png), sizeof(png));
         pngOut.close();
 
-        // The parent exposes BaseColorFactor (vec4) + BaseColor (texture) + BaseColorSampler;
-        // EngineBound is reflected in the shader but NOT declared here, so it is not exposed.
+        // The parent declares every member its fragment's MaterialParams carries, which the
+        // cook now requires.
         WriteFile(dir / "brick.vmat.json", R"({
   "domain": "Surface",
   "shaders": { "vertex": "0x0000000000001B5A", "fragment": "0x0000000000001B5B" },
@@ -253,24 +250,6 @@ TEST_CASE("Cooker: an override naming a non-exposed field is a located cook erro
     const Result<ArchiveReader> reader = CookWithInstance(dir, "bad.vmatinst.json");
     REQUIRE_FALSE(reader.has_value());
     CHECK(reader.error().find("NotAField") != string::npos);
-    CHECK(reader.error().find("not an exposed field") != string::npos);
-
-    std::filesystem::remove_all(dir);
-}
-
-TEST_CASE("Cooker: an override naming an engine-bound (non-exposed) field is a located cook error")
-{
-    // EngineBound is a MaterialParams member but is not in the parent's declared "fields",
-    // so it is not an override surface — exactly the engine-bound exclusion.
-    const path dir = WriteParentPack("enginebound");
-    WriteFile(dir / "bad.vmatinst.json", R"({
-  "parent": "0x0000000000001B5D",
-  "overrides": { "EngineBound": 3 }
-})");
-
-    const Result<ArchiveReader> reader = CookWithInstance(dir, "bad.vmatinst.json");
-    REQUIRE_FALSE(reader.has_value());
-    CHECK(reader.error().find("EngineBound") != string::npos);
     CHECK(reader.error().find("not an exposed field") != string::npos);
 
     std::filesystem::remove_all(dir);

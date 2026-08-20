@@ -15,8 +15,6 @@ struct MaterialParams
 {
     uint   BaseColor;        uint BaseColorSampler;
     uint   ORM;              uint ORMSampler;
-    uint   Normal;           uint NormalSampler;
-    uint   Pad0;             uint Pad1;
     float4 BaseColorFactor;
     float4 EmissiveFactor;
     float  MetallicFactor;   float RoughnessFactor;

@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x0000000000001B59",
+      "type": "VertexLayout",
+      "source": "layouts/canonical.vlayout.json"
+    },
+    {
+      "id": "0x0000000000001005",
+      "type": "Shader",
+      "source": "shaders/brick.vert.shader.json"
+    },
+    {
+      "id": "0x0000000000001006",
+      "type": "Shader",
+      "source": "shaders/brick.frag.shader.json"
+    },
+    {
+      "id": "0x00000000000007D1",
+      "type": "Texture",
+      "source": "textures/texture.tex.json"
+    },
+    {
+      "id": "0x0000000000000BB9",
+      "type": "Material",
+      "source": "materials/brick_missing_field.vmat.json"
+    }
+  ]
+}

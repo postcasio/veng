@@ -11,8 +11,6 @@ struct MaterialParams
     float4 EmissiveColor;
     uint EmissiveTexture;
     uint EmissiveSampler;
-    uint Pad0;
-    uint Pad1;
 };
 
 MaterialParams LoadMaterialParams(uint index)

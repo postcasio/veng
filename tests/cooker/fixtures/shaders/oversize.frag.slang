@@ -6,10 +6,6 @@
 
 struct MaterialParams
 {
-    uint Albedo;
-    uint AlbedoSampler;
-    uint Pad0;
-    uint Pad1;
     float4 P0;  float4 P1;  float4 P2;  float4 P3;
     float4 P4;  float4 P5;  float4 P6;  float4 P7;
     float4 P8;  float4 P9;  float4 P10; float4 P11;
@@ -27,6 +23,8 @@ struct MaterialParams
     float4 P56; float4 P57; float4 P58; float4 P59;
     float4 P60; float4 P61; float4 P62; float4 P63;
     float4 P64; float4 P65; float4 P66; float4 P67;
+    uint Albedo;
+    uint AlbedoSampler;
 };
 
 static const uint MaterialParamStride = 1024;

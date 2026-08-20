@@ -15,13 +15,11 @@
 // ordinary consuming path.
 struct MaterialParams
 {
-    uint  Texture;
-    uint  Sampler;
-    uint  Pad0;
-    uint  Pad1;
     float4 Center;      // engine-published: xyz the probe's world position, w 1 while a capture is bound
     float4 Orientation; // engine-published: the capture's frame as a quaternion, xyz then w
     float4 Display;     // selects what the fragment shows: x the centre, y the frame's xyz, z its w
+    uint  Texture;
+    uint  Sampler;
 };
 
 MaterialParams LoadMaterialParams(uint index)

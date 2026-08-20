@@ -8,11 +8,9 @@
 // still hide the geometry beyond it, and the sampled direction would read black either way.
 struct MaterialParams
 {
+    float4 Direction; // World direction the capture's octahedral map is sampled in.
     uint Texture;
     uint Sampler;
-    uint Pad0;
-    uint Pad1;
-    float4 Direction; // World direction the capture's octahedral map is sampled in.
 };
 
 MaterialParams LoadMaterialParams(uint index)

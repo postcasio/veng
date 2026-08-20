@@ -599,6 +599,41 @@ namespace Veng::Cook
             blockByName[f.Name] = &f;
         }
 
+        // Every member of MaterialParams is declared by the material. This is the direction the walk
+        // below cannot cover: it validates each *declared* field against the struct, so a member the
+        // shader declares and the material omits was never reached. It stayed zero in the block
+        // image, the cook succeeded, and the fragment read zero for the life of the asset — and
+        // where zero is not inert for that parameter (a scale, a radius, a count, a coverage) the
+        // surface drew wrong with nothing naming the missing line. The opposite direction has always
+        // been an error, so this closes the pair.
+        //
+        // **The rule is total: there is no exemption for padding.** A struct needing an alignment
+        // pad can be ordered so that it does not — members widest-first, the float4s ahead of the
+        // handle uints — and every struct in the tree now is. Exempting a spelling instead would put
+        // a hole in the contract exactly where a real parameter could hide in it, and would make the
+        // convention load-bearing for correctness rather than for tidiness.
+        {
+            string undeclared;
+            for (const ReflectedStructField& reflField : blockReflected->Fields)
+            {
+                if (declaredByName.find(reflField.Name) == declaredByName.end())
+                {
+                    if (!undeclared.empty())
+                    {
+                        undeclared += ", ";
+                    }
+                    undeclared += reflField.Name;
+                }
+            }
+            if (!undeclared.empty())
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: MaterialParams members with no entry in the material's "
+                    "\"fields\": {}",
+                    undeclared));
+            }
+        }
+
         // --- 6. Walk declared fields, routing each by type ---
         //
         // One CookedMaterialField per declared field — undeclared block members

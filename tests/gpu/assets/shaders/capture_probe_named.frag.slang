@@ -10,8 +10,6 @@ struct MaterialParams
 {
     uint CaptureMap;
     uint CaptureSampler;
-    uint Pad0;
-    uint Pad1;
 };
 
 MaterialParams LoadMaterialParams(uint index)

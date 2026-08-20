@@ -6,8 +6,6 @@ struct MaterialParams
 {
     uint Albedo;
     uint AlbedoSampler;
-    uint Pad0;
-    uint Pad1;
 };
 
 static const uint MaterialParamStride = 1024;

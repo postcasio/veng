@@ -14,8 +14,6 @@ struct MaterialParams
 {
     uint Texture;
     uint Sampler;
-    uint Pad0;
-    uint Pad1;
 };
 
 MaterialParams LoadMaterialParams(uint index)
