@@ -138,13 +138,12 @@ float SampleCascade(float3 worldPos, float3 N, float3 L, uint cascade, uint coun
         float2(float(cascade % columns), float(set * rows + cascade / columns)) * tileSize;
     float2 tileMax = tileMin + tileSize;
 
-    // The PCF tap step and the tile-clamp inset, in atlas UV. ShadowParams.x is one
-    // *tile*-relative texel (1/tileRes); one atlas texel is that scaled by the tile's UV span,
-    // so a tap steps several atlas texels — the spread that widens the penumbra past the
-    // comparison sampler's own 2×2 footprint. The set count divides out of the vertical span, so
-    // the atlas gaining row bands for a second cascade set leaves the footprint where it is.
+    // The PCF tap step and the tile-clamp inset, in atlas UV: one tile spans tileSize of
+    // atlas UV over tileRes texels, so the per-axis texel is the per-tile texel
+    // (ShadowParams.x = 1/tileRes) scaled by the tile's UV span — anisotropic because the
+    // cascade grid is non-square, and the same derivation the punctual path runs.
     float invTileRes = g_Shadow.ShadowParams.x;
-    float2 texel = float2(invTileRes, invTileRes / float(MaxCascadeSets));
+    float2 texel = invTileRes * tileSize;
 
     float nDotL = saturate(dot(N, L));
     float slope = clamp(1.0 - nDotL, 0.0, 1.0);
