@@ -1123,6 +1123,15 @@ namespace Veng
         /// When set, Exposure becomes a manual bias on the adapted result instead of the absolute
         /// exposure. Off matches the renderer's own default.
         bool AutoExposure = false;
+        /// @brief Auto-exposure lower clamp on the adapted average luminance.
+        ///
+        /// Bounds how bright the metering lets a dark scene drive the exposure; a small value suits a
+        /// scene whose dimmest lit content is far below mid-grey. It is authored beside the upper
+        /// clamp because the two are one statement — the luminance range the metering spans, which
+        /// is also the range the histogram's bins are laid over — and a scene that has to raise one
+        /// end almost always has to lower the other. The default matches the renderer's own
+        /// ViewState default, so a level authoring none is unchanged.
+        f32 AutoExposureMinLuminance = 0.002f;
         /// @brief Auto-exposure upper clamp on the adapted average luminance.
         ///
         /// Bounds how dark the metering lets a bright scene drive the exposure; a large value suits a
@@ -1590,6 +1599,8 @@ VE_REFLECT(::Veng::LevelRenderSettings, 0x28E4618C66455E21ULL)
 VE_FIELD(Exposure, .DisplayName = "Exposure", .Display = {.Min = 0.0})
 VE_FIELD(Tonemapper, .DisplayName = "Tonemapper")
 VE_FIELD(AutoExposure, .DisplayName = "Auto Exposure")
+VE_FIELD(AutoExposureMinLuminance, .DisplayName = "Auto Exposure Min Luminance",
+         .Display = {.Min = 0.0})
 VE_FIELD(AutoExposureMaxLuminance, .DisplayName = "Auto Exposure Max Luminance",
          .Display = {.Min = 0.0})
 VE_FIELD(AutoExposureLowPercentile, .DisplayName = "Auto Exposure Low Percentile",

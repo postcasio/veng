@@ -246,8 +246,12 @@ namespace Veng::Renderer
                                     std::max(view.AutoExposureSpeed, 0.0f));
                 }
             }
-            const f32 clamped = std::clamp(m_AdaptedLuminance, view.AutoExposureMinLuminance,
-                                           view.AutoExposureMaxLuminance);
+            // The upper clamp is lifted to the lower rather than trusted to be above it: both ends
+            // are authored, independently, by a cooked level and by the debug panel, and an
+            // inverted pair is undefined behaviour in std::clamp rather than a bad picture.
+            const f32 clamped =
+                std::clamp(m_AdaptedLuminance, view.AutoExposureMinLuminance,
+                           std::max(view.AutoExposureMaxLuminance, view.AutoExposureMinLuminance));
             exposure = (view.AutoExposureKey / std::max(clamped, 1e-5f)) * view.Exposure;
         }
         m_ResolvedExposure = exposure;

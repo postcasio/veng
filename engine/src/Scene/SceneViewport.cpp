@@ -71,6 +71,7 @@ namespace Veng
         view.AmbientFloor = render.AmbientFloor;
         view.Exposure = render.Exposure;
         view.Tonemapper = render.Tonemapper;
+        view.AutoExposureMinLuminance = render.AutoExposureMinLuminance;
         view.AutoExposureMaxLuminance = render.AutoExposureMaxLuminance;
         view.AutoExposureLowPercentile = render.AutoExposureLowPercentile;
         view.AutoExposureHighPercentile = render.AutoExposureHighPercentile;

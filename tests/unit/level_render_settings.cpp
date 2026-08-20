@@ -18,6 +18,7 @@ TEST_CASE(
     "ApplyLevelRenderSettings delivers the authored auto-exposure metering onto the ViewState")
 {
     LevelRenderSettings render;
+    render.AutoExposureMinLuminance = 0.0005f;
     render.AutoExposureMaxLuminance = 4000.0f;
     render.AutoExposureLowPercentile = 0.6f;
     render.AutoExposureHighPercentile = 0.98f;
@@ -26,6 +27,7 @@ TEST_CASE(
     Renderer::ViewState view;
     ApplyLevelRenderSettings(render, settings, view);
 
+    CHECK(view.AutoExposureMinLuminance == doctest::Approx(0.0005f));
     CHECK(view.AutoExposureMaxLuminance == doctest::Approx(4000.0f));
     CHECK(view.AutoExposureLowPercentile == doctest::Approx(0.6f));
     CHECK(view.AutoExposureHighPercentile == doctest::Approx(0.98f));
@@ -42,6 +44,7 @@ TEST_CASE("A level authoring no metering keeps the engine ViewState defaults")
     Renderer::ViewState view;
     ApplyLevelRenderSettings(render, settings, view);
 
+    CHECK(view.AutoExposureMinLuminance == doctest::Approx(defaults.AutoExposureMinLuminance));
     CHECK(view.AutoExposureMaxLuminance == doctest::Approx(defaults.AutoExposureMaxLuminance));
     CHECK(view.AutoExposureLowPercentile == doctest::Approx(defaults.AutoExposureLowPercentile));
     CHECK(view.AutoExposureHighPercentile == doctest::Approx(defaults.AutoExposureHighPercentile));
