@@ -1,6 +1,7 @@
 #include <Veng/Input/Actions.h>
 
 #include <algorithm>
+#include <cmath>
 
 namespace Veng
 {
@@ -134,7 +135,16 @@ namespace Veng
                 switch (binding.Axis)
                 {
                 case AxisComponent::Whole:
-                    sample.Value = vec2{contribution, 0.0f};
+                    // The strongest push wins, rather than the last binding listed. Several
+                    // sources may drive one whole-axis action — two keys spelling the same verb,
+                    // or a stick beside a key — and the other two components' `+=` is wrong here:
+                    // summing would read 2.0 for two keys held at once, and a plain assignment
+                    // let a *resting* alternate overwrite a pushed source with its own zero, so
+                    // whichever source happened to be listed last was the only live one.
+                    if (std::abs(contribution) > std::abs(sample.Value.x))
+                    {
+                        sample.Value = vec2{contribution, 0.0f};
+                    }
                     break;
                 case AxisComponent::X:
                     sample.Value.x += contribution;

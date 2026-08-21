@@ -138,6 +138,93 @@ TEST_CASE("ResolveActions drives a 1D axis action from a whole-axis source")
     CHECK(state.GetAxis(Throttle) == doctest::Approx(0.5f));
 }
 
+TEST_CASE("Two whole-axis bindings on one action are an OR, not the last one listed")
+{
+    // The alternate-key case: one verb, two keys that each mean it. Nothing in the pair is
+    // privileged, so either alone must activate the action and neither may cancel the other by
+    // resting. A sum would be wrong in the other direction — two keys held is still one press.
+    const ResolvedContext context{
+        .Actions = {InputAction{.Id = Jump, .Name = "Jump", .Kind = ActionKind::Button}},
+        .Bindings = {Binding{.Source = {.Device = InputDeviceType::Keyboard, .Control = KeySpace},
+                             .Action = Jump,
+                             .Axis = AxisComponent::Whole,
+                             .Scale = 1.0f},
+                     Binding{.Source = {.Device = InputDeviceType::Keyboard, .Control = KeyW},
+                             .Action = Jump,
+                             .Axis = AxisComponent::Whole,
+                             .Scale = 1.0f}}};
+    const std::array active{context};
+
+    SUBCASE("the first-listed key alone activates it")
+    {
+        FakeRawInput raw;
+        raw.KeysDown = {KeySpace};
+        CHECK(ResolveActions(active, raw, {}).IsHeld(Jump));
+    }
+
+    SUBCASE("the last-listed key alone activates it")
+    {
+        FakeRawInput raw;
+        raw.KeysDown = {KeyW};
+        CHECK(ResolveActions(active, raw, {}).IsHeld(Jump));
+    }
+
+    SUBCASE("both held reads as one press, not two")
+    {
+        FakeRawInput raw;
+        raw.KeysDown = {KeySpace, KeyW};
+        const ActionState state = ResolveActions(active, raw, {});
+        CHECK(state.IsHeld(Jump));
+        CHECK(state.GetAxis(Jump) == doctest::Approx(1.0f));
+    }
+
+    SUBCASE("neither held leaves it inactive")
+    {
+        const FakeRawInput raw;
+        CHECK_FALSE(ResolveActions(active, raw, {}).IsHeld(Jump));
+    }
+}
+
+TEST_CASE("A whole-axis stick and a key on one action resolve to the stronger push")
+{
+    // The same rule where the two sources are not interchangeable: a partly-deflected stick must
+    // not be lifted to a full press by a key resting beside it, and a full key press must not be
+    // dragged down by the stick's own rest.
+    const ResolvedContext context{
+        .Actions = {InputAction{.Id = Throttle, .Name = "Throttle", .Kind = ActionKind::Axis1D}},
+        .Bindings = {Binding{.Source = {.Device = InputDeviceType::GamepadAxis, .Control = 0},
+                             .Action = Throttle,
+                             .Axis = AxisComponent::Whole,
+                             .Scale = 1.0f},
+                     Binding{.Source = {.Device = InputDeviceType::Keyboard, .Control = KeySpace},
+                             .Action = Throttle,
+                             .Axis = AxisComponent::Whole,
+                             .Scale = 1.0f}}};
+    const std::array active{context};
+
+    SUBCASE("the stick alone reads its own deflection")
+    {
+        FakeRawInput raw;
+        raw.Axes = {{0, 0.5f}};
+        CHECK(ResolveActions(active, raw, {}).GetAxis(Throttle) == doctest::Approx(0.5f));
+    }
+
+    SUBCASE("a key beside a resting stick reads the key")
+    {
+        FakeRawInput raw;
+        raw.KeysDown = {KeySpace};
+        CHECK(ResolveActions(active, raw, {}).GetAxis(Throttle) == doctest::Approx(1.0f));
+    }
+
+    SUBCASE("a deflection past the key's own magnitude wins")
+    {
+        FakeRawInput raw;
+        raw.KeysDown = {KeySpace};
+        raw.Axes = {{0, -1.0f}};
+        CHECK(ResolveActions(active, raw, {}).GetAxis(Throttle) == doctest::Approx(-1.0f));
+    }
+}
+
 TEST_CASE("ResolveActions derives Started/Ongoing/Completed across scripted ticks")
 {
     const ResolvedContext context = WasdContext();
@@ -299,7 +386,7 @@ TEST_CASE("A focus-gated context is excluded from resolution while gameplay focu
         const ActionState gatedState = ResolveActions(active, raw, {});
 
         // The same bindings as an ungated stack yield a byte-identical result once focused.
-        ResolvedContext ungated = WasdContext();
+        const ResolvedContext ungated = WasdContext();
         const std::array<ResolvedContext, 1> ungatedStack{ungated};
         const ActionState ungatedState = ResolveActions(ungatedStack, raw, {});
 
