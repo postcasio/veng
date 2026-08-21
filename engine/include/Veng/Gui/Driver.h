@@ -46,7 +46,13 @@ namespace Veng
         /// MeshRenderer, its Transform) are read through the scene rather than searched for. Never
         /// null while a driver runs — a driver exists because a component on this entity named it.
         Entity Owner = Entity::Null;
-        /// @brief The claiming viewport's bound seat, or Entity::Null when the viewport is unbound.
+        /// @brief The claiming viewport's bound seat — the split-screen identity, not "the player".
+        ///
+        /// `Entity::Null` is the **default and the single-player value** (Viewport::SetSeat), not an
+        /// error: a viewport that never binds a seat is the one seat that reads every device. So it
+        /// names no entity a driver can look a per-seat component up on, and a driver wanting one
+        /// resolves the seat from the scene instead. Read this only to tell two split-screen seats
+        /// apart.
         Entity Seat = Entity::Null;
         /// @brief Frame delta time in seconds.
         f32 Delta = 0.0f;
