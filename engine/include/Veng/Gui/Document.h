@@ -634,20 +634,22 @@ namespace Veng::Gui
             return element.Widget.Value;
         }
 
-        /// @brief Scrolls a ScrollView by a pixel delta, clamped to its content extent.
+        /// @brief Scrolls a scrollable element by a pixel delta, clamped to its content extent.
         ///
-        /// Adds the delta to the ScrollView's offset and clamps it so the content stays within its
+        /// Adds the delta to the element's offset and clamps it so the content stays within its
         /// scrollable range (never scrolling past the last child). The offset shifts the laid-out
-        /// children on the next Solve. A no-op on an element that is not a ScrollView.
-        /// @param element  The ScrollView element to scroll.
+        /// children on the next Solve. Whether an element scrolls is its **resolved style**
+        /// (`overflow-x`/`overflow-y`) rather than its kind, so this reaches any element styled
+        /// scrollable and is a no-op on one that is not.
+        /// @param element  The scrollable element to scroll.
         /// @param delta    The scroll delta, in pixels (positive scrolls content up/left).
         void ScrollBy(Element& element, vec2 delta);
 
-        /// @brief Scrolls the nearest ScrollView ancestor so an element's box is fully in view.
+        /// @brief Scrolls the nearest scrollable ancestor so an element's box is fully in view.
         ///
         /// Adjusts the ancestor's scroll offset by the smallest delta that brings the element's
         /// laid-out rect inside the view's own rect, on both axes; an element already in view is a
-        /// no-op, as is an element with no ScrollView ancestor. This runs against the last Solve's
+        /// no-op, as is an element with no scrollable ancestor. This runs against the last Solve's
         /// rects, so an item created this frame scrolls into view on the next one.
         /// @param element  The element to reveal.
         void ScrollIntoView(const Element& element);
