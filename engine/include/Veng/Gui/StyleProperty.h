@@ -144,6 +144,9 @@ namespace Veng::Gui
         /// @brief The material an Image shades its content box through (Style::ImageMaterial);
         /// value is a Material or MaterialInstance AssetId.
         ImageMaterial,
+        /// @brief A per-property ease list (not a Style field): Unit is the sheet's transition-table
+        /// index the declaration's entries start at, Values.x is how many entries it holds.
+        Transition,
     };
 
     /// @brief The kind of shadow a BoxShadow declaration's Unit selects.
@@ -160,7 +163,7 @@ namespace Veng::Gui
     /// @brief The number of StyleProperty enumerators — keep in step when appending one.
     ///
     /// The runtime's whole-style property sweeps iterate `[0, StylePropertyCount)`.
-    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::ImageMaterial) + 1;
+    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::Transition) + 1;
 
     /// @brief Canonical USS declaration name of a style property ("flex-direction", "background", …).
     ///
@@ -177,4 +180,15 @@ namespace Veng::Gui
     /// @param name  The declaration name (e.g. "background", "corner-radius").
     /// @return The matching property, or nullopt when the name is unrecognized.
     [[nodiscard]] optional<StyleProperty> ParseStyleProperty(std::string_view name);
+
+    /// @brief Whether a property's value interpolates continuously, so it can be eased.
+    ///
+    /// True for colors, scalars, corner radii, edge insets, and same-kind lengths; false for the
+    /// enums, fonts, fill-source references, and the shadow shorthand, whose values have no
+    /// midpoint. This is the transition-able set: an entry naming a property outside it never
+    /// tweens, so the style tween clock skips it and the stylesheet cook rejects it up front
+    /// rather than letting an author discover it by watching a property snap.
+    /// @param property  The style property.
+    /// @return True when a transition or a keyframe clip can interpolate the property.
+    [[nodiscard]] bool IsAnimatableProperty(StyleProperty property);
 }

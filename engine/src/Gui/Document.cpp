@@ -502,7 +502,10 @@ namespace Veng::Gui
         // keeps each state-scoped survivor as a variant in the same source order. Inline always wins.
         // An `animation` declaration is element state, not a Style field: it copies the referenced
         // sheet clip's keyframes onto the element (a later declaration replaces an earlier one, the
-        // cascade's last-wins), so the live document never borrows the sheet.
+        // cascade's last-wins), so the live document never borrows the sheet. A `transition`
+        // declaration resolves the same way, copying its slice of the sheet's transition table onto
+        // the element — the same list Document::SetTransitions writes, so both paths reach one
+        // runtime mechanism.
         // Cascades the sheets onto an element, then its inline style over the top. `recipe` is
         // null for a widget-owned element, which has neither an authored identity nor inline style
         // — only the sheet rules its kind and classes match.
@@ -513,6 +516,7 @@ namespace Veng::Gui
         {
             element.Variants.clear();
             element.Animations.clear();
+            element.Transitions.clear();
 
             for (const StyleSheet* sheet : sheets)
             {
@@ -536,6 +540,19 @@ namespace Veng::Gui
                                         .Duration = declaration.Values.x,
                                         .Mode = static_cast<AnimationLoopMode>(
                                             static_cast<u32>(declaration.Values.y))}});
+                                }
+                                continue;
+                            }
+                            if (declaration.Property == StyleProperty::Transition)
+                            {
+                                const vector<StyleTransition>& table = sheet->GetTransitions();
+                                const auto first = static_cast<usize>(declaration.Unit);
+                                const auto count = static_cast<usize>(declaration.Values.x);
+                                if (first + count <= table.size())
+                                {
+                                    element.Transitions.assign(
+                                        table.begin() + static_cast<isize>(first),
+                                        table.begin() + static_cast<isize>(first + count));
                                 }
                                 continue;
                             }
@@ -1352,6 +1369,7 @@ namespace Veng::Gui
             case StyleProperty::BoxShadowColor:
             case StyleProperty::BackgroundMaterial:
             case StyleProperty::ImageMaterial:
+            case StyleProperty::Transition:
                 return false;
             // A slice makes an Image's intrinsic size the sum of its corner insets, so authoring or
             // dropping one re-measures the leaf.
@@ -1364,71 +1382,6 @@ namespace Veng::Gui
             case StyleProperty::OverflowY:
             case StyleProperty::ScrollbarLayout:
                 return true;
-            }
-            return false;
-        }
-
-        // Whether a property's value type interpolates continuously: colors, scalars, corner radii,
-        // edge insets, and same-kind lengths. Enums, fonts, and the overflow keywords snap.
-        bool IsAnimatableProperty(StyleProperty property)
-        {
-            switch (property)
-            {
-            case StyleProperty::FlexGrow:
-            case StyleProperty::FlexShrink:
-            case StyleProperty::FlexBasis:
-            case StyleProperty::Width:
-            case StyleProperty::Height:
-            case StyleProperty::MinWidth:
-            case StyleProperty::MinHeight:
-            case StyleProperty::MaxWidth:
-            case StyleProperty::MaxHeight:
-            case StyleProperty::Margin:
-            case StyleProperty::Padding:
-            case StyleProperty::Inset:
-            case StyleProperty::InsetLeft:
-            case StyleProperty::InsetTop:
-            case StyleProperty::InsetRight:
-            case StyleProperty::InsetBottom:
-            case StyleProperty::Origin:
-            case StyleProperty::Background:
-            case StyleProperty::CornerRadius:
-            case StyleProperty::BorderWidth:
-            case StyleProperty::BorderColor:
-            case StyleProperty::TextColor:
-            case StyleProperty::TextSize:
-            case StyleProperty::Opacity:
-            case StyleProperty::Rotation:
-                return true;
-            case StyleProperty::FlexDirection:
-            case StyleProperty::JustifyContent:
-            case StyleProperty::AlignItems:
-            case StyleProperty::AlignSelf:
-            case StyleProperty::FlexWrap:
-            case StyleProperty::Position:
-            case StyleProperty::TextFont:
-            case StyleProperty::Overflow:
-            case StyleProperty::OverflowX:
-            case StyleProperty::OverflowY:
-            case StyleProperty::ScrollbarLayout:
-            case StyleProperty::PointerEvents:
-            case StyleProperty::Animation:
-            case StyleProperty::BackgroundGradient:
-            case StyleProperty::TextAlign:
-            case StyleProperty::BackgroundImage:
-            case StyleProperty::BackgroundSlice:
-            case StyleProperty::BackgroundFit:
-            case StyleProperty::BackgroundRepeat:
-            case StyleProperty::ObjectFit:
-            case StyleProperty::ImageRepeat:
-            case StyleProperty::ImageSlice:
-            // A shadow's geometry rides one declaration with the kind in its Unit, so easing it
-            // would interpolate an enum alongside the pixels; both halves snap.
-            case StyleProperty::BoxShadow:
-            case StyleProperty::BoxShadowColor:
-            case StyleProperty::BackgroundMaterial:
-            case StyleProperty::ImageMaterial:
-                return false;
             }
             return false;
         }

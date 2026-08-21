@@ -64,11 +64,14 @@ namespace Veng
                 static_cast<usize>(header.GradientCount) * sizeof(CookedStyleGradient);
             const usize variableBytes =
                 static_cast<usize>(header.VariableCount) * sizeof(CookedStyleVariable);
+            const usize transitionBytes =
+                static_cast<usize>(header.TransitionCount) * sizeof(CookedStyleTransition);
             const auto rampBytes = static_cast<usize>(header.RampByteCount);
 
             usize cursor = sizeof(CookedStyleSheetHeader);
             if (cooked.size() < cursor + ruleBytes + propertyBytes + animationBytes +
-                                    keyframeBytes + gradientBytes + variableBytes + rampBytes)
+                                    keyframeBytes + gradientBytes + variableBytes +
+                                    transitionBytes + rampBytes)
             {
                 return std::unexpected(Corrupt(id, "stylesheet: cooked blob truncated"));
             }
@@ -114,6 +117,13 @@ namespace Veng
                 std::memcpy(cookedVariables.data(), cooked.data() + cursor, variableBytes);
             }
             cursor += variableBytes;
+
+            vector<CookedStyleTransition> cookedTransitions(header.TransitionCount);
+            if (transitionBytes > 0)
+            {
+                std::memcpy(cookedTransitions.data(), cooked.data() + cursor, transitionBytes);
+            }
+            cursor += transitionBytes;
 
             const u8* const rampRegion = cooked.data() + cursor;
 
@@ -234,6 +244,14 @@ namespace Veng
                 variable.Payload = {cookedVariable.Payload[0], cookedVariable.Payload[1],
                                     cookedVariable.Payload[2], cookedVariable.Payload[3]};
                 decoded.Variables.push_back(std::move(variable));
+            }
+
+            decoded.Transitions.reserve(header.TransitionCount);
+            for (const CookedStyleTransition& cookedTransition : cookedTransitions)
+            {
+                decoded.Transitions.push_back(Gui::StyleTransition{
+                    .Property = static_cast<Gui::StyleProperty>(cookedTransition.Property),
+                    .Duration = cookedTransition.Duration});
             }
 
             // Deduplicate the surfaced asset ids so an asset referenced by many rules loads once.
@@ -367,9 +385,10 @@ namespace Veng
             }
         }
 
-        const Ref<Gui::StyleSheet> sheet = Gui::StyleSheet::Create(
-            std::move(decoded->Rules), std::move(decoded->Animations),
-            std::move(decoded->Gradients), std::move(decoded->Variables), dependencies);
+        const Ref<Gui::StyleSheet> sheet =
+            Gui::StyleSheet::Create(std::move(decoded->Rules), std::move(decoded->Animations),
+                                    std::move(decoded->Gradients), std::move(decoded->Variables),
+                                    std::move(decoded->Transitions), dependencies);
 
         return Detail::LoadJob{
             .Resource = Detail::RefAny(sheet),

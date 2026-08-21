@@ -128,8 +128,11 @@ at cook time:
   tokenizer over the sheet, both cooker-only, so no XML or CSS parser reaches the runtime. The
   markup becomes a pre-order recipe element tree (kind, id, classes, text, inline style, unresolved
   `{obj.field}` bindings, named handlers) and the sheet becomes flattened, selector-resolved rules
-  plus their pseudo-state variants, with colors resolved sRGB→linear and each `background-gradient`
-  baked to a shape + a ramp LUT. Both importers share `Importers/StyleParse.{h,cpp}`, which owns the
+  plus their pseudo-state variants, with colors resolved sRGB→linear, each `background-gradient`
+  baked to a shape + a ramp LUT, and each `transition` list resolved into the sheet's transition
+  table — an entry naming an unknown property, or one whose value does not interpolate, is a
+  **located cook error** rather than an ease that silently never runs.
+  Both importers share `Importers/StyleParse.{h,cpp}`, which owns the
   per-property value grammar and the **fill-source exclusivity diagnostic**
   (`CheckExclusiveFillSources`): `background-material`, `background-gradient`, `background-image`,
   and `background` are one exclusive fill source, so a block authoring two is a **located cook

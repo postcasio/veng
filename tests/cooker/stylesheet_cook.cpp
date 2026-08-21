@@ -3,7 +3,9 @@
 // variable referencing another variable, then checks the flattened rules carry the substituted
 // values, the runtime variable table answers FindVariableColor/FindVariableScalar for the sheet's
 // own color/scalar variables (and nullopt for a multi-token or @use'd one), the @use target is
-// recorded as a build dependency, and each malformed sheet is a located cook error.
+// recorded as a build dependency, and each malformed sheet is a located cook error. It also covers
+// the `transition` declaration — the list it cooks, the entries the cook rejects, and that a later
+// rule replaces the whole list — and the nesting-aware value split a functional colour needs.
 
 #include <algorithm>
 #include <array>
@@ -19,6 +21,7 @@
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
+#include <Veng/Gui/Document.h>
 #include <Veng/Gui/Element.h>
 #include <Veng/Gui/StyleProperty.h>
 #include <Veng/Gui/StyleSheet.h>
@@ -33,11 +36,12 @@ namespace
 {
     constexpr AssetId MainSheetId{0x51A7EE7500000001ULL};
 
-    const Gui::StyleRule* FindRuleByClass(const vector<Gui::StyleRule>& rules, string_view cls)
+    const Gui::StyleRule* FindRuleByClass(const vector<Gui::StyleRule>& rules, string_view cls,
+                                          Gui::ElementState state = Gui::ElementState::None)
     {
         for (const Gui::StyleRule& rule : rules)
         {
-            if (rule.Class == cls && rule.State == Gui::ElementState::None)
+            if (rule.Class == cls && rule.State == state)
             {
                 return &rule;
             }
@@ -63,6 +67,53 @@ namespace
         CHECK(lhs.g == doctest::Approx(rhs.g));
         CHECK(lhs.b == doctest::Approx(rhs.b));
         CHECK(lhs.a == doctest::Approx(rhs.a));
+    }
+
+    // Cooks one `.vuss` source text through the real importer, returning the raw cook result so a
+    // located error is checkable beside a successful blob.
+    Result<vector<u8>> CookSheetText(string_view text)
+    {
+        const path source = Veng::TestSupport::TempDir() / "veng_sheet_case.vuss";
+        {
+            std::ofstream out(source);
+            out << text;
+        }
+        Cooker cooker;
+        RegisterBuiltinImporters(cooker);
+        Result<vector<u8>> bytes = cooker.CookSource(source, AssetId{0x1}, AssetTypes::StyleSheet);
+        std::filesystem::remove(source);
+        return bytes;
+    }
+
+    // Cooks a sheet and decodes it the way the runtime loader does.
+    AssetResult<Detail::DecodedStyleSheet> CookAndDecodeSheet(string_view text)
+    {
+        const Result<vector<u8>> bytes = CookSheetText(text);
+        REQUIRE(bytes.has_value());
+        const Result<ArchiveReader> reader = ArchiveReader::FromBytes(*bytes);
+        REQUIRE(reader.has_value());
+        const optional<ArchiveEntry> entry = reader->Find(AssetId{0x1});
+        REQUIRE(entry.has_value());
+        return Detail::DecodeStyleSheet(AssetId{0x1}, entry->Blob);
+    }
+
+    // The transition entries one rule's `transition` declaration names, read the way the
+    // instantiate-time style resolve reads them: the declaration slices the sheet's own table.
+    vector<Gui::StyleTransition> RuleTransitions(const Detail::DecodedStyleSheet& sheet,
+                                                 const Gui::StyleRule& rule)
+    {
+        const Gui::StyleDeclaration* const declaration =
+            FindDecl(rule, Gui::StyleProperty::Transition);
+        if (declaration == nullptr)
+        {
+            return {};
+        }
+        const auto first = static_cast<usize>(declaration->Unit);
+        const auto count = static_cast<usize>(declaration->Values.x);
+        REQUIRE(first + count <= sheet.Transitions.size());
+        return vector<Gui::StyleTransition>(sheet.Transitions.begin() + static_cast<isize>(first),
+                                            sheet.Transitions.begin() +
+                                                static_cast<isize>(first + count));
     }
 }
 
@@ -164,9 +215,9 @@ TEST_CASE("Cooker: stylesheet variables substitute, redefine last-wins, and fill
     CHECK(keyframeOpacity->Values.x == doctest::Approx(0.5f));
 
     // The runtime variable table carries the sheet's own color/scalar variables only.
-    const Ref<Gui::StyleSheet> sheet =
-        Gui::StyleSheet::Create(std::move(decoded->Rules), std::move(decoded->Animations),
-                                std::move(decoded->Gradients), std::move(decoded->Variables), {});
+    const Ref<Gui::StyleSheet> sheet = Gui::StyleSheet::Create(
+        std::move(decoded->Rules), std::move(decoded->Animations), std::move(decoded->Gradients),
+        std::move(decoded->Variables), std::move(decoded->Transitions), {});
 
     // A color variable, and one that resolved through another variable (var(--accent)).
     const optional<vec4> accentStrong = sheet->FindVariableColor("accent-strong");
@@ -613,4 +664,152 @@ TEST_CASE("Cooker: the box-shadow shorthand splits into a geometry and a color d
     const Result<vector<CookedStyleProperty>> short_ = ParseBoxShadowDeclaration("4px", located);
     REQUIRE_FALSE(short_.has_value());
     CHECK(short_.error().find("loc") != string::npos);
+}
+
+TEST_CASE("Cooker: a sheet-authored transition drives the tween clock the imperative list drives")
+{
+    // Two entries, one with the `s` suffix and one without — both are seconds.
+    const AssetResult<Detail::DecodedStyleSheet> decoded =
+        CookAndDecodeSheet(".eased {\n"
+                           "  background: rgb(0, 0, 0);\n"
+                           "  transition: background 1s, color 0.25;\n"
+                           "}\n"
+                           ".eased:hover { background: rgb(1, 1, 1); }\n");
+    REQUIRE(decoded.has_value());
+
+    const Gui::StyleRule* const eased = FindRuleByClass(decoded->Rules, "eased");
+    REQUIRE(eased != nullptr);
+    const vector<Gui::StyleTransition> authored = RuleTransitions(*decoded, *eased);
+    REQUIRE(authored.size() == 2);
+    CHECK(authored[0].Property == Gui::StyleProperty::Background);
+    CHECK(authored[0].Duration == doctest::Approx(1.0f));
+    CHECK(authored[1].Property == Gui::StyleProperty::TextColor);
+    CHECK(authored[1].Duration == doctest::Approx(0.25f));
+
+    // The sheet's list and a hand-written one are the same data, so they are the same mechanism:
+    // two elements given each reach the same value at the same time, not merely the same endpoint.
+    const Gui::StyleRule* const hovered =
+        FindRuleByClass(decoded->Rules, "eased", Gui::ElementState::Hovered);
+    REQUIRE(hovered != nullptr);
+
+    Gui::Document doc;
+    const auto arm = [&](const vector<Gui::StyleTransition>& transitions) -> Gui::Element&
+    {
+        Gui::Element& element = doc.Add(doc.Root(), Gui::ElementKind::Panel);
+        Gui::Style base{};
+        for (const Gui::StyleDeclaration& declaration : eased->Declarations)
+        {
+            Gui::ApplyDeclaration(base, declaration, nullptr);
+        }
+        doc.SetStyle(element, base);
+        element.Variants = {Gui::StyleVariant{.State = Gui::ElementState::Hovered,
+                                              .Declarations = hovered->Declarations}};
+        doc.SetTransitions(element, transitions);
+        return element;
+    };
+
+    Gui::Element& fromSheet = arm(authored);
+    Gui::Element& fromCode =
+        arm({Gui::StyleTransition{.Property = Gui::StyleProperty::Background, .Duration = 1.0f},
+             Gui::StyleTransition{.Property = Gui::StyleProperty::TextColor, .Duration = 0.25f}});
+
+    doc.SetState(fromSheet, Gui::ElementState::Hovered);
+    doc.SetState(fromCode, Gui::ElementState::Hovered);
+    for (const f32 step : {0.25f, 0.25f, 0.5f})
+    {
+        doc.Update(step);
+        CHECK(fromSheet.ComputedStyle.Background.r ==
+              doctest::Approx(fromCode.ComputedStyle.Background.r));
+    }
+    // Both landed on the target at the same duration, having passed through the same midpoint.
+    CHECK(fromSheet.ComputedStyle.Background.r == doctest::Approx(1.0f));
+}
+
+TEST_CASE("Cooker: a malformed transition entry fails the cook")
+{
+    // A property name no USS declaration spells.
+    const Result<vector<u8>> unknown = CookSheetText(".a { transition: wobble 1s; }\n");
+    REQUIRE_FALSE(unknown.has_value());
+    CHECK(unknown.error().find("wobble") != string::npos);
+
+    // A real property whose value has no midpoint to interpolate through.
+    const Result<vector<u8>> unanimatable =
+        CookSheetText(".a { transition: flex-direction 1s; }\n");
+    REQUIRE_FALSE(unanimatable.has_value());
+    CHECK(unanimatable.error().find("flex-direction") != string::npos);
+
+    // A duration that is not a positive seconds value.
+    const Result<vector<u8>> badDuration = CookSheetText(".a { transition: background soon; }\n");
+    REQUIRE_FALSE(badDuration.has_value());
+    CHECK(badDuration.error().find("duration") != string::npos);
+
+    // An entry missing its duration entirely.
+    const Result<vector<u8>> incomplete = CookSheetText(".a { transition: background; }\n");
+    REQUIRE_FALSE(incomplete.has_value());
+    CHECK(incomplete.error().find("transition") != string::npos);
+}
+
+TEST_CASE("Cooker: a later rule's transition replaces the earlier list whole")
+{
+    const AssetResult<Detail::DecodedStyleSheet> decoded =
+        CookAndDecodeSheet(".a { transition: background 1s, color 2s; }\n"
+                           ".a { transition: opacity 3s; }\n");
+    REQUIRE(decoded.has_value());
+
+    // Both rules survive the flatten (the runtime cascades them in source order), and each carries
+    // its own whole list — the later one is not merged entry-by-entry into the earlier.
+    vector<const Gui::StyleRule*> rules;
+    for (const Gui::StyleRule& rule : decoded->Rules)
+    {
+        if (rule.Class == "a")
+        {
+            rules.push_back(&rule);
+        }
+    }
+    REQUIRE(rules.size() == 2);
+
+    const vector<Gui::StyleTransition> first = RuleTransitions(*decoded, *rules[0]);
+    const vector<Gui::StyleTransition> second = RuleTransitions(*decoded, *rules[1]);
+    REQUIRE(first.size() == 2);
+    REQUIRE(second.size() == 1);
+    CHECK(second[0].Property == Gui::StyleProperty::Opacity);
+    CHECK(second[0].Duration == doctest::Approx(3.0f));
+}
+
+TEST_CASE("Cooker: a multi-value declaration splits outside parentheses, so a stop may be rgba()")
+{
+    // The gradient's value is comma-separated and so is each stop's own component list; the split
+    // has to see the nesting or the four-component stops lex as separate values.
+    const AssetResult<Detail::DecodedStyleSheet> decoded = CookAndDecodeSheet(
+        ".ramp {\n"
+        "  background-gradient: linear 90deg, rgba(0.5, 1.0, 1.5, 0.25) 0%, rgba(2.0, 0.0, 0.0, "
+        "1.0) 100%;\n"
+        "}\n");
+    REQUIRE(decoded.has_value());
+    REQUIRE(decoded->Gradients.size() == 1);
+
+    const Gui::StyleGradient& gradient = decoded->Gradients.front();
+    REQUIRE(gradient.Width >= 2);
+    const auto texel = [&gradient](u32 index) -> vec4
+    {
+        u16 halves[4] = {};
+        std::memcpy(halves, gradient.Ramp.data() + static_cast<usize>(index) * 4 * sizeof(u16),
+                    sizeof(halves));
+        return vec4(glm::unpackHalf1x16(halves[0]), glm::unpackHalf1x16(halves[1]),
+                    glm::unpackHalf1x16(halves[2]), glm::unpackHalf1x16(halves[3]));
+    };
+    const vec4 first = texel(0);
+    const vec4 last = texel(gradient.Width - 1);
+    CHECK(first.g == doctest::Approx(1.0f).epsilon(0.01));
+    CHECK(first.a == doctest::Approx(0.25f).epsilon(0.01));
+    CHECK(last.r == doctest::Approx(2.0f).epsilon(0.01));
+    CHECK(last.a == doctest::Approx(1.0f).epsilon(0.01));
+
+    // A paren-free multi-value declaration splits exactly as it always did — the regression guard
+    // for every sheet already in the tree.
+    const AssetResult<Detail::DecodedStyleSheet> hex = CookAndDecodeSheet(
+        ".ramp { background-gradient: linear 90deg, #ff0000 0%, #0000ff 100%; }\n");
+    REQUIRE(hex.has_value());
+    REQUIRE(hex->Gradients.size() == 1);
+    CHECK(hex->Gradients.front().Width >= 2);
 }

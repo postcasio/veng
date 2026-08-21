@@ -108,6 +108,8 @@ namespace Veng::Gui
             return "background-material";
         case StyleProperty::ImageMaterial:
             return "material";
+        case StyleProperty::Transition:
+            return "transition";
         }
         return "unknown";
     }
@@ -318,6 +320,75 @@ namespace Veng::Gui
         {
             return StyleProperty::ImageMaterial;
         }
+        if (name == "transition")
+        {
+            return StyleProperty::Transition;
+        }
         return std::nullopt;
+    }
+
+    bool IsAnimatableProperty(StyleProperty property)
+    {
+        switch (property)
+        {
+        case StyleProperty::FlexGrow:
+        case StyleProperty::FlexShrink:
+        case StyleProperty::FlexBasis:
+        case StyleProperty::Width:
+        case StyleProperty::Height:
+        case StyleProperty::MinWidth:
+        case StyleProperty::MinHeight:
+        case StyleProperty::MaxWidth:
+        case StyleProperty::MaxHeight:
+        case StyleProperty::Margin:
+        case StyleProperty::Padding:
+        case StyleProperty::Inset:
+        case StyleProperty::InsetLeft:
+        case StyleProperty::InsetTop:
+        case StyleProperty::InsetRight:
+        case StyleProperty::InsetBottom:
+        case StyleProperty::Origin:
+        case StyleProperty::Background:
+        case StyleProperty::CornerRadius:
+        case StyleProperty::BorderWidth:
+        case StyleProperty::BorderColor:
+        case StyleProperty::TextColor:
+        case StyleProperty::TextSize:
+        case StyleProperty::Opacity:
+        case StyleProperty::Rotation:
+            return true;
+        case StyleProperty::FlexDirection:
+        case StyleProperty::JustifyContent:
+        case StyleProperty::AlignItems:
+        case StyleProperty::AlignSelf:
+        case StyleProperty::FlexWrap:
+        case StyleProperty::Position:
+        case StyleProperty::TextFont:
+        case StyleProperty::Overflow:
+        case StyleProperty::OverflowX:
+        case StyleProperty::OverflowY:
+        case StyleProperty::ScrollbarLayout:
+        case StyleProperty::PointerEvents:
+        case StyleProperty::Animation:
+        case StyleProperty::BackgroundGradient:
+        case StyleProperty::TextAlign:
+        case StyleProperty::BackgroundImage:
+        case StyleProperty::BackgroundSlice:
+        case StyleProperty::BackgroundFit:
+        case StyleProperty::BackgroundRepeat:
+        case StyleProperty::ObjectFit:
+        case StyleProperty::ImageRepeat:
+        case StyleProperty::ImageSlice:
+        // A shadow's geometry rides one declaration with the kind in its Unit, so easing it
+        // would interpolate an enum alongside the pixels; both halves snap.
+        case StyleProperty::BoxShadow:
+        case StyleProperty::BoxShadowColor:
+        case StyleProperty::BackgroundMaterial:
+        case StyleProperty::ImageMaterial:
+        // The ease list is what selects the properties that tween; it is not one of them.
+        case StyleProperty::Transition:
+            return false;
+        }
+        return false;
     }
 }

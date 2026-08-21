@@ -35,7 +35,9 @@ TTF/OTF; the runtime decodes nothing and shapes crisp text at any scale from the
 
 `AssetTypes::StyleSheet` (`Veng/Gui/StyleSheet.h`) is a reusable cooked stylesheet — **resolved**
 rules (type/class/id selectors matched at cook time) plus their
-`:hover`/`:active`/`:focus`/`:disabled`/`:checked`/`:selected` state variants, colors resolved sRGB→linear, and
+`:hover`/`:active`/`:focus`/`:disabled`/`:checked`/`:selected` state variants, colors resolved sRGB→linear, a
+**transition table** (each `transition` declaration owning a contiguous run the resolve copies onto
+the element as its ease list), and
 a **gradient table** (each `background-gradient` baked at cook time to a shape + box-space geometry
 — linear endpoints `P0`/`P1`, elliptical radial radii, conic center + turn — plus an N×1 ramp LUT
 the instantiate resolve uploads through the borrowed AssetManager). At draw the gradient geometry
@@ -127,6 +129,15 @@ selector engine — `Update` selects the variants whose state bit is set in the 
 interaction mask, folds them over the base, and **eases** any transition-able property (colors,
 opacity, scalar sizes) over its authored duration through a small tween clock. A style change that
 moves a layout input re-dirties the Yoga box; a pure paint change (color/opacity) does not.
+
+**The ease durations are one per-element list, reached two ways.** A rule's
+`transition: <property> <duration>[, …]` cooks into the sheet's transition table and the
+instantiate-time resolve copies its slice onto the element; `Document::SetTransitions` writes the
+same `vector<StyleTransition>` imperatively, for a duration a game computes at runtime. So the
+declarative path is a default, not a replacement, and both drive one tween clock. The cook rejects
+an unknown property name and one that does not interpolate (`Gui::IsAnimatableProperty` is the
+shared predicate the tween clock and the cooker both read), and a later rule's `transition`
+replaces an earlier one's **whole** list — the ordinary cascade, not a per-entry merge.
 
 **A background is one fill source, never a stack.** `background-material` > `background-gradient` >
 `background-image` > `background`, **exclusive**: the winning source *is* the fill and they do not

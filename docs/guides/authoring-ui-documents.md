@@ -244,10 +244,31 @@ variant the runtime folds over the base style when the element is hovered, easin
 transition-able property:
 
 ```css
-.primary { background: #3b82f6; }
+.primary { background: #3b82f6; transition: background 0.08s; }
 .primary:hover { background: #60a5fa; }
 .primary:disabled { opacity: 0.5; }
 ```
+
+### `transition` — the ease a state change takes
+
+`transition: <property> <duration>[s][, <property> <duration>[s]]*` names, per property, how long
+the live value takes to reach a new target instead of snapping to it. A property with no entry
+snaps, which is the default. The duration is in seconds, with or without the `s` suffix.
+
+Three things the cook holds it to. An **unknown property name is a cook error**, as an `animation`
+naming a missing clip is. A **property that does not interpolate is a cook error too** — only the
+colors, scalars, corner radii, edge insets and same-kind lengths have a midpoint, so
+`transition: flex-direction 1s` is rejected rather than silently ignored at runtime. And a **later
+rule's `transition` replaces an earlier one's whole list**, exactly as any other property resolves
+through the cascade — there is no per-entry merge.
+
+There is no timing function, no `transition: all`, and no delay: the runtime eases one way, an
+explicit list is what makes the cook-time property check possible, and a wildcard would ease
+properties nobody chose.
+
+`Document::SetTransitions(element, list)` is the imperative sibling and writes the same per-element
+list, for a duration a game computes at runtime; the two are one mechanism, so a sheet is the
+default rather than a replacement.
 
 ### Shader-driven fills: `background-material`
 

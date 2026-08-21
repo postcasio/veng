@@ -153,12 +153,14 @@ namespace Veng::Gui
         /// @param animations    The cooked @keyframes clips, indexed by `animation` declarations.
         /// @param gradients     The cooked gradients, indexed by `background-gradient` declarations.
         /// @param variables     The sheet's own queryable variables (colors and scalars).
+        /// @param transitions   The flat transition table `transition` declarations slice.
         /// @param dependencies  The resolved font dependency cache entries, kept resident.
         /// @return A shared StyleSheet.
         static Ref<StyleSheet> Create(vector<StyleRule> rules,
                                       vector<StyleAnimationClip> animations,
                                       vector<StyleGradient> gradients,
                                       vector<StyleVariable> variables,
+                                      vector<StyleTransition> transitions,
                                       vector<Ref<Detail::AssetCacheEntry>> dependencies);
 
         /// @brief Returns the sheet's resolved rules, in source order.
@@ -175,6 +177,17 @@ namespace Veng::Gui
 
         /// @brief Returns the sheet's own queryable variables (colors and scalars).
         [[nodiscard]] const vector<StyleVariable>& GetVariables() const { return m_Variables; }
+
+        /// @brief Returns the flat transition table a `transition` declaration slices.
+        ///
+        /// A declaration owns the run [Unit, Unit + Values.x) of this table; the instantiate-time
+        /// resolve copies that run onto the element as its live transition list, so a sheet-authored
+        /// ease and one set through Document::SetTransitions produce identical per-element data and
+        /// run through the same tween clock.
+        [[nodiscard]] const vector<StyleTransition>& GetTransitions() const
+        {
+            return m_Transitions;
+        }
 
         /// @brief Looks up a color variable this sheet owns, by its name without the leading `--`.
         ///
@@ -196,6 +209,7 @@ namespace Veng::Gui
     private:
         StyleSheet(vector<StyleRule> rules, vector<StyleAnimationClip> animations,
                    vector<StyleGradient> gradients, vector<StyleVariable> variables,
+                   vector<StyleTransition> transitions,
                    vector<Ref<Detail::AssetCacheEntry>> dependencies);
 
         vector<StyleRule> m_Rules;
@@ -205,6 +219,8 @@ namespace Veng::Gui
         vector<StyleGradient> m_Gradients;
         /// @brief The sheet's own queryable variables (colors and scalars), in source order.
         vector<StyleVariable> m_Variables;
+        /// @brief The flat transition table, sliced by a `transition` declaration's Unit + Values.x.
+        vector<StyleTransition> m_Transitions;
         /// @brief Resolved font dependency entries, kept resident so a declaration's font stays loaded.
         vector<Ref<Detail::AssetCacheEntry>> m_Dependencies;
     };

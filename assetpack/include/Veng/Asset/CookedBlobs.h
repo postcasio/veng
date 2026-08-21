@@ -913,15 +913,17 @@ namespace Veng
     /// @brief The current stylesheet-format version.
     ///
     /// Bumped on any CookedStyleSheetHeader/CookedStyleRule/CookedStyleProperty/
-    /// CookedStyleAnimation/CookedStyleKeyframe/CookedStyleGradient/CookedStyleVariable layout change,
+    /// CookedStyleAnimation/CookedStyleKeyframe/CookedStyleGradient/CookedStyleVariable/
+    /// CookedStyleTransition layout change,
     /// and on any renumbering of the StyleProperty enumerators a CookedStyleProperty stores by ordinal;
     /// the loader rejects a blob whose Version != this. v2 added the @keyframes animation tables; v3
     /// added the gradient table and its baked ramp region; v4 widened a gradient's geometry to
     /// explicit endpoints (P0/P1) and an elliptical radial radius; v5 added the queryable variable
     /// table; v6 widened the gradient ramp from RGBA8 to RGBA16Sfloat half-float texels so a stop can
     /// hold an HDR (> 1) color; v7 renumbered the StyleProperty enumerators, replacing the single clip
-    /// flag with the per-axis overflow properties and the scrollbar layout.
-    inline constexpr u32 CookedStyleSheetVersion = 7u;
+    /// flag with the per-axis overflow properties and the scrollbar layout; v8 added the transition
+    /// table a `transition` declaration slices.
+    inline constexpr u32 CookedStyleSheetVersion = 8u;
 
     /// @brief Maximum byte length (including nul terminator) for a selector's class/id/type name.
     ///
@@ -946,6 +948,7 @@ namespace Veng
     ///   CookedStyleKeyframe[KeyframeCount]     — every clip's keyframes, contiguous per clip
     ///   CookedStyleGradient[GradientCount]     — one entry per `background-gradient`, in source order
     ///   CookedStyleVariable[VariableCount]     — the sheet's own queryable variables, in source order
+    ///   CookedStyleTransition[TransitionCount] — every `transition` declaration's entries, contiguous per declaration
     ///   u8[RampByteCount]                      — every gradient's baked N×1 RGBA16Sfloat ramp, contiguous
     ///
     /// A rule's declarations are the PropertyCount-slice [FirstProperty, FirstProperty + PropertyCount)
@@ -953,7 +956,10 @@ namespace Veng
     /// source order so a later rule of equal specificity wins the cascade, matching CSS
     /// source-order precedence. An `animation` declaration references a clip by its index in the
     /// animation table (resolved from the authored name at cook time — the name is not stored). A
-    /// `background-gradient` declaration references a gradient by its index in the gradient table.
+    /// `background-gradient` declaration references a gradient by its index in the gradient table. A
+    /// `transition` declaration slices the transition table — its Unit is the first entry's index and
+    /// its Values[0] the entry count — so the whole list is one declaration and a later rule's
+    /// `transition` replaces an earlier one's outright, like any other property in the cascade.
     /// The variable table carries only the sheet's own top-level `--` variables whose value resolves
     /// to a color or a single number, for runtime query; multi-token variables are cook-time-only and
     /// absent.
@@ -973,7 +979,9 @@ namespace Veng
         u32 GradientCount = 0;
         /// @brief Number of CookedStyleVariable entries following the gradient table.
         u32 VariableCount = 0;
-        /// @brief Total bytes in the ramp region following the variable table.
+        /// @brief Total number of CookedStyleTransition entries following the variable table.
+        u32 TransitionCount = 0;
+        /// @brief Total bytes in the ramp region following the transition table.
         u32 RampByteCount = 0;
     };
 
@@ -1083,6 +1091,19 @@ namespace Veng
         u32 Kind = 0;
         /// @brief Resolved value: a linear straight-alpha color (all four), or a scalar in [0].
         f32 Payload[4] = {};
+    };
+
+    /// @brief One entry of a cooked `transition` list: which property eases, and over how long.
+    ///
+    /// Property is the underlying Gui::StyleProperty integer, checked at cook time to be one the
+    /// runtime can interpolate. Duration is in seconds. A `transition` declaration owns the
+    /// contiguous run [Unit, Unit + Values[0]) of this table.
+    struct CookedStyleTransition
+    {
+        /// @brief Underlying Gui::StyleProperty integer of the property this entry eases.
+        u32 Property = 0;
+        /// @brief The ease duration, in seconds.
+        f32 Duration = 0.0f;
     };
 
     /// @brief The current UI-document-format version.

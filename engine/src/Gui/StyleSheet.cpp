@@ -261,6 +261,10 @@ namespace Veng::Gui
             // upload its ramp, so the instantiate-time cascade resolves it where the sheet is in hand
             // (ResolveElementStyle); it is not resolvable from a declaration alone here.
             return;
+        case StyleProperty::Transition:
+            // An ease list is element state, not a Style field; it slices the sheet's transition
+            // table, so the instantiate-time style resolve routes it onto the element.
+            return;
         }
     }
 
@@ -268,19 +272,21 @@ namespace Veng::Gui
                                        vector<StyleAnimationClip> animations,
                                        vector<StyleGradient> gradients,
                                        vector<StyleVariable> variables,
+                                       vector<StyleTransition> transitions,
                                        vector<Ref<Detail::AssetCacheEntry>> dependencies)
     {
         return Ref<StyleSheet>(new StyleSheet(std::move(rules), std::move(animations),
                                               std::move(gradients), std::move(variables),
-                                              std::move(dependencies)));
+                                              std::move(transitions), std::move(dependencies)));
     }
 
     StyleSheet::StyleSheet(vector<StyleRule> rules, vector<StyleAnimationClip> animations,
                            vector<StyleGradient> gradients, vector<StyleVariable> variables,
+                           vector<StyleTransition> transitions,
                            vector<Ref<Detail::AssetCacheEntry>> dependencies)
         : m_Rules(std::move(rules)), m_Animations(std::move(animations)),
           m_Gradients(std::move(gradients)), m_Variables(std::move(variables)),
-          m_Dependencies(std::move(dependencies))
+          m_Transitions(std::move(transitions)), m_Dependencies(std::move(dependencies))
     {
     }
 

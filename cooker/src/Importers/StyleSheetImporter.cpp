@@ -328,6 +328,71 @@ namespace Veng::Cook
             return out;
         }
 
+        // Parses a `transition: <property> <duration>[s][, <property> <duration>[s]]*` declaration
+        // value, appending one entry per comma-separated pair to the sheet's transition table and
+        // returning the declaration that slices it. The whole list is one declaration, so a later
+        // rule's `transition` replaces an earlier one's through the ordinary cascade.
+        Result<CookedStyleProperty>
+        ParseTransitionDeclaration(const string& value, const string& located,
+                                   vector<CookedStyleTransition>& transitions)
+        {
+            const vector<string> parts = SplitTrim(value, ',');
+            const auto first = static_cast<u32>(transitions.size());
+            u32 count = 0;
+
+            for (const string& part : parts)
+            {
+                const vector<string> tokens = WhitespaceTokens(part);
+                if (tokens.size() != 2)
+                {
+                    return std::unexpected(fmt::format(
+                        "{}: 'transition' expects '<property> <duration>' per entry, got '{}'",
+                        located, part));
+                }
+
+                const optional<Gui::StyleProperty> property = Gui::ParseStyleProperty(tokens[0]);
+                if (!property)
+                {
+                    return std::unexpected(fmt::format(
+                        "{}: 'transition' names unknown style property '{}'", located, tokens[0]));
+                }
+                if (!Gui::IsAnimatableProperty(*property))
+                {
+                    return std::unexpected(
+                        fmt::format("{}: 'transition' names '{}', which does not interpolate — "
+                                    "only a color, a scalar, a corner radius, an edge inset or a "
+                                    "length eases",
+                                    located, tokens[0]));
+                }
+
+                std::string_view durationText = tokens[1];
+                if (!durationText.empty() && durationText.back() == 's')
+                {
+                    durationText.remove_suffix(1);
+                }
+                f32 duration = 0.0f;
+                const auto [ptr, ec] = std::from_chars(
+                    durationText.data(), durationText.data() + durationText.size(), duration);
+                if (ec != std::errc{} || ptr != durationText.data() + durationText.size() ||
+                    duration <= 0.0f)
+                {
+                    return std::unexpected(fmt::format(
+                        "{}: 'transition' duration must be a positive seconds value, got '{}'",
+                        located, tokens[1]));
+                }
+
+                transitions.push_back(CookedStyleTransition{.Property = static_cast<u32>(*property),
+                                                            .Duration = duration});
+                ++count;
+            }
+
+            CookedStyleProperty cp{};
+            cp.Property = static_cast<u32>(Gui::StyleProperty::Transition);
+            cp.Unit = first;
+            cp.Values[0] = static_cast<f32>(count);
+            return cp;
+        }
+
         // Parses a bare number with an optional `deg` suffix into degrees.
         Result<f32> ParseAngle(std::string_view token, const string& located)
         {
@@ -701,13 +766,13 @@ namespace Veng::Cook
         // Parses a declaration block (the tokens between `{` and `}`) into cooked properties.
         // `animationNames` is the sheet's @keyframes table an `animation` declaration resolves
         // against; `gradients`/`rampBytes` are the sheet's gradient tables a `background-gradient`
-        // appends to. All three are nullptr where those references are not authorable (a keyframe
-        // block), so they fall through to ParseStyleDeclaration's located error.
-        Result<vector<CookedStyleProperty>> ParseBlock(const std::vector<CssToken>& tokens,
-                                                       usize& i, const string& located,
-                                                       const vector<string>* animationNames,
-                                                       vector<CookedStyleGradient>* gradients,
-                                                       vector<u8>* rampBytes)
+        // appends to; `transitions` is the sheet's transition table a `transition` declaration
+        // slices. All are nullptr where those references are not authorable (a keyframe block), so
+        // they fall through to ParseStyleDeclaration's located error.
+        Result<vector<CookedStyleProperty>>
+        ParseBlock(const std::vector<CssToken>& tokens, usize& i, const string& located,
+                   const vector<string>* animationNames, vector<CookedStyleGradient>* gradients,
+                   vector<u8>* rampBytes, vector<CookedStyleTransition>* transitions)
         {
             vector<CookedStyleProperty> properties;
 
@@ -804,6 +869,20 @@ namespace Veng::Cook
                 {
                     const Result<CookedStyleProperty> cooked =
                         ParseGradientDeclaration(value, located, *gradients, *rampBytes);
+                    if (!cooked)
+                    {
+                        return std::unexpected(cooked.error());
+                    }
+                    properties.push_back(*cooked);
+                    continue;
+                }
+
+                // A transition list slices the sheet's own transition table here; with no table
+                // (a keyframe block) it falls through to ParseStyleDeclaration's located error.
+                if (*property == Gui::StyleProperty::Transition && transitions != nullptr)
+                {
+                    const Result<CookedStyleProperty> cooked =
+                        ParseTransitionDeclaration(value, located, *transitions);
                     if (!cooked)
                     {
                         return std::unexpected(cooked.error());
@@ -972,7 +1051,7 @@ namespace Veng::Cook
                 ++i;
 
                 const Result<vector<CookedStyleProperty>> block =
-                    ParseBlock(tokens, i, located, nullptr, nullptr, nullptr);
+                    ParseBlock(tokens, i, located, nullptr, nullptr, nullptr, nullptr);
                 if (!block)
                 {
                     return std::unexpected(block.error());
@@ -1330,6 +1409,7 @@ namespace Veng::Cook
         vector<CookedStyleAnimation> animations;
         vector<CookedStyleKeyframe> keyframes;
         vector<CookedStyleGradient> gradients;
+        vector<CookedStyleTransition> transitions;
         vector<u8> rampBytes;
         vector<string> animationNames;
 
@@ -1390,8 +1470,8 @@ namespace Veng::Cook
             }
             ++i; // consume '{'
 
-            const Result<vector<CookedStyleProperty>> block =
-                ParseBlock(tokens, i, located, &animationNames, &gradients, &rampBytes);
+            const Result<vector<CookedStyleProperty>> block = ParseBlock(
+                tokens, i, located, &animationNames, &gradients, &rampBytes, &transitions);
             if (!block)
             {
                 return std::unexpected(block.error());
@@ -1461,6 +1541,7 @@ namespace Veng::Cook
         header.KeyframeCount = static_cast<u32>(keyframes.size());
         header.GradientCount = static_cast<u32>(gradients.size());
         header.VariableCount = static_cast<u32>(variables.size());
+        header.TransitionCount = static_cast<u32>(transitions.size());
         header.RampByteCount = static_cast<u32>(rampBytes.size());
 
         vector<u8> blob;
@@ -1469,7 +1550,8 @@ namespace Veng::Cook
                      animations.size() * sizeof(CookedStyleAnimation) +
                      keyframes.size() * sizeof(CookedStyleKeyframe) +
                      gradients.size() * sizeof(CookedStyleGradient) +
-                     variables.size() * sizeof(CookedStyleVariable) + rampBytes.size());
+                     variables.size() * sizeof(CookedStyleVariable) +
+                     transitions.size() * sizeof(CookedStyleTransition) + rampBytes.size());
         Append(blob, header);
         for (const CookedStyleRule& rule : rules)
         {
@@ -1494,6 +1576,10 @@ namespace Veng::Cook
         for (const CookedStyleVariable& variable : variables)
         {
             Append(blob, variable);
+        }
+        for (const CookedStyleTransition& transition : transitions)
+        {
+            Append(blob, transition);
         }
         blob.insert(blob.end(), rampBytes.begin(), rampBytes.end());
 

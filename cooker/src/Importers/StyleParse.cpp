@@ -873,6 +873,13 @@ namespace Veng::Cook
             return std::unexpected(fmt::format(
                 "{}: 'background-gradient' is only authorable in a stylesheet rule", located));
 
+        case StyleProperty::Transition:
+            // A transition list slices the stylesheet's own transition table, so only the
+            // stylesheet importer's rule parse can cook it; an inline style or keyframe block has
+            // no transition table to append to.
+            return std::unexpected(
+                fmt::format("{}: 'transition' is only authorable in a stylesheet rule", located));
+
         case StyleProperty::Origin:
         {
             // One or two bare normalized fractions; one value applies to both axes.
