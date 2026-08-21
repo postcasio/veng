@@ -163,8 +163,8 @@ ramp at cook time; the shape is one of three, each spanning the element's box:
 
 Stop positions (`40%`) are optional — omitted stops distribute evenly. A gradient is
 authorable **only in a stylesheet rule** (like `animation`), applied from the base
-(non-pseudo-state) rules. It is not yet variant-swappable or transition-eased, but a
-gradient **can be animated from C++**: `Document::SetBackgroundGradient(element, …)`
+(non-pseudo-state) rules. It is not variant-swappable and does not ease through a
+`transition`, but a gradient **can be animated from C++**: `Document::SetBackgroundGradient(element, …)`
 sets a resolved gradient whose `P0`/`P1`/`AngleOffset` you mutate per frame — moving a
 linear axis, growing a radial, or spinning a conic — a paint-only write with no re-solve.
 
