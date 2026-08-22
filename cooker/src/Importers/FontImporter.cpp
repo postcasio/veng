@@ -79,6 +79,65 @@ namespace Veng::Cook
             return charset;
         }
 
+        // Applies the source JSON's optional `variations` block onto a loaded face — an object of
+        // axis name to design coordinate, `{"Weight": 700}`. A variable font carries a design space
+        // rather than one weight, and FreeType hands back its default instance unless an axis is
+        // set, so this block is what makes a second weight cookable from the same file. It must run
+        // before the charset loads, because that is when the outlines are read.
+        //
+        // **The key is the axis's name as the font declares it, not its four-character tag** — the
+        // name table string ("Weight", "Width", "Optical size"), which is the only identifier the
+        // underlying call matches on. An unknown name is an error listing what the font does carry,
+        // rather than a declaration silently ignored: a cook that quietly produced the default
+        // instance is exactly the failure a second weight would be debugged through.
+        optional<string> ApplyVariations(msdfgen::FreetypeHandle* freetype,
+                                         msdfgen::FontHandle* font, const json& fontJson,
+                                         const string& sourceLabel)
+        {
+            if (!fontJson.contains("variations"))
+            {
+                return std::nullopt;
+            }
+            if (!fontJson["variations"].is_object())
+            {
+                return fmt::format("font importer: '{}': 'variations' must be an object mapping an "
+                                   "axis name to a coordinate",
+                                   sourceLabel);
+            }
+
+            std::vector<msdfgen::FontVariationAxis> axes;
+            if (!msdfgen::listFontVariationAxes(axes, freetype, font) || axes.empty())
+            {
+                return fmt::format("font importer: '{}': 'variations' was declared but the font "
+                                   "carries no variation axes (it is not a variable font)",
+                                   sourceLabel);
+            }
+
+            string available;
+            for (const msdfgen::FontVariationAxis& axis : axes)
+            {
+                available +=
+                    fmt::format("{}'{}' [{:g}, {:g}] default {:g}", available.empty() ? "" : ", ",
+                                axis.name, axis.minValue, axis.maxValue, axis.defaultValue);
+            }
+
+            for (const auto& [name, value] : fontJson["variations"].items())
+            {
+                if (!value.is_number())
+                {
+                    return fmt::format("font importer: '{}': variation axis '{}' must be a number",
+                                       sourceLabel, name);
+                }
+                if (!msdfgen::setFontVariationAxis(freetype, font, name.c_str(), value.get<f64>()))
+                {
+                    return fmt::format("font importer: '{}': the font declares no variation axis "
+                                       "named '{}' (it carries {})",
+                                       sourceLabel, name, available);
+                }
+            }
+            return std::nullopt;
+        }
+
         void AppendBytes(vector<u8>& blob, const void* data, usize size)
         {
             const usize offset = blob.size();
@@ -149,6 +208,15 @@ namespace Veng::Cook
             msdfgen::deinitializeFreetype(freetype);
             return std::unexpected(fmt::format("font importer: '{}': failed to load font '{}'",
                                                sourcePath.string(), fontPath.string()));
+        }
+
+        if (const optional<string> failure =
+                ApplyVariations(freetype, font, fontJson, sourcePath.string());
+            failure.has_value())
+        {
+            msdfgen::destroyFont(font);
+            msdfgen::deinitializeFreetype(freetype);
+            return std::unexpected(*failure);
         }
 
         // fontScale 1.0 normalizes every glyph geometry, advance, and kerning value to em units

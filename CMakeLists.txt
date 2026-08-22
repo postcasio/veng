@@ -1890,6 +1890,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/cook_cache.cpp
             tests/cooker/cook_timing.cpp
             tests/cooker/texture_cook.cpp
+            tests/cooker/font_variations.cpp
             tests/cooker/compression_resolution.cpp
             tests/cooker/mesh_cook.cpp
             tests/cooker/socket_cook.cpp
@@ -1936,6 +1937,9 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             veng_test_bad_cook_module)
     target_compile_definitions(veng_test_cooker PRIVATE
             VENG_COOKER_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/cooker/fixtures"
+            # The font-variations cook test needs a variable font, and the engine's own default UI
+            # font is one — so it cooks that rather than carrying a second TTF of its own.
+            VENG_DEFAULT_FONT_TTF="${VENG_DEFAULT_FONT_TTF}"
             VENG_HELLO_TRIANGLE_MODULE_PATH="$<TARGET_FILE:hello_triangle>"
             VENG_BAD_VERSION_MODULE_PATH="$<TARGET_FILE:veng_test_bad_version_module>"
             VENG_TEST_MODULE_PATH="$<TARGET_FILE:veng_test_module>"

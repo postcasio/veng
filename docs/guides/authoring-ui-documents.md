@@ -57,6 +57,26 @@ so text is crisp at any scale from one small atlas:
 }
 ```
 
+A **variable font** carries a design space rather than one weight, and the cook bakes one instance
+of it — so a second weight is a second asset cooked from the same file, selected with a
+`variations` block. The key is the axis's **name as the font declares it** (`"Weight"`, `"Width"`,
+`"Optical size"`), not its four-character tag; an axis the font does not carry fails the cook and
+names the ones it does, because a weight silently cooked at the default is the hardest kind of
+mistake to see.
+
+```json
+{
+  "font": "Roboto.ttf",
+  "charset": "ascii",
+  "glyphSize": 40,
+  "pixelRange": 4,
+  "variations": { "Weight": 700 }
+}
+```
+
+Without the block the face's own default instance is cooked, which is not always the regular weight
+— a family whose axis starts at ExtraLight defaults to ExtraLight. State the weight you want.
+
 Add the font to your pack manifest (`*.vengpack.json`) as an ordinary asset entry:
 
 ```json
