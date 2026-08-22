@@ -115,6 +115,9 @@ namespace Veng::Gui
         /// @brief Whether a text run wraps to its width (Style::Wrapping); value is a TextWrap
         ///        ordinal.
         TextWrap,
+        /// @brief The case a text run is drawn in (Style::Casing); value is a TextTransform
+        ///        ordinal.
+        TextTransform,
         /// @brief A texture background fill (Style::BackgroundImage); value is a Texture AssetId.
         BackgroundImage,
         /// @brief The background image's nine-slice margins (Style::BackgroundSlice); value is four

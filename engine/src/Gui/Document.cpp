@@ -1360,6 +1360,7 @@ namespace Veng::Gui
             case StyleProperty::Animation:
             case StyleProperty::TextAlign:
             case StyleProperty::TextWrap:
+            case StyleProperty::TextTransform:
             case StyleProperty::BackgroundImage:
             case StyleProperty::BackgroundSlice:
             case StyleProperty::BackgroundFit:
@@ -1617,6 +1618,39 @@ namespace Veng::Gui
             return state;
         }
 
+        // The run an element actually shapes: its text with the style's case transform applied.
+        //
+        // The transform lands here rather than where the string is set, because the case a screen
+        // is *typeset* in is a property of the screen and not of the model that named the station.
+        // `storage` holds the mapped copy when there is one; otherwise the view aliases the
+        // element's own text and nothing is allocated, which is every element on a document that
+        // does not ask for this.
+        string_view RunOf(const Element& element, string& storage)
+        {
+            const TextTransform casing = element.ComputedStyle.Casing;
+            if (casing == TextTransform::None || element.Text.empty())
+            {
+                return element.Text;
+            }
+            // ASCII only: a UTF-8 continuation byte has its high bit set and is left alone, so a
+            // multi-byte codepoint passes through untouched rather than being corrupted a byte at
+            // a time.
+            storage = element.Text;
+            for (char& c : storage)
+            {
+                const auto byte = static_cast<unsigned char>(c);
+                if (casing == TextTransform::Uppercase && byte >= 'a' && byte <= 'z')
+                {
+                    c = static_cast<char>(byte - ('a' - 'A'));
+                }
+                else if (casing == TextTransform::Lowercase && byte >= 'A' && byte <= 'Z')
+                {
+                    c = static_cast<char>(byte + ('a' - 'A'));
+                }
+            }
+            return storage;
+        }
+
         // Folds the variants whose state bit is set in `state` over the base style, in stored source
         // order (later-listed states win — the USS order), producing the resolved target style.
         Style ResolveTarget(const Element& element, AssetManager* assets)
@@ -1868,10 +1902,11 @@ namespace Veng::Gui
                 break;
             }
         }
-        // A font swap is a layout move ReadProperty does not see (a font has no numeric payload).
+        // A font swap is a layout move ReadProperty does not see (a font has no numeric payload),
+        // and so is a case transform — capitals are wider than the lower case they replace.
         const bool fontMoved =
             element.ComputedStyle.TextFont.Id().Value != live.TextFont.Id().Value;
-        layoutMoved = layoutMoved || fontMoved;
+        layoutMoved = layoutMoved || fontMoved || element.ComputedStyle.Casing != live.Casing;
 
         element.ComputedStyle = live;
 
@@ -1997,8 +2032,9 @@ namespace Veng::Gui
         }
         // A TextInput is a line box: it holds one line of its typography open even with no value,
         // so the field reserves room for the run it paints at every value, empty included.
-        return MeasureRun(element.Text, ResolveFont(element), element.ComputedStyle, availableWidth,
-                          element.Kind == ElementKind::TextInput);
+        string cased;
+        return MeasureRun(RunOf(element, cased), ResolveFont(element), element.ComputedStyle,
+                          availableWidth, element.Kind == ElementKind::TextInput);
     }
 
     vec2 Document::MeasureStyledText(string_view text, const Style& style,
@@ -3292,6 +3328,8 @@ namespace Veng::Gui
         {
             // A Text leaf draws at its content-box origin (inside the border and padding, the box
             // the measure sized); a Button centers its label in its box.
+            string cased;
+            const string_view run = RunOf(element, cased);
             const f32 border = BorderWidth(style);
             vec2 origin = rect.Min + vec2(border + style.Padding.Left, border + style.Padding.Top);
             if (element.Kind == ElementKind::Button)
@@ -3316,7 +3354,7 @@ namespace Veng::Gui
             // Shaped against the same width the measure was taken at, so the run painted here is
             // the run the box was sized for. A wrapping element hands its content width down; a
             // non-wrapping one hands nothing, which is what its measure did too.
-            list.Text(origin, *font, element.Text, style.TextSize, textColor,
+            list.Text(origin, *font, run, style.TextSize, textColor,
                       style.Wrapping == TextWrap::Wrap
                           ? optional<f32>{rect.Size.x - 2.0f * border - style.Padding.Left -
                                           style.Padding.Right}

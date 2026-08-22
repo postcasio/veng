@@ -187,6 +187,28 @@ namespace Veng::Gui
         Wrap
     };
 
+    /// @brief The case a text run is drawn in, whatever case it was authored or bound in.
+    ///
+    /// A screen that sets its labels in capitals wants that of the *strings it is given* as much as
+    /// of the ones it authors — a station's name and a commodity's arrive from the model in their
+    /// own case, and upper-casing them where they are set would put a presentation decision in the
+    /// code that produces the data. The transform applies to the run that is measured and painted;
+    /// `Element::Text` keeps what was authored or bound, so a binding, a hit-test and an inspection
+    /// all still see the real string.
+    ///
+    /// Only ASCII letters are mapped. The cooked atlas charsets this engine ships are ASCII or
+    /// Latin-1, and a correct Unicode case mapping is locale-dependent and can change a string's
+    /// length — neither is worth carrying for a styling convenience.
+    enum class TextTransform : u8
+    {
+        /// @brief The run is drawn as it is (the default).
+        None,
+        /// @brief ASCII letters are drawn upper-case.
+        Uppercase,
+        /// @brief ASCII letters are drawn lower-case.
+        Lowercase
+    };
+
     enum class TextAlign : u8
     {
         /// @brief Glyphs start at the content box's left edge (the default).
@@ -422,6 +444,9 @@ namespace Veng::Gui
 
         /// @brief Whether this element's text breaks across lines to fit its width.
         TextWrap Wrapping = TextWrap::NoWrap;
+
+        /// @brief The case this element's text is drawn in, leaving Element::Text as authored.
+        TextTransform Casing = TextTransform::None;
 
         /// @brief Multiplier applied to the element's alpha, in 0..1.
         ///

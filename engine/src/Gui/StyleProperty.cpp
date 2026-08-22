@@ -88,6 +88,8 @@ namespace Veng::Gui
             return "text-align";
         case StyleProperty::TextWrap:
             return "text-wrap";
+        case StyleProperty::TextTransform:
+            return "text-transform";
         case StyleProperty::BackgroundImage:
             return "background-image";
         case StyleProperty::BackgroundSlice:
@@ -282,6 +284,10 @@ namespace Veng::Gui
         {
             return StyleProperty::TextWrap;
         }
+        if (name == "text-transform")
+        {
+            return StyleProperty::TextTransform;
+        }
         if (name == "background-image")
         {
             return StyleProperty::BackgroundImage;
@@ -379,6 +385,7 @@ namespace Veng::Gui
         case StyleProperty::BackgroundGradient:
         case StyleProperty::TextAlign:
         case StyleProperty::TextWrap:
+        case StyleProperty::TextTransform:
         case StyleProperty::BackgroundImage:
         case StyleProperty::BackgroundSlice:
         case StyleProperty::BackgroundFit:

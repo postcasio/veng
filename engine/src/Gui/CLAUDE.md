@@ -495,6 +495,18 @@ covers. The hit-test already walks children before self, so `children` only supp
 `none` keeps its subtree prune, which is the cheaper form a decorative group wants. The enumerator is
 **appended**, so `None` keeps its ordinal and no cooked blob version moves.
 
+**`text-transform` is a styling decision about a screen, not about the strings it is given.** A
+document typeset in capitals wants that of its bound values — a station's name, a commodity's, a
+status line — as much as of the labels it authors, and upper-casing them at the site that sets the
+text would put a presentation choice in the code producing the data. So the transform applies to the
+run that is measured and painted, and `Element::Text` keeps what was authored or bound: a binding, a
+hit-test and `gui.inspect` all still see the real string. It maps **ASCII only** — a UTF-8
+continuation byte carries its high bit and is left alone, so a multi-byte codepoint passes through
+rather than being corrupted a byte at a time, and a locale-correct Unicode mapping (which can change
+a string's *length*) is not something a styling convenience should carry. Changing it is a **layout**
+move, like a font swap: capitals are wider than the lower case they replace, and no numeric property
+comparison can see either, so both are checked explicitly in `UpdateElement`.
+
 **A state reaches inside the element that carries it, and the selector grammar is why.** There is
 no descendant combinator, so `.row:selected` cannot reach `.row .row-name`; a label with a `color`
 of its own would keep it while the ground behind it inverted, and text colour does not inherit the

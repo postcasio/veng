@@ -599,3 +599,74 @@ TEST_CASE("gui layout: the border is reserved out of the content box")
         CheckRect(inner.Layout, 4.0f, 4.0f, 56.0f, 40.0f);
     }
 }
+
+TEST_CASE("gui layout: text-transform changes the run measured and drawn, not the text held")
+{
+    // A screen typeset in capitals wants that of the strings it is given as much as the ones it
+    // authors, so the transform is a style rather than something done where the text is set — and
+    // Element::Text stays as bound, which is what a binding and an inspection read back.
+    Document doc;
+    Element& label = doc.Add(doc.Root(), ElementKind::Text);
+    doc.SetText(label, "Hydroponics");
+
+    // A measurer that reports the run it was handed, so the case reaching the shaper is visible.
+    string measured;
+    doc.SetTextMeasurer(
+        [&measured](const string_view text, const Style&, optional<f32>) -> vec2
+        {
+            measured = text;
+            return vec2{static_cast<f32>(text.size()) * 8.0f, 16.0f};
+        });
+
+    const Style plain;
+    doc.SetStyle(label, plain);
+    doc.Solve(vec2{400.0f, 200.0f});
+    CHECK(measured == "Hydroponics");
+
+    Style upper;
+    upper.Casing = TextTransform::Uppercase;
+    doc.SetStyle(label, upper);
+    doc.Solve(vec2{400.0f, 200.0f});
+    CHECK(measured == "HYDROPONICS");
+    // The element still holds what was set on it: the transform is how it is drawn, not what it is.
+    CHECK(label.Text == "Hydroponics");
+
+    Style lower;
+    lower.Casing = TextTransform::Lowercase;
+    doc.SetStyle(label, lower);
+    doc.Solve(vec2{400.0f, 200.0f});
+    CHECK(measured == "hydroponics");
+}
+
+TEST_CASE("gui layout: a case transform re-solves the box it changed the width of")
+{
+    // Capitals are wider than the lower case they replace, so a transform is a layout input — and
+    // one no numeric property comparison can see, exactly as a font swap is.
+    Document doc;
+    Element& label = doc.Add(doc.Root(), ElementKind::Text);
+    doc.SetText(label, "iiii");
+    doc.SetTextMeasurer(
+        [](const string_view text, const Style&, optional<f32>) -> vec2
+        {
+            // A width that depends on case, the way a real face's does.
+            f32 width = 0.0f;
+            for (const char c : text)
+            {
+                width += c >= 'A' && c <= 'Z' ? 20.0f : 6.0f;
+            }
+            return vec2{width, 16.0f};
+        });
+
+    // Content-sized rather than stretched, so the box is the run's own width.
+    Style narrow;
+    narrow.AlignSelf = Align::FlexStart;
+    doc.SetStyle(label, narrow);
+    doc.Solve(vec2{400.0f, 200.0f});
+    CHECK(label.Layout.Size.x == doctest::Approx(24.0f));
+
+    Style upper = narrow;
+    upper.Casing = TextTransform::Uppercase;
+    doc.SetStyle(label, upper);
+    doc.Solve(vec2{400.0f, 200.0f});
+    CHECK(label.Layout.Size.x == doctest::Approx(80.0f));
+}

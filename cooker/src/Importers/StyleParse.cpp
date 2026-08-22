@@ -493,6 +493,23 @@ namespace Veng::Cook
             return std::nullopt;
         }
 
+        optional<u32> ParseTextTransform(std::string_view v)
+        {
+            if (v == "none")
+            {
+                return static_cast<u32>(Gui::TextTransform::None);
+            }
+            if (v == "uppercase")
+            {
+                return static_cast<u32>(Gui::TextTransform::Uppercase);
+            }
+            if (v == "lowercase")
+            {
+                return static_cast<u32>(Gui::TextTransform::Lowercase);
+            }
+            return std::nullopt;
+        }
+
         optional<u32> ParseTextWrap(std::string_view v)
         {
             if (v == "nowrap")
@@ -763,6 +780,8 @@ namespace Veng::Cook
             return EnumProperty(property, ParseTextAlign(v), v, located);
         case StyleProperty::TextWrap:
             return EnumProperty(property, ParseTextWrap(v), v, located);
+        case StyleProperty::TextTransform:
+            return EnumProperty(property, ParseTextTransform(v), v, located);
         case StyleProperty::OverflowX:
         case StyleProperty::OverflowY:
             return EnumProperty(property, ParseOverflow(v), v, located);

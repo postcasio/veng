@@ -121,7 +121,11 @@ Layout is **flexbox** (Yoga): `flex-direction`, `justify-content`, `align-items`
 (text / widget fill), `corner-radius`, `border-width`/`border-color`, `box-shadow`,
 `opacity`, and
 `text-align` (`left`/`center`/`right` — a Text element's glyph alignment inside its
-solved box, meaningful when the box is wider than the run, e.g. a Table cell). Colors
+solved box, meaningful when the box is wider than the run, e.g. a Table cell).
+`text-transform` (`none`/`uppercase`/`lowercase`) draws a run in a different case without
+changing the text the element holds, so a screen set in capitals gets them for its **bound**
+values too and nothing upper-cases strings where they are produced; it maps ASCII only, and it
+is a layout input (capitals are wider). Colors
 are hex `#rrggbb` or `#rrggbbaa`, resolved sRGB→linear at cook time. Register the
 stylesheet in the pack as type `StyleSheet`.
 
