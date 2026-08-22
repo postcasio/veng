@@ -118,7 +118,8 @@ namespace
         // than the v1 arrival-front consume; the clock-sync scenario exercises this path.
         bool ScheduledConsume = false;
 
-        explicit ServerWorld(Transport& transport, f32 interestRadius = 0.0f, bool quantize = false)
+        explicit ServerWorld(Transport& transport, f32 interestRadius = 0.0f, bool quantize = false,
+                             function<optional<string>(const JoinRequestInfo&)> judgeTravel = {})
         {
             RegisterBuiltinTypes(Types);
             World = Scene::Create(Types);
@@ -130,6 +131,7 @@ namespace
                 .Replication =
                     ReplicationServer::Settings{.SnapshotInterval = 2, .QuantizeSpatial = quantize},
                 .Interest = InterestSettings{.Radius = interestRadius, .MinDwellSnapshots = 2},
+                .AuthorizeTravel = std::move(judgeTravel),
             });
             REQUIRE(host.has_value());
             Host = std::move(*host);
@@ -7204,4 +7206,104 @@ TEST_CASE("The default join budget holds the standing-join matrix; the ninth joi
     CHECK(client.TravelDenied.front().first == WorldKey::FromU64(0x9));
     CHECK(client.TravelDenied.front().second == JoinDenyReason::PerConnectionCapReached);
     CHECK(client.Host->Joins().size() == 8);
+}
+
+TEST_CASE("A travel a client asks for is the server's to judge, and a refusal directs nothing")
+{
+    // A travel is a world change somebody asked for, and the party that decides it is the one that
+    // owns the state it costs — so the server puts the question to the consumer before it directs
+    // anything. Without that the server echoed whatever key the client named, and a consumer could
+    // only price a travel by trusting the client to charge itself.
+    const WorldKey elsewhere{.Lo = 0x51DEULL, .Hi = 0x7EAULL};
+
+    struct Asked
+    {
+        u32 Calls = 0;
+        WorldKey Key;
+        AccountId Account;
+    };
+
+    // The refusing server: every travel comes back with a reason, so none is directed.
+    {
+        Asked seen;
+        auto [serverT, clientT] = LoopbackTransport::CreatePair();
+        ServerWorld server(*serverT, 0.0f, false,
+                           [&seen](const JoinRequestInfo& request) -> optional<string>
+                           {
+                               seen.Calls += 1;
+                               seen.Key = request.Key;
+                               seen.Account = request.Account;
+                               return string{"not today"};
+                           });
+        ClientWorld client(*clientT);
+
+        f64 now = 0.0;
+        constexpr f32 Delta = 1.0f / 60.0f;
+        for (u64 tick = 1; tick <= 40; ++tick)
+        {
+            now += Delta;
+            server.SimStep(tick, Delta);
+            server.NetPump(now, tick);
+            client.Frame(now, tick, Delta, MoveState(vec2(0.0f, 0.0f)));
+        }
+        REQUIRE(client.Host->IsJoined());
+        const usize joinedBefore = client.Host->Joins().size();
+
+        client.Host->Travel(elsewhere, Net::Blob{}, /*present=*/true, /*standing=*/std::nullopt);
+        for (u64 tick = 41; tick <= 90; ++tick)
+        {
+            now += Delta;
+            server.SimStep(tick, Delta);
+            server.NetPump(now, tick);
+            client.Frame(now, tick, Delta, MoveState(vec2(0.0f, 0.0f)));
+        }
+
+        // Asked exactly once, about the key the client named and on that client's own account —
+        // which is what makes a consumer able to price the travel against the right career.
+        CHECK(seen.Calls == 1);
+        CHECK(seen.Key.Lo == elsewhere.Lo);
+        CHECK(seen.Key.Hi == elsewhere.Hi);
+        // And nothing was directed: the client holds exactly the joins it had, still on its
+        // original world. A refused travel leaves the requester where it was.
+        CHECK(client.Host->Joins().size() == joinedBefore);
+        CHECK(client.Host->IsJoined());
+    }
+
+    // The granting server, for the same request: the ask is not a veto by construction, so a
+    // consumer that allows travel behaves exactly as one that sets no hook at all.
+    {
+        u32 calls = 0;
+        auto [serverT, clientT] = LoopbackTransport::CreatePair();
+        ServerWorld server(*serverT, 0.0f, false,
+                           [&calls](const JoinRequestInfo&) -> optional<string>
+                           {
+                               calls += 1;
+                               return std::nullopt;
+                           });
+        ClientWorld client(*clientT);
+
+        f64 now = 0.0;
+        constexpr f32 Delta = 1.0f / 60.0f;
+        for (u64 tick = 1; tick <= 40; ++tick)
+        {
+            now += Delta;
+            server.SimStep(tick, Delta);
+            server.NetPump(now, tick);
+            client.Frame(now, tick, Delta, MoveState(vec2(0.0f, 0.0f)));
+        }
+        REQUIRE(client.Host->IsJoined());
+
+        client.Host->Travel(elsewhere, Net::Blob{}, /*present=*/true, /*standing=*/std::nullopt);
+        for (u64 tick = 41; tick <= 90; ++tick)
+        {
+            now += Delta;
+            server.SimStep(tick, Delta);
+            server.NetPump(now, tick);
+            client.Frame(now, tick, Delta, MoveState(vec2(0.0f, 0.0f)));
+        }
+
+        // The travel was granted and directed, so the client acted on it — it asked to join the
+        // named world, whatever the directory then made of a key nothing hosts.
+        CHECK(calls == 1);
+    }
 }

@@ -239,6 +239,22 @@ namespace Veng
         /// keeps. Threaded into the host-tier session registry; see
         /// Net::SessionRegistryInfo::TransformOnReattach.
         function<Net::SessionRecord(Net::SessionRecord)> TransformOnReattach;
+        /// @brief Judges a travel before it is carried out; unset allows every travel.
+        ///
+        /// A travel is a world change somebody *asked* for, and the party that decides it is the one
+        /// that owns the state it costs — so the engine puts the question to the game on the
+        /// **authoritative** side and nowhere else: a standalone or listen host judges its own
+        /// player's travel as it resolves it, and a server judges a connected client's travel as it
+        /// receives the request, before it directs anything. A client never judges its own.
+        ///
+        /// Refusing returns the reason. On the local path it becomes the TravelRequest's `Error`, so
+        /// a refused travel reports through the request protocol like any other failure; on the
+        /// server path the travel is simply not directed, and telling the requester why is the
+        /// game's business, since the reason is the game's. Returning nullopt grants it.
+        ///
+        /// The travel is judged on exactly what a join is judged on (Net::JoinRequestInfo): who asked,
+        /// what world they named, and the payload they named it with.
+        function<optional<string>(const Net::JoinRequestInfo&)> AuthorizeTravel;
         /// @brief Encodes an account's current gameplay pose from its seat; unset keeps the last travel's.
         ///
         /// The engine cannot serialize game pose, so the game encodes it: invoked at disconnect and
@@ -352,6 +368,14 @@ namespace Veng
                                                                     const Net::AccountId& presented)
         {
             return presented;
+        }
+
+        /// @brief Judges a travel before it is carried out; defaults to allowing all.
+        /// @see GameNetInfo::AuthorizeTravel
+        [[nodiscard]] virtual optional<string> AuthorizeTravel(const Net::JoinRequestInfo& request)
+        {
+            static_cast<void>(request);
+            return std::nullopt;
         }
 
         /// @brief Authorizes a world-join request; defaults to allowing all.
@@ -1308,6 +1332,13 @@ namespace Veng
         /// @param info  The travel destination.
         /// @return Empty on success, or the directory's denial reason.
         VoidResult TravelStandalone(const TravelInfo& info);
+
+        /// @brief The consumer's judgement on a travel, resolved once from the policy or the hook.
+        ///
+        /// Held here rather than on the directory because it is asked on the **authoritative** side
+        /// of a travel and a travel has two of those: this process for its own player, and the
+        /// ServerHost for a connected client's. Both read this one closure.
+        function<optional<string>(const Net::JoinRequestInfo&)> m_AuthorizeTravel;
 
         /// @brief Takes a local directory presence for a non-presenting standing membership on a world.
         ///

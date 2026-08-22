@@ -128,6 +128,13 @@ namespace Veng
         Net::InterestSettings Interest;
         /// @brief The game hook adding entities to each connection's interest set; unset adds none.
         Net::InterestPolicy InterestPolicy;
+        /// @brief Judges a client's travel request before the server directs it; unset allows every one.
+        ///
+        /// The server is the party that decides a travel it is asked for, so the question is put here
+        /// and the request is dropped when it comes back with a reason. Telling the client why is the
+        /// consumer's business — the reason is the game's, and the game has its own channels to say
+        /// it on. See GameNetInfo::AuthorizeTravel.
+        function<optional<string>(const Net::JoinRequestInfo&)> AuthorizeTravel;
         /// @brief The most worlds one connection may join; a join past it is denied PerConnectionCapReached.
         ///
         /// The default budgets the standing-join architecture (the arithmetic is documented on

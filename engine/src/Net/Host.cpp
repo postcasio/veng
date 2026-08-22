@@ -60,6 +60,8 @@ namespace Veng
 
     struct ServerHost::State
     {
+        /// The consumer's judgement on a travel a client asked for; unset allows every one.
+        function<optional<string>(const Net::JoinRequestInfo&)> AuthorizeTravel;
         // One hosted world: its scene, seat rule, and its own replication instance and wire-id space.
         // Its existence, presence refcount, keep-warm dwell, and idle reap are the WorldDirectory's; the
         // host holds only the replication state keyed by WorldInstanceId, dropped when the directory
@@ -783,6 +785,7 @@ namespace Veng
         // The local player performs no connect, so its profile is bound here instead — owned by
         // ServerConnectionId, which no connection holds, so no teardown clears it.
         state->BindProfile(Net::ServerConnectionId, info.LocalAccount, &info.LocalProfile);
+        state->AuthorizeTravel = info.AuthorizeTravel;
 
         // Consume a borrowed directory when given one (the Application-shared path); otherwise build a
         // private one from the info's caps and policy hooks (the self-contained ServerHost).
@@ -1011,6 +1014,27 @@ namespace Veng
                         if (const optional<Net::TravelRequestMessage> request =
                                 Net::DecodeTravelRequest(env->Payload))
                         {
+                            // The server decides the travel it is asked for, before it directs
+                            // anything: the state a travel costs is the server's, so the client
+                            // asking is not the party that may grant it. A refusal drops the
+                            // request — the reason is the consumer's to deliver, on its own
+                            // channels, because the reason is the consumer's.
+                            if (s.AuthorizeTravel)
+                            {
+                                const Net::AccountId account = s.Connections[id].Account;
+                                const optional<string> refused = s.AuthorizeTravel(
+                                    Net::JoinRequestInfo{.Connection = id,
+                                                         .Account = account,
+                                                         .Key = request->Key,
+                                                         .Payload = request->Payload,
+                                                         .Profile = s.ProfileOf(account)});
+                                if (refused.has_value())
+                                {
+                                    Log::Info("ServerHost refused a travel for connection {}: {}",
+                                              id, *refused);
+                                    continue;
+                                }
+                            }
                             const State::JoinState* current = s.CurrentJoinState(id);
                             const Net::JoinId leave =
                                 current != nullptr ? current->Join : Net::ControlJoinId;

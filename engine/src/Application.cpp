@@ -631,6 +631,7 @@ namespace Veng
                                               .LeaveMultiplier = net.InterestLeaveMultiplier,
                                               .MinDwellSnapshots = net.InterestMinDwellSnapshots},
             .InterestPolicy = net.InterestPolicy,
+            .AuthorizeTravel = m_AuthorizeTravel,
             .MaxJoinedWorldsPerConnection = net.MaxJoinedWorldsPerConnection,
             .MaxHostedWorlds = net.MaxHostedWorlds,
             .MaxPlayersPerInstance = net.MaxPlayersPerInstance,
@@ -921,6 +922,7 @@ namespace Veng
             .LoadSession = net.LoadSession,
             .SaveSession = net.SaveSession,
         };
+        m_AuthorizeTravel = net.AuthorizeTravel;
         WorldDirectoryInfo directory{
             .MaxHostedWorlds = net.MaxHostedWorlds,
             .MaxJoinedWorldsPerConnection = net.MaxJoinedWorldsPerConnection,
@@ -950,6 +952,8 @@ namespace Veng
             { policy->SaveSession(account, bytes); };
             directory.Authorize = [policy](const Net::JoinRequestInfo& request)
             { return policy->AuthorizeJoin(request); };
+            m_AuthorizeTravel = [policy](const Net::JoinRequestInfo& request)
+            { return policy->AuthorizeTravel(request); };
             directory.WorldFactory = [policy](const Net::JoinRequestInfo& request,
                                               const Net::WorldKey& key, const Net::Blob& payload)
             { return policy->ResolveWorld(request, key, payload); };
@@ -1069,6 +1073,24 @@ namespace Veng
 
     VoidResult Application::TravelStandalone(const TravelInfo& info)
     {
+        // This process is the authority for its own player's travel, so it is the one that judges
+        // it — the same question a server puts to the consumer for a client's, asked here for the
+        // player it simulates itself. A refusal is returned rather than resolved, so it reaches the
+        // TravelRequest's Error and reports through the request protocol like any other failure.
+        if (m_AuthorizeTravel)
+        {
+            if (optional<string> refused =
+                    m_AuthorizeTravel(Net::JoinRequestInfo{.Connection = Net::ConnectionId{},
+                                                           .Account = m_LocalAccount,
+                                                           .Key = info.Key,
+                                                           .Payload = info.Payload,
+                                                           .Profile = GetLocalProfile()});
+                refused.has_value())
+            {
+                return std::unexpected(std::move(*refused));
+            }
+        }
+
         // A standalone resolve is the local player's own request: no connection, the local account.
         const WorldResolveResult resolve =
             m_Directory->Resolve(Net::JoinRequestInfo{.Connection = Net::ConnectionId{},

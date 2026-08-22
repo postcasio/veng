@@ -317,6 +317,18 @@ future.
 
 ## Hosts & Application wiring
 
+**A travel is judged by whoever is authoritative for it.** A travel is a world change somebody *asked*
+for, and the party that decides it is the one that owns the state it costs — so the engine puts the
+question to the consumer on the authoritative side and nowhere else. `GameNetInfo::AuthorizeTravel`
+(superseded by `GameNetPolicy::AuthorizeTravel`) is asked over the same `Net::JoinRequestInfo` a join
+is authorized on, from **two** sites: `Application::TravelStandalone`, for the player this process
+simulates itself, and `ServerHost`'s `TravelRequest` handler, for a connected client's — *before* it
+directs anything. **A client never judges its own.** Returning a reason refuses: on the local path it
+becomes the `TravelRequest`'s `Error` and reports through the request protocol like any other failure;
+on the server path the travel is simply not directed, and telling the requester why is the consumer's
+business, because the reason is the consumer's. Unset allows every travel, so it costs an existing
+consumer nothing.
+
 `Host.h` is the world glue. **`ServerHost`** wraps the lifecycle + replication halves and the world
 lifecycle. A client joins a world by presenting a `WorldKey`; the host resolves it in a fixed order —
 **authorize** (the `Authorize` hook over a **`Net::JoinRequestInfo`** — the connection, its admitted
