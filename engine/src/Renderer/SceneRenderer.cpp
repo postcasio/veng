@@ -328,10 +328,21 @@ namespace Veng::Renderer
         // intermediate the TAA/SSR routing picked; the handle is the bindless side of that id.
         m_RefractionSceneId = ResourceId{};
         m_RefractionDepthId = ResourceId{};
+        m_RefractionMipIds.clear();
         if (m_Topology->RefractionActive)
         {
             m_RefractionSceneId = graph.Import("SceneRenderer Refraction Scene");
             m_RefractionDepthId = graph.Import("SceneRenderer Refraction Depth");
+            // The chain's levels are separate graph resources: each is written by its own halving
+            // pass and read by the next, so the barriers between them are the graph's to place.
+            // Level 0 *is* the scene grab, so it is that id rather than a second import of it.
+            const u32 levels = m_Refraction->GetSceneMipCount();
+            m_RefractionMipIds.push_back(m_RefractionSceneId);
+            for (u32 level = 1; level < levels; level++)
+            {
+                m_RefractionMipIds.push_back(
+                    graph.Import(fmt::format("SceneRenderer Refraction Scene Level {}", level)));
+            }
         }
         const TextureHandle dofTargetHandle =
             m_Topology->DofComposited() ? m_Dof->GetSceneHandle() : m_HdrHandle;
@@ -540,7 +551,7 @@ namespace Veng::Renderer
             {
                 m_Refraction->Declare(m_Passes, lightingTargetId, lightingTargetHandle, depthId,
                                       m_DepthHandle, m_RefractionSceneId, m_RefractionDepthId,
-                                      m_SamplerHandle, m_Extent);
+                                      m_SamplerHandle, m_Extent, m_RefractionMipIds);
             }
             m_Passes.push_back(CreateUnique<TranslucentScenePass>(
                 m_Context, m_Extent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
@@ -714,7 +725,7 @@ namespace Veng::Renderer
             {
                 m_Refraction->Declare(m_Passes, lightingTargetId, lightingTargetHandle, depthId,
                                       m_DepthHandle, m_RefractionSceneId, m_RefractionDepthId,
-                                      m_SamplerHandle, m_Extent);
+                                      m_SamplerHandle, m_Extent, m_RefractionMipIds);
             }
             m_Passes.push_back(CreateUnique<TranslucentScenePass>(
                 m_Context, m_Extent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
@@ -1355,9 +1366,13 @@ namespace Veng::Renderer
             // reads one consistent value; the delta is this view's.
             .TimeParams = vec4(Time::GetFrameTime(), view.Delta, 0.0f, 0.0f),
             .ExtentParams = vec4(vec2(validExtent), vec2(m_Extent)),
+            // The chain's own sampler rather than the shared g-buffer one: that carries the
+            // default MaxLod of 1, which would pin every blurred sample to the top two levels with
+            // nothing anywhere reporting it. At level 0 the two behave identically.
             .SceneColor =
-                uvec4(m_Refraction->GetSceneHandle().Index, m_SamplerHandle.Index,
+                uvec4(m_Refraction->GetSceneHandle().Index, m_Refraction->GetSamplerHandle().Index,
                       m_Topology->RefractionActive ? 1u : 0u, m_Refraction->GetDepthHandle().Index),
+            .SceneColorChain = uvec4(m_Refraction->GetSceneMipCount(), 0, 0, 0),
         };
         for (u32 i = 0; i < ShCoefficientCount; ++i)
         {
@@ -1573,7 +1588,15 @@ namespace Veng::Renderer
         }
         if (m_Topology->RefractionActive)
         {
-            bindings.push_back({m_RefractionSceneId, m_Refraction->GetSceneView()});
+            // The grab binds its *level 0* view, not the whole-chain one: the copy pass attaches
+            // this resource, and an attachment view addresses one level. The chain view is for the
+            // material's sampled read and lives only in the view-constants handle.
+            const vector<Ref<ImageView>>& mipViews = m_Refraction->GetSceneMipViews();
+            for (usize level = 0; level < m_RefractionMipIds.size() && level < mipViews.size();
+                 level++)
+            {
+                bindings.push_back({m_RefractionMipIds[level], mipViews[level]});
+            }
             bindings.push_back({m_RefractionDepthId, m_Refraction->GetDepthView()});
         }
         if (m_Topology->SsrActive)

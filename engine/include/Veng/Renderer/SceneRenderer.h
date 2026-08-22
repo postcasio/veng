@@ -893,6 +893,8 @@ namespace Veng::Renderer
         ResourceId m_RefractionSceneId;
         /// @brief Imported id for the refraction scene-depth intermediate.
         ResourceId m_RefractionDepthId;
+        /// @brief One graph id per scene-color chain level, base first; empty when refraction is off.
+        vector<ResourceId> m_RefractionMipIds;
         /// @brief Per-mip subresource handle for the SSR reflection pyramid (trace + blur).
         MipChainId m_SsrReflectionChainId;
         /// @brief Per-mip subresource handle for the SSR min-Z pyramid (reduction + trace).

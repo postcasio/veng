@@ -255,6 +255,7 @@ add_library(veng SHARED
         src/Renderer/Passes/PickingScenePass.cpp
         src/Renderer/Passes/TranslucentScenePass.cpp
         src/Renderer/Passes/SceneColorCopyScenePass.cpp
+        src/Renderer/Passes/SceneColorDownsampleScenePass.cpp
         src/Renderer/Passes/DeferredLightingScenePass.cpp
         src/Renderer/Passes/TaaScenePass.cpp
         src/Renderer/Passes/DebugBlitScenePasses.cpp

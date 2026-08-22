@@ -36,6 +36,10 @@ namespace Veng::Renderer
         // x refraction scene-color texture handle, y sampler handle, z 1 when the copy
         // pass runs this frame (Settings.Refraction), w the opaque-depth copy's texture handle.
         uvec4 SceneColor;
+        // x the number of mip levels the scene-color grab carries — 1 when Settings.RefractionBlur
+        // is off, so a blurred sample degrades to the sharp one rather than reading a level that
+        // does not exist. yzw unused.
+        uvec4 SceneColorChain;
     };
 
     static_assert(sizeof(ViewConstantsBlock) <= BindlessRegistry::ViewConstantsStride,

@@ -1194,6 +1194,13 @@ namespace Veng
         /// renderer's own default — a level whose translucents refract or distort the scene
         /// authors it on.
         bool Refraction = false;
+        /// @brief Whether the scene-color copy carries a mip chain a material can read blurred.
+        ///
+        /// Requires Refraction. Enables SampleSceneColorBlurred — frosted glass, a backdrop blur —
+        /// by giving the grab a halving chain down to roughly an 8-pixel level. Off matches the
+        /// renderer's own default; a level whose translucents only *distort* their samples wants it
+        /// off, since the levels are generated whether or not anything reads them.
+        bool RefractionBlur = false;
         /// @brief Whether the depth-of-field battery runs.
         ///
         /// Off matches the renderer's own default.
@@ -1619,6 +1626,7 @@ VE_FIELD(AmbientFloor, .DisplayName = "Ambient Floor")
 VE_FIELD(AO, .DisplayName = "SSAO")
 VE_FIELD(SSR, .DisplayName = "Screen-Space Reflections")
 VE_FIELD(Refraction, .DisplayName = "Refraction (Scene-Color Grab)")
+VE_FIELD(RefractionBlur, .DisplayName = "Refraction Blur (Grab Mip Chain)")
 VE_FIELD(DepthOfField, .DisplayName = "Depth of Field")
 VE_FIELD(DofFocusDistance, .DisplayName = "DoF Focus Distance", .Display = {.Min = 0.0})
 VE_FIELD(DofAperture, .DisplayName = "DoF Aperture", .Display = {.Min = 0.0})

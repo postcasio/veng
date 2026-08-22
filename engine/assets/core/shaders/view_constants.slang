@@ -64,6 +64,12 @@ struct ViewConstants
     // sample whose geometry is in front of it. This is what lets a Translucent material
     // refract or distort the scene behind it; see Veng/translucent.slang for the helpers.
     uint4 SceneColor;
+
+    // The grab's mip chain: x is how many levels it carries — 1 when the renderer's RefractionBlur
+    // setting is off, which is the value that makes a blurred sample degrade to the sharp one
+    // instead of reading a level that was never generated. yzw unused. See
+    // Veng/translucent.slang's SampleSceneColorBlurred.
+    uint4 SceneColorChain;
 };
 
 static const uint ViewConstantsStride = 640;

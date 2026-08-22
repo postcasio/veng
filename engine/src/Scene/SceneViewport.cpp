@@ -66,6 +66,7 @@ namespace Veng
         settings.SSR = render.SSR;
         settings.AO = render.AO;
         settings.Refraction = render.Refraction;
+        settings.RefractionBlur = render.RefractionBlur;
         settings.DepthOfField = render.DepthOfField;
 
         view.AmbientFloor = render.AmbientFloor;

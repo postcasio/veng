@@ -338,6 +338,54 @@ a separate capability — both need the shadow pass to *shade* rather than to ra
 per-light shadow cull is the **prime consumer of the BVH broadphase** — one tree queried many times (`N`
 spot frustums + `6N` cube faces per frame, on top of the camera and cascade queries).
 
+### The refraction grab, and reading it blurred
+
+**`Settings.Refraction` copies the lit scene ahead of the translucent pass**, into a full-extent
+`HdrFormat` colour target and an `R32Sfloat` opaque-depth target beside it, and publishes both in the
+view block's `SceneColor` slot. A Translucent fragment reaches them through
+`Veng/translucent.slang` — `SampleSceneColor` for what is behind it, `SampleSceneDepth` to reject a
+distorted sample whose geometry stands in *front* of the refractor. The copy predates the translucent
+pass, so one translucent surface never refracts another.
+
+**`Settings.RefractionBlur` gives that copy a mip chain**, so the same fragment can read the scene
+behind it *blurred* — `SampleSceneColorBlurred(vc, uv, blur)`, with `blur` in [0,1] across whatever
+chain the frame has rather than in texels, so a material authors an appearance that holds at any
+resolution and any render scale. Frosted glass, ground glass, a backdrop blur behind an interface.
+
+- **A halving chain rather than a wide kernel**, and the reason is what is usually behind glass. A
+  handful of taps blurs a smooth image acceptably and turns a field of small high-contrast points —
+  a star field, a city at night, specular glints — into visible duplicates of each one. A chain
+  averages every texel exactly once per level, so a point spreads instead of repeating. It is also
+  far cheaper at a wide radius: the whole chain costs about a third of one full-resolution pass, and
+  the radius is then free.
+- **A chain averages locally, which is the thing it is.** A level covers `2^level` fine texels and no
+  more, so light reaches a neighbourhood rather than the far corner — the coarsest level holds
+  roughly an 8-pixel edge, which at 1080p is a very wide blur and is still not a global one.
+- **Graph resources, not a manual barrier sweep.** Each level is its own `Import`, written by its own
+  fullscreen halving pass and sampled by the next, so the transitions between them are the graph's.
+  Level 0 *is* the grab, so it is that id rather than a second import of it. Bloom's chain is compute
+  with hand-placed barriers because it also *writes* storage images; this one only ever renders into
+  an attachment and reads the level above, which the graph already orders.
+- **Every level renders the sub-rect its parent occupied, halved**, and clamps its reads inside the
+  parent's valid region — the copy's dynamic-resolution discipline applied at every level, so the
+  cleared area outside the sub-rect never works its way inward. The valid fraction is therefore the
+  same at every level and one sub-rect mapping serves a sample at any of them; the *clamp* still
+  widens with the level, because a coarse texel covers `2^lod` fine ones.
+- **The chain carries its own sampler.** The renderer's shared g-buffer sampler has the default
+  `MaxLod` of 1, which would silently pin every blurred sample to the top two levels; the grab's
+  sampler lifts it with `LodClampNone` and filters *between* levels, so a material sweeping its blur
+  crossfades rather than stepping.
+- **Off by default and separate from `Refraction`**, because the levels are generated whether or not
+  anything reads them, and a material that only distorts its samples needs none of them. With the
+  setting off the chain is one level and `SampleSceneColorBlurred` returns the sharp copy at any
+  `blur` — a degradation rather than a read of a level that was never generated.
+
+**Replacing what is behind a surface is the fragment's job, not the blend's.** The blend can only
+reach the sharp scene already in the target, so a fragment wanting a *different* backdrop fetches it,
+composites itself over it, and emits at full coverage. At `blur` 0 that is the surface over the scene
+it was already over, which is what lets a material mix the two states and fade the effect in with no
+seam and no second pipeline.
+
 ### Bloom
 
 **Bloom is a compute mip-pyramid battery**, a fixed engine pass like SSAO and the shadow atlas —

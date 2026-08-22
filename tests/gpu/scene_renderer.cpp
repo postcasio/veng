@@ -4385,6 +4385,167 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// The refraction blur proof. The same grab, with Settings.RefractionBlur on so the copy carries a
+// halving chain, and the fixture's translucent material asking for the coarsest level. What it
+// asserts is the property a blur *is* — that the spread of what shows through collapses while its
+// average is kept — rather than any particular filtered value, plus the two gates: a blur of zero
+// reproduces the sharp copy exactly, and asking for a blur with the setting off returns the sharp
+// copy rather than reading a level that was never generated.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: a translucent material samples the scene behind it blurred")
+{
+    RegisterBuiltinTypes(Types);
+
+    const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_refraction_blur.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker
+                .CookPack(fixtureDir / "translucent_pack.json", outArchive, {}, nullptr, nullptr,
+                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+                .has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> refractive =
+        assets.LoadSync<MaterialInstance>(AssetId{0x896002});
+    REQUIRE(refractive.has_value());
+    const AssetResult<AssetHandle<MaterialInstance>> brick =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(brick.has_value());
+
+    constexpr uvec2 extent{128, 128};
+
+    // A small bright cube on a dark background is the hard case for a blur and the reason the
+    // chain exists: a few taps would smear it into copies of itself, where a halving chain spreads
+    // it. It also gives the horizontal sweep below a large spread to collapse.
+    const Ref<Mesh> brickCube =
+        Mesh::BuildSync(Context, Primitives::Cube(0.5f, *brick), "Refraction Blur Opaque Cube");
+    const Ref<Mesh> refractiveCube =
+        Mesh::BuildSync(Context, Primitives::Cube(2.0f, *refractive), "Refraction Blur Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+
+    const Entity opaqueEntity = scene->CreateEntity();
+    scene->Add<Transform>(opaqueEntity).Position = vec3(0.0f, 0.0f, -0.5f);
+    scene->Add<MeshRenderer>(opaqueEntity).Mesh = assets.Adopt(brickCube);
+
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Direction = vec3(0.0f, 0.0f, -1.0f),
+        .Color = vec3(1.0f, 1.0f, 1.0f),
+        .Intensity = 1.0f,
+    };
+
+    const Entity refractiveEntity = scene->CreateEntity();
+    scene->Add<Transform>(refractiveEntity).Position = vec3(0.0f, 0.0f, 1.2f);
+    scene->Add<MeshRenderer>(refractiveEntity).Mesh = assets.Adopt(refractiveCube);
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const SceneRendererSettings blurOn{.Mode = DebugView::Final,
+                                       .Bloom = false,
+                                       .Shadows = false,
+                                       .Refraction = true,
+                                       .RefractionBlur = true,
+                                       .AO = false};
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = blurOn,
+    });
+
+    auto Render = [&](const f32 blur) -> vector<u8>
+    {
+        refractive->Get()->SetParam("UVOffset", vec4(0.0f, 0.0f, blur, 0.0f));
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+            });
+        return renderer->GetOutput()->GetImage()->Download();
+    };
+
+    // The whole frame summarised. The refracting cube covers it entirely, so every texel is a
+    // sample of the scene behind the pane and the three figures are the ones a blur is defined by:
+    // its peak comes down, its total is kept, and somewhere that was dark is no longer.
+    struct Frame
+    {
+        f32 Peak = 0.0f;
+        f32 Mean = 0.0f;
+        f32 Corner = 0.0f;
+    };
+    auto Measure = [&](const vector<u8>& pixels) -> Frame
+    {
+        Frame frame;
+        f32 total = 0.0f;
+        for (u32 y = 0; y < extent.y; y++)
+        {
+            for (u32 x = 0; x < extent.x; x++)
+            {
+                const vec3 texel = DecodeTexel(pixels, extent.x, x, y);
+                const f32 luma = texel.r + texel.g + texel.b;
+                frame.Peak = std::max(frame.Peak, luma);
+                total += luma;
+            }
+        }
+        frame.Mean = total / static_cast<f32>(extent.x * extent.y);
+        // A point just outside the small bright cube's silhouette — it spans about the middle
+        // fifth of the frame — and well inside the frame so no edge clamp reaches it. Black in the
+        // sharp copy, and lit once the cube's light is spread into it.
+        const vec3 halo = DecodeTexel(pixels, extent.x, extent.x * 7 / 10, extent.y / 2);
+        frame.Corner = halo.r + halo.g + halo.b;
+        return frame;
+    };
+
+    const Frame sharp = Measure(Render(0.0f));
+    const Frame blurred = Measure(Render(1.0f));
+
+    // The scene is worth blurring at all: a bright cube on a dark field, and the dark is dark.
+    REQUIRE(sharp.Peak > 0.3f);
+    REQUIRE(sharp.Corner < 0.02f);
+
+    // The property, in both directions — which together are what make this a spread rather than a
+    // fade. The peak comes down because the cube's light is no longer confined to the cube, and
+    // the halo beside it comes up because that is where the light went.
+    CHECK(blurred.Peak < 0.6f * sharp.Peak);
+    CHECK(blurred.Corner > sharp.Corner + 0.02f);
+    // And the light is moved rather than discarded — a bound rather than an equality, and a loose
+    // one on purpose. **These figures are post-tonemap**, and a tonemapper is not linear: the sharp
+    // frame's small very bright region maps near the top of the curve while the spread one sits on
+    // its straighter part, so a blur that conserved radiance exactly still reads as a lower mean
+    // here. The claim worth making is that the frame does not go dark, and that is this.
+    CHECK(blurred.Mean > 0.5f * sharp.Mean);
+    // A halving chain averages locally rather than globally, which is the thing it is: a level
+    // covers 2^level fine texels and no more, so light reaches a neighbourhood and not the far
+    // corner. The corner staying dark is correct behaviour and is pinned so it reads that way.
+    const vec3 farCorner = DecodeTexel(Render(1.0f), extent.x, extent.x / 16, extent.y / 16);
+    CHECK(farCorner.r + farCorner.g + farCorner.b < 0.02f);
+
+    // A blur of zero is the sharp copy, exactly — the helper's level-0 path is the plain sample.
+    const Frame again = Measure(Render(0.0f));
+    CHECK(again.Peak == doctest::Approx(sharp.Peak));
+    CHECK(again.Mean == doctest::Approx(sharp.Mean));
+
+    // The gate: with the chain off, asking for the coarsest level returns the sharp copy rather
+    // than reading a level that was never generated.
+    SceneRendererSettings blurOff = blurOn;
+    blurOff.RefractionBlur = false;
+    renderer->Configure(blurOff);
+    const Frame ungated = Measure(Render(1.0f));
+    CHECK(ungated.Peak == doctest::Approx(sharp.Peak).epsilon(0.02));
+    CHECK(ungated.Corner < 0.02f);
+
+    std::filesystem::remove(outArchive);
+}
+
 // The screen-space-reflection proof. A brightly lit, rough-dielectric cube stands on a smooth
 // metal floor; with Settings.SSR on, the SSR trace reflects the cube's view about the floor
 // normal, marches the depth buffer to the cube, and samples its lit scene color, so the SSR

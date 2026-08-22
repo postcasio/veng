@@ -105,6 +105,38 @@ float3 SampleSceneColor(ViewConstants vc, float2 logicalUV)
     return g_Textures[vc.SceneColor.x].SampleLevel(g_Samplers[vc.SceneColor.y], uv, 0.0).rgb;
 }
 
+// How many levels the scene-color grab carries: 1 when the renderer's RefractionBlur setting is
+// off, and the depth of the halving chain when it is on. A material can branch on this to tell a
+// blur it can have from one it cannot, though it never has to — asking for a blur without the
+// chain simply returns the sharp sample.
+uint SceneColorLevels(ViewConstants vc)
+{
+    return max(vc.SceneColorChain.x, 1u);
+}
+
+// Samples the pre-translucent scene color *blurred*, at a logical [0,1] screen UV.
+//
+// `blur` is in [0,1] across whatever chain the frame has: 0 is the sharp copy and 1 is the coarsest
+// level, so a material authors an appearance rather than a texel count and it holds at any
+// resolution and any render scale. With no chain this is SampleSceneColor.
+//
+// **The clamp widens with the level.** A coarse texel covers 2^lod fine ones, so the half-texel
+// inset that keeps a bilinear tap inside the rendered sub-rect has to grow with it — otherwise a
+// blurred sample near the edge of a dynamic-resolution frame pulls in the cleared region beyond it,
+// which reads as the scene darkening toward the border.
+float3 SampleSceneColorBlurred(ViewConstants vc, float2 logicalUV, float blur)
+{
+    if (!SceneColorAvailable(vc))
+    {
+        return float3(0.0, 0.0, 0.0);
+    }
+    const float lod = saturate(blur) * float(SceneColorLevels(vc) - 1u);
+    const float2 inset = (exp2(lod) - 1.0) * 0.5 / max(vc.ExtentParams.zw, float2(1.0, 1.0));
+    const float2 uv = ScaledSampleUV(saturate(logicalUV), vc.RenderScaleUV.xy,
+                                     max(vc.MaxValidUV.xy - inset, float2(0.0, 0.0)));
+    return g_Textures[vc.SceneColor.x].SampleLevel(g_Samplers[vc.SceneColor.y], uv, lod).rgb;
+}
+
 // Samples the pre-translucent opaque depth at a logical [0,1] screen UV — raw [0,1], reverse-Z
 // so larger is nearer, copied beside the scene color. A refracting material depth-gates a
 // distorted sample against its own sv_position.z: a sampled depth nearer than the fragment

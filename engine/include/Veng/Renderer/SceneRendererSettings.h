@@ -261,6 +261,25 @@ namespace Veng::Renderer
         /// samples it.
         bool Refraction = false;
 
+        /// @brief Whether the scene-color grab carries a mip chain a material can read blurred.
+        ///
+        /// Requires Refraction, and is a topology change of its own: the grab is allocated with a
+        /// mip chain down to roughly an 8-pixel level and a fullscreen halving pass is inserted per
+        /// level, so a translucent material can sample the scene behind it at a chosen blur through
+        /// SampleSceneColorBlurred (see Veng/translucent.slang) — frosted glass, ground glass, a
+        /// backdrop blur behind an interface.
+        ///
+        /// **A mip chain rather than a wide kernel, because of what is usually behind glass.** A
+        /// handful of taps blurs a smooth image acceptably and turns a field of small high-contrast
+        /// points into visible duplicates of each one; a halving chain averages every texel exactly
+        /// once per level, so a point spreads instead of repeating. It is also far cheaper at a wide
+        /// radius — the whole chain costs about a third of one full-resolution pass, and the radius
+        /// is then free.
+        ///
+        /// Off by default and separate from Refraction, because a material that only distorts its
+        /// samples needs none of it and the levels are generated whether or not anything reads them.
+        bool RefractionBlur = false;
+
         /// @brief Whether the screen-space ambient occlusion pass runs.
         ///
         /// A topology change: it inserts/removes the fullscreen SsaoScenePass and

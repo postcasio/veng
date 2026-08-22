@@ -4,6 +4,9 @@
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Veng.h>
 
+#include <algorithm>
+#include <span>
+
 namespace Veng
 {
     class AssetManager;
@@ -68,13 +71,36 @@ namespace Veng::Renderer
         /// @param depthCopyId  The depth-copy target this pass writes (the renderer's import).
         /// @param sampler      Shared sampler bindless slot.
         /// @param extent       The current render extent.
+        /// @param mipIds       One id per chain level; index 0 is `copyId`, the rest are the
+        ///                     halving levels. Empty or single-entry when the blur is off.
         void Declare(vector<Unique<ScenePass>>& passes, ResourceId sourceId,
                      TextureHandle sourceHandle, ResourceId depthId, TextureHandle depthHandle,
-                     ResourceId copyId, ResourceId depthCopyId, SamplerHandle sampler,
-                     uvec2 extent) const;
+                     ResourceId copyId, ResourceId depthCopyId, SamplerHandle sampler, uvec2 extent,
+                     std::span<const ResourceId> mipIds) const;
 
         /// @brief The scene-color intermediate view (bound to its import when refraction is active).
+        ///
+        /// Spans the whole mip chain, so the view-constants handle a material samples through can
+        /// select a level; the per-level views below are what the graph attaches and reads.
         [[nodiscard]] const Ref<ImageView>& GetSceneView() const { return m_SceneView; }
+
+        /// @brief The per-level views of the scene-color chain, base first; one entry with no blur.
+        [[nodiscard]] const vector<Ref<ImageView>>& GetSceneMipViews() const
+        {
+            return m_SceneMipViews;
+        }
+
+        /// @brief How many levels the scene-color grab carries; 1 when the blur is off.
+        [[nodiscard]] u32 GetSceneMipCount() const
+        {
+            return static_cast<u32>(std::max<usize>(m_SceneMipViews.size(), 1));
+        }
+
+        /// @brief The sampler a material reads the chain through: clamped edges, no LOD clamp.
+        ///
+        /// The renderer's shared g-buffer sampler cannot serve this — it carries the default MaxLod
+        /// of 1, which silently pins every blurred sample to the top two levels.
+        [[nodiscard]] SamplerHandle GetSamplerHandle() const { return m_SamplerHandle; }
 
         /// @brief The scene-depth intermediate view (bound to its import when refraction is active).
         [[nodiscard]] const Ref<ImageView>& GetDepthView() const { return m_DepthView; }
@@ -97,10 +123,21 @@ namespace Veng::Renderer
 
         /// @brief Refraction scene-color intermediate a translucent material samples.
         Ref<Image> m_SceneImage;
-        /// @brief View over m_SceneImage.
+        /// @brief Whole-chain view over m_SceneImage (what a material samples a level of).
         Ref<ImageView> m_SceneView;
         /// @brief Bindless slot for m_SceneView.
         TextureHandle m_SceneHandle;
+        /// @brief One single-level view per chain level: the graph's attachment and its read source.
+        vector<Ref<ImageView>> m_SceneMipViews;
+        /// @brief Bindless slot per level, so a halving pass can sample the level above it.
+        vector<TextureHandle> m_SceneMipHandles;
+        /// @brief The chain sampler's shared slot: clamp-to-edge, linear between levels, no LOD
+        ///        clamp. Shared, so it is never released.
+        SamplerHandle m_SamplerHandle;
+        /// @brief The downsample pipeline that halves one level into the next.
+        Ref<GraphicsPipeline> m_DownsamplePipeline;
+        /// @brief Layout for m_DownsamplePipeline: a texture + sampler + sub-rect push block.
+        Ref<PipelineLayout> m_DownsampleLayout;
         /// @brief Refraction scene-depth intermediate: the opaque depth copied beside the scene color.
         Ref<Image> m_DepthImage;
         /// @brief View over m_DepthImage.
