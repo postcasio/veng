@@ -8,9 +8,10 @@
 /// @brief Pure, device-free math for the volume-field ray-march pass.
 ///
 /// The CPU counterparts of the per-pixel work the volume march shader does: the ray/AABB segment
-/// clipped against the reconstructed scene depth (mirrored by the shader so the same rule governs
-/// which pixels march), the far-to-near draw ordering the multi-field composite relies on, and the
-/// resolved per-field draw record. glm-only value types, no GPU — unit-testable with no ICD.
+/// clipped against the reconstructed scene depth (whose slab core the shader shares as
+/// `Veng/slab.slang`, so the same rule governs which pixels march), the far-to-near draw ordering
+/// the multi-field composite relies on, and the resolved per-field draw record. glm-only value
+/// types, no GPU — unit-testable with no ICD.
 namespace Veng::Renderer
 {
     class VolumeField;

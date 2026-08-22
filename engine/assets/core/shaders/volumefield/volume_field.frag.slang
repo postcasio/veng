@@ -10,6 +10,7 @@
 // the engine refuses. Bounds, the Opacity-folded scales, the step count, and the frame index for
 // the jitter rotation ride the push.
 #include "../view_constants.slang"
+#include "../Veng/slab.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
@@ -83,18 +84,14 @@ float4 fsMain(VSOutput input) : SV_Target
     float sceneDistance = (depth > 0.0) ? length(WorldFromDepth(vc, ndcXY, depth) - origin) : 1e30;
 
     // Slab intersection of the ray with the field's AABB (mirrors Renderer::ComputeMarchSegment).
-    float3 invDir = 1.0 / dir;
-    float3 t0 = (g_PC.BoundsMin.xyz - origin) * invDir;
-    float3 t1 = (g_PC.BoundsMax.xyz - origin) * invDir;
-    float3 tSmall = min(t0, t1);
-    float3 tLarge = max(t0, t1);
-    float tEnter = max(max(tSmall.x, tSmall.y), tSmall.z);
-    float tExit = min(min(tLarge.x, tLarge.y), tLarge.z);
+    SlabHit slab = IntersectRayBox(origin, dir, g_PC.BoundsMin.xyz, g_PC.BoundsMax.xyz);
 
-    // Clamp entry to the camera and exit to the nearest opaque surface; discard an empty segment
-    // (missed the box, grazing, or geometry occludes the field entirely).
-    tEnter = max(tEnter, 0.0);
-    tExit = min(tExit, sceneDistance);
+    // Clamp entry to the camera and exit to the nearest opaque surface; discard an empty segment.
+    // A miss needs no branch of its own: its exit already sits below its entry, and neither clamp
+    // can reorder them, so it collapses into the empty-segment test with a grazing hit and with
+    // geometry occluding the field entirely.
+    float tEnter = max(slab.Enter, 0.0);
+    float tExit = min(slab.Exit, sceneDistance);
     if (tExit <= tEnter)
     {
         discard;

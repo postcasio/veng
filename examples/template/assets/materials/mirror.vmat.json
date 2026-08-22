@@ -16,6 +16,16 @@
       "name": "Sampler",
       "type": "sampler",
       "texture": "Texture"
+    },
+    {
+      "name": "ProbeCenter",
+      "type": "vec4",
+      "value": [0.0, 0.0, 0.0, 0.0]
+    },
+    {
+      "name": "ProxyRadius",
+      "type": "float",
+      "value": 2.5
     }
   ]
 }

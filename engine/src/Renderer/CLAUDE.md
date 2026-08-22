@@ -1123,7 +1123,11 @@ probes** (another capture-consuming surface in the map reads a one-frame-old res
 reflection's contrast), and **parallax correction**, whose math belongs to the consuming material —
 `CaptureSurface::CenterSlot` publishes the world position the map was rendered from, plus a validity
 flag, and `CaptureSurface::OrientationSlot` the frame the faces were oriented in as a quaternion, so
-the material has the two inputs it cannot derive for itself.
+the material has the two inputs it cannot derive for itself. The *math* is nonetheless **published**
+as a shared helper — `Veng/probeproxy.slang`, a sphere and a box proxy over the raw slab test in
+`Veng/slab.slang` — which a consuming material may include beside `Veng/octahedral.slang` instead of
+open-coding an intersection. No pass calls it: a material that includes nothing samples exactly what
+it samples today, and whether to correct at all remains the material's decision.
 
 ## Generated textures: compute something expensive once, then sample it
 

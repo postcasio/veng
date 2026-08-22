@@ -228,9 +228,10 @@
           }
         },
         "::Veng::Renderer::CaptureSurface": {
-          "Shape": "PlanarReflection",
+          "Shape": "EnvironmentProbe",
           "Resolution": 256,
-          "Refresh": "EveryFrame"
+          "Refresh": "EveryFrame",
+          "CenterSlot": "ProbeCenter"
         }
       }
     },
