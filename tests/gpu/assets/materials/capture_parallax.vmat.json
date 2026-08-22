@@ -30,26 +30,6 @@
       "name": "Display",
       "type": "vec4",
       "value": [0.0, 0.0, 0.0, 0.0]
-    },
-    {
-      "name": "ProxyRay",
-      "type": "vec4",
-      "value": [0.0, -1.0, 0.0, 0.0]
-    },
-    {
-      "name": "ProxyOrigin",
-      "type": "vec4",
-      "value": [0.0, 0.0, 0.0, 0.0]
-    },
-    {
-      "name": "ProxyMin",
-      "type": "vec4",
-      "value": [0.0, 0.0, 0.0, 0.0]
-    },
-    {
-      "name": "ProxyMax",
-      "type": "vec4",
-      "value": [0.0, 0.0, 0.0, 0.0]
     }
   ]
 }

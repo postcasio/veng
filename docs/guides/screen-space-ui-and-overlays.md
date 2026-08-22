@@ -408,21 +408,12 @@ direction instead — which needs the position the map was rendered from, and a 
 to its own draw's world matrix. So author `CenterSlot`, declare the matching `vec4` field, and gate
 the sample on `w`:
 
-**The intersection itself is published, so no material writes one.** `Veng/probeproxy.slang`
-carries both proxy shapes — `ProbeProxySphereDirection(origin, dir, radius)` for a body and
-`ProbeProxyBoxDirection(origin, dir, boxMin, boxMax)` for an enclosure — each taking the ray
-**already probe-relative and already in the capture's frame**, and returning the unnormalized
-probe → hit direction to hand to `OctahedralUV`. Both always return a direction (a grazing miss
-clamps to the tangent point, an origin outside the box to `t = 0`), and a proxy authored degenerate
-— a radius at or below zero, a box with no extent — returns the ray unchanged, so switching the
-correction off is authoring, not a branch. `Veng/slab.slang` underneath is the raw, miss-reporting
-ray/AABB test for a caller that wants one.
-
 ```hlsl
-#include "Veng/probeproxy.slang"
-
 if (p.ProbeCenter.w <= 0.5) { return Unreflected(); }   // no capture yet, or torn down
-const float3 hit = ProbeProxySphereDirection(world - p.ProbeCenter.xyz, dir, p.ProxyRadius);
+const float3 fromCenter = world - p.ProbeCenter.xyz;
+const float b = dot(fromCenter, dir);
+const float c = dot(fromCenter, fromCenter) - radius * radius;
+const float3 hit = fromCenter + dir * (-b + sqrt(max(b * b - c, 0.0)));
 return SampleOctahedral(p.CaptureMap, normalize(hit));
 ```
 

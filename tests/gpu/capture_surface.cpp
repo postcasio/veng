@@ -15,10 +15,6 @@
 //  - the published capture frame: with OrientationSlot named, the drive writes the basis the faces
 //    were oriented by as a quaternion — the identity for a world-aligned capture, the carrier's own
 //    rotation for an entity-aligned one — and teardown returns it to the identity;
-//  - the proxy correction: the shared Veng/probeproxy.slang entry points return the probe-to-hit
-//    direction a material samples the map along when the reflected content is at a finite distance,
-//    clamp rather than miss at their boundaries, converge on the uncorrected direction as the proxy
-//    grows, and resolve a degenerate proxy or a hit on the probe centre to a usable direction;
 //  - teardown: a capture built and registered against a component unregisters itself from the
 //    drive-list when the component is removed, its entity destroyed, or its scene dropped — and the
 //    material it fed stops sampling the capture rather than freezing on a released bindless slot;
@@ -56,7 +52,6 @@
 #include <Veng/World.h>
 #include <Veng/WorldRunner.h>
 
-#include <cmath>
 #include <utility>
 
 #include <gpu/fixture.h>
@@ -655,139 +650,6 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(unboundW.r > 0.5f);
     CHECK(std::abs(unboundW.r - unboundW.g) < 0.05f);
     CHECK(std::abs(unboundW.r - unboundW.b) < 0.05f);
-}
-
-TEST_CASE_FIXTURE(
-    Veng::Test::GpuFixture,
-    "capture surface: the shared proxy helper corrects a sample for a finite distance")
-{
-    RegisterBuiltinTypes(Types);
-
-    AssetManager assets(Context, Tasks, Types);
-    REQUIRE(assets.Mount(CookCapturePack()).has_value());
-
-    const AssetResult<AssetHandle<MaterialInstance>> parallax =
-        assets.LoadSync<MaterialInstance>(ParallaxInstance);
-    const AssetResult<AssetHandle<MaterialInstance>> backdrop =
-        assets.LoadSync<MaterialInstance>(BackdropInstance);
-    REQUIRE(parallax.has_value());
-    REQUIRE(backdrop.has_value());
-
-    vector<Ref<Mesh>> meshes;
-    Entity surfaceEntity;
-    const Unique<Scene> scene =
-        BuildCaptureScene(Context, assets, Types, *parallax, *backdrop, CaptureRefresh::EveryFrame,
-                          meshes, surfaceEntity);
-    const AssetHandle<MaterialInstance> material = SurfaceMaterial(*scene, surfaceEntity);
-    const Unique<Viewport> viewport = MakeViewport(Context, assets);
-
-    // The correction branch sits past the unbound fallback and returns before any sample, so this
-    // case sets the validity flag by hand and drives no capture at all — the arithmetic under test
-    // needs no rendered environment, only a ray and a proxy.
-    material->SetParam("Center", vec4(0.0f, 0.0f, 0.0f, 1.0f));
-    material->SetParam("Display", vec4(0.0f, 0.0f, 0.0f, 1.0f));
-
-    // Renders one frame with no tone curve — every curve including None clamps to [0, 1], which is
-    // why the fragment encodes its direction, but only None leaves the encoded value untouched —
-    // and decodes the frame centre, which the surface entity fills, back to a direction.
-    const auto Corrected = [&]
-    {
-        viewport->SetViewState({.World = scene.get(),
-                                .Camera = FrontCamera(),
-                                .Delta = 0.016f,
-                                .Tonemapper = Tonemapper::None});
-        Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
-        const vector<u8> output = viewport->GetOutput()->GetImage()->Download();
-        return vec3(SampleBlock(output, Extent, vec2(0.5f, 0.5f))) * 2.0f - 1.0f;
-    };
-    const auto Sphere = [&](const vec3& origin, const vec3& dir, const f32 radius)
-    {
-        material->SetParam("ProxyRay", vec4(dir, 0.0f));
-        material->SetParam("ProxyOrigin", vec4(origin, radius));
-        return Corrected();
-    };
-    const auto Box =
-        [&](const vec3& origin, const vec3& dir, const vec3& boxMin, const vec3& boxMax)
-    {
-        material->SetParam("ProxyRay", vec4(dir, 1.0f));
-        material->SetParam("ProxyOrigin", vec4(origin, 0.0f));
-        material->SetParam("ProxyMin", vec4(boxMin, 0.0f));
-        material->SetParam("ProxyMax", vec4(boxMax, 0.0f));
-        return Corrected();
-    };
-    // Half-float storage carries ~3 decimal digits, so the band is wide enough for the encoding
-    // round trip and far tighter than the difference between any two configurations below.
-    const auto Points = [](const vec3& actual, const vec3& expected)
-    {
-        CHECK(actual.x == doctest::Approx(expected.x).epsilon(0.01));
-        CHECK(actual.y == doctest::Approx(expected.y).epsilon(0.01));
-        CHECK(actual.z == doctest::Approx(expected.z).epsilon(0.01));
-    };
-
-    SUBCASE("the corrected direction is the probe-to-hit direction, for both shapes")
-    {
-        // A ray from inside a sphere leaves it at the far root: from (1,0,0) along +Y through a
-        // radius-2 sphere that is (1, sqrt(3), 0), which the probe sees 60 degrees off its own +Y.
-        Points(Sphere(vec3(1.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f), 2.0f),
-               vec3(0.5f, std::sqrt(3.0f) / 2.0f, 0.0f));
-
-        // A second configuration on a different axis pair, so the result is shown to follow the ray
-        // and the radius rather than a constant: (2,0,0) along +Z through radius 3 exits at
-        // (2, 0, sqrt(5)).
-        Points(Sphere(vec3(2.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, 1.0f), 3.0f),
-               vec3(2.0f / 3.0f, 0.0f, std::sqrt(5.0f) / 3.0f));
-
-        // A ray inside a box leaves through the face it heads for, and the direction is taken from
-        // the probe centre — not from the ray origin, which is what makes it differ from the ray.
-        Points(Box(vec3(0.0f, 0.5f, 0.0f), vec3(1.0f, 0.0f, 0.0f), vec3(-1.0f), vec3(1.0f)),
-               glm::normalize(vec3(1.0f, 0.5f, 0.0f)));
-
-        Points(Box(vec3(0.5f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f), vec3(-1.0f), vec3(1.0f)),
-               glm::normalize(vec3(0.5f, 1.0f, 0.0f)));
-    }
-
-    SUBCASE("a large proxy converges on the uncorrected direction")
-    {
-        // The limit, not an identity: normalize(dir * t) is not bitwise dir in f32, so the claim is
-        // that the correction vanishes to within the readback's own resolution.
-        Points(Sphere(vec3(1.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f), 1.0e5f),
-               vec3(0.0f, 1.0f, 0.0f));
-        Points(Box(vec3(1.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f), vec3(-1.0e5f), vec3(1.0e5f)),
-               vec3(0.0f, 1.0f, 0.0f));
-    }
-
-    SUBCASE("the clamps hold at the boundary")
-    {
-        // A ray that misses the sphere clamps to its closest approach — the tangent point of the
-        // grazing limit — rather than taking a root that does not exist: from (-2,3,0) along +X
-        // past a radius-1 sphere, that is (0,3,0).
-        Points(Sphere(vec3(-2.0f, 3.0f, 0.0f), vec3(1.0f, 0.0f, 0.0f), 1.0f),
-               vec3(0.0f, 1.0f, 0.0f));
-
-        // An origin outside the box clamps to t = 0, so the hit is the origin itself and never a
-        // point behind the fragment.
-        Points(Box(vec3(3.0f, 1.0f, 0.0f), vec3(1.0f, 0.0f, 0.0f), vec3(-1.0f), vec3(1.0f)),
-               glm::normalize(vec3(3.0f, 1.0f, 0.0f)));
-    }
-
-    SUBCASE("a degenerate proxy disables the correction rather than dividing by zero")
-    {
-        const vec3 dir(0.0f, 1.0f, 0.0f);
-        Points(Sphere(vec3(1.0f, 0.0f, 0.0f), dir, 0.0f), dir);
-        Points(Sphere(vec3(1.0f, 0.0f, 0.0f), dir, -2.0f), dir);
-        Points(Box(vec3(1.0f, 0.0f, 0.0f), dir, vec3(0.0f), vec3(0.0f)), dir);
-        Points(Box(vec3(1.0f, 0.0f, 0.0f), dir, vec3(1.0f), vec3(-1.0f)), dir);
-    }
-
-    SUBCASE("a hit on the probe centre yields a direction, not a zero vector")
-    {
-        // A box entirely to one side of the probe, a fragment at the centre, and a ray heading away
-        // from it: the exit is behind the origin, the t = 0 clamp puts the hit on the centre, and
-        // the zero vector that would normalize to a NaN is replaced by the ray direction. A NaN
-        // would saturate to black and decode to (-1, -1, -1), which no case here expects.
-        Points(Box(vec3(0.0f), vec3(-1.0f, 0.0f, 0.0f), vec3(1.0f), vec3(2.0f)),
-               vec3(-1.0f, 0.0f, 0.0f));
-    }
 }
 
 TEST_CASE_FIXTURE(
