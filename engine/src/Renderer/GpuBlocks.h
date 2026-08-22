@@ -34,7 +34,7 @@ namespace Veng::Renderer
         vec4 TimeParams;   // x seconds since engine start (frame-locked), y frame delta
         vec4 ExtentParams; // xy valid (sub-rect) extent px, zw allocation extent px
         // x refraction scene-color texture handle, y sampler handle, z 1 when the copy
-        // pass runs this frame (Settings.Refraction), w unused.
+        // pass runs this frame (Settings.Refraction), w the opaque-depth copy's texture handle.
         uvec4 SceneColor;
     };
 
