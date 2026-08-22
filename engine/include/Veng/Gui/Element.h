@@ -78,6 +78,16 @@ namespace Veng::Gui
     /// The bits are a bitmask (combine with the bitwise operators). They record the pointer
     /// and focus state an interaction layer sets and a styling layer reads; the layout and
     /// draw here do not consult them.
+    /// @brief The interaction states a style variant can be scoped to.
+    ///
+    /// Four of them reach **inside** the element that carries them when a variant is matched, since
+    /// a control's state is a fact about the control and the labels inside it are part of what it
+    /// looks like — `.row:selected` and `.row-name:selected` both resolve off the row's bit.
+    /// Selected and Disabled reach the whole subtree (an item's selection covers the item; a
+    /// disabled container disables what it holds), while Hovered and Active reach only
+    /// `pointer-events: none` content, which hit-testing prunes and which could never carry the bit
+    /// on its own — a reachable sibling keeps its own hover. Focused and Checked apply to the
+    /// element that carries them alone.
     enum class ElementState : u32
     {
         /// @brief No interaction state.
@@ -94,10 +104,11 @@ namespace Veng::Gui
         Checked = 1u << 4,
         /// @brief The element is a selected item of a selectable item host.
         ///
-        /// Set on each item root an item host's selection covers, so a `:selected` style variant
-        /// paints the whole item subtree as selected. Distinct from Checked, which is a Checkbox's
-        /// own two-state value: an item carries Selected because its host's selection names its
-        /// index, not because the item holds a value of its own.
+        /// Set on each item root an item host's selection covers; the bit reaches the item's
+        /// descendants when variants resolve, so a `:selected` style variant paints the whole item
+        /// subtree as selected. Distinct from Checked, which is a Checkbox's own two-state value: an
+        /// item carries Selected because its host's selection names its index, not because the item
+        /// holds a value of its own.
         Selected = 1u << 5,
     };
 

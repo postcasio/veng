@@ -21,6 +21,16 @@ namespace
         decl.Values = color;
         return StyleVariant{.State = ElementState::Hovered, .Declarations = {decl}};
     }
+
+    // A variant scoped to one state, setting the text color — the property a label inside a control
+    // has to move for the control to invert as one unit.
+    StyleVariant TextColorIn(ElementState state, vec4 color)
+    {
+        StyleDeclaration decl;
+        decl.Property = StyleProperty::TextColor;
+        decl.Values = color;
+        return StyleVariant{.State = state, .Declarations = {decl}};
+    }
 }
 
 TEST_CASE("gui style: a :hover variant is selected on state and reverts when cleared")
@@ -254,4 +264,90 @@ TEST_CASE("gui style: an animating width transition re-dirties layout each step"
     doc.Solve(vec2(400.0f, 200.0f));
     CHECK(panel.Layout.Size.x == doctest::Approx(140.0f));
     CHECK_FALSE(doc.IsAnimating());
+}
+
+TEST_CASE("gui style: an interaction state a control carries reaches the labels inside it")
+{
+    // A control's label is a child element with a color of its own, and text color does not inherit
+    // — so a `:selected` rule on the label is the only thing that can invert it, and it has to
+    // resolve off the *control's* bit. Nothing ever sets a state on a Text leaf directly.
+    Document doc;
+    Element& row = doc.Add(doc.Root(), ElementKind::Button);
+    Element& label = doc.Add(row, ElementKind::Text);
+    Element& group = doc.Add(row, ElementKind::Panel);
+    Element& deeper = doc.Add(group, ElementKind::Text);
+
+    Style base;
+    base.TextColor = vec4(0.0f, 1.0f, 1.0f, 1.0f);
+    doc.SetStyle(label, base);
+    doc.SetStyle(deeper, base);
+
+    const vec4 knockedOut{0.0f, 0.0f, 0.0f, 1.0f};
+    label.Variants = {TextColorIn(ElementState::Selected, knockedOut)};
+    deeper.Variants = {TextColorIn(ElementState::Selected, knockedOut)};
+
+    doc.Update(0.0f);
+    CHECK(label.ComputedStyle.TextColor.g == doctest::Approx(1.0f));
+
+    // Lit on the row alone, and resolved on the same call rather than a frame later: a ground that
+    // inverts before the text on it is a visible tear.
+    doc.SetState(row, ElementState::Selected);
+    CHECK(label.ComputedStyle.TextColor.g == doctest::Approx(0.0f));
+    CHECK(deeper.ComputedStyle.TextColor.g == doctest::Approx(0.0f));
+    CHECK(label.State == ElementState::None);
+
+    doc.SetState(row, ElementState::None);
+    CHECK(label.ComputedStyle.TextColor.g == doctest::Approx(1.0f));
+    CHECK(deeper.ComputedStyle.TextColor.g == doctest::Approx(1.0f));
+}
+
+TEST_CASE("gui style: focus and checkedness stay on the element that carries them")
+{
+    // The line the inheritance stops at. A focus ring is a fact about the control, and a checkbox's
+    // value is its own two-state reading — a label painting itself checked because the box beside it
+    // is would be saying something no author wrote.
+    Document doc;
+    Element& box = doc.Add(doc.Root(), ElementKind::Button);
+    Element& label = doc.Add(box, ElementKind::Text);
+
+    Style base;
+    base.TextColor = vec4(0.0f, 1.0f, 1.0f, 1.0f);
+    doc.SetStyle(label, base);
+
+    const vec4 moved{1.0f, 0.0f, 0.0f, 1.0f};
+    label.Variants = {TextColorIn(ElementState::Focused, moved),
+                      TextColorIn(ElementState::Checked, moved)};
+
+    doc.SetState(box, ElementState::Focused | ElementState::Checked);
+    doc.Update(0.0f);
+    CHECK(label.ComputedStyle.TextColor.g == doctest::Approx(1.0f));
+
+    // And the same two bits on the label itself do reach it, so the case above is about the chain
+    // rather than about the properties being unreachable.
+    doc.SetState(label, ElementState::Checked);
+    CHECK(label.ComputedStyle.TextColor.g == doctest::Approx(0.0f));
+}
+
+TEST_CASE("gui style: a disabled container greys the controls inside it")
+{
+    // Disabled inherits for the same reason the other three do: a greyed panel whose labels stayed
+    // lit would read as a live control that merely refuses the pointer.
+    Document doc;
+    Element& panel = doc.Add(doc.Root(), ElementKind::Panel);
+    Element& inner = doc.Add(panel, ElementKind::Button);
+
+    Style base;
+    base.Opacity = 1.0f;
+    doc.SetStyle(inner, base);
+
+    StyleDeclaration dim;
+    dim.Property = StyleProperty::Opacity;
+    dim.Values = vec4(0.35f);
+    inner.Variants = {StyleVariant{.State = ElementState::Disabled, .Declarations = {dim}}};
+
+    doc.Update(0.0f);
+    CHECK(inner.ComputedStyle.Opacity == doctest::Approx(1.0f));
+
+    doc.SetState(panel, ElementState::Disabled);
+    CHECK(inner.ComputedStyle.Opacity == doctest::Approx(0.35f));
 }

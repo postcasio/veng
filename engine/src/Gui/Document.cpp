@@ -1576,14 +1576,56 @@ namespace Veng::Gui
             }
         }
 
+        // The interaction bits an element hands down to what is inside it, and how far each goes.
+        //
+        // A control's state is a fact about the control, and the labels inside it are part of what
+        // that control looks like — so a `:selected` or `:active` rule on a Button's Text child has
+        // to resolve off the Button's own bit. It is what a stylesheet author gets from CSS without
+        // noticing, through a descendant combinator; this engine's selectors have none, so the
+        // inheritance is the mechanism instead. Two bits reach differently:
+        //
+        //   - **Selected and Disabled are facts about a whole subtree.** An item host's selection
+        //     covers the item, and a disabled container disables what it contains — everything
+        //     under the holder inherits, a nested control included.
+        //   - **Hovered and Active are facts about one path down it**, so they reach only content
+        //     the pointer could never have claimed on its own: a `pointer-events: none` branch,
+        //     which hit-testing prunes wholesale. A *reachable* sibling is left alone — it is
+        //     hovered when the pointer is over it, and lighting it because the box around it is
+        //     hovered would be a different claim entirely.
+        //
+        // **Focused and Checked deliberately stay put.** A focus ring is a fact about the control
+        // itself, and a Checkbox's value is its own two-state reading rather than a property of the
+        // words beside it — a label painting itself checked because its box is would be saying
+        // something the author did not write.
+        constexpr ElementState SubtreeStates = ElementState::Selected | ElementState::Disabled;
+        constexpr ElementState PointerStates = ElementState::Hovered | ElementState::Active;
+
+        // An element's state for variant matching: its own bits, plus each ancestor's inheritable
+        // bits that reach it. A document is a handful of levels deep and this runs once per resolve.
+        ElementState EffectiveState(const Element& element)
+        {
+            ElementState state = element.State;
+            const Element* child = &element;
+            for (const Element* ancestor = element.Parent; ancestor != nullptr;
+                 child = ancestor, ancestor = ancestor->Parent)
+            {
+                const ElementState reach = child->ComputedStyle.Pointer == PointerEvents::None
+                                               ? SubtreeStates | PointerStates
+                                               : SubtreeStates;
+                state = state | (ancestor->State & reach);
+            }
+            return state;
+        }
+
         // Folds the variants whose state bit is set in `state` over the base style, in stored source
         // order (later-listed states win — the USS order), producing the resolved target style.
         Style ResolveTarget(const Element& element, AssetManager* assets)
         {
+            const ElementState state = EffectiveState(element);
             Style target = element.BaseStyle;
             for (const StyleVariant& variant : element.Variants)
             {
-                if ((element.State & variant.State) == ElementState::None)
+                if ((state & variant.State) == ElementState::None)
                 {
                     continue;
                 }
@@ -1696,8 +1738,32 @@ namespace Veng::Gui
 
     void Document::SetState(Element& element, ElementState state)
     {
+        const auto moved =
+            static_cast<ElementState>(static_cast<u32>(element.State) ^ static_cast<u32>(state));
         element.State = state;
         UpdateElement(element, 0.0f);
+
+        // An inheritable bit changes what every descendant resolves to, so the subtree re-resolves
+        // with it rather than on the next Update(). A press whose ground inverts a frame before its
+        // label does is a visible tear, and a transition started a frame late eases from the wrong
+        // place.
+        if ((moved & (SubtreeStates | PointerStates)) != ElementState::None)
+        {
+            RefreshDescendantStyles(element);
+        }
+    }
+
+    void Document::RefreshDescendantStyles(Element& element)
+    {
+        for (Element* const child : element.Children)
+        {
+            if (child == nullptr)
+            {
+                continue;
+            }
+            UpdateElement(*child, 0.0f);
+            RefreshDescendantStyles(*child);
+        }
     }
 
     void Document::SetTransitions(Element& element, vector<StyleTransition> transitions)
@@ -3452,38 +3518,21 @@ namespace Veng::Gui
         }
 
         // Hover is a property of a **box**, so every box the pointer is inside is hovered: the
-        // element under it, every ancestor containing it, and the pointer-transparent content that
-        // element draws.
+        // element under it and every ancestor containing it (CSS's own rule).
         //
-        // The last term is what a composite control needs. A row that is one button spelled as a
-        // button wrapping the texts inside it cannot restyle those texts on hover otherwise: a
-        // `pointer-events: none` subtree is pruned from hit-testing outright, so nothing in it can
-        // ever be a hit target and nothing in it could carry the bit on its own — and the selector
-        // grammar has no descendant combinator to reach it with either. So its host's state is the
-        // only state it has, which is the same move `Selected` already makes across an item slot.
-        // A descendant that *is* reachable is skipped: it is hovered when the pointer is over it,
-        // and marking it because a sibling is would be a different claim entirely.
+        // The pointer-transparent content those boxes draw is hovered too, and that is what a
+        // composite control needs — a row spelled as a Button wrapping its own Texts could not
+        // restyle them on hover otherwise, since a `pointer-events: none` subtree is pruned from
+        // hit-testing outright and nothing in it could ever carry the bit on its own. That reach is
+        // not marked here: it is the style resolve's, alongside the same reach `Selected` and
+        // `Active` need (see EffectiveState). Marking it twice would put the same rule in two
+        // places to drift apart.
         const auto mark = [this](Element& element)
         {
             SetState(element, WithBit(element.State, ElementState::Hovered, true));
             m_Hovered.push_back(&element);
         };
-        const auto markContent = [&mark](auto&& self, Element& element) -> void
-        {
-            mark(element);
-            for (Element* const child : element.Children)
-            {
-                self(self, *child);
-            }
-        };
         mark(*target);
-        for (Element* const child : target->Children)
-        {
-            if (child->ComputedStyle.Pointer == PointerEvents::None)
-            {
-                markContent(markContent, *child);
-            }
-        }
         for (Element* ancestor = target->Parent; ancestor != nullptr; ancestor = ancestor->Parent)
         {
             mark(*ancestor);

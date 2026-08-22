@@ -309,6 +309,13 @@ namespace Veng::Gui
         /// style, starting a transition on any transition-able property whose target moved. A
         /// change to a layout input re-dirties the layout; a paint-only change does not. This is
         /// the entry point an interaction layer drives a hover/press/focus change through.
+        ///
+        /// Selected and Disabled reach the element's whole subtree, and Hovered and Active reach
+        /// the `pointer-events: none` content inside it: a control's state is a fact about the
+        /// control, so a `:hover` or `:selected` rule on a label inside it resolves off the
+        /// control's bit and the whole thing paints as one. The descendants re-resolve here rather
+        /// than on the next Update(), so a ground and the text on it invert on the same frame.
+        /// Focused and Checked apply to the element alone.
         /// @param element  The element whose state to set.
         /// @param state    The new interaction-state mask.
         void SetState(Element& element, ElementState state);
@@ -836,6 +843,9 @@ namespace Veng::Gui
 
         /// @brief Re-selects active variants over the base and advances one element's tweens.
         void UpdateElement(Element& element, f32 delta);
+
+        /// @brief Re-resolves every descendant's live style after an inheritable state bit moved.
+        void RefreshDescendantStyles(Element& element);
 
         /// @brief Pushes one element's style layout inputs into its mirrored layout node.
         void ApplyStyle(Element& element);

@@ -495,16 +495,30 @@ covers. The hit-test already walks children before self, so `children` only supp
 `none` keeps its subtree prune, which is the cheaper form a decorative group wants. The enumerator is
 **appended**, so `None` keeps its ordinal and no cooked blob version moves.
 
-**Hover is a property of a box, and every box the pointer is inside is hovered** — the element
-under it, every ancestor containing it (CSS's own rule), and the **pointer-transparent content that
-element draws**. The last term is what a composite control needs: a row spelled as a `Button`
-wrapping its own `Text` children cannot restyle those children on hover otherwise, because a
-`pointer-events: none` subtree is pruned from hit-testing outright, so nothing in it can ever be a
-hit target and nothing in it could carry the state on its own — and the selector grammar has no
-descendant combinator to reach it with either. Its host's state is the only state it has, which is
-the same projection `Selected` already makes across an item slot. A descendant that *is* reachable
-is left alone: it is hovered when the pointer is over it, and marking it because a sibling is would
-be a different claim.
+**A state reaches inside the element that carries it, and the selector grammar is why.** There is
+no descendant combinator, so `.row:selected` cannot reach `.row .row-name`; a label with a `color`
+of its own would keep it while the ground behind it inverted, and text colour does not inherit the
+way the font does. So the *resolve* walks the chain instead — `EffectiveState` in `Document.cpp`
+folds an ancestor's bits into the element's before variants are selected — and how far each bit
+travels is the whole design:
+
+- **`Selected` and `Disabled` are facts about a whole subtree.** An item host's selection covers the
+  item, and a disabled container disables what it contains, so everything under the holder inherits,
+  a nested control included.
+- **`Hovered` and `Active` are facts about one path down it.** They reach only `pointer-events: none`
+  content — a branch hit-testing prunes wholesale, so nothing in it could ever carry the bit on its
+  own. A row spelled as a `Button` wrapping its own `Text` children is the case this exists for. A
+  *reachable* sibling is left alone: it is hovered when the pointer is over it, and lighting it
+  because the box around it is would be a different claim.
+- **`Focused` and `Checked` do not travel.** A focus ring is a fact about the control, and a
+  Checkbox's value is its own reading rather than a property of the words beside it.
+
+`SetState` re-resolves the subtree on the spot rather than leaving it to the next `Update`, so a
+ground and the text on it invert on the same frame and a transition eases from the right place.
+
+**Hover is a property of a box, and every box the pointer is inside is hovered** — the element under
+it and every ancestor containing it (CSS's own rule). Those are marked on `Element::State` by
+`SetHovered`; the content reach above is the resolve's and is not marked a second time.
 
 **The document reports the pointer state it already tracks.** `GetPointerPosition()` is where the
 last routed event landed in document points, `IsPointerDown()` whether the primary button is held,

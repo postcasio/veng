@@ -386,12 +386,13 @@ TEST_CASE("gui input: pointer-events children passes the element through but kee
     CHECK(doc.HitTest(vec2(20, 20)) == &root);
 }
 
-TEST_CASE("gui events: hover marks every box the pointer is inside")
+TEST_CASE("gui events: hover reaches every box the pointer is inside, and the content they draw")
 {
     // A composite control — a button spelled as a button wrapping its own texts — is the case this
     // exists for: the texts are pointer-transparent, so they can never be a hit target and could
     // never carry the bit on their own, and the selector grammar has no way to reach them from the
-    // host's rule. Their host's hover is the only hover they have.
+    // host's rule. Their host's hover is the only hover they have, and it reaches them where it
+    // matters, in the style that resolves rather than in a bit copied onto them.
     Document doc;
     doc.SetInteractive(true);
 
@@ -403,29 +404,48 @@ TEST_CASE("gui events: hover marks every box the pointer is inside")
     PlaceAt(label, {0, 0}, {100, 60});
     Element& stamp = doc.Add(row, ElementKind::Text);
     PlaceAt(stamp, {100, 0}, {100, 60});
+    // A third text that takes the pointer itself, so the reach can be shown to stop at it.
+    Element& reachable = doc.Add(root, ElementKind::Text);
+    PlaceAt(reachable, {0, 60}, {200, 60});
 
     Style transparent;
     transparent.Pointer = PointerEvents::None;
+    transparent.TextColor = vec4(1.0f);
     doc.SetStyle(label, transparent);
     doc.SetStyle(stamp, transparent);
+
+    Style opaque;
+    opaque.TextColor = vec4(1.0f);
+    doc.SetStyle(reachable, opaque);
+
+    StyleDeclaration knockOut;
+    knockOut.Property = StyleProperty::TextColor;
+    knockOut.Values = vec4(0.0f, 0.0f, 0.0f, 1.0f);
+    const StyleVariant onHover{.State = ElementState::Hovered, .Declarations = {knockOut}};
+    label.Variants = {onHover};
+    stamp.Variants = {onHover};
+    reachable.Variants = {onHover};
     doc.Update(0.0f);
 
-    // Over the left text: the row is the hit target, and both of its texts take its state — the
+    // Over the left text: the row is the hit target, and both of its texts resolve its state — the
     // one under the pointer and the one beside it alike, since neither has a state of its own.
     PointerEvent move{.Kind = PointerEventKind::Move, .Position = vec2(50, 30)};
     doc.DispatchPointer(move);
     CHECK((row.State & ElementState::Hovered) == ElementState::Hovered);
-    CHECK((label.State & ElementState::Hovered) == ElementState::Hovered);
-    CHECK((stamp.State & ElementState::Hovered) == ElementState::Hovered);
+    CHECK(label.ComputedStyle.TextColor.r == doctest::Approx(0.0f));
+    CHECK(stamp.ComputedStyle.TextColor.r == doctest::Approx(0.0f));
     // Every ancestor containing the pointer is hovered too, which is CSS's own rule.
     CHECK((root.State & ElementState::Hovered) == ElementState::Hovered);
+    // And the reach stops at a descendant that could have been hit itself: the root is hovered, but
+    // a text that takes the pointer is hovered only when the pointer is on it.
+    CHECK(reachable.ComputedStyle.TextColor.r == doctest::Approx(1.0f));
 
     // Off the row: the whole set clears, ancestors and content together.
     PointerEvent away{.Kind = PointerEventKind::Move, .Position = vec2(50, 150)};
     doc.DispatchPointer(away);
     CHECK((row.State & ElementState::Hovered) == ElementState::None);
-    CHECK((label.State & ElementState::Hovered) == ElementState::None);
-    CHECK((stamp.State & ElementState::Hovered) == ElementState::None);
+    CHECK(label.ComputedStyle.TextColor.r == doctest::Approx(1.0f));
+    CHECK(stamp.ComputedStyle.TextColor.r == doctest::Approx(1.0f));
 }
 
 TEST_CASE("gui pointer state: the document reports where the pointer is and whether it is down")
