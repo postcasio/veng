@@ -18,6 +18,7 @@ add_library(veng_mcp SHARED
         src/McpClientCli.cpp
         src/ReflectToJson.cpp
         src/WorldTools.cpp
+        src/GuiTools.cpp
         src/RenderTools.cpp
         src/AudioTools.cpp
         src/ViewportCapture.cpp

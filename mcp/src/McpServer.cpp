@@ -4,6 +4,7 @@
 #include <Veng/Log.h>
 
 #include "AudioTools.h"
+#include "GuiTools.h"
 #include "InputTools.h"
 #include "MutationTools.h"
 #include "ProfileTools.h"
@@ -456,6 +457,7 @@ namespace Veng::Mcp
         // thread starts on the first Pump() — so tools registered between Create and the
         // first pump land before the network thread reads the (then-immutable) registry.
         RegisterWorldTools(*server, mcpHost);
+        RegisterGuiTools(*server, mcpHost);
         RegisterRenderTools(*server, mcpHost);
         RegisterProfileReadTools(*server, mcpHost);
         RegisterAudioTools(*server, mcpHost);

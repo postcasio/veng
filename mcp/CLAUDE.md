@@ -342,6 +342,19 @@ family registers from the editor side.
   whole array rather than the page. Nothing is recorded per slot for this: the description is read
   back off the `Ref` the registry already keeps to stop a registered resource dangling, so a
   registration site is untouched and a caller pays only for the call.
+- **`gui.*`** (`src/GuiTools.cpp`, read-only) — `gui.list_documents` names the documents the
+  presented world holds (owning entity, surface or overlay, canvas size); `gui.inspect` dumps one
+  document's **solved** element tree — id, classes, kind, visibility, painted text, and the layout
+  rect in document points — rooted at the whole document or at a named element, bounded by `depth`
+  and by an element cap, both of which report what they elided rather than truncating silently.
+  **A rendered interface is otherwise unreadable.** The element tree belongs to a `Gui::Document`
+  behind a `GuiSurface` or `GuiOverlay`, not to the entity carrying it, so `entity.get` reaches the
+  component and nothing inside it — and a solved rect exists only after a layout pass, so it is not
+  in the cooked recipe either. Without these the only way to ask where an interface actually put
+  something is to capture the frame and measure pixels, which answers a layout question with an
+  image. Both handlers read through const accessors, so neither drives a solve nor dirties one; a
+  world with no document, or an entity presenting none, is an empty result or a located error
+  rather than a null deref.
 - **`audio.*`** (`src/AudioTools.cpp`, read-only) — `audio.list_voices` reports the presented world's
   live mix over `AudioEngine::GetVoiceInfos`: every active voice's bus, gain, pan/pitch, occlusion,
   reverb send, looping flag, whether it is a clip or a generator, its role
@@ -539,6 +552,12 @@ httplib stays PRIVATE and `veng-config` already carries `find_dependency(nlohman
   promptly with a long off-pump handler mid-run.
 - **`mcp_world`** — the read-only world tools over a populated scene (`FieldsToJson`,
   pagination).
+- **`mcp_gui`** — the gui tools over a hand-built document injected into a `GuiSurface` and solved
+  against a device-free text measurer: the listing, the reported tree, the id-rooted walk, the
+  depth floor's elision report, and both located errors. What it pins is the property the tools
+  exist for rather than a shape — a label's solved box lies inside the row that owns it, and a row
+  under a heading solves below that heading's box — so the assertions survive any restyling of the
+  fixture.
 - **`mcp_screenshot`** — `render.screenshot` (`gpu`-labelled: the viewport `Download` → PNG
   path).
 - **`mcp_mutation`** — the mutation tools behind `AllowMutations`, including the routed

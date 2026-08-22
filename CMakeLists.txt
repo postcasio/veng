@@ -1278,6 +1278,20 @@ if (VENG_BUILD_TESTS)
     add_test(NAME mcp_world COMMAND veng_test_mcp_world)
     set_tests_properties(mcp_world PROPERTIES LABELS mcp)
 
+    # The gui-tools proof: a hand-built Document injected into a GuiSurface on a scene entity,
+    # solved against a device-free text measurer, driven over loopback through gui.list_documents
+    # and gui.inspect — asserting the solved rects nest, that a heading occupies layout above the
+    # row it heads, and the id-rooted / depth-floored / error paths. Device-free, default band.
+    add_executable(veng_test_mcp_gui tests/mcp_gui.cpp)
+    target_link_libraries(veng_test_mcp_gui PRIVATE veng::mcp veng::veng
+            nlohmann_json::nlohmann_json)
+    target_compile_definitions(veng_test_mcp_gui PRIVATE JSON_NOEXCEPTION)
+    target_include_directories(veng_test_mcp_gui SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/mcp/src/Vendor)
+
+    add_test(NAME mcp_gui COMMAND veng_test_mcp_gui)
+    set_tests_properties(mcp_gui PROPERTIES LABELS mcp)
+
     # The mutation-tools proof: an McpServer with AllowMutations on + a null ApplyMutation
     # (raw-scene path), a device-free Scene, and a loopback round-trip over entity.spawn /
     # add_component / get / set_field / remove_component / destroy — asserting each edit took, the
