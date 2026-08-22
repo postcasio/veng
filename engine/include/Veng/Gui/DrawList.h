@@ -442,7 +442,11 @@ namespace Veng::Gui
         /// @param text       The UTF-8 text to shape and draw.
         /// @param pixelSize  The em size to render at, in pixels.
         /// @param color      Text tint, linear straight-alpha RGBA.
-        void Text(vec2 pen, const Font& font, string_view text, f32 pixelSize, vec4 color);
+        /// @param maxWidth   Width to word-wrap within, or empty for a single unwrapped line per
+        ///                   newline. A caller passes the same value its measure was taken at, so
+        ///                   the run drawn is the run the box was sized for.
+        void Text(vec2 pen, const Font& font, string_view text, f32 pixelSize, vec4 color,
+                  optional<f32> maxWidth = {});
 
         /// @brief Pushes a clip rectangle onto the scissor stack.
         ///

@@ -493,6 +493,19 @@ namespace Veng::Cook
             return std::nullopt;
         }
 
+        optional<u32> ParseTextWrap(std::string_view v)
+        {
+            if (v == "nowrap")
+            {
+                return static_cast<u32>(Gui::TextWrap::NoWrap);
+            }
+            if (v == "wrap")
+            {
+                return static_cast<u32>(Gui::TextWrap::Wrap);
+            }
+            return std::nullopt;
+        }
+
         optional<u32> ParseImageFit(std::string_view v)
         {
             if (v == "fill")
@@ -748,6 +761,8 @@ namespace Veng::Cook
             return EnumProperty(property, ParsePointerEvents(v), v, located);
         case StyleProperty::TextAlign:
             return EnumProperty(property, ParseTextAlign(v), v, located);
+        case StyleProperty::TextWrap:
+            return EnumProperty(property, ParseTextWrap(v), v, located);
         case StyleProperty::OverflowX:
         case StyleProperty::OverflowY:
             return EnumProperty(property, ParseOverflow(v), v, located);

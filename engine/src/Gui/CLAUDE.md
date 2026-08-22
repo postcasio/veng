@@ -105,8 +105,22 @@ Three consequences, and they are what the paint path was always written against:
   `56×40`.
 - **An auto-sized element includes its own frame.** A text leaf measuring `20×20` inside `6px` of
   padding and a `3px` border solves to `38×38`.
-- **A measure function is handed the box its content is drawn in.** A `100px`-wide leaf with `6px`
-  padding and a `3px` border wraps its text at `82px`, so the last glyphs do not clip.
+- **A measure function is handed the box its content is drawn in** — when it is handed one at all.
+  A `100px`-wide **wrapping** leaf with `6px` padding and a `3px` border wraps its text at `82px`,
+  so the last glyphs do not clip. A non-wrapping leaf is offered no width, because there is
+  nothing for it to wrap within.
+
+**Wrapping is opt-in (`text-wrap`), and `nowrap` is the default — because the measure and the paint
+must shape the same run.** `Document::MeasureElementText` and `DrawList::Text` both take a wrap
+width, and both read it from `Style::Wrapping`: a `wrap` element hands its content width to each, a
+`nowrap` element hands neither one. When the two disagreed the failure was silent and looked like
+nothing to do with text — a label wider than its column measured two lines tall, solved a box twice
+the height it needed, and then painted **one** unwrapped line at that box's top. Under
+`align-items: center` the over-tall box is centred while the single line sits at its top edge, so
+the text drew outside the row that owned it and no longer lined up with that row's own background.
+The box was wrong, not the glyphs. Defaulting to `nowrap` makes the measure agree with what the
+paint has always done, so an over-long run overflows horizontally — where `overflow: hidden` can
+catch it — instead of mis-sizing its box.
 
 **So every paint-side deduction is correct, not a double count.** `ToPaddingBox` deflates `Layout`
 by the border; `ToContentBox` by border + padding; the text origin, the text-alignment slack, and

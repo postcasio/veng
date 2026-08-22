@@ -159,6 +159,11 @@ TEST_CASE("gui layout: a text leaf reflows to a taller box under a width constra
     doc.SetStyle(doc.Root(), column);
 
     Element& label = doc.Add(doc.Root(), ElementKind::Text);
+    // Reflow is opt-in: a run wraps only where the style asks it to, so this case says so. The
+    // default is one line, pinned by the case below.
+    Style wrapping;
+    wrapping.Wrapping = TextWrap::Wrap;
+    doc.SetStyle(label, wrapping);
     doc.SetText(label, "HELLOWORLD"); // 10 chars -> 100px unconstrained.
 
     // Wide enough: one line, 100x20.
@@ -171,6 +176,47 @@ TEST_CASE("gui layout: a text leaf reflows to a taller box under a width constra
     doc.SetStyle(doc.Root(), narrow);
     doc.Solve(vec2(200.0f, 200.0f));
     CheckRect(label.Layout, 0.0f, 0.0f, 50.0f, 40.0f);
+}
+
+TEST_CASE("gui layout: a text leaf does not reflow unless its style asks to")
+{
+    Document doc;
+
+    // The measurer records what width it was offered, so the case can say the constraint never
+    // reached it rather than only that the box came out one line tall.
+    optional<f32> offered;
+    bool offeredSeen = false;
+    doc.SetTextMeasurer(
+        [&](string_view text, const Style&, optional<f32> maxWidth) -> vec2
+        {
+            offered = maxWidth;
+            offeredSeen = true;
+            const f32 full = static_cast<f32>(text.size()) * 10.0f;
+            if (!maxWidth || *maxWidth >= full || full == 0.0f)
+            {
+                return vec2(full, 20.0f);
+            }
+            const f32 perLine = std::max(1.0f, std::floor(*maxWidth / 10.0f));
+            return vec2(perLine * 10.0f, std::ceil(full / (perLine * 10.0f)) * 20.0f);
+        });
+
+    Style column;
+    column.Direction = FlexDirection::Column;
+    column.AlignItems = Align::FlexStart;
+    column.Width = Length::Points(50.0f);
+    doc.SetStyle(doc.Root(), column);
+
+    Element& label = doc.Add(doc.Root(), ElementKind::Text);
+    doc.SetText(label, "HELLOWORLD"); // 100px unconstrained, in a 50px container.
+
+    doc.Solve(vec2(200.0f, 200.0f));
+
+    // The box is one line tall and its full unwrapped width, so it overflows its container rather
+    // than growing. This is what keeps a measured box and a painted run the same run: DrawList::Text
+    // shapes unwrapped too, so a box sized for two lines would hold one line drawn offset inside it.
+    REQUIRE(offeredSeen);
+    CHECK_FALSE(offered.has_value());
+    CheckRect(label.Layout, 0.0f, 0.0f, 100.0f, 20.0f);
 }
 
 TEST_CASE("gui layout: a button sizes to its label plus padding, like a text leaf")
@@ -516,6 +562,10 @@ TEST_CASE("gui layout: the border is reserved out of the content box")
         boxed.Width = Length::Points(100.0f);
         boxed.Padding = Insets::All(6.0f);
         boxed.BorderStyle = Border{.Width = 3.0f, .Color = vec4(1.0f)};
+
+        // Only a wrapping run is offered a width to wrap within, so the element that observes what
+        // the width *is* has to be one.
+        boxed.Wrapping = TextWrap::Wrap;
 
         Element& label = doc.Add(doc.Root(), ElementKind::Text);
         doc.SetStyle(label, boxed);

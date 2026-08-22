@@ -220,6 +220,9 @@ namespace Veng::Gui
         case StyleProperty::TextAlign:
             style.TextAlignment = static_cast<TextAlign>(declaration.Unit);
             return;
+        case StyleProperty::TextWrap:
+            style.Wrapping = static_cast<TextWrap>(declaration.Unit);
+            return;
         case StyleProperty::Overflow:
             // The shorthand carries both axes; the longhands below each carry one in Unit.
             style.OverflowX = static_cast<Overflow>(static_cast<i32>(declaration.Values.x));

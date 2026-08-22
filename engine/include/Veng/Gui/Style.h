@@ -172,6 +172,21 @@ namespace Veng::Gui
     /// Meaningful when the box is wider than the shaped run — a min-width-pinned table cell, a
     /// stretched cross-axis child, a fixed-width label. Alignment is applied at paint; it never
     /// feeds the layout solve, so a content-sized text box aligns identically under all three.
+    /// @brief Whether a text run breaks across lines to fit the width it is given.
+    ///
+    /// **NoWrap is the default**, and it is what makes an element's measured box agree with what is
+    /// painted in it: a run is shaped once, unwrapped, so a label too wide for its column overflows
+    /// horizontally — where a clip can catch it — rather than solving a box two lines tall that a
+    /// single painted line then sits offset inside. Wrap opts a run into breaking at the available
+    /// width, for the paragraph case that genuinely wants it.
+    enum class TextWrap : u8
+    {
+        /// @brief One line per explicit newline; the run overflows its box rather than breaking.
+        NoWrap,
+        /// @brief The run word-wraps within the width the layout offers it.
+        Wrap
+    };
+
     enum class TextAlign : u8
     {
         /// @brief Glyphs start at the content box's left edge (the default).
@@ -404,6 +419,9 @@ namespace Veng::Gui
         AssetHandle<Font> TextFont;
         /// @brief Horizontal alignment of a Text element's glyphs inside its solved box.
         TextAlign TextAlignment = TextAlign::Left;
+
+        /// @brief Whether this element's text breaks across lines to fit its width.
+        TextWrap Wrapping = TextWrap::NoWrap;
 
         /// @brief Multiplier applied to the element's alpha, in 0..1.
         ///

@@ -86,6 +86,8 @@ namespace Veng::Gui
             return "rotation";
         case StyleProperty::TextAlign:
             return "text-align";
+        case StyleProperty::TextWrap:
+            return "text-wrap";
         case StyleProperty::BackgroundImage:
             return "background-image";
         case StyleProperty::BackgroundSlice:
@@ -276,6 +278,10 @@ namespace Veng::Gui
         {
             return StyleProperty::TextAlign;
         }
+        if (name == "text-wrap")
+        {
+            return StyleProperty::TextWrap;
+        }
         if (name == "background-image")
         {
             return StyleProperty::BackgroundImage;
@@ -372,6 +378,7 @@ namespace Veng::Gui
         case StyleProperty::Animation:
         case StyleProperty::BackgroundGradient:
         case StyleProperty::TextAlign:
+        case StyleProperty::TextWrap:
         case StyleProperty::BackgroundImage:
         case StyleProperty::BackgroundSlice:
         case StyleProperty::BackgroundFit:

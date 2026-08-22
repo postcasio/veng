@@ -112,6 +112,9 @@ namespace Veng::Gui
         /// @brief A Text element's horizontal glyph alignment (Style::TextAlignment); value is a
         /// TextAlign ordinal.
         TextAlign,
+        /// @brief Whether a text run wraps to its width (Style::Wrapping); value is a TextWrap
+        ///        ordinal.
+        TextWrap,
         /// @brief A texture background fill (Style::BackgroundImage); value is a Texture AssetId.
         BackgroundImage,
         /// @brief The background image's nine-slice margins (Style::BackgroundSlice); value is four

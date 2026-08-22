@@ -1359,6 +1359,7 @@ namespace Veng::Gui
             case StyleProperty::PointerEvents:
             case StyleProperty::Animation:
             case StyleProperty::TextAlign:
+            case StyleProperty::TextWrap:
             case StyleProperty::BackgroundImage:
             case StyleProperty::BackgroundSlice:
             case StyleProperty::BackgroundFit:
@@ -1920,6 +1921,14 @@ namespace Veng::Gui
 
     vec2 Document::MeasureElementText(const Element& element, optional<f32> availableWidth) const
     {
+        // A run wraps only where the style asks it to. The default is not to, so what a measure
+        // reports and what DrawList::Text shapes are the same run: a label too wide for its column
+        // overflows horizontally, where a clip can catch it, rather than solving a box two lines
+        // tall that a single painted line then sits offset inside.
+        if (element.ComputedStyle.Wrapping == TextWrap::NoWrap)
+        {
+            availableWidth.reset();
+        }
         // A TextInput is a line box: it holds one line of its typography open even with no value,
         // so the field reserves room for the run it paints at every value, empty included.
         return MeasureRun(element.Text, ResolveFont(element), element.ComputedStyle, availableWidth,
@@ -3238,7 +3247,14 @@ namespace Veng::Gui
             }
             vec4 textColor = style.TextColor;
             textColor.a *= opacity;
-            list.Text(origin, *font, element.Text, style.TextSize, textColor);
+            // Shaped against the same width the measure was taken at, so the run painted here is
+            // the run the box was sized for. A wrapping element hands its content width down; a
+            // non-wrapping one hands nothing, which is what its measure did too.
+            list.Text(origin, *font, element.Text, style.TextSize, textColor,
+                      style.Wrapping == TextWrap::Wrap
+                          ? optional<f32>{rect.Size.x - 2.0f * border - style.Padding.Left -
+                                          style.Padding.Right}
+                          : optional<f32>{});
         }
 
         for (const Element* child : element.Children)

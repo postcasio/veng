@@ -463,7 +463,8 @@ namespace Veng::Gui
         }
     }
 
-    void DrawList::Text(vec2 pen, const Font& font, string_view text, f32 pixelSize, vec4 color)
+    void DrawList::Text(vec2 pen, const Font& font, string_view text, f32 pixelSize, vec4 color,
+                        const optional<f32> maxWidth)
     {
         const vector<u32> codepoints = DecodeUtf8(text);
         if (codepoints.empty())
@@ -471,7 +472,7 @@ namespace Veng::Gui
             return;
         }
 
-        const ShapeResult shaped = font.ShapeRun(codepoints, pixelSize, std::nullopt);
+        const ShapeResult shaped = font.ShapeRun(codepoints, pixelSize, maxWidth);
         if (shaped.Glyphs.empty())
         {
             return;
