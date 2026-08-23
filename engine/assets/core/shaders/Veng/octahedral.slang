@@ -1,9 +1,15 @@
-// Octahedral direction ↔ UV mapping: the equal-area square parameterization of the sphere a
-// SceneCapture's output uses, chosen because a 2D map samples through the ordinary bindless
-// Texture2D array (a cube view cannot ride set 0). Shared by the engine's capture resample
-// pass and any material sampling a capture's output — a consumer computes
-// OctahedralUV(direction) and samples the capture texture there. Bindings-free, so it is
-// includable beside any domain contract.
+// Octahedral direction ↔ UV mapping: the square parameterization of the sphere a SceneCapture's
+// output uses, chosen because a 2D map samples through the ordinary bindless Texture2D array (a
+// cube view cannot ride set 0). Shared by the engine's capture resample pass and any material
+// sampling a capture's output — a consumer computes OctahedralUV(direction) and samples the
+// capture texture there. Bindings-free, so it is includable beside any domain contract.
+//
+// **It is not equal-area.** The fold is `dir / L1norm`, whose solid angle per unit of UV runs as
+// `1 / |p|³` over the octahedron point `p`: uniform density would be `4 / edge²` per texel at the
+// six vertices and it reaches 5.196 times that at the eight face centres. The distortion is mild
+// and has no polar singularity, which is what the mapping is chosen for — but a consumer weighting
+// by area, or measuring a distance between two texels, must take the per-texel solid angle and the
+// great-circle arc rather than assuming the square's own metric.
 
 // Per-component sign that never returns zero, the octahedral fold's reflection factor.
 float2 OctSignNotZero(float2 v)
