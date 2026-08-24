@@ -93,6 +93,12 @@ namespace Veng::Renderer
         ///        4 bytes/texel, magnitude cap matching the FP16 lit chain. Appended at the fixed
         ///        ordinal 28 for cooked-blob integer stability.
         B10G11R11Ufloat,
+        /// @brief 8-bit per channel RG, normalized [0,1]. Two channels at a byte apiece, for a
+        ///        direction-and-strength pair that wants neither the range of a float nor the two
+        ///        idle channels of an RGBA. As a storage image it needs the device's extended
+        ///        storage-image formats, which the context enables wherever they are advertised.
+        ///        Appended at the fixed ordinal 29 for cooked-blob integer stability.
+        RG8Unorm,
     };
 
     /// @brief Requested display output mode for the presentable swapchain.

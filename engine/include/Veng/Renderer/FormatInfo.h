@@ -50,6 +50,7 @@ namespace Veng::Renderer
         case Format::R8Unorm:
             return {.BlockWidth = 1, .BlockHeight = 1, .Bytes = 1};
         case Format::R16Sfloat:
+        case Format::RG8Unorm:
             return {.BlockWidth = 1, .BlockHeight = 1, .Bytes = 2};
         case Format::RGBA8Unorm:
         case Format::RGBA8Srgb:
@@ -157,6 +158,8 @@ namespace Veng::Renderer
             return "ASTC4x4Srgb";
         case Format::R32Uint:
             return "R32Uint";
+        case Format::RG8Unorm:
+            return "RG8Unorm";
         case Format::BC5Unorm:
             return "BC5Unorm";
         case Format::BC4Unorm:
