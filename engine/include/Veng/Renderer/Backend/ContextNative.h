@@ -320,5 +320,13 @@ namespace Veng::Renderer
         /// Gates GraphicsPipelineInfo::DepthClampEnable (shadow pancaking); set in CreateDevice
         /// from the physical device's reported support.
         bool DepthClampSupported = false;
+
+        /// @brief True when shaderStorageImageExtendedFormats was supported and enabled at device
+        /// creation.
+        ///
+        /// The device-wide guarantee that the extended storage-image formats carry
+        /// VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT; set in CreateDevice from the physical device's
+        /// reported support.
+        bool ExtendedStorageImageFormatsSupported = false;
     };
 }

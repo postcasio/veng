@@ -95,10 +95,21 @@ namespace Veng::Renderer
         B10G11R11Ufloat,
         /// @brief 8-bit per channel RG, normalized [0,1]. Two channels at a byte apiece, for a
         ///        direction-and-strength pair that wants neither the range of a float nor the two
-        ///        idle channels of an RGBA. As a storage image it needs the device's extended
-        ///        storage-image formats, which the context enables wherever they are advertised.
+        ///        idle channels of an RGBA. As a storage image it is one of the extended
+        ///        storage-image formats: the context enables shaderStorageImageExtendedFormats
+        ///        wherever the device advertises it, and Context::IsFormatStorageImageSupported
+        ///        answers whether this device actually carries it.
         ///        Appended at the fixed ordinal 29 for cooked-blob integer stability.
         RG8Unorm,
+        /// @brief 16-bit per channel RGBA, normalized [0,1]. A bounded field quantised uniformly
+        ///        at range/65535, where a half's ulp would instead be finest at zero and coarsest
+        ///        at the extremes; the hardware does the conversion, so no consumer repeats an
+        ///        encode. Eight bytes per texel, the same as RGBA16Sfloat. As a storage image it
+        ///        is one of the extended storage-image formats: the context enables
+        ///        shaderStorageImageExtendedFormats wherever the device advertises it, and
+        ///        Context::IsFormatStorageImageSupported answers whether this device actually
+        ///        carries it. Appended at the fixed ordinal 30 for cooked-blob integer stability.
+        RGBA16Unorm,
     };
 
     /// @brief Requested display output mode for the presentable swapchain.

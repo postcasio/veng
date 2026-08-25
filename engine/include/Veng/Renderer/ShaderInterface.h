@@ -28,14 +28,15 @@ namespace Veng::Renderer
 
     /// @brief One descriptor binding reflected from a shader's interface.
     ///
-    /// Set is always >= 1 — set 0 is the bindless registry's reserved set, recognized
-    /// and excluded by the cooker. Named so a material can resolve a binding by name
-    /// rather than hand-declaring set/binding numbers.
+    /// Set is always >= BindlessRegistry::FirstUserSet — the leading sets are the typed
+    /// bindless registries', recognized and excluded by the cooker. Named so a material can
+    /// resolve a binding by name rather than hand-declaring set/binding numbers.
     struct ShaderBinding
     {
         /// @brief Reflected binding name.
         string Name;
-        /// @brief Descriptor set index (always >= 1).
+        /// @brief Descriptor set index (always an author-declared set, past the reserved
+        ///        bindless sets).
         u32 Set = 1;
         /// @brief Binding slot within the set.
         u32 Binding = 0;

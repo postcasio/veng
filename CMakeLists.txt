@@ -1533,6 +1533,10 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/volume_write.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/volume_sample.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sh_eval.comp.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/bindless_buffer.frag.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/material_buffer.frag.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/material_param.frag.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/storage_image_range.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/invert.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/fullscreen.vert.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sample.frag.shader.json
@@ -1542,7 +1546,11 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/indirect_cull.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/volume_write.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/volume_sample.comp.shader.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sh_eval.comp.shader.json)
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sh_eval.comp.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/bindless_buffer.frag.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/material_buffer.frag.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/material_param.frag.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/storage_image_range.comp.shader.json)
 
     add_executable(veng_test_compute_dispatch tests/compute_dispatch.cpp)
     target_link_libraries(veng_test_compute_dispatch PRIVATE veng::veng veng_test_support)
@@ -1601,6 +1609,11 @@ if (VENG_BUILD_TESTS)
             tests/gpu/splitscreen.cpp
             tests/gpu/hi_z_pyramid.cpp
             tests/gpu/volume_texture_3d.cpp
+            # storage_image_range.cpp drives a normalised sixteen-bit storage image: a compute
+            # shader declaring the Rgba16 image format writes both ends of the range and the datum,
+            # and the readback asserts the quantisation. It also reads the context's own report of
+            # the extended storage-image formats rather than trusting the declaration compiled.
+            tests/gpu/storage_image_range.cpp
             tests/gpu/volume_field.cpp
             tests/gpu/volume_scene_pass.cpp
             tests/gpu/dof_battery.cpp

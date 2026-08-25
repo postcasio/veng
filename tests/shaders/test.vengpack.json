@@ -65,6 +65,11 @@
       "id": "0x0000000000001F4D",
       "type": "Shader",
       "source": "material_buffer.frag.shader.json"
+    },
+    {
+      "id": "0x0000000000001F4E",
+      "type": "Shader",
+      "source": "storage_image_range.comp.shader.json"
     }
   ]
 }

@@ -617,6 +617,11 @@ namespace Veng::Renderer
         return m_Native->DepthClampSupported;
     }
 
+    bool Context::IsExtendedStorageImageFormatsSupported() const
+    {
+        return m_Native->ExtendedStorageImageFormatsSupported;
+    }
+
     bool Context::IsGpuTimingSupported() const
     {
         return m_GpuTimingSupported;
@@ -718,6 +723,14 @@ namespace Veng::Renderer
         constexpr vk::FormatFeatureFlags required =
             vk::FormatFeatureFlagBits::eColorAttachment | vk::FormatFeatureFlagBits::eTransferSrc;
         return (props.optimalTilingFeatures & required) == required;
+    }
+
+    bool Context::IsFormatStorageImageSupported(const Format format) const
+    {
+        const vk::FormatProperties props =
+            m_Native->PhysicalDevice.getFormatProperties(ToVk(format));
+        return static_cast<bool>(props.optimalTilingFeatures &
+                                 vk::FormatFeatureFlagBits::eStorageImage);
     }
 
     SynchronizationFrame& Context::GetCurrentFrame()
@@ -1309,6 +1322,18 @@ namespace Veng::Renderer
         // queried value already reflects support and is passed through to createDevice
         // unchanged; record it so IsDepthClampSupported() reports the enabled state.
         DepthClampSupported = features2.features.depthClamp;
+
+        // shaderStorageImageExtendedFormats is the device-wide guarantee that the extended
+        // storage-image formats (the two-channel and normalized sixteen-bit classes among them)
+        // carry the StorageImage format feature, which is what lets a shader declare one of them
+        // on a read-write image. Requested explicitly rather than left to ride the queried chain,
+        // so the dependency is stated where it is taken; a device without it reports false from
+        // IsFormatStorageImageSupported for those formats instead of storing undefined bytes.
+        const bool extendedStorageImageFormats =
+            features2.features.shaderStorageImageExtendedFormats;
+        ExtendedStorageImageFormatsSupported = extendedStorageImageFormats;
+        features2.features.shaderStorageImageExtendedFormats =
+            extendedStorageImageFormats ? vk::True : vk::False;
 
         // Timeline semaphores are required for the async-upload sync channel.
         // Fatal-assert if the device lacks support before enabling the feature.

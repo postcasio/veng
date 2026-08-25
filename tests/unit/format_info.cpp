@@ -26,6 +26,20 @@ TEST_CASE("FormatInfo: block geometry of the block-compressed formats")
     }
 }
 
+TEST_CASE("FormatInfo: the sixteen-bit-per-channel RGBA formats cost eight bytes per texel")
+{
+    // An uncompressed format reports a 1x1 block whose Bytes is its bytes-per-texel. RGBA16Unorm
+    // trades a half's magnitude-proportional ulp for uniform quantisation at no change in size, so
+    // its cost matching RGBA16Sfloat's exactly is the claim worth pinning.
+    for (const Format format : {Format::RGBA16Unorm, Format::RGBA16Sfloat, Format::RGBA16Uint})
+    {
+        CHECK(GetFormatBlockInfo(format).BlockWidth == 1u);
+        CHECK(GetFormatBlockInfo(format).BlockHeight == 1u);
+        CHECK(GetFormatBlockInfo(format).Bytes == 8u);
+        CHECK(BytesForLevel(format, 4, 4) == 128u);
+    }
+}
+
 TEST_CASE("FormatInfo: BytesForLevel over BC5 and BC4 block counts")
 {
     // An 8x8 level is 2x2 = 4 blocks: 64 bytes for BC5 (16/block), 32 bytes for BC4 (8/block).
@@ -50,8 +64,8 @@ TEST_CASE("FormatInfo: FormatName covers every declared enumerator, distinctly")
     // The property that matters is coverage: a format added to Types.h and left out of the switch
     // reports "Unknown", so a diagnostic silently stops naming it. Walking the declared range
     // catches that at the point the enumerator is added rather than the day someone reads a dump.
-    // RG8Unorm is the last declared value; the loop is the whole closed set.
-    constexpr auto Last = static_cast<u32>(Format::RG8Unorm);
+    // RGBA16Unorm is the last declared value; the loop is the whole closed set.
+    constexpr auto Last = static_cast<u32>(Format::RGBA16Unorm);
     std::set<string_view> names;
     for (u32 value = 0; value <= Last; ++value)
     {

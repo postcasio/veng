@@ -248,6 +248,28 @@ namespace Veng::Renderer
         /// @param format The image format to query.
         [[nodiscard]] bool IsFormatColorAttachmentTransferSrcSupported(Format format) const;
 
+        /// @brief Returns true when @p format can back a storage image the device reads and writes.
+        ///
+        /// Queries the format's optimal-tiling feature flags for StorageImage. This is the
+        /// per-format answer, and it is the one to check before creating an ImageUsage::Storage
+        /// image: the extended storage-image formats (the two-channel and normalized sixteen-bit
+        /// classes among them) are guaranteed only where
+        /// IsExtendedStorageImageFormatsSupported() is true, and a device that carries neither
+        /// the guarantee nor the individual format reports false here rather than storing
+        /// undefined bytes.
+        /// @param format The image format to query.
+        [[nodiscard]] bool IsFormatStorageImageSupported(Format format) const;
+
+        /// @brief Returns true when the extended storage-image formats were enabled at device
+        /// creation.
+        ///
+        /// True only when shaderStorageImageExtendedFormats was supported by the physical device
+        /// and was therefore enabled at device creation. The feature is a device-wide guarantee
+        /// that every extended storage-image format carries the StorageImage format feature, so a
+        /// shader may declare one of those formats on a read-write image; it is not a per-format
+        /// answer, which is what IsFormatStorageImageSupported() gives.
+        [[nodiscard]] bool IsExtendedStorageImageFormatsSupported() const;
+
         /// @brief Returns the borrowed window.
         [[nodiscard]] Window& GetWindow() const { return *m_Window; }
 

@@ -1,6 +1,6 @@
 // Writes a known field into an RGBA16F 3D storage image: each voxel stores its
-// own integer coordinate in RGB and a constant in A. Set 0 is reserved for the
-// bindless registry, so the storage image binds on set 1; the test's hand-built
+// own integer coordinate in RGB and a constant in A. Sets 0-2 are reserved for the
+// bindless registries, so the storage image binds on set 3; the test's hand-built
 // layout matches this binding. Drives the 3D storage-image write path (the
 // MoltenVK 3D-storage probe).
 [[vk::binding(0, 3)]] [format("rgba16f")] RWTexture3D<float4> u_Volume;

@@ -8,11 +8,11 @@
 // driver. veng_unit is given the Vulkan/GLFW/VMA include dirs for this TU; that
 // is headers only, no run-time driver dependency.
 //
-// The per-enum arrays below must track Renderer/Types.h: they drive the
-// round-trip / coverage loops, so a new enumerator is one edit here. (The
-// "unmapped enumerator aborts" path is a death, covered by the death-test
-// harness; here we assert the *currently defined* enumerators all map
-// correctly.)
+// Format walks its declared range, so a new pixel format needs no edit here. The other
+// enums are hand-listed arrays that must track Renderer/Types.h: they drive the round-trip
+// / coverage loops, so a new enumerator is one edit here. (The "unmapped enumerator aborts"
+// path is a death, covered by the death-test harness; here we assert the *currently
+// defined* enumerators all map correctly.)
 
 #include <doctest/doctest.h>
 
@@ -40,26 +40,25 @@ namespace
 
 TEST_CASE("Format round-trips through ToVk/FromVk")
 {
-    constexpr std::array formats = {
-        Format::Undefined,      Format::R8Unorm,         Format::RGBA8Unorm,
-        Format::RGBA8Srgb,      Format::BGRA8Srgb,       Format::R16Sfloat,
-        Format::RGBA16Sfloat,   Format::R32Sfloat,       Format::RG32Sfloat,
-        Format::RGB32Sfloat,    Format::RGBA32Sfloat,    Format::D16Unorm,
-        Format::D32Sfloat,      Format::S8Uint,          Format::D16UnormS8Uint,
-        Format::D24UnormS8Uint, Format::D32SfloatS8Uint, Format::X8D24UnormPack32,
-    };
+    // Walk the declared range rather than a hand-listed set: a format appended to Types.h and
+    // left out of either switch is then caught the day it is declared, not the day a hand-kept
+    // array is remembered. RGBA16Unorm is the last declared value.
+    constexpr auto Last = static_cast<Veng::u32>(Format::RGBA16Unorm);
 
     std::set<std::underlying_type_t<vk::Format>> distinct;
-    for (Format f : formats)
+    for (Veng::u32 value = 0; value <= Last; ++value)
     {
-        CHECK(FromVk(ToVk(f)) == f); // asymmetric edit to one direction fails here
-        distinct.insert(Underlying(ToVk(f)));
+        const auto format = static_cast<Format>(value);
+        CAPTURE(value);
+        CHECK(FromVk(ToVk(format)) == format); // asymmetric edit to one direction fails here
+        distinct.insert(Underlying(ToVk(format)));
     }
-    CHECK(distinct.size() == formats.size()); // no two engine formats collide in vk
+    CHECK(distinct.size() == Last + 1); // no two engine formats collide in vk
 
     // Spot-check a couple of concrete mappings.
     CHECK(ToVk(Format::RGBA8Unorm) == vk::Format::eR8G8B8A8Unorm);
     CHECK(ToVk(Format::D32Sfloat) == vk::Format::eD32Sfloat);
+    CHECK(ToVk(Format::RGBA16Unorm) == vk::Format::eR16G16B16A16Unorm);
 }
 
 TEST_CASE("ImageLayout round-trips through ToVk/FromVk")
