@@ -18,6 +18,12 @@ namespace Veng::Cook
         /// @brief Returns AssetTypes::Prefab.
         [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Prefab; }
 
+        /// @brief Reads CookContext::Types, so a module rebuild can change what it emits.
+        [[nodiscard]] ImporterModuleDependence ModuleDependence() const override
+        {
+            return ImporterModuleDependence::DependsOnModule;
+        }
+
         /// @brief Cooks the prefab described by `entry` into a binary blob.
         [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context,
                                               const json& entry) const override;

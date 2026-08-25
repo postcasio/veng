@@ -13,7 +13,7 @@ namespace Veng::Cook
     {
         for (Unique<AssetImporter>& importer : m_Importers)
         {
-            cooker.Register(std::move(importer));
+            cooker.RegisterFromModule(std::move(importer));
         }
         m_Importers.clear();
     }

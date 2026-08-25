@@ -19,6 +19,12 @@ namespace Veng::Cook
         /// @brief Returns AssetTypes::Level.
         [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Level; }
 
+        /// @brief Reads CookContext::Types and ::Systems, so a module rebuild can change its output.
+        [[nodiscard]] ImporterModuleDependence ModuleDependence() const override
+        {
+            return ImporterModuleDependence::DependsOnModule;
+        }
+
         /// @brief Cooks the level described by `entry` into a binary blob.
         [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context,
                                               const json& entry) const override;

@@ -123,7 +123,7 @@ extern "C"
 /// the importer surface never invalidates every runtime module. Guarded with #ifndef so a target
 /// can force a mismatch via -D for testing.
 #ifndef VENG_COOK_MODULE_ABI_VERSION
-#define VENG_COOK_MODULE_ABI_VERSION 2u
+#define VENG_COOK_MODULE_ABI_VERSION 3u
 #endif
 
 /// @brief Emits the VengCookModuleAbiVersion() export; place in exactly one TU per cook module.

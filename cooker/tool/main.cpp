@@ -44,9 +44,10 @@ namespace
                            "  vengc verify <archive.vengpack> [--module <lib>]\n");
     }
 
-    // Opens the cooked-blob cache at `cacheDir`, keyed on every image this cook runs code from.
-    // Returns nullopt (no caching) when `cacheDir` is unset; a real open failure is fatal so a
-    // broken cache dir surfaces loudly rather than silently disabling the cache.
+    // Opens the cooked-blob cache at `cacheDir`, keyed on the cook tool and — for the entries that
+    // read them — on the images this cook dlopens. Returns nullopt (no caching) when `cacheDir` is
+    // unset; a real open failure is fatal so a broken cache dir surfaces loudly rather than
+    // silently disabling the cache.
     optional<CookCache> OpenCache(const optional<path>& cacheDir, const char* argv0,
                                   const optional<path>& modulePath, const path& cookModulePath)
     {
@@ -54,9 +55,10 @@ namespace
         {
             return std::nullopt;
         }
-        string toolTag =
-            ComputeCookToolTag(path(argv0), modulePath ? *modulePath : path{}, cookModulePath);
-        Result<CookCache> opened = CookCache::Open(*cacheDir, std::move(toolTag));
+        string baseTag = ComputeCookBaseTag(path(argv0));
+        string moduleTag = ComputeCookModuleTag(modulePath ? *modulePath : path{}, cookModulePath);
+        Result<CookCache> opened =
+            CookCache::Open(*cacheDir, std::move(baseTag), std::move(moduleTag));
         if (!opened)
         {
             fmt::print(stderr, "vengc: {}\n", opened.error());

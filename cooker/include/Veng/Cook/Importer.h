@@ -98,6 +98,22 @@ namespace Veng::Cook
         Parallel,
     };
 
+    /// @brief Whether a loaded module image can change what an importer emits.
+    ///
+    /// The cook loads module images — a runtime module whose reflected types and systems some
+    /// importers validate against, and a cook module supplying importers of its own — and their
+    /// identity is a genuine input to whatever consults them. It is an input to nothing else: a
+    /// shader, a texture, a mesh or a material is decided entirely by its own sources and the
+    /// cooker's own code, and keying it on an image it never reads throws its cached result away
+    /// every time that image is rebuilt.
+    enum class ImporterModuleDependence : u8
+    {
+        /// @brief Emits from its own sources alone; no module image can change the result.
+        Independent,
+        /// @brief Consults a module image — its reflected registries, or code living inside it.
+        DependsOnModule,
+    };
+
     /// @brief Offline, Vulkan-free importer interface: one implementation per AssetTypeId.
     ///
     /// Registered into a Cooker and dispatched per pack entry. Cook() turns a pack entry's
@@ -120,6 +136,22 @@ namespace Veng::Cook
         [[nodiscard]] virtual ImporterConcurrency Concurrency() const
         {
             return ImporterConcurrency::Serialized;
+        }
+
+        /// @brief Declares whether a loaded module image can change what this importer emits.
+        ///
+        /// Defaults to @ref ImporterModuleDependence::Independent, which is the truth for an
+        /// importer that reads only its own sources. Override with
+        /// @ref ImporterModuleDependence::DependsOnModule when Cook reads CookContext::Types or
+        /// CookContext::Systems, so an entry it produced is invalidated by the module rebuild that
+        /// can change it.
+        ///
+        /// A host never asks this of an importer a cook module supplied: that importer's code lives
+        /// in the module image, so its output depends on the image whatever it declares here.
+        /// @return This importer's module dependence.
+        [[nodiscard]] virtual ImporterModuleDependence ModuleDependence() const
+        {
+            return ImporterModuleDependence::Independent;
         }
 
         /// @brief Cooks one pack entry's JSON into cooked blob bytes.

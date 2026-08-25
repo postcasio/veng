@@ -483,6 +483,20 @@ namespace Veng::Cook
 
     void Cooker::Register(Unique<AssetImporter> importer)
     {
+        const ImporterModuleDependence dependence = importer != nullptr
+                                                        ? importer->ModuleDependence()
+                                                        : ImporterModuleDependence::Independent;
+        RegisterImporter(std::move(importer), dependence);
+    }
+
+    void Cooker::RegisterFromModule(Unique<AssetImporter> importer)
+    {
+        RegisterImporter(std::move(importer), ImporterModuleDependence::DependsOnModule);
+    }
+
+    void Cooker::RegisterImporter(Unique<AssetImporter> importer,
+                                  ImporterModuleDependence dependence)
+    {
         if (importer == nullptr)
         {
             FatalRegistration("importer is null");
@@ -498,7 +512,27 @@ namespace Veng::Cook
                             m_AssetTypes.GetName(type)));
         }
 
-        m_Importers[type] = std::move(importer);
+        m_Importers[type] =
+            RegisteredImporter{.Importer = std::move(importer), .Dependence = dependence};
+    }
+
+    ImporterModuleDependence Cooker::EntryModuleDependence(const json& entry) const
+    {
+        if (!entry.is_object() || !entry.contains("type") || !entry["type"].is_string())
+        {
+            return ImporterModuleDependence::DependsOnModule;
+        }
+        const optional<AssetTypeId> type = m_AssetTypes.FindByName(entry["type"].get<string>());
+        if (!type)
+        {
+            return ImporterModuleDependence::DependsOnModule;
+        }
+        const auto importerIt = m_Importers.find(*type);
+        if (importerIt == m_Importers.end())
+        {
+            return ImporterModuleDependence::DependsOnModule;
+        }
+        return importerIt->second.Dependence;
     }
 
     VoidResult Cooker::CookPack(const path& packJson, const path& outArchive,
@@ -713,6 +747,8 @@ namespace Veng::Cook
                     .PackDir = keyPackDir,
                     .ConfigFingerprint = configFingerprint,
                     .ShaderIncludeDir = keyShaderIncludeDir,
+                    .ConsultsModule =
+                        EntryModuleDependence(entry) == ImporterModuleDependence::DependsOnModule,
                 });
 
                 if (const optional<CookCacheMeta> meta = cache->LoadMeta(*slot.CacheKey))
@@ -1092,7 +1128,7 @@ namespace Veng::Cook
         json entry;
         entry["source"] = sourcePath.filename().string();
 
-        const Result<vector<u8>> blob = importerIt->second->Cook(context, entry);
+        const Result<vector<u8>> blob = importerIt->second.Importer->Cook(context, entry);
         if (!blob)
         {
             return std::unexpected(fmt::format("cook '{}': {}", sourcePath.string(), blob.error()));
@@ -1181,7 +1217,7 @@ namespace Veng::Cook
         // An importer that has not declared itself reentrant runs under the cook's serialization
         // lock — held for the rest of the entry, so a parent Material's companion instance cook is
         // covered too. An importer is never assumed safe; declaring nothing means holding this.
-        const AssetImporter& importer = *importerIt->second;
+        const AssetImporter& importer = *importerIt->second.Importer;
         std::unique_lock<std::mutex> serialize(serialLock, std::defer_lock);
         if (importer.Concurrency() != ImporterConcurrency::Parallel)
         {

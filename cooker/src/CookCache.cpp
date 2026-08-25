@@ -17,9 +17,10 @@ namespace Veng::Cook
 {
     namespace
     {
-        // The cache's own format version. Folded into the tool tag so a change to the cache file
-        // layout or the manifest schema invalidates every cached entry without a manual sweep.
-        constexpr u32 CookCacheFormatVersion = 3;
+        // The cache's own format version. Folded into the base tag so a change to the cache file
+        // layout, the manifest schema, or the key derivation invalidates every cached entry
+        // without a manual sweep.
+        constexpr u32 CookCacheFormatVersion = 4;
 
         // Renders a 128-bit hash as a fixed 32-char lowercase hex string, the basename form used
         // for both cache keys and content-addressed blob files.
@@ -52,6 +53,27 @@ namespace Veng::Cook
             in.seekg(0);
             in.read(reinterpret_cast<char*>(out.data()), size);
             return static_cast<bool>(in);
+        }
+
+        // Appends `;<label>=<resolved path>` plus, when the file can be read, `;<label>_hash=<hex>`.
+        // The path is emitted even for an unreadable image so it never drops out of a tag silently —
+        // two cooks differing only in which image they loaded must still key apart. Hashing the
+        // contents rather than stat'ing them is what keeps a relink that produced identical bytes
+        // from invalidating anything: an image's identity is what it holds, not when it was written.
+        void AppendImage(string& tag, std::string_view label, const path& file)
+        {
+            if (file.empty())
+            {
+                return;
+            }
+            std::error_code ec;
+            const path canonical = std::filesystem::weakly_canonical(file, ec);
+            const path& resolved = ec ? file : canonical;
+            tag += fmt::format(";{}={}", label, resolved.string());
+            if (const optional<ContentHash> hash = HashFileContents(resolved))
+            {
+                tag += fmt::format(";{}_hash={}", label, HexOf(*hash));
+            }
         }
     }
 
@@ -88,7 +110,7 @@ namespace Veng::Cook
         // Every field that steers a stored blob's bytes, serialized deterministically. The role
         // table is walked in the fixed CompressionRoles order and each format written by its
         // ordinal — reorderings of the enum never silently alias two tables because the whole
-        // fingerprint (and the cache) is invalidated by the tool tag on any cooker rebuild.
+        // fingerprint (and the cache) is invalidated by the base tag on any cooker rebuild.
         string out = fmt::format("name={};target={};level={};", config.Name, config.Target,
                                  config.CompressionLevel);
         for (const CompressionRole role : CompressionRoles)
@@ -99,43 +121,31 @@ namespace Veng::Cook
         return out;
     }
 
-    string ComputeCookToolTag(const path& toolExe, const path& modulePath,
-                              const path& cookModulePath)
+    string ComputeCookBaseTag(const path& toolExe)
     {
-        // Each image contributes `<label>=<path>` plus, when it can be stat'd, its size and mtime.
-        // The path is emitted even for an unstattable image so it never drops out of the tag
-        // silently — two cooks differing only in which module they loaded must still key apart.
-        const auto append = [](string& tag, std::string_view label, const path& file)
-        {
-            if (file.empty())
-            {
-                return;
-            }
-            std::error_code ec;
-            const path canonical = std::filesystem::weakly_canonical(file, ec);
-            const path& resolved = ec ? file : canonical;
-            tag += fmt::format(";{}={}", label, resolved.string());
-            if (const optional<FileStat> stat = StatFile(resolved))
-            {
-                tag +=
-                    fmt::format(";{}_size={};{}_mtime={}", label, stat->Size, label, stat->Mtime);
-            }
-        };
-
         string tag = fmt::format("cachefmt={}", CookCacheFormatVersion);
-        append(tag, "exe", toolExe);
-        append(tag, "module", modulePath);
-        append(tag, "cookmodule", cookModulePath);
+        AppendImage(tag, "exe", toolExe);
         return tag;
     }
 
-    Result<CookCache> CookCache::Open(const path& cacheDir, string toolTag)
+    string ComputeCookModuleTag(const path& modulePath, const path& cookModulePath)
+    {
+        // Empty for a cook that loads no module, which is the right answer rather than a special
+        // case: an entry that reads no module image keys identically whether one was loaded or not.
+        string tag;
+        AppendImage(tag, "module", modulePath);
+        AppendImage(tag, "cookmodule", cookModulePath);
+        return tag;
+    }
+
+    Result<CookCache> CookCache::Open(const path& cacheDir, string baseTag, string moduleTag)
     {
         CookCache cache;
         cache.m_Root = cacheDir;
         cache.m_EntriesDir = cacheDir / "entries";
         cache.m_BlobsDir = cacheDir / "blobs";
-        cache.m_ToolTag = std::move(toolTag);
+        cache.m_BaseTag = std::move(baseTag);
+        cache.m_ModuleTag = std::move(moduleTag);
 
         std::error_code ec;
         std::filesystem::create_directories(cache.m_EntriesDir, ec);
@@ -156,9 +166,12 @@ namespace Veng::Cook
     string CookCache::KeyFor(const CookCacheKeyInputs& inputs) const
     {
         // Concatenate every keying input behind length-tagged separators so no two distinct field
-        // splits ever hash equal, then xxh3-128 the whole and render it hex.
+        // splits ever hash equal, then xxh3-128 the whole and render it hex. The module tag joins
+        // only the entries that read a module image; folding it into every key instead would throw
+        // away every shader, texture and mesh in the project each time a module is relinked.
         const string material = fmt::format(
-            "tool={}\nentry={}\npackdir={}\nconfig={}\nshaderinc={}\n", m_ToolTag, inputs.EntryJson,
+            "tool={}\nmodule={}\nentry={}\npackdir={}\nconfig={}\nshaderinc={}\n", m_BaseTag,
+            inputs.ConsultsModule ? m_ModuleTag : string{}, inputs.EntryJson,
             inputs.PackDir.string(), inputs.ConfigFingerprint, inputs.ShaderIncludeDir.string());
         const XXH128_hash_t h = XXH3_128bits(material.data(), material.size());
         return HexOf(ContentHash{.Lo = h.low64, .Hi = h.high64});

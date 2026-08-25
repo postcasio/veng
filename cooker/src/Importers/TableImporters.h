@@ -14,6 +14,12 @@ namespace Veng::Cook
         /// @brief Returns AssetTypes::TableSchema.
         [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::TableSchema; }
 
+        /// @brief Resolves column types through CookContext::Types, whose layouts a module decides.
+        [[nodiscard]] ImporterModuleDependence ModuleDependence() const override
+        {
+            return ImporterModuleDependence::DependsOnModule;
+        }
+
         /// @brief Cooks the table schema described by `entry` into a binary blob.
         [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context,
                                               const json& entry) const override;
@@ -32,6 +38,12 @@ namespace Veng::Cook
     public:
         /// @brief Returns AssetTypes::DataTable.
         [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::DataTable; }
+
+        /// @brief Encodes cells through CookContext::Types, whose layouts a module decides.
+        [[nodiscard]] ImporterModuleDependence ModuleDependence() const override
+        {
+            return ImporterModuleDependence::DependsOnModule;
+        }
 
         /// @brief Cooks the data table described by `entry` into a binary blob.
         [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context,

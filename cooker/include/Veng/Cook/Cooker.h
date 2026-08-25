@@ -108,9 +108,22 @@ namespace Veng::Cook
         /// a cook module's importers after, so a silent replacement would hand every asset of that
         /// type to the newcomer with no diagnostic — override semantics for builtin types stay
         /// engine-owned, matching the loader side.
+        ///
+        /// The importer's own AssetImporter::ModuleDependence decides whether the entries it
+        /// produces are keyed on the loaded module images.
         /// @param importer  The importer to register; must be non-null.
         /// @warning Aborts on a null importer or on a type that is already registered.
         void Register(Unique<AssetImporter> importer);
+
+        /// @brief Registers an importer that a cook module supplied, keyed on the module images.
+        ///
+        /// Identical to Register but for the dependence recorded: the importer's code lives in a
+        /// dlopened image, so rebuilding that image can change what it emits from an unchanged
+        /// source whatever the importer declares. The declaration is therefore not consulted here —
+        /// a module importer is module-dependent by construction.
+        /// @param importer  The importer to register; must be non-null.
+        /// @warning Aborts on a null importer or on a type that is already registered.
+        void RegisterFromModule(Unique<AssetImporter> importer);
 
         /// @brief Returns the asset-type registry this cooker resolves manifest type names through.
         ///
@@ -211,8 +224,28 @@ namespace Veng::Cook
                                            int level, f64* outStoreSeconds = nullptr,
                                            f64* outWaitSeconds = nullptr) const;
 
+        /// @brief One registered importer plus the module dependence recorded for it.
+        struct RegisteredImporter
+        {
+            /// @brief The importer itself.
+            Unique<AssetImporter> Importer;
+            /// @brief Whether a module image can change what it emits; decides the entry's key.
+            ImporterModuleDependence Dependence = ImporterModuleDependence::Independent;
+        };
+
+        /// @brief The shared body of Register and RegisterFromModule.
+        void RegisterImporter(Unique<AssetImporter> importer, ImporterModuleDependence dependence);
+
+        /// @brief Whether a manifest entry's importer reads a loaded module image.
+        ///
+        /// An entry whose type does not resolve to a registered importer answers
+        /// @ref ImporterModuleDependence::DependsOnModule: it is about to fail with its own located
+        /// error, and the conservative key costs a re-cook where the other answer could serve a
+        /// stale blob.
+        [[nodiscard]] ImporterModuleDependence EntryModuleDependence(const json& entry) const;
+
         /// @brief Registered importers keyed by AssetTypeId.
-        std::unordered_map<AssetTypeId, Unique<AssetImporter>> m_Importers;
+        std::unordered_map<AssetTypeId, RegisteredImporter> m_Importers;
         /// @brief Asset-type identities this cooker recognizes, pre-filled with the engine builtins.
         AssetTypeRegistry m_AssetTypes;
     };

@@ -320,11 +320,9 @@ tree** — `build-debug/` and `build/` never share one.
   produces a **byte-identical** archive to a fresh cook — `MakeStoredBlob` is the one place a blob's
   stored form is chosen, so the compressed bytes agree whether freshly encoded or replayed.
 - **It is ccache-style: a direct key selects a per-entry manifest, which is then validated.** The
-  key folds the tool tag (the cache-format version plus a path/size/mtime fingerprint of **every
-  image the cook runs code from** — the `vengc` executable, the `--module` runtime module whose
-  reflected field layouts the prefab/level/table encoders walk, and the cook module supplying a
-  game type's importer — so rebuilding any of them invalidates everything), the manifest entry
-  JSON, the pack directory, the
+  key folds the **base tag** (the cache-format version plus a path + content-hash fingerprint of the
+  `vengc` executable, so rebuilding the cooker or changing the key derivation invalidates
+  everything), the manifest entry JSON, the pack directory, the
   active configuration's fingerprint, and the shader-include dir. A hit is trusted only after every
   recorded **source dependency** is confirmed unchanged **and** every recorded cross-asset
   **resolution** (`AssetId → source path`) still maps identically — the id→source-remap check a
@@ -332,6 +330,21 @@ tree** — `build-debug/` and `build/` never share one.
   entry's own source, importer-recorded payloads/includes, resolved reference sources), so the cache
   is as complete as the depfile, and a hit re-records those paths so the **depfile stays complete**
   even though the importer never ran.
+- **The dlopened images key the entries that read them, and no others.** The `--module` runtime
+  module (whose reflected field layouts the prefab/level/table encoders walk) and the cook module
+  (supplying a game type's importer) form a second **module tag**, folded in only when the entry's
+  importer declares `ImporterModuleDependence::DependsOnModule` or came from a module image itself.
+  Every other entry — every shader, texture, mesh, font, material and material instance — is decided
+  by its own sources and the cooker's own code, opens no module image, and keeps its cached bytes
+  across a relink. That is the difference between a consuming project's incremental cook re-encoding
+  a handful of assets and re-encoding all of them: a module's mtime moves on **every** relink, so a
+  tag folded into every key discards the whole project's cooked output whenever any source in the
+  consuming project changes. The module tag is empty when no module is loaded, so a no-module cook
+  and a module-independent entry key alike. An entry whose type resolves to no registered importer
+  keys on the module tag: it is about to fail with its own error, and the conservative key can only
+  cost a re-cook.
+- **Both tags fingerprint by content hash, not size and mtime**, so a relink that reproduced the
+  same image is not an invalidation at all.
 - **Validation is stat-fast-path, content-hash-authoritative.** Each dependency stores its size,
   mtime, and xxh3-128. On a lookup the file is `stat`'d first: an unchanged size+mtime is trusted as
   unchanged and the file is **not read** — this is what makes an all-hit re-cook cheap (reading the
@@ -489,12 +502,18 @@ a 26.7 s serial floor against a ~60 s wall means throughput binds, not serialisa
   repo carries no rigged-model fixture — so what establishes those two is the serialization lock,
   not the sanitiser.
 
-### Cook-module ABI 1 → 2
+### Cook-module ABI history
 
-`AssetImporter` gained a virtual (`Concurrency()`) and `CookContext` a trailing field
-(`ThreadBudget`), both of which a module built against ABI 1 would misread — a stale vtable and a
-short context. `VENG_COOK_MODULE_ABI_VERSION` is therefore **2**, so the handshake rejects a stale
-cook module loudly instead. A consumer **rebuilds; no source change is required.**
+`AssetImporter`'s vtable is the contract, so a virtual added to it is a version event; a module
+built against an older ABI would misread it. Each bump has the handshake reject a stale cook module
+loudly instead, and a consumer **rebuilds; no source change is required.**
+
+- **1 → 2.** `AssetImporter` gained `Concurrency()` and `CookContext` a trailing `ThreadBudget`
+  field — a stale vtable and a short context.
+- **2 → 3.** `AssetImporter` gained `ModuleDependence()`, the declaration that scopes the cook
+  cache's module tag to the entries that actually read a module image. A cook module never needs to
+  override it — a module importer's code lives in the image, so the host records it as
+  module-dependent without asking.
 
 ### Reading a `--timing` report
 
@@ -659,8 +678,8 @@ passing both is an explicit override of the sibling lookup.
   duplicated machinery. `AssetImporterRegistry::Register` is inline for exactly this reason — an
   out-of-line definition would be an unresolved symbol in the module.
 - **Its own ABI, versioned independently.** `VengCookModuleRegister(VengCookModuleHost*)` with a
-  `VengCookModuleAbiVersion` handshake (`VENG_COOK_MODULE_ABI_VERSION`, currently **2** — see
-  [the ABI bump](#cook-module-abi-1--2)), so a change
+  `VengCookModuleAbiVersion` handshake (`VENG_COOK_MODULE_ABI_VERSION`, currently **3** — see
+  [the ABI history](#cook-module-abi-history)), so a change
   to the importer surface never invalidates every runtime module. `ModuleLoader::Load` is
   parameterized on the version symbol and expected value, so both contracts share one platform
   loader.

@@ -88,7 +88,8 @@ TEST_CASE("CookTiming: a cache hit is recorded as a hit and costs no importer ti
     const path packDir = UniqueDir("hit");
     const path packJson = WriteRawPack(packDir);
 
-    Result<CookCache> cache = CookCache::Open(UniqueDir("hitcache"), "test-tool-tag");
+    Result<CookCache> cache =
+        CookCache::Open(UniqueDir("hitcache"), "test-tool-tag", "test-module-tag");
     REQUIRE(cache.has_value());
 
     Cooker cooker;

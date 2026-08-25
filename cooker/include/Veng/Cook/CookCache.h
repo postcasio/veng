@@ -127,12 +127,13 @@ namespace Veng::Cook
 
     /// @brief The per-entry inputs, all known before cooking, that select a cache entry.
     ///
-    /// These are only half the key: the tool tag (see ComputeCookToolTag) fingerprints the code
-    /// that does the cooking, and these fields the data it cooks. Between them they fold in
-    /// everything that steers a blob's bytes, which is what makes replaying a stored blob under a
-    /// matching key valid rather than a guess — it is not a claim that two independent cooks of the
-    /// same input emit identical bytes. The two halves cover: the cooker executable and both
-    /// dlopened module images, plus the
+    /// These are only half the key: the cache's tags (see ComputeCookBaseTag and
+    /// ComputeCookModuleTag) fingerprint the code that does the cooking, and these fields the data
+    /// it cooks. Between them they fold in everything that steers a blob's bytes, which is what
+    /// makes replaying a stored blob under a matching key valid rather than a guess — it is not a
+    /// claim that two independent cooks of the same input emit identical bytes. The two halves
+    /// cover: the cooker executable, plus (for an entry that reads them) the dlopened module
+    /// images, plus the
     /// entry's manifest JSON (id, type, per-asset fields), the pack directory (source paths are
     /// relative to it, so it disambiguates two packs that reuse a relative source name), the active
     /// configuration's fingerprint (role → format table + zstd level, so macOS/Windows/debug/release
@@ -148,6 +149,12 @@ namespace Veng::Cook
         string ConfigFingerprint;
         /// @brief The engine core shader-include directory threaded onto the cook, or empty.
         path ShaderIncludeDir;
+        /// @brief Whether the importer that produces this entry reads a loaded module image.
+        ///
+        /// True folds the cache's module tag into the key, so a module rebuild invalidates the
+        /// entry; false leaves it out, so the entry survives one. Defaults to true because that is
+        /// the answer that can only cost a re-cook, never serve a stale blob.
+        bool ConsultsModule = true;
     };
 
     /// @brief xxh3-128 of a file's contents, or nullopt if the file cannot be read.
@@ -168,26 +175,35 @@ namespace Veng::Cook
     /// @return The deterministic fingerprint string.
     [[nodiscard]] string FingerprintBuildConfiguration(const BuildConfiguration& config);
 
-    /// @brief Fingerprints every image a cook runs importer code from, for CookCache::Open.
+    /// @brief Fingerprints the cook tool itself — the half of the cache's identity keying every entry.
     ///
-    /// A blob's bytes are decided by code, not only by data: the cooker executable, the runtime
-    /// module whose reflected field layouts the prefab/level/table encoders walk, and the cook
-    /// module supplying a game type's importer. Rebuilding any of them can change what an unchanged
-    /// source cooks to, so all three are folded into the tag that keys every entry, alongside the
-    /// cache-format version. The fingerprint is path + size + mtime per image; the size and mtime
-    /// are dropped for an image that cannot be stat'd, leaving its path, and the format version is
-    /// the one component always present.
+    /// A blob's bytes are decided by code, not only by data, and the cooker executable is the code
+    /// every entry passes through: its importers, its encoders, its compressor. It is folded into
+    /// every key alongside the cache-format version, so rebuilding vengc — or changing how a key is
+    /// derived — invalidates the whole cache without a manual sweep.
     ///
-    /// The tag is deliberately coarse — any module rebuild invalidates every entry, matching how a
-    /// vengc rebuild already behaves. The cooker cannot tell which importer came from which image,
-    /// so a finer per-entry dependency would have to guess, and a wrong fine-grained key is worse
-    /// than a right coarse one.
-    /// @param toolExe         The cook tool's own executable, or empty when it cannot be located.
+    /// The fingerprint is path + content hash. Hashing rather than stat'ing is what makes a rebuild
+    /// that produced identical bytes a no-op; the hash is dropped for an image that cannot be read,
+    /// leaving its path, and the format version is the one component always present.
+    /// @param toolExe  The cook tool's own executable, or empty when it cannot be located.
+    /// @return The base identity string to open a cache with.
+    [[nodiscard]] string ComputeCookBaseTag(const path& toolExe);
+
+    /// @brief Fingerprints the dlopened module images, for the entries that actually read them.
+    ///
+    /// Two images can decide a cooked blob beyond the cooker's own code: the runtime module whose
+    /// reflected field layouts the prefab/level/table encoders walk, and the cook module supplying a
+    /// game type's importer. They are inputs to the entries that consult them and to nothing else —
+    /// a shader, a texture, a mesh or a material reads neither — so this tag joins a key only when
+    /// the entry's importer declares @ref ImporterModuleDependence::DependsOnModule, or came from a
+    /// module image itself. Keying every entry on it instead discards the whole project's cooked
+    /// output on each relink of a consuming project, which is the expensive bulk of a cook.
+    ///
+    /// Empty when no module is loaded, so a no-module cook and a module-independent entry key alike.
     /// @param modulePath      The --module runtime module, or empty when none is loaded.
     /// @param cookModulePath  The resolved cook module, or empty when none is loaded.
-    /// @return The tool identity string to open a cache with.
-    [[nodiscard]] string ComputeCookToolTag(const path& toolExe, const path& modulePath,
-                                            const path& cookModulePath);
+    /// @return The module identity string to open a cache with.
+    [[nodiscard]] string ComputeCookModuleTag(const path& modulePath, const path& cookModulePath);
 
     /// @brief A content-addressed on-disk cache of cooked, compression-ready asset blobs.
     ///
@@ -205,18 +221,23 @@ namespace Veng::Cook
     public:
         /// @brief Opens (creating if absent) a cache rooted at @p cacheDir.
         ///
-        /// @p toolTag folds into every key, so a rebuild of any image the cook runs code from — or a
-        /// change to the cache format — invalidates the whole cache without a manual sweep. The
-        /// caller builds it with ComputeCookToolTag.
-        /// @param cacheDir  The cache root directory; its `entries/` and `blobs/` subdirs are created.
-        /// @param toolTag   A cook-tool identity string mixed into every cache key.
+        /// @p baseTag folds into every key, so a rebuild of the cooker — or a change to the cache
+        /// format — invalidates the whole cache without a manual sweep. @p moduleTag folds only
+        /// into the keys of entries whose importer reads a module image, so a module rebuild
+        /// invalidates those and leaves the rest. The caller builds them with ComputeCookBaseTag
+        /// and ComputeCookModuleTag.
+        /// @param cacheDir   The cache root directory; its `entries/` and `blobs/` subdirs are created.
+        /// @param baseTag    The cook-tool identity string mixed into every cache key.
+        /// @param moduleTag  The module identity string mixed into module-dependent keys only.
         /// @return The opened cache, or a located error if the directories cannot be created.
-        [[nodiscard]] static Result<CookCache> Open(const path& cacheDir, string toolTag);
+        [[nodiscard]] static Result<CookCache> Open(const path& cacheDir, string baseTag,
+                                                    string moduleTag);
 
         /// @brief Computes the hex cache key for a manifest entry's key inputs.
         ///
-        /// Folds the tool tag with every field of @p inputs into an xxh3-128, rendered as a 32-char
-        /// hex string — the basename of the entry's `entries/<key>.json` file.
+        /// Folds the base tag — and, when @ref CookCacheKeyInputs::ConsultsModule, the module tag —
+        /// with every field of @p inputs into an xxh3-128, rendered as a 32-char hex string: the
+        /// basename of the entry's `entries/<key>.json` file.
         /// @param inputs  The pre-cook inputs that select the entry.
         /// @return The hex cache key.
         [[nodiscard]] string KeyFor(const CookCacheKeyInputs& inputs) const;
@@ -260,6 +281,8 @@ namespace Veng::Cook
         /// @brief The `blobs/` subdirectory holding content-addressed stored blobs.
         path m_BlobsDir;
         /// @brief The cook-tool identity mixed into every key.
-        string m_ToolTag;
+        string m_BaseTag;
+        /// @brief The module identity mixed into the keys of module-dependent entries only.
+        string m_ModuleTag;
     };
 }

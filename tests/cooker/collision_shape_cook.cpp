@@ -143,7 +143,8 @@ TEST_CASE("Cooker: a warm collision-shape cook at 8 jobs replays the cache byte 
 
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
-    Result<CookCache> cache = CookCache::Open(scratch / "cache", "collision-shape-test-tag");
+    Result<CookCache> cache = CookCache::Open(scratch / "cache", "collision-shape-test-tag",
+                                              "collision-shape-test-module-tag");
     REQUIRE(cache.has_value());
 
     const path coldArchive = scratch / "cold" / "out.vengpack";

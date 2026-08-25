@@ -4,8 +4,10 @@
 // and its resolved dependencies); the depfile stays complete across a hit; a source edit is not a
 // false hit; a touch (mtime moved, content unchanged) still hits via the content-hash fallback; and
 // two build configurations sharing one cache dir never contaminate each other. It also pins the
-// tool tag: a blob's bytes come from code as well as data, so rebuilding an image the cook runs an
-// importer from must invalidate what that image produced.
+// two halves of the cache's code identity: a blob's bytes come from code as well as data, so
+// rebuilding the cooker invalidates every entry and rebuilding a module image invalidates the
+// entries that read it — and only those, since keying a shader or a texture on an image it never
+// opens throws its cached result away for nothing.
 
 #include <doctest/doctest.h>
 
@@ -22,6 +24,7 @@
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/CookCache.h>
 #include <Veng/Cook/CookModule.h>
+#include <Veng/Cook/CookTiming.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Cook/ModuleTypes.h>
 #include <Veng/Project/BuildConfiguration.h>
@@ -51,7 +54,8 @@ namespace
 
     CookCache OpenCache()
     {
-        Result<CookCache> cache = CookCache::Open(UniqueDir("cache"), "test-tool-tag");
+        Result<CookCache> cache =
+            CookCache::Open(UniqueDir("cache"), "test-tool-tag", "test-module-tag");
         REQUIRE(cache.has_value());
         return std::move(*cache);
     }
@@ -60,7 +64,7 @@ namespace
     constexpr AssetId ProbeAsset{0x0000000000002041};
 
     // Cooks the probe pack through the importer in @p cookModulePath, against a cache in @p cacheDir
-    // opened exactly as vengc opens it — with the tool tag that module identity produces. Returns
+    // opened exactly as vengc opens it — with the module tag that image's identity produces. Returns
     // the blob the resulting archive carries, which is what the two images must disagree on.
     vector<u8> CookProbeThrough(const path& cookModulePath, const path& cacheDir,
                                 const path& packJson, const path& out)
@@ -72,8 +76,9 @@ namespace
         Result<LoadedCookModule> cookModule = LoadCookModule(cookModulePath);
         REQUIRE(cookModule.has_value());
 
-        Result<CookCache> cache = CookCache::Open(
-            cacheDir, ComputeCookToolTag({}, path{VENG_TEST_MODULE_PATH}, cookModulePath));
+        Result<CookCache> cache =
+            CookCache::Open(cacheDir, ComputeCookBaseTag({}),
+                            ComputeCookModuleTag(path{VENG_TEST_MODULE_PATH}, cookModulePath));
         REQUIRE(cache.has_value());
 
         Cooker cooker;
@@ -394,7 +399,7 @@ TEST_CASE("CookCache: a rebuilt cook module's importer is not replayed from the 
     CHECK(second == vector<u8>{0x12, 0x34, 0x56, 0x78});
 }
 
-TEST_CASE("CookCache: the tool tag follows a module image's contents, not only its path")
+TEST_CASE("CookCache: a tag follows an image's contents, not only its path")
 {
     const path dir = UniqueDir("tooltag");
     const path image = dir / "module.bin";
@@ -402,21 +407,164 @@ TEST_CASE("CookCache: the tool tag follows a module image's contents, not only i
         std::ofstream out(image, std::ios::binary);
         out << "FIRST-BUILD";
     }
-    const string before = ComputeCookToolTag({}, {}, image);
+    const string before = ComputeCookModuleTag({}, image);
 
     // A rebuild lands new bytes at the same path — what an incremental build does every time, and
-    // the case a path-only fingerprint cannot see.
+    // the case a path-only fingerprint cannot see. Bytes, not size and mtime: a relink that
+    // reproduced the same image must not invalidate anything.
     {
         std::ofstream out(image, std::ios::binary | std::ios::trunc);
         out << "SECOND-BUILD-IS-LONGER";
     }
-    CHECK(before != ComputeCookToolTag({}, {}, image));
+    CHECK(before != ComputeCookModuleTag({}, image));
 
     // The two module slots key separately, so a runtime-module change is never mistaken for a
     // cook-module change (or vice versa) by an accidental fingerprint collision.
-    CHECK(ComputeCookToolTag({}, image, {}) != ComputeCookToolTag({}, {}, image));
+    CHECK(ComputeCookModuleTag(image, {}) != ComputeCookModuleTag({}, image));
 
-    // A cook that loads no module at all keys as it always did — the format version alone.
-    CHECK(ComputeCookToolTag({}, {}, {}) == ComputeCookToolTag({}, {}, {}));
-    CHECK(ComputeCookToolTag({}, {}, {}) != ComputeCookToolTag({}, {}, image));
+    // A cook that loads no module at all carries no module identity at all.
+    CHECK(ComputeCookModuleTag({}, {}).empty());
+
+    // The base tag is the cooker's own image, and it moves with that image's contents too.
+    const path exe = dir / "vengc.bin";
+    {
+        std::ofstream out(exe, std::ios::binary);
+        out << "COOKER-BUILD-ONE";
+    }
+    const string baseBefore = ComputeCookBaseTag(exe);
+    {
+        std::ofstream out(exe, std::ios::binary | std::ios::trunc);
+        out << "COOKER-BUILD-TWO-LONGER";
+    }
+    CHECK(baseBefore != ComputeCookBaseTag(exe));
+    CHECK(ComputeCookBaseTag({}) != ComputeCookBaseTag(exe));
+}
+
+TEST_CASE("CookCache: a rebuilt module leaves the entries that never read it alone")
+{
+    // The property the module tag is scoped for. A texture, a shader and a material are decided by
+    // their own sources and the cooker's own code; none of them opens a module image. So a cook
+    // that differs only in which module was loaded must serve every one of them from the cache —
+    // otherwise every relink of a consuming project re-encodes the whole project.
+    const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
+    const path packJson = fixtureDir / "material_pack.json";
+    const path shaderInclude = path(VENG_CORE_SHADER_DIR);
+    const path cacheDir = UniqueDir("modscope");
+
+    const auto cookWith = [&](const string& moduleTag, const path& out)
+    {
+        Result<CookCache> cache =
+            CookCache::Open(cacheDir, ComputeCookBaseTag({}), string(moduleTag));
+        REQUIRE(cache.has_value());
+
+        Cooker cooker;
+        RegisterBuiltinImporters(cooker);
+        CookTiming timing;
+        REQUIRE(cooker
+                    .CookPack(packJson, out, {}, nullptr, nullptr, nullptr, nullptr, {},
+                              shaderInclude, &*cache, &timing)
+                    .has_value());
+        return timing;
+    };
+
+    const CookTiming cold = cookWith("module-build-one", UniqueDir("modscope1") / "out.vengpack");
+    CHECK(cold.CacheHits() == 0);
+    CHECK_FALSE(cold.Assets.empty());
+
+    // Same sources, a different module image: every entry still hits.
+    const CookTiming afterRelink =
+        cookWith("module-build-two", UniqueDir("modscope2") / "out.vengpack");
+    CHECK(afterRelink.CacheHits() == afterRelink.Assets.size());
+    CHECK(afterRelink.Assets.size() == cold.Assets.size());
+}
+
+TEST_CASE("CookCache: a rebuilt cooker invalidates everything, module-independent included")
+{
+    // The other half of the split: the cooker's own code decides every blob, so a changed base tag
+    // must be a miss for entries no module could ever have touched.
+    const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
+    const path packJson = fixtureDir / "material_pack.json";
+    const path shaderInclude = path(VENG_CORE_SHADER_DIR);
+    const path cacheDir = UniqueDir("basescope");
+
+    const auto cookWith = [&](const string& baseTag, const path& out)
+    {
+        Result<CookCache> cache = CookCache::Open(cacheDir, string(baseTag), "one-module");
+        REQUIRE(cache.has_value());
+
+        Cooker cooker;
+        RegisterBuiltinImporters(cooker);
+        CookTiming timing;
+        REQUIRE(cooker
+                    .CookPack(packJson, out, {}, nullptr, nullptr, nullptr, nullptr, {},
+                              shaderInclude, &*cache, &timing)
+                    .has_value());
+        return timing;
+    };
+
+    REQUIRE(cookWith("cooker-build-one", UniqueDir("basescope1") / "out.vengpack").CacheHits() ==
+            0);
+    const CookTiming warm = cookWith("cooker-build-one", UniqueDir("basescope2") / "out.vengpack");
+    CHECK(warm.CacheHits() == warm.Assets.size());
+
+    const CookTiming rebuilt =
+        cookWith("cooker-build-two", UniqueDir("basescope3") / "out.vengpack");
+    CHECK(rebuilt.CacheHits() == 0);
+}
+
+TEST_CASE("CookCache: editing a shader's include re-cooks the shader that pulls it in")
+{
+    // A shader reads files the manifest never names, so its invalidation rests on the includes the
+    // compiler reported being recorded as dependencies. With the module tag no longer keying it,
+    // that recording is the only thing standing between an edited header and a stale SPIR-V blob.
+    const path packDir = UniqueDir("shaderinc");
+    std::filesystem::create_directories(packDir / "shaders");
+
+    const path header = packDir / "shaders" / "tint.slang";
+    const auto writeHeader = [&header](const char* rgb)
+    {
+        std::ofstream out(header);
+        out << "float3 Tint() { return float3(" << rgb << "); }\n";
+    };
+    writeHeader("1.0, 0.0, 0.0");
+
+    {
+        std::ofstream out(packDir / "shaders" / "tinted.slang");
+        out << "#include \"tint.slang\"\n"
+               "[shader(\"fragment\")] float4 fsMain() : SV_Target0\n"
+               "{ return float4(Tint(), 1.0); }\n";
+    }
+    {
+        std::ofstream out(packDir / "shaders" / "tinted.shader.json");
+        out << R"({ "source": "tinted.slang", "entry": "fsMain" })";
+    }
+    {
+        std::ofstream out(packDir / "pack.json");
+        out << R"({ "version": 1, "assets": [ { "id": "0x0000000000000401", "type": "Shader", )"
+               R"("source": "shaders/tinted.shader.json" } ] })";
+    }
+    const path packJson = packDir / "pack.json";
+
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+    const CookCache cache = OpenCache();
+
+    const path first = UniqueDir("shaderinc1") / "out.vengpack";
+    const path second = UniqueDir("shaderinc2") / "out.vengpack";
+    const path third = UniqueDir("shaderinc3") / "out.vengpack";
+
+    REQUIRE(cooker.CookPack(packJson, first, {}, nullptr, nullptr, nullptr, nullptr, {}, {}, &cache)
+                .has_value());
+
+    // Only the included header moves; the shader the manifest names is untouched.
+    writeHeader("0.0, 0.25, 0.75");
+    REQUIRE(
+        cooker.CookPack(packJson, second, {}, nullptr, nullptr, nullptr, nullptr, {}, {}, &cache)
+            .has_value());
+    CHECK(ReadBytes(first) != ReadBytes(second));
+
+    // And with nothing further changed it is a hit again.
+    REQUIRE(cooker.CookPack(packJson, third, {}, nullptr, nullptr, nullptr, nullptr, {}, {}, &cache)
+                .has_value());
+    CHECK(ReadBytes(second) == ReadBytes(third));
 }
