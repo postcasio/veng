@@ -74,7 +74,7 @@ TEST_CASE(
         TransientImage("GBuffer", ImageUsage::ColorAttachment | ImageUsage::Sampled)};
 
     const vector<RenderGraph::Access> writeAccess{Access(0, AccessKind::ColorAttachment)};
-    const vector<RenderGraph::Access> readAccess{Access(0, AccessKind::Sample)};
+    const vector<RenderGraph::Access> readAccess{Access(0, AccessKind::SampleGraphics)};
     const vector<SchedulePass> passes{
         {.Name = "Geometry", .Accesses = writeAccess},
         {.Name = "Lighting", .Accesses = readAccess},
@@ -108,9 +108,9 @@ TEST_CASE("Schedule: a mip chain tracks each level's transition on its own slot"
     // Dispatch that writes mip 0 (seed), then a dispatch reading mip 0 and writing mip 1,
     // then one reading mip 1 and writing mip 2.
     const vector<RenderGraph::Access> seed{Access(0, AccessKind::StorageWrite)};
-    const vector<RenderGraph::Access> reduce1{Access(0, AccessKind::Sample),
+    const vector<RenderGraph::Access> reduce1{Access(0, AccessKind::SampleGraphics),
                                               Access(1, AccessKind::StorageWrite)};
-    const vector<RenderGraph::Access> reduce2{Access(1, AccessKind::Sample),
+    const vector<RenderGraph::Access> reduce2{Access(1, AccessKind::SampleGraphics),
                                               Access(2, AccessKind::StorageWrite)};
     const vector<SchedulePass> passes{
         {.Name = "Seed", .Accesses = seed},

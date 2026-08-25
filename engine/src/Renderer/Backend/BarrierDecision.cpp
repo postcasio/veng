@@ -81,10 +81,23 @@ namespace Veng::Renderer::Backend
                 .Access = vk::AccessFlagBits::eDepthStencilAttachmentWrite |
                           vk::AccessFlagBits::eDepthStencilAttachmentRead,
             };
-        case Kind::Sample:
+        case Kind::SampleGraphics:
             return {
                 .Layout = vk::ImageLayout::eShaderReadOnlyOptimal,
                 .Stage = vk::PipelineStageFlagBits::eFragmentShader,
+                .Access = vk::AccessFlagBits::eShaderRead,
+            };
+        case Kind::SampleCompute:
+            return {
+                .Layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                .Stage = vk::PipelineStageFlagBits::eComputeShader,
+                .Access = vk::AccessFlagBits::eShaderRead,
+            };
+        case Kind::SampleAny:
+            return {
+                .Layout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                .Stage = vk::PipelineStageFlagBits::eFragmentShader |
+                         vk::PipelineStageFlagBits::eComputeShader,
                 .Access = vk::AccessFlagBits::eShaderRead,
             };
         case Kind::StorageRead:

@@ -62,7 +62,12 @@ namespace Veng::Renderer
 
     RenderGraph::PassBuilder& RenderGraph::PassBuilder::Sample(const ResourceId resource)
     {
-        m_Pass.Accesses.push_back({.Resource = resource, .Kind = AccessKind::Sample});
+        // The stage comes from the pass this read was declared on, not from a default: a compute
+        // pass's sampled read is waited on by a later write through the compute stage, and naming
+        // the fragment stage for it would order that write against a stage which read nothing.
+        const AccessKind kind = m_Pass.Type == PassType::Compute ? AccessKind::SampleCompute
+                                                                 : AccessKind::SampleGraphics;
+        m_Pass.Accesses.push_back({.Resource = resource, .Kind = kind});
         return *this;
     }
 

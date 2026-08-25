@@ -293,7 +293,7 @@ namespace Veng::Renderer
         ///
         /// Within a RenderGraph, barriers fall out of declared use and this is never needed.
         /// This is the deliberate escape hatch for reads/writes the graph cannot see (e.g.
-        /// AccessKind::Sample before ImGui samples a scene texture via ImGui::Image). It
+        /// AccessKind::SampleGraphics before ImGui samples a scene texture via ImGui::Image). It
         /// funnels into the same barrier path as the graph (ScopeFor + DecideBarrier) and
         /// updates the image's tracked state, so a later graph pass declaring the same use
         /// correctly sees no hazard.

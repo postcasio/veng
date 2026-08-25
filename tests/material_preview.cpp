@@ -189,7 +189,7 @@ int main()
                 viewport->Execute(cmd, Renderer::SceneView{.World = *viewportScene,
                                                            .Camera = viewportCamera,
                                                            .Delta = 0.0f});
-                cmd.PrepareForAccess(viewport->GetOutput(), AccessKind::Sample);
+                cmd.PrepareForAccess(viewport->GetOutput(), AccessKind::SampleGraphics);
 
                 preview.GetViewport().Render(cmd);
             });

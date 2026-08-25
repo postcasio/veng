@@ -297,7 +297,9 @@ namespace Veng::Renderer
         // Prepare the velocity for sampling from its tracked state each advect, not once: a caller
         // may have rewritten the image since the last advect, so this barrier makes that write
         // visible to the sample below (and orders this read ahead of the caller's next write).
-        cmd.PrepareForAccess(m_VelocityView, AccessKind::Sample);
+        // **SampleCompute, because the advect below is a dispatch** — naming the fragment stage
+        // here would leave a caller's next write ordered against a stage that read nothing.
+        cmd.PrepareForAccess(m_VelocityView, AccessKind::SampleCompute);
         for (const Dye& dye : m_Dyes)
         {
             RecordDyeAdvect(cmd, dye);
@@ -319,30 +321,32 @@ namespace Veng::Renderer
 
     void FlowField::RecordDyeAdvect(CommandBuffer& cmd, const Dye& dye)
     {
-        cmd.PrepareForAccess(dye.View, AccessKind::Sample);
+        cmd.PrepareForAccess(dye.View, AccessKind::SampleCompute);
         cmd.PrepareForAccess(m_ScratchView, AccessKind::StorageWrite);
         Bind(cmd, m_AdvectPipeline, dye.AdvectSet, 1.0f);
         DispatchGrid(cmd);
 
-        cmd.PrepareForAccess(m_ScratchView, AccessKind::Sample);
+        cmd.PrepareForAccess(m_ScratchView, AccessKind::SampleCompute);
         cmd.PrepareForAccess(dye.View, AccessKind::StorageWrite);
         Bind(cmd, dye.StorePipeline, dye.StoreSet, 1.0f);
         DispatchGrid(cmd);
-        cmd.PrepareForAccess(dye.View, AccessKind::Sample);
+        // The release: a dye is the caller's image and this primitive does not know what reads it
+        // next — the following advect's dispatch, or a material sampling it in a fragment.
+        cmd.PrepareForAccess(dye.View, AccessKind::SampleAny);
     }
 
     void FlowField::RecordDyeSharpen(CommandBuffer& cmd, const Dye& dye, const f32 strength)
     {
-        cmd.PrepareForAccess(dye.View, AccessKind::Sample);
+        cmd.PrepareForAccess(dye.View, AccessKind::SampleCompute);
         cmd.PrepareForAccess(m_ScratchView, AccessKind::StorageWrite);
         Bind(cmd, m_SharpenPipeline, dye.SharpenSet, strength);
         DispatchGrid(cmd);
 
-        cmd.PrepareForAccess(m_ScratchView, AccessKind::Sample);
+        cmd.PrepareForAccess(m_ScratchView, AccessKind::SampleCompute);
         cmd.PrepareForAccess(dye.View, AccessKind::StorageWrite);
         Bind(cmd, dye.StorePipeline, dye.StoreSet, 1.0f);
         DispatchGrid(cmd);
-        cmd.PrepareForAccess(dye.View, AccessKind::Sample);
+        cmd.PrepareForAccess(dye.View, AccessKind::SampleAny);
     }
 
     i32 FoldFlowTexel(const i32 coord, const u32 extent, const FlowWrap wrap)

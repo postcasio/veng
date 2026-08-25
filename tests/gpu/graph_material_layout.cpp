@@ -452,7 +452,7 @@ SurfaceFragmentInput vsMain(VSInput input)
             // The volume is sampled bindlessly (invisible to the graph), so transition it to
             // Sample layout on this command buffer before the draw — the acquire the per-frame
             // drain would otherwise do, done inline for the one-shot submit.
-            cmd.PrepareForAccess(volume->GetImageView(), AccessKind::Sample);
+            cmd.PrepareForAccess(volume->GetImageView(), AccessKind::SampleGraphics);
             renderer->Execute(
                 cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
         });

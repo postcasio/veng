@@ -358,7 +358,7 @@ namespace Veng::Renderer
                 GetVkCommandBuffer(cmd).clearColorImage(GetVkImage(*m_CubeImage),
                                                         vk::ImageLayout::eTransferDstOptimal,
                                                         &black, 1, &range);
-                cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
+                cmd.PrepareForAccess(m_CubeView, AccessKind::SampleAny);
             });
     }
 
@@ -598,8 +598,9 @@ namespace Veng::Renderer
             RecordMaterialRegion(cmd, m_Pipeline, material, m_FaceViews[face], m_FaceSize, face,
                                  {0, 0}, {m_FaceSize, m_FaceSize}, true);
         }
-        // Leave the whole cube in a sampled layout for the skybox pass that samples it this frame.
-        cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
+        // Leave the whole cube sampled for this frame's readers: the skybox pass samples it in a
+        // fragment, and the IBL convolution reads it with a dispatch.
+        cmd.PrepareForAccess(m_CubeView, AccessKind::SampleAny);
     }
 
     void BakedSkyCube::Bake(CommandBuffer& cmd, const std::span<const SkyBakeLayer> layers)
@@ -625,8 +626,9 @@ namespace Veng::Renderer
                                      {m_FaceSize, m_FaceSize}, layer == 0);
             }
         }
-        // Leave the whole cube in a sampled layout for the skybox pass that samples it this frame.
-        cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
+        // Leave the whole cube sampled for this frame's readers: the skybox pass samples it in a
+        // fragment, and the IBL convolution reads it with a dispatch.
+        cmd.PrepareForAccess(m_CubeView, AccessKind::SampleAny);
     }
 
     void BakedSkyCube::RecordReductionMips(CommandBuffer& cmd)
@@ -677,9 +679,9 @@ namespace Veng::Renderer
             height = dstHeight;
         }
 
-        // Restore mip 0 (the display cube) to a sampled layout for the skybox pass this frame; the
-        // readback level is left in TransferDst for the copy the caller records next.
-        cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
+        // Restore mip 0 (the display cube) to a sampled layout for this frame's fragment and
+        // dispatch readers; the readback level is left in TransferDst for the caller's copy.
+        cmd.PrepareForAccess(m_CubeView, AccessKind::SampleAny);
     }
 
     void BakedSkyCube::RecordAtmosphereRegion(CommandBuffer& cmd,
@@ -760,8 +762,9 @@ namespace Veng::Renderer
                                    intensity, m_FaceViews[face], m_FaceSize, face, {0, 0},
                                    {m_FaceSize, m_FaceSize}, true);
         }
-        // Leave the whole cube in a sampled layout for the skybox pass that samples it this frame.
-        cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
+        // Leave the whole cube sampled for this frame's readers: the skybox pass samples it in a
+        // fragment, and the IBL convolution reads it with a dispatch.
+        cmd.PrepareForAccess(m_CubeView, AccessKind::SampleAny);
     }
 
     void BakedSkyCube::AbandonBake()
@@ -981,7 +984,7 @@ namespace Veng::Renderer
         GetVkCommandBuffer(cmd).copyImage(
             GetVkImage(*m_ScratchImage), vk::ImageLayout::eTransferSrcOptimal,
             GetVkImage(*m_CubeImage), vk::ImageLayout::eTransferDstOptimal, 1, &copy);
-        cmd.PrepareForAccess(m_CubeView, AccessKind::Sample);
+        cmd.PrepareForAccess(m_CubeView, AccessKind::SampleAny);
 
         // Drop the completed job (its adopted target is this bake's own scratch image, which stays)
         // so the key is free for the next re-bake.

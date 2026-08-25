@@ -226,7 +226,7 @@ namespace Veng::Renderer
                                            .Delta = 0.0f,
                                            .Exclude = m_View.Exclude,
                                            .Alpha = m_View.Alpha});
-        cmd.PrepareForAccess(m_Renderer->GetHdrView(), AccessKind::Sample);
+        cmd.PrepareForAccess(m_Renderer->GetHdrView(), AccessKind::SampleGraphics);
 
         // Tile the face's HDR into its atlas cell. The atlas persists across frames (only the
         // first-ever render clears it), so the five untouched cells keep their last capture.
@@ -255,7 +255,7 @@ namespace Veng::Renderer
 
         // Resample the finished atlas into the octahedral map and leave it sampled for the
         // consuming material this frame.
-        cmd.PrepareForAccess(m_AtlasView, AccessKind::Sample);
+        cmd.PrepareForAccess(m_AtlasView, AccessKind::SampleGraphics);
         cmd.PrepareForAccess(m_OctahedralView, AccessKind::ColorAttachment);
         cmd.BeginRendering({
             .Extent = {res * 2, res * 2},
@@ -276,6 +276,6 @@ namespace Veng::Renderer
         });
         cmd.DrawFullscreenTriangle();
         cmd.EndRendering();
-        cmd.PrepareForAccess(m_OctahedralView, AccessKind::Sample);
+        cmd.PrepareForAccess(m_OctahedralView, AccessKind::SampleGraphics);
     }
 }

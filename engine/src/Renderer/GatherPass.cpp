@@ -228,7 +228,7 @@ namespace Veng::Renderer
         // graph cannot see; transition them to Sample out of graph, before BeginRendering.
         for (const CompositePlacement& placement : m_Impl->Placements)
         {
-            cmd.PrepareForAccess(placement.Texture, AccessKind::Sample);
+            cmd.PrepareForAccess(placement.Texture, AccessKind::SampleGraphics);
         }
 
         const RenderGraph::ImportBinding bindings[] = {

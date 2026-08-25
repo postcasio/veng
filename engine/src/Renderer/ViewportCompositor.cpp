@@ -205,7 +205,7 @@ namespace Veng::Renderer
         m_Gather->Execute(cmd, *m_GatherGraph);
 
         // The composite samples the assembly target outside the graph; transition it.
-        cmd.PrepareForAccess(m_Gather->GetOutput(), AccessKind::Sample);
+        cmd.PrepareForAccess(m_Gather->GetOutput(), AccessKind::SampleGraphics);
 
         m_Composite->Execute(cmd, *m_CompositeGraph, m_Context.GetCurrentSwapChainImageView());
     }

@@ -256,10 +256,34 @@ TEST_CASE("ScopeFor maps each AccessKind to its documented scope")
     CHECK(depth.Access == (vk::AccessFlagBits::eDepthStencilAttachmentWrite |
                            vk::AccessFlagBits::eDepthStencilAttachmentRead));
 
-    const auto sample = ScopeFor(Kind::Sample);
+    // The three sampled kinds share a layout and an access and differ only in the stage they
+    // name — which is the whole point of their being three: a barrier's source scope must name
+    // the stage that actually read, or it waits on work that never happened.
+    const auto sample = ScopeFor(Kind::SampleGraphics);
     CHECK(sample.Layout == vk::ImageLayout::eShaderReadOnlyOptimal);
     CHECK(sample.Stage == vk::PipelineStageFlagBits::eFragmentShader);
     CHECK(sample.Access == vk::AccessFlagBits::eShaderRead);
+
+    const auto sampleCompute = ScopeFor(Kind::SampleCompute);
+    CHECK(sampleCompute.Layout == vk::ImageLayout::eShaderReadOnlyOptimal);
+    CHECK(sampleCompute.Stage == vk::PipelineStageFlagBits::eComputeShader);
+    CHECK(sampleCompute.Access == vk::AccessFlagBits::eShaderRead);
+
+    const auto sampleAny = ScopeFor(Kind::SampleAny);
+    CHECK(sampleAny.Layout == vk::ImageLayout::eShaderReadOnlyOptimal);
+    CHECK(sampleAny.Stage ==
+          (vk::PipelineStageFlagBits::eFragmentShader | vk::PipelineStageFlagBits::eComputeShader));
+    CHECK(sampleAny.Access == vk::AccessFlagBits::eShaderRead);
+
+    // SampleAny covers both single-stage kinds, which is what makes it the safe release label.
+    CHECK((sampleAny.Stage & sample.Stage) == sample.Stage);
+    CHECK((sampleAny.Stage & sampleCompute.Stage) == sampleCompute.Stage);
+
+    CHECK(IsSampledAccess(Kind::SampleGraphics));
+    CHECK(IsSampledAccess(Kind::SampleCompute));
+    CHECK(IsSampledAccess(Kind::SampleAny));
+    CHECK_FALSE(IsSampledAccess(Kind::StorageRead));
+    CHECK_FALSE(IsSampledAccess(Kind::TransferSrc));
 
     const auto sread = ScopeFor(Kind::StorageRead);
     CHECK(sread.Layout == vk::ImageLayout::eGeneral);

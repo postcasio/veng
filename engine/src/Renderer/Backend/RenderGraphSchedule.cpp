@@ -107,7 +107,7 @@ namespace Veng::Renderer::Backend
                 }
 
                 // A transient read before any pass writes it produces undefined contents.
-                const bool isRead = access.Kind == AccessKind::Sample ||
+                const bool isRead = IsSampledAccess(access.Kind) ||
                                     access.Kind == AccessKind::StorageRead ||
                                     access.Kind == AccessKind::TransferSrc;
                 if (!source.IsImport && isRead)
@@ -135,7 +135,7 @@ namespace Veng::Renderer::Backend
                                   "but lacks ImageUsage::DepthAttachment",
                                   source.Name);
                     }
-                    else if (access.Kind == AccessKind::Sample)
+                    else if (IsSampledAccess(access.Kind))
                     {
                         VE_ASSERT(HasFlag(source.ImageUsage, ImageUsage::Sampled),
                                   "RenderGraph::Compile: transient '{}' is sampled "

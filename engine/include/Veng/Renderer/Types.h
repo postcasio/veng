@@ -278,8 +278,26 @@ namespace Veng::Renderer
         ColorAttachment,
         /// @brief Read/written as a depth/stencil attachment.
         DepthAttachment,
-        /// @brief Sampled by a shader.
-        Sample,
+        /// @brief Sampled by a fragment shader.
+        ///
+        /// **A sampled read names the stage that performs it**, because that stage is what a
+        /// later conflicting use must wait on. Declaring the wrong one costs nothing at
+        /// validation and produces a barrier waiting on a stage that did no work — a hazard
+        /// surfacing only as rare, timing-dependent corruption. SampleCompute and SampleAny
+        /// are the other two; pick the one describing who actually reads.
+        SampleGraphics,
+        /// @brief Sampled by a compute shader.
+        ///
+        /// @see SampleGraphics for why the stage is named rather than assumed.
+        SampleCompute,
+        /// @brief Sampled by fragment and compute shaders alike.
+        ///
+        /// The honest declaration at a **release point** — the barrier ending a write, whose
+        /// next reader is either stage, or is not known to the code recording it. Waits wider
+        /// than either single-stage kind, which is the price of not having to know.
+        ///
+        /// @see SampleGraphics for why the stage is named rather than assumed.
+        SampleAny,
         /// @brief Read as a storage image.
         StorageRead,
         /// @brief Written as a storage image.
@@ -301,6 +319,17 @@ namespace Veng::Renderer
         /// layout, so this resolves to a stage/access memory scope with no transition.
         StorageBufferWrite,
     };
+
+    /// @brief Whether an access kind is a sampled read, whichever stage performs it.
+    ///
+    /// The three Sample* kinds differ only in the pipeline stage they name, so code asking
+    /// "is this a sampled read" — barrier scheduling, usage derivation — asks here rather
+    /// than comparing against one of them and silently excluding the other two.
+    [[nodiscard]] constexpr bool IsSampledAccess(const AccessKind kind)
+    {
+        return kind == AccessKind::SampleGraphics || kind == AccessKind::SampleCompute ||
+               kind == AccessKind::SampleAny;
+    }
 
     /// @brief Width of index elements in an index buffer.
     enum class IndexType : u8

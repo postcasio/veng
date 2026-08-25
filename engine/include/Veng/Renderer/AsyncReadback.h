@@ -38,9 +38,10 @@ namespace Veng::Renderer
         /// @brief The access the subresource is left prepared for once the copy is recorded.
         ///
         /// The copy needs TransferSrc, so the subresource is transitioned there and then back to
-        /// this. Sample is the default because a generated texture's steady state is being sampled,
-        /// and a bindless-sampled image left in TransferSrc would be read in the wrong layout.
-        AccessKind RestoreTo = AccessKind::Sample;
+        /// this. SampleAny is the default because a read-back image's steady state is being
+        /// sampled and this class cannot know by which stage, and one left in TransferSrc would
+        /// be read in the wrong layout. Name a single-stage kind where the reader is known.
+        AccessKind RestoreTo = AccessKind::SampleAny;
         /// @brief Delivered on the main thread once the copy has completed, with the level's bytes.
         ///
         /// The span is tightly packed in the image's format and is valid only for the duration of
@@ -122,7 +123,7 @@ namespace Veng::Renderer
             /// @brief The array layer being read.
             u32 ArrayLayer = 0;
             /// @brief The access the subresource is restored to after the copy.
-            AccessKind RestoreTo = AccessKind::Sample;
+            AccessKind RestoreTo = AccessKind::SampleAny;
             /// @brief The completion to deliver the bytes to.
             function<void(std::span<const u8>)> OnComplete;
             /// @brief Whether the copy has been recorded.

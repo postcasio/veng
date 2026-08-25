@@ -871,7 +871,7 @@ namespace Veng::Renderer
         // — bindless resources are invisible to it (sampled through set 0).
         for (const Ref<ImageView>& view : m_PendingBindlessAcquires)
         {
-            commandBuffer->PrepareForAccess(view, AccessKind::Sample);
+            commandBuffer->PrepareForAccess(view, AccessKind::SampleAny);
         }
         m_PendingBindlessAcquires.clear();
 

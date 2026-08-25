@@ -157,7 +157,7 @@ namespace Veng::Renderer
                     .Execute([](PassContext&) {});
                 const RenderGraph::ImportBinding binding{.Id = target, .View = m_DummyView};
                 graph.Compile()->Execute(cmd, {&binding, 1});
-                cmd.PrepareForAccess(m_DummyView, AccessKind::Sample);
+                cmd.PrepareForAccess(m_DummyView, AccessKind::SampleGraphics);
             });
 
         // ShadowConstants ring: framesInFlight regions, each aligned to
@@ -282,7 +282,7 @@ namespace Veng::Renderer
                     .Execute([](PassContext&) {});
                 const RenderGraph::ImportBinding binding{.Id = target, .View = m_PunctualView};
                 graph.Compile()->Execute(cmd, {&binding, 1});
-                cmd.PrepareForAccess(m_PunctualView, AccessKind::Sample);
+                cmd.PrepareForAccess(m_PunctualView, AccessKind::SampleGraphics);
             });
     }
 

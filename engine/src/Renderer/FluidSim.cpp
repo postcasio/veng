@@ -425,7 +425,9 @@ namespace Veng::Renderer
         RecordVelocity(cmd);
         RecordProjection(cmd);
 
-        cmd.PrepareForAccess(m_VelocityView, AccessKind::Sample);
+        // The step's release of the velocity: the dye advects below read it with a dispatch, but it
+        // is the caller's image and a caller may sample it between steps.
+        cmd.PrepareForAccess(m_VelocityView, AccessKind::SampleAny);
         for (const Dye& dye : m_Dyes)
         {
             RecordDye(cmd, dye);
@@ -437,13 +439,13 @@ namespace Veng::Renderer
     void FluidSim::RecordVelocity(CommandBuffer& cmd)
     {
         // Advect the velocity through itself into the scratch.
-        cmd.PrepareForAccess(m_VelocityView, AccessKind::Sample);
+        cmd.PrepareForAccess(m_VelocityView, AccessKind::SampleCompute);
         cmd.PrepareForAccess(m_ScratchView, AccessKind::StorageWrite);
         Bind(cmd, m_AdvectPipeline, m_AdvectVelocitySet, 1.0f, 0);
         DispatchGrid(cmd);
 
         // Curl of the advected velocity, the field confinement steers by.
-        cmd.PrepareForAccess(m_ScratchView, AccessKind::Sample);
+        cmd.PrepareForAccess(m_ScratchView, AccessKind::SampleCompute);
         cmd.PrepareForAccess(m_CurlView, AccessKind::StorageWrite);
         Bind(cmd, m_CurlPipeline, m_CurlSet, 0.0f, 0);
         DispatchGrid(cmd);
@@ -460,9 +462,9 @@ namespace Veng::Renderer
         {
             flags |= FlagHasDamping;
         }
-        cmd.PrepareForAccess(m_CurlView, AccessKind::Sample);
-        cmd.PrepareForAccess(m_TargetView, AccessKind::Sample);
-        cmd.PrepareForAccess(m_DampingView, AccessKind::Sample);
+        cmd.PrepareForAccess(m_CurlView, AccessKind::SampleCompute);
+        cmd.PrepareForAccess(m_TargetView, AccessKind::SampleCompute);
+        cmd.PrepareForAccess(m_DampingView, AccessKind::SampleCompute);
         cmd.PrepareForAccess(m_VelocityView, AccessKind::StorageWrite);
         Bind(cmd, m_ForcesPipeline, m_ForcesSet, m_Confinement, flags);
         DispatchGrid(cmd);
@@ -470,7 +472,7 @@ namespace Veng::Renderer
 
     void FluidSim::RecordProjection(CommandBuffer& cmd)
     {
-        cmd.PrepareForAccess(m_VelocityView, AccessKind::Sample);
+        cmd.PrepareForAccess(m_VelocityView, AccessKind::SampleCompute);
         cmd.PrepareForAccess(m_DivergenceView, AccessKind::StorageWrite);
         Bind(cmd, m_DivergencePipeline, m_DivergenceSet, 0.0f, 0);
         DispatchGrid(cmd);
@@ -480,12 +482,12 @@ namespace Veng::Renderer
         // The source is still transitioned on that iteration — a bound sampled descriptor must
         // name a subresource in the layout it was written with whether or not the shader reads
         // it, and on the first step of a solver's life that image is still Undefined.
-        cmd.PrepareForAccess(m_DivergenceView, AccessKind::Sample);
+        cmd.PrepareForAccess(m_DivergenceView, AccessKind::SampleCompute);
         u32 source = 0;
         for (u32 iteration = 0; iteration < m_JacobiIterations; ++iteration)
         {
             const u32 destination = 1 - source;
-            cmd.PrepareForAccess(m_PressureView[source], AccessKind::Sample);
+            cmd.PrepareForAccess(m_PressureView[source], AccessKind::SampleCompute);
             cmd.PrepareForAccess(m_PressureView[destination], AccessKind::StorageWrite);
             Bind(cmd, m_JacobiPipeline, m_JacobiSet[source], 0.0f,
                  iteration == 0 ? FlagFirstIteration : 0);
@@ -494,7 +496,7 @@ namespace Veng::Renderer
         }
 
         // `source` now names the image the last iteration wrote.
-        cmd.PrepareForAccess(m_PressureView[source], AccessKind::Sample);
+        cmd.PrepareForAccess(m_PressureView[source], AccessKind::SampleCompute);
         cmd.PrepareForAccess(m_VelocityView, AccessKind::StorageWrite);
         Bind(cmd, m_GradientPipeline, m_GradientSet[source], 0.0f, 0);
         DispatchGrid(cmd);
@@ -502,17 +504,18 @@ namespace Veng::Renderer
 
     void FluidSim::RecordDye(CommandBuffer& cmd, const Dye& dye)
     {
-        cmd.PrepareForAccess(dye.View, AccessKind::Sample);
+        cmd.PrepareForAccess(dye.View, AccessKind::SampleCompute);
         cmd.PrepareForAccess(m_ScratchView, AccessKind::StorageWrite);
         Bind(cmd, m_AdvectPipeline, dye.AdvectSet, 1.0f, 0);
         DispatchGrid(cmd);
 
         const f32 survival = 1.0f - (dye.Dissipation * m_TimeStep);
-        cmd.PrepareForAccess(m_ScratchView, AccessKind::Sample);
+        cmd.PrepareForAccess(m_ScratchView, AccessKind::SampleCompute);
         cmd.PrepareForAccess(dye.View, AccessKind::StorageWrite);
         Bind(cmd, dye.StorePipeline, dye.StoreSet, survival, 0);
         DispatchGrid(cmd);
-        cmd.PrepareForAccess(dye.View, AccessKind::Sample);
+        // The release: a dye is the caller's image and this solver does not know what reads it next.
+        cmd.PrepareForAccess(dye.View, AccessKind::SampleAny);
     }
 
     i32 FoldFluidTexel(const i32 coord, const u32 extent, const FluidWrap wrap)

@@ -370,14 +370,16 @@ namespace Veng::Renderer
         });
         cmd.PushConstants(BrdfPush{.Size = BrdfLutSize, .SampleCount = BrdfSamples});
         cmd.Dispatch(Groups(BrdfLutSize), Groups(BrdfLutSize), 1);
-        cmd.PrepareForAccess(m_BrdfView, AccessKind::Sample);
+        cmd.PrepareForAccess(m_BrdfView, AccessKind::SampleGraphics);
 
         // Transition the still-ungenerated cubes to a sampled layout so the lighting pass can
         // bind the consumer set before an environment is set (the shader gates the sample on
         // the IblEnabled push flag, so the as-yet-uninitialized contents are never read).
-        cmd.PrepareForAccess(m_RadianceCubeView, AccessKind::Sample);
-        cmd.PrepareForAccess(m_IrradianceCubeView, AccessKind::Sample);
-        cmd.PrepareForAccess(m_PrefilterCubeView, AccessKind::Sample);
+        // The radiance cube is SampleAny because the convolutions below read it with a dispatch
+        // as well as the skybox sampling it in a fragment; the other two have fragment readers only.
+        cmd.PrepareForAccess(m_RadianceCubeView, AccessKind::SampleAny);
+        cmd.PrepareForAccess(m_IrradianceCubeView, AccessKind::SampleGraphics);
+        cmd.PrepareForAccess(m_PrefilterCubeView, AccessKind::SampleGraphics);
     }
 
     void EnvironmentIbl::RecordEquirectToCube(CommandBuffer& cmd,
@@ -398,7 +400,7 @@ namespace Veng::Renderer
             .FaceSize = RadianceCubeSize,
         });
         cmd.Dispatch(Groups(RadianceCubeSize), Groups(RadianceCubeSize), CubeFaces);
-        cmd.PrepareForAccess(m_RadianceCubeView, AccessKind::Sample);
+        cmd.PrepareForAccess(m_RadianceCubeView, AccessKind::SampleAny);
     }
 
     void EnvironmentIbl::Generate(CommandBuffer& cmd, const Veng::EnvironmentMap& environment)
@@ -444,7 +446,7 @@ namespace Veng::Renderer
                 GetVkCommandBuffer(cmd).copyImageToBuffer(GetVkImage(*m_RadianceImage),
                                                           vk::ImageLayout::eTransferSrcOptimal,
                                                           GetVkBuffer(*staging), 1, &region);
-                cmd.PrepareForAccess(m_RadianceCubeView, AccessKind::Sample);
+                cmd.PrepareForAccess(m_RadianceCubeView, AccessKind::SampleAny);
             });
 
         const vector<u8> faces = staging->Download();
@@ -473,7 +475,7 @@ namespace Veng::Renderer
         });
         cmd.PushConstants(IrradiancePush{.FaceSize = IrradianceSize});
         cmd.Dispatch(Groups(IrradianceSize), Groups(IrradianceSize), CubeFaces);
-        cmd.PrepareForAccess(m_IrradianceCubeView, AccessKind::Sample);
+        cmd.PrepareForAccess(m_IrradianceCubeView, AccessKind::SampleGraphics);
 
         // Radiance cube -> prefiltered specular cube, one dispatch per roughness mip.
         cmd.BindPipeline(m_PrefilterPipeline);
@@ -497,7 +499,7 @@ namespace Veng::Renderer
             });
             cmd.Dispatch(Groups(faceSize), Groups(faceSize), CubeFaces);
         }
-        cmd.PrepareForAccess(m_PrefilterCubeView, AccessKind::Sample);
+        cmd.PrepareForAccess(m_PrefilterCubeView, AccessKind::SampleGraphics);
     }
 
     Sh9 EnvironmentIbl::ProjectCubeToIrradianceSh(const std::span<const u8> cubeTexels,

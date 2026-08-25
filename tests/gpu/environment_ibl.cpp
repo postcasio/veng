@@ -159,7 +159,7 @@ namespace
                 GetVkCommandBuffer(cmd).copyImageToBuffer(GetVkImage(*image),
                                                           vk::ImageLayout::eTransferSrcOptimal,
                                                           GetVkBuffer(*staging), 1, &region);
-                cmd.PrepareForAccess(view, AccessKind::Sample);
+                cmd.PrepareForAccess(view, AccessKind::SampleGraphics);
             });
         return staging->Download();
     }
@@ -193,7 +193,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         [&](CommandBuffer& cmd)
         {
             ibl->EnsureInitialized(cmd);
-            cmd.PrepareForAccess(view, AccessKind::Sample);
+            cmd.PrepareForAccess(view, AccessKind::SampleGraphics);
             ibl->GenerateFromCube(cmd, view, SourceFaceSize);
         });
 
@@ -229,7 +229,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         [&](CommandBuffer& cmd)
         {
             ibl->EnsureInitialized(cmd);
-            cmd.PrepareForAccess(view, AccessKind::Sample);
+            cmd.PrepareForAccess(view, AccessKind::SampleGraphics);
             ibl->GenerateFromCube(cmd, view, SourceFaceSize);
         });
 
@@ -265,7 +265,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
             [&](CommandBuffer& cmd)
             {
                 ibl->EnsureInitialized(cmd);
-                cmd.PrepareForAccess(view, AccessKind::Sample);
+                cmd.PrepareForAccess(view, AccessKind::SampleGraphics);
                 ibl->GenerateFromCube(cmd, view, SourceFaceSize);
             });
         return DownloadIrradiance(Context, *ibl);

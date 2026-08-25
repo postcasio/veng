@@ -389,7 +389,7 @@ namespace Veng::Renderer
                 .Image = m_ResolvedCube->GetCubeImage(),
                 .MipLevel = m_ResolvedCube->GetShReadbackMipLevel(),
                 .ArrayLayer = face,
-                .RestoreTo = AccessKind::Sample,
+                .RestoreTo = AccessKind::SampleAny,
                 .OnComplete =
                     [this, face, faceBytes](const std::span<const u8> bytes)
                 {

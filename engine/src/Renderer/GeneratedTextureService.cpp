@@ -38,7 +38,9 @@ namespace Veng::Renderer
                 return ImageUsage::TransferDst;
             case AccessKind::TransferSrc:
                 return ImageUsage::TransferSrc;
-            case AccessKind::Sample:
+            case AccessKind::SampleGraphics:
+            case AccessKind::SampleCompute:
+            case AccessKind::SampleAny:
                 return ImageUsage::Sampled;
             case AccessKind::IndirectRead:
             case AccessKind::StorageBufferRead:
@@ -644,7 +646,7 @@ namespace Veng::Renderer
                     LevelRegions(ShapeOf(*target.GetImage()), job->Restore->TargetOffsets[i]);
                 cmd.PrepareForAccess(target.GetSampledView(), AccessKind::TransferDst);
                 cmd.CopyBufferToImage(job->Restore->Staging, target.GetImage(), regions);
-                cmd.PrepareForAccess(target.GetSampledView(), AccessKind::Sample);
+                cmd.PrepareForAccess(target.GetSampledView(), AccessKind::SampleAny);
             }
             // The staging buffer retires into this frame's bin, so it outlives the copy it was
             // recorded into and is destroyed once that frame's fence has been waited.
@@ -698,7 +700,7 @@ namespace Veng::Renderer
                 LevelRegions(shapes[i], GeneratedTextureShapeOffset(shapes, i));
             cmd.PrepareForAccess(target->GetSampledView(), AccessKind::TransferSrc);
             cmd.CopyImageToBuffer(target->GetImage(), store.Staging, regions);
-            cmd.PrepareForAccess(target->GetSampledView(), AccessKind::Sample);
+            cmd.PrepareForAccess(target->GetSampledView(), AccessKind::SampleAny);
             store.Images.push_back(target->GetImage());
         }
 
@@ -938,7 +940,7 @@ namespace Veng::Renderer
                 VE_ASSERT(job != nullptr, "generated-texture job {} has no GPU half", key);
                 for (const Unique<GeneratedTexture>& target : job->Targets)
                 {
-                    cmd.PrepareForAccess(target->GetSampledView(), AccessKind::Sample);
+                    cmd.PrepareForAccess(target->GetSampledView(), AccessKind::SampleAny);
                 }
                 m_CompletedTotal++;
                 completed.push_back(key);

@@ -137,7 +137,7 @@ namespace
                     Renderer::GetVkImage(*bake.GetCubeImage()),
                     vk::ImageLayout::eTransferSrcOptimal, Renderer::GetVkBuffer(*staging), 1,
                     &region);
-                cmd.PrepareForAccess(bake.GetCubeView(), AccessKind::Sample);
+                cmd.PrepareForAccess(bake.GetCubeView(), AccessKind::SampleGraphics);
             });
 
         return staging->Download();
@@ -437,7 +437,7 @@ namespace
                     Renderer::GetVkImage(*bake.GetCubeImage()),
                     vk::ImageLayout::eTransferSrcOptimal, Renderer::GetVkBuffer(*staging), 1,
                     &region);
-                cmd.PrepareForAccess(levelView, AccessKind::Sample);
+                cmd.PrepareForAccess(levelView, AccessKind::SampleGraphics);
             });
         return staging->Download();
     }

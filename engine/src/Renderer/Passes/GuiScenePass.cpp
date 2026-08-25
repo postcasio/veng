@@ -668,7 +668,7 @@ namespace Veng::Renderer
 
         // The scene output arrives already in a sampleable layout (the viewport transitioned it);
         // ensure it regardless, since a test may hand a freshly written target.
-        cmd.PrepareForAccess(sceneOutput, AccessKind::Sample);
+        cmd.PrepareForAccess(sceneOutput, AccessKind::SampleGraphics);
 
         // Replay the graph baked at construction/Resize against this frame's geometry and imports —
         // the topology is invariant, so no per-frame recompile.
@@ -701,7 +701,7 @@ namespace Veng::Renderer
 
         // Leave the target in a sampleable layout for a later sampler in the frame — the
         // producer-before-consumer handoff a downstream material reads across.
-        cmd.PrepareForAccess(target.GetOutput(), AccessKind::Sample);
+        cmd.PrepareForAccess(target.GetOutput(), AccessKind::SampleGraphics);
     }
 
     const Ref<ImageView>& GuiScenePass::GetOutput() const

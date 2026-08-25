@@ -375,10 +375,12 @@ namespace Veng::Renderer
         // Transition every table to a sampled layout so the sky pass can bind the consumer set
         // before any atmosphere is generated (the shader gates the sample on the Enabled flag, so
         // the as-yet-uninitialized contents are never read).
-        cmd.PrepareForAccess(m_TransmittanceView, AccessKind::Sample);
-        cmd.PrepareForAccess(m_ScatteringViewA, AccessKind::Sample);
-        cmd.PrepareForAccess(m_ScatteringViewB, AccessKind::Sample);
-        cmd.PrepareForAccess(m_IrradianceView, AccessKind::Sample);
+        // Every table is SampleAny: each scattering order reads the tables before it with a
+        // dispatch, and the sky pass samples all four in a fragment.
+        cmd.PrepareForAccess(m_TransmittanceView, AccessKind::SampleAny);
+        cmd.PrepareForAccess(m_ScatteringViewA, AccessKind::SampleAny);
+        cmd.PrepareForAccess(m_ScatteringViewB, AccessKind::SampleAny);
+        cmd.PrepareForAccess(m_IrradianceView, AccessKind::SampleAny);
     }
 
     void AtmospherePrecompute::Generate(CommandBuffer& cmd, const Atmosphere& atmosphere)
@@ -395,7 +397,7 @@ namespace Veng::Renderer
         });
         cmd.PushConstants(push);
         cmd.Dispatch(Groups2D(TransmittanceWidth), Groups2D(TransmittanceHeight), 1);
-        cmd.PrepareForAccess(m_TransmittanceView, AccessKind::Sample);
+        cmd.PrepareForAccess(m_TransmittanceView, AccessKind::SampleAny);
 
         // Single scattering seeds the running total into volume A.
         cmd.PrepareForAccess(m_ScatteringStorageViewA, AccessKind::StorageWrite);
@@ -407,7 +409,7 @@ namespace Veng::Renderer
         });
         cmd.PushConstants(push);
         cmd.Dispatch(Groups3D(ScatteringMuS), Groups3D(ScatteringMu), Groups3D(ScatteringR));
-        cmd.PrepareForAccess(m_ScatteringViewA, AccessKind::Sample);
+        cmd.PrepareForAccess(m_ScatteringViewA, AccessKind::SampleAny);
 
         // Multiple-scattering iteration: ping-pong A<->B, each pass reading the running total and
         // writing the next total into the other (write-only) volume.
@@ -428,7 +430,7 @@ namespace Veng::Renderer
             });
             cmd.PushConstants(push);
             cmd.Dispatch(Groups3D(ScatteringMuS), Groups3D(ScatteringMu), Groups3D(ScatteringR));
-            cmd.PrepareForAccess(destSampled, AccessKind::Sample);
+            cmd.PrepareForAccess(destSampled, AccessKind::SampleAny);
             totalInA = !totalInA;
         }
         m_TotalInA = totalInA;
@@ -448,6 +450,6 @@ namespace Veng::Renderer
         });
         cmd.PushConstants(push);
         cmd.Dispatch(Groups2D(IrradianceWidth), Groups2D(IrradianceHeight), 1);
-        cmd.PrepareForAccess(m_IrradianceView, AccessKind::Sample);
+        cmd.PrepareForAccess(m_IrradianceView, AccessKind::SampleAny);
     }
 }

@@ -404,7 +404,7 @@ namespace Veng::Renderer
 
         // The output is sampled outside the renderer's graph (the compositor, an ImGui
         // panel, a material), so transition it to a sampleable layout here.
-        cmd.PrepareForAccess(m_Renderer->GetOutput(), AccessKind::Sample);
+        cmd.PrepareForAccess(m_Renderer->GetOutput(), AccessKind::SampleGraphics);
 
         // Drive the GuiOverlay components this viewport claims onto its layer stack, so a
         // component-declared HUD attaches (or re-attaches) before the layers are composited below.
@@ -453,7 +453,7 @@ namespace Veng::Renderer
 
         // The composite is sampled outside the pass's graph (the compositor, a material, an ImGui
         // panel), so transition it to a sampleable layout — the same handoff the scene output gets.
-        cmd.PrepareForAccess(m_GuiPass->GetOutput(), AccessKind::Sample);
+        cmd.PrepareForAccess(m_GuiPass->GetOutput(), AccessKind::SampleGraphics);
 
         // Register the composite view into bindless (once, and again whenever a resize replaced it)
         // so GetOutputHandle names the composited result.
