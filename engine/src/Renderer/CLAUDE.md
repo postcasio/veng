@@ -400,8 +400,12 @@ The layer is **content-driven, the volume-field model**: the translucent gather 
 by `Material::IsHalfResolution()` into its own plan, and the renderer activates the layer the
 first Execute that plan is non-empty (that frame's routed draws fold back into the full-res plan
 — rendered full-resolution once, correctly sorted, never dropped — while the activation edge
-allocates the targets and rebuilds the pass set) and drops it when the last one goes. A frame
-with no opted-in material carries no targets and no passes. `HalfResTranslucency`
+allocates the targets and rebuilds the pass set) and drops it only after the gather has stayed
+empty for `HalfResTranslucentIdleFrameLimit` consecutive Executes — deactivation hysteresis,
+because a capture probe renders one cube face per frame and a scene whose opted-in material sits
+in some faces and not others would otherwise recompile the graph every frame. An idle wired
+layer's passes skip their draws on an empty plan, so the window costs only the targets' memory.
+A renderer that never sees an opted-in material carries no targets and no passes. `HalfResTranslucency`
 (`src/Renderer/HalfResTranslucency.h`) owns the vertical slice; `HalfResExtent` is the one
 rounding rule every consumer derives the half extent through.
 

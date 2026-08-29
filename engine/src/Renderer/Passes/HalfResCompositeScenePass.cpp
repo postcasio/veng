@@ -22,6 +22,12 @@ namespace Veng::Renderer
             .Execute(
                 [this](PassContext& inner)
                 {
+                    // An idle wired layer (deactivation hysteresis) drew nothing this frame, so
+                    // there is nothing to lay under the full-res translucents.
+                    if (m_Plan->Draws.empty())
+                    {
+                        return;
+                    }
                     CommandBuffer& cmd = inner.Cmd();
                     cmd.BindPipeline(m_Pipeline);
                     const uvec2 validExtent = Wrap(inner).View().RenderExtent;

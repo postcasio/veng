@@ -1023,6 +1023,12 @@ namespace Veng::Renderer
         /// full-res plan and the layer is wired for the next), cleared when the last one goes;
         /// each edge recreates the layer targets and rebuilds the pass set.
         bool m_HalfResTranslucentActive = false;
+        /// @brief Consecutive Executes whose gather routed nothing into the half plan.
+        ///
+        /// Deactivation hysteresis: the wired layer is torn down only past
+        /// HalfResTranslucentIdleFrameLimit, so a capture probe whose faces alternately see and
+        /// miss the opted-in material does not recompile the graph every frame.
+        u32 m_HalfResTranslucentIdleFrames = 0;
 
         /// @brief Opaque compiled graph; replayed every Execute.
         ///

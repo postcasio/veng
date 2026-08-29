@@ -24,6 +24,12 @@ namespace Veng::Renderer
             .Execute(
                 [this](PassContext& inner)
                 {
+                    // An idle wired layer (deactivation hysteresis) keeps the cleared target and
+                    // pays no fullscreen reduce — nothing will composite it.
+                    if (m_Plan->Draws.empty())
+                    {
+                        return;
+                    }
                     CommandBuffer& cmd = inner.Cmd();
                     cmd.BindPipeline(m_Pipeline);
                     const uvec2 validExtent = Wrap(inner).View().RenderExtent;

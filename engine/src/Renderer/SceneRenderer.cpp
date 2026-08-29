@@ -127,6 +127,14 @@ namespace Veng::Renderer
         }
     }
 
+    namespace
+    {
+        // How many consecutive empty half-res gathers a wired layer survives before it is torn
+        // down. Sized to ride out a capture probe's face rotation and brief look-aways; the idle
+        // cost is the two half-res targets' memory, nothing per-frame.
+        constexpr u32 HalfResTranslucentIdleFrameLimit = 256;
+    }
+
     // Kept out of the header so SceneRenderer.h needs no CompiledGraph definition.
     struct SceneRenderer::Internal
     {
@@ -1156,15 +1164,33 @@ namespace Veng::Renderer
         // (rendered full-res, correctly sorted — the cost of one transition frame, never a
         // dropped draw). The activation edge then recreates the layer targets and rebuilds the
         // pass set, the volume-field model, so the next frame takes the half-res path.
-        const bool halfResActive = !halfResPlan.Draws.empty();
-        if (halfResActive && (!m_HalfResTranslucentActive || !halfResViewReady))
+        //
+        // Deactivation waits out an idle window rather than firing on the first empty gather: a
+        // capture probe renders one cube face per frame, so a scene whose opted-in material sits
+        // in some faces and not others would otherwise toggle the layer — a full graph recompile
+        // — every frame. An idle wired layer costs only its targets' memory (the passes skip
+        // their draws on an empty plan), so the window is generous.
+        const bool halfResGathered = !halfResPlan.Draws.empty();
+        if (halfResGathered && (!m_HalfResTranslucentActive || !halfResViewReady))
         {
             MergeTranslucentPlans(translucentPlan, halfResPlan);
         }
-        if (halfResActive != m_HalfResTranslucentActive)
+        if (halfResGathered)
         {
-            m_HalfResTranslucentActive = halfResActive;
-            m_HalfResTranslucent->Recreate(halfResActive, m_Extent);
+            m_HalfResTranslucentIdleFrames = 0;
+            if (!m_HalfResTranslucentActive)
+            {
+                m_HalfResTranslucentActive = true;
+                m_HalfResTranslucent->Recreate(true, m_Extent);
+                Rebuild();
+            }
+        }
+        else if (m_HalfResTranslucentActive &&
+                 ++m_HalfResTranslucentIdleFrames > HalfResTranslucentIdleFrameLimit)
+        {
+            m_HalfResTranslucentActive = false;
+            m_HalfResTranslucentIdleFrames = 0;
+            m_HalfResTranslucent->Recreate(false, m_Extent);
             Rebuild();
         }
 

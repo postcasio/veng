@@ -6,6 +6,8 @@
 #include <Veng/Renderer/ScenePass.h>
 #include <Veng/Renderer/Types.h>
 
+#include "../DrawPlan.h"
+
 namespace Veng::Renderer
 {
     class Context;
@@ -37,11 +39,12 @@ namespace Veng::Renderer
         /// @param depthId     Full-res opaque depth source id (declared sampled).
         /// @param depthHandle Bindless slot for the full-res opaque depth.
         /// @param targetId    The half-res depth target this pass writes.
+        /// @param plan        The layer's draw plan — a frame that routed nothing skips the draw.
         HalfResDepthReduceScenePass(Context& context, Ref<GraphicsPipeline> pipeline,
                                     ResourceId depthId, TextureHandle depthHandle,
-                                    ResourceId targetId)
+                                    ResourceId targetId, const TranslucentDrawPlan* plan)
             : m_Context(context), m_Pipeline(std::move(pipeline)), m_DepthId(depthId),
-              m_DepthHandle(depthHandle), m_TargetId(targetId)
+              m_DepthHandle(depthHandle), m_TargetId(targetId), m_Plan(plan)
         {
         }
 
@@ -61,5 +64,7 @@ namespace Veng::Renderer
         TextureHandle m_DepthHandle;
         /// @brief The half-res depth target.
         ResourceId m_TargetId;
+        /// @brief Borrowed per-frame half-res draw plan (only its emptiness is read).
+        const TranslucentDrawPlan* m_Plan = nullptr;
     };
 }

@@ -167,7 +167,7 @@ namespace Veng::Renderer
                                       const uvec2 extent) const
     {
         passes.push_back(CreateUnique<HalfResDepthReduceScenePass>(
-            m_Context, m_ReducePipeline, depthId, depthHandle, halfDepthId));
+            m_Context, m_ReducePipeline, depthId, depthHandle, halfDepthId, plan));
         // The layer's own translucent pass: half viewport, transparent clear, no bloom mask —
         // the layer is composited into the lit color before the bloom bright-pass reads it, so
         // its glow rides the scene the way an unmasked full-res translucent's does.
@@ -176,6 +176,6 @@ namespace Veng::Renderer
             sceneDepthId, HdrFormat, ResourceId{}, Format::Undefined, /*halfResolution=*/true));
         passes.push_back(CreateUnique<HalfResCompositeScenePass>(
             m_Context, m_CompositePipeline, layerId, m_LayerHandle, halfDepthId, m_DepthHandle,
-            depthId, depthHandle, targetId));
+            depthId, depthHandle, targetId, plan));
     }
 }

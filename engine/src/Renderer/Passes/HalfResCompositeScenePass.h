@@ -6,6 +6,8 @@
 #include <Veng/Renderer/ScenePass.h>
 #include <Veng/Renderer/Types.h>
 
+#include "../DrawPlan.h"
+
 namespace Veng::Renderer
 {
     class Context;
@@ -44,15 +46,16 @@ namespace Veng::Renderer
         /// @param depthId     Full-res opaque depth id (declared sampled).
         /// @param depthHandle Bindless slot for the full-res opaque depth.
         /// @param targetId    The lit scene-color target the composite blends into.
+        /// @param plan        The layer's draw plan — a frame that routed nothing skips the draw.
         HalfResCompositeScenePass(Context& context, Ref<GraphicsPipeline> pipeline,
                                   ResourceId layerId, TextureHandle layerHandle,
                                   ResourceId halfDepthId, TextureHandle halfDepthHandle,
                                   ResourceId depthId, TextureHandle depthHandle,
-                                  ResourceId targetId)
+                                  ResourceId targetId, const TranslucentDrawPlan* plan)
             : m_Context(context), m_Pipeline(std::move(pipeline)), m_LayerId(layerId),
               m_LayerHandle(layerHandle), m_HalfDepthId(halfDepthId),
               m_HalfDepthHandle(halfDepthHandle), m_DepthId(depthId), m_DepthHandle(depthHandle),
-              m_TargetId(targetId)
+              m_TargetId(targetId), m_Plan(plan)
         {
         }
 
@@ -80,5 +83,7 @@ namespace Veng::Renderer
         TextureHandle m_DepthHandle;
         /// @brief The lit scene-color target.
         ResourceId m_TargetId;
+        /// @brief Borrowed per-frame half-res draw plan (only its emptiness is read).
+        const TranslucentDrawPlan* m_Plan = nullptr;
     };
 }
