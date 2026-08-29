@@ -55,10 +55,15 @@ float4 fsMain(VSOutput input) : SV_Target
         const int2 offset = int2(i & 1, i >> 1);
         const int2 coord = clamp(base + offset, int2(0, 0), maxCoord);
         const float tapDepth = halfDepth.Load(int3(coord, 0)).r;
-        // Reverse-Z device depths: a mismatched tap sits across a geometry edge, and its
-        // weight collapses in proportion. The epsilon keeps a perfectly matched 2x2 window
-        // at the plain bilinear weights.
-        const float depthWeight = 1.0 / (1e-4 + abs(ownDepth - tapDepth));
+        // Reverse-Z device depths compare RELATIVELY: device depth is ~near/distance, so a
+        // fixed relative difference means a fixed relative distance gap at any range — where an
+        // absolute epsilon is mis-scaled for everything except one depth regime (a scene whose
+        // far content sits at 1e-6 would read every tap as matched against an absolute 1e-4).
+        // A matched tap (relDiff ~ 0) outweighs a cross-edge tap (relDiff >= 1) about 10:1;
+        // a window with no depth edge degrades to the plain bilinear weights.
+        const float relDiff =
+            abs(ownDepth - tapDepth) / max(min(ownDepth, tapDepth), 1e-6);
+        const float depthWeight = 1.0 / (0.1 + min(relDiff, 10.0));
         const float weight = bilinear[i] * depthWeight;
         accum += layer.Load(int3(coord, 0)) * weight;
         totalWeight += weight;
