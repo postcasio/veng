@@ -54,6 +54,7 @@ namespace Veng::Renderer
     class SsrChain;
     class DofChain;
     class RefractionGrab;
+    class HalfResTranslucency;
     class GpuCullSystem;
     class PickingSystem;
     class Image;
@@ -404,7 +405,13 @@ namespace Veng::Renderer
         /// the plan at record time.
         /// @param view                The frame's scene view (broadphase already synced).
         /// @param viewConstantsIndex  This frame's view-constants ring region.
-        void PrepareDraws(const SceneView& view, u32 viewConstantsIndex);
+        /// @param halfResViewConstantsIndex The half-res layer's own view-constants region
+        ///                            (equal to viewConstantsIndex when the layer claimed none).
+        /// @param halfResViewReady    Whether the half-res layer's view region was claimed and
+        ///                            written this frame; when not, gathered half-res draws fold
+        ///                            back into the full-resolution plan.
+        void PrepareDraws(const SceneView& view, u32 viewConstantsIndex,
+                          u32 halfResViewConstantsIndex, bool halfResViewReady);
 
         /// @brief This frame's dynamic-resolution sub-rect and its UV mapping into the allocation.
         struct FrameScale
@@ -603,6 +610,9 @@ namespace Veng::Renderer
 
         /// @brief The pre-translucent refraction grab — scene-color/depth intermediates and the copy pipeline.
         Unique<RefractionGrab> m_Refraction;
+
+        /// @brief The reduced-resolution translucent layer: targets, pipelines, and passes.
+        Unique<HalfResTranslucency> m_HalfResTranslucent;
 
         /// @brief Bindless slots for the g-buffer/HDR views and the shared sampler.
         ///
@@ -895,6 +905,10 @@ namespace Veng::Renderer
         ResourceId m_RefractionDepthId;
         /// @brief One graph id per scene-color chain level, base first; empty when refraction is off.
         vector<ResourceId> m_RefractionMipIds;
+        /// @brief Imported id for the half-res translucent layer color target.
+        ResourceId m_HalfResLayerId;
+        /// @brief Imported id for the half-res translucent reduced depth target.
+        ResourceId m_HalfResDepthReducedId;
         /// @brief Per-mip subresource handle for the SSR reflection pyramid (trace + blur).
         MipChainId m_SsrReflectionChainId;
         /// @brief Per-mip subresource handle for the SSR min-Z pyramid (reduction + trace).
@@ -1001,6 +1015,14 @@ namespace Veng::Renderer
         /// each Execute's presence so the pass inserts on the first live field and drops when the last
         /// one goes, recompiling at the frame boundary (reusing the imported output).
         bool m_VolumeFieldActive = false;
+
+        /// @brief True while the translucent gather routes draws into the half-res layer.
+        ///
+        /// Content-driven, the volume-field model: set the first Execute whose gather routed an
+        /// opted-in material's draw into the half plan (that frame's draws fold back into the
+        /// full-res plan and the layer is wired for the next), cleared when the last one goes;
+        /// each edge recreates the layer targets and rebuilds the pass set.
+        bool m_HalfResTranslucentActive = false;
 
         /// @brief Opaque compiled graph; replayed every Execute.
         ///

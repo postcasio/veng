@@ -929,6 +929,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/fluid_sim_config.cpp
             tests/unit/flow_field.cpp
             tests/unit/draw_grouping.cpp
+            tests/unit/halfres_translucent.cpp
             tests/unit/draw_budget.cpp
             tests/unit/taa_jitter.cpp
             tests/unit/atmosphere.cpp

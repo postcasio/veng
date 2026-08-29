@@ -28,6 +28,7 @@
 #include "Passes/VolumeScenePass.h"
 #include "ShadowSystem.h"
 #include "RefractionGrab.h"
+#include "HalfResTranslucency.h"
 #include <Veng/Renderer/BakedSkyCube.h>
 #include "SceneRendererIds.h"
 #include "SkyResolver.h"
@@ -136,6 +137,10 @@ namespace Veng::Renderer
         // The per-frame forward translucent submission plan PrepareDraws fills (back-to-front) and
         // the translucent pass reads at record time.
         TranslucentDrawPlan TranslucentPlan;
+        // The reduced-resolution layer's own plan: the draws of materials that opted into
+        // half-resolution rendering, sorted back-to-front on their own (the layer composites as a
+        // whole under the full-resolution draws).
+        TranslucentDrawPlan HalfResTranslucentPlan;
     };
 
     Unique<SceneRenderer> SceneRenderer::Create(const SceneRendererInfo& info)
@@ -164,6 +169,7 @@ namespace Veng::Renderer
         m_Bloom = BloomPyramid::Create(m_Context, m_Assets, m_Settings.Kernel);
         m_Taa = TaaResolve::Create(m_Context, m_Assets);
         m_Refraction = RefractionGrab::Create(m_Context, m_Assets);
+        m_HalfResTranslucent = HalfResTranslucency::Create(m_Context, m_Assets);
         // The GPU cull subsystem owns the hi-Z reduce layouts the SSR chain's min-Z reduce borrows,
         // so it is constructed before the SSR chain (and resolves the active cull mode). Its hi-Z
         // reduce pipeline creation is not frame-observable, so building it here rather than in
@@ -195,6 +201,7 @@ namespace Veng::Renderer
         m_Dof->Recreate(m_Settings, m_Extent, m_HdrView, m_DepthView,
                         m_Bloom->GetDownUpSetLayout());
         m_Refraction->Recreate(m_Settings, m_Extent);
+        m_HalfResTranslucent->Recreate(m_HalfResTranslucentActive, m_Extent);
         // The metering set binds the HDR target, so the meter is created after CreateHdr.
         m_AutoExposure = AutoExposureMeter::Create(m_Context, m_Assets, m_HdrView);
         m_Picking->Recreate(m_Settings, m_Extent);
@@ -344,6 +351,17 @@ namespace Veng::Renderer
                     graph.Import(fmt::format("SceneRenderer Refraction Scene Level {}", level)));
             }
         }
+        // The half-res translucent layer's two targets, imported only while content drives the
+        // layer (the volume-field model): the reduced-resolution color the routed draws fill and
+        // the reduced opaque depth they test against.
+        m_HalfResLayerId = ResourceId{};
+        m_HalfResDepthReducedId = ResourceId{};
+        if (m_HalfResTranslucentActive)
+        {
+            m_HalfResLayerId = graph.Import("SceneRenderer Half-Res Translucent Layer");
+            m_HalfResDepthReducedId = graph.Import("SceneRenderer Half-Res Translucent Depth");
+        }
+
         const TextureHandle dofTargetHandle =
             m_Topology->DofComposited() ? m_Dof->GetSceneHandle() : m_HdrHandle;
         const TextureHandle lightingTargetHandle =
@@ -553,10 +571,20 @@ namespace Veng::Renderer
                                       m_DepthHandle, m_RefractionSceneId, m_RefractionDepthId,
                                       m_SamplerHandle, m_Extent, m_RefractionMipIds);
             }
+            // The reduced-resolution layer draws and composites immediately ahead of the
+            // full-resolution translucent pass, so its result lies under every full-res
+            // translucent draw (a cockpit pane over an atmosphere shell).
+            if (m_HalfResTranslucentActive)
+            {
+                m_HalfResTranslucent->Declare(m_Passes, m_HalfResLayerId, m_HalfResDepthReducedId,
+                                              depthId, m_DepthHandle, lightingTargetId,
+                                              &m_Internal->HalfResTranslucentPlan,
+                                              m_RefractionSceneId, m_RefractionDepthId, m_Extent);
+            }
             m_Passes.push_back(CreateUnique<TranslucentScenePass>(
                 m_Context, m_Extent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
-                m_RefractionSceneId, m_RefractionDepthId, HdrFormat, m_BloomMaskId,
-                BloomMaskFormat));
+                m_RefractionSceneId, m_RefractionDepthId, HdrFormat, m_BloomMaskId, BloomMaskFormat,
+                /*halfResolution=*/false));
 
             // TAA resolves the lit target into the HDR target the tail samples, so it sits
             // between lighting and the bloom/tonemap tail.
@@ -727,10 +755,20 @@ namespace Veng::Renderer
                                       m_DepthHandle, m_RefractionSceneId, m_RefractionDepthId,
                                       m_SamplerHandle, m_Extent, m_RefractionMipIds);
             }
+            // The reduced-resolution layer draws and composites immediately ahead of the
+            // full-resolution translucent pass, so its result lies under every full-res
+            // translucent draw (a cockpit pane over an atmosphere shell).
+            if (m_HalfResTranslucentActive)
+            {
+                m_HalfResTranslucent->Declare(m_Passes, m_HalfResLayerId, m_HalfResDepthReducedId,
+                                              depthId, m_DepthHandle, lightingTargetId,
+                                              &m_Internal->HalfResTranslucentPlan,
+                                              m_RefractionSceneId, m_RefractionDepthId, m_Extent);
+            }
             m_Passes.push_back(CreateUnique<TranslucentScenePass>(
                 m_Context, m_Extent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
-                m_RefractionSceneId, m_RefractionDepthId, HdrFormat, m_BloomMaskId,
-                BloomMaskFormat));
+                m_RefractionSceneId, m_RefractionDepthId, HdrFormat, m_BloomMaskId, BloomMaskFormat,
+                /*halfResolution=*/false));
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
                 m_Context, m_DebugBlits->Albedo, m_Extent, FullscreenBlitScenePass::Source::Bloom));
             break;
@@ -1006,7 +1044,9 @@ namespace Veng::Renderer
         m_CascadeBudgetWarned = true;
     }
 
-    void SceneRenderer::PrepareDraws(const SceneView& view, const u32 viewConstantsIndex)
+    void SceneRenderer::PrepareDraws(const SceneView& view, const u32 viewConstantsIndex,
+                                     const u32 halfResViewConstantsIndex,
+                                     const bool halfResViewReady)
     {
         GBufferDrawPlan& plan = m_Internal->Plan;
         plan.Cull = m_GpuCull->GetActiveCull();
@@ -1027,6 +1067,11 @@ namespace Veng::Renderer
         translucentPlan.CandidateIdBuffer = m_CandidateIdBuffer;
         translucentPlan.Draws.clear();
 
+        TranslucentDrawPlan& halfResPlan = m_Internal->HalfResTranslucentPlan;
+        halfResPlan.DrawDataSet = m_DrawDataSet;
+        halfResPlan.CandidateIdBuffer = m_CandidateIdBuffer;
+        halfResPlan.Draws.clear();
+
         // The DrawData / candidate / palette / indirect buffers are renderer-owned and
         // framesInFlight-deep, so they ring by the frame-in-flight index; only the shared
         // view-constants push (viewConstantsIndex) rings per viewport render.
@@ -1036,6 +1081,11 @@ namespace Veng::Renderer
         auto* paletteData = static_cast<mat4*>(m_PaletteBuffer->GetMappedData());
         plan.Push = SurfacePush{.FrameBase = frameBase, .ViewConstantsIndex = viewConstantsIndex};
         translucentPlan.Push = plan.Push;
+        // The half-res layer renders through its own view-constants region, whose extents are
+        // the half target's — a fragment mapping sv_position through ExtentParams then lands on
+        // the same UV a full-resolution draw would.
+        halfResPlan.Push =
+            SurfacePush{.FrameBase = frameBase, .ViewConstantsIndex = halfResViewConstantsIndex};
         plan.IndirectRegionOffset =
             frameIndex * MaxCullCandidates * static_cast<u32>(sizeof(DrawIndexedIndirectCommand));
 
@@ -1099,7 +1149,24 @@ namespace Veng::Renderer
         GatherStaticOpaque(gatherInput, m_CullScratch, plan, budget, skinnedScratch,
                            translucentScratch);
         GatherSkinned(gatherInput, skinnedScratch, plan, m_PaletteBaseByEntity, budget);
-        GatherTranslucent(gatherInput, translucentScratch, translucentPlan, budget);
+        GatherTranslucent(gatherInput, translucentScratch, translucentPlan, halfResPlan, budget);
+
+        // The layer draws only once its passes are wired AND its view region was written this
+        // frame; otherwise this frame's routed draws fold back into the full-resolution plan
+        // (rendered full-res, correctly sorted — the cost of one transition frame, never a
+        // dropped draw). The activation edge then recreates the layer targets and rebuilds the
+        // pass set, the volume-field model, so the next frame takes the half-res path.
+        const bool halfResActive = !halfResPlan.Draws.empty();
+        if (halfResActive && (!m_HalfResTranslucentActive || !halfResViewReady))
+        {
+            MergeTranslucentPlans(translucentPlan, halfResPlan);
+        }
+        if (halfResActive != m_HalfResTranslucentActive)
+        {
+            m_HalfResTranslucentActive = halfResActive;
+            m_HalfResTranslucent->Recreate(halfResActive, m_Extent);
+            Rebuild();
+        }
 
         m_DrawBudgetStats = budget.GetStats();
         ReportDrawBudgetDrops();
@@ -1107,8 +1174,9 @@ namespace Veng::Renderer
 
         // The slot layout the GPU cull arrays depend on, asserted in one place rather than left
         // implicit in the three phases' call order.
-        const u32 gatheredSlots = static_cast<u32>(plan.Slots.size() + plan.SkinnedSlots.size() +
-                                                   translucentPlan.Draws.size());
+        const u32 gatheredSlots =
+            static_cast<u32>(plan.Slots.size() + plan.SkinnedSlots.size() +
+                             translucentPlan.Draws.size() + halfResPlan.Draws.size());
         VE_ASSERT(gatheredSlots == slotCursor,
                   "SceneRenderer: {} draw slots laid out but the shared cursor advanced {}",
                   gatheredSlots, slotCursor);
@@ -1147,6 +1215,7 @@ namespace Veng::Renderer
         m_Dof->Recreate(m_Settings, m_Extent, m_HdrView, m_DepthView,
                         m_Bloom->GetDownUpSetLayout());
         m_Refraction->Recreate(m_Settings, m_Extent);
+        m_HalfResTranslucent->Recreate(m_HalfResTranslucentActive, m_Extent);
         // The HDR target moved; rebind the metering source and re-snap the adaptation so the
         // resized frame is not mis-exposed off a stale ring value.
         m_AutoExposure->RebindHdr(m_HdrView);
@@ -1179,6 +1248,7 @@ namespace Veng::Renderer
         m_Dof->Recreate(m_Settings, m_Extent, m_HdrView, m_DepthView,
                         m_Bloom->GetDownUpSetLayout());
         m_Refraction->Recreate(m_Settings, m_Extent);
+        m_HalfResTranslucent->Recreate(m_HalfResTranslucentActive, m_Extent);
         m_Shadows->Reconfigure(m_Settings);
         m_Picking->Recreate(m_Settings, m_Extent);
         Rebuild();
@@ -1307,20 +1377,6 @@ namespace Veng::Renderer
         // this records only the request, the completion-copy, and the readback, so it claims none.
         m_SkyResolver->RecordPreBeginView(cmd, resolvedView, m_SkyPipeline);
 
-        // Claim this Execute's view slot before any shared-buffer write below: the view-constants
-        // and light buffers are shared across every viewport, so each render writes its own region
-        // rather than clobbering the one another viewport's draws still read this frame. A frame
-        // whose view budget is spent leaves this render's targets as the last frame left them —
-        // stale content, which is what a budget degrades to; the alternative is writing over a
-        // region another view's draws still read.
-        if (!registry.TryBeginView())
-        {
-            return;
-        }
-        registry.WriteLights(std::as_bytes(std::span(packed.Lights.data(), packed.LightCount)));
-        registry.WriteAreaVertices(
-            std::as_bytes(std::span(packed.AreaVertices.data(), packed.AreaVertexCount)));
-
         // Pack view constants (camera/view state only; shadow system rides set-1).
         // The unjittered view-projection drives the frustum cull, hi-Z, and next frame's
         // reprojection matrix; the jittered one (TAA only) is what the geometry and
@@ -1379,7 +1435,48 @@ namespace Veng::Renderer
             viewConstants.SkyShCoeffs[i] =
                 skylightActive ? vec4(skySh.Coefficients[i], 0.0f) : vec4(0.0f);
         }
+        // The half-res translucent layer renders through a second view region of its own: the
+        // one block field its fragments must read differently is ExtentParams, which carries the
+        // HALF extents so an sv_position mapped through it lands on the same UV a full-resolution
+        // draw's would. The lights and area vertices ring beside the view constants by the same
+        // index, so the region carries its own copy. It is claimed BEFORE this render's own slot:
+        // every pass that reads GetCurrentViewConstantsIndex at record time must land on the full
+        // region, so the full claim is the later one. A frame whose view budget refuses this
+        // claim folds the layer's draws back into the full-res plan in PrepareDraws.
+        u32 halfResViewConstantsIndex = 0;
+        bool halfResViewReady = false;
+        if (m_HalfResTranslucentActive && registry.TryBeginView())
+        {
+            registry.WriteLights(std::as_bytes(std::span(packed.Lights.data(), packed.LightCount)));
+            registry.WriteAreaVertices(
+                std::as_bytes(std::span(packed.AreaVertices.data(), packed.AreaVertexCount)));
+            ViewConstantsBlock halfResConstants = viewConstants;
+            halfResConstants.ExtentParams =
+                vec4(vec2(HalfResExtent(validExtent)), vec2(HalfResExtent(m_Extent)));
+            registry.WriteViewConstants(std::as_bytes(std::span(&halfResConstants, 1)));
+            halfResViewConstantsIndex = registry.GetCurrentViewConstantsIndex();
+            halfResViewReady = true;
+        }
+
+        // Claim this Execute's view slot before any further shared-buffer write: the
+        // view-constants and light buffers are shared across every viewport, so each render
+        // writes its own region rather than clobbering the one another viewport's draws still
+        // read this frame. A frame whose view budget is spent leaves this render's targets as
+        // the last frame left them — stale content, which is what a budget degrades to; the
+        // alternative is writing over a region another view's draws still read.
+        if (!registry.TryBeginView())
+        {
+            return;
+        }
+        registry.WriteLights(std::as_bytes(std::span(packed.Lights.data(), packed.LightCount)));
+        registry.WriteAreaVertices(
+            std::as_bytes(std::span(packed.AreaVertices.data(), packed.AreaVertexCount)));
         registry.WriteViewConstants(std::as_bytes(std::span(&viewConstants, 1)));
+        const u32 viewConstantsIndex = registry.GetCurrentViewConstantsIndex();
+        if (!halfResViewReady)
+        {
+            halfResViewConstantsIndex = viewConstantsIndex;
+        }
 
         // Decide whether last frame's pyramid is trustworthy this frame; the GPU cull subsystem
         // combines the reset gate (frame 0 / post-resize / post-configure) with the device-free
@@ -1418,7 +1515,7 @@ namespace Veng::Renderer
         // Fill the per-draw DrawData buffer + (GPU) the candidate buffer and submission plan.
         // The surface push's ViewConstantsIndex is the shared per-view slot, distinct from the
         // renderer-owned frame-in-flight rings PrepareDraws indexes internally.
-        PrepareDraws(resolvedView, registry.GetCurrentViewConstantsIndex());
+        PrepareDraws(resolvedView, viewConstantsIndex, halfResViewConstantsIndex, halfResViewReady);
 
         // Build each skinned draw's surface skinned g-buffer pipeline on the first frame its
         // material is drawn skinned (idempotent). A material never skinned never pays for the
@@ -1598,6 +1695,11 @@ namespace Veng::Renderer
                 bindings.push_back({m_RefractionMipIds[level], mipViews[level]});
             }
             bindings.push_back({m_RefractionDepthId, m_Refraction->GetDepthView()});
+        }
+        if (m_HalfResTranslucentActive)
+        {
+            bindings.push_back({m_HalfResLayerId, m_HalfResTranslucent->GetLayerView()});
+            bindings.push_back({m_HalfResDepthReducedId, m_HalfResTranslucent->GetDepthView()});
         }
         if (m_Topology->SsrActive)
         {

@@ -129,8 +129,21 @@ namespace Veng::Renderer
     /// @pre GatherStaticOpaque and GatherSkinned ran, so their slot ranges are already laid out.
     /// @param input       The shared per-frame inputs.
     /// @param translucent The translucent survivors GatherStaticOpaque triaged out.
-    /// @param plan        Receives the sorted translucent draws.
+    /// @param plan        Receives the sorted full-resolution translucent draws.
+    /// @param halfResPlan Receives the sorted draws of materials that opted into the
+    ///                    reduced-resolution translucent layer (Material::IsHalfResolution).
     /// @param budget      The shared draw budget, continued from the skinned range.
     void GatherTranslucent(const DrawGatherInput& input, std::span<const u32> translucent,
-                           TranslucentDrawPlan& plan, DrawBudget& budget);
+                           TranslucentDrawPlan& plan, TranslucentDrawPlan& halfResPlan,
+                           DrawBudget& budget);
+
+    /// @brief Folds one translucent plan's draws into another, restoring the sort.
+    ///
+    /// The fallback for a frame that gathered half-resolution draws the wired passes cannot
+    /// take yet — the layer's first active frame, or a frame whose view budget refused the
+    /// layer's view slot: the draws render full-resolution this frame, in the correct
+    /// back-to-front order, and @p from is left empty.
+    /// @param into The plan that receives the draws (re-sorted after the append).
+    /// @param from The plan whose draws move; cleared.
+    void MergeTranslucentPlans(TranslucentDrawPlan& into, TranslucentDrawPlan& from);
 }

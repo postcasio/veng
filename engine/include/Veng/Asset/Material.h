@@ -117,6 +117,13 @@ namespace Veng
         /// in the pass leaves the mask untouched. Ignored outside the Translucent domain.
         bool WritesBloomMask = false;
 
+        /// @brief Whether the material draws in the reduced-resolution translucent layer.
+        ///
+        /// An expensive per-pixel translucent opts into a half-resolution offscreen layer
+        /// composited under the full-resolution translucents through a depth-aware upsample.
+        /// Translucent domain only, and exclusive with the bloom mask (both cook-enforced).
+        bool HalfResolution = false;
+
         /// @brief Null for PostProcess materials (built by the pass).
         Ref<Renderer::GraphicsPipeline> Pipeline;
 
@@ -183,6 +190,9 @@ namespace Veng
         /// and leaves them off for every other, so a material that declares no SV_Target1 cannot
         /// write undefined values into the mask.
         [[nodiscard]] bool IsBloomMaskWriter() const { return m_WritesBloomMask; }
+
+        /// @brief Whether the material draws in the reduced-resolution translucent layer.
+        [[nodiscard]] bool IsHalfResolution() const { return m_HalfResolution; }
 
         /// @brief Returns the built graphics pipeline, or null for a pass-built domain (PostProcess, Sky, Translucent, GuiFill).
         [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetPipeline() const
@@ -303,6 +313,7 @@ namespace Veng
         Renderer::CullMode m_CullMode = Renderer::CullMode::Back;
         i32 m_SortPriority = 0;
         bool m_WritesBloomMask = false;
+        bool m_HalfResolution = false;
         Ref<Renderer::GraphicsPipeline> m_Pipeline;
         Ref<Renderer::GraphicsPipeline> m_SkinnedPipeline;
         Ref<Renderer::PipelineLayout> m_PipelineLayout;

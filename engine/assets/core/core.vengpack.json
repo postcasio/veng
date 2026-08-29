@@ -212,6 +212,16 @@
       "source": "shaders/scene_color_downsample.frag.shader.json"
     },
     {
+      "id": "0x8A1DD0C15A953B2D",
+      "type": "Shader",
+      "source": "shaders/halfres_depth_reduce.frag.shader.json"
+    },
+    {
+      "id": "0xA5BEC069EF71BAB6",
+      "type": "Shader",
+      "source": "shaders/halfres_composite.frag.shader.json"
+    },
+    {
       "id": "0xF79D3A3F132A0D2D",
       "type": "Shader",
       "source": "shaders/capture_octahedral.frag.shader.json"

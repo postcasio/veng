@@ -284,7 +284,7 @@ namespace Veng
     /// @brief The current material-format version.
     ///
     /// Bumped on any layout change; the loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedMaterialVersion = 9u;
+    inline constexpr u32 CookedMaterialVersion = 10u;
 
     /// @brief Cooked header for a material asset.
     ///
@@ -339,6 +339,14 @@ namespace Veng
         /// this as 1, and the translucent pass enables the mask attachment's writes for its
         /// pipeline alone. Ignored outside the Translucent domain.
         u32 BloomMask = 0;
+        /// @brief Whether the material draws in the reduced-resolution translucent layer (the
+        ///        "resolution" key; 0 = full, 1 = half).
+        ///
+        /// An expensive per-pixel translucent — a ray-marched volumetric shell — opts into a
+        /// half-resolution offscreen layer composited under the full-resolution translucents
+        /// through a depth-aware upsample. Translucent domain only, and exclusive with the bloom
+        /// mask, both enforced at cook.
+        u32 HalfResolution = 0;
         /// @brief Number of CookedMaterialField entries following this header.
         u32 FieldCount = 0;
         /// @brief Byte size of the single parameter block; <= the per-material param stride.

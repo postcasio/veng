@@ -52,13 +52,17 @@ namespace Veng::Renderer
         /// @param targetFormat Color format the per-parent pipelines target.
         /// @param maskId       The bloom-mask target, or invalid when the frame wires none.
         /// @param maskFormat   Color format of the bloom-mask attachment.
+        /// @param halfResolution Renders the reduced-resolution layer: the viewport is the half
+        ///                     valid sub-rect and the target is cleared to transparent at pass
+        ///                     begin (the layer accumulates over nothing and composites later).
         TranslucentScenePass(Context& context, uvec2 extent, const TranslucentDrawPlan* plan,
                              ResourceId targetId, ResourceId depthId, ResourceId sceneColorId,
                              ResourceId sceneDepthId, Format targetFormat, ResourceId maskId,
-                             Format maskFormat)
+                             Format maskFormat, bool halfResolution)
             : m_Context(context), m_Extent(extent), m_Plan(plan), m_TargetId(targetId),
               m_DepthId(depthId), m_SceneColorId(sceneColorId), m_SceneDepthId(sceneDepthId),
-              m_TargetFormat(targetFormat), m_MaskId(maskId), m_MaskFormat(maskFormat)
+              m_TargetFormat(targetFormat), m_MaskId(maskId), m_MaskFormat(maskFormat),
+              m_HalfResolution(halfResolution)
         {
         }
 
@@ -94,6 +98,8 @@ namespace Veng::Renderer
         ResourceId m_MaskId;
         /// @brief Color format of the bloom-mask attachment.
         Format m_MaskFormat;
+        /// @brief Whether this instance renders the reduced-resolution layer.
+        bool m_HalfResolution;
         // Per-parent pipeline cache; mutable so PipelineFor can lazily populate it from the
         // const record callback.
         mutable std::unordered_map<const Material*, Ref<GraphicsPipeline>> m_Pipelines;

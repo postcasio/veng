@@ -278,7 +278,8 @@ namespace Veng::Renderer
     }
 
     void GatherTranslucent(const DrawGatherInput& input, const std::span<const u32> translucent,
-                           TranslucentDrawPlan& plan, DrawBudget& budget)
+                           TranslucentDrawPlan& plan, TranslucentDrawPlan& halfResPlan,
+                           DrawBudget& budget)
     {
         const mat4 viewMatrix = input.View.Camera.View();
         for (usize index = 0; index < translucent.size(); ++index)
@@ -330,21 +331,43 @@ namespace Veng::Renderer
                                     : vec3(item.World * vec4(subMesh.Bounds.Center(), 1.0f));
             const f32 viewDepth = (viewMatrix * vec4(center, 1.0f)).z;
 
-            plan.Draws.push_back(TranslucentDraw{
+            // A material that opted into the reduced-resolution layer routes to its own plan;
+            // the layer composites under every full-resolution translucent, so the split is a
+            // sort statement as much as a cost one.
+            const Material* parent = material.GetParent().Get();
+            TranslucentDrawPlan& destination = parent->IsHalfResolution() ? halfResPlan : plan;
+            destination.Draws.push_back(TranslucentDraw{
                 .Material = &material,
                 .SourceMesh = &mesh,
                 .IndexCount = subMesh.IndexCount,
                 .FirstIndex = subMesh.IndexOffset,
                 .CandidateId = slot,
                 .ViewDepth = viewDepth,
-                .SortPriority = material.GetParent().Get()->GetSortPriority(),
+                .SortPriority = parent->GetSortPriority(),
             });
         }
 
         // Ascending priority groups, back-to-front (most negative view-space z first) within
         // each: a higher-priority material (an overlay) draws over every lower-priority draw
-        // regardless of depth.
-        std::ranges::sort(plan.Draws,
+        // regardless of depth. Each plan sorts on its own, since the layer composites as a
+        // whole under the full-resolution draws.
+        const auto backToFront = [](const TranslucentDraw& a, const TranslucentDraw& b)
+        {
+            if (a.SortPriority != b.SortPriority)
+            {
+                return a.SortPriority < b.SortPriority;
+            }
+            return a.ViewDepth < b.ViewDepth;
+        };
+        std::ranges::sort(plan.Draws, backToFront);
+        std::ranges::sort(halfResPlan.Draws, backToFront);
+    }
+
+    void MergeTranslucentPlans(TranslucentDrawPlan& into, TranslucentDrawPlan& from)
+    {
+        into.Draws.insert(into.Draws.end(), from.Draws.begin(), from.Draws.end());
+        from.Draws.clear();
+        std::ranges::sort(into.Draws,
                           [](const TranslucentDraw& a, const TranslucentDraw& b)
                           {
                               if (a.SortPriority != b.SortPriority)

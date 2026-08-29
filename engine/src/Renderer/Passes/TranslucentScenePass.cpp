@@ -14,17 +14,35 @@
 #include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/PipelineLayout.h>
 
+#include "../HalfResTranslucency.h"
+
 namespace Veng::Renderer
 {
     void TranslucentScenePass::Declare(RenderGraph& graph, const PassIO& /*io*/)
     {
-        RenderGraph::PassBuilder builder = graph.AddPass("Scene Translucent");
-        builder.Color({
-            // Alpha-blend into the lit scene color (blend enabled on the pipeline).
-            .Resource = m_TargetId,
-            .Load = LoadOp::Load,
-            .Store = StoreOp::Store,
-        });
+        RenderGraph::PassBuilder builder =
+            graph.AddPass(m_HalfResolution ? "Scene Translucent Half" : "Scene Translucent");
+        if (m_HalfResolution)
+        {
+            // The layer target accumulates over nothing: cleared to transparent, the straight
+            // alpha blend leaves it holding (premultiplied color, coverage), which is exactly
+            // what the composite's (One, OneMinusSrcAlpha) blend consumes.
+            builder.Color({
+                .Resource = m_TargetId,
+                .Load = LoadOp::Clear,
+                .Store = StoreOp::Store,
+                .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
+            });
+        }
+        else
+        {
+            builder.Color({
+                // Alpha-blend into the lit scene color (blend enabled on the pipeline).
+                .Resource = m_TargetId,
+                .Load = LoadOp::Load,
+                .Store = StoreOp::Store,
+            });
+        }
         if (m_MaskId.IsValid())
         {
             // This pass is the mask's only writer, so it clears the target at begin rather than
@@ -117,7 +135,8 @@ namespace Veng::Renderer
         const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
         const TranslucentDrawPlan& plan = *m_Plan;
 
-        const uvec2 renderExtent = ctx.View().RenderExtent;
+        const uvec2 fullExtent = ctx.View().RenderExtent;
+        const uvec2 renderExtent = m_HalfResolution ? HalfResExtent(fullExtent) : fullExtent;
         cmd.SetViewport({0, 0}, renderExtent);
         cmd.SetScissor({0, 0}, renderExtent);
 

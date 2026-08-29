@@ -533,6 +533,7 @@ namespace Veng
             .CullMode = cullMode,
             .SortPriority = header.SortPriority,
             .WritesBloomMask = header.BloomMask != 0,
+            .HalfResolution = header.HalfResolution != 0,
             .Pipeline = nullptr,
             .VertexShader = vsHandle,
             .FragmentShader = fsHandle,

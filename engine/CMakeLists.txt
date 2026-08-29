@@ -254,6 +254,8 @@ add_library(veng SHARED
         src/Renderer/Passes/GBufferScenePass.cpp
         src/Renderer/Passes/PickingScenePass.cpp
         src/Renderer/Passes/TranslucentScenePass.cpp
+        src/Renderer/Passes/HalfResCompositeScenePass.cpp
+        src/Renderer/Passes/HalfResDepthReduceScenePass.cpp
         src/Renderer/Passes/SceneColorCopyScenePass.cpp
         src/Renderer/Passes/SceneColorDownsampleScenePass.cpp
         src/Renderer/Passes/DeferredLightingScenePass.cpp
@@ -301,6 +303,7 @@ add_library(veng SHARED
         src/Renderer/TaaResolve.cpp
         src/Renderer/SsrChain.cpp
         src/Renderer/DofChain.cpp
+        src/Renderer/HalfResTranslucency.cpp
         src/Renderer/RefractionGrab.cpp
         src/Renderer/GpuCullSystem.cpp
         src/Renderer/PickingSystem.cpp

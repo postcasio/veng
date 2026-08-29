@@ -1,0 +1,4 @@
+{
+  "source": "halfres_depth_reduce.frag.slang",
+  "entry": "fsMain"
+}

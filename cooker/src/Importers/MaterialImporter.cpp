@@ -166,6 +166,50 @@ namespace Veng::Cook
             bloomMask = vmat["bloomMask"].get<bool>();
         }
 
+        // --- 1f. Parse the optional resolution (default full) ---
+
+        // "half" opts a Translucent material into the reduced-resolution translucent layer — a
+        // half-resolution offscreen composited under the full-resolution translucents. The layer
+        // carries no bloom-mask attachment, so the two keys are exclusive; and a non-Translucent
+        // domain has no layer to opt into, so the key is a located cook error there rather than
+        // silently inert.
+        bool halfResolution = false;
+        if (vmat.contains("resolution"))
+        {
+            if (!vmat["resolution"].is_string())
+            {
+                return std::unexpected(
+                    fmt::format("material importer: '{}': 'resolution' must be a string "
+                                "(\"full\" or \"half\")",
+                                vmatPath.string()));
+            }
+            const string resolutionStr = vmat["resolution"].get<string>();
+            if (resolutionStr == "half")
+            {
+                halfResolution = true;
+            }
+            else if (resolutionStr != "full")
+            {
+                return std::unexpected(
+                    fmt::format("material importer: '{}': unknown resolution '{}' "
+                                "(expected \"full\" or \"half\")",
+                                vmatPath.string(), resolutionStr));
+            }
+            if (halfResolution && domainValue != MaterialDomain::Translucent)
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': 'resolution: half' requires the Translucent domain",
+                    vmatPath.string()));
+            }
+            if (halfResolution && bloomMask)
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': 'resolution: half' is exclusive with 'bloomMask' — "
+                    "the reduced-resolution layer carries no mask attachment",
+                    vmatPath.string()));
+            }
+        }
+
         // --- 2. Validate and resolve shader references ---
 
         if (!vmat.contains("shaders") || !vmat["shaders"].is_object())
@@ -824,6 +868,7 @@ namespace Veng::Cook
         header.CullMode = cull;
         header.SortPriority = sortPriority;
         header.BloomMask = bloomMask ? 1u : 0u;
+        header.HalfResolution = halfResolution ? 1u : 0u;
         header.FieldCount = static_cast<u32>(fields.size());
         header.BlockBytes = blockReflected->Size;
 

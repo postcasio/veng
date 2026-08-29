@@ -527,6 +527,48 @@ TEST_CASE("Cooker: a fragment writing SV_Depth beside its target cooks")
     std::filesystem::remove(outArchive);
 }
 
+TEST_CASE("Cooker: a half-resolution translucent material cooks with the flag set")
+{
+    // "resolution": "half" opts a Translucent material into the reduced-resolution translucent
+    // layer; the cooked header carries the flag the loader threads to Material::IsHalfResolution.
+    const path packJson = FixtureDir / "material_translucent_half_pack.json";
+    const path outArchive =
+        Veng::TestSupport::TempDir() / "veng_cooker_material_translucent_half.vengpack";
+
+    const Result<ArchiveReader> reader = CookMaterialPack(packJson, outArchive);
+    REQUIRE(reader.has_value());
+
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0xC96});
+    REQUIRE(entry.has_value());
+
+    CookedMaterialHeader header{};
+    std::memcpy(&header, entry->Blob.data(), sizeof(header));
+    CHECK(header.Version == CookedMaterialVersion);
+    CHECK(header.Domain == 3u); // Translucent
+    CHECK(header.HalfResolution == 1u);
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE("Cooker: 'resolution: half' outside the Translucent domain is a located cook error")
+{
+    // Only the Translucent domain has a reduced-resolution layer to opt into; a Surface
+    // material asking for it is rejected at cook time rather than silently ignored.
+    const path packJson = FixtureDir / "material_surface_half_pack.json";
+    const path outArchive =
+        Veng::TestSupport::TempDir() / "veng_cooker_material_surface_half.vengpack";
+
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+
+    const VoidResult result = cooker.CookPack(packJson, outArchive);
+
+    REQUIRE(!result.has_value());
+    CHECK(result.error().find("requires the Translucent domain") != string::npos);
+
+    std::filesystem::remove(outArchive);
+}
+
 TEST_CASE("Cooker: an unknown cull mode is a located cook error")
 {
     // Cull modes are serialized by enumerator name ("Back"/"Front"/"None"); a

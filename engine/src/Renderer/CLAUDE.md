@@ -386,6 +386,52 @@ composites itself over it, and emits at full coverage. At `blur` 0 that is the s
 it was already over, which is what lets a material mix the two states and fade the effect in with no
 seam and no second pipeline.
 
+### The half-resolution translucent layer
+
+**A Translucent material may opt into rendering at half resolution** — `"resolution": "half"` in
+its `.vmat.json` (default `"full"`; Translucent-domain only, and exclusive with `bloomMask`, both
+cook errors) — and the renderer then routes its draws into a **reduced-resolution layer** instead
+of the full-resolution translucent pass. The trade is a quarter of the fragment cost against a
+softened image, which a smooth, screen-filling volumetric surface (an atmosphere shell, a fog
+bank) makes gladly and a crisp-edged surface (glass with geometry detail behind it) does not — so
+it is authored per material, never a renderer setting.
+
+The layer is **content-driven, the volume-field model**: the translucent gather routes each draw
+by `Material::IsHalfResolution()` into its own plan, and the renderer activates the layer the
+first Execute that plan is non-empty (that frame's routed draws fold back into the full-res plan
+— rendered full-resolution once, correctly sorted, never dropped — while the activation edge
+allocates the targets and rebuilds the pass set) and drops it when the last one goes. A frame
+with no opted-in material carries no targets and no passes. `HalfResTranslucency`
+(`src/Renderer/HalfResTranslucency.h`) owns the vertical slice; `HalfResExtent` is the one
+rounding rule every consumer derives the half extent through.
+
+Three passes, wired immediately ahead of the full translucent pass in both compositing arms so
+the layer composites **under** every full-resolution translucent draw (a cockpit pane over an
+atmosphere shell):
+
+1. **A depth reduce** writes a half-res D32 target as the farthest (reverse-Z minimum) of each
+   texel's 2×2 full-res opaque depths, so the layer's draws depth-test conservatively — a
+   fragment survives wherever any of its four full-res pixels would show it.
+2. **The layer's own `TranslucentScenePass`** (the same class, its half-resolution option):
+   half-extent viewport into a half-res HDR target cleared to transparent, the same back-to-front
+   sort, per-parent pipelines, and straight alpha blend — which over a transparent clear leaves
+   exactly (premultiplied color, coverage). No bloom-mask attachment: the layer lands in the lit
+   color ahead of the bloom bright-pass, so its glow rides the scene like an unmasked
+   translucent's.
+3. **A depth-aware composite** upsamples the layer to full resolution — each 2×2 tap's bilinear
+   weight collapsed in proportion to its reduced depth's distance from the pixel's own opaque
+   depth, so the layer hugs geometry edges instead of haloing across them — and blends it into
+   the lit scene color with `(One, OneMinusSrcAlpha)`.
+
+**The layer renders through a second view-constants region.** The one block field a half-res
+fragment must read differently is `ExtentParams`, which carries the half extents so an
+`sv_position` mapped through it lands on the same UV a full-resolution draw's would — every other
+field (matrices, `RenderScaleUV`, the refraction-chain handles) is the full view's, so UV-space
+reads like `SampleSceneColor` work unchanged. The region is claimed **before** the render's own
+slot, because every pass reading `GetCurrentViewConstantsIndex()` at record time must land on the
+full region; a frame whose view budget refuses the extra claim folds the layer's draws back into
+the full-res plan for that frame, the same fallback as the activation edge.
+
 ### Bloom
 
 **Bloom is a compute mip-pyramid battery**, a fixed engine pass like SSAO and the shadow atlas —
