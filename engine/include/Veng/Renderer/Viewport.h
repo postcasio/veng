@@ -769,13 +769,28 @@ namespace Veng::Renderer
         /// @brief Whether this viewport drives @p surface's GuiDriver, deciding the driver by seat.
         ///
         /// A surface naming a Seat is driven by the viewport whose GetSeat matches it; one naming
-        /// none by the sole/primary presenter (IsPrimaryPresenterOf). The surface's *document* is
-        /// still rendered by every presenting viewport — the claim decides only which of them owns
-        /// the per-frame driver update.
+        /// none by the sole/primary presenter (IsPrimaryPresenterOf). A viewport whose own seat is
+        /// unbound — the default single-player posture, the one seat that reads every device — also
+        /// claims a seated surface through the primary-presenter rule, unless some presenting
+        /// viewport genuinely binds that seat: a surface must name a seat to take routed pointer
+        /// input at all, and no consumer binds a viewport seat outside split-screen, so requiring
+        /// the match unconditionally would leave a seated surface's driver unrunnable in the
+        /// default posture. The surface's *document* is still rendered by every presenting viewport
+        /// — the claim decides only which of them owns the per-frame driver update.
         /// @param world    The scene the surface lives in.
         /// @param surface  The surface to test.
         /// @return True when this viewport should drive the surface's driver this frame.
         [[nodiscard]] bool ClaimsSurface(const Scene& world, const GuiSurface& surface) const;
+
+        /// @brief Whether any drive-list viewport presenting @p world has @p seat as its bound seat.
+        ///
+        /// The split-screen guard of the seated-surface claim: an unbound viewport yields a seated
+        /// surface to the viewport genuinely bound to its seat. False for a viewport driven
+        /// directly (no drive-list).
+        /// @param world  The scene the surface lives in.
+        /// @param seat   The surface's named seat; never Null.
+        /// @return True when a presenting viewport is bound to @p seat.
+        [[nodiscard]] bool AnyPresenterBindsSeat(const Scene& world, Entity seat) const;
 
         /// @brief Drives the GuiOverlay components this viewport claims onto its layer stack.
         ///

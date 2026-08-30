@@ -18,6 +18,7 @@
 
 #include "Passes/GuiScenePass.h"
 #include "Picking.h"
+#include "SurfaceClaim.h"
 
 #include <algorithm>
 
@@ -531,14 +532,30 @@ namespace Veng::Renderer
 
     bool Viewport::ClaimsSurface(const Scene& world, const GuiSurface& surface) const
     {
-        // A surface's seat is the one it already names for input (GuiSurface::Seat); a surface that
-        // names none is claimed by the sole/primary presenter, so a single-viewport cockpit drives
-        // unchanged.
-        if (!surface.Seat.IsNull())
+        // A surface's seat is the one it already names for input (GuiSurface::Seat); the decision
+        // itself is the pure rule in SurfaceClaim.h, this gathers its inputs. The second walk runs
+        // only for a seated surface seen by an unbound viewport — the single-player posture, where
+        // this viewport reads every device and claims the surface unless a bound presenter owns it.
+        const bool bindsElsewhere =
+            !surface.Seat.IsNull() && m_Seat.IsNull() && AnyPresenterBindsSeat(world, surface.Seat);
+        return ClaimsSeatedSurface(surface.Seat, m_Seat, IsPrimaryPresenterOf(world),
+                                   bindsElsewhere);
+    }
+
+    bool Viewport::AnyPresenterBindsSeat(const Scene& world, const Entity seat) const
+    {
+        if (m_DriveList == nullptr)
         {
-            return surface.Seat == m_Seat;
+            return false;
         }
-        return IsPrimaryPresenterOf(world);
+        for (const Viewport* const viewport : *m_DriveList)
+        {
+            if (viewport->m_ViewState.World == &world && viewport->m_Seat == seat)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     bool Viewport::IsPrimaryPresenterOf(const Scene& world) const
