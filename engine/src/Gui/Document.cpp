@@ -3327,7 +3327,9 @@ namespace Veng::Gui
             (element.Kind == ElementKind::Text || element.Kind == ElementKind::Button))
         {
             // A Text leaf draws at its content-box origin (inside the border and padding, the box
-            // the measure sized); a Button centers its label in its box.
+            // the measure sized); a Button keeps its label vertically centered in its box, and both
+            // kinds place it horizontally by text-align — so a button's label aligns exactly as a
+            // Text does, rather than centering regardless of what the sheet says.
             string cased;
             const string_view run = RunOf(element, cased);
             const f32 border = BorderWidth(style);
@@ -3335,9 +3337,9 @@ namespace Veng::Gui
             if (element.Kind == ElementKind::Button)
             {
                 const vec2 label = MeasureElementText(element, std::nullopt);
-                origin = rect.Min + (rect.Size - label) * 0.5f;
+                origin.y = rect.Min.y + (rect.Size.y - label.y) * 0.5f;
             }
-            else if (style.TextAlignment != TextAlign::Left)
+            if (style.TextAlignment != TextAlign::Left)
             {
                 // Center/right alignment distributes the content box's slack ahead of the run — a
                 // paint-only shift, so a content-sized box (no slack) draws exactly as Left does.

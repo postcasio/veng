@@ -48,6 +48,7 @@
 }
 
 .dismiss {
+    text-align: center;
     margin: 8px;
     padding: 8px;
     corner-radius: 5px;

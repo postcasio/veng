@@ -88,6 +88,7 @@
 }
 
 .row {
+    text-align: center;
     font-size: 13px;
     color: var(--text);
     padding: 2px 4px 2px 4px;
