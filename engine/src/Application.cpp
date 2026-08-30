@@ -487,17 +487,17 @@ namespace Veng
         }
     }
 
-    void Application::RestoreLocalSession()
+    bool Application::RestoreLocalSession()
     {
         if (!m_Sessions || !m_Directory || !m_LocalAccount.IsValid())
         {
-            return;
+            return false;
         }
         m_Sessions->EnsureLoaded(m_LocalAccount);
         const optional<Net::SessionRecord> record = m_Sessions->BeginReattach(m_LocalAccount);
         if (!record.has_value())
         {
-            return;
+            return false;
         }
 
         // Standing joins warm their worlds under a local pin — standalone presence is a pin, there
@@ -523,7 +523,7 @@ namespace Veng
 
         if (record->Gameplay.Key == Net::WorldKey{})
         {
-            return;
+            return false;
         }
         const WorldResolveResult resolve =
             m_Directory->Resolve(Net::JoinRequestInfo{.Connection = Net::ConnectionId{},
@@ -541,12 +541,14 @@ namespace Veng
             Log::Warn("standalone continue: the gameplay world did not resolve (reason {}); "
                       "leaving the current world presented, record kept for the next restore",
                       static_cast<u32>(resolve.Reason));
-            return;
+            return false;
         }
-        if (m_ManagedViewports->GetCount() > 0)
+        if (m_ManagedViewports->GetCount() == 0)
         {
-            m_ManagedViewports->RebindWorldWhenReady(0, resolve.World);
+            return false;
         }
+        m_ManagedViewports->RebindWorldWhenReady(0, resolve.World);
+        return true;
     }
 
     void Application::ReleaseLocalSession()
@@ -1142,9 +1144,22 @@ namespace Veng
         // and the departed world is unpinned there too — the dwell then owns its fate. A non-presenting
         // resolve opens/places the world but takes no presentation pin, so an unpinned world's fate is
         // the dwell's.
-        if (info.Present && info.ViewportIndex < m_ManagedViewports->GetCount())
+        Log::Info("Travel: resolved world {} (present {}, viewport {})", resolve.World.Value,
+                  info.Present, info.ViewportIndex);
+        if (info.Present)
         {
-            m_ManagedViewports->RebindWorldWhenReady(info.ViewportIndex, resolve.World);
+            if (info.ViewportIndex < m_ManagedViewports->GetCount())
+            {
+                m_ManagedViewports->RebindWorldWhenReady(info.ViewportIndex, resolve.World);
+            }
+            else
+            {
+                // A presenting travel whose viewport does not exist would otherwise succeed
+                // silently with nothing ever shown — the one outcome a traveller cannot observe.
+                Log::Warn("Travel: presenting viewport {} does not exist ({} managed); world {} "
+                          "opened unpresented.",
+                          info.ViewportIndex, m_ManagedViewports->GetCount(), resolve.World.Value);
+            }
         }
         return {};
     }

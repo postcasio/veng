@@ -1086,7 +1086,14 @@ namespace Veng
         /// false; a game that opted out calls it once the store its record lives in is open. Pair a
         /// restore with ReleaseLocalSession before opening a different store, so the next restore
         /// resolves against that store's record rather than the cached one.
-        void RestoreLocalSession();
+        ///
+        /// Returns whether a recorded gameplay world was resolved and its presenting rebind
+        /// requested. False is the vacuous restore — no record, no gameplay entry in it, or a
+        /// resolve the directory denied — after which nothing will present, so a caller that was
+        /// counting on the restore to put a world on screen must fall back to a travel of its own
+        /// rather than wait.
+        /// @return True when a gameplay world's present-on-ready rebind was requested.
+        bool RestoreLocalSession();
 
         /// @brief Tears down the restored local session, so a later restore reloads from scratch.
         ///
