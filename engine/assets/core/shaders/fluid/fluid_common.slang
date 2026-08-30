@@ -12,6 +12,8 @@ static const uint FluidWrapClamped = 1u;
 static const uint FluidFlagFirstIteration = 1u;
 static const uint FluidFlagHasTarget = 2u;
 static const uint FluidFlagHasDamping = 4u;
+// The advect back-trace samples Catmull-Rom instead of bilinear (see FluidSampleCatmullRom).
+static const uint FluidFlagCubicAdvect = 8u;
 
 struct FluidParams
 {
@@ -68,6 +70,55 @@ float4 FluidSampleBilinear(Texture2D<float4> field, float2 position)
     float4 s01 = FluidLoad(field, base + int2(0, 1));
     float4 s11 = FluidLoad(field, base + int2(1, 1));
     return lerp(lerp(s00, s10, fraction.x), lerp(s01, s11, fraction.x), fraction.y);
+}
+
+// The Catmull-Rom basis weights for the four taps bracketing a unit-interval position.
+float4 FluidCubicWeights(float t)
+{
+    float t2 = t * t;
+    float t3 = t2 * t;
+    return 0.5 * float4(-t3 + 2.0 * t2 - t,
+                        3.0 * t3 - 5.0 * t2 + 2.0,
+                        -3.0 * t3 + 4.0 * t2 + t,
+                        t3 - t2);
+}
+
+// A 4x4 Catmull-Rom tap over the same fold the bilinear tap reads. A bilinear resample blurs by
+// up to half a texel whenever the back-trace lands off-centre, so an advect taken in many small
+// sub-texel steps diffuses far faster than it transports; the cubic's negative lobes restore what
+// bilinear smears. The result is clamped to the inner 2x2's own range, so the overshoot those
+// lobes ring with can never push a value outside what its neighbourhood holds.
+float4 FluidSampleCatmullRom(Texture2D<float4> field, float2 position)
+{
+    float2 offset = position - 0.5;
+    float2 origin = floor(offset);
+    float2 fraction = offset - origin;
+    int2 base = int2(origin);
+
+    float4 wx = FluidCubicWeights(fraction.x);
+    float4 wy = FluidCubicWeights(fraction.y);
+
+    float4 result = 0.0;
+    float4 lo = float4(1.0e30);
+    float4 hi = float4(-1.0e30);
+    [unroll]
+    for (int j = 0; j < 4; ++j)
+    {
+        float4 row = 0.0;
+        [unroll]
+        for (int i = 0; i < 4; ++i)
+        {
+            float4 tap = FluidLoad(field, base + int2(i - 1, j - 1));
+            row += wx[i] * tap;
+            if (i >= 1 && i <= 2 && j >= 1 && j <= 2)
+            {
+                lo = min(lo, tap);
+                hi = max(hi, tap);
+            }
+        }
+        result += wy[j] * row;
+    }
+    return clamp(result, lo, hi);
 }
 
 // A row of metric m advances m grid cells per unit of x velocity and has its x derivatives

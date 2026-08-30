@@ -37,8 +37,9 @@ namespace Veng::Renderer
         constexpr u32 GroupSize = 8;
 
         // Mirrors FluidParams in fluid_common.slang field for field: the advect and sharpen kernels
-        // both include it. TimeStep carries the step scale, and Scale carries the sharpen strength
-        // (or the store's 1.0). Relaxation and Flags are inert for FlowField.
+        // both include it. TimeStep carries the step scale, Scale carries the sharpen strength
+        // (or the store's 1.0), and Flags carries the advect's filter choice. Relaxation is inert
+        // for FlowField.
         struct FlowPush
         {
             u32 Width;
@@ -50,6 +51,9 @@ namespace Veng::Renderer
             f32 Relaxation;
             u32 Flags;
         };
+
+        // Mirrors FluidFlagCubicAdvect in fluid_common.slang.
+        constexpr u32 FluidFlagCubicAdvect = 8u;
 
         constexpr u32 Groups(const u32 extent)
         {
@@ -259,7 +263,7 @@ namespace Veng::Renderer
     }
 
     void FlowField::Bind(CommandBuffer& cmd, const Ref<ComputePipeline>& pipeline,
-                         const Ref<DescriptorSet>& set, const f32 scale) const
+                         const Ref<DescriptorSet>& set, const f32 scale, const u32 flags) const
     {
         cmd.BindPipeline(pipeline);
         cmd.BindDescriptorSets(DescriptorSetBindInfo{
@@ -275,7 +279,7 @@ namespace Veng::Renderer
             .TimeStep = m_StepScale,
             .Scale = scale,
             .Relaxation = 0.0f,
-            .Flags = 0,
+            .Flags = flags,
         });
     }
 
@@ -323,7 +327,8 @@ namespace Veng::Renderer
     {
         cmd.PrepareForAccess(dye.View, AccessKind::SampleCompute);
         cmd.PrepareForAccess(m_ScratchView, AccessKind::StorageWrite);
-        Bind(cmd, m_AdvectPipeline, dye.AdvectSet, 1.0f);
+        Bind(cmd, m_AdvectPipeline, dye.AdvectSet, 1.0f,
+             m_AdvectFilter == FlowAdvectFilter::CatmullRom ? FluidFlagCubicAdvect : 0u);
         DispatchGrid(cmd);
 
         cmd.PrepareForAccess(m_ScratchView, AccessKind::SampleCompute);

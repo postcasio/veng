@@ -17,6 +17,20 @@ namespace Veng::Renderer
         Clamped,
     };
 
+    /// @brief How the advect's back-trace samples the source field.
+    enum class FlowAdvectFilter : u8
+    {
+        /// @brief The four-tap bilinear read — the default and the cheapest.
+        Bilinear,
+        /// @brief A sixteen-tap Catmull-Rom read, clamped to its inner four taps' range.
+        ///
+        /// For an advect run in many small sub-texel steps — a slowed live field — where
+        /// bilinear's per-resample blur outruns the transport: the cubic's negative lobes restore
+        /// what bilinear smears, and the clamp keeps their overshoot inside the neighbourhood's
+        /// own values. Four times the taps of the bilinear read.
+        CatmullRom,
+    };
+
     /// @brief The grid geometry a FlowField advects through — no images, no device state.
     struct FlowFieldShape
     {

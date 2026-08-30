@@ -144,6 +144,12 @@ namespace Veng::Renderer
         /// @brief How far one advect step moves the dye, per unit of velocity.
         [[nodiscard]] f32 GetStepScale() const { return m_StepScale; }
 
+        /// @brief Sets how the advect's back-trace samples the source field.
+        void SetAdvectFilter(const FlowAdvectFilter filter) { m_AdvectFilter = filter; }
+
+        /// @brief How the advect's back-trace samples the source field.
+        [[nodiscard]] FlowAdvectFilter GetAdvectFilter() const { return m_AdvectFilter; }
+
     private:
         FlowField(Context& context, AssetManager& assets, const FlowFieldInfo& info);
 
@@ -166,7 +172,7 @@ namespace Veng::Renderer
 
         /// @brief Binds a compute pipeline with its set-1 descriptor set and pushes the params.
         void Bind(CommandBuffer& cmd, const Ref<ComputePipeline>& pipeline,
-                  const Ref<DescriptorSet>& set, f32 scale) const;
+                  const Ref<DescriptorSet>& set, f32 scale, u32 flags = 0) const;
 
         /// @brief Records one dye's advection and its store back into the caller's image.
         void RecordDyeAdvect(CommandBuffer& cmd, const Dye& dye);
@@ -220,6 +226,8 @@ namespace Veng::Renderer
         FlowWrap m_WrapY = FlowWrap::Clamped;
         /// @brief How far one advect step moves the dye, per unit of velocity.
         f32 m_StepScale = 1.0f;
+        /// @brief How the advect's back-trace samples the source field.
+        FlowAdvectFilter m_AdvectFilter = FlowAdvectFilter::Bilinear;
         /// @brief Advections recorded over this instance's lifetime.
         u64 m_AdvectCount = 0;
     };

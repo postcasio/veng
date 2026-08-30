@@ -26,5 +26,7 @@ void csMain(uint3 id : SV_DispatchThreadID)
     float2 centre = float2(id.xy) + 0.5;
     float2 source = centre - g_Fluid.TimeStep * float2(velocity.x * metric, velocity.y);
 
-    g_Dest[texel] = FluidSampleBilinear(g_Source, source);
+    g_Dest[texel] = (g_Fluid.Flags & FluidFlagCubicAdvect) != 0u
+                        ? FluidSampleCatmullRom(g_Source, source)
+                        : FluidSampleBilinear(g_Source, source);
 }
