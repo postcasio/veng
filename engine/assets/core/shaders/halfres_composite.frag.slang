@@ -19,6 +19,13 @@ struct PushConstants
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
 
+// The largest per-channel radiance a single half-res tap may contribute. The layer composites into
+// the lit colour ahead of the bloom bright-pass, so one blown-out texel — a grazing-limb sample a
+// half-res footprint magnifies across its whole 2x2 — would bloom across the frame, and the
+// bounded-average below faithfully passes through any value it is handed. This caps that without
+// touching ordinary content, which sits orders of magnitude under it. A first value, tunable.
+static const float HalfResLayerMaxRadiance = 64.0;
+
 struct VSOutput
 {
     float4 sv_position : SV_Position;
@@ -64,8 +71,18 @@ float4 fsMain(VSOutput input) : SV_Target
         const float relDiff =
             abs(ownDepth - tapDepth) / max(min(ownDepth, tapDepth), 1e-6);
         const float depthWeight = 1.0 / (0.1 + min(relDiff, 10.0));
+        // Sanitize the tap before it is weighted in: a non-finite value (a NaN from a degenerate
+        // grazing-limb shell evaluation) would propagate through accum/totalWeight as a flickering
+        // bright pixel, and a runaway HDR spike would bloom. Zero the non-finite, cap the finite.
+        float4 tap = layer.Load(int3(coord, 0));
+        if (any(isnan(tap)) || any(isinf(tap)))
+        {
+            tap = float4(0.0, 0.0, 0.0, 0.0);
+        }
+        tap.rgb = min(tap.rgb, float3(HalfResLayerMaxRadiance, HalfResLayerMaxRadiance,
+                                      HalfResLayerMaxRadiance));
         const float weight = bilinear[i] * depthWeight;
-        accum += layer.Load(int3(coord, 0)) * weight;
+        accum += tap * weight;
         totalWeight += weight;
     }
     if (totalWeight <= 0.0)
