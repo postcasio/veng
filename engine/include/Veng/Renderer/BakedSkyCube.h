@@ -231,11 +231,16 @@ namespace Veng::Renderer
         /// across the frame budget, so a heavy multi-layer sky never blocks a frame. RecordAmortized
         /// copies the finished composite into the displayed cube on completion. Supersedes any bake
         /// still in flight.
-        /// @param service The service the job runs through.
-        /// @param layers  The ordered layer stack; each layer's material must stay resident with its
-        ///                param block uploaded until the bake completes.
+        /// @param service  The service the job runs through.
+        /// @param layers   The ordered layer stack; each layer's material must stay resident with its
+        ///                 param block uploaded until the bake completes.
+        /// @param cacheKey The key the finished composite is stored under in the service's attached
+        ///                 cache, or empty for an uncached bake. The caller composes it from
+        ///                 everything the composite depends on that the cache's generation does not;
+        ///                 a hit restores the stored texels and the layer march never runs.
         /// @pre Every layer's material is a MaterialDomain::Sky material.
-        void RequestBake(GeneratedTextureService& service, std::span<const SkyBakeLayer> layers);
+        void RequestBake(GeneratedTextureService& service, std::span<const SkyBakeLayer> layers,
+                         string cacheKey = {});
 
         /// @brief Requests an amortized bake of the procedural atmosphere into the scratch cube.
         ///

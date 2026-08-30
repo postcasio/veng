@@ -791,7 +791,7 @@ namespace Veng::Renderer
     }
 
     void BakedSkyCube::RequestBake(GeneratedTextureService& service,
-                                   const std::span<const SkyBakeLayer> layers)
+                                   const std::span<const SkyBakeLayer> layers, string cacheKey)
     {
         VE_ASSERT(!layers.empty(), "BakedSkyCube::RequestBake: a bake needs at least one layer");
         EnsureLayerPipelines(layers);
@@ -863,6 +863,7 @@ namespace Veng::Renderer
                 .ProducerAccess = AccessKind::ColorAttachment,
                 .SampledViewType = ImageViewType::Cube,
             }},
+            .CacheKey = std::move(cacheKey),
             .TickCount = tickCount,
             .OnTick =
                 [this, render = std::move(render), perLayer, baseDivisor, coarseFaceSize,
