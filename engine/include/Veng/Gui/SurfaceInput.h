@@ -94,20 +94,23 @@ namespace Veng::Gui
                                               PointerEventKind kind,
                                               PointerButton button = PointerButton::Primary);
 
-    /// @brief The router consumer that routes world-ray pointers into interactive world panels.
+    /// @brief The router consumer that routes UI-owned input into interactive world panels.
     ///
     /// The world-space analogue of GuiConsumer: registered once with the InputRouter, it routes each
-    /// UI-owned pointer event into the interactive GuiSurfaces participating this frame. A surface
-    /// participates only while a Registration is held — the game creates one alongside the SeatFocusScope
-    /// it opens on the surface's seat, so a panel is a router consumer exactly while it is interactive
-    /// and drops out when the scope (and the registration) close. Each registration supplies the panel's
-    /// live placement and pointer ray through callbacks pulled per event, so a moving panel or camera
-    /// resolves correctly.
+    /// UI-owned event — pointer, wheel, keyboard, text-edit, and typed text — into the interactive
+    /// GuiSurfaces participating this frame, so a text field on a world panel is edited exactly as a
+    /// screen-space one is. A surface participates only while a Registration is held — the game creates
+    /// one alongside the SeatFocusScope it opens on the surface's seat, so a panel is a router consumer
+    /// exactly while it is interactive and drops out when the scope (and the registration) close. Each
+    /// registration supplies the panel's live placement and pointer ray through callbacks pulled per
+    /// event, so a moving panel or camera resolves correctly.
     ///
-    /// Routing is scoped to the seat: a surface receives a pointer only while its seat's focus top is UI
+    /// Routing is scoped to the seat: a surface receives input only while its seat's focus top is UI
     /// (the SeatFocusScope's takeover), so in split-screen a seat's in-world menu owns only that seat's
-    /// devices. When several participating panels lie under one ray, the nearest hit wins (the only
-    /// world-space arbitration; a richer policy is not modeled). The router must outlive the consumer.
+    /// devices. A pointer or wheel event names a world point, so when several participating panels lie
+    /// under one ray the nearest hit wins (the only world-space arbitration; a richer policy is not
+    /// modeled); a keyboard or text event carries no point, so it routes to the participating panels in
+    /// registration order and stops at the first that consumes. The router must outlive the consumer.
     class SurfaceInputConsumer final : public InputConsumer
     {
     public:
@@ -165,13 +168,35 @@ namespace Veng::Gui
                                             function<SurfacePlacement()> placement,
                                             function<optional<Ray>()> ray);
 
-        /// @brief Offers one UI-owned pointer event to the participating world panels.
+        /// @brief Offers one UI-owned event to the participating world panels.
+        ///
+        /// Pointer and wheel events route by the nearest ray hit; keyboard, text-edit and typed-text
+        /// events route to the participating panels in registration order, stopping at the first that
+        /// consumes — the world-space mirror of the screen-space GuiConsumer's routing.
         /// @param event  The event to route.
         /// @return True when a panel consumed the event, stopping the fall-through.
         bool ForwardEvent(const Event& event) override;
 
     private:
         void Unregister(RegistrationId id);
+
+        struct Entry;
+
+        /// @brief Whether an entry participates in this frame's routing.
+        ///
+        /// True only while the surface's seat holds UI focus (the SeatFocusScope's takeover) and its
+        /// document has been opened interactive — the gate every routed event shares.
+        /// @param entry  The entry to test.
+        /// @return True when the entry's document should receive routed input.
+        [[nodiscard]] bool IsParticipating(const Entry& entry) const;
+
+        /// @brief The nearest participating surface under the shared pointer ray.
+        ///
+        /// Intersects each participating entry's live ray with its panel and keeps the nearest hit —
+        /// the only world-space arbitration when overlapping panels lie under one ray.
+        /// @param hit  Filled with the winning entry's ray hit; untouched when none is found.
+        /// @return The nearest participating entry, or nullptr when none is under the ray.
+        Entry* HitTestNearest(SurfaceRayHit& hit);
 
         /// @brief One participating surface: its document sink, seat gate, and live placement/ray.
         struct Entry

@@ -3,6 +3,7 @@
 #include <Veng/Event.h>
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/Surface.h>
+#include <Veng/Input.h>
 #include <Veng/InputEvents.h>
 #include <Veng/InputRouter.h>
 
@@ -28,6 +29,83 @@ namespace Veng::Gui
                 return PointerButton::Middle;
             }
             return PointerButton::Primary;
+        }
+
+        // Maps a GLFW modifier bitfield to the Gui modifier vocabulary. The bits are GLFW's own
+        // (SHIFT/CONTROL/ALT/SUPER), the same field the pointer and ImGui sinks read.
+        InputModifiers ToInputModifiers(i32 mods)
+        {
+            InputModifiers result = InputModifiers::None;
+            if ((mods & 0x0001) != 0)
+            {
+                result = result | InputModifiers::Shift;
+            }
+            if ((mods & 0x0002) != 0)
+            {
+                result = result | InputModifiers::Control;
+            }
+            if ((mods & 0x0004) != 0)
+            {
+                result = result | InputModifiers::Alt;
+            }
+            if ((mods & 0x0008) != 0)
+            {
+                result = result | InputModifiers::Meta;
+            }
+            return result;
+        }
+
+        // One wheel notch, in document points — the screen-space consumer's constant, so a panel
+        // answers a flick the same whether it is composited as an overlay or mapped onto a mesh.
+        constexpr f32 WheelNotchPoints = 56.0f;
+
+        // Maps a navigation key to its NavAction, or nullopt when the key is not a navigation key.
+        optional<NavAction> ToNavAction(Key key, bool shift)
+        {
+            switch (key)
+            {
+            case Key::Up:
+                return NavAction::MoveUp;
+            case Key::Down:
+                return NavAction::MoveDown;
+            case Key::Left:
+                return NavAction::MoveLeft;
+            case Key::Right:
+                return NavAction::MoveRight;
+            case Key::Tab:
+                return shift ? NavAction::Previous : NavAction::Next;
+            case Key::Enter:
+            case Key::Space:
+                return NavAction::Confirm;
+            case Key::Escape:
+                return NavAction::Cancel;
+            default:
+                return std::nullopt;
+            }
+        }
+
+        // Maps an editing key to its TextEditAction, or nullopt when the key edits no text. These
+        // carry no character, so they never reach a field through the typed-text route and need this
+        // key-press mapping to reach it at all.
+        optional<TextEditAction> ToTextEditAction(Key key)
+        {
+            switch (key)
+            {
+            case Key::Backspace:
+                return TextEditAction::DeleteBackward;
+            case Key::Delete:
+                return TextEditAction::DeleteForward;
+            case Key::Left:
+                return TextEditAction::CaretLeft;
+            case Key::Right:
+                return TextEditAction::CaretRight;
+            case Key::Home:
+                return TextEditAction::CaretHome;
+            case Key::End:
+                return TextEditAction::CaretEnd;
+            default:
+                return std::nullopt;
+            }
         }
 
         // Builds a document-local pointer event of the given kind and dispatches it into the
@@ -190,46 +268,27 @@ namespace Veng::Gui
         }
     }
 
-    bool SurfaceInputConsumer::ForwardEvent(const Event& event)
+    bool SurfaceInputConsumer::IsParticipating(const Entry& entry) const
     {
-        const EventType type = event.GetEventType();
-        if (type != EventType::MouseMoved && type != EventType::MouseButtonPressed &&
-            type != EventType::MouseButtonReleased)
+        // The seat gate: an unseated panel is display-only, so the adapter is never consulted. Route
+        // only while the seat's focus top is UI (the SeatFocusScope's takeover) and the document has
+        // been opened interactive — the same gate the screen-space consumer applies.
+        const Entity seat = entry.Surface->Seat;
+        if (seat == Entity::Null || m_Router.GetFocus(seat) != InputFocus::UI)
         {
             return false;
         }
+        const Document* const document = entry.Surface->GetDocument();
+        return document != nullptr && document->IsInteractive();
+    }
 
-        PointerEventKind kind = PointerEventKind::Move;
-        PointerButton button = PointerButton::Primary;
-        if (type == EventType::MouseButtonPressed)
-        {
-            kind = PointerEventKind::Down;
-            button =
-                ToPointerButton(static_cast<const MouseButtonPressedEvent&>(event).GetButton());
-        }
-        else if (type == EventType::MouseButtonReleased)
-        {
-            kind = PointerEventKind::Up;
-            button =
-                ToPointerButton(static_cast<const MouseButtonReleasedEvent&>(event).GetButton());
-        }
-
-        // Across every participating panel whose seat holds UI focus, the nearest ray hit wins — the
-        // only world-space arbitration when overlapping panels lie under one pointer ray.
+    SurfaceInputConsumer::Entry* SurfaceInputConsumer::HitTestNearest(SurfaceRayHit& hit)
+    {
         Entry* nearest = nullptr;
         SurfaceRayHit nearestHit{};
         for (Entry& entry : m_Entries)
         {
-            // The seat gate: an unseated panel is display-only, so the adapter is never consulted.
-            // Route only while the seat's focus top is UI (the SeatFocusScope's takeover) and the
-            // document has been opened interactive — the same gate the screen-space consumer applies.
-            const Entity seat = entry.Surface->Seat;
-            if (seat == Entity::Null || m_Router.GetFocus(seat) != InputFocus::UI)
-            {
-                continue;
-            }
-            const Document* const document = entry.Surface->GetDocument();
-            if (document == nullptr || !document->IsInteractive())
+            if (!IsParticipating(entry))
             {
                 continue;
             }
@@ -238,23 +297,126 @@ namespace Veng::Gui
             {
                 continue;
             }
-            const optional<SurfaceRayHit> hit =
+            const optional<SurfaceRayHit> entryHit =
                 IntersectSurface(*ray, entry.Placement(), vec2(entry.Surface->Resolution));
-            if (!hit)
+            if (!entryHit)
             {
                 continue;
             }
-            if (nearest == nullptr || hit->Distance < nearestHit.Distance)
+            if (nearest == nullptr || entryHit->Distance < nearestHit.Distance)
             {
                 nearest = &entry;
-                nearestHit = *hit;
+                nearestHit = *entryHit;
             }
         }
-
-        if (nearest == nullptr)
+        if (nearest != nullptr)
         {
+            hit = nearestHit;
+        }
+        return nearest;
+    }
+
+    bool SurfaceInputConsumer::ForwardEvent(const Event& event)
+    {
+        const EventType type = event.GetEventType();
+
+        // A pointer or wheel event names a point in the world, so it routes by the nearest ray hit.
+        if (type == EventType::MouseMoved || type == EventType::MouseButtonPressed ||
+            type == EventType::MouseButtonReleased || type == EventType::MouseScrolled)
+        {
+            SurfaceRayHit hit{};
+            Entry* const nearest = HitTestNearest(hit);
+            if (nearest == nullptr)
+            {
+                return false;
+            }
+            Document* const document = nearest->Surface->GetDocument();
+
+            // The wheel is not a pointer transition: it names a scrollable box at the hit point and
+            // takes its own dispatch. The wheel's y is positive away from the user where a scroll
+            // offset grows downward, so the sign flips here — once, at the seam.
+            if (type == EventType::MouseScrolled)
+            {
+                const vec2 turn = static_cast<const MouseScrolledEvent&>(event).GetOffset();
+                const vec2 delta = vec2(turn.x, -turn.y) * WheelNotchPoints;
+                return document->DispatchScroll(hit.DocumentPoint, delta);
+            }
+
+            PointerEventKind kind = PointerEventKind::Move;
+            PointerButton button = PointerButton::Primary;
+            if (type == EventType::MouseButtonPressed)
+            {
+                kind = PointerEventKind::Down;
+                button =
+                    ToPointerButton(static_cast<const MouseButtonPressedEvent&>(event).GetButton());
+            }
+            else if (type == EventType::MouseButtonReleased)
+            {
+                kind = PointerEventKind::Up;
+                button = ToPointerButton(
+                    static_cast<const MouseButtonReleasedEvent&>(event).GetButton());
+            }
+            return DispatchDocumentPointer(*nearest->Surface, hit.DocumentPoint, kind, button);
+        }
+
+        // A key carries no world point, so it routes to the participating panels in registration
+        // order, stopping at the first that consumes — the focused text field or focus navigation.
+        // An editing key is offered to the field first (a caret step or a codepoint deletion); a
+        // navigation key then drives focus. A platform auto-repeat takes the editing route and only
+        // it — focus is a discrete choice of element and must not skate through the focus order.
+        if (type == EventType::KeyPressed || type == EventType::KeyRepeat)
+        {
+            const bool repeat = type == EventType::KeyRepeat;
+            const Key code = repeat ? static_cast<const KeyRepeatEvent&>(event).GetKey()
+                                    : static_cast<const KeyPressedEvent&>(event).GetKey();
+            if (const optional<TextEditAction> edit = ToTextEditAction(code))
+            {
+                for (const Entry& entry : m_Entries)
+                {
+                    if (IsParticipating(entry) &&
+                        entry.Surface->GetDocument()->DispatchTextEdit(*edit))
+                    {
+                        return true;
+                    }
+                }
+            }
+            if (repeat)
+            {
+                return false;
+            }
+            const InputModifiers modifiers =
+                ToInputModifiers(static_cast<const KeyPressedEvent&>(event).GetMods());
+            const optional<NavAction> action =
+                ToNavAction(code, HasModifier(modifiers, InputModifiers::Shift));
+            if (!action)
+            {
+                return false;
+            }
+            for (const Entry& entry : m_Entries)
+            {
+                if (IsParticipating(entry) &&
+                    entry.Surface->GetDocument()->Navigate(*action, modifiers))
+                {
+                    return true;
+                }
+            }
             return false;
         }
-        return DispatchDocumentPointer(*nearest->Surface, nearestHit.DocumentPoint, kind, button);
+
+        // A typed character reaches the focused element's text input.
+        if (type == EventType::KeyTyped)
+        {
+            const u32 codepoint = static_cast<const KeyTypedEvent&>(event).GetCodepoint();
+            for (const Entry& entry : m_Entries)
+            {
+                if (IsParticipating(entry) && entry.Surface->GetDocument()->DispatchText(codepoint))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        return false;
     }
 }

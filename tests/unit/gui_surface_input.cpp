@@ -189,6 +189,59 @@ TEST_CASE("gui surface seat gate: a panel is display-only until a seat + SeatFoc
     router.PopFocus(gameplay);
 }
 
+TEST_CASE(
+    "gui surface adapter: typed text and editing keys reach the focused field through the consumer")
+{
+    // A text field on a world panel is edited over the router consumer, not the document directly:
+    // a KeyTyped inserts a codepoint and a Backspace deletes one, both routed by ForwardEvent under
+    // the same seat gate the pointer takes. A caret-less editing key carries no character, so it
+    // reaches the field only through the KeyPressed → DispatchTextEdit route this asserts — the half
+    // of the world-space adapter a pointer-only forward never covered.
+    Unique<Document> docOwner = CreateUnique<Document>();
+    Document* const doc = docOwner.get();
+    doc->SetInteractive(true);
+    Element& root = doc->Root();
+    PlaceAt(root, {0, 0}, {200, 200});
+    Element& input = doc->Add(root, ElementKind::TextInput);
+    PlaceAt(input, {0, 0}, {200, 40});
+    doc->InitWidget(input);
+    doc->SetFocus(&input);
+
+    // Moving the Unique into the surface transfers ownership without moving the Document object, so
+    // `input` stays a live reference the assertions read back.
+    GuiSurface surface;
+    surface.Resolution = {200, 200};
+    const Entity seat{.Index = 4, .Generation = 1};
+    surface.Seat = seat;
+    surface.SetDocument(std::move(docOwner));
+
+    Input inputDevice(nullptr);
+    const Renderer::ViewportRegistry registry;
+    InputRouter router(nullptr, inputDevice, registry);
+    SurfaceInputConsumer consumer(router);
+    const SurfacePlacement placement = UnitPanel();
+    const Ray ray = AimedRay();
+    auto reg = consumer.Register(
+        surface, [&] { return placement; }, [&]() -> optional<Ray> { return ray; });
+
+    // A gameplay-focused seat gates the keystroke out exactly as it gates a pointer.
+    const FocusToken gameplay = router.PushFocus(seat, InputFocus::Gameplay);
+    CHECK_FALSE(consumer.ForwardEvent(KeyTypedEvent('X')));
+    CHECK(input.Text.empty());
+
+    // Opening a SeatFocusScope flips the seat's focus top to UI, so the field now receives input.
+    const SeatFocusScope scope(router, InputSeat{.Viewer = seat, .World = nullptr}, nullptr);
+
+    // Interactive document + UI-focused seat: a typed character routes into the focused field.
+    CHECK(consumer.ForwardEvent(KeyTypedEvent('H')));
+    CHECK(consumer.ForwardEvent(KeyTypedEvent('i')));
+    CHECK(input.Text == "Hi");
+
+    // Backspace carries no character: it reaches the field only as a key press mapped to an edit.
+    CHECK(consumer.ForwardEvent(KeyPressedEvent(Key::Backspace, 0, 0)));
+    CHECK(input.Text == "H");
+}
+
 TEST_CASE("gui surface focus nav: gamepad directional navigation needs the seat, not the ray")
 {
     // A gamepad-driven in-world menu needs only the seat + scope, not the coordinate adapter — the
