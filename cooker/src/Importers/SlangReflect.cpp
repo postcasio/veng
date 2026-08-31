@@ -61,9 +61,10 @@ namespace Veng::Cook
 
             ReflectedStructField result;
             result.Name = field->getName();
-            result.Offset = static_cast<u32>(field->getOffset(slang::ParameterCategory::Uniform));
-            result.Size = static_cast<u32>(
-                field->getTypeLayout()->getSize(slang::ParameterCategory::Uniform));
+            // Offset is assigned by the caller from a running cursor (scalar/tight layout, below).
+            // Size is the component span: every reflectable member is a float/uint scalar or a
+            // 2/3/4 vector, so its width is componentCount 4-byte components with no padding.
+            result.Size = componentCount * 4;
             result.ComponentCount = componentCount;
             result.IsFloat = isFloat;
             return result;
@@ -312,19 +313,29 @@ namespace Veng::Cook
                                                slangSource.Path.string(), structName));
         }
 
+        // The material-param block is read shader-side with g_MaterialParams.Load<MaterialParams>()
+        // on a ByteAddressBuffer, which lays the struct out in scalar/tight layout: each field 4-byte
+        // aligned, packed contiguously, with no 16-byte vector alignment. Reflect that same layout by
+        // assigning each field the running byte cursor rather than the std140/uniform offset — the
+        // uniform offset 16-aligns vectors and so disagrees with the Load a vector placed after a
+        // scalar reads. Every reflectable member is a 4-byte-component scalar or vector, so the tight
+        // layout never inserts padding and the struct size is the cursor's final value.
         ReflectedStruct result;
-        result.Size = static_cast<u32>(typeLayout->getSize(slang::ParameterCategory::Uniform));
         result.Fields.reserve(typeLayout->getFieldCount());
+        u32 cursor = 0;
         for (unsigned i = 0; i < typeLayout->getFieldCount(); ++i)
         {
-            const Result<ReflectedStructField> field =
+            Result<ReflectedStructField> field =
                 ReflectField(typeLayout->getFieldByIndex(i), structName);
             if (!field)
             {
                 return std::unexpected(field.error());
             }
+            field->Offset = cursor;
+            cursor += field->Size;
             result.Fields.push_back(*field);
         }
+        result.Size = cursor;
 
         return result;
     }

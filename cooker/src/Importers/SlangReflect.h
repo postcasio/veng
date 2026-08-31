@@ -23,9 +23,11 @@ namespace Veng::Cook
     {
         /// @brief Field name as declared in the Slang source.
         string Name;
-        /// @brief Byte offset of the field within its containing struct.
+        /// @brief Byte offset of the field within its containing struct, in scalar/tight layout
+        /// (the layout a shader's ByteAddressBuffer.Load<T> reads — 4-byte packed, vectors not
+        /// 16-aligned).
         u32 Offset = 0;
-        /// @brief Byte size of the field.
+        /// @brief Byte size of the field: componentCount 4-byte components, no padding.
         u32 Size = 0;
         /// @brief Component count: 1 for scalar, 2/3/4 for vector.
         u32 ComponentCount = 1;
@@ -36,7 +38,8 @@ namespace Veng::Cook
     /// @brief A reflected struct: total byte size and fields in declaration order.
     struct ReflectedStruct
     {
-        /// @brief Total byte size of the struct under uniform layout.
+        /// @brief Total byte size of the struct in scalar/tight layout — the sum of the fields'
+        /// component spans, matching the byte extent a ByteAddressBuffer.Load<T> reads.
         u32 Size = 0;
         /// @brief Fields in declaration order.
         vector<ReflectedStructField> Fields;

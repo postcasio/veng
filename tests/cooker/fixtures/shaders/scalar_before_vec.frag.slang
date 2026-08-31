@@ -1,0 +1,64 @@
+// Material fragment fixture whose MaterialParams places vectors *after* a scalar — the layout
+// that mispacked while the cooker reflected std140 (16-aligning a vector) but the shader reads
+// the block tight through Load<T>. Used by the material-cook test to assert the cooked offsets
+// are the scalar/tight ones Load<T> reads (Lead 0, Mid 4, Region 16, Count 32), not the
+// 16-aligned ones (which would put Mid at 16 and Region at 32).
+
+struct MaterialParams
+{
+    float  Lead;   // scalar first
+    float3 Mid;    // vec3 after a scalar — tight 4, std140 would be 16
+    float4 Region; // vec4 after the vec3 — tight 16, std140 would be 32
+    uint   Count;  // trailing scalar — tight 32, std140 would be 48
+};
+
+static const uint MaterialParamStride = 1024;
+
+[[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
+
+MaterialParams LoadMaterialParams(uint index)
+{
+    return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
+}
+
+struct GBufferOutput
+{
+    float4 Albedo   : SV_Target0;
+    float4 Normal   : SV_Target1;
+    float4 ORM      : SV_Target2;
+    float2 Velocity : SV_Target3;
+    float3 Emissive : SV_Target4;
+};
+
+struct PushConstants
+{
+    float4x4 MVP;
+    uint MaterialIndex;
+    uint Pad0;
+    uint Pad1;
+    uint Pad2;
+    float3x3 NormalMatrix;
+};
+
+[[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+
+struct VSOutput
+{
+    float4 sv_position : SV_Position;
+    float2 v_UV : TEXCOORD0;
+    float3 v_WorldNormal : NORMAL;
+};
+
+[shader("fragment")]
+GBufferOutput fsMain(VSOutput input)
+{
+    MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);
+
+    GBufferOutput output;
+    output.Albedo = p.Region * p.Lead + float4(p.Mid, float(p.Count));
+    output.Normal = float4(normalize(input.v_WorldNormal), 0.0);
+    output.ORM = float4(1.0, 1.0, 0.0, 0.0);
+    output.Velocity = float2(0.0, 0.0);
+    output.Emissive = float3(0.0);
+    return output;
+}

@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x0000000000001B59",
+      "type": "VertexLayout",
+      "source": "layouts/canonical.vlayout.json"
+    },
+    {
+      "id": "0x0000000000001005",
+      "type": "Shader",
+      "source": "shaders/brick.vert.shader.json"
+    },
+    {
+      "id": "0x000000000000106C",
+      "type": "Shader",
+      "source": "shaders/scalar_before_vec.frag.shader.json"
+    },
+    {
+      "id": "0x0000000000000C21",
+      "type": "Material",
+      "source": "materials/scalar_before_vec.vmat.json"
+    }
+  ]
+}

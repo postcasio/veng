@@ -2,17 +2,17 @@
 // through libveng_cook and checks the resulting CookedMaterialHeader +
 // CookedMaterialField table + single param block.
 //
-// material_data.slang:
-//   struct MaterialParams {            // the one block (handles + params)
-//     uint   Albedo;        // offset  0, size 4, Kind 1 (texture handle)
-//     uint   AlbedoSampler; // offset  4, size 4, Kind 2 (sampler handle)
-//     uint   Pad0;          // offset  8 — undeclared, not emitted as a field
-//     uint   Pad1;          // offset 12 — undeclared, not emitted as a field
-//     float4 Factors;       // offset 16, size 16, Kind 0 (param)
-//   };                      // total 32 bytes (BlockBytes)
+// The fixture fragment (brick.frag.slang) declares:
+//   struct MaterialParams {            // the one block (params + handles)
+//     float4 Factors;       // offset  0, size 16, Kind 0 (param)
+//     uint   Albedo;        // offset 16, size  4, Kind 1 (texture handle)
+//     uint   AlbedoSampler; // offset 20, size  4, Kind 2 (sampler handle)
+//   };                      // total 24 bytes (BlockBytes)
 //
-// Blob layout: CookedMaterialHeader → CookedMaterialField[3] → param block
-// (32 bytes). The pads are zeroed in the block but carry no field-table entry.
+// The block is packed in scalar/tight layout (the layout the shader's Load<T> reads), so
+// the offsets are contiguous and BlockBytes is the tight 24, not a 16-rounded 32.
+//
+// Blob layout: CookedMaterialHeader → CookedMaterialField[3] → param block (24 bytes).
 
 #include <cstring>
 #include <filesystem>
@@ -71,13 +71,12 @@ TEST_CASE("Cooker: cooks a material and validates the cooked blob layout")
     CHECK(header.FragmentShaderId == 4102ULL);
     CHECK(header.Version == CookedMaterialVersion);
     CHECK(header.FieldCount == 3);
-    CHECK(header.BlockBytes == 32);
+    CHECK(header.BlockBytes == 24);
 
-    // Blob: header + 3 fields + 32-byte param block. The fixture's MaterialParams leads with its
-    // float4 and follows with the two handle uints — 16 + 4 + 4 of members, and no alignment hole
-    // between any two of them; the block is 32 because the struct's own size rounds up to its
-    // largest member's alignment, which is a tail beyond every field rather than a gap inside.
-    const usize expectedSize = sizeof(CookedMaterialHeader) + 3 * sizeof(CookedMaterialField) + 32;
+    // Blob: header + 3 fields + 24-byte param block. The fixture's MaterialParams leads with its
+    // float4 and follows with the two handle uints — 16 + 4 + 4 of members, tightly packed with no
+    // hole between them and no rounded tail: scalar/tight layout is exactly the members' span.
+    const usize expectedSize = sizeof(CookedMaterialHeader) + 3 * sizeof(CookedMaterialField) + 24;
     REQUIRE(entry->Blob.size() == expectedSize);
 
     // --- Field table: the 3 declared fields, at the offsets reflection gives them ---
@@ -112,7 +111,8 @@ TEST_CASE("Cooker: cooks a material and validates the cooked blob layout")
     const u8* block =
         entry->Blob.data() + sizeof(CookedMaterialHeader) + 3 * sizeof(CookedMaterialField);
 
-    for (usize i = 16; i < 32; ++i)
+    // The two handle slots (Albedo at 16, AlbedoSampler at 20) are zeroed; the loader patches them.
+    for (usize i = 16; i < 24; ++i)
     {
         CHECK(block[i] == 0u);
     }
@@ -203,9 +203,8 @@ TEST_CASE("Cooker: material cook fails when the shader declares a field the mate
 
 TEST_CASE("Cooker: an authored param beyond Factors cooks into the authored block")
 {
-    // MaterialParams { uint Albedo; uint AlbedoSampler; uint Pad0; uint Pad1;
-    // float4 Factors; float Roughness; } — std430: handle uints at 0..12,
-    // Factors at 16, Roughness at 32.
+    // MaterialParams { float4 Factors; float Roughness; uint Albedo; uint AlbedoSampler; } —
+    // scalar/tight: Factors at 0, Roughness at 16, the two handles at 20 and 24; BlockBytes 28.
     const path packJson = FixtureDir / "material_ext_pack.json";
     const path outArchive = Veng::TestSupport::TempDir() / "veng_cooker_material_ext.vengpack";
 
@@ -273,7 +272,7 @@ TEST_CASE("Cooker: a handles-only material cooks with a zero-size authored block
 
     CHECK(header.FieldCount == 2); // Albedo + AlbedoSampler, no params
     CHECK(header.Version == CookedMaterialVersion);
-    CHECK(header.BlockBytes == 16); // four handle uints
+    CHECK(header.BlockBytes == 8); // two handle uints, tightly packed
 
     const auto* fieldTable = reinterpret_cast<const CookedMaterialField*>(
         entry->Blob.data() + sizeof(CookedMaterialHeader));
@@ -313,6 +312,103 @@ TEST_CASE("Cooker: a params-only material cooks with no handle fields")
     {
         CHECK(fieldTable[i].Kind == 0u); // every field is a param, no handle field
     }
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE("Cooker: a vector after a scalar packs at its tight offset, not a 16-aligned one")
+{
+    // The mispack regression. A MaterialParams that places a vector after a scalar is read
+    // shader-side by g_MaterialParams.Load<MaterialParams>() in scalar/tight layout — every field
+    // 4-byte packed, vectors not 16-aligned. The cooker must reflect that same layout, so the
+    // offset it packs a value at is the offset the shader reads it from. Under the old std140
+    // reflection the vectors 16-aligned: Mid would sit at 16 (not 4) and Region at 32 (not 16),
+    // and the write side and read side disagreed, so a vector after a scalar read garbage.
+    //
+    // struct MaterialParams { float Lead; float3 Mid; float4 Region; uint Count; } packs tight to
+    // Lead@0, Mid@4, Region@16, Count@32; BlockBytes 36.
+    const path packJson = FixtureDir / "material_scalar_before_vec_pack.json";
+    const path outArchive =
+        Veng::TestSupport::TempDir() / "veng_cooker_material_scalar_before_vec.vengpack";
+
+    const Result<ArchiveReader> reader = CookMaterialPack(packJson, outArchive);
+    REQUIRE(reader.has_value());
+
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0xC21});
+    REQUIRE(entry.has_value());
+
+    CookedMaterialHeader header{};
+    std::memcpy(&header, entry->Blob.data(), sizeof(header));
+    CHECK(header.Version == CookedMaterialVersion);
+    CHECK(header.FieldCount == 4);
+    CHECK(header.BlockBytes == 36);
+
+    const auto* fieldTable = reinterpret_cast<const CookedMaterialField*>(
+        entry->Blob.data() + sizeof(CookedMaterialHeader));
+
+    const CookedMaterialField* lead = nullptr;
+    const CookedMaterialField* mid = nullptr;
+    const CookedMaterialField* region = nullptr;
+    const CookedMaterialField* count = nullptr;
+    for (u32 i = 0; i < header.FieldCount; ++i)
+    {
+        const std::string_view name(fieldTable[i].Name);
+        if (name == "Lead")
+        {
+            lead = &fieldTable[i];
+        }
+        else if (name == "Mid")
+        {
+            mid = &fieldTable[i];
+        }
+        else if (name == "Region")
+        {
+            region = &fieldTable[i];
+        }
+        else if (name == "Count")
+        {
+            count = &fieldTable[i];
+        }
+    }
+    REQUIRE(lead != nullptr);
+    REQUIRE(mid != nullptr);
+    REQUIRE(region != nullptr);
+    REQUIRE(count != nullptr);
+
+    // The tight offsets Load<T> reads — the whole point of the fix.
+    CHECK(lead->Offset == 0u);
+    CHECK(lead->Size == 4u);
+    CHECK(mid->Offset == 4u);
+    CHECK(mid->Size == 12u);
+    CHECK(region->Offset == 16u);
+    CHECK(region->Size == 16u);
+    CHECK(count->Offset == 32u);
+    CHECK(count->Size == 4u);
+
+    // The authored values land at those offsets in the cooked block.
+    const u8* block = entry->Blob.data() + sizeof(CookedMaterialHeader) +
+                      header.FieldCount * sizeof(CookedMaterialField);
+
+    f32 lead0 = 0.0f;
+    std::memcpy(&lead0, block + lead->Offset, sizeof(f32));
+    CHECK(lead0 == doctest::Approx(3.0f));
+
+    f32 midv[3];
+    std::memcpy(midv, block + mid->Offset, sizeof(midv));
+    CHECK(midv[0] == doctest::Approx(0.1f));
+    CHECK(midv[1] == doctest::Approx(0.2f));
+    CHECK(midv[2] == doctest::Approx(0.3f));
+
+    f32 regionv[4];
+    std::memcpy(regionv, block + region->Offset, sizeof(regionv));
+    CHECK(regionv[0] == doctest::Approx(0.25f));
+    CHECK(regionv[1] == doctest::Approx(0.5f));
+    CHECK(regionv[2] == doctest::Approx(0.75f));
+    CHECK(regionv[3] == doctest::Approx(1.0f));
+
+    u32 countv = 0;
+    std::memcpy(&countv, block + count->Offset, sizeof(u32));
+    CHECK(countv == 7u);
 
     std::filesystem::remove(outArchive);
 }

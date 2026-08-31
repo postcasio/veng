@@ -1,0 +1,12 @@
+{
+  "shaders": {
+    "vertex": "0x0000000000001005",
+    "fragment": "0x000000000000106C"
+  },
+  "fields": [
+    { "name": "Lead", "type": "float", "value": 3.0 },
+    { "name": "Mid", "type": "vec3", "value": [ 0.1, 0.2, 0.3 ] },
+    { "name": "Region", "type": "vec4", "value": [ 0.25, 0.5, 0.75, 1.0 ] },
+    { "name": "Count", "type": "uint", "value": 7 }
+  ]
+}

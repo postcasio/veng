@@ -651,11 +651,10 @@ namespace Veng::Cook
         // surface drew wrong with nothing naming the missing line. The opposite direction has always
         // been an error, so this closes the pair.
         //
-        // **The rule is total: there is no exemption for padding.** A struct needing an alignment
-        // pad can be ordered so that it does not — members widest-first, the float4s ahead of the
-        // handle uints — and every struct in the tree now is. Exempting a spelling instead would put
-        // a hole in the contract exactly where a real parameter could hide in it, and would make the
-        // convention load-bearing for correctness rather than for tidiness.
+        // **The rule is total: there is no exemption for padding.** The block is packed in scalar/
+        // tight layout (SlangReflect), the same layout the shader's Load<T> reads, so a struct needs
+        // no alignment pad and field order carries no correctness weight. Exempting an undeclared
+        // spelling would put a hole in the contract exactly where a real parameter could hide.
         {
             string undeclared;
             for (const ReflectedStructField& reflField : blockReflected->Fields)

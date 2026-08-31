@@ -414,8 +414,13 @@ default-instance id needed for the preview).
 A material instance's GPU parameters are **one reflection-sized block** per instance (set 0
 binding 4, byte-addressed at `index * MaterialParamStride`): its bindless handle slots (`uint`
 members seeded from the parent and overridden by a texture override) and its authored
-scalar/vector params share that single block, laid out by reflection at each field's offset. There
-is no fixed engine struct and no second SSBO — a material declares an arbitrary, shader-defined
+scalar/vector params share that single block, laid out by reflection at each field's offset in
+**scalar/tight layout** — the exact byte layout a shader's `g_MaterialParams.Load<MaterialParams>()`
+reads (4-byte packed, vectors *not* 16-aligned), so the offset the cook packs a value at is the
+offset the shader reads it from regardless of field order. (The cooker reflects that layout
+directly rather than the std140 uniform layout, whose 16-byte vector alignment would disagree with
+the `Load` for any vector placed after a scalar — see `cooker/src/Importers/SlangReflect.cpp`.)
+There is no fixed engine struct and no second SSBO — a material declares an arbitrary, shader-defined
 handle set (zero, one, or several), and `CookedMaterialField::Kind` (handle vs. param) is the seam
 the loader patches by offset. `CookedMaterialHeader` carries `Version` (`CookedMaterialVersion`),
 `Domain`, and `BlockBytes`; a stale blob rejects loudly. `Material::GetFields()` (delegated by
