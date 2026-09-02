@@ -25,8 +25,8 @@ namespace Veng
     struct VisibleMesh;
     void ComputeWorldMatrices(const Scene& scene, vector<mat4>& out);
     AABB SceneBounds(const Scene& scene);
-    void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds,
-                      Entity exclude);
+    void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds, Entity exclude,
+                      u32 layerMask);
 
     /// @brief Runtime ECS world: a generational entity free-list plus one type-erased sparse-set pool per component type.
     ///
@@ -756,7 +756,7 @@ namespace Veng
         friend void ComputeWorldMatrices(const Scene& scene, vector<mat4>& out);
         friend AABB SceneBounds(const Scene& scene);
         friend void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds,
-                                 Entity exclude);
+                                 Entity exclude, u32 layerMask);
     };
 
     /// @brief Range iterable returned by Scene::View\<Ts...\>().

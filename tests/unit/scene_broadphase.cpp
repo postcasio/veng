@@ -18,6 +18,7 @@
 #include <Veng/Renderer/Context.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/RenderLayer.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneBroadphase.h>
 #include <Veng/Scene/Visibility.h>
@@ -121,7 +122,7 @@ TEST_CASE("SceneBroadphase: Cull equals the linear tight scan, ascending, over m
     TypeRegistry types;
     RegisterBuiltins(types);
 
-    AssetManager manager(context, tasks, types);
+    const AssetManager manager(context, tasks, types);
     Unique<Scene> scene = Scene::Create(types);
 
     const AssetHandle<Mesh> mesh =
@@ -161,7 +162,7 @@ TEST_CASE("SceneBroadphase: Cull appends to caller scratch, never clears it")
     TypeRegistry types;
     RegisterBuiltins(types);
 
-    AssetManager manager(context, tasks, types);
+    const AssetManager manager(context, tasks, types);
     Unique<Scene> scene = Scene::Create(types);
 
     const AssetHandle<Mesh> mesh =
@@ -191,7 +192,7 @@ TEST_CASE("SceneBroadphase: version gate — a second Sync of an unmutated scene
     TypeRegistry types;
     RegisterBuiltins(types);
 
-    AssetManager manager(context, tasks, types);
+    const AssetManager manager(context, tasks, types);
     Unique<Scene> scene = Scene::Create(types);
 
     const AssetHandle<Mesh> mesh =
@@ -219,6 +220,46 @@ TEST_CASE("SceneBroadphase: version gate — a second Sync of an unmutated scene
     CHECK(scene->GetSpatialVersion() == v1);
 }
 
+TEST_CASE("SceneBroadphase: a changed layer mask forces a rebuild without a spatial mutation")
+{
+    Renderer::Context context;
+    TaskSystem tasks;
+    TypeRegistry types;
+    RegisterBuiltins(types);
+
+    const AssetManager manager(context, tasks, types);
+    Unique<Scene> scene = Scene::Create(types);
+
+    const AssetHandle<Mesh> mesh =
+        manager.Adopt<Mesh>(BoundsMesh(AABB{.Min = vec3(-0.5f), .Max = vec3(0.5f)}));
+
+    const Entity ordinary = scene->CreateEntity();
+    scene->Add<Transform>(ordinary, Transform{});
+    scene->Add<MeshRenderer>(ordinary, MeshRenderer{.Mesh = mesh, .Layer = RenderLayer::Default});
+
+    const Entity anchored = scene->CreateEntity();
+    scene->Add<Transform>(anchored, Transform{.Position = vec3(3.0f, 0.0f, 0.0f)});
+    scene->Add<MeshRenderer>(anchored,
+                             MeshRenderer{.Mesh = mesh, .Layer = RenderLayer::ViewAnchored});
+
+    SceneBroadphase broadphase;
+    broadphase.Sync(*scene);
+    REQUIRE(broadphase.DidRebuildLastSync());
+    CHECK(broadphase.GetCandidates().size() == 2);
+
+    // Like the exclude, the mask is a view property that moves no spatial version, so it is its own
+    // rebuild trigger — and the narrowed gather drops the view-anchored candidate.
+    const u64 version = scene->GetSpatialVersion();
+    broadphase.Sync(*scene, Entity::Null, DefaultEnvironmentCaptureLayers);
+    CHECK(broadphase.DidRebuildLastSync());
+    CHECK(broadphase.GetCandidates().size() == 1);
+    CHECK(scene->GetSpatialVersion() == version);
+
+    // Re-syncing with the same mask is the cheap version compare again.
+    broadphase.Sync(*scene, Entity::Null, DefaultEnvironmentCaptureLayers);
+    CHECK_FALSE(broadphase.DidRebuildLastSync());
+}
+
 TEST_CASE("SceneBroadphase: every spatial mutation rebuilds and the tree stays correct")
 {
     Renderer::Context context;
@@ -226,7 +267,7 @@ TEST_CASE("SceneBroadphase: every spatial mutation rebuilds and the tree stays c
     TypeRegistry types;
     RegisterBuiltins(types);
 
-    AssetManager manager(context, tasks, types);
+    const AssetManager manager(context, tasks, types);
     Unique<Scene> scene = Scene::Create(types);
 
     const AssetHandle<Mesh> mesh =
@@ -317,7 +358,7 @@ TEST_CASE("SceneBroadphase: a mesh becoming resident between frames enters the t
     TypeRegistry types;
     RegisterBuiltins(types);
 
-    AssetManager manager(context, tasks, types);
+    const AssetManager manager(context, tasks, types);
     Unique<Scene> scene = Scene::Create(types);
 
     // One genuinely resident mesh, plus one whose handle is held but not yet loaded:
@@ -373,7 +414,7 @@ TEST_CASE("SceneBroadphase: per-submesh leaves — a frustum drops one submesh o
     TypeRegistry types;
     RegisterBuiltins(types);
 
-    AssetManager manager(context, tasks, types);
+    const AssetManager manager(context, tasks, types);
     Unique<Scene> scene = Scene::Create(types);
 
     // One wide mesh, two submeshes well separated on X: the left around x=-20, the
@@ -441,7 +482,7 @@ TEST_CASE("SceneBroadphase: the caster bound excludes non-casting meshes")
     TypeRegistry types;
     RegisterBuiltins(types);
 
-    AssetManager manager(context, tasks, types);
+    const AssetManager manager(context, tasks, types);
     Unique<Scene> scene = Scene::Create(types);
 
     const AssetHandle<Mesh> mesh =

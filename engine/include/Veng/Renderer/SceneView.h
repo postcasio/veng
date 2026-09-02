@@ -12,6 +12,7 @@
 
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Entity.h>
+#include <Veng/Scene/RenderLayer.h>
 #include <Veng/Scene/Visibility.h>
 
 #include <array>
@@ -81,6 +82,14 @@ namespace Veng::Renderer
         /// not a visibility mask: the one caller that sets it is a capture whose output feeds a
         /// surface, because a surface is not part of its own environment (see CaptureView::Exclude).
         Entity Exclude = Entity::Null;
+
+        /// @brief Render layers this view draws; a renderer whose MeshRenderer::Layer bit is clear is
+        ///        omitted from the gather (colour, depth and scene bound alike).
+        ///
+        /// AllRenderLayers (the default) draws every layer, so an ordinary camera view is unchanged.
+        /// A view that omits a layer — an environment capture dropping RenderLayer::ViewAnchored — is
+        /// the one caller that narrows it (see CaptureView::VisibleLayers).
+        u32 VisibleLayers = AllRenderLayers;
 
         /// @brief Interpolation fraction into the next Sim tick, in [0, 1).
         ///

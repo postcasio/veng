@@ -1181,10 +1181,23 @@ shadow pass rides that single face render. Both flags move together: an interior
 enclosure's occlusion whichever kind of light casts it. They are topology changes in the face
 renderer, so the field is read when the runtime materializes and is not live-tunable.
 
-Deliberately **not** here: a general per-entity or per-layer visibility mask (this is one nominated
-entity in a closed producer→consumer pair, with no authoring story to get wrong), **recursive
-probes** (another capture-consuming surface in the map reads a one-frame-old result, invisible at a
-reflection's contrast), and **parallax correction**, whose math belongs to the consuming material —
+**A capture also draws a subset of the render layers, and defaults to the environment set.** Beyond
+the one nominated entity, a capture filters by `RenderLayer` (`Veng/Scene/RenderLayer.h`): every
+drawable sits on a layer (`MeshRenderer::Layer`), and `CaptureView::VisibleLayers` names the layers
+the faces draw. `CaptureSurface::VisibleLayers` defaults to `DefaultEnvironmentCaptureLayers` — every
+layer but `RenderLayer::ViewAnchored` — because a probe records the environment around its position
+and camera-anchored decoration (a near-field particle shell, a billboard slaved to the eye) is not
+part of it: drawn into the map, it would appear in every reflection or lens sampling the capture,
+floating at a distance it was never at. The filter is the same closed producer→consumer machinery the
+entity exclusion rides — `SceneView::VisibleLayers` carried into `SceneBroadphase::Sync`, applied by
+`GatherMeshes` beside the `Visible` test, a changed mask its own rebuild trigger — and the ordinary
+camera view keeps its default `AllRenderLayers`, so it draws every layer and is unaffected.
+
+Deliberately **not** here: an *arbitrary* per-entity visibility mask (the entity filter is one
+nominated entity in a closed producer→consumer pair, and layer membership is a closed table, not a
+free-form set — neither has an authoring story to get wrong), **recursive probes** (another
+capture-consuming surface in the map reads a one-frame-old result, invisible at a reflection's
+contrast), and **parallax correction**, whose math belongs to the consuming material —
 the engine publishes the *data* a correction needs and applies none. `CaptureSurface::CenterSlot`
 publishes the world position the map was rendered from, plus a validity flag;
 `CaptureSurface::OrientationSlot` the frame the faces were oriented in as a quaternion; and

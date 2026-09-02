@@ -4,6 +4,7 @@
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Scene/Entity.h>
+#include <Veng/Scene/RenderLayer.h>
 
 namespace Veng
 {
@@ -86,6 +87,12 @@ namespace Veng::Renderer
         /// (never a mesh or a material, which are shared by many entities) drops it from the
         /// capture's visibility gather, so it is absent from every domain the capture draws.
         Entity Exclude = Entity::Null;
+        /// @brief Render layers the face renders draw (SceneView::VisibleLayers).
+        ///
+        /// AllRenderLayers (the default here) captures every layer. A driver capturing an environment
+        /// passes DefaultEnvironmentCaptureLayers to drop RenderLayer::ViewAnchored — camera-anchored
+        /// decoration is not part of the environment a probe records (see CaptureSurface::VisibleLayers).
+        u32 VisibleLayers = AllRenderLayers;
         /// @brief Interpolation fraction the face renders draw the scene at, in [0, 1).
         ///
         /// Forwarded to the face renderer as SceneView::Alpha, so the captured content sits at the

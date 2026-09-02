@@ -5,6 +5,7 @@
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Scene/Entity.h>
+#include <Veng/Scene/RenderLayer.h>
 
 namespace Veng
 {
@@ -156,6 +157,15 @@ namespace Veng::Renderer
         /// whole refresh at once. Both shadow batteries are topology changes in the face renderer, so
         /// this is read once when the runtime materializes on the first Drive and is not live-tunable.
         bool Shadows = false;
+
+        /// @brief Render layers the capture's faces draw (see RenderLayer).
+        ///
+        /// DefaultEnvironmentCaptureLayers (the default) draws every layer but RenderLayer::ViewAnchored,
+        /// because a capture records the environment around its position and camera-anchored decoration —
+        /// a near-field particle shell, a billboard — is not part of it: drawn into the map, it would
+        /// appear in every reflection or lens sampling this capture, floating at a distance it was never
+        /// at. Author AllRenderLayers to capture everything, or a narrower mask to drop more.
+        u32 VisibleLayers = DefaultEnvironmentCaptureLayers;
 
         /// @brief Name of the sibling material's texture slot the capture output binds onto.
         ///
@@ -382,6 +392,7 @@ VE_FIELD(Resolution, .DisplayName = "Resolution", .Display = {.Min = 1})
 VE_FIELD(Refresh, .DisplayName = "Refresh")
 VE_FIELD(Alignment, .DisplayName = "Alignment")
 VE_FIELD(Shadows, .DisplayName = "Shadows")
+VE_FIELD(VisibleLayers, .DisplayName = "Visible Layers")
 VE_FIELD(TextureSlot, .DisplayName = "Texture Slot")
 VE_FIELD(SamplerSlot, .DisplayName = "Sampler Slot")
 VE_FIELD(CenterSlot, .DisplayName = "Center Slot")

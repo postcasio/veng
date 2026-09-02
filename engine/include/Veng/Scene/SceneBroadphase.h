@@ -7,6 +7,7 @@
 #include <Veng/Math/BVH.h>
 #include <Veng/Math/Frustum.h>
 #include <Veng/Scene/Entity.h>
+#include <Veng/Scene/RenderLayer.h>
 #include <Veng/Scene/Visibility.h>
 
 namespace Veng
@@ -40,7 +41,11 @@ namespace Veng
         /// them. There is no domain or pass in which it survives.
         /// @param scene    Scene to bring the tree current with.
         /// @param exclude  One entity to omit from the tree entirely; Entity::Null omits none.
-        void Sync(const Scene& scene, Entity exclude = Entity::Null);
+        /// @param layerMask Render layers to include; a renderer whose layer bit is clear is omitted.
+        ///                  Like @p exclude, a change to it forces a rebuild — it is a property of the
+        ///                  caller's view, not of the scene, so it moves no spatial version.
+        void Sync(const Scene& scene, Entity exclude = Entity::Null,
+                  u32 layerMask = AllRenderLayers);
 
         /// @brief Returns the live per-mesh gather records in GatherMeshes order.
         ///
@@ -89,7 +94,8 @@ namespace Veng
         /// @brief Re-gathers candidates, rebuilds the BVH, and refreshes the pending set.
         /// @param scene    Scene to gather from.
         /// @param exclude  One entity the gather omits; Entity::Null omits none.
-        void Rebuild(const Scene& scene, Entity exclude);
+        /// @param layerMask Render layers the gather includes.
+        void Rebuild(const Scene& scene, Entity exclude, u32 layerMask);
 
         /// @brief The bounding-volume hierarchy over the gathered candidates.
         BVH m_Tree;
@@ -112,6 +118,11 @@ namespace Veng
         /// The scene's spatial version does not move when a caller changes which entity it
         /// excludes, so the exclusion is its own rebuild trigger.
         Entity m_LastExclude = Entity::Null;
+        /// @brief The layer mask the current tree was gathered against; a change forces a rebuild.
+        ///
+        /// A view property like m_LastExclude, so it does not move the spatial version and is its own
+        /// rebuild trigger.
+        u32 m_LastLayerMask = AllRenderLayers;
         /// @brief Set by the most recent Sync call.
         bool m_DidRebuild = false;
     };

@@ -12,7 +12,7 @@
 namespace Veng
 {
     void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds,
-                      const Entity exclude)
+                      const Entity exclude, const u32 layerMask)
     {
         // ComputeWorldMatrices uses Transform pool dense order, matching DensePtr below,
         // so worldMatrices[i] is the world matrix for dense[i].
@@ -34,6 +34,13 @@ namespace Veng
 
             const auto* renderer = scene.TryGet<MeshRenderer>(dense[i]);
             if (renderer == nullptr || !renderer->Visible || !renderer->Mesh.IsLoaded())
+            {
+                continue;
+            }
+
+            // The view's layer mask filters here, beside Visible, so nothing downstream re-tests it:
+            // an off-mask renderer is absent from the candidate list and never widens outBounds.
+            if (!RenderLayerInMask(layerMask, renderer->Layer))
             {
                 continue;
             }

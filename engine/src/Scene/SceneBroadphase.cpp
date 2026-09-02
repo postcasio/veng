@@ -8,14 +8,15 @@
 
 namespace Veng
 {
-    void SceneBroadphase::Sync(const Scene& scene, const Entity exclude)
+    void SceneBroadphase::Sync(const Scene& scene, const Entity exclude, const u32 layerMask)
     {
         const u64 version = scene.GetSpatialVersion();
 
-        // The exclusion is a property of the caller's view, not of the scene, so it moves no
-        // spatial version — it has to force its own rebuild or the tree keeps the previous
-        // caller's candidate set.
-        bool needRebuild = (version != m_LastVersion) || (exclude != m_LastExclude);
+        // The exclusion and the layer mask are properties of the caller's view, not of the scene, so
+        // neither moves a spatial version — each has to force its own rebuild or the tree keeps the
+        // previous caller's candidate set.
+        bool needRebuild = (version != m_LastVersion) || (exclude != m_LastExclude) ||
+                           (layerMask != m_LastLayerMask);
 
         // A mesh finishing async load does not mutate the scene, so it does not bump
         // the spatial version. While candidates are still resolving residency, poll
@@ -44,9 +45,10 @@ namespace Veng
 
         if (needRebuild)
         {
-            Rebuild(scene, exclude);
+            Rebuild(scene, exclude, layerMask);
             m_LastVersion = version;
             m_LastExclude = exclude;
+            m_LastLayerMask = layerMask;
             m_DidRebuild = true;
         }
         else
@@ -55,9 +57,9 @@ namespace Veng
         }
     }
 
-    void SceneBroadphase::Rebuild(const Scene& scene, const Entity exclude)
+    void SceneBroadphase::Rebuild(const Scene& scene, const Entity exclude, const u32 layerMask)
     {
-        GatherMeshes(scene, m_Candidates, m_SceneBounds, exclude);
+        GatherMeshes(scene, m_Candidates, m_SceneBounds, exclude, layerMask);
 
         // The caster bound is the union of the shadow-casting candidates alone — the box the
         // shadow projections fit to, so a non-caster (an emissive body co-located with its own
@@ -96,7 +98,7 @@ namespace Veng
         for (auto [entity, transform, renderer] : scene.View<Transform, MeshRenderer>())
         {
             (void)transform;
-            if (entity == exclude)
+            if (entity == exclude || !RenderLayerInMask(layerMask, renderer.Layer))
             {
                 continue;
             }

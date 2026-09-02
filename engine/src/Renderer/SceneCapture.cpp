@@ -345,6 +345,7 @@ namespace Veng::Renderer
                                            .Camera = camera,
                                            .Delta = 0.0f,
                                            .Exclude = m_View.Exclude,
+                                           .VisibleLayers = m_View.VisibleLayers,
                                            .Alpha = m_View.Alpha});
         cmd.PrepareForAccess(m_Renderer->GetHdrView(), AccessKind::SampleGraphics);
 

@@ -1320,7 +1320,7 @@ namespace Veng::Renderer
         // needed; casterBounds excludes the non-casters (so a light's own co-located body never
         // widens its shadow frustum) and drives both the cascade near-extension and the punctual
         // spot/area fit.
-        m_Broadphase.Sync(view.World, view.Exclude);
+        m_Broadphase.Sync(view.World, view.Exclude, view.VisibleLayers);
         const AABB sceneBounds = m_Broadphase.GetSceneBounds();
         const AABB casterBounds = m_Broadphase.GetCasterBounds();
 

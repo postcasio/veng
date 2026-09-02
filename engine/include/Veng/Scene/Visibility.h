@@ -3,6 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Math/AABB.h>
 #include <Veng/Scene/Entity.h>
+#include <Veng/Scene/RenderLayer.h>
 
 namespace Veng
 {
@@ -58,6 +59,9 @@ namespace Veng
     /// @param out       Destination; cleared then filled with gathered candidates.
     /// @param outBounds Receives the union of all gathered world bounds.
     /// @param exclude   One entity to omit entirely; Entity::Null gathers every candidate.
+    /// @param layerMask Render layers to gather; a renderer whose MeshRenderer::Layer bit is clear is
+    ///                  omitted (and never widens outBounds). AllRenderLayers (the default) gathers
+    ///                  every layer, so a caller wanting the whole scene passes nothing.
     void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds,
-                      Entity exclude = Entity::Null);
+                      Entity exclude = Entity::Null, u32 layerMask = AllRenderLayers);
 }

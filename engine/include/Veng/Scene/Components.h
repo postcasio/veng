@@ -9,6 +9,7 @@
 #include <Veng/Renderer/SunPosition.h>
 #include <Veng/Renderer/VolumeField.h>
 #include <Veng/Renderer/Tonemapper.h>
+#include <Veng/Scene/RenderLayer.h>
 #include <Veng/Net/AccountId.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Reflection/Reflect.h>
@@ -257,6 +258,14 @@ namespace Veng
         /// MeshRenderer instead loses the resolved mesh and any sibling component bound onto it,
         /// and collapsing the Transform scale drags every child down with it.
         bool Visible = true;
+        /// @brief The render-visibility layer this mesh sits on; a view draws it only when its mask
+        ///        names the layer (see RenderLayer).
+        ///
+        /// Default (RenderLayer::Default) is ordinary scene geometry, drawn by every view. Set it to
+        /// RenderLayer::ViewAnchored for a mesh slaved to the viewing camera — a near-field particle
+        /// shell, a billboard — which the ordinary camera view still draws but an environment probe
+        /// skips, so the mesh never leaks into a reflection or a lens sampling that capture.
+        RenderLayer Layer = RenderLayer::Default;
     };
 
     /// @brief How an Animator treats a clip's baked root motion.
@@ -1327,6 +1336,7 @@ VE_FIELD(Mesh, .DisplayName = "Mesh")
 VE_FIELD(Source, .DisplayName = "Source")
 VE_FIELD(CastsShadows, .DisplayName = "Casts shadows")
 VE_FIELD(Visible, .DisplayName = "Visible")
+VE_FIELD(Layer, .DisplayName = "Render layer")
 VE_REFLECT_END();
 
 VE_ENUM(::Veng::RootMotionMode, 0x2F4A31CEE94569AFULL)

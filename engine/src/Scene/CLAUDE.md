@@ -143,8 +143,11 @@ mutated through `SetParent`/`Detach`/`MoveBefore`; `WorldMatrix`/`ComputeWorldMa
 carrying the view/projection — Y flipped for Vulkan clip space), `MeshRenderer` (holds the
 `AssetHandle<Mesh>` a draw queries — the mesh owns its materials, so a renderer queries
 `(Transform, MeshRenderer)` and draws each submesh with its material — plus two independent
-switches: `CastsShadows` drops it from the shadow views alone, and **`Visible`** drops it from the
-gather entirely, so it is neither drawn, nor a caster, nor part of the scene bound. `Visible` is
+switches and a layer: `CastsShadows` drops it from the shadow views alone, **`Visible`** drops it from
+the gather entirely, so it is neither drawn, nor a caster, nor part of the scene bound, and **`Layer`**
+(a `RenderLayer`, default `Default`) names the render-visibility layer it sits on — a view draws it
+only when the view's mask names the layer, so `RenderLayer::ViewAnchored` marks a camera-anchored mesh
+the ordinary view still draws but an environment probe skips. `Visible` is
 what hiding something reaches for: removing the component loses the resolved mesh and any sibling
 bound onto it — a `GuiSurface` draws its document *into* that mesh — and collapsing the
 `Transform` scale takes every child with it, a camera riding the hull included), `Animator` (plays an
@@ -170,10 +173,11 @@ A `Scene` reduces to a world-space bound on demand: `SceneBounds(scene)`
 mesh bound, reusing `ComputeWorldMatrices`' one amortized pass — recompute-on-demand, no
 dirty-flag cache. `GatherMeshes` (`Veng/Scene/Visibility.h`) is the pure one-shot candidate gather
 over the same pass (world matrix + world-space `AABB` + resident mesh per entity, skipping a
-renderer whose `Visible` is clear — the one place that flag is honoured, so nothing downstream
-re-tests it); the
+renderer whose `Visible` is clear or whose `MeshRenderer::Layer` is absent from the caller's
+`layerMask` — the one place both filters are honoured, so nothing downstream re-tests them); the
 `SceneBroadphase` caches that gather and builds the BVH from it, re-gathering only when the
-scene's spatial version moves (or a still-loading mesh becomes resident). The broadphase is a BVH
+scene's spatial version moves (or a still-loading mesh becomes resident, or the exclude or layer
+mask the caller's view carries changes). The broadphase is a BVH
 with **per-submesh leaves**, the granularity the renderer's GPU-driven hi-Z occlusion culling
 operates at. Each `Mesh` carries a local-space `GetBounds()` derived from its canonical vertex
 positions at load, and each `SubMesh` a local-space `AABB` folded over its index range. Both build
