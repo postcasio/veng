@@ -7,6 +7,8 @@
 
 #include <doctest/doctest.h>
 
+#include <glm/gtc/constants.hpp>
+
 #include <cmath>
 
 #include <Veng/Reflection/TypeRegistry.h>
@@ -90,19 +92,128 @@ TEST_CASE("PackSceneLights: a lone directional packs exactly as it did before ca
     CHECK(packed.CascadeSetCount == 1);
     CHECK(packed.CascadeTravel[0] == vec3{0.3f, -0.8f, 0.5f});
 
-    // The overwhelmingly common scene — one shadow-casting directional — packs the identical
-    // GpuLight it always has: set 0 is the flags word's zero, and the punctual slot stays -1
-    // because a directional never takes an atlas tile. The ranking changed which light gets an
-    // arm, not what a light looks like once it has one.
+    // The overwhelmingly common scene — one shadow-casting directional — packs the same GpuLight
+    // shape it always has: set 0 is the flags word's zero, and the punctual slot stays -1 because a
+    // directional never takes an atlas tile. Its packed radiance is the authored lux converted
+    // through the anchor — a directional carries `Intensity · S`.
     const PackedLight& light = packed.Lights[0];
     CHECK(light.DirectionType.w == doctest::Approx(0.0f)); // LightType::Directional
-    CHECK(light.ColorIntensity.a == doctest::Approx(2.0f));
+    CHECK(light.ColorIntensity.a == doctest::Approx(2.0f * LuminousAnchor));
     CHECK(light.Cone.z == doctest::Approx(-1.0f));
     CHECK(light.Cone.w == doctest::Approx(0.0f));
     CHECK(light.Area.w == doctest::Approx(-1.0f));
     CHECK(light.AreaNormal.w == doctest::Approx(0.0f));
     CHECK(packed.PunctualCount == 0);
     CHECK(packed.DeniedDirectionalCount == 0);
+}
+
+TEST_CASE(
+    "PackSceneLights: each light type converts its photometric intensity to internal radiance")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+    const f32 pi = glm::pi<f32>();
+
+    // A directional of L lux packs L · S.
+    {
+        const Unique<Scene> scene = Scene::Create(types);
+        const f32 lux = 50000.0f;
+        AddLight(*scene, Light{.Type = LightType::Directional, .Intensity = lux});
+        const PackedSceneLights packed = PackSceneLights(*scene, false, 1024);
+        REQUIRE(packed.LightCount == 1);
+        CHECK(packed.Lights[0].ColorIntensity.a == doctest::Approx(lux * LuminousAnchor));
+    }
+
+    // A point of Φ lumens packs Φ/(4π) · S — the luminous power spread over the whole sphere. That
+    // packed value is the internal radiance a surface at one metre receives, since the shader then
+    // applies the 1/d² falloff (1 at d = 1).
+    {
+        const Unique<Scene> scene = Scene::Create(types);
+        const f32 lumens = 1200.0f;
+        AddLight(*scene, Light{.Type = LightType::Point, .Intensity = lumens, .Range = 10.0f});
+        const PackedSceneLights packed = PackSceneLights(*scene, false, 1024);
+        REQUIRE(packed.LightCount == 1);
+        CHECK(packed.Lights[0].ColorIntensity.a ==
+              doctest::Approx(lumens / (4.0f * pi) * LuminousAnchor));
+    }
+
+    // A spot of Φ lumens at outer half-angle θ packs Φ/(2π(1−cos θ)) · S, and halving the cone's
+    // solid angle at fixed lumens doubles the packed radiance — the same power in a tighter cone.
+    {
+        const Unique<Scene> scene = Scene::Create(types);
+        const f32 lumens = 900.0f;
+        const f32 wide = 0.9f;
+        AddLight(*scene, Light{.Type = LightType::Spot, .Intensity = lumens, .OuterCone = wide});
+        const PackedSceneLights packed = PackSceneLights(*scene, false, 1024);
+        REQUIRE(packed.LightCount == 1);
+        const f32 wideSolid = 2.0f * pi * (1.0f - std::cos(wide));
+        CHECK(packed.Lights[0].ColorIntensity.a ==
+              doctest::Approx(lumens / wideSolid * LuminousAnchor));
+
+        // The half-solid-angle cone: cos θ_narrow = (1 + cos θ_wide)/2 halves 2π(1−cos θ).
+        const f32 narrow = std::acos(0.5f * (1.0f + std::cos(wide)));
+        const Unique<Scene> narrowScene = Scene::Create(types);
+        AddLight(*narrowScene,
+                 Light{.Type = LightType::Spot, .Intensity = lumens, .OuterCone = narrow});
+        const PackedSceneLights narrowPacked = PackSceneLights(*narrowScene, false, 1024);
+        REQUIRE(narrowPacked.LightCount == 1);
+        CHECK(narrowPacked.Lights[0].ColorIntensity.a ==
+              doctest::Approx(2.0f * packed.Lights[0].ColorIntensity.a));
+    }
+
+    // An area light of N nits packs N · S for Rect, Sphere, and Polygon alike — the area path treats
+    // Colour·Intensity as the emitter luminance directly, so there is no solid-angle division.
+    {
+        const f32 nits = 3000.0f;
+        for (const LightType type : {LightType::Rect, LightType::Sphere, LightType::Polygon})
+        {
+            const Unique<Scene> scene = Scene::Create(types);
+            Light light{.Type = type, .Intensity = nits, .Radius = 1.0f};
+            if (type == LightType::Polygon)
+            {
+                light.PolygonVertices = {vec3(-1.0f, -1.0f, 0.0f), vec3(1.0f, -1.0f, 0.0f),
+                                         vec3(0.0f, 1.0f, 0.0f)};
+            }
+            AddLight(*scene, light);
+            const PackedSceneLights packed = PackSceneLights(*scene, false, 1024);
+            REQUIRE(packed.LightCount == 1);
+            CHECK(packed.Lights[0].ColorIntensity.a == doctest::Approx(nits * LuminousAnchor));
+        }
+    }
+}
+
+TEST_CASE("PackSceneLights: the two units agree at the anchor, through one shared scale")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+    const f32 pi = glm::pi<f32>();
+
+    // A point authored at the lumens that produce a given illuminance E at one metre, and a
+    // directional authored at that same E in lux, deliver equal internal radiance to a surface at
+    // one metre: the point packs Φ/(4π)·S and Φ = 4π·E, so its packed radiance is E·S, exactly the
+    // directional's. The two units are consistent by construction of the anchor.
+    const f32 illuminance = 800.0f; // lux, i.e. lumens/m² at one metre
+    const Unique<Scene> pointScene = Scene::Create(types);
+    AddLight(*pointScene,
+             Light{.Type = LightType::Point, .Intensity = 4.0f * pi * illuminance, .Range = 10.0f});
+    const Unique<Scene> dirScene = Scene::Create(types);
+    AddLight(*dirScene, Light{.Type = LightType::Directional, .Intensity = illuminance});
+
+    const PackedSceneLights point = PackSceneLights(*pointScene, false, 1024);
+    const PackedSceneLights dir = PackSceneLights(*dirScene, false, 1024);
+    REQUIRE(point.LightCount == 1);
+    REQUIRE(dir.LightCount == 1);
+    CHECK(point.Lights[0].ColorIntensity.a == doctest::Approx(dir.Lights[0].ColorIntensity.a));
+    CHECK(dir.Lights[0].ColorIntensity.a == doctest::Approx(illuminance * LuminousAnchor));
+
+    // The anchor is the single knob: for every type the packed radiance is its type-geometry times
+    // the one shared scale S, so the ratio packed / (geometry) is LuminousAnchor for all of them —
+    // scaling S would scale every type's internal radiance by the same factor.
+    const f32 dirRatio = dir.Lights[0].ColorIntensity.a / illuminance;
+    const f32 pointRatio =
+        point.Lights[0].ColorIntensity.a / ((4.0f * pi * illuminance) / (4.0f * pi));
+    CHECK(dirRatio == doctest::Approx(LuminousAnchor));
+    CHECK(pointRatio == doctest::Approx(LuminousAnchor));
 }
 
 TEST_CASE("PackSceneLights: a point/spot source radius packs into Area.x, transform-scaled")

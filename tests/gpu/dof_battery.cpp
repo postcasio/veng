@@ -28,6 +28,7 @@
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/LightPacking.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Camera.h>
@@ -117,7 +118,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(lightEntity) = Light{
         .Direction = vec3(0.0f, 0.0f, -1.0f),
         .Color = vec3(1.0f, 1.0f, 1.0f),
-        .Intensity = 1.0f,
+        // A directional's intensity is an illuminance in lux (internal radiance 1.0 at the anchor).
+        .Intensity = 1.0f / Renderer::LuminousAnchor,
     };
 
     CameraView camera;

@@ -23,6 +23,32 @@ namespace Veng
 
 namespace Veng::Renderer
 {
+    /// @brief Reference illuminance the photometric calibration is anchored to: direct sunlight.
+    ///
+    /// A round figure for the illuminance a surface receives under direct midday sun. It fixes the
+    /// scale of LuminousAnchor below — the one physical quantity the whole calibration is pinned to
+    /// — so a directional authored at this many lux carries an internal radiance of exactly one.
+    inline constexpr f32 ReferenceSolarIlluminanceLux = 100000.0f;
+
+    /// @brief The engine's photometric calibration: internal linear radiance produced per lux.
+    ///
+    /// A light's authored intensity is a **physical photometric quantity** whose unit is fixed by
+    /// the light's type — lux (illuminance) for a directional, lumens (luminous power) for a point or
+    /// spot, nits (cd/m², luminance) for an area light. LightPacking converts that authored quantity
+    /// into the renderer's internal linear radiance once, at pack time, and this anchor is the single
+    /// scalar tying the two together: the internal radiance carried per lux of directional
+    /// illuminance (equivalently, per nit of area-light luminance).
+    ///
+    /// It is **anchored to a real solar illuminance** — a directional of ReferenceSolarIlluminanceLux
+    /// lux, direct sunlight, packs an internal radiance of exactly one — so a real-world lumen or lux
+    /// count read off a datasheet or a light meter lands at a physically sensible brightness relative
+    /// to a sun. The point/spot divisions by the emitter's solid angle (`Φ / 4π`, `Φ / 2π(1−cos θ)`)
+    /// and the area path's direct luminance are all expressed against this same number.
+    ///
+    /// It is **exported** so a consumer authoring its own physically-measured light model expresses
+    /// that model against the identical scalar and cannot drift from the engine's calibration.
+    inline constexpr f32 LuminousAnchor = 1.0f / ReferenceSolarIlluminanceLux;
+
     /// @brief The bit meanings of a PackedLight's Cone.w flags word, mirrored in light_flags.slang.
     ///
     /// A small integer carried in a float, so every value must stay well inside f32's exact

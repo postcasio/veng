@@ -4907,7 +4907,7 @@
             0.96,
             0.9
           ],
-          "Intensity": 1.8
+          "Intensity": 100000.0
         },
         "::Veng::TimeOfDay": {
           "Hours": 11.0,

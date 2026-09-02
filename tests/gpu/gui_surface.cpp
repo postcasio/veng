@@ -38,6 +38,7 @@
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/LightPacking.h>
 #include <Veng/Renderer/Viewport.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
@@ -167,7 +168,8 @@ namespace
         auto& light = scene->Add<Light>(lightEntity);
         light.Direction = glm::normalize(vec3(0.0f, 0.0f, -1.0f));
         light.Color = vec3(1.0f);
-        light.Intensity = 2.0f;
+        // A directional's intensity is an illuminance in lux (internal radiance 2.0 at the anchor).
+        light.Intensity = 2.0f / Renderer::LuminousAnchor;
 
         const Ref<Mesh> panel =
             Mesh::BuildSync(context, Primitives::Cube(1.4f, panelMaterial), "GuiSurface Panel");

@@ -26,6 +26,7 @@
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/LightPacking.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
@@ -50,6 +51,7 @@
 // After the Veng headers, so Veng.h's GLM_FORCE_DEPTH_ZERO_TO_ONE is set before glm is
 // first included — including a glm header ahead of Veng.h would compile glm::ortho with the
 // GL depth convention in this TU and break the orthographic-camera cases.
+#include <glm/gtc/constants.hpp>
 #include <glm/gtc/packing.hpp>
 
 using namespace Veng;
@@ -57,6 +59,26 @@ using namespace Veng::Renderer;
 
 namespace
 {
+    // Authored intensity, in the light type's physical photometric unit, that reproduces the given
+    // internal radiance through LightPacking's per-type conversion (LuminousAnchor). These invert
+    // that conversion so a render check states the radiance it wants and stays stable across the
+    // authored unit — a directional's lux, a point/spot's lumens, an area light's nits.
+    [[maybe_unused]] f32 DirectionalLux(f32 radiance)
+    {
+        return radiance / LuminousAnchor;
+    }
+    [[maybe_unused]] f32 AreaNits(f32 radiance)
+    {
+        return radiance / LuminousAnchor;
+    }
+    [[maybe_unused]] f32 PointLumens(f32 radiance)
+    {
+        return radiance * 4.0f * glm::pi<f32>() / LuminousAnchor;
+    }
+    [[maybe_unused]] f32 SpotLumens(f32 radiance, f32 outerCone)
+    {
+        return radiance * 2.0f * glm::pi<f32>() * (1.0f - std::cos(outerCone)) / LuminousAnchor;
+    }
     struct SamplePushConstants
     {
         u32 TextureIndex;
@@ -314,7 +336,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Type = LightType::Directional,
         .Direction = vec3(0.0f, -1.0f, 0.0f),
         .Color = vec3(1.0f),
-        .Intensity = 1.0f,
+        .Intensity = DirectionalLux(1.0f),
     };
 
     CameraView camera;
@@ -1117,7 +1139,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(lightEntity) = Light{
         .Direction = vec3(0.0f, 0.0f, -1.0f), // travels toward the front face
         .Color = vec3(1.0f, 1.0f, 1.0f),
-        .Intensity = 1.0f,
+        .Intensity = DirectionalLux(1.0f),
     };
 
     f32 litCenterR = 0.0f;
@@ -1247,7 +1269,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "scene renderer: two renderers (differ
     scene->Add<Light>(lightEntity) = Light{
         .Direction = vec3(0.0f, 0.0f, -1.0f),
         .Color = vec3(1.0f, 1.0f, 1.0f),
-        .Intensity = 1.0f,
+        .Intensity = DirectionalLux(1.0f),
     };
 
     constexpr uvec2 extentA{96, 96};
@@ -1348,7 +1370,7 @@ TEST_CASE_FIXTURE(
     scene->Add<Light>(lightEntity) = Light{
         .Direction = vec3(0.0f, 0.0f, -1.0f),
         .Color = vec3(1.0f),
-        .Intensity = 1.0f,
+        .Intensity = DirectionalLux(1.0f),
     };
 
     constexpr uvec2 extent{128, 128};
@@ -1513,7 +1535,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(lightEntity) = Light{
         .Direction = vec3(0.0f, 0.0f, -1.0f),
         .Color = vec3(1.0f),
-        .Intensity = 1.0f,
+        .Intensity = DirectionalLux(1.0f),
     };
 
     constexpr uvec2 extent{128, 128};
@@ -1587,7 +1609,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(lightEntity) = Light{
         .Direction = vec3(0.0f, 0.0f, -1.0f),
         .Color = vec3(1.0f),
-        .Intensity = 1.0f,
+        .Intensity = DirectionalLux(1.0f),
     };
 
     constexpr uvec2 extent{128, 128};
@@ -1686,7 +1708,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Type = LightType::Directional,
         .Direction = vec3(0.0f, 0.0f, -1.0f),
         .Color = vec3(1.0f),
-        .Intensity = 1.0f,
+        .Intensity = DirectionalLux(1.0f),
     };
     const f32 directionalOnly = CenterLuma();
     CHECK(directionalOnly > 0.0f);
@@ -1699,7 +1721,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(pointEntity) = Light{
         .Type = LightType::Point,
         .Color = vec3(1.0f),
-        .Intensity = 8.0f,
+        .Intensity = PointLumens(8.0f),
         .Range = 8.0f,
     };
     const f32 pointOnly = CenterLuma();
@@ -1713,7 +1735,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Type = LightType::Directional,
         .Direction = vec3(0.0f, 0.0f, -1.0f),
         .Color = vec3(1.0f),
-        .Intensity = 1.0f,
+        .Intensity = DirectionalLux(1.0f),
     };
     const f32 bothLights = CenterLuma();
 
@@ -1769,7 +1791,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(lightEntity) = Light{
         .Direction = vec3(0.0f, 0.0f, -1.0f),
         .Color = vec3(1.0f),
-        .Intensity = 8.0f,
+        .Intensity = DirectionalLux(8.0f),
     };
 
     constexpr uvec2 extent{128, 128};
@@ -1876,7 +1898,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // average on mip 0 weights bright outliers by 1/(1+luma), so the far halo grows far
     // less than the 10× input would without it — pinning the mandatory suppression.
     const f64 farHaloModerate = FarHaloLuma(Render(1.0f, 1.0f, 1.0f));
-    scene->Get<Light>(lightEntity).Intensity = 80.0f;
+    scene->Get<Light>(lightEntity).Intensity = DirectionalLux(80.0f);
     const f64 farHaloSpike = FarHaloLuma(Render(1.0f, 1.0f, 1.0f));
     // The spike still bloom (it is brighter), but Karis compresses it well below the 10×
     // the un-suppressed input would drive — a generous bound that a removed Karis breaks.
@@ -1919,7 +1941,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(lightEntity) = Light{
         .Direction = vec3(0.0f, 0.0f, -1.0f),
         .Color = vec3(1.0f),
-        .Intensity = 8.0f,
+        .Intensity = DirectionalLux(8.0f),
     };
 
     constexpr uvec2 extent{128, 128};
@@ -2048,7 +2070,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Type = LightType::Directional,
         .Direction = vec3(0.0f, -1.0f, 0.0f),
         .Color = vec3(1.0f),
-        .Intensity = 3.0f,
+        .Intensity = DirectionalLux(3.0f),
     };
 
     constexpr uvec2 extent{128, 128};
@@ -2152,7 +2174,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Type = LightType::Directional,
         .Direction = vec3(0.0f, -1.0f, 0.0f),
         .Color = vec3(1.0f),
-        .Intensity = 3.0f,
+        .Intensity = DirectionalLux(3.0f),
     };
 
     constexpr uvec2 extent{128, 128};
@@ -2267,7 +2289,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(lightEntity) = Light{
         .Direction = vec3(0.2f, -1.0f, 0.2f),
         .Color = vec3(1.0f),
-        .Intensity = 1.0f,
+        .Intensity = DirectionalLux(1.0f),
     };
 
     constexpr uvec2 extent{160, 160};
@@ -2373,7 +2395,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Type = LightType::Directional,
         .Direction = vec3(-1.0f, -1.5f, 0.0f),
         .Color = vec3(1.0f),
-        .Intensity = 3.0f,
+        .Intensity = DirectionalLux(3.0f),
     };
 
     constexpr uvec2 extent{128, 128};
@@ -2529,7 +2551,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Type = LightType::Directional,
         .Direction = vec3(0.2f, -1.0f, 0.1f),
         .Color = vec3(1.0f),
-        .Intensity = 1.0f,
+        .Intensity = DirectionalLux(1.0f),
     };
 
     constexpr uvec2 extent{128, 128};
@@ -2717,7 +2739,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
             .Type = LightType::Spot,
             .Direction = vec3(0.0f, -1.0f, 0.0f),
             .Color = vec3(1.0f),
-            .Intensity = 5.0f,
+            .Intensity = SpotLumens(5.0f, 0.8f),
             .Range = 12.0f,
             .InnerCone = 0.5f,
             .OuterCone = 0.8f,
@@ -2745,7 +2767,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         scene->Add<Light>(lightEntity) = Light{
             .Type = LightType::Point,
             .Color = vec3(1.0f),
-            .Intensity = 8.0f,
+            .Intensity = PointLumens(8.0f),
             .Range = 12.0f,
         };
 
@@ -2819,7 +2841,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
             .Type = LightType::Spot,
             .Direction = vec3(0.0f, -1.0f, 0.0f),
             .Color = vec3(1.0f),
-            .Intensity = 5.0f,
+            .Intensity = SpotLumens(5.0f, 0.9f),
             .Range = 12.0f,
             .InnerCone = 0.5f,
             .OuterCone = 0.9f,
@@ -2939,7 +2961,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         scene->Add<Light>(lightEntity) = Light{
             .Type = LightType::Point,
             .Color = vec3(1.0f),
-            .Intensity = 8.0f,
+            .Intensity = PointLumens(8.0f),
             .Range = 12.0f,
         };
 
@@ -3023,7 +3045,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Type = LightType::Spot,
         .Direction = vec3(0.0f, -1.0f, 0.0f),
         .Color = vec3(1.0f),
-        .Intensity = 14.0f,
+        .Intensity = SpotLumens(14.0f, 0.9f),
         .Range = 14.0f,
         .InnerCone = 0.6f,
         .OuterCone = 0.9f,
@@ -3144,7 +3166,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(lightEntity) = Light{
         .Type = LightType::Point,
         .Color = vec3(1.0f),
-        .Intensity = 60.0f,
+        .Intensity = PointLumens(60.0f),
         .Range = 16.0f,
     };
 
@@ -3267,7 +3289,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         scene->Add<Light>(filler) = Light{
             .Type = LightType::Point,
             .Color = vec3(1.0f),
-            .Intensity = 40.0f,
+            .Intensity = PointLumens(40.0f),
             .Range = 2.0f,
         };
     }
@@ -3281,7 +3303,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Type = LightType::Spot,
         .Direction = vec3(0.0f, -1.0f, 0.0f),
         .Color = vec3(1.0f),
-        .Intensity = 14.0f,
+        .Intensity = SpotLumens(14.0f, 0.9f),
         .Range = 14.0f,
         .InnerCone = 0.6f,
         .OuterCone = 0.9f,
@@ -3767,7 +3789,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         light = Light{
             .Type = LightType::Directional,
             .Color = vec3(1.0f, 1.0f, 1.0f),
-            .Intensity = 1.0f,
+            .Intensity = DirectionalLux(1.0f),
         };
 
         // Headlight onto the forward face: the outward normal is fully lit (N·L = 1).
@@ -3820,7 +3842,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(lightEntity) = Light{
         .Direction = vec3(0.0f, 0.0f, -1.0f),
         .Color = vec3(1.0f),
-        .Intensity = 1.0f,
+        .Intensity = DirectionalLux(1.0f),
     };
 
     CameraView camera;
@@ -4230,7 +4252,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(lightEntity) = Light{
         .Direction = vec3(0.0f, 0.0f, -1.0f), // straight at the front faces
         .Color = vec3(1.0f, 1.0f, 1.0f),
-        .Intensity = 1.0f,
+        .Intensity = DirectionalLux(1.0f),
     };
 
     CameraView camera;
@@ -4332,7 +4354,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(lightEntity) = Light{
         .Direction = vec3(0.0f, 0.0f, -1.0f),
         .Color = vec3(1.0f, 1.0f, 1.0f),
-        .Intensity = 1.0f,
+        .Intensity = DirectionalLux(1.0f),
     };
 
     const Entity refractiveEntity = scene->CreateEntity();
@@ -4436,7 +4458,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(lightEntity) = Light{
         .Direction = vec3(0.0f, 0.0f, -1.0f),
         .Color = vec3(1.0f, 1.0f, 1.0f),
-        .Intensity = 1.0f,
+        .Intensity = DirectionalLux(1.0f),
     };
 
     const Entity refractiveEntity = scene->CreateEntity();
@@ -4607,7 +4629,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(lightEntity) = Light{
         .Direction = vec3(0.0f, -0.3f, -1.0f),
         .Color = vec3(1.0f, 1.0f, 1.0f),
-        .Intensity = 5.0f,
+        .Intensity = DirectionalLux(5.0f),
     };
 
     CameraView camera;
@@ -4710,7 +4732,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     scene->Add<Light>(lightEntity) = Light{
         .Direction = vec3(0.0f, 0.0f, -1.0f),
         .Color = vec3(1.0f, 1.0f, 1.0f),
-        .Intensity = 2.0f,
+        .Intensity = DirectionalLux(2.0f),
     };
 
     CameraView camera;

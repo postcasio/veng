@@ -4,6 +4,8 @@
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Transforms.h>
 
+#include <glm/gtc/constants.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <optional>
@@ -62,6 +64,44 @@ namespace Veng::Renderer
             return glm::dot(color, vec3(0.2126f, 0.7152f, 0.0722f));
         }
 
+        // Converts a light's authored photometric intensity into the renderer's internal linear
+        // radiance, by the light's type, through the published LuminousAnchor. The unit of Intensity
+        // is fixed by Type: lux for a directional, lumens for a point or spot, nits for an area
+        // light — so each type carries a different geometric factor to a common radiance the shader's
+        // ColorIntensity.a receives.
+        //
+        //   Directional / area  : Intensity · S            (lux / nits — the area path already treats
+        //                                                    Colour·Intensity as the emitter luminance)
+        //   Point               : Intensity / (4π) · S     (lumens over the whole sphere → intensity)
+        //   Spot                : Intensity / (2π(1−cos θ)) · S
+        //                                                   (lumens over the cone's solid angle → the
+        //                                                    same power in a tighter cone reads brighter)
+        //
+        // The spot's solid angle is floored so a degenerate cone (OuterCone at zero) cannot divide by
+        // zero; there the whole power collapses onto the axis and the floored denominator caps the
+        // radiance rather than sending it to infinity.
+        f32 IntensityToRadiance(const Light& light)
+        {
+            const f32 anchor = Renderer::LuminousAnchor;
+            switch (light.Type)
+            {
+            case LightType::Point:
+                return light.Intensity / (4.0f * glm::pi<f32>()) * anchor;
+            case LightType::Spot:
+            {
+                const f32 solidAngle =
+                    std::max(2.0f * glm::pi<f32>() * (1.0f - std::cos(light.OuterCone)), 1e-4f);
+                return light.Intensity / solidAngle * anchor;
+            }
+            case LightType::Directional:
+            case LightType::Rect:
+            case LightType::Sphere:
+            case LightType::Polygon:
+                break;
+            }
+            return light.Intensity * anchor;
+        }
+
         // A light's estimated contribution to the frame: the radiance the lighting pass would
         // apply at the point of the caster bound nearest the light — the brightest this light
         // can be anywhere in the drawn scene, which is the right question for "does it deserve
@@ -77,7 +117,7 @@ namespace Veng::Renderer
         // past its own size.
         f32 EstimateContribution(const Light& light, const vec3& worldPos, const AABB& sceneBounds)
         {
-            const f32 radiance = light.Intensity * Luminance(light.Color);
+            const f32 radiance = IntensityToRadiance(light) * Luminance(light.Color);
             if (radiance <= 0.0f)
             {
                 return 0.0f;
@@ -398,7 +438,7 @@ namespace Veng::Renderer
             result.Lights[i] = PackedLight{
                 .PositionRange = vec4(worldPos, light.Range),
                 .DirectionType = vec4(light.Direction, static_cast<f32>(light.Type)),
-                .ColorIntensity = vec4(light.Color, light.Intensity),
+                .ColorIntensity = vec4(light.Color, IntensityToRadiance(light)),
                 .Cone = vec4(cosInner, cosOuter, shadowSlot, flags),
                 .Area = area,
                 .AreaNormal = vec4(areaNormal, shadowRadius),

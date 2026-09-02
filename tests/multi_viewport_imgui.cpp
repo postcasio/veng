@@ -234,7 +234,8 @@ namespace
             .Type = LightType::Directional,
             .Direction = vec3(0.0f, -1.0f, 0.0f), // travels down onto the +Y plane face
             .Color = lightColor,
-            .Intensity = 2.5f,
+            // A directional's intensity is an illuminance in lux: direct daylight.
+            .Intensity = 100000.0f,
         };
 
         return scene;

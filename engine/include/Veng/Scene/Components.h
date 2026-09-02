@@ -340,17 +340,17 @@ namespace Veng
     /// light SSBO and persisted in prefabs.
     enum class LightType : u32
     {
-        /// @brief Infinite directional light; no position or falloff.
+        /// @brief Infinite directional light; no position or falloff. Intensity is an illuminance in lux.
         Directional = 0,
-        /// @brief Omnidirectional point light; falls off within Range.
+        /// @brief Omnidirectional point light; falls off within Range. Intensity is a luminous power in lumens.
         Point = 1,
-        /// @brief Cone spot light; falls off within Range and the cone angles.
+        /// @brief Cone spot light; falls off within Range and the cone angles. Intensity is a luminous power in lumens.
         Spot = 2,
-        /// @brief Rectangular area light in the entity's local XY plane (Width × Height).
+        /// @brief Rectangular area light in the entity's local XY plane (Width × Height). Intensity is a luminance in nits.
         Rect = 3,
-        /// @brief Spherical area light of the given Radius; correct at any angular size.
+        /// @brief Spherical area light of the given Radius; correct at any angular size. Intensity is a luminance in nits.
         Sphere = 4,
-        /// @brief Convex-polygon area light from PolygonVertices in the entity's local frame.
+        /// @brief Convex-polygon area light from PolygonVertices in the entity's local frame. Intensity is a luminance in nits.
         Polygon = 5,
     };
 
@@ -375,9 +375,23 @@ namespace Veng
         LightType Type{LightType::Directional};
         /// @brief World-space travel direction (directional and spot).
         vec3 Direction{0.0f, -1.0f, 0.0f};
-        /// @brief Linear RGB color.
+        /// @brief Linear RGB color (a chromaticity; brightness lives in Intensity).
         vec3 Color{1.0f, 1.0f, 1.0f};
-        /// @brief Scales the color at full brightness.
+        /// @brief The light's brightness as a physical photometric quantity, its unit fixed by Type.
+        ///
+        /// Not a bare multiplier: the unit is the one a datasheet or a light meter prints for that
+        /// kind of source, converted to the renderer's internal radiance once at pack time through
+        /// the published Renderer::LuminousAnchor.
+        ///
+        /// | Type | Unit | Quantity |
+        /// |---|---|---|
+        /// | Directional | lux | illuminance a surface receives (an infinite source has no falloff) |
+        /// | Point / Spot | lumens | total luminous power radiated (over the sphere / the cone) |
+        /// | Rect / Sphere / Polygon | nits (cd/m²) | the emitter surface's luminance |
+        ///
+        /// So a sun is authored as its lux, a lamp as its lumens, a panel as its nits — the values
+        /// that stay meaningful when the light moves. The anchor is pinned so a directional at a real
+        /// solar illuminance carries an internal radiance of one (see Renderer::LuminousAnchor).
         f32 Intensity{1.0f};
         /// @brief Falloff radius for positioned lights (point, spot, and area).
         f32 Range{10.0f};

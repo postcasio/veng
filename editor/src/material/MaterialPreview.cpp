@@ -85,7 +85,8 @@ namespace VengEditor
         m_Scene->Add<Light>(lightEntity) = Light{
             .Direction = glm::normalize(vec3(-0.4f, -0.7f, -0.5f)),
             .Color = vec3(1.0f, 1.0f, 1.0f),
-            .Intensity = 1.5f,
+            // A directional's intensity is an illuminance in lux: direct daylight.
+            .Intensity = 100000.0f,
         };
 
         const f32 aspect = static_cast<f32>(m_Extent.x) / static_cast<f32>(m_Extent.y);
