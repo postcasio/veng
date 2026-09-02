@@ -230,7 +230,10 @@
         "::Veng::Renderer::CaptureSurface": {
           "Shape": "PlanarReflection",
           "Resolution": 256,
-          "Refresh": "EveryFrame"
+          "Refresh": "EveryFrame",
+          "CenterSlot": "Center",
+          "DepthTextureSlot": "Depth",
+          "DepthSamplerSlot": "DepthSampler"
         }
       }
     },

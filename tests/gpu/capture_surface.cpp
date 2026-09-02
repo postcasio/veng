@@ -52,6 +52,7 @@
 #include <Veng/World.h>
 #include <Veng/WorldRunner.h>
 
+#include <cmath>
 #include <utility>
 
 #include <gpu/fixture.h>
@@ -298,6 +299,48 @@ namespace
         capture.DepthTextureSlot = "Depth";
         capture.DepthResolution = distanceResolution;
         return entity;
+    }
+
+    // A scene for the distance-march cases: an H = 4 box open at +Y (so +Y is sky), a protruding
+    // block filling the back centre whose front (+Z) face sits at z = -1.5 — well in front of the -Z
+    // wall at z = -4, the two surfaces at different distances in nearby directions that no single box
+    // proxy can hold — and, at the origin, a surface cube carrying the parallax fixture material and a
+    // distance-publishing CaptureSurface. The surface fills the frame centre, so a rendered frame
+    // reads back whatever the fixture produced there.
+    Unique<Scene> BuildMarchScene(Context& context, AssetManager& assets, TypeRegistry& types,
+                                  const AssetHandle<MaterialInstance>& parallaxMaterial,
+                                  const AssetHandle<MaterialInstance>& wallMaterial,
+                                  vector<Ref<Mesh>>& meshes, Entity& surfaceEntity)
+    {
+        Unique<Scene> scene = Scene::Create(types);
+        AddWall(*scene, assets, meshes, wallMaterial, "March +X", vec3(10.0f, 0.0f, 0.0f), 12.0f,
+                context);
+        AddWall(*scene, assets, meshes, wallMaterial, "March -X", vec3(-10.0f, 0.0f, 0.0f), 12.0f,
+                context);
+        AddWall(*scene, assets, meshes, wallMaterial, "March -Y", vec3(0.0f, -10.0f, 0.0f), 12.0f,
+                context);
+        AddWall(*scene, assets, meshes, wallMaterial, "March +Z", vec3(0.0f, 0.0f, 10.0f), 12.0f,
+                context);
+        AddWall(*scene, assets, meshes, wallMaterial, "March -Z", vec3(0.0f, 0.0f, -10.0f), 12.0f,
+                context);
+        // The protrusion: a cube of edge 3 centred at z = -3, so its front (+Z) face is at z = -1.5
+        // and its body merges into the -Z wall behind it.
+        AddWall(*scene, assets, meshes, wallMaterial, "March Block", vec3(0.0f, 0.0f, -3.0f), 3.0f,
+                context);
+
+        const Ref<Mesh> surface =
+            Mesh::BuildSync(context, Primitives::Cube(1.4f, parallaxMaterial), "March Surface");
+        meshes.push_back(surface);
+        surfaceEntity = scene->CreateEntity();
+        scene->Add<Transform>(surfaceEntity);
+        scene->Add<MeshRenderer>(surfaceEntity).Mesh = assets.Adopt(surface);
+        auto& capture = scene->Add<CaptureSurface>(surfaceEntity);
+        capture.Resolution = 128;
+        capture.Refresh = CaptureRefresh::EveryFrame;
+        capture.DepthTextureSlot = "Depth";
+        capture.DepthSamplerSlot = "DepthSampler";
+        capture.DepthResolution = 128;
+        return scene;
     }
 }
 
@@ -1633,4 +1676,193 @@ TEST_CASE_FIXTURE(
         CHECK(std::abs(center.r - center.g) < 0.1f);
         CHECK(std::abs(center.r - center.b) < 0.1f);
     }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "capture depth march: the corrected direction lands on the recorded surface, "
+                  "including a protrusion a box proxy misses")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> parallax =
+        assets.LoadSync<MaterialInstance>(ParallaxInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> wall =
+        assets.LoadSync<MaterialInstance>(WallGreenInstance);
+    REQUIRE(parallax.has_value());
+    REQUIRE(wall.has_value());
+
+    vector<Ref<Mesh>> meshes;
+    Entity surfaceEntity;
+    const Unique<Scene> scene =
+        BuildMarchScene(Context, assets, Types, *parallax, *wall, meshes, surfaceEntity);
+    const CaptureSurface& capture = scene->Get<CaptureSurface>(surfaceEntity);
+    const AssetHandle<MaterialInstance> material = SurfaceMaterial(*scene, surfaceEntity);
+    const Unique<Viewport> viewport = MakeViewport(Context, assets);
+
+    // One full round-robin refresh populates the distance map; the fixture renders under the None
+    // tonemapper so an encoded [0,1] direction round-trips through the terminal clamp.
+    const auto RenderOnce = [&]
+    {
+        auto* const built = capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), 0.0f,
+                                          mat3(1.0f), material);
+        REQUIRE(built != nullptr);
+        viewport->SetViewState({.World = scene.get(),
+                                .Camera = FrontCamera(),
+                                .Delta = 0.016f,
+                                .Tonemapper = Tonemapper::None});
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                built->Render(cmd);
+                viewport->Render(cmd);
+            });
+        return viewport->GetOutput()->GetImage()->Download();
+    };
+    for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
+    {
+        RenderOnce();
+    }
+
+    // Drives one more face (keeping the distance map bound and current), renders, and decodes the
+    // corrected direction the fixture encoded as normalize(dir) * 0.5 + 0.5.
+    const auto MarchedDirection = [&](const vec3& rayOrigin, const vec3& rayDir, const i32 budget)
+    {
+        material->SetParam("Display", vec4(0.0f, 0.0f, 0.0f, 1.0f));
+        material->SetParam("RayOrigin", vec4(rayOrigin, 0.0f));
+        material->SetParam("RayDir", vec4(rayDir, static_cast<f32>(budget)));
+        const vector<u8> output = RenderOnce();
+        const vec4 encoded = SampleBlock(output, Extent, vec2(0.5f, 0.5f), 2);
+        return glm::normalize(vec3(encoded) * 2.0f - 1.0f);
+    };
+
+    // The thesis case. A ray from an off-centre origin toward the back centre crosses the protruding
+    // block's front face (z = -1.5), not the -Z wall (z = -4) behind it. The true corrected direction
+    // is the direction from the probe centre to that crossing; a box proxy of the room's own
+    // half-extent would instead send the ray to the -Z wall, and the bare (uncorrected) direction
+    // points a third way — so the marched direction agrees with none of the wrong answers.
+    const vec3 blockOrigin(1.2f, 0.0f, 0.0f);
+    const vec3 blockRay(-0.3f, 0.0f, -1.0f);
+    const vec3 blockDir = glm::normalize(blockRay);
+    const vec3 trueHit = blockOrigin + blockDir * ((-1.5f - blockOrigin.z) / blockDir.z);
+    const vec3 trueDir = glm::normalize(trueHit); // ~ (0.447, 0, -0.894)
+    const vec3 proxyHit = blockOrigin + blockDir * ((-4.0f - blockOrigin.z) / blockDir.z);
+    const vec3 proxyDir = glm::normalize(proxyHit); // ~ (0, 0, -1): the -Z wall a box proxy hits
+
+    const vec3 marched = MarchedDirection(blockOrigin, blockRay, 0);
+    CHECK(marched.x == doctest::Approx(trueDir.x).epsilon(0.12));
+    CHECK(marched.z == doctest::Approx(trueDir.z).epsilon(0.12));
+    CHECK(std::abs(marched.y) < 0.06f);
+    // The correction is what the whole planset is for: the marched direction is NOT the box-proxy
+    // direction (its x is near zero) and NOT the bare direction (its x is negative). The recorded
+    // near surface moved the reflected direction well off both.
+    CHECK(std::abs(marched.x - proxyDir.x) > 0.3f);
+    CHECK(marched.x > 0.3f);
+
+    // A ray from the probe centre outward is the degenerate case: the crossing lies along the ray, so
+    // the corrected direction is the ray direction itself. It must be the identity, and must not
+    // divide by zero at the centre.
+    const vec3 idRay(0.3f, 0.3f, -1.0f);
+    const vec3 idDir = glm::normalize(idRay);
+    const vec3 idMarched = MarchedDirection(vec3(0.0f), idRay, 0);
+    CHECK(std::isfinite(idMarched.x));
+    CHECK(idMarched.x == doctest::Approx(idDir.x).epsilon(0.06));
+    CHECK(idMarched.y == doctest::Approx(idDir.y).epsilon(0.06));
+    CHECK(idMarched.z == doctest::Approx(idDir.z).epsilon(0.06));
+
+    // A ray whose origin is outside the captured region is still defined — a finite direction, never
+    // a NaN — whether it finds a crossing or exhausts its budget to the sky.
+    const vec3 outsideMarched =
+        MarchedDirection(vec3(0.0f, 5.0f, 0.0f), vec3(0.0f, -1.0f, 0.05f), 0);
+    CHECK(std::isfinite(outsideMarched.x));
+    CHECK(std::isfinite(outsideMarched.y));
+    CHECK(std::isfinite(outsideMarched.z));
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "capture depth march: a sky-sentinel ray misses to the bare direction, and a low "
+                  "budget stays bounded")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> parallax =
+        assets.LoadSync<MaterialInstance>(ParallaxInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> wall =
+        assets.LoadSync<MaterialInstance>(WallGreenInstance);
+    REQUIRE(parallax.has_value());
+    REQUIRE(wall.has_value());
+
+    vector<Ref<Mesh>> meshes;
+    Entity surfaceEntity;
+    const Unique<Scene> scene =
+        BuildMarchScene(Context, assets, Types, *parallax, *wall, meshes, surfaceEntity);
+    const CaptureSurface& capture = scene->Get<CaptureSurface>(surfaceEntity);
+    const AssetHandle<MaterialInstance> material = SurfaceMaterial(*scene, surfaceEntity);
+    const Unique<Viewport> viewport = MakeViewport(Context, assets);
+
+    const auto RenderOnce = [&]
+    {
+        auto* const built = capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), 0.0f,
+                                          mat3(1.0f), material);
+        REQUIRE(built != nullptr);
+        viewport->SetViewState({.World = scene.get(),
+                                .Camera = FrontCamera(),
+                                .Delta = 0.016f,
+                                .Tonemapper = Tonemapper::None});
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                built->Render(cmd);
+                viewport->Render(cmd);
+            });
+        return viewport->GetOutput()->GetImage()->Download();
+    };
+    for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
+    {
+        RenderOnce();
+    }
+
+    const auto MarchedDirection = [&](const vec3& rayOrigin, const vec3& rayDir, const i32 budget)
+    {
+        material->SetParam("Display", vec4(0.0f, 0.0f, 0.0f, 1.0f));
+        material->SetParam("RayOrigin", vec4(rayOrigin, 0.0f));
+        material->SetParam("RayDir", vec4(rayDir, static_cast<f32>(budget)));
+        const vector<u8> output = RenderOnce();
+        const vec4 encoded = SampleBlock(output, Extent, vec2(0.5f, 0.5f), 2);
+        return glm::normalize(vec3(encoded) * 2.0f - 1.0f);
+    };
+
+    // The box is open at +Y, so a ray toward +Y crosses no recorded surface — the sky. A miss returns
+    // the bare ray direction (the sky, correctly sampled by direction) and never a NaN.
+    const vec3 skyRay(0.05f, 1.0f, 0.05f);
+    const vec3 skyDir = glm::normalize(skyRay);
+    const vec3 skyMarched = MarchedDirection(vec3(0.0f), skyRay, 0);
+    CHECK(std::isfinite(skyMarched.x));
+    CHECK(std::isfinite(skyMarched.y));
+    CHECK(std::isfinite(skyMarched.z));
+    CHECK(skyMarched.y == doctest::Approx(skyDir.y).epsilon(0.05));
+    CHECK(skyMarched.x == doctest::Approx(skyDir.x).epsilon(0.05));
+
+    // The block ray from the first case again, at a starved linear budget of one step. A low budget
+    // degrades toward the uncorrected direction rather than toward garbage: it stays a finite unit
+    // direction, and its angular error is no worse than the bare direction's.
+    const vec3 blockOrigin(1.2f, 0.0f, 0.0f);
+    const vec3 blockRay(-0.3f, 0.0f, -1.0f);
+    const vec3 blockDir = glm::normalize(blockRay);
+    const vec3 trueDir =
+        glm::normalize(blockOrigin + blockDir * ((-1.5f - blockOrigin.z) / blockDir.z));
+
+    const vec3 lowBudget = MarchedDirection(blockOrigin, blockRay, 1);
+    CHECK(std::isfinite(lowBudget.x));
+    CHECK(std::isfinite(lowBudget.z));
+    const f32 lowError =
+        glm::degrees(std::acos(glm::clamp(glm::dot(lowBudget, trueDir), -1.0f, 1.0f)));
+    const f32 bareError =
+        glm::degrees(std::acos(glm::clamp(glm::dot(blockDir, trueDir), -1.0f, 1.0f)));
+    CHECK(lowError <= bareError + 12.0f);
 }

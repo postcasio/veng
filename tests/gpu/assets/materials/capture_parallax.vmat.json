@@ -30,6 +30,26 @@
       "name": "Display",
       "type": "vec4",
       "value": [0.0, 0.0, 0.0, 0.0]
+    },
+    {
+      "name": "RayOrigin",
+      "type": "vec4",
+      "value": [0.0, 0.0, 0.0, 0.0]
+    },
+    {
+      "name": "RayDir",
+      "type": "vec4",
+      "value": [0.0, 0.0, -1.0, 0.0]
+    },
+    {
+      "name": "Depth",
+      "type": "texture",
+      "id": "0x0000000000002329"
+    },
+    {
+      "name": "DepthSampler",
+      "type": "sampler",
+      "texture": "Depth"
     }
   ]
 }

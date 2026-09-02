@@ -8,6 +8,11 @@
   },
   "fields": [
     {
+      "name": "Center",
+      "type": "vec4",
+      "value": [0.0, 0.0, 0.0, 0.0]
+    },
+    {
       "name": "Texture",
       "type": "texture",
       "id": "0x502E61AE5D720E64"
@@ -16,6 +21,16 @@
       "name": "Sampler",
       "type": "sampler",
       "texture": "Texture"
+    },
+    {
+      "name": "Depth",
+      "type": "texture",
+      "id": "0x502E61AE5D720E64"
+    },
+    {
+      "name": "DepthSampler",
+      "type": "sampler",
+      "texture": "Depth"
     }
   ]
 }
