@@ -316,9 +316,10 @@ namespace Veng::Renderer
 
             // Area-light shape, packed into the last two vec4. A Rect or Polygon emits its
             // world-space vertices into the shared area-vertex buffer (base/count in Area.yz); a
-            // Sphere records its transform-scaled radius in Area.x. Non-area lights leave these
-            // inert (radius 0, count 0, area-shadow slot -1). The area-shadow slot stays -1 here;
-            // the shading path is independent of the shadow arm.
+            // Sphere records its transform-scaled radius in Area.x, and a Point or Spot records
+            // its transform-scaled source radius in the same lane (the shading distance clamp).
+            // Area.yz and the area-shadow slot stay inert for a punctual light. The area-shadow
+            // slot stays -1 here; the shading path is independent of the shadow arm.
             vec4 area{0.0f, 0.0f, 0.0f, -1.0f};
             vec3 areaNormal{0.0f};
             // The light's world-space size, driving the PCSS penumbra width in the lighting pass.
@@ -331,6 +332,15 @@ namespace Veng::Renderer
                 const f32 scale = glm::length(vec3(world4[0]));
                 area.x = light.Radius * scale;
                 shadowRadius = area.x;
+            }
+            else if (light.Type == LightType::Point || light.Type == LightType::Spot)
+            {
+                // The spherical source radius rides Area.x for the punctual arm too, scaled by the
+                // transform basis so a parented, scaled light keeps a consistent source size. The
+                // lighting pass clamps the shading distance to it before the inverse-square; it
+                // does not size a shadow penumbra, so shadowRadius is left at zero.
+                const f32 scale = glm::length(vec3(world4[0]));
+                area.x = light.Radius * scale;
             }
             else if (light.Type == LightType::Rect || light.Type == LightType::Polygon)
             {

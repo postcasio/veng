@@ -55,15 +55,16 @@ static const float LightTypePolygon = 5.0;
 
 // One light, packed by the renderer into the ring-buffered light buffer. Position
 // is the entity's world transform; the type rides DirectionType.w. The last two
-// vec4 carry the area-light shape: a Sphere's radius, a Rect/Polygon's vertex range
-// into the area-vertex buffer, the area-shadow slot, and the world area normal.
+// vec4 carry the source/shape size: a Sphere's or a Point/Spot's source radius, a
+// Rect/Polygon's vertex range into the area-vertex buffer, the area-shadow slot, and
+// the world area normal.
 struct GpuLight
 {
     float4 PositionRange;   // xyz world position, w range
     float4 DirectionType;   // xyz travel direction, w LightType
     float4 ColorIntensity;  // rgb linear color, a intensity
     float4 Cone;            // x cos(inner), y cos(outer), z punctual shadow slot, w LightFlag bits
-    float4 Area;            // x sphere radius, y poly vertex base, z poly vertex count, w area-shadow slot
+    float4 Area;            // x sphere/point/spot source radius, y poly vertex base, z poly vertex count, w area-shadow slot
     float4 AreaNormal;      // xyz world area normal (Rect/Polygon), w pad
 };
 
@@ -500,8 +501,18 @@ float4 fsMain(VSOutput input) : SV_Target
             // Inverse-square falloff with a smooth cutoff at Range: physically
             // correct near the light, faded to zero by the range radius so the loop
             // bound stays meaningful.
+            //
+            // The near field is bounded by the light's spherical source radius (Area.x):
+            // the shading distance is clamped to be no less than it before the square, so a
+            // real source size — not an epsilon guard — caps the response at contact. A zero
+            // radius (the default) falls back to the 1e-4 floor and is bit-identical to a pure
+            // inverse-square. A 1/(d^2 + 1) denominator is deliberately not used: the +1
+            // perturbs the falloff at every distance, not only near the singularity, so it
+            // cannot be read as absolute radiance under a fixed exposure. L still comes from the
+            // true toLight — the clamp bounds the magnitude of the response, not its direction.
             float range = max(light.PositionRange.w, 1e-4);
-            float distanceFactor = 1.0 / max(dist * dist, 1e-4);
+            float sourceRadius = light.Area.x;
+            float distanceFactor = 1.0 / max(max(dist * dist, sourceRadius * sourceRadius), 1e-4);
             float rangeFactor = saturate(1.0 - pow(dist / range, 4.0));
             rangeFactor *= rangeFactor;
             attenuation = distanceFactor * rangeFactor;

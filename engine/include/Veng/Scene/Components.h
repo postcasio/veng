@@ -389,8 +389,17 @@ namespace Veng
         f32 Width{1.0f};
         /// @brief Full height of a Rect area light along the entity's local Y axis.
         f32 Height{1.0f};
-        /// @brief Radius of a Sphere area light.
-        f32 Radius{1.0f};
+        /// @brief Spherical radius, in world units, of a Sphere area light's shape and of a
+        /// Point or Spot light's emitter.
+        ///
+        /// For a Sphere it is the area emitter's radius. For a Point or Spot it is the spherical
+        /// source radius: the deferred lighting pass clamps the shading distance to be no less
+        /// than it before the inverse-square, so the near field is bounded by a real source size
+        /// rather than exploding as the distance goes to zero. It is scaled by the entity's world
+        /// transform, so a parented, scaled light keeps a consistent size. Zero — the default —
+        /// is an unsized emitter: a punctual Point/Spot reproducing the pure inverse-square, or a
+        /// degenerate Sphere.
+        f32 Radius{0.0f};
         /// @brief Whether a Rect or Polygon area light emits from both faces.
         bool TwoSided{false};
         /// @brief Whether this light is given a shadow map.

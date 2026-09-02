@@ -105,6 +105,50 @@ TEST_CASE("PackSceneLights: a lone directional packs exactly as it did before ca
     CHECK(packed.DeniedDirectionalCount == 0);
 }
 
+TEST_CASE("PackSceneLights: a point/spot source radius packs into Area.x, transform-scaled")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+    const Unique<Scene> scene = Scene::Create(types);
+
+    // A Point light with an authored source radius, on an entity uniformly scaled 2x: the packer
+    // scales the radius by the transform basis so a parented, scaled light keeps a consistent size.
+    const Entity point = scene->CreateEntity();
+    scene->Add<Transform>(point, Transform{.Scale = vec3(2.0f)});
+    scene->Add<Light>(point, Light{.Type = LightType::Point, .Range = 5.0f, .Radius = 0.5f});
+
+    // A Spot with an unscaled transform: the radius packs through unchanged.
+    AddLight(*scene,
+             Light{.Type = LightType::Spot, .Range = 5.0f, .OuterCone = 0.6f, .Radius = 0.3f},
+             vec3(10.0f, 0.0f, 0.0f));
+
+    const PackedSceneLights packed = PackSceneLights(*scene, true, 1024);
+
+    REQUIRE(packed.LightCount == 2);
+    CHECK(packed.Lights[0].Area.x == doctest::Approx(1.0f)); // 0.5 * 2x scale
+    CHECK(packed.Lights[1].Area.x == doctest::Approx(0.3f));
+}
+
+TEST_CASE("PackSceneLights: a default point/spot source radius is zero, so the near field is inert")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+    const Unique<Scene> scene = Scene::Create(types);
+
+    // With Radius at its default, the packed source radius is zero: the shader's distance clamp
+    // falls back to the epsilon floor, reproducing the pure inverse-square. A default light of any
+    // positioned type is unchanged from before the source radius existed.
+    AddLight(*scene, Light{.Type = LightType::Point, .Range = 5.0f});
+    AddLight(*scene, Light{.Type = LightType::Spot, .Range = 5.0f, .OuterCone = 0.6f},
+             vec3(10.0f, 0.0f, 0.0f));
+
+    const PackedSceneLights packed = PackSceneLights(*scene, true, 1024);
+
+    REQUIRE(packed.LightCount == 2);
+    CHECK(packed.Lights[0].Area.x == doctest::Approx(0.0f));
+    CHECK(packed.Lights[1].Area.x == doctest::Approx(0.0f));
+}
+
 TEST_CASE("PackSceneLights: two directionals each take a cascade set of their own")
 {
     TypeRegistry types;
