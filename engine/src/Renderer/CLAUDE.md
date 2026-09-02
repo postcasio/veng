@@ -1118,6 +1118,20 @@ view budget it can leave those viewports, round-robin across frames when they do
 material sampling one reads this frame's result. `CaptureSurface` (the reflected component, see
 [../Gui/CLAUDE.md](../Gui/CLAUDE.md)) is the authoring front end.
 
+**A capture optionally publishes an octahedral distance map beside the radiance one**
+(`SceneCaptureInfo::CaptureDistance`, off by default). The same six faces are rendered with a depth
+buffer either way; when asked, their depths tile into a second (3×2) atlas and resample into a
+single-channel `R32Sfloat` octahedral map — in the *same* parameterization, so one
+`OctahedralUV(direction)` indexes both — holding the **radial** distance from the probe centre to the
+nearest surface in each direction (world units), with `SceneCapture::DistanceSkySentinel` where a
+direction saw only the far-plane sky. Radial, not the face-axis distance the depth linearizes to: the
+map is direction-indexed, and dividing by the direction's cosine with the face axis (the projection's
+own denominator) is what a consumer cannot do afterwards, since the octahedral map hides which face a
+texel came from. The distance resample point-samples the depth atlas — a bilinear tap across a depth
+discontinuity yields a distance at which nothing is. Off, none of the distance path exists (no depth
+atlas, no distance map, no extra pipelines or slots). Nothing in the engine consumes it; a consuming
+material walks it (see the parallax-correction note under "Deliberately not here").
+
 **A capture in a world nothing presents is not driven.** A capture feeds a material sampled by a mesh
 drawn in some view, so a world no view shows has nowhere its capture could be seen — and worlds are
 flat peers of which several are live at once in the ordinary case, so driving every live world's
@@ -1171,9 +1185,15 @@ Deliberately **not** here: a general per-entity or per-layer visibility mask (th
 entity in a closed producer→consumer pair, with no authoring story to get wrong), **recursive
 probes** (another capture-consuming surface in the map reads a one-frame-old result, invisible at a
 reflection's contrast), and **parallax correction**, whose math belongs to the consuming material —
-`CaptureSurface::CenterSlot` publishes the world position the map was rendered from, plus a validity
-flag, and `CaptureSurface::OrientationSlot` the frame the faces were oriented in as a quaternion, so
-the material has the two inputs it cannot derive for itself.
+the engine publishes the *data* a correction needs and applies none. `CaptureSurface::CenterSlot`
+publishes the world position the map was rendered from, plus a validity flag;
+`CaptureSurface::OrientationSlot` the frame the faces were oriented in as a quaternion; and
+`CaptureSurface::DepthTextureSlot` (opt-in) a second octahedral map, in the same parameterization as
+the radiance one, holding the **radial distance** from the probe centre to the nearest surface in
+each direction (world units, with `SceneCapture::DistanceSkySentinel` where a direction saw only the
+sky). So a material can walk the recorded distance along a reflected ray rather than intersect a
+hand-authored stand-in volume — but the walk, and the correction, are the material's; the engine
+records how far away what it saw was and stops there.
 
 ## Generated textures: compute something expensive once, then sample it
 

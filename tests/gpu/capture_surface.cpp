@@ -78,6 +78,50 @@ namespace
     // A probe material that reads the published centre: it falls back to bright magenta on a zero
     // validity flag, and can display the centre itself instead of the capture (its Display param).
     constexpr AssetId ParallaxInstance{0x24B1};
+    // Opaque, depth-writing wall materials (green / red), for the box-distance and registration cases.
+    constexpr AssetId WallGreenInstance{0x24D1};
+    constexpr AssetId WallRedInstance{0x24D2};
+    // A material that samples the octahedral distance map in an authored Direction and returns the
+    // recorded distance as radiance, for the opt-in end-to-end case.
+    constexpr AssetId DistanceProbeInstance{0x24F1};
+
+    // The octahedral UV of a direction — a CPU mirror of Veng/octahedral.slang's OctahedralUV, so a
+    // test can address the distance map's texel for a chosen world direction.
+    vec2 OctahedralUv(const vec3& dir)
+    {
+        const vec3 a = dir / (std::abs(dir.x) + std::abs(dir.y) + std::abs(dir.z));
+        vec2 uv;
+        if (a.z >= 0.0f)
+        {
+            uv = vec2(a.x, a.y);
+        }
+        else
+        {
+            uv = vec2((1.0f - std::abs(a.y)) * (a.x >= 0.0f ? 1.0f : -1.0f),
+                      (1.0f - std::abs(a.x)) * (a.y >= 0.0f ? 1.0f : -1.0f));
+        }
+        return uv * 0.5f + 0.5f;
+    }
+
+    // Reads the single-channel R32Sfloat octahedral distance map at the texel a direction addresses.
+    f32 DistanceInDirection(const vector<u8>& r32, u32 edge, const vec3& dir)
+    {
+        const vec2 uv = OctahedralUv(glm::normalize(dir));
+        const i32 x = glm::clamp(static_cast<i32>(uv.x * static_cast<f32>(edge)), 0,
+                                 static_cast<i32>(edge) - 1);
+        const i32 y = glm::clamp(static_cast<i32>(uv.y * static_cast<f32>(edge)), 0,
+                                 static_cast<i32>(edge) - 1);
+        const auto* floats = reinterpret_cast<const f32*>(r32.data());
+        return floats[static_cast<usize>(y) * edge + static_cast<usize>(x)];
+    }
+
+    // The radial distance from the origin to the surface of an axis-aligned box of half-extent
+    // `halfExtent` along `dir` — the analytic answer a capture centred in the box must record.
+    f32 BoxRadialDistance(f32 halfExtent, const vec3& dir)
+    {
+        const vec3 n = glm::normalize(dir);
+        return halfExtent / glm::max(glm::max(std::abs(n.x), std::abs(n.y)), std::abs(n.z));
+    }
 
     vec4 DecodeTexel(const vector<u8>& rgba16f, u32 width, u32 x, u32 y)
     {
@@ -227,6 +271,33 @@ namespace
         capture.Refresh = CaptureRefresh::EveryFrame;
 
         return scene;
+    }
+
+    // Adds one opaque, depth-writing wall cube of the given edge, centred at `center`.
+    void AddWall(Scene& scene, AssetManager& assets, vector<Ref<Mesh>>& meshes,
+                 const AssetHandle<MaterialInstance>& material, const char* name,
+                 const vec3& center, f32 edge, Context& context)
+    {
+        const Ref<Mesh> mesh = Mesh::BuildSync(context, Primitives::Cube(edge, material), name);
+        meshes.push_back(mesh);
+        const Entity entity = scene.CreateEntity();
+        scene.Add<Transform>(entity).Position = center;
+        scene.Add<MeshRenderer>(entity).Mesh = assets.Adopt(mesh);
+    }
+
+    // A capturing entity at the origin (no mesh) carrying a distance-publishing CaptureSurface, so the
+    // distance map is read back directly rather than through a consuming surface.
+    Entity AddDistanceCapture(Scene& scene, u32 faceResolution, u32 distanceResolution)
+    {
+        const Entity entity = scene.CreateEntity();
+        scene.Add<Transform>(entity);
+        auto& capture = scene.Add<CaptureSurface>(entity);
+        capture.Resolution = faceResolution;
+        capture.Refresh = CaptureRefresh::EveryFrame;
+        // A non-empty DepthTextureSlot is the opt-in that makes the capture publish a distance map.
+        capture.DepthTextureSlot = "Depth";
+        capture.DepthResolution = distanceResolution;
+        return entity;
     }
 }
 
@@ -1292,4 +1363,274 @@ TEST_CASE_FIXTURE(
     const vector<u8> output = viewport->GetOutput()->GetImage()->Download();
     const vec4 center = SampleBlock(output, Extent, vec2(0.5f, 0.5f));
     CHECK(center.g > 0.6f);
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "capture distance: a capture centred in a box records radial distances, with a sky "
+    "sentinel where the box is open")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> wall =
+        assets.LoadSync<MaterialInstance>(WallGreenInstance);
+    REQUIRE(wall.has_value());
+
+    // Five opaque walls forming a box of half-extent H = 4 about the origin, open at +Y. Each wall is
+    // a cube of edge 12 (half 6) whose inner face sits at ±4: wide enough that every ray whose
+    // dominant axis is the wall's normal lands on that inner face.
+    constexpr f32 H = 4.0f;
+    vector<Ref<Mesh>> meshes;
+    const Unique<Scene> scene = Scene::Create(Types);
+    AddWall(*scene, assets, meshes, *wall, "Box +X", vec3(10.0f, 0.0f, 0.0f), 12.0f, Context);
+    AddWall(*scene, assets, meshes, *wall, "Box -X", vec3(-10.0f, 0.0f, 0.0f), 12.0f, Context);
+    AddWall(*scene, assets, meshes, *wall, "Box -Y", vec3(0.0f, -10.0f, 0.0f), 12.0f, Context);
+    AddWall(*scene, assets, meshes, *wall, "Box +Z", vec3(0.0f, 0.0f, 10.0f), 12.0f, Context);
+    AddWall(*scene, assets, meshes, *wall, "Box -Z", vec3(0.0f, 0.0f, -10.0f), 12.0f, Context);
+
+    const Entity captureEntity = AddDistanceCapture(*scene, 128, 128);
+    const CaptureSurface& capture = scene->Get<CaptureSurface>(captureEntity);
+
+    // Drive a full round-robin refresh, then read the distance map back directly.
+    for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
+    {
+        auto* const built = capture.Drive(Context, assets, *scene, captureEntity, vec3(0.0f), 0.0f,
+                                          mat3(1.0f), AssetHandle<MaterialInstance>{});
+        REQUIRE(built != nullptr);
+        Context.ImmediateCommands([&](CommandBuffer& cmd) { built->Render(cmd); });
+    }
+
+    const SceneCapture* built = capture.GetCapture();
+    REQUIRE(built != nullptr);
+    REQUIRE(built->GetDistanceOutput() != nullptr);
+    const u32 edge = built->GetDistanceOutput()->GetImage()->GetExtent().x;
+    const vector<u8> map = built->GetDistanceOutput()->GetImage()->Download();
+
+    // Face centres (slightly off-axis, so they map to interior texels rather than the octahedral
+    // fold's edges): each wall stands at H along its axis, so its radial distance is ~H.
+    const vec3 faceDirs[5] = {
+        vec3(1.0f, 0.05f, 0.05f), vec3(-1.0f, 0.05f, 0.05f), vec3(0.05f, -1.0f, 0.05f),
+        vec3(0.05f, 0.05f, 1.0f), vec3(0.05f, 0.05f, -1.0f),
+    };
+    for (const vec3& dir : faceDirs)
+    {
+        const f32 expected = BoxRadialDistance(H, dir);
+        const f32 recorded = DistanceInDirection(map, edge, dir);
+        CHECK(recorded == doctest::Approx(expected).epsilon(0.06));
+        // A direction with geometry never reads the sky sentinel.
+        CHECK(recorded < SceneCapture::DistanceSkySentinel * 0.5f);
+    }
+
+    // The single most valuable check: an off-axis texel is RADIAL, not the face-axis distance. For a
+    // direction 42 degrees off the +X axis the radial distance to the +X wall is H/cos, which the
+    // z-along-the-axis answer (H) is not — so the recorded value must match the radial length and sit
+    // clearly above H.
+    const vec3 offAxis(1.0f, -0.9f, 0.1f);
+    const f32 radial = BoxRadialDistance(H, offAxis); // ~5.39, versus the face-axis answer H = 4.
+    const f32 recordedOffAxis = DistanceInDirection(map, edge, offAxis);
+    CHECK(recordedOffAxis == doctest::Approx(radial).epsilon(0.08));
+    CHECK(recordedOffAxis > H + 0.6f);
+
+    // The box is open at +Y: that direction saw no geometry, so it records the sky sentinel.
+    const f32 openSky = DistanceInDirection(map, edge, vec3(0.05f, 1.0f, 0.05f));
+    CHECK(openSky >= SceneCapture::DistanceSkySentinel);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "capture distance: the distance map registers with the radiance map")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> shell =
+        assets.LoadSync<MaterialInstance>(ShellInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> green =
+        assets.LoadSync<MaterialInstance>(WallGreenInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> red =
+        assets.LoadSync<MaterialInstance>(WallRedInstance);
+    REQUIRE(shell.has_value());
+    REQUIRE(green.has_value());
+    REQUIRE(red.has_value());
+
+    // Two distinguishable walls in known directions and at distinct distances: green straight down
+    // (its inner face at Y = -4, so distance 4) and red straight ahead (its inner face at Z = 10, so
+    // distance 10). A shell at the origin carries the capture and samples the RADIANCE map in an
+    // authored direction; the DISTANCE map is read back directly.
+    vector<Ref<Mesh>> meshes;
+    const Unique<Scene> scene = Scene::Create(Types);
+    AddWall(*scene, assets, meshes, *green, "Reg Green Down", vec3(0.0f, -10.0f, 0.0f), 12.0f,
+            Context);
+    AddWall(*scene, assets, meshes, *red, "Reg Red Ahead", vec3(0.0f, 0.0f, 16.0f), 12.0f, Context);
+
+    const Ref<Mesh> shellMesh =
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *shell), "Reg Shell");
+    meshes.push_back(shellMesh);
+    const Entity shellEntity = scene->CreateEntity();
+    scene->Add<Transform>(shellEntity);
+    scene->Add<MeshRenderer>(shellEntity).Mesh = assets.Adopt(shellMesh);
+    auto& capture = scene->Add<CaptureSurface>(shellEntity);
+    capture.Resolution = 128;
+    capture.Refresh = CaptureRefresh::EveryFrame;
+    capture.DepthTextureSlot = "Depth";
+    capture.DepthResolution = 128;
+
+    const AssetHandle<MaterialInstance> material = SurfaceMaterial(*scene, shellEntity);
+    const Unique<Viewport> viewport = MakeViewport(Context, assets);
+
+    // Drive a full refresh with the shell showing the -Y radiance, and read both maps once populated.
+    material->SetParam("Direction", vec4(0.0f, -1.0f, 0.0f, 0.0f));
+    vector<u8> frame;
+    for (u32 i = 0; i < SceneCapture::FaceCount; ++i)
+    {
+        auto* const built = capture.Drive(Context, assets, *scene, shellEntity, vec3(0.0f), 0.0f,
+                                          mat3(1.0f), material);
+        REQUIRE(built != nullptr);
+        viewport->SetViewState({.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f});
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                built->Render(cmd);
+                viewport->Render(cmd);
+            });
+        frame = viewport->GetOutput()->GetImage()->Download();
+    }
+
+    // Radiance at -Y is the green wall.
+    const vec4 downColor = SampleBlock(frame, Extent, vec2(0.5f, 0.5f));
+    CHECK(downColor.g > 0.5f);
+    CHECK(downColor.g > downColor.r + 0.2f);
+
+    // Distance at -Y is the green wall's distance (4), and at +Z the red wall's (10). The same
+    // OctahedralUV(direction) addresses the same surface in both maps: green sits at distance 4 in the
+    // exact direction its colour appears, red at 10 where its colour appears — a misregistered
+    // distance map would not line the two up.
+    const SceneCapture* built = capture.GetCapture();
+    REQUIRE(built->GetDistanceOutput() != nullptr);
+    const u32 edge = built->GetDistanceOutput()->GetImage()->GetExtent().x;
+    const vector<u8> map = built->GetDistanceOutput()->GetImage()->Download();
+    CHECK(DistanceInDirection(map, edge, vec3(0.05f, -1.0f, 0.05f)) ==
+          doctest::Approx(4.0f).epsilon(0.08));
+    CHECK(DistanceInDirection(map, edge, vec3(0.05f, 0.05f, 1.0f)) ==
+          doctest::Approx(10.0f).epsilon(0.08));
+
+    // Radiance at +Z is the red wall — the colour half of the same registration.
+    material->SetParam("Direction", vec4(0.0f, 0.0f, 1.0f, 0.0f));
+    for (u32 i = 0; i < SceneCapture::FaceCount; ++i)
+    {
+        auto* const built2 = capture.Drive(Context, assets, *scene, shellEntity, vec3(0.0f), 0.0f,
+                                           mat3(1.0f), material);
+        viewport->SetViewState({.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f});
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                built2->Render(cmd);
+                viewport->Render(cmd);
+            });
+        frame = viewport->GetOutput()->GetImage()->Download();
+    }
+    const vec4 aheadColor = SampleBlock(frame, Extent, vec2(0.5f, 0.5f));
+    CHECK(aheadColor.r > 0.5f);
+    CHECK(aheadColor.r > aheadColor.g + 0.2f);
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "capture distance: an unset DepthTextureSlot publishes no distance map; naming one "
+    "publishes and binds it")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> probe =
+        assets.LoadSync<MaterialInstance>(ProbeInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> distanceProbe =
+        assets.LoadSync<MaterialInstance>(DistanceProbeInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> wall =
+        assets.LoadSync<MaterialInstance>(WallGreenInstance);
+    REQUIRE(probe.has_value());
+    REQUIRE(distanceProbe.has_value());
+    REQUIRE(wall.has_value());
+
+    SUBCASE("an unset DepthTextureSlot allocates and binds no distance map")
+    {
+        vector<Ref<Mesh>> meshes;
+        Entity surfaceEntity;
+        // The default DepthTextureSlot is empty, so this capture opts into no distance map.
+        const Unique<Scene> scene =
+            BuildCaptureScene(Context, assets, Types, *probe, *probe, CaptureRefresh::EveryFrame,
+                              meshes, surfaceEntity);
+        const CaptureSurface& capture = scene->Get<CaptureSurface>(surfaceEntity);
+        REQUIRE(capture.DepthTextureSlot.empty());
+
+        auto* const built = capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f), 0.0f,
+                                          mat3(1.0f), SurfaceMaterial(*scene, surfaceEntity));
+        REQUIRE(built != nullptr);
+        // The capture reports no distance resources: no distance map view, an invalid handle.
+        CHECK(built->GetDistanceOutput() == nullptr);
+        CHECK_FALSE(built->GetDistanceOutputHandle().IsValid());
+    }
+
+    SUBCASE("naming a DepthTextureSlot publishes the map and binds it end to end")
+    {
+        // A green floor 8 units below (inner face at Y = -4, distance 4), and a distance-probe surface
+        // at the origin that samples the distance map in -Y and shows the recorded distance.
+        vector<Ref<Mesh>> meshes;
+        const Unique<Scene> scene = Scene::Create(Types);
+        AddWall(*scene, assets, meshes, *wall, "Opt Floor", vec3(0.0f, -10.0f, 0.0f), 12.0f,
+                Context);
+
+        const Ref<Mesh> surface =
+            Mesh::BuildSync(Context, Primitives::Cube(1.4f, *distanceProbe), "Opt Probe");
+        meshes.push_back(surface);
+        const Entity surfaceEntity = scene->CreateEntity();
+        scene->Add<Transform>(surfaceEntity);
+        scene->Add<MeshRenderer>(surfaceEntity).Mesh = assets.Adopt(surface);
+        auto& capture = scene->Add<CaptureSurface>(surfaceEntity);
+        capture.Resolution = 128;
+        capture.Refresh = CaptureRefresh::EveryFrame;
+        capture.DepthTextureSlot = "Depth";
+        capture.DepthSamplerSlot = "DepthSampler";
+        capture.DepthResolution = 128;
+
+        const AssetHandle<MaterialInstance> material = SurfaceMaterial(*scene, surfaceEntity);
+        material->SetParam("Direction", vec4(0.0f, -1.0f, 0.0f, 0.0f));
+        const Unique<Viewport> viewport = MakeViewport(Context, assets);
+
+        vector<u8> frame;
+        for (u32 i = 0; i < SceneCapture::FaceCount; ++i)
+        {
+            auto* const built = capture.Drive(Context, assets, *scene, surfaceEntity, vec3(0.0f),
+                                              0.0f, mat3(1.0f), material);
+            REQUIRE(built != nullptr);
+            viewport->SetViewState(
+                {.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f});
+            Context.ImmediateCommands(
+                [&](CommandBuffer& cmd)
+                {
+                    built->Render(cmd);
+                    viewport->Render(cmd);
+                });
+            frame = viewport->GetOutput()->GetImage()->Download();
+        }
+
+        // The capture now reports a distance map, and its handle is valid.
+        const SceneCapture* built = capture.GetCapture();
+        CHECK(built->GetDistanceOutput() != nullptr);
+        CHECK(built->GetDistanceOutputHandle().IsValid());
+
+        // End to end: the probe sampled the distance map through the bound Depth/DepthSampler slots
+        // and showed the floor's distance (4) as radiance — a grey, bright centre. Had the slots not
+        // bound, it would sample the cooked-default brick texture (a coloured, non-grey value).
+        const vec4 center = SampleBlock(frame, Extent, vec2(0.5f, 0.5f));
+        CHECK(center.r > 0.3f);
+        CHECK(std::abs(center.r - center.g) < 0.1f);
+        CHECK(std::abs(center.r - center.b) < 0.1f);
+    }
 }

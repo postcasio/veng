@@ -70,6 +70,31 @@
       "id": "0x00000000000024A1",
       "type": "Material",
       "source": "materials/capture_parallax.vmat.json"
+    },
+    {
+      "id": "0x00000000000024C0",
+      "type": "Shader",
+      "source": "shaders/capture_wall.frag.shader.json"
+    },
+    {
+      "id": "0x00000000000024C1",
+      "type": "Material",
+      "source": "materials/capture_wall_green.vmat.json"
+    },
+    {
+      "id": "0x00000000000024C2",
+      "type": "Material",
+      "source": "materials/capture_wall_red.vmat.json"
+    },
+    {
+      "id": "0x00000000000024E0",
+      "type": "Shader",
+      "source": "shaders/capture_distance_probe.frag.shader.json"
+    },
+    {
+      "id": "0x00000000000024E1",
+      "type": "Material",
+      "source": "materials/capture_distance_probe.vmat.json"
     }
   ]
 }

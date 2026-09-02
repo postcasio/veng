@@ -16,6 +16,10 @@ namespace Veng::Renderer
 
         /// @brief The owned capture, self-unregistering from the drive-list on destruction.
         Unique<SceneCapture> Capture;
+        /// @brief Bindless slot of the point sampler the material reads the distance map through.
+        ///
+        /// Declared before SamplerHandle, whose member name shadows the type from that point on.
+        SamplerHandle DepthSamplerHandle;
         /// @brief Bindless slot of the shared sampler the material reads the capture output through.
         SamplerHandle SamplerHandle;
         /// @brief Faces still owed before the current refresh settles; 0 leaves an OnDemand capture idle.
@@ -31,6 +35,10 @@ namespace Veng::Renderer
         string BoundCenterSlot;
         /// @brief Orientation-slot name the last drive filled on BoundMaterial; empty when none.
         string BoundOrientationSlot;
+        /// @brief Distance-map texture-slot name the last drive filled; empty when it filled none.
+        string BoundDepthTextureSlot;
+        /// @brief Distance-map sampler-slot name the last drive filled; empty when it filled none.
+        string BoundDepthSamplerSlot;
     };
 
     namespace
@@ -69,6 +77,16 @@ namespace Veng::Renderer
                 {
                     material->SetSamplerHandle(runtime.BoundSamplerSlot, SamplerHandle{});
                 }
+                // The distance map's handle rides back to the same sentinel as the radiance map: the
+                // capture releases the slot and the next registration reuses it.
+                if (!runtime.BoundDepthTextureSlot.empty())
+                {
+                    material->SetTextureHandle(runtime.BoundDepthTextureSlot, TextureHandle{});
+                }
+                if (!runtime.BoundDepthSamplerSlot.empty())
+                {
+                    material->SetSamplerHandle(runtime.BoundDepthSamplerSlot, SamplerHandle{});
+                }
                 if (!runtime.BoundCenterSlot.empty())
                 {
                     material->SetParam(runtime.BoundCenterSlot, vec4(0.0f));
@@ -87,6 +105,8 @@ namespace Veng::Renderer
             runtime.BoundSamplerSlot.clear();
             runtime.BoundCenterSlot.clear();
             runtime.BoundOrientationSlot.clear();
+            runtime.BoundDepthTextureSlot.clear();
+            runtime.BoundDepthSamplerSlot.clear();
         }
 
         /// @brief A lean renderer config for a capture: the heavy per-view batteries multiply by six
@@ -189,11 +209,16 @@ namespace Veng::Renderer
         // uses, and the same one every other clamped blit in the engine reads through.
         if (!runtime.Capture)
         {
+            // The distance map is opt-in: an empty DepthTextureSlot builds none, so the depth atlas,
+            // the distance map, and their pipelines and slots do not exist.
+            const bool captureDistance = !DepthTextureSlot.empty();
             runtime.Capture = SceneCapture::Create({
                 .Context = context,
                 .Assets = assets,
                 .FaceResolution = Resolution,
                 .Settings = CaptureSettings(Shadows),
+                .CaptureDistance = captureDistance,
+                .DistanceResolution = DepthResolution,
             });
             runtime.SamplerHandle = context.GetBindlessRegistry()
                                         .AcquireSampler({
@@ -205,6 +230,22 @@ namespace Veng::Renderer
                                             .AddressModeW = AddressMode::ClampToEdge,
                                         })
                                         .Handle;
+            if (captureDistance)
+            {
+                // A point sampler for the distance map — a bilinear tap across a depth discontinuity
+                // yields a distance at which nothing is.
+                runtime.DepthSamplerHandle = context.GetBindlessRegistry()
+                                                 .AcquireSampler({
+                                                     .Name = "CaptureSurface Depth Sampler",
+                                                     .MagFilter = Filter::Nearest,
+                                                     .MinFilter = Filter::Nearest,
+                                                     .MipmapMode = MipmapMode::Nearest,
+                                                     .AddressModeU = AddressMode::ClampToEdge,
+                                                     .AddressModeV = AddressMode::ClampToEdge,
+                                                     .AddressModeW = AddressMode::ClampToEdge,
+                                                 })
+                                                 .Handle;
+            }
         }
 
         // Push this frame's capture source when the refresh policy calls for it. EveryFrame always
@@ -237,6 +278,8 @@ namespace Veng::Renderer
             runtime.BoundSamplerSlot.clear();
             runtime.BoundCenterSlot.clear();
             runtime.BoundOrientationSlot.clear();
+            runtime.BoundDepthTextureSlot.clear();
+            runtime.BoundDepthSamplerSlot.clear();
 
             const TextureHandle output = runtime.Capture->GetOutputHandle();
             if (HasField(*target, TextureSlot, MaterialField::FieldKind::TextureHandle))
@@ -249,9 +292,27 @@ namespace Veng::Renderer
                 target->SetSamplerHandle(SamplerSlot, runtime.SamplerHandle);
                 runtime.BoundSamplerSlot = SamplerSlot;
             }
-            // The centre is what a parallax-correcting fragment intersects its proxy volume about, and
-            // w is 1 only once an output slot exists — so a fragment can tell an unpopulated slot from
-            // a probe at the origin and reach its fallback instead of indexing the array with it.
+            // The octahedral distance map and its point sampler, when the component opted into a
+            // distance map (DepthTextureSlot names one) and the material declares the fields. Both
+            // ride back to the unbound sentinel on teardown, and CenterSlot's flag gates the sample.
+            if (!DepthTextureSlot.empty() &&
+                HasField(*target, DepthTextureSlot, MaterialField::FieldKind::TextureHandle))
+            {
+                target->SetTextureHandle(DepthTextureSlot,
+                                         runtime.Capture->GetDistanceOutputHandle());
+                runtime.BoundDepthTextureSlot = DepthTextureSlot;
+            }
+            // The point sampler binds only when the distance path is on (DepthTextureSlot names one):
+            // DepthSamplerSlot defaults non-empty, but a capture with no distance map holds no sampler.
+            if (!DepthTextureSlot.empty() && !DepthSamplerSlot.empty() &&
+                HasField(*target, DepthSamplerSlot, MaterialField::FieldKind::SamplerHandle))
+            {
+                target->SetSamplerHandle(DepthSamplerSlot, runtime.DepthSamplerHandle);
+                runtime.BoundDepthSamplerSlot = DepthSamplerSlot;
+            }
+            // The centre is where a parallax-correcting fragment starts marching the recorded distance,
+            // and w is 1 only once an output slot exists — so a fragment can tell an unpopulated slot
+            // from a probe at the origin and reach its fallback instead of indexing the array with it.
             if (!CenterSlot.empty() &&
                 HasField(*target, CenterSlot, MaterialField::FieldKind::Param))
             {
@@ -270,7 +331,8 @@ namespace Veng::Renderer
 
             // Hold the material resident only when something was actually written onto it.
             if (!runtime.BoundTextureSlot.empty() || !runtime.BoundSamplerSlot.empty() ||
-                !runtime.BoundCenterSlot.empty() || !runtime.BoundOrientationSlot.empty())
+                !runtime.BoundCenterSlot.empty() || !runtime.BoundOrientationSlot.empty() ||
+                !runtime.BoundDepthTextureSlot.empty() || !runtime.BoundDepthSamplerSlot.empty())
             {
                 runtime.BoundMaterial = material;
             }

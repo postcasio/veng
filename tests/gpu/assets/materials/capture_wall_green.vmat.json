@@ -1,0 +1,16 @@
+{
+  "defaultInstance": "0x00000000000024D1",
+  "domain": "Surface",
+  "cull": "None",
+  "shaders": {
+    "vertex": "0x0000000000002400",
+    "fragment": "0x00000000000024C0"
+  },
+  "fields": [
+    {
+      "name": "Color",
+      "type": "vec4",
+      "value": [0.0, 4.0, 0.0, 1.0]
+    }
+  ]
+}

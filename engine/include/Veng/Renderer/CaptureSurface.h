@@ -179,12 +179,14 @@ namespace Veng::Renderer
         /// samples by direction declares no such field.
         ///
         /// A fragment that parallax-corrects its sample needs the centre: the map is a view from the
-        /// probe while the sampling ray leaves the fragment, so the correction intersects that ray with
-        /// a proxy volume about the probe and re-takes the direction from there. Sampling by the bare
-        /// reflection direction instead treats the probe as infinitely distant, which is wrong by the
-        /// whole extent of the reflected content when that content is close. SurfaceFragmentInput
-        /// carries no route to a draw's own world matrix, so without this slot a consumer reimplements
-        /// the position lookup the engine's capture drive already performs.
+        /// probe while the sampling ray leaves the fragment, so the correction walks that ray, in the
+        /// probe's frame, against the recorded distance the capture publishes (see DepthTextureSlot) to
+        /// find where the ray meets the surface the capture saw, and re-takes the sample direction
+        /// from that hit. Sampling by the bare reflection direction instead treats the probe as
+        /// infinitely distant, which is wrong by the whole extent of the reflected content when that
+        /// content is close. SurfaceFragmentInput carries no route to a draw's own world matrix, so
+        /// without this slot a consumer reimplements the position lookup the engine's capture drive
+        /// already performs.
         ///
         /// The flag is what makes a consumer's fallback branch reachable: without it a fragment cannot
         /// tell "no capture yet" from "a capture centred on the world origin", and would index the
@@ -213,6 +215,46 @@ namespace Veng::Renderer
         /// It carries no validity flag of its own: CenterSlot's `w` already reports whether the
         /// capture is bound, and a material correcting a sample declares both slots or neither.
         string OrientationSlot;
+
+        /// @brief Name of the sibling material's texture slot the octahedral distance map binds onto;
+        ///        empty is off.
+        ///
+        /// Named, Drive publishes — beside the radiance map — a second octahedral map in the same
+        /// parameterization, holding the radial distance from the probe centre to the nearest surface
+        /// in each direction (in world units), with SceneCapture::DistanceSkySentinel where a
+        /// direction saw no geometry. So one OctahedralUV(direction) indexes both maps, and a fragment
+        /// correcting its sample can march the recorded distance rather than intersect a hand-authored
+        /// stand-in volume (see CenterSlot).
+        ///
+        /// **Empty (the default) renders no distance map at all** — no second resample, no second
+        /// image, no bindless slots — so a capture nobody asks a distance of pays nothing. This is the
+        /// opt-in, and it is what gates the work, not a flag beside it.
+        ///
+        /// The distance map carries no validity flag of its own: CenterSlot's `w` reports whether the
+        /// capture — and thus, when this names a slot, its distance map — is bound, and teardown
+        /// returns this handle to the unbound sentinel with the radiance one. A consumer that marches
+        /// the distance map declares this slot together with CenterSlot; the two are not automatically
+        /// in step, since a capture may name a centre and no distance map (this empty), so a consumer
+        /// samples the distance map only when it, too, names a slot the capture fills.
+        string DepthTextureSlot;
+
+        /// @brief Name of the sibling material's sampler slot the distance map's sampler binds onto.
+        ///
+        /// A separate slot rather than the radiance map's, because the distance map wants **point
+        /// filtering**: a bilinear tap across a depth discontinuity interpolates between a near surface
+        /// and a far one and yields a distance at which nothing is, which reads as a smeared halo at
+        /// every silhouette in the reflection. Named alongside DepthTextureSlot; Drive binds a clamp
+        /// **point** sampler onto the material field of this name (a SamplerHandle-kind field).
+        string DepthSamplerSlot = "DepthSampler";
+
+        /// @brief Edge length, in pixels, of each face of the distance capture; 0 is invalid.
+        ///
+        /// Sizes the depth atlas cell and, at twice this, the octahedral distance map. Its own knob,
+        /// defaulting to a fraction of Resolution rather than to it: distance varies far more smoothly
+        /// than radiance across a captured environment, so the distance map is cheap to under-size and
+        /// expensive to over-size. Read when the runtime materializes; used only when DepthTextureSlot
+        /// names a slot.
+        u32 DepthResolution = 128;
 
         /// @brief Runtime capture state, materialized on the first Drive; empty until then.
         mutable Unique<CaptureSurfaceRuntime> Runtime;
@@ -255,8 +297,9 @@ namespace Veng::Renderer
         /// capture's output handle onto @p material's named slot every frame (SetTextureHandle writes the
         /// current frame-in-flight region, so the handle must land regardless of whether a face was
         /// pushed), beside the sampler, — when CenterSlot names one — @p position with its validity
-        /// flag, and — when OrientationSlot names one — @p faceBasis as a quaternion. Only slots the
-        /// material declares at the matching field kind are written.
+        /// flag, — when OrientationSlot names one — @p faceBasis as a quaternion, and — when
+        /// DepthTextureSlot names one — the octahedral distance map and its point sampler. Only slots
+        /// the material declares at the matching field kind are written.
         ///
         /// The pushed source excludes @p entity (CaptureView::Exclude), so the capture never draws the
         /// mesh it feeds — the rule has no authoring surface and cannot be misconfigured.
@@ -343,4 +386,7 @@ VE_FIELD(TextureSlot, .DisplayName = "Texture Slot")
 VE_FIELD(SamplerSlot, .DisplayName = "Sampler Slot")
 VE_FIELD(CenterSlot, .DisplayName = "Center Slot")
 VE_FIELD(OrientationSlot, .DisplayName = "Orientation Slot")
+VE_FIELD(DepthTextureSlot, .DisplayName = "Depth Texture Slot")
+VE_FIELD(DepthSamplerSlot, .DisplayName = "Depth Sampler Slot")
+VE_FIELD(DepthResolution, .DisplayName = "Depth Resolution", .Display = {.Min = 1})
 VE_REFLECT_END();

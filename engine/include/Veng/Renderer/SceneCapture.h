@@ -38,6 +38,24 @@ namespace Veng::Renderer
         /// SSR) multiply by six faces, and the capture samples the pre-tonemap HDR, so bloom
         /// and tonemap tuning never reach its output.
         SceneRendererSettings Settings;
+
+        /// @brief Whether to also resample the face depths into an octahedral distance map.
+        ///
+        /// Off by default. When set, the capture publishes a second octahedral map beside the
+        /// radiance one (see SceneCapture and GetDistanceOutput) holding the radial distance from the
+        /// probe centre to the nearest surface in each direction. Off, none of the distance path's
+        /// resources exist — no depth atlas, no distance map, no extra pipelines or bindless slots —
+        /// so a capture nobody asks a distance of pays nothing for one.
+        bool CaptureDistance = false;
+
+        /// @brief Edge length, in pixels, of each face of the distance capture; used only when
+        ///        CaptureDistance is set.
+        ///
+        /// Sizes both the depth atlas cell and, at twice this, the octahedral distance map — its own
+        /// knob, independent of FaceResolution, because distance varies far more smoothly than
+        /// radiance across a captured environment, so the distance map is cheap to under-size and
+        /// expensive to over-size.
+        u32 DistanceResolution = 128;
     };
 
     /// @brief The per-frame capture source, pushed by the owner (see SceneCapture::SetView).
@@ -113,6 +131,17 @@ namespace Veng::Renderer
         /// then stops; the map freezes fully refreshed.
         static constexpr u32 FaceCount = 6;
 
+        /// @brief The distance stored where a direction saw no geometry (only the far-plane sky).
+        ///
+        /// A large finite value, not an infinity: it composes with point filtering and with the
+        /// ordinary less-than comparisons a distance consumer makes, where an infinity interacts
+        /// badly with later filtering and with a shader compile's fast-math assumptions. It is far
+        /// beyond any world-unit distance a capture's far plane admits, so a real hit never reaches
+        /// it and a consumer reads a sample at or past it as "no geometry, infinitely far". Mirrors
+        /// the shader constant `CaptureDistanceSky` (Veng/capture_distance.slang) — the two must not
+        /// drift.
+        static constexpr f32 DistanceSkySentinel = 1.0e30f;
+
         /// @brief Creates the capture: the face renderer, atlas, octahedral map, and pipelines.
         /// @param info  Construction parameters.
         /// @return The owning Unique.
@@ -147,6 +176,18 @@ namespace Veng::Renderer
 
         /// @brief Returns the octahedral map's bindless handle, for Material::SetTextureHandle.
         [[nodiscard]] TextureHandle GetOutputHandle() const { return m_OctahedralHandle; }
+
+        /// @brief Returns the octahedral distance map view, or null when the capture publishes none.
+        ///
+        /// A single-channel R32Sfloat map, registered with the radiance map by the shared octahedral
+        /// parameterization, holding the radial distance from the probe centre to the nearest surface
+        /// in each direction in world units, and DistanceSkySentinel where a direction saw no
+        /// geometry. Non-null only when the capture was created with SceneCaptureInfo::CaptureDistance.
+        [[nodiscard]] const Ref<ImageView>& GetDistanceOutput() const { return m_DistanceView; }
+
+        /// @brief Returns the distance map's bindless handle, or an invalid handle when it publishes
+        ///        none.
+        [[nodiscard]] TextureHandle GetDistanceOutputHandle() const { return m_DistanceHandle; }
 
         /// @brief Attaches this capture to the Application capture drive-list.
         ///
@@ -185,6 +226,41 @@ namespace Veng::Renderer
         /// @brief Bindless slot of the clamp sampler the atlas copy and the resample both read
         /// through, shared out of the registry with every other consumer of the same settings.
         SamplerHandle m_SamplerHandle;
+
+        /// @brief Whether the distance path (depth atlas, distance map, its pipelines) was built.
+        bool m_CaptureDistance = false;
+        /// @brief Distance-face edge; sizes the depth atlas cell and, at twice this, the distance map.
+        u32 m_DistanceResolution = 0;
+
+        /// @brief Bindless handle over the face renderer's depth target, sampled by the depth copy.
+        TextureHandle m_DepthHandle;
+
+        /// @brief The 3×2 face depth atlas the six face depths tile into (raw reverse-Z depth).
+        Ref<Image> m_DepthAtlasImage;
+        /// @brief View over m_DepthAtlasImage.
+        Ref<ImageView> m_DepthAtlasView;
+        /// @brief Bindless handle of m_DepthAtlasView, sampled by the distance resample.
+        TextureHandle m_DepthAtlasHandle;
+
+        /// @brief The octahedral distance map (R32Sfloat radial distance from the probe centre).
+        Ref<Image> m_DistanceImage;
+        /// @brief View over m_DistanceImage.
+        Ref<ImageView> m_DistanceView;
+        /// @brief Bindless handle of m_DistanceView — the consumer-facing distance output.
+        TextureHandle m_DistanceHandle;
+
+        /// @brief Point clamp sampler the depth copy and the distance resample read through: a
+        /// bilinear tap across a depth discontinuity yields a distance at which nothing is.
+        SamplerHandle m_DistanceSamplerHandle;
+
+        /// @brief Depth copy pipeline (face depth → depth atlas cell) + layout. Null without distance.
+        Ref<GraphicsPipeline> m_DepthCopyPipeline;
+        Ref<PipelineLayout> m_DepthCopyLayout;
+        /// @brief Distance resample pipeline (depth atlas → distance map) + layout. Null without.
+        Ref<GraphicsPipeline> m_DistancePipeline;
+        Ref<PipelineLayout> m_DistanceLayout;
+        /// @brief Whether the depth atlas has been cleared once; later faces load the persisted cells.
+        bool m_DepthAtlasCleared = false;
 
         /// @brief Fullscreen copy pipeline (HDR → atlas cell) + layout.
         Ref<GraphicsPipeline> m_CopyPipeline;

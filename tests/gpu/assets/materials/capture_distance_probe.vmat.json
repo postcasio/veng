@@ -1,0 +1,25 @@
+{
+  "defaultInstance": "0x00000000000024F1",
+  "domain": "Translucent",
+  "shaders": {
+    "vertex": "0x0000000000002400",
+    "fragment": "0x00000000000024E0"
+  },
+  "fields": [
+    {
+      "name": "Depth",
+      "type": "texture",
+      "id": "0x0000000000002329"
+    },
+    {
+      "name": "DepthSampler",
+      "type": "sampler",
+      "texture": "Depth"
+    },
+    {
+      "name": "Direction",
+      "type": "vec4",
+      "value": [0.0, -1.0, 0.0, 0.0]
+    }
+  ]
+}
