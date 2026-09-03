@@ -1,6 +1,7 @@
 #include <Veng/Scene/BuiltinSystems.h>
 
 #include <Veng/Audio/AudioSystem.h>
+#include <Veng/Behavior/BehaviorSystem.h>
 #include <Veng/Scene/AnimationSystem.h>
 #include <Veng/Scene/CameraRig.h>
 #include <Veng/Scene/CharacterAnimationSystem.h>
@@ -32,6 +33,12 @@ namespace Veng
         // The sole reader of raw device state, registered first so it runs ahead of any
         // control system that reads the resolved PlayerInput.
         registry.Register<InputMappingSystem>();
+
+        // Ticks each authoritative BehaviorAgent's tree, resolving the agent's pawn and writing its
+        // Intent — the AI arm of the control pipeline. Ordered like a control system: after
+        // InputMappingSystem so it never reads a stale seat input, and before MovementSystem so the
+        // Intent it writes is consumed the same tick.
+        registry.Register<BehaviorSystem>();
 
         registry.Register<MovementSystem>();
 

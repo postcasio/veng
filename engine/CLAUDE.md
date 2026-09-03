@@ -18,6 +18,10 @@ Each major system's architecture lives in a `CLAUDE.md` inside its source direct
   input → actions → `PlayerInput` → `Intent` control flow, interaction and vehicles with their
   `PhysicsPoseResolver` seam, the Sim/View tick split, the `SystemRegistry` catalog, game modes, and
   `Level`s.
+- **[src/Behavior/CLAUDE.md](src/Behavior/CLAUDE.md)** — `Veng/Behavior/`, the behaviour runtime: a
+  behaviour tree built in code, the `BehaviorAgent` component holding a shared tree plus this agent's
+  seeded per-node running state, and the `BehaviorSystem` that ticks agents under authority with the
+  ECS as blackboard — the AI arm of the `Intent` control pipeline.
 - **[src/Asset/CLAUDE.md](src/Asset/CLAUDE.md)** — runtime asset loading (`AssetManager`,
   `AssetHandle`, async/sync `Load`, `MountMemory`), meshes/textures/skinning, prefabs, and the
   shader/material model (`Material` / `MaterialInstance`, `MaterialDomain`).

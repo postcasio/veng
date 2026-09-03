@@ -13,6 +13,11 @@ symbol: build the Doxygen reference with `cmake --build build --target docs`
   lifecycle, choosing the Sim or View phase, the Input → Intent → Movement
   pattern, configuring a system through components, registering it into the
   catalog, and a worked example built from scratch.
+- **[Writing AI behaviours](guides/writing-ai-behaviors.md)** — the behaviour
+  runtime: building a `BehaviorTree` from composites, decorators, and consumer
+  `Task` leaves; the ECS as the blackboard; giving an entity a `BehaviorAgent`
+  and a seed; how the `BehaviorSystem` resolves the pawn and ticks under
+  authority; and why an AI is just another `Intent` producer.
 - **[Wiring a level](guides/wiring-a-level.md)** — the `Level` asset from the
   author's side: world prefab versus level-scoped data (game mode, the active
   system set, render settings), why a level is not a prefab, and the

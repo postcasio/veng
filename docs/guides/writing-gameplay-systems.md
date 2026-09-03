@@ -297,7 +297,8 @@ local player:
 
 - **AI is a drop-in.** An AI system that writes the same `Intent` component drives
   the same `MovementSystem` with zero changes — AI is "just another `Intent`
-  producer."
+  producer." The engine ships that producer: `BehaviorSystem` ticks a behaviour
+  tree whose leaves write `Intent` (see [Writing AI behaviours](writing-ai-behaviors.md)).
 - **Remote players are a drop-in.** A net layer fills `PlayerInput` from the wire
   instead of the device; nothing downstream changes.
 - **The simulation is replayable.** Because movement is a pure function of
@@ -432,97 +433,96 @@ hardcoded in `main.cpp`.
 
 ## 7. Worked example, end to end
 
-Let's build a small but complete Sim-phase gameplay system from scratch: a
-**patrol mover** that drives an entity back and forth between two points by
-*producing `Intent`*, so it rides the existing `MovementSystem` exactly as a
-player does. This shows the Input → Intent → Movement pattern with an AI producer
-substituted for the control system — the "AI is just another `Intent` producer"
-payoff made concrete.
+Let's make the "AI is just another `Intent` producer" payoff concrete: a **patrol**
+that drives an entity back and forth between two points by *producing `Intent`*, so it
+rides the existing `MovementSystem` exactly as a player does. The `Intent` producer for
+an AI is the engine's shipped **`BehaviorSystem`**, so we do not write a bespoke system
+at all — we write the *leaf* that carries the logic and build a tree around it. This is
+the whole shape of AI work in veng: the composites, the per-agent state, and the tick are
+the engine's; the leaf is yours. The behaviour runtime has its own guide,
+[Writing AI behaviours](writing-ai-behaviors.md); this is the movement-pattern slice of it.
 
-### The settings component
-
-```cpp
-// A patrol path and pace; tuned in the inspector, read by the patrol system.
-struct Patrol
-{
-    vec3 PointA{0.0f};
-    vec3 PointB{0.0f};
-    f32  Speed = 1.0f;   // fraction of the leg traversed per second
-};
-
-// The type is named fully qualified (a leading `::`) — a hard rule the macro enforces,
-// so the registry records its namespace.
-VE_REFLECT(::Patrol, 0x…ULL)   // mint with `vengc generate-id`
-VE_FIELD(PointA, .DisplayName = "Point A")
-VE_FIELD(PointB, .DisplayName = "Point B")
-VE_FIELD(Speed,  .DisplayName = "Speed", .Min = 0.0)
-VE_REFLECT_END();
-```
-
-### The system — an Intent producer
+### The leaf — an Intent producer
 
 ```cpp
-// Drives each (Transform, Intent, Patrol) pawn toward its current goal by writing
-// Intent — never by moving the Transform itself. The engine's MovementSystem
-// consumes that Intent, so the patrol pawn moves through the identical path a
-// player-controlled pawn does. Phase::Sim (the default): deterministic, reads only
-// entity state — no device, no wall clock.
-class PatrolSystem final : public SceneSystem
+// Drives the pawn toward a world point by writing Intent — never by moving the Transform
+// itself. The engine's MovementSystem consumes that Intent, so the patrol pawn moves
+// through the identical path a player-controlled pawn does. Succeeds once it arrives.
+class MoveToWaypoint final : public BehaviorTask
 {
 public:
-    void OnUpdate(Scene& scene, const f32, const SystemContext&) override
+    explicit MoveToWaypoint(vec3 goal) : m_Goal(goal) {}
+
+    Status Tick(BehaviorContext& context) override
     {
-        scene.Each<Transform, Intent, Patrol>(
-            [&](Entity entity, Transform& transform, Intent& intent, Patrol& patrol)
-            {
-                const vec3 goal = m_TowardB[entity] ? patrol.PointB : patrol.PointA;
-                const vec3 toGoal = goal - transform.Position;
+        Transform& transform = context.Scene.Get<Transform>(context.Pawn);
+        const vec3 toGoal = m_Goal - transform.Position;
+        if (glm::length(toGoal) < 0.05f)
+        {
+            context.Scene.Get<Intent>(context.Pawn).Move = vec3(0.0f);
+            return Status::Success;   // arrived; the Sequence advances to the next leaf
+        }
 
-                if (glm::length(toGoal) < 0.05f)
-                {
-                    m_TowardB[entity] = !m_TowardB[entity];   // reached the goal; flip
-                    intent.Move = vec3(0.0f);
-                    return;
-                }
-
-                // Express the goal direction in the pawn's local frame and request it
-                // as movement; the Mover's MoveSpeed and the MovementSystem do the rest.
-                const vec3 localDir = glm::inverse(transform.Rotation) * glm::normalize(toGoal);
-                intent.Move = localDir * patrol.Speed;
-            });
+        // Express the goal direction in the pawn's local frame and request it as movement;
+        // the Mover's MoveSpeed and the MovementSystem do the rest.
+        const vec3 localDir = glm::inverse(transform.Rotation) * glm::normalize(toGoal);
+        context.Scene.Get<Intent>(context.Pawn).Move = localDir;
+        return Status::Running;
     }
 
 private:
-    map<Entity, bool> m_TowardB;
+    vec3 m_Goal;
 };
-
-VE_SYSTEM(PatrolSystem, 0x…ULL, "Patrol");   // mint with `vengc generate-id`
 ```
 
-`Intent` is overwritten each tick by its producer, so writing `intent.Move` every
-tick (zeroing it at the goal) is correct — a zero `Intent` is a pawn at rest.
+`Intent` is overwritten each tick by its producer, so writing `Move` every tick (zeroing
+it on arrival) is correct — a zero `Intent` is a pawn at rest.
 
-### Register it
+### The tree
+
+A `Sequence` of waypoints, each move followed by a two-second dwell, wrapped in a `Repeat`
+so it loops forever:
 
 ```cpp
-extern "C" void VengModuleRegister(VengModuleHost* host)
-{
-    host->Types.Register<Patrol>();
-
-    // PatrolSystem produces Intent; MovementSystem consumes it. Register the
-    // producer first so the Intent is fresh when movement runs this same tick.
-    host->Systems.Register<PatrolSystem>();
-    host->Systems.Register<MovementSystem>();
-    // ...
-}
+Ref<BehaviorTree> tree = BehaviorTreeBuilder()
+    .Repeat()                                  // forever
+        .Sequence()
+            .Leaf(CreateRef<MoveToWaypoint>(pointA))
+            .Wait(2.0f)
+            .Leaf(CreateRef<MoveToWaypoint>(pointB))
+            .Wait(2.0f)
+        .End()
+    .Build();
 ```
+
+### Give the entity a behaviour
+
+Add a `BehaviorAgent` carrying the tree and a seed. The entity needs the same movement
+inputs a player's pawn has — `Transform`, `Intent`, `Mover` — because the leaf writes
+`Intent` and `MovementSystem` reads it:
+
+```cpp
+const Entity pawn = scene.CreateEntity();
+scene.Add<Transform>(pawn, Transform{});
+scene.Add<Intent>(pawn, Intent{});
+scene.Add<Mover>(pawn, Mover{.MoveSpeed = 5.0f});
+scene.Add<BehaviorAgent>(pawn, BehaviorAgent{.Tree = tree, .Seed = 1});
+```
+
+Here the agent has no `Possesses`, so it acts on itself — the pawn is its own body. An AI
+pilot flying a separate ship would instead carry `Possesses{ship}`, and the same leaf
+would write the ship's `Intent`.
 
 ### Wire it into the level
 
-In the level editor, enable `PatrolSystem` and `MovementSystem` (in that order),
-add a patrolling entity to the world carrying `Transform`, `Intent`, `Mover`, and
-`Patrol`, set its two points and speed in the inspector, and Play. The pawn
-shuttles between the points — and because it drives `Intent`, it obeys the same
+`BehaviorSystem` and `MovementSystem` are both builtins, so a level just names them in
+order — the producer before the consumer:
+
+```
+"systems": ["InputMappingSystem", "BehaviorSystem", "MovementSystem", ...]
+```
+
+The pawn shuttles between the points — and because it drives `Intent`, it obeys the same
 `Mover` tuning and the same movement integration a player does.
 
 ### What it cross-references
@@ -534,11 +534,17 @@ This example reuses the real shipped pieces:
 - **`MovementSystem`** — the engine's `Intent` consumer from
   [`Movement.h`](../../engine/include/Veng/Scene/Movement.h), the exact system
   hello-triangle's `ControlSystem` feeds.
+- **`BehaviorSystem`** — the engine's AI `Intent` producer from
+  [`BehaviorSystem.h`](../../engine/include/Veng/Behavior/BehaviorSystem.h), registered in
+  the control-system slot (after `InputMappingSystem`, before `MovementSystem`). It is the
+  sibling of a player's `ControlSystem`: both are `Phase::Sim` `Intent` producers feeding
+  one movement system. Swapping the device-reading producer for the behaviour tree is the
+  whole difference — which is the point of the pattern. See
+  [Writing AI behaviours](writing-ai-behaviors.md) for the tree in full.
 - **`ControlSystem`** in
-  [`main.cpp`](../../examples/hello-triangle/main.cpp) is the player-driven
-  sibling of `PatrolSystem`: both are `Phase::Sim` `Intent` producers feeding one
-  movement system. Swapping the device-reading producer for an AI one is the whole
-  difference — which is the point of the pattern.
+  [`main.cpp`](../../examples/hello-triangle/main.cpp) is the player-driven counterpart —
+  a from-scratch `SceneSystem` in exactly the shape sections 1–6 describe, the model to
+  copy when you *do* need a bespoke Sim system rather than a behaviour leaf.
 - **`SpawnPlayerRule`** in the same file shows the `OnStart`/`OnStop`
   lifecycle in full: it spawns the configured player prefab at `OnStart` (gated on
   the scene carrying a `GameModeConfig`) and tears it down at `OnStop`.

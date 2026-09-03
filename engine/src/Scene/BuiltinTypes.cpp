@@ -1,6 +1,7 @@
 #include <Veng/Scene/BuiltinTypes.h>
 
 #include <Veng/Asset/AssetHandleType.h>
+#include <Veng/Behavior/BehaviorAgent.h>
 #include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Audio/AudioComponents.h>
 #include <Veng/Gui/Overlay.h>
@@ -163,6 +164,11 @@ namespace Veng
         // Game mode as data: the per-scene config a spawn rule reads. A game authors whatever
         // further mode-state components its own rule systems read.
         registry.Register<GameModeConfig>();
+
+        // A behaviour tree plus this agent's running state and seed. Runtime-only (a behaviour is
+        // re-decided from world state on any authoritative peer), so it carries no reflected field
+        // and neither serializes nor rides the wire.
+        registry.Register<BehaviorAgent>();
 
         // The per-account session record, registered so its reflection-binary encoding (the
         // durability blob) has a schema everywhere a SessionRegistry runs. Not a component — it

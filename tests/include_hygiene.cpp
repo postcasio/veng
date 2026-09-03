@@ -53,6 +53,10 @@
 #include <Veng/Audio/Reverb.h>
 #include <Veng/Audio/Voice.h>
 
+#include <Veng/Behavior/BehaviorAgent.h>
+#include <Veng/Behavior/BehaviorSystem.h>
+#include <Veng/Behavior/BehaviorTree.h>
+
 #include <Veng/Diagnostics/FileTraceSink.h>
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Diagnostics/TraceSink.h>
