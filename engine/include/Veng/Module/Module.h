@@ -68,12 +68,15 @@ extern "C"
 /// @brief ABI version token baked into both host and module at compile time.
 ///
 /// Bumped whenever VengModuleHost's layout, or the layout of anything a module passes through
-/// it, changes — a stale module registering a FieldDescriptor or AssetTypeInfo of the wrong size
-/// is exactly the silent corruption this token exists to turn into a loud rejection.
+/// it or reads from it, changes — a stale module registering a FieldDescriptor or AssetTypeInfo
+/// of the wrong size, or reading a SystemContext whose fields have shifted, is exactly the silent
+/// corruption this token exists to turn into a loud rejection. Version 13 adds SystemContext::World
+/// (the runner handle of the ticking world), which shifts the fields after it for a stale module's
+/// per-tick reads.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 12u
+#define VENG_MODULE_ABI_VERSION 13u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

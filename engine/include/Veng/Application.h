@@ -1572,6 +1572,7 @@ namespace Veng
         /// retained camera + region + UI scale) and Debug (its debug-draw sink). View is nullopt and
         /// Debug null for a view-less sim.
         /// @param scene    The scene being ticked.
+        /// @param world    The runner handle of the world being ticked, stamped onto the context.
         /// @param role     The authority role the world ticks under (from RoleForWorld).
         /// @param pointer  This frame's routing for @p scene (empty when the pointer is elsewhere).
         /// @param tick     The tick number to stamp (the Sim step, or the last completed tick in View).
@@ -1580,9 +1581,9 @@ namespace Veng
         ///                            per-frame accumulator (see SystemContext::FirstStepThisFrame).
         /// @param isReplay  True when this is a reconciliation replay step (see SystemContext::IsReplay).
         /// @return The assembled per-tick context.
-        [[nodiscard]] SystemContext BuildSystemContext(const Scene& scene, NetRole role,
-                                                       const PointerRouting& pointer, u64 tick,
-                                                       f32 alpha, bool firstStepThisFrame,
+        [[nodiscard]] SystemContext BuildSystemContext(const Scene& scene, WorldInstanceId world,
+                                                       NetRole role, const PointerRouting& pointer,
+                                                       u64 tick, f32 alpha, bool firstStepThisFrame,
                                                        bool isReplay = false) const;
 
         ApplicationInfo m_Info;

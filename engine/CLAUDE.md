@@ -375,7 +375,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 12** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 13** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the
@@ -399,11 +399,15 @@ and calls `Run()`.
   export or bake off the UI thread, the way the cook-on-demand already runs on it), so a module
   built against ABI 10 reads it past the end of a short context. **Version 12** adds the editor
   `StatusTracker&` to that same context (so a game panel's background task reports into the status
-  bar beside the cook), a module built against ABI 11 reading it past the end. The
-  gameplay *simulation* layer still adds **no** ABI surface: game modes are systems + components,
-  the system catalog rides a per-system trait the way a component's `TypeId` does, and a `Level`
-  is an asset — registered through the existing registries or authored as data, never through a
-  new host entry.
+  bar beside the cook), a module built against ABI 11 reading it past the end. **Version 13** is the
+  first bump the runtime *simulation* surface drove: `SystemContext` — the per-tick services struct
+  the host builds and hands to every module-registered `SceneSystem::OnUpdate` — grew `World` (the
+  runner handle of the ticking world), inserted mid-struct, so a module built against ABI 12 reads
+  the fields after it at shifted offsets each tick. So the gameplay simulation layer adds **no**
+  ABI surface *by registration* — game modes are systems + components, the system catalog rides a
+  per-system trait the way a component's `TypeId` does, and a `Level` is an asset — but the struct
+  the host passes into a system each tick is itself boundary-crossing, and growing it bumps the ABI
+  exactly as growing `AssetEditorContext` does.
 - **`veng_add_game(<name> SOURCES … [ASSET_PACK …] [MCP])`** is the build entry: it emits
   `lib<name>` + `<name>-launcher` from one declaration, compiling the launcher exe from
   **`launcher_main.cpp`** — an **installed SDK artifact** whose path is `VENG_LAUNCHER_MAIN`,

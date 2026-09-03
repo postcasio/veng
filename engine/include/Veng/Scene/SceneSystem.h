@@ -6,6 +6,7 @@
 #include <Veng/Renderer/ViewportRegion.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Entity.h>
+#include <Veng/WorldInstanceId.h>
 
 namespace Veng
 {
@@ -171,6 +172,16 @@ namespace Veng
         /// An authority-gated Sim system reads it to act only where this peer owns the state. Inert
         /// until a client/server split exists — every standalone tick is Server.
         NetRole Role = NetRole::Server;
+
+        /// @brief The world instance this tick runs in — the runner handle of the ticking world.
+        ///
+        /// The WorldRunner mints one id per world for its whole open lifetime and never reuses it
+        /// (see WorldInstanceId), so a system that keeps host-side state spanning more than one world
+        /// can tell which world a tick belongs to — tagging a record with the world that produced it,
+        /// or telling its own live entity in this scene from an identically-indexed one in another
+        /// world's scene (entity handles are per-scene and alias across scenes). Default-invalid
+        /// (names no world) for a context a caller assembles without a runner.
+        WorldInstanceId World;
 
         /// @brief Whether the presenting seat currently holds gameplay focus this frame.
         ///

@@ -775,7 +775,8 @@ namespace Veng
                 const f32 simDelta =
                     1.0f / static_cast<f32>(m_Info.World ? m_Info.World->SimTickRate : 60u);
                 world.TickSimulationPhase(SceneSystem::Phase::Sim, simDelta,
-                                          BuildSystemContext(world, RoleForWorld(m_ManagedWorld),
+                                          BuildSystemContext(world, m_ManagedWorld,
+                                                             RoleForWorld(m_ManagedWorld),
                                                              PointerRouting{}, tick, 0.0f, false,
                                                              /*isReplay=*/true));
             },
@@ -1794,9 +1795,10 @@ namespace Veng
         return m_AudioDevice->GetEngine();
     }
 
-    SystemContext Application::BuildSystemContext(const Scene& scene, const NetRole role,
-                                                  const PointerRouting& pointer, const u64 tick,
-                                                  const f32 alpha, const bool firstStepThisFrame,
+    SystemContext Application::BuildSystemContext(const Scene& scene, const WorldInstanceId world,
+                                                  const NetRole role, const PointerRouting& pointer,
+                                                  const u64 tick, const f32 alpha,
+                                                  const bool firstStepThisFrame,
                                                   const bool isReplay) const
     {
         SystemContext context{
@@ -1808,6 +1810,7 @@ namespace Veng
             .Tick = tick,
             .Alpha = alpha,
             .Role = role,
+            .World = world,
             // The focus gate every seat's input resolution reads: true only while the router reports
             // the cursor seat gameplay-focused, false headless (no window owns focus).
             .GameplayFocused = m_InputRouter->IsGameplayFocused(),
@@ -2196,7 +2199,7 @@ namespace Veng
             {
                 const PointerRouting pointer =
                     &scene == scoped.Scene ? scoped.Routing : PointerRouting{};
-                return BuildSystemContext(scene, RoleForWorld(world), pointer, tick, alpha,
+                return BuildSystemContext(scene, world, RoleForWorld(world), pointer, tick, alpha,
                                           firstStep);
             },
             .SimScale = [this](const WorldInstanceId world) -> f32
