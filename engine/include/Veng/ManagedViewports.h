@@ -19,6 +19,11 @@ namespace Veng
     class WorldRunner;
 }
 
+namespace Veng::Audio
+{
+    class AudioEngine;
+}
+
 namespace Veng::Renderer
 {
     class Context;
@@ -128,9 +133,11 @@ namespace Veng
         /// @param compositor  The compositor the viewports register into; must outlive the set.
         /// @param router      The input router viewport↔seat associations are made through; must outlive the set.
         /// @param drivers     The host-owned GuiDriver catalog set on each built viewport, or nullptr (undriven).
+        /// @param audio       The audio engine set on each built viewport for its drivers, or nullptr (silent).
         ManagedViewportSet(Renderer::Context& context, AssetManager& assets,
                            Renderer::ViewportCompositor& compositor, InputRouter& router,
-                           GuiDriverRegistry* drivers = nullptr);
+                           GuiDriverRegistry* drivers = nullptr,
+                           Audio::AudioEngine* audio = nullptr);
 
         /// @brief Clears the set, self-unregistering each viewport and its router association.
         ~ManagedViewportSet();
@@ -438,6 +445,8 @@ namespace Veng
         InputRouter& m_Router;
         /// @brief The host-owned GuiDriver catalog set on each built viewport; null drives none.
         GuiDriverRegistry* m_GuiDrivers = nullptr;
+        /// @brief The audio engine set on each built viewport for its drivers; null hands silence.
+        Audio::AudioEngine* m_Audio = nullptr;
 
         /// @brief The managed viewports in order; index 0 is the primary.
         vector<ManagedViewport> m_Viewports;

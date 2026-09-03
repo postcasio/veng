@@ -181,7 +181,7 @@ namespace Veng
 
         // Feed the named driver before the core refreshes its bindings, so what the driver wrote is
         // what this frame's bindings read and what the dirty-gate below sees.
-        DriveDriver(runtime, driver, delta);
+        DriveDriver(runtime, assets, driver, delta);
 
         // Drive the core (refresh bindings, expose the live tree), then render it into the HDR target
         // dirty-gated. UpdateBindings precedes the texture's dirty check, so a moved binding re-renders.
@@ -203,8 +203,8 @@ namespace Veng
         return rendered;
     }
 
-    void GuiSurface::DriveDriver(GuiSurfaceRuntime& runtime, const GuiSurfaceDriveContext& services,
-                                 const f32 delta) const
+    void GuiSurface::DriveDriver(GuiSurfaceRuntime& runtime, AssetManager& assets,
+                                 const GuiSurfaceDriveContext& services, const f32 delta) const
     {
         // Undriven is the common case and every one of these is a legitimate way to spell it: no
         // driver named, no scene or catalog (a viewport that does not claim this surface), or a
@@ -244,6 +244,8 @@ namespace Veng
             .Delta = delta,
             .Alpha = services.Alpha,
             .View = services.View,
+            .Assets = assets,
+            .Audio = services.Audio,
         });
     }
 }

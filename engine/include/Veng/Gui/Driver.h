@@ -7,7 +7,13 @@
 
 namespace Veng
 {
+    class AssetManager;
     class Scene;
+
+    namespace Audio
+    {
+        class AudioEngine;
+    }
 
     namespace Gui
     {
@@ -64,6 +70,16 @@ namespace Veng
         f32 Alpha = 0.0f;
         /// @brief The presenting viewport's resolved camera, region, and UI scale this frame.
         SystemViewInfo View;
+        /// @brief The asset manager the driven document loads through; what a driver loads its own
+        /// assets (a sound, an icon) with.
+        AssetManager& Assets;
+        /// @brief The device-wide audio engine a driver fires sound through, or null.
+        ///
+        /// The audio peer of SystemContext::Audio, reaching the driver from the presenting viewport
+        /// (Viewport::SetAudioEngine, which the engine sets on each managed viewport). Null when the
+        /// viewport was handed no engine — an editor preview, a driver-free test — so a driver that
+        /// plays sound treats null as silence, never as an error.
+        Audio::AudioEngine* Audio = nullptr;
     };
 
     /// @brief A named, per-instance presentation binding the engine drives from component data.

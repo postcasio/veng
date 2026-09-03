@@ -148,8 +148,9 @@ namespace Veng
         /// @param scene     The presented scene the overlay lives in, handed to the driver.
         /// @param owner     The entity carrying this overlay, handed to the driver as its instance.
         /// @param drivers   The driver catalog the Driver id resolves against, or nullptr (undriven).
+        /// @param audio     The audio engine handed to the driver's frame, or nullptr (silent).
         void Drive(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene, Entity owner,
-                   GuiDriverRegistry* drivers) const;
+                   GuiDriverRegistry* drivers, Audio::AudioEngine* audio = nullptr) const;
 
         /// @brief Detaches the presented document from a viewport's layer stack — the inverse of Drive.
         ///

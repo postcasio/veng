@@ -295,7 +295,8 @@ namespace Veng
         // The managed-viewport policy collaborator, over the compositor + router. Presentation-only:
         // it owns the Presented viewports the engine drives and pulls their cameras from the runner.
         m_ManagedViewports = CreateUnique<ManagedViewportSet>(
-            m_RenderContext, *m_AssetManager, m_Compositor, *m_InputRouter, m_GuiDriverRegistry);
+            m_RenderContext, *m_AssetManager, m_Compositor, *m_InputRouter, m_GuiDriverRegistry,
+            m_AudioDevice != nullptr ? &m_AudioDevice->GetEngine() : nullptr);
 
         // The opt-in managed viewport set: Presented viewports owned and driven by the engine so a
         // game pushes only a ViewState (or names a World/Viewer). Built before OnInitialize so a

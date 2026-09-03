@@ -522,6 +522,7 @@ namespace Veng::Renderer
                     .View = SystemViewInfo{.Camera = m_ViewState.Camera,
                                            .Region = m_Region,
                                            .UiScale = m_UiScale},
+                    .Audio = m_Audio,
                 };
             }
 
@@ -608,7 +609,7 @@ namespace Veng::Renderer
         {
             if (ClaimsOverlay(world, entity, overlay))
             {
-                overlay.Drive(*this, m_Assets, world, entity, m_GuiDrivers);
+                overlay.Drive(*this, m_Assets, world, entity, m_GuiDrivers, m_Audio);
             }
         }
     }

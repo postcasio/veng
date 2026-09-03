@@ -23,6 +23,8 @@
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Material.h>
+#include <Veng/Audio/AudioDevice.h>
+#include <Veng/Audio/AudioEngine.h>
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Primitives.h>
@@ -195,6 +197,8 @@ namespace
         Entity Owner;
         f32 Alpha = -1.0f;
         uvec2 RegionExtent{0};
+        const AssetManager* Assets = nullptr;
+        const Audio::AudioEngine* Audio = nullptr;
     };
 
     DriverTrace g_Trace;
@@ -211,6 +215,8 @@ namespace
             g_Trace.Owner = frame.Owner;
             g_Trace.Alpha = frame.Alpha;
             g_Trace.RegionExtent = frame.View.Region.Extent;
+            g_Trace.Assets = &frame.Assets;
+            g_Trace.Audio = frame.Audio;
 
             Gui::Element& root = frame.Document.Root();
             REQUIRE(root.Children.size() == 1);
@@ -420,8 +426,14 @@ TEST_CASE_FIXTURE(
     GuiDriverRegistry drivers;
     drivers.Register<PanelDriver>();
 
+    // The engine a driver fires sound through rides the viewport exactly like the driver catalog.
+    const Unique<Audio::AudioDevice> audio =
+        Audio::AudioDevice::Create(Audio::AudioDeviceInfo{.Backend = Audio::AudioBackend::Null});
+    REQUIRE(audio != nullptr);
+
     const Unique<Viewport> viewport = MakeViewport(Context, assets);
     viewport->SetGuiDriverRegistry(&drivers);
+    viewport->SetAudioEngine(&audio->GetEngine());
     const auto RenderFrame = [&](const f32 alpha)
     {
         viewport->SetViewState(
@@ -439,6 +451,9 @@ TEST_CASE_FIXTURE(
     CHECK(g_Trace.Owner == panelEntity);
     CHECK(g_Trace.Alpha == doctest::Approx(0.5f));
     CHECK(g_Trace.RegionExtent == Extent);
+    // And the services a driver loads and sounds through: the viewport's asset manager and engine.
+    CHECK(g_Trace.Assets == &assets);
+    CHECK(g_Trace.Audio == &audio->GetEngine());
 
     // The driver runs ahead of the document's record, so its style write is in the target the scene
     // samples: the child is red on both channels the fixture's cyan document never writes.

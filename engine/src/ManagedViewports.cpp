@@ -77,9 +77,10 @@ namespace Veng
 
     ManagedViewportSet::ManagedViewportSet(Renderer::Context& context, AssetManager& assets,
                                            Renderer::ViewportCompositor& compositor,
-                                           InputRouter& router, GuiDriverRegistry* const drivers)
+                                           InputRouter& router, GuiDriverRegistry* const drivers,
+                                           Audio::AudioEngine* const audio)
         : m_Context(context), m_Assets(assets), m_Compositor(compositor), m_Router(router),
-          m_GuiDrivers(drivers)
+          m_GuiDrivers(drivers), m_Audio(audio)
     {
     }
 
@@ -138,6 +139,8 @@ namespace Veng
             // Hand the viewport the driver catalog so a claimed, driver-authored GuiOverlay
             // instantiates its driver on the first drive; null leaves every overlay undriven.
             viewport->SetGuiDriverRegistry(m_GuiDrivers);
+            // And the audio engine its drivers fire sound through; null hands them a silent frame.
+            viewport->SetAudioEngine(m_Audio);
 
             m_Compositor.RegisterViewport(*viewport);
 

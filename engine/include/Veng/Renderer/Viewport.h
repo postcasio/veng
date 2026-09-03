@@ -24,6 +24,11 @@ namespace Veng
     struct GuiSurface;
 }
 
+namespace Veng::Audio
+{
+    class AudioEngine;
+}
+
 namespace Veng::Gui
 {
     class Document;
@@ -403,6 +408,14 @@ namespace Veng::Renderer
         /// viewport so a component-authored driver instantiates on the first drive.
         /// @param drivers  The driver catalog, or nullptr to drive no overlays.
         void SetGuiDriverRegistry(GuiDriverRegistry* drivers) { m_GuiDrivers = drivers; }
+
+        /// @brief Sets the audio engine a claimed driver fires sound through (GuiDriverFrame::Audio).
+        ///
+        /// Borrowed and host-owned, threaded through exactly like the driver catalog: the engine sets
+        /// it on each managed viewport, and null — the default — hands every driver a silent frame
+        /// (an editor preview, a driver-free test). Never consulted by the render path itself.
+        /// @param audio  The device-wide audio engine, or nullptr for silent drivers.
+        void SetAudioEngine(Audio::AudioEngine* audio) { m_Audio = audio; }
 
         /// @brief Sets the scale attached Gui documents lay out and draw at.
         ///
@@ -852,6 +865,9 @@ namespace Veng::Renderer
 
         /// @brief The driver catalog a claimed driven GuiOverlay resolves against; null drives none.
         GuiDriverRegistry* m_GuiDrivers = nullptr;
+
+        /// @brief The audio engine handed to a claimed driver's frame; null hands a silent frame.
+        Audio::AudioEngine* m_Audio = nullptr;
 
         /// @brief The UI overlay pass, created lazily on the first document attach; null until then.
         ///

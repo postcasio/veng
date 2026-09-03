@@ -807,8 +807,11 @@ addition **bumped `VENG_MODULE_ABI_VERSION` 5 → 6**). A `GuiOverlay` names one
 `Driver` field (`GuiDriverId::Null` = undriven, the status quo). The component's `Drive` instantiates
 the named driver on the first drive, owns it in the runtime (destroyed with it), re-runs
 `OnInstantiate` whenever the document (re)instantiates — exactly like `SetOnInstantiate` — and calls
-`OnUpdate` each drive with a `GuiDriverFrame { Document, Scene, Owner, Seat, Delta, Alpha, View }`
-carrying the claiming viewport's real view. `Owner` is the entity the driven component sits on, so a
+`OnUpdate` each drive with a `GuiDriverFrame { Document, Scene, Owner, Seat, Delta, Alpha, View,
+Assets, Audio }` carrying the claiming viewport's real view, the asset manager the document loads
+through, and the audio engine a driver fires sound through (`Audio` is the peer of
+`SystemContext::Audio`, set per viewport by `Viewport::SetAudioEngine` — the engine sets it on each
+managed viewport, and null hands a driver a silent frame). `Owner` is the entity the driven component sits on, so a
 driver reads its own authored configuration and its siblings (its config component, its
 `MeshRenderer`, its `Transform`) rather than searching the scene for itself; `Alpha` is the render
 gather's own interpolation fraction, so a driver placing a marker against a moving body reads the

@@ -68,6 +68,8 @@ namespace Veng
         f32 Alpha = 0.0f;
         /// @brief The presenting viewport's resolved camera, region, and UI scale this frame.
         SystemViewInfo View;
+        /// @brief The audio engine handed to the driver's frame, or null for a silent driver.
+        Audio::AudioEngine* Audio = nullptr;
     };
 
     /// @brief Runtime GPU state a GuiSurface materializes lazily; defined in Surface.cpp.
@@ -211,10 +213,11 @@ namespace Veng
         /// before the document instantiates. An id no registered driver claims is logged once and
         /// leaves the surface undriven — a recoverable miss, never an abort.
         /// @param runtime   This surface's materialized runtime.
+        /// @param assets    The asset manager handed to the driver's frame.
         /// @param services  The driver services for this drive.
         /// @param delta     The frame time step, in seconds, handed to the driver's frame.
-        void DriveDriver(GuiSurfaceRuntime& runtime, const GuiSurfaceDriveContext& services,
-                         f32 delta) const;
+        void DriveDriver(GuiSurfaceRuntime& runtime, AssetManager& assets,
+                         const GuiSurfaceDriveContext& services, f32 delta) const;
     };
 }
 

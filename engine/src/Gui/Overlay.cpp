@@ -105,7 +105,8 @@ namespace Veng
     }
 
     void GuiOverlay::Drive(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene,
-                           const Entity owner, GuiDriverRegistry* const drivers) const
+                           const Entity owner, GuiDriverRegistry* const drivers,
+                           Audio::AudioEngine* const audio) const
     {
         EnsureHost(assets);
         GuiOverlayRuntime& runtime = *Runtime;
@@ -154,6 +155,8 @@ namespace Veng
                 .View = SystemViewInfo{.Camera = viewport.GetPresentedCamera(),
                                        .Region = viewport.GetRegion(),
                                        .UiScale = viewport.GetUiScale()},
+                .Assets = assets,
+                .Audio = audio,
             });
         }
     }
