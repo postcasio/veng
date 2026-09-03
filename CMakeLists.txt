@@ -920,6 +920,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/bvh.cpp
             tests/unit/math_random.cpp
             tests/unit/math_ease.cpp
+            tests/unit/math_steering.cpp
             tests/unit/platform_userpaths.cpp
             tests/unit/shadow_cascades.cpp
             tests/unit/punctual_shadows.cpp

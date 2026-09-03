@@ -76,10 +76,12 @@
 
 #include <Veng/Math/AABB.h>
 #include <Veng/Math/BVH.h>
+#include <Veng/Math/Ease.h>
 #include <Veng/Math/Frustum.h>
 #include <Veng/Math/Noise.h>
 #include <Veng/Math/Random.h>
 #include <Veng/Math/SphericalHarmonics.h>
+#include <Veng/Math/Steering.h>
 
 #include <Veng/UI/UI.h>
 #include <Veng/UI/Types.h>
