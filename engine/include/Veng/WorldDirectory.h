@@ -190,7 +190,8 @@ namespace Veng
     /// its viewport pins. Resolve runs the fixed order (authorize → per-connection cap → placement → on
     /// a miss the hosted cap and the factory), Pin/Unpin and AddJoin/RemoveJoin move the presence
     /// counter, and ReapIdle closes a bucket that has idled past the dwell (the consumer hook first,
-    /// then the runner). Pure policy — no socket, no scene contents, no presentation dependency.
+    /// then the runner) — Close takes the same teardown on demand. Pure policy — no socket, no scene
+    /// contents, no presentation dependency.
     class VE_API WorldDirectory
     {
     public:
@@ -289,6 +290,21 @@ namespace Veng
         /// @param now  Monotonic time in seconds.
         /// @return The reaped world ids, so a borrowing host drops its per-world state for each.
         [[nodiscard]] vector<WorldInstanceId> ReapIdle(f64 now);
+
+        /// @brief Closes one factory-opened bucket now, regardless of its presence or dwell.
+        ///
+        /// The same teardown a reap performs — the consumer CloseWorld hook first, then
+        /// WorldRunner::CloseWorld when a runner is configured, then the bucket and its key mapping
+        /// are dropped so a later resolve cold-opens — taken on demand rather than after the dwell.
+        /// A consumer reaches for it when the state a world persists into is going away (a store
+        /// closing under a data world), so the world cannot outlive it and be handed back, warm and
+        /// stale, to the next open. Pins and joins still held on the bucket are dropped with it;
+        /// a holder that later releases one takes a harmless no-op. Pre-registered buckets are
+        /// never closed this way.
+        /// @param world  The bucket to close.
+        /// @return True when a factory-opened bucket was closed; false for an unknown id or a
+        ///         pre-registered bucket.
+        bool Close(WorldInstanceId world);
 
         /// @brief Returns the number of live buckets (pre-registered plus factory-opened).
         [[nodiscard]] usize WorldCount() const;

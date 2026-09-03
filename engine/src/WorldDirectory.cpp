@@ -63,6 +63,31 @@ namespace Veng
             return it != Buckets.end() ? &it->second : nullptr;
         }
 
+        // Tears one live bucket down: the consumer captures persistent state through CloseWorld
+        // first, then the runner tears the world down (when a runner is configured), then the bucket
+        // and its key mapping go so a later resolve cold-opens.
+        void Drop(const WorldInstanceId world)
+        {
+            const Net::WorldKey key = Buckets.at(world.Value).Key;
+            if (CloseWorld)
+            {
+                CloseWorld(world);
+            }
+            if (Runner != nullptr)
+            {
+                Runner->CloseWorld(world);
+            }
+            if (const auto it = KeyMap.find(key); it != KeyMap.end())
+            {
+                std::erase(it->second, world);
+                if (it->second.empty())
+                {
+                    KeyMap.erase(it);
+                }
+            }
+            Buckets.erase(world.Value);
+        }
+
         // Fills out with the key's live buckets, each carrying its presence and recorded payload —
         // the shape both the placement policy and InstancesOf see.
         void Gather(const Net::WorldKey& key, vector<WorldPlacement>& out)
@@ -320,28 +345,21 @@ namespace Veng
         }
         for (const WorldInstanceId world : reaped)
         {
-            const Net::WorldKey key = s.Buckets.at(world.Value).Key;
-            // Hook-before-teardown: the consumer captures persistent state through CloseWorld first,
-            // then the runner tears the world down (when a runner is configured).
-            if (s.CloseWorld)
-            {
-                s.CloseWorld(world);
-            }
-            if (s.Runner != nullptr)
-            {
-                s.Runner->CloseWorld(world);
-            }
-            if (const auto it = s.KeyMap.find(key); it != s.KeyMap.end())
-            {
-                std::erase(it->second, world);
-                if (it->second.empty())
-                {
-                    s.KeyMap.erase(it);
-                }
-            }
-            s.Buckets.erase(world.Value);
+            s.Drop(world);
         }
         return reaped;
+    }
+
+    bool WorldDirectory::Close(const WorldInstanceId world)
+    {
+        State& s = *m_State;
+        const State::Bucket* const bucket = s.Find(world);
+        if (bucket == nullptr || !bucket->Reapable)
+        {
+            return false;
+        }
+        s.Drop(world);
+        return true;
     }
 
     usize WorldDirectory::WorldCount() const

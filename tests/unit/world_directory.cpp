@@ -208,3 +208,27 @@ TEST_CASE("A world pinned before its first reap sighting is never reaped by the 
     CHECK(fx.Directory->Contains(resolve.World));
     CHECK(fx.Closed.empty());
 }
+
+TEST_CASE("Close tears a factory-opened world down on demand, pins and dwell notwithstanding")
+{
+    DirectoryFixture fx(/*dwell=*/5.0);
+    const WorldKey key = WorldKey::FromU64(0x6);
+    const WorldResolveResult resolve = fx.Open(key, AccountId{});
+    REQUIRE(resolve.Outcome == WorldResolveOutcome::Opened);
+    fx.Directory->Pin(resolve.World);
+
+    // A pinned, un-dwelt bucket closes through the same hook a reap runs, and its key cold-opens.
+    CHECK(fx.Directory->Close(resolve.World));
+    CHECK_FALSE(fx.Directory->Contains(resolve.World));
+    CHECK(fx.Directory->InstancesOf(key).empty());
+    REQUIRE(fx.Closed.size() == 1);
+    CHECK(fx.Closed[0] == resolve.World.Value);
+
+    // A stale release and a second close are no-ops, and the next resolve of the key is a fresh open.
+    fx.Directory->Unpin(resolve.World, /*now=*/1.0);
+    CHECK_FALSE(fx.Directory->Close(resolve.World));
+    const WorldResolveResult reopened = fx.Open(key, AccountId{});
+    CHECK(reopened.Outcome == WorldResolveOutcome::Opened);
+    CHECK(reopened.World != resolve.World);
+    CHECK(fx.Closed.size() == 1);
+}

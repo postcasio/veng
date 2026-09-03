@@ -649,6 +649,10 @@ the moment capping turned on. A caller wanting the sole bucket of an uncapped ke
 element. The view is directory-owned scratch, valid until the next `InstancesOf`; it is not a live
 window onto the map, so a caller holding it across a `Resolve` or a reap copies what it needs. A
 bucket stops appearing exactly when `ReapIdle` drops it — the same moment the `CloseWorld` hook fires.
+**`WorldDirectory::Close(WorldInstanceId)`** takes that same teardown on demand: hook, runner close,
+mapping dropped, regardless of presence or dwell (pre-registered buckets excepted). It is for the
+consumer whose world persists into state that is going away — a store closing under a data world —
+where waiting out the dwell would hand the next open a warm world carrying the old store's state.
 
 The directory is reachable from outside the engine through **`Application::GetWorldDirectory()`**
 (null before the managed world is started, and always for an application configured without one).
