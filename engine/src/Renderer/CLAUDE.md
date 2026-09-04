@@ -295,7 +295,8 @@ nothing retained — which is what makes it unit-testable and what lets the edit
 debug view show the identical layer.
 
 The families are the `SceneGizmo` bits: **Lights, Cameras, Colliders, Sockets, Interaction,
-Audio, Probes, Empties**. They are selectable because a scene carrying hundreds of one kind is
+Audio, Probes, Empties, Agents** (the last marking every `BehaviorAgent` whose tree is running, at
+the pawn it acts through — read through `BehaviorTree::RootStatus`, never ticked). They are selectable because a scene carrying hundreds of one kind is
 unreadable while a different question is being asked of it. `SceneGizmoGroupTable()` pairs each
 bit with a name and a description **so a consumer's selection interface is the engine's own list**
 — a family added here appears in every consumer's checkboxes with no change on the consuming side,

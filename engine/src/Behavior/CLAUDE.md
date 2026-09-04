@@ -71,9 +71,14 @@ the ordinary `RegisterBuiltinTypes` / `RegisterBuiltinSystems` path, so the modu
 - **A `Parallel` that completes abandons a still-`Running` sibling without an `OnExit`.** The status
   has no "aborted" value, so the abandoned subtree is reset silently. A leaf that must clean up on
   abandonment does it from its own component lifecycle, not from `OnExit`.
-- **The one debug affordance is a marker, not a label.** `SystemContext::Debug`, when present, marks
-  the pawn of an agent whose tree is `Running` — the debug-draw surface carries no world-space text, so
-  it marks rather than names the running leaf.
+- **The running-agent marker is a scene gizmo, not a `BehaviorSystem` draw.** A mark at the pawn of
+  an agent whose tree is `Running` is the `SceneGizmo::Agents` family
+  (`Veng/Renderer/SceneGizmos.h`), drawn only when a consumer selects that family — the debug-draw
+  surface carries no world-space text, so it marks the pawn rather than naming the running leaf. It
+  reads the root's status through `BehaviorTree::RootStatus` rather than ticking, so it never
+  advances an agent. It lives there rather than in `BehaviorSystem::OnUpdate` so it is opt-in like
+  every other gizmo family: a system that drew it whenever a debug sink merely existed painted every
+  running agent in any scene whose viewport carried a debug pass at all.
 
 ## The guide
 

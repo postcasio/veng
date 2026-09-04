@@ -2,10 +2,8 @@
 
 #include <Veng/Behavior/BehaviorAgent.h>
 #include <Veng/Math/Random.h>
-#include <Veng/Renderer/DebugDraw.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
-#include <Veng/Scene/Transforms.h>
 
 namespace Veng
 {
@@ -58,17 +56,7 @@ namespace Veng
                 .Random = random,
                 .System = context,
             };
-            const Status status = agent.Tree->Tick(agent.Slots, agent.Seed, behaviorContext);
-
-            // The one debug affordance a tree needs: mark the pawn of an agent still running. The
-            // debug-draw surface carries no world-space text, so this marks the pawn rather than
-            // labelling the leaf.
-            if (context.Debug != nullptr && status == Status::Running)
-            {
-                const vec3 position = vec3(WorldMatrix(scene, pawn)[3]);
-                context.Debug->DrawLine(position, position + vec3(0.0f, 1.0f, 0.0f),
-                                        vec4(0.2f, 0.9f, 0.3f, 1.0f));
-            }
+            agent.Tree->Tick(agent.Slots, agent.Seed, behaviorContext);
         }
     }
 }

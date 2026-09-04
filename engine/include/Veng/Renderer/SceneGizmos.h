@@ -46,8 +46,11 @@ namespace Veng::Renderer
         Probes = 1u << 6u,
         /// @brief Every entity that draws nothing at all: a small axis triad at its transform.
         Empties = 1u << 7u,
+        /// @brief Every BehaviorAgent whose tree is running: a mark at the pawn it acts through.
+        Agents = 1u << 8u,
         /// @brief Every family above.
-        All = Lights | Cameras | Colliders | Sockets | Interaction | Audio | Probes | Empties,
+        All = Lights | Cameras | Colliders | Sockets | Interaction | Audio | Probes | Empties |
+              Agents,
     };
 
     /// @brief Union of two gizmo sets.

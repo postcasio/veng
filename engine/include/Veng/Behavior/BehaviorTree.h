@@ -144,6 +144,19 @@ namespace Veng
         /// @return The root node's status this tick.
         Status Tick(vector<NodeSlot>& slots, u64 seed, const BehaviorContext& context) const;
 
+        /// @brief The status the tree reported on its most recent tick, read from the agent's slots.
+        ///
+        /// Reads the root node's stored status rather than ticking, so a View-phase consumer — a
+        /// debug overlay — can ask whether an agent is still running without advancing it. A slot
+        /// vector too short to hold the root (an agent not yet ticked) reads as Running, the initial
+        /// state a fresh slot carries.
+        /// @param slots  The agent's per-node running state.
+        /// @return The root's last status, or Status::Running for an un-ticked agent.
+        [[nodiscard]] Status RootStatus(const vector<NodeSlot>& slots) const
+        {
+            return m_Root < slots.size() ? slots[m_Root].Last : Status::Running;
+        }
+
     private:
         friend class BehaviorTreeBuilder;
 

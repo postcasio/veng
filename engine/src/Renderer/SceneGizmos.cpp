@@ -9,6 +9,7 @@
 #include <Veng/Asset/CollisionShape.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Audio/AudioComponents.h>
+#include <Veng/Behavior/BehaviorAgent.h>
 #include <Veng/Physics/Components.h>
 #include <Veng/Renderer/CaptureSurface.h>
 #include <Veng/Renderer/DebugDraw.h>
@@ -36,10 +37,11 @@ namespace Veng::Renderer
         constexpr vec4 AudioOuterColor{0.35f, 0.3f, 0.7f, 1.0f};
         constexpr vec4 ProbeColor{0.3f, 1.0f, 1.0f, 1.0f};
         constexpr vec4 EmptyColor{0.6f, 0.6f, 0.6f, 1.0f};
+        constexpr vec4 AgentColor{0.2f, 0.9f, 0.3f, 1.0f};
 
         // The families, in the order an interface offers them: the two an author places by hand
         // first, then the derived and the diagnostic.
-        constexpr std::array<SceneGizmoGroupInfo, 8> Groups{{
+        constexpr std::array<SceneGizmoGroupInfo, 9> Groups{{
             {.Bit = SceneGizmo::Lights,
              .Name = "Lights",
              .Description = "Icon and emitting volume for every light"},
@@ -64,6 +66,9 @@ namespace Veng::Renderer
             {.Bit = SceneGizmo::Empties,
              .Name = "Empties",
              .Description = "Entities that draw nothing at all"},
+            {.Bit = SceneGizmo::Agents,
+             .Name = "Agents",
+             .Description = "Behaviour agents whose tree is running"},
         }};
 
         // A world matrix's three basis vectors, scale included — what an oriented wireframe is
@@ -497,6 +502,29 @@ namespace Veng::Renderer
                     continue;
                 }
                 DrawTriad(debug, WorldMatrix(scene, entity), style.MarkerSize, EmptyColor);
+            }
+        }
+
+        if (HasGizmo(groups, SceneGizmo::Agents))
+        {
+            // A running agent is marked at the pawn it acts through — its Possesses.Pawn when it has
+            // one, else itself — so a mind-and-body agent and a pawnless one both read at their body.
+            for (auto [entity, agent] : scene.View<BehaviorAgent>())
+            {
+                if (!agent.Tree || agent.Tree->RootStatus(agent.Slots) != Status::Running)
+                {
+                    continue;
+                }
+                Entity pawn = entity;
+                if (const auto* const possesses = scene.TryGet<Possesses>(entity);
+                    possesses != nullptr && !possesses->Pawn.IsNull() &&
+                    scene.IsAlive(possesses->Pawn))
+                {
+                    pawn = possesses->Pawn;
+                }
+                const vec3 origin = vec3(WorldMatrix(scene, pawn)[3]);
+                debug.DrawLine(origin, origin + vec3(0.0f, style.MarkerSize * 4.0f, 0.0f),
+                               AgentColor);
             }
         }
     }
