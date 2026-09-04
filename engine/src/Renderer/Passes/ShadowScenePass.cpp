@@ -292,7 +292,7 @@ namespace Veng::Renderer
                                 continue;
                             }
 
-                            if (!CastsShadow(mesh, c.SubMeshIndex))
+                            if (!CastsShadow(item.Materials, mesh, c.SubMeshIndex))
                             {
                                 continue;
                             }
@@ -336,7 +336,7 @@ namespace Veng::Renderer
                                     continue;
                                 }
 
-                                if (!CastsShadow(mesh, c.SubMeshIndex))
+                                if (!CastsShadow(item.Materials, mesh, c.SubMeshIndex))
                                 {
                                     continue;
                                 }

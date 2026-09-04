@@ -220,7 +220,7 @@ namespace Veng::Renderer
                         {
                             return;
                         }
-                        if (!CastsShadow(mesh, subMeshIndex))
+                        if (!CastsShadow(item.Materials, mesh, subMeshIndex))
                         {
                             return;
                         }
@@ -250,7 +250,7 @@ namespace Veng::Renderer
                         {
                             return;
                         }
-                        if (!CastsShadow(mesh, subMeshIndex))
+                        if (!CastsShadow(item.Materials, mesh, subMeshIndex))
                         {
                             return;
                         }

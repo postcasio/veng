@@ -368,8 +368,5 @@ namespace Veng
 
         /// @brief The instance counter minting world ids; never reused, so a stale id resolves to nothing.
         u64 m_NextId = 1;
-
-        /// @brief Latch for the shared-capture-material warning, so it is logged once per runner.
-        bool m_WarnedSharedCaptureMaterial = false;
     };
 }

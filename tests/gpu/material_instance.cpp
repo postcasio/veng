@@ -263,4 +263,52 @@ TEST_CASE_FIXTURE(
     std::filesystem::remove(outArchive);
 }
 
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "material instance: Clone is an independent per-instance copy")
+{
+    const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
+    const path outArchive =
+        Veng::TestSupport::TempDir() / "veng_gpu_material_instance_clone.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker
+                .CookPack(fixtureDir / "gbuffer_pack.json", outArchive, {}, nullptr, nullptr,
+                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+                .has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<Material>> parent = assets.LoadSync<Material>(BrickParentId);
+    REQUIRE(parent.has_value());
+
+    // A source instance with an established look, then a clone of it.
+    const AssetHandle<MaterialInstance> source =
+        assets.BuildSync<MaterialInstance>(MaterialInstanceInfo{
+            .Name = "Clone Source", .Context = &Context, .Parent = *parent, .Overrides = {}});
+    REQUIRE(source.IsLoaded());
+    source.Get()->SetParam("BaseColorFactor", vec4(0.2f, 0.4f, 0.6f, 1.0f));
+
+    const AssetHandle<MaterialInstance> clone =
+        assets.Adopt<MaterialInstance>(source.Get()->Clone("Clone Copy"));
+    REQUIRE(clone.IsLoaded());
+
+    // The copy shares the parent (pipeline pointer-equal) but owns its own bindless slot, so it is
+    // a distinct target the renderer selects separately.
+    CHECK(clone.Get()->GetPipeline().get() == source.Get()->GetPipeline().get());
+    CHECK(clone.Get()->GetIndex() != MaterialHandle::Invalid);
+    CHECK(clone.Get()->GetIndex() != source.Get()->GetIndex());
+
+    // Mutating the copy touches only the copy: its revision moves while the source's holds, which is
+    // the whole point — a write into a clone reaches no other drawer of the shared source.
+    const u32 sourceRevision = source.Get()->GetRevision();
+    const u32 cloneRevision = clone.Get()->GetRevision();
+    clone.Get()->SetParam("BaseColorFactor", vec4(1.0f, 0.0f, 0.0f, 1.0f));
+    CHECK(clone.Get()->GetRevision() > cloneRevision);
+    CHECK(source.Get()->GetRevision() == sourceRevision);
+
+    std::filesystem::remove(outArchive);
+}
+
 #endif

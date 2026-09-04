@@ -153,6 +153,30 @@ namespace Veng
         m_Registered = true;
     }
 
+    Ref<MaterialInstance> MaterialInstance::Clone(std::string_view name) const
+    {
+        VE_ASSERT(m_Registered, "MaterialInstance::Clone: '{}' is not finalized", m_Name);
+
+        // Reuse the private constructor (parent + overrides) for the resident-handle bookkeeping,
+        // then overwrite the block with this instance's current one rather than re-running
+        // Finalize's parent-default reseed — so the copy captures the live appearance, including
+        // any Set* writes since — and register the copy's own per-material slot.
+        Ref<MaterialInstance> copy =
+            Ref<MaterialInstance>(new MaterialInstance(MaterialInstanceInfo{
+                .Name = string(name),
+                .Context = &m_Context,
+                .Parent = m_Parent,
+                .Overrides = m_Overrides,
+            }));
+        copy->m_Textures = m_Textures;
+        copy->m_Block = m_Block;
+        copy->m_Handle = m_Context.GetBindlessRegistry().RegisterMaterial(
+            std::span<const std::byte>(copy->m_Block));
+        copy->m_Registered = true;
+        copy->m_Revision = m_Revision;
+        return copy;
+    }
+
     void MaterialInstance::Bind(CommandBuffer& cmd) const
     {
         const Material& parent = *m_Parent.Get();

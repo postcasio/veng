@@ -90,6 +90,21 @@ namespace Veng
         /// @param assets  Asset manager used to load the skinned vertex shader and its layout.
         void EnsureSkinnedPipeline(AssetManager& assets) const;
 
+        /// @brief Creates a runtime copy sharing this instance's parent, with its own SSBO slot.
+        ///
+        /// The copy keeps the same parent (and this instance's override textures) resident and
+        /// seeds its parameter block from this instance's **current** block — so it reproduces the
+        /// live appearance, overrides and any Set* writes since Finalize included — then registers
+        /// its own bindless per-material slot. Mutating the copy
+        /// (SetParam/SetTexture/SetTextureHandle/…) therefore affects only the copy, never this
+        /// instance or any other entity drawing a shared material. Render-thread only (it allocates
+        /// a bindless slot); the caller owns the returned Ref and wraps it with AssetManager::Adopt
+        /// to draw with it.
+        /// @param name  Debug name for the copy.
+        /// @return The runtime copy, finalized and ready to draw.
+        /// @pre This instance is finalized (registered).
+        [[nodiscard]] Ref<MaterialInstance> Clone(std::string_view name) const;
+
         /// @brief Returns the frame-folded material selector (GetCurrentFrameBase() + slot index).
         ///
         /// The value the shader uses to index the ring-buffered per-material parameter block. A

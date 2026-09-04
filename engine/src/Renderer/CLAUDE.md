@@ -1118,6 +1118,22 @@ view budget it can leave those viewports, round-robin across frames when they do
 material sampling one reads this frame's result. `CaptureSurface` (the reflected component, see
 [../Gui/CLAUDE.md](../Gui/CLAUDE.md)) is the authoring front end.
 
+**The probe binds into a per-entity clone of the sibling material, not the shared mesh instance.**
+The drive writes its output — the octahedral map handle and the `ProbeCenter` validity flag a
+consumer gates the reflection on — into `materials[0]` of the sibling `MeshRenderer`. That instance
+belongs to the **mesh asset**, shared by every entity drawing that mesh, so writing it directly
+would make every sharer sample this probe (the classic case: two ships of one model, only the
+player's cockpit should reflect). So `WorldRunner::DriveCaptureSurfaces`, on a captured entity's
+first drive, **clones the sibling `materials[0]` (`MaterialInstance::Clone`) and installs it as that
+entity's `MeshRenderer::InstanceMaterials` override** — the per-entity material seam the render
+gather honours (`GatherMeshes` → `VisibleMesh::Materials`, see [../Scene/CLAUDE.md](../Scene/CLAUDE.md)
+and [../Asset/CLAUDE.md](../Asset/CLAUDE.md)). The probe then writes only the clone: the capturing
+entity draws the reflective copy and every other sharer keeps the untouched asset instance, sampling
+nothing (its `ProbeCenter.w` stays 0 → the material's no-probe path). The install is one mutable
+component write per capturing entity — it bumps the scene's spatial version once, which the
+broadphase re-gathers on — and the clone is held by the override for the entity's lifetime, so a
+consumer authors no second mesh or material to keep an NPC's copy of a reflective surface flat.
+
 **A capture optionally publishes an octahedral distance map beside the radiance one**
 (`SceneCaptureInfo::CaptureDistance`, off by default). The same six faces are rendered with a depth
 buffer either way; when asked, their depths tile into a second (3×2) atlas and resample into a

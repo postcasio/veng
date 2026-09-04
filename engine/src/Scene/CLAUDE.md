@@ -150,7 +150,12 @@ only when the view's mask names the layer, so `RenderLayer::ViewAnchored` marks 
 the ordinary view still draws but an environment probe skips. `Visible` is
 what hiding something reaches for: removing the component loses the resolved mesh and any sibling
 bound onto it — a `GuiSurface` draws its document *into* that mesh — and collapsing the
-`Transform` scale takes every child with it, a camera riding the hull included), `Animator` (plays an
+`Transform` scale takes every child with it, a camera riding the hull included; and a runtime,
+never-cooked **`InstanceMaterials`** override that, when non-empty, replaces the mesh asset's shared
+material list for *this* entity's draw only — same length, indexed by `SubMesh::MaterialIndex` — so
+one entity draws with its own instances while every other sharer of the mesh keeps the asset's, the
+seam the capture path uses to scope a probe to one entity, see
+[../Renderer/CLAUDE.md](../Renderer/CLAUDE.md)), `Animator` (plays an
 `AssetHandle<Animation>` on a skinned-mesh entity; the `AnimationSystem` writes the result into a
 transient `SkinnedPose` the renderer uploads — or, when the entity also carries an `AnimationBlend`
 or `AnimationStateSet` (`Veng/Scene/AnimationBlend.h`), the phase-synced 1-D blend of the bracketing

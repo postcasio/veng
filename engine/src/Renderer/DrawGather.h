@@ -35,10 +35,13 @@ namespace Veng::Renderer
     ///
     /// Alpha-cut and stained-glass casters are deliberately out of scope: both need the shadow pass
     /// to shade rather than to rasterize depth, which is a separate capability from this predicate.
+    /// @param materials     The material list to resolve the submesh against — the caller's
+    ///                      VisibleMesh::Materials, so a per-entity override is honoured.
     /// @param mesh          The mesh owning the submesh.
     /// @param subMeshIndex  Index of the submesh within that mesh.
     /// @return True when the submesh should be rasterized into a shadow map.
-    [[nodiscard]] bool CastsShadow(const Mesh& mesh, u32 subMeshIndex);
+    [[nodiscard]] bool CastsShadow(std::span<const AssetHandle<MaterialInstance>> materials,
+                                   const Mesh& mesh, u32 subMeshIndex);
 
     /// @brief The per-frame inputs the three draw-gather phases share.
     ///

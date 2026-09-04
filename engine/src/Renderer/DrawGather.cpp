@@ -14,9 +14,9 @@
 
 namespace Veng::Renderer
 {
-    bool CastsShadow(const Mesh& mesh, const u32 subMeshIndex)
+    bool CastsShadow(const std::span<const AssetHandle<MaterialInstance>> materials,
+                     const Mesh& mesh, const u32 subMeshIndex)
     {
-        const std::span<const AssetHandle<MaterialInstance>> materials = mesh.GetMaterials();
         const SubMesh& subMesh = mesh.GetSubMeshes()[subMeshIndex];
         if (subMesh.MaterialIndex == SubMesh::NoMaterial ||
             !materials[subMesh.MaterialIndex].IsLoaded())
@@ -72,7 +72,7 @@ namespace Veng::Renderer
             const SubMeshCandidate& candidate = input.Candidates[id];
             const VisibleMesh& item = input.View.Visible[candidate.MeshCandidate];
             const Mesh& mesh = *item.Mesh;
-            const std::span<const AssetHandle<MaterialInstance>> materials = mesh.GetMaterials();
+            const std::span<const AssetHandle<MaterialInstance>> materials = item.Materials;
             const SubMesh& subMesh = mesh.GetSubMeshes()[candidate.SubMeshIndex];
 
             if (subMesh.MaterialIndex == SubMesh::NoMaterial ||
@@ -169,7 +169,7 @@ namespace Veng::Renderer
             const VisibleMesh& item = input.View.Visible[candidate.MeshCandidate];
             const Mesh& mesh = *item.Mesh;
             const SubMesh& subMesh = mesh.GetSubMeshes()[candidate.SubMeshIndex];
-            const std::span<const AssetHandle<MaterialInstance>> materials = mesh.GetMaterials();
+            const std::span<const AssetHandle<MaterialInstance>> materials = item.Materials;
             const AssetHandle<Skeleton>& skeletonHandle = mesh.GetSkeleton();
             if (!skeletonHandle.IsLoaded())
             {
@@ -292,7 +292,7 @@ namespace Veng::Renderer
             {
                 continue;
             }
-            const std::span<const AssetHandle<MaterialInstance>> materials = mesh.GetMaterials();
+            const std::span<const AssetHandle<MaterialInstance>> materials = item.Materials;
             const SubMesh& subMesh = mesh.GetSubMeshes()[candidate.SubMeshIndex];
 
             u32 slot = 0;

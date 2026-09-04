@@ -263,7 +263,15 @@ and the app still runs — only `smoke_golden` (gated to skip on a non-ASTC devi
   stores u64 material ids; `MeshLoader` eager-resolves those ids into material instances and
   builds the list, exactly as `Material` resolves its own texture/shader dependencies — so every
   asset eager-loads its dependencies. A draw iterates submeshes, binding
-  `GetMaterials()[MaterialIndex]` per range.
+  `GetMaterials()[MaterialIndex]` per range. **The list is the mesh asset's, so every entity drawing
+  that mesh shares one instance per submesh** — a `SetParam`/`SetTextureHandle` on one is seen by all.
+  A single entity draws differently through **`MeshRenderer::InstanceMaterials`** (a runtime,
+  never-cooked per-entity override, see [../Scene/CLAUDE.md](../Scene/CLAUDE.md)): non-empty, it
+  replaces the asset's list for that entity's draw, so a caller wanting a private, mutable copy
+  clones one with **`MaterialInstance::Clone(name)`** — a runtime copy over the same parent with its
+  own SSBO slot, seeded from the source's current block — and `Adopt`s it into the override. The
+  engine's own consumer is the capture path, which clones the sibling material so a `CaptureSurface`
+  probe reaches only the capturing entity ([../Renderer/CLAUDE.md](../Renderer/CLAUDE.md)).
 - **A mesh carries the model's named attachment points.** `Mesh::GetSockets()` is the cooked
   `MeshSocket` list — name plus a mesh-space TRS — sorted by name, and `Mesh::FindSocket(name)`
   binary-searches it, returning `nullptr` for a name the model does not carry (a content error the

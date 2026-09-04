@@ -1,6 +1,9 @@
 #pragma once
 
+#include <span>
+
 #include <Veng/Veng.h>
+#include <Veng/Asset/AssetHandle.h>
 #include <Veng/Math/AABB.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/RenderLayer.h>
@@ -9,6 +12,7 @@ namespace Veng
 {
     class Scene;
     class Mesh;
+    class MaterialInstance;
 
     /// @brief One resident drawable candidate from a (Transform, MeshRenderer) entity.
     ///
@@ -27,6 +31,13 @@ namespace Veng
         AABB WorldBounds;
         /// @brief Resident mesh pointer; valid for the gathering Execute only.
         const Mesh* Mesh;
+        /// @brief The material instances to draw this mesh's submeshes with, by SubMesh::MaterialIndex.
+        ///
+        /// The MeshRenderer's InstanceMaterials override when it carries one, else the Mesh asset's
+        /// own GetMaterials(). Valid for the gathering Execute only, like Mesh — it points into
+        /// whichever of the two the gather chose, so a consumer resolves a submesh's material
+        /// through this rather than Mesh->GetMaterials() to honour a per-entity override.
+        std::span<const AssetHandle<MaterialInstance>> Materials;
         /// @brief Whether the entity's MeshRenderer opts this mesh into shadow casting.
         ///
         /// Mirrors MeshRenderer::CastsShadows. The camera view draws every candidate regardless;

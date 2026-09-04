@@ -1,10 +1,10 @@
 #include <Veng/WorldRunner.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Diagnostics/Profiler.h>
-#include <Veng/Log.h>
 #include <Veng/Renderer/CaptureSurface.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
@@ -316,12 +316,6 @@ namespace Veng
 
         WorldCaptureDriveResult result;
 
-        // The MaterialInstances driven this pass, so a second capture binding onto one already bound is
-        // reported rather than silently winning: the target is the sibling mesh *asset*'s cooked
-        // instance, shared by every entity drawing that asset, so two such entities have one slot
-        // between them.
-        vector<const MaterialInstance*> boundMaterials;
-
         // Pause is not what gates capture driving: a paused world a viewport still presents drives its
         // mirrors. Presentation is — a capture feeds a material sampled by a mesh drawn in some view,
         // so a world no view shows has nowhere its capture could be seen.
@@ -335,7 +329,7 @@ namespace Veng
             }
             ++result.WorldsDriven;
 
-            const Scene& scene = world->GetScene();
+            Scene& scene = world->GetScene();
             // The world's own interpolation fraction, not the frame's: the drive walks every world,
             // and each advances its Sim on its own clock.
             const f32 alpha = world->LastAlpha;
@@ -364,38 +358,34 @@ namespace Veng
                     faceBasis[2] = glm::normalize(faceBasis[2]);
                 }
 
-                // The surface's material is the sibling MeshRenderer's first.
+                // The surface's material is the sibling MeshRenderer's first — but the capture
+                // writes its probe output (a texture handle, and the ProbeCenter validity flag the
+                // shader gates the reflection on) into it, so binding onto the shared mesh-asset
+                // instance would make every other entity drawing that mesh sample this probe. Draw
+                // this entity through a private clone instead: on first drive, clone materials[0]
+                // and install a per-entity InstanceMaterials override the render gather honours, so
+                // the write reaches only this entity while every sharer keeps the untouched asset
+                // instance. The one mutable access bumps the scene's spatial version once, which the
+                // broadphase re-gathers on — subsequent frames read the installed clone const.
                 AssetHandle<MaterialInstance> material;
-                if (const auto* mesh = scene.TryGet<MeshRenderer>(entity); mesh != nullptr)
+                if (const auto* renderer = scene.TryGet<MeshRenderer>(entity);
+                    renderer != nullptr && renderer->Mesh.IsLoaded())
                 {
-                    if (mesh->Mesh.IsLoaded())
+                    if (!renderer->InstanceMaterials.empty())
                     {
-                        const std::span<const AssetHandle<MaterialInstance>> materials =
-                            mesh->Mesh.Get()->GetMaterials();
-                        if (!materials.empty() && materials[0].IsLoaded())
-                        {
-                            material = materials[0];
-                        }
+                        material = renderer->InstanceMaterials[0];
                     }
-                }
-
-                if (const MaterialInstance* const target = material.Get(); target != nullptr)
-                {
-                    if (std::ranges::find(boundMaterials, target) != boundMaterials.end())
+                    else if (const std::span<const AssetHandle<MaterialInstance>> meshMaterials =
+                                 renderer->Mesh.Get()->GetMaterials();
+                             !meshMaterials.empty() && meshMaterials[0].IsLoaded())
                     {
-                        if (!m_WarnedSharedCaptureMaterial)
-                        {
-                            m_WarnedSharedCaptureMaterial = true;
-                            Log::Warn("Two CaptureSurfaces drive material '{}' in one frame: it "
-                                      "belongs to a shared mesh asset, so they overwrite each "
-                                      "other's output and both sample one probe. Give each "
-                                      "capturing entity its own mesh asset or material instance.",
-                                      target->GetName());
-                        }
-                    }
-                    else
-                    {
-                        boundMaterials.emplace_back(target);
+                        vector<AssetHandle<MaterialInstance>> overrides(meshMaterials.begin(),
+                                                                        meshMaterials.end());
+                        overrides[0] =
+                            m_Assets->Adopt<MaterialInstance>(meshMaterials[0].Get()->Clone(
+                                meshMaterials[0].Get()->GetName() + " (capture)"));
+                        material = overrides[0];
+                        scene.Get<MeshRenderer>(entity).InstanceMaterials = std::move(overrides);
                     }
                 }
 

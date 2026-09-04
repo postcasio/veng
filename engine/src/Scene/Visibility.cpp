@@ -58,11 +58,25 @@ namespace Veng
             }
 
             const AABB worldBounds = renderer->Mesh->GetBounds().Transformed(world);
+            // A per-entity InstanceMaterials override replaces the mesh asset's shared list for this
+            // entity; empty falls back to the asset's own, so a mesh with no override draws exactly
+            // as before. The override is indexed by SubMesh::MaterialIndex like the asset's list, so
+            // it is honoured only when it matches that list's length — a stale override left over a
+            // swapped mesh falls back rather than risking an out-of-range index. Both spans stay
+            // valid for this gather (the mesh is resident; the component is not structurally changed
+            // mid-Execute).
+            const std::span<const AssetHandle<MaterialInstance>> meshMaterials =
+                renderer->Mesh.Get()->GetMaterials();
+            const std::span<const AssetHandle<MaterialInstance>> materials =
+                renderer->InstanceMaterials.size() == meshMaterials.size()
+                    ? std::span<const AssetHandle<MaterialInstance>>(renderer->InstanceMaterials)
+                    : meshMaterials;
             out.push_back(VisibleMesh{
                 .Owner = dense[i],
                 .World = world,
                 .WorldBounds = worldBounds,
                 .Mesh = renderer->Mesh.Get(),
+                .Materials = materials,
                 .CastsShadows = renderer->CastsShadows,
             });
             outBounds.Expand(worldBounds);

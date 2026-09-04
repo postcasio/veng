@@ -266,6 +266,18 @@ namespace Veng
         /// shell, a billboard — which the ordinary camera view still draws but an environment probe
         /// skips, so the mesh never leaks into a reflection or a lens sampling that capture.
         RenderLayer Layer = RenderLayer::Default;
+        /// @brief Per-entity material instances that replace the mesh asset's list when non-empty.
+        ///
+        /// Empty (the default) draws with the shared Mesh asset's GetMaterials(), so every entity
+        /// drawing that mesh shares one instance per submesh. Non-empty, this vector **replaces**
+        /// that list — same length, indexed the same way by SubMesh::MaterialIndex — so this entity
+        /// draws with its own instances while other sharers keep the asset's. It is runtime-only
+        /// presentation state: **not** a reflected field, so it never serializes, cooks, or
+        /// replicates (a scene Clone copies it like any member). The engine populates it for a
+        /// capturing entity — a CaptureSurface writes its probe into a private clone here so the
+        /// output reaches only the entity it drives, never every sharer of the mesh — and a game
+        /// may set it for a per-entity material override of its own.
+        vector<AssetHandle<MaterialInstance>> InstanceMaterials;
     };
 
     /// @brief How an Animator treats a clip's baked root motion.

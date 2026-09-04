@@ -1236,6 +1236,96 @@ namespace
     }
 }
 
+// A MeshRenderer's per-entity InstanceMaterials override draws that entity with its own
+// instances while the shared Mesh asset's list — every other sharer's material — is untouched:
+// the override is honoured by the draw, and clearing it restores the asset's own material.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: a per-entity material override draws differently and leaves "
+                  "the shared mesh material untouched")
+{
+    RegisterBuiltinTypes(Types);
+
+    const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_instance_override.vengpack";
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker
+                .CookPack(fixtureDir / "gbuffer_pack.json", outArchive, {}, nullptr, nullptr,
+                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+                .has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443}); // the brick default instance
+    REQUIRE(material.has_value());
+    const AssetResult<AssetHandle<Material>> parent = assets.LoadSync<Material>(AssetId{0x232BULL});
+    REQUIRE(parent.has_value());
+
+    constexpr uvec2 extent{128, 128};
+    const Ref<Mesh> cube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *material), "Override Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{.Direction = vec3(0.0f, 0.0f, -1.0f),
+                                           .Color = vec3(1.0f, 1.0f, 1.0f),
+                                           .Intensity = DirectionalLux(1.0f)};
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
+    });
+
+    const auto RenderCenter = [&]() -> vec3
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+            });
+        const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
+        return DecodeTexel(pixels, extent.x, extent.x / 2, extent.y / 2);
+    };
+
+    // With no override the brick renders red-dominant (its cooked BaseColorFactor).
+    const vec3 baseColor = RenderCenter();
+    CHECK(baseColor.r > baseColor.b + 0.1f);
+
+    // A per-entity instance whose BaseColorFactor is blue, installed as the entity's override.
+    const AssetHandle<MaterialInstance> blue = assets.BuildSync<MaterialInstance>(
+        MaterialInstanceInfo{.Name = "Override Blue", .Context = &Context, .Parent = *parent});
+    blue.Get()->SetParam("BaseColorFactor", vec4(0.1f, 0.15f, 0.9f, 1.0f));
+    scene->Get<MeshRenderer>(entity).InstanceMaterials = {blue};
+
+    // The entity now draws through the blue override — the gather honoured it: blue is the
+    // dominant channel where the base was red, and the red brick has collapsed.
+    const vec3 overridden = RenderCenter();
+    CHECK(overridden.b > overridden.r);
+    CHECK(overridden.r < baseColor.r - 0.2f);
+
+    // Clearing the override restores the shared asset instance's own red: the override never
+    // mutated it, so every other sharer of the mesh was unaffected throughout.
+    scene->Get<MeshRenderer>(entity).InstanceMaterials.clear();
+    const vec3 restored = RenderCenter();
+    CHECK(restored.r > restored.b + 0.1f);
+    CHECK(restored.r > baseColor.r - 0.05f);
+
+    std::filesystem::remove(outArchive);
+}
+
 // The design-for-N proof: two SceneRenderers, different extents and different Modes
 // (one Final, one Albedo), over ONE Scene with two cameras, Executed INTERLEAVED in
 // one command stream (A, B, A) to exercise each renderer's independent barrier
