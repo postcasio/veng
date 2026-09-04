@@ -84,6 +84,22 @@ namespace Veng
         /// @return The always-relevant entities' NetIds.
         [[nodiscard]] VE_API vector<NetId> GatherAlwaysRelevant(const Scene& scene);
 
+        /// @brief Narrows an interest set by each entity's NetRelevance scope for one connection.
+        ///
+        /// The owner-relative relevance filter: an entity carrying a NetRelevance whose scope excludes
+        /// @p conn is removed from the set, so it neither spawns to nor updates that connection. The
+        /// owner an entity is scoped against is its Authority::Owner (ServerConnectionId when it
+        /// carries no Authority) — OwnerOnly keeps the entity only for its owning connection,
+        /// ExceptOwner keeps it for every connection but the owner. A scope of All (and an entity with
+        /// no NetRelevance) is left untouched, and the scan is over the NetRelevance pool alone, so a
+        /// world authoring no scope pays a pool lookup and nothing more. A const, headless-safe scene
+        /// scan, so a dedicated server applies it with no renderer.
+        /// @param scene     The server scene to scan.
+        /// @param conn      The connection whose interest set is being narrowed.
+        /// @param interest  The interest set to narrow in place.
+        VE_API void ApplyRelevanceScope(const Scene& scene, ConnectionId conn,
+                                        set<NetId>& interest);
+
         /// @brief Computes a connection's new interest set, applying hysteresis and the dwell floor.
         ///
         /// The union of: spatial candidates within the enter radius (or the leave radius while already

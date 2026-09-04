@@ -133,6 +133,12 @@ namespace Veng
         // consumer authors/inspects it; the net layer resolves a claimant by it at spawn time.
         registry.Register<NetAnchor>();
 
+        // Per-connection relevance scope and its enum: a server-side interest predicate narrowing
+        // which connections a replicated entity reaches by owner relationship. Reflected so a game
+        // authors it; not replicated (it changes which bytes send, never the bytes).
+        registry.Register<RelevanceScope>();
+        registry.Register<NetRelevance>();
+
         // The account a seat entity belongs to, stamped server-side at seat spawn. Not replicated —
         // the id stays server-local. Net::AccountId registers transitively through its field.
         registry.Register<SeatAccount>();

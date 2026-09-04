@@ -66,6 +66,31 @@ namespace Veng::Net
         return ids;
     }
 
+    void ApplyRelevanceScope(const Scene& scene, const ConnectionId conn, set<NetId>& interest)
+    {
+        for (auto [entity, relevance] : scene.View<NetRelevance>())
+        {
+            if (relevance.Scope == RelevanceScope::All)
+            {
+                continue;
+            }
+            const auto* identity = scene.TryGet<NetIdentity>(entity);
+            if (identity == nullptr || identity->Id == InvalidNetId)
+            {
+                continue;
+            }
+            const auto* authority = scene.TryGet<Authority>(entity);
+            const ConnectionId owner = authority != nullptr ? authority->Owner : ServerConnectionId;
+            const bool ownedByConn = owner == conn;
+            const bool admits =
+                relevance.Scope == RelevanceScope::OwnerOnly ? ownedByConn : !ownedByConn;
+            if (!admits)
+            {
+                interest.erase(identity->Id);
+            }
+        }
+    }
+
     set<NetId> UpdateInterest(std::span<const InterestCandidate> spatial,
                               std::span<const NetId> alwaysRelevant, std::span<const NetId> extra,
                               const InterestSettings& settings, InterestState& state)

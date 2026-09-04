@@ -244,9 +244,32 @@ namespace Veng
                                              JoinState& join)
         {
             Scene& scene = *world.World;
-            if (world.InterestSettings.Radius <= 0.0f)
+            const bool radiusOff = world.InterestSettings.Radius <= 0.0f;
+
+            // Relevance scoping is a per-connection filter that must run even with the spatial radius
+            // off, so the whole-world fast path (nullopt) stands only when no entity carries a scope.
+            // The const view drives off the NetRelevance pool, so the emptiness test is O(1).
+            const auto relevanceView = std::as_const(scene).View<NetRelevance>();
+            const bool scoped = relevanceView.begin() != relevanceView.end();
+            if (radiusOff && !scoped)
             {
                 return std::nullopt;
+            }
+
+            // With the radius off but scoping present, the base set is every server entity; the scope
+            // filter at the tail then narrows it per connection.
+            if (radiusOff)
+            {
+                set<NetId> interest;
+                for (auto [entity, identity] : scene.View<NetIdentity>())
+                {
+                    if (identity.Id != InvalidNetId)
+                    {
+                        interest.insert(identity.Id);
+                    }
+                }
+                Net::ApplyRelevanceScope(scene, id, interest);
+                return interest;
             }
 
             const Entity seatEntity = join.Seat;
@@ -301,8 +324,13 @@ namespace Veng
                 }
             }
 
-            return Net::UpdateInterest(spatial, alwaysRelevant, extra, world.InterestSettings,
-                                       join.Interest);
+            set<NetId> interest = Net::UpdateInterest(spatial, alwaysRelevant, extra,
+                                                      world.InterestSettings, join.Interest);
+            if (scoped)
+            {
+                Net::ApplyRelevanceScope(scene, id, interest);
+            }
+            return interest;
         }
 
         // Spawns a seat into a joined world: a Viewer seat with Authority{ Server, Owner = id } and no

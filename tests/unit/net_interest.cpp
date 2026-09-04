@@ -143,6 +143,59 @@ TEST_CASE("GatherSpatialCandidates returns entities within the leave radius with
     CHECK(got.front().Distance == doctest::Approx(3.0f));
 }
 
+TEST_CASE("ApplyRelevanceScope narrows an interest set by owner relationship")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    Unique<Scene> scene = Scene::Create(types);
+
+    // Three connections, three scoped entities: one owned by connection 1 as OwnerOnly, its
+    // ExceptOwner sibling, and an unscoped (All) entity that scoping never touches.
+    const auto scoped = [&](NetId id, RelevanceScope scope, ConnectionId owner)
+    {
+        const Entity e = scene->CreateEntity();
+        scene->Add<NetIdentity>(e).Id = id;
+        scene->Add<Authority>(e, Authority{.Tier = Tier::Server, .Owner = owner});
+        scene->Add<NetRelevance>(e, NetRelevance{.Scope = scope});
+        return e;
+    };
+    scoped(1, RelevanceScope::OwnerOnly, 1);
+    scoped(2, RelevanceScope::ExceptOwner, 1);
+    const Entity plain = scene->CreateEntity();
+    scene->Add<NetIdentity>(plain).Id = 3;
+    scene->Add<NetRelevance>(plain, NetRelevance{.Scope = RelevanceScope::All});
+
+    // The owner (connection 1) keeps its OwnerOnly entity, loses its ExceptOwner one; the All entity
+    // is untouched.
+    set<NetId> owner{1, 2, 3};
+    ApplyRelevanceScope(*scene, 1, owner);
+    CHECK(owner == set<NetId>{1, 3});
+
+    // A non-owner (connection 2) loses the OwnerOnly entity, keeps the ExceptOwner one.
+    set<NetId> other{1, 2, 3};
+    ApplyRelevanceScope(*scene, 2, other);
+    CHECK(other == set<NetId>{2, 3});
+}
+
+TEST_CASE("An owner-less scoped entity is OwnerOnly to nobody and ExceptOwner to everybody")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    Unique<Scene> scene = Scene::Create(types);
+
+    // No Authority → owner is ServerConnectionId (0), which no live connection holds.
+    const Entity ownerOnly = scene->CreateEntity();
+    scene->Add<NetIdentity>(ownerOnly).Id = 1;
+    scene->Add<NetRelevance>(ownerOnly, NetRelevance{.Scope = RelevanceScope::OwnerOnly});
+    const Entity exceptOwner = scene->CreateEntity();
+    scene->Add<NetIdentity>(exceptOwner).Id = 2;
+    scene->Add<NetRelevance>(exceptOwner, NetRelevance{.Scope = RelevanceScope::ExceptOwner});
+
+    set<NetId> set1{1, 2};
+    ApplyRelevanceScope(*scene, 1, set1);
+    CHECK(set1 == set<NetId>{2}); // OwnerOnly reaches no connection; ExceptOwner reaches this one
+}
+
 // ---- Replication integration: interest gates the wire and leave is a visibility despawn -----------
 
 namespace

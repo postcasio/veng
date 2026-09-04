@@ -262,6 +262,28 @@ floor. Set enter sends the spawn + baseline; leave sends a **despawn-with-reason
 and re-baselines on re-entry. `GameNetInfo::InterestRadius` 0 (the default) replicates the whole
 world, so interest is opt-in per game.
 
+**The spatial arm and the policy hook are additive — union-only, never a subtraction.** They can
+only *add* an entity to a connection's set (a far team-mate kept relevant); neither can express "this
+entity is *not* for that connection". **`NetRelevance` is that subtraction** — a builtin reflected
+component (`RelevanceScope::{All, OwnerOnly, ExceptOwner}`, default `All`) read at snapshot build by
+`Net::ApplyRelevanceScope`, which removes a scoped entity from a connection's interest set by owner
+relationship: `OwnerOnly` keeps it only for its `Authority::Owner` connection, `ExceptOwner` for
+every connection but that one (an owner of `0`/server is owned by no live connection, so `OwnerOnly`
+reaches nobody and `ExceptOwner` reaches everybody). It gates **spawn and delta uniformly** — the
+same `relevant()` predicate in `Generate` — so a filtered-out entity's spawn simply never sends, and
+it despawns with `DespawnReason::Visibility` if it later leaves a connection's set. It is a purely
+server-side predicate over which bytes send, never over the bytes, so it is **not** replicated and
+bumps **no** `ProtocolVersion`; being a new component it needs no module-ABI bump either. The scope
+is layered **on top of** the interest set: at radius 0 (whole-world replication) the base set is
+every server entity and `ApplyRelevanceScope` subtracts from it — so the radius-0 fast path
+(`ComputeInterest` returning `nullopt`, no per-connection set) stands only while the world's
+`NetRelevance` pool is empty, which the common no-scope world checks in O(1) and pays nothing for.
+`ExceptOwner` never *adds* reach: it removes the owner from whatever set the entity would otherwise
+have, so a consumer wanting an `ExceptOwner` entity relevant to non-owners regardless of distance
+marks it `AlwaysRelevant` too, and the scope still subtracts the owner. `net_interest.cpp` pins the
+predicate; `net_two_world.cpp` pins the two-connection reach (an `OwnerOnly` entity reaching only its
+owner, an `ExceptOwner` one reaching everyone else).
+
 ## Input replication
 
 Input replicates client→server (`Replication.h` input half, `InputFeed.h`). The client stamps its

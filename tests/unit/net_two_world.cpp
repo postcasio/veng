@@ -915,6 +915,69 @@ TEST_CASE("Interest management: two clients far apart each hear only their own n
     CHECK(clientB.Host->Replication().Map().Lookup(netA).IsNull());
 }
 
+TEST_CASE("Relevance scope: an OwnerOnly entity reaches only its owner, ExceptOwner everyone else")
+{
+    const auto hub = CreateRef<Hub>();
+    const u32 serverEndpoint = hub->Register();
+    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    // Interest radius 0: the whole world replicates, so any exclusion is the relevance scope's alone.
+    ServerWorld server(*serverT);
+
+    auto clientTa = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    auto clientTb = CreateUnique<HubTransport>(hub, hub->Register(), serverEndpoint);
+    ClientWorld clientA(*clientTa);
+    ClientWorld clientB(*clientTb);
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    const auto run = [&](u64 from, u64 to)
+    {
+        for (u64 tick = from; tick <= to; ++tick)
+        {
+            now += Delta;
+            server.SimStep(tick, Delta);
+            server.NetPump(now, tick);
+            clientA.Frame(now, tick, Delta, std::nullopt);
+            clientB.Frame(now, tick, Delta, std::nullopt);
+        }
+    };
+
+    // Join both clients so their connection ids are assigned.
+    run(1, 60);
+    REQUIRE(server.Host->Server().Connections().size() == 2);
+    const ConnectionId idA = clientA.Client->AssignedId();
+    const ConnectionId idB = clientB.Client->AssignedId();
+    REQUIRE(idA != idB);
+
+    // Two host-owned props owned by connection A: one OwnerOnly (only A should receive it) and one
+    // ExceptOwner (everyone but A should). AssignServerNetIds gives each a wire id on the next pump.
+    const auto stampProp = [&](RelevanceScope scope)
+    {
+        const Entity prop = server.World->CreateEntity();
+        server.World->Add<Transform>(prop);
+        server.World->Add<Authority>(prop, Authority{.Tier = Tier::Server, .Owner = idA});
+        server.World->Add<NetRelevance>(prop, NetRelevance{.Scope = scope});
+        return prop;
+    };
+    const Entity ownerOnly = stampProp(RelevanceScope::OwnerOnly);
+    const Entity exceptOwner = stampProp(RelevanceScope::ExceptOwner);
+
+    run(61, 120);
+
+    const NetId netOwnerOnly = server.World->Get<NetIdentity>(ownerOnly).Id;
+    const NetId netExceptOwner = server.World->Get<NetIdentity>(exceptOwner).Id;
+    REQUIRE(netOwnerOnly != InvalidNetId);
+    REQUIRE(netExceptOwner != InvalidNetId);
+
+    // A (the owner) receives the OwnerOnly prop and never the ExceptOwner one.
+    CHECK_FALSE(clientA.Host->Replication().Map().Lookup(netOwnerOnly).IsNull());
+    CHECK(clientA.Host->Replication().Map().Lookup(netExceptOwner).IsNull());
+
+    // B (a non-owner) receives the ExceptOwner prop and never the OwnerOnly one.
+    CHECK_FALSE(clientB.Host->Replication().Map().Lookup(netExceptOwner).IsNull());
+    CHECK(clientB.Host->Replication().Map().Lookup(netOwnerOnly).IsNull());
+}
+
 TEST_CASE("Two clients with quantization on: each sees the other's pawn move (not frozen at spawn)")
 {
     const auto hub = CreateRef<Hub>();

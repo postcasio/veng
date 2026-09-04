@@ -709,6 +709,42 @@ namespace Veng
         [[nodiscard]] bool operator==(const NetAnchor&) const = default;
     };
 
+    /// @brief How a replicated entity's relevance is scoped relative to its owning connection.
+    ///
+    /// The subject of a NetRelevance component. Owner here is the entity's Authority::Owner — the
+    /// connection id an entity is owned by (0 = server/none) — so the two owner-relative scopes are
+    /// meaningful only on an entity whose Owner names a connection.
+    enum class RelevanceScope : u32
+    {
+        /// @brief Relevant to every connection — the default, byte-identical to no component.
+        All = 0,
+        /// @brief Relevant only to the connection that owns the entity (Authority::Owner).
+        OwnerOnly = 1,
+        /// @brief Relevant to every connection except the one that owns the entity.
+        ExceptOwner = 2,
+    };
+
+    /// @brief Per-connection relevance scope: restricts which connections a replicated entity reaches.
+    ///
+    /// The general form of "this entity is not for everyone". The replication server already filters
+    /// each connection's snapshot to its interest set; this component narrows that set by owner
+    /// relationship, so an entity can be made relevant to only its owner (a player's private pickup),
+    /// or to everyone but its owner (a proxy standing in for the owner's own view of an entity it
+    /// sees differently). The owner is the entity's Authority::Owner. A scope of All (the default, and
+    /// an entity with no component) leaves the interest set untouched, so every existing entity is
+    /// unchanged and worlds carrying no scope pay nothing.
+    ///
+    /// It names *whether* an entity reaches a connection, never *how*: it gates spawn and delta
+    /// uniformly (a filtered-out entity's spawn simply never sends, and it despawns with
+    /// DespawnReason::Visibility if it later leaves a connection's set, re-spawning on re-entry). It is
+    /// a purely server-side predicate — it changes no wire bytes, only whether they send — so it is
+    /// reflected (a game authors it on a prefab) but not replicated.
+    struct NetRelevance
+    {
+        /// @brief The relevance scope; All leaves the interest set unchanged.
+        RelevanceScope Scope{RelevanceScope::All};
+    };
+
     /// @brief The account a seat entity belongs to, stamped by the server when it spawns the seat.
     ///
     /// Server-local bookkeeping: the host stamps each spawned seat with the connection's admitted
@@ -1493,6 +1529,18 @@ VE_REFLECT_END();
 VE_REFLECT(::Veng::NetAnchor, 0x6B5366CCAC328A6CULL)
 VE_FIELD(Lo, .DisplayName = "Anchor Lo")
 VE_FIELD(Hi, .DisplayName = "Anchor Hi")
+VE_REFLECT_END();
+
+VE_ENUM(::Veng::RelevanceScope, 0x6D6B56DD098E177AULL)
+VE_ENUMERATOR(All)
+VE_ENUMERATOR(OwnerOnly)
+VE_ENUMERATOR(ExceptOwner)
+VE_ENUM_END();
+
+// Reflected so a game authors the scope on a prefab, but *not* replicated: it is a server-side
+// interest predicate that changes no wire bytes, only which connections an entity's bytes reach.
+VE_REFLECT(::Veng::NetRelevance, 0x2C7A94377311D11EULL)
+VE_FIELD(Scope, .DisplayName = "Relevance")
 VE_REFLECT_END();
 
 // Registered without a reflected field, so it neither serializes nor rides the wire: provenance is
