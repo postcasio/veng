@@ -6,6 +6,7 @@
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <Veng/Asset/CollisionShape.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Audio/AudioComponents.h>
 #include <Veng/Physics/Components.h>
@@ -171,6 +172,66 @@ namespace Veng::Renderer
             }
         }
 
+        // Cooked geometry in a frame: a mesh's triangle edges, or a hull's points as crosses. The
+        // only wireframe a convex hull or triangle-mesh collider has here — the render mesh's AABB
+        // is not the collider.
+        void DrawWireGeometry(DebugDraw& debug, const mat4& frame,
+                              const std::span<const vec3> points,
+                              const std::span<const u32> indices, const bool triangleMesh,
+                              const vec4 color)
+        {
+            const auto at = [&](const vec3 p) { return vec3(frame * vec4(p, 1.0f)); };
+            if (triangleMesh)
+            {
+                for (usize i = 0; i + 2 < indices.size(); i += 3)
+                {
+                    const vec3 a = at(points[indices[i]]);
+                    const vec3 b = at(points[indices[i + 1]]);
+                    const vec3 c = at(points[indices[i + 2]]);
+                    debug.DrawLine(a, b, color);
+                    debug.DrawLine(b, c, color);
+                    debug.DrawLine(c, a, color);
+                }
+                return;
+            }
+            for (const vec3 point : points)
+            {
+                const vec3 world = at(point);
+                debug.DrawLine(world - vec3(0.05f, 0.0f, 0.0f), world + vec3(0.05f, 0.0f, 0.0f),
+                               color);
+                debug.DrawLine(world - vec3(0.0f, 0.05f, 0.0f), world + vec3(0.0f, 0.05f, 0.0f),
+                               color);
+                debug.DrawLine(world - vec3(0.0f, 0.0f, 0.05f), world + vec3(0.0f, 0.0f, 0.05f),
+                               color);
+            }
+        }
+
+        // One compound child drawn at its composed pose within the collider frame.
+        void DrawCollisionChild(DebugDraw& debug, const mat4& frame, const CollisionChild& child,
+                                const vec4 color)
+        {
+            const mat4 childFrame =
+                frame * glm::translate(mat4(1.0f), child.Offset) * glm::mat4_cast(child.Rotation);
+            switch (child.Kind)
+            {
+            case CollisionChildKind::Box:
+                DrawOrientedBox(debug, childFrame, vec3(0.0f), child.Extents, color);
+                break;
+            case CollisionChildKind::Sphere:
+                debug.DrawSphere(vec3(childFrame[3]), child.Extents.x, color);
+                break;
+            case CollisionChildKind::Capsule:
+                DrawCapsule(debug, childFrame, vec3(0.0f), child.Extents.x, child.Extents.y, color);
+                break;
+            case CollisionChildKind::Convex:
+                DrawWireGeometry(debug, childFrame, child.Points, {}, false, color);
+                break;
+            case CollisionChildKind::Mesh:
+                DrawWireGeometry(debug, childFrame, child.Points, child.Indices, true, color);
+                break;
+            }
+        }
+
         void DrawLightGizmo(const Scene& scene, DebugDraw& debug, const Entity entity,
                             const Light& light, const SceneGizmoStyle& style)
         {
@@ -307,30 +368,56 @@ namespace Veng::Renderer
             {
                 const mat4 world = WorldMatrix(scene, entity);
                 const vec4 color = scene.Has<Sensor>(entity) ? SensorColor : ColliderColor;
+                // The shape's own local pose composes under the entity transform: rotate by
+                // Rotation, then offset by Offset, the frame the solver's RotatedTranslatedShape
+                // builds. A primitive draws at this frame's origin so a rotated collider is drawn
+                // where the solver puts it, not in its unrotated frame.
+                const mat4 frame = world * glm::translate(mat4(1.0f), collider.Offset) *
+                                   glm::mat4_cast(collider.Rotation);
                 switch (collider.Shape)
                 {
                 case ColliderShape::Box:
-                    DrawOrientedBox(debug, world, collider.Offset, collider.Extents, color);
+                    DrawOrientedBox(debug, frame, vec3(0.0f), collider.Extents, color);
                     break;
                 case ColliderShape::Sphere:
-                    debug.DrawSphere(vec3(world * vec4(collider.Offset, 1.0f)), collider.Extents.x,
-                                     color);
+                    debug.DrawSphere(vec3(frame[3]), collider.Extents.x, color);
                     break;
                 case ColliderShape::Capsule:
-                    DrawCapsule(debug, world, collider.Offset, collider.Extents.x,
-                                collider.Extents.y, color);
+                    DrawCapsule(debug, frame, vec3(0.0f), collider.Extents.x, collider.Extents.y,
+                                color);
                     break;
-                default:
-                    // A mesh or convex collider's geometry is a cooked asset with no wireframe of
-                    // its own here; the drawn mesh's bounds is the honest stand-in, and its absence
-                    // is drawn as nothing rather than as a guessed box.
-                    if (const auto* const renderer = scene.TryGet<MeshRenderer>(entity);
-                        renderer != nullptr && renderer->Mesh.IsLoaded())
+                case ColliderShape::Mesh:
+                {
+                    // Cooked geometry has its real wireframe: a compound's children each at their
+                    // composed pose, a convex hull's points as crosses, a triangle mesh's edges.
+                    // The render mesh's AABB is not the collider, so it is only the fallback for an
+                    // unresident handle.
+                    if (const CollisionShape* const geometry = collider.Geometry.Get();
+                        geometry != nullptr)
                     {
+                        if (geometry->Geometry == CollisionGeometry::Compound)
+                        {
+                            for (const CollisionChild& child : geometry->Children)
+                            {
+                                DrawCollisionChild(debug, frame, child, color);
+                            }
+                        }
+                        else
+                        {
+                            DrawWireGeometry(debug, frame, geometry->Points, geometry->Indices,
+                                             geometry->Geometry == CollisionGeometry::Mesh, color);
+                        }
+                    }
+                    else if (const auto* const renderer = scene.TryGet<MeshRenderer>(entity);
+                             renderer != nullptr && renderer->Mesh.IsLoaded())
+                    {
+                        // The render mesh's bounds are in the entity frame, not the collider's
+                        // offset/rotation frame, so this stand-in draws through world.
                         const AABB& bounds = renderer->Mesh.Get()->GetBounds();
                         DrawOrientedBox(debug, world, bounds.Center(), bounds.Extents(), color);
                     }
                     break;
+                }
                 }
             }
         }
