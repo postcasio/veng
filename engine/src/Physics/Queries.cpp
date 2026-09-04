@@ -112,9 +112,10 @@ namespace Veng
             if (sweeping && shape.Shape == ColliderShape::Mesh)
             {
                 const CollisionShape* geometry = shape.Geometry.Get();
-                VE_ASSERT(geometry == nullptr || geometry->Geometry == CollisionGeometry::Convex,
+                VE_ASSERT(geometry == nullptr || !geometry->ContainsTriangleMesh(),
                           "ShapeCast was given a triangle-mesh CollisionShape; a concave shape has "
-                          "no sweep, so only a convex hull or a primitive can be cast");
+                          "no sweep, so only a convex hull, a primitive, or a compound of those "
+                          "can be cast");
             }
             return Detail::BuildShape(shape);
         }

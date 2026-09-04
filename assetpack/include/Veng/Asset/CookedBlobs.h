@@ -681,37 +681,98 @@ namespace Veng
         Convex = 0,
         /// @brief Indexed triangles, for non-simulated geometry: a static or kinematic body only.
         Mesh = 1,
+        /// @brief A set of transformed child shapes; the header's ChildCount children follow it.
+        ///
+        /// Each child is a primitive (box/sphere/capsule) or its own convex hull / triangle mesh,
+        /// placed by a per-child translation and rotation. The children's convex/mesh points and
+        /// indices are concatenated into the one point/index region the header sizes, and each
+        /// child records its own slice of it.
+        Compound = 2,
+    };
+
+    /// @brief The shape one CookedCollisionChild carries.
+    ///
+    /// Stored as the underlying integer of CookedCollisionChild::Kind; the engine mirrors it as
+    /// Veng::CollisionChildKind. Integer values are stable — persisted in cooked blobs.
+    enum class CookedCollisionChildKind : u32
+    {
+        /// @brief An axis-aligned box before the child transform; Extents are its half sizes.
+        Box = 0,
+        /// @brief A sphere; Extents[0] is the radius.
+        Sphere = 1,
+        /// @brief A capsule about local Y; Extents[0] is the radius, Extents[1] the half height.
+        Capsule = 2,
+        /// @brief A convex hull, its vertices the child's slice of the point region.
+        Convex = 3,
+        /// @brief A triangle mesh, its vertices and indices the child's slices of the two regions.
+        Mesh = 4,
+    };
+
+    /// @brief One transformed child shape in a Compound collision shape.
+    ///
+    /// A primitive child (Box/Sphere/Capsule) is fully described by Kind and Extents; a Convex or
+    /// Mesh child instead reads its geometry from [PointOffset, PointOffset + PointCount) of the
+    /// blob's shared point region (and, for a Mesh, [IndexOffset, IndexOffset + IndexCount) of the
+    /// index region). Offset and Rotation place the child in the compound's local frame. The
+    /// transform is raw f32 (xyzw for the quaternion) so assetpack gains no glm dependency.
+    struct CookedCollisionChild
+    {
+        /// @brief Which shape this child is; underlying CookedCollisionChildKind integer.
+        u32 Kind = 0;
+        /// @brief Primitive dimensions (box half sizes; sphere radius in [0]; capsule radius [0],
+        ///        half height [1]); unused for a Convex or Mesh child.
+        f32 Extents[3] = {};
+        /// @brief The child's centre in the compound's local frame.
+        f32 Offset[3] = {};
+        /// @brief The child's orientation in the compound's local frame, xyzw.
+        f32 Rotation[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+        /// @brief First point of a Convex/Mesh child's vertices in the shared point region.
+        u32 PointOffset = 0;
+        /// @brief Number of vertices a Convex/Mesh child owns; 0 for a primitive.
+        u32 PointCount = 0;
+        /// @brief First index of a Mesh child's triangles in the shared index region.
+        u32 IndexOffset = 0;
+        /// @brief Number of indices a Mesh child owns; a multiple of 3, or 0 for a non-Mesh child.
+        u32 IndexCount = 0;
     };
 
     /// @brief The current collision-shape-format version.
     ///
     /// Bumped on any CookedCollisionShapeHeader or payload layout change; the loader rejects a
-    /// blob whose Version != this.
-    inline constexpr u32 CookedCollisionShapeVersion = 1u;
+    /// blob whose Version != this. v2 added the Compound mode: the header's ChildCount field and
+    /// the CookedCollisionChild table between the header and the point region.
+    inline constexpr u32 CookedCollisionShapeVersion = 2u;
 
     /// @brief Cooked header for a collision-shape asset.
     ///
     /// The blob is, in order:
     ///   CookedCollisionShapeHeader
-    ///   f32 points[PointCount * 3]     — vertex positions, xyz, in the shape's local frame
-    ///   u32 indices[IndexCount]        — triangle indices; empty under a Convex mode
+    ///   CookedCollisionChild[ChildCount]  — the compound's children; empty under Convex/Mesh
+    ///   f32 points[PointCount * 3]        — vertex positions, xyz, in the shape's local frame
+    ///   u32 indices[IndexCount]           — triangle indices; empty under a Convex mode
+    ///
+    /// Under Convex/Mesh the point/index region is the shape's own geometry and ChildCount is 0;
+    /// under Compound it is every Convex/Mesh child's geometry concatenated (each child naming its
+    /// slice) and PointCount/IndexCount are the totals.
     ///
     /// The geometry is **engine-owned and solver-neutral**: a point cloud for a convex hull, an
-    /// indexed triangle soup for a mesh, both as raw f32/u32 so assetpack gains no math or
-    /// physics dependency. The solver's own shape is built from it at load, so a solver version
-    /// bump is a rebuild rather than a re-cook and no third-party binary format reaches the
-    /// shipped asset layer. Convex hulling still happens once, offline: a Convex blob carries the
-    /// hull's vertices, not the source model's.
+    /// indexed triangle soup for a mesh, primitives and transforms for a compound, all as raw
+    /// f32/u32 so assetpack gains no math or physics dependency. The solver's own shape is built
+    /// from it at load, so a solver version bump is a rebuild rather than a re-cook and no
+    /// third-party binary format reaches the shipped asset layer. Convex hulling still happens
+    /// once, offline: a Convex blob (or child) carries the hull's vertices, not the source model's.
     struct CookedCollisionShapeHeader
     {
         /// @brief Must equal CookedCollisionShapeVersion; the loader rejects mismatches.
         u32 Version = 0;
         /// @brief Which geometry follows; underlying CookedCollisionGeometry integer.
         u32 Mode = 0;
-        /// @brief Number of xyz points following this header.
+        /// @brief Total number of xyz points following the child table.
         u32 PointCount = 0;
-        /// @brief Number of triangle indices following the points; a multiple of 3, or 0 for Convex.
+        /// @brief Total number of triangle indices following the points; a multiple of 3, or 0 for Convex.
         u32 IndexCount = 0;
+        /// @brief Number of CookedCollisionChild entries following this header; 0 under Convex/Mesh.
+        u32 ChildCount = 0;
     };
 
     /// @brief How a cooked audio clip stores its samples.

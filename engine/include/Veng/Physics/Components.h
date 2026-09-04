@@ -94,6 +94,12 @@ namespace Veng
         vec3 Extents = vec3(0.5f);
         /// @brief Offset of the shape's centre from the body's origin, in the body's local frame.
         vec3 Offset = vec3(0.0f);
+        /// @brief Orientation of the shape in the body's local frame; applied before the Offset.
+        ///
+        /// A primitive is otherwise axis-aligned to the body — a box to its axes, a capsule about
+        /// local Y — so this is how one is turned (a capsule laid along the body's forward axis, a
+        /// box tilted) with no cooked-geometry detour. It orients cooked geometry too.
+        quat Rotation = quat(1.0f, 0.0f, 0.0f, 0.0f);
         /// @brief Coulomb friction coefficient; the contact combines the two bodies' values.
         f32 Friction = 0.2f;
         /// @brief Bounciness in [0, 1]; 0 is a fully damped contact.
@@ -263,6 +269,8 @@ VE_FIELD(Shape, .DisplayName = "Shape")
 VE_FIELD(Extents, .DisplayName = "Extents",
          .Tooltip = "Box half sizes; sphere radius in x; capsule radius in x, half height in y")
 VE_FIELD(Offset, .DisplayName = "Offset", .Tooltip = "Shape centre in the body's local frame")
+VE_FIELD(Rotation, .DisplayName = "Rotation",
+         .Tooltip = "Shape orientation in the body's local frame (turns a primitive)")
 VE_FIELD(Friction, .DisplayName = "Friction")
 VE_FIELD(Restitution, .DisplayName = "Restitution", .Tooltip = "Bounciness in [0, 1]")
 VE_FIELD(Geometry, .DisplayName = "Geometry",

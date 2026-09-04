@@ -255,14 +255,18 @@ at cook time:
 - **Textures** take an optional `"max_size"` that downscales the decoded image (aspect-
   preserving, sRGB- or linear-correct) before packing, so high-resolution scan art does not
   bloat the blob.
-- **Collision shapes** (`*.collision.json`) turn an authored model into collision geometry. The
-  source names a `"model"` (relative to the source JSON, as a `*.mesh.json` does — there is no
-  `"part"` concept at cook time) and a `"mode"`: `"convex"` reduces the model to its **convex
-  hull's vertices**, `"mesh"` welds its triangles by position into an indexed triangle soup. An
-  optional `"import": { "scale": …, "orientation": … }` matches the mesh importer's, so a collision
-  shape and the render mesh cooked from one model stay the same size and the same way round. Welding
-  is the point of both modes — a render mesh splits a vertex per normal and per UV seam, which a
-  solver has no use for. The hull
+- **Collision shapes** (`*.collision.json`) turn authored geometry into a collision shape. The
+  source names a `"mode"`: `"convex"` reduces a `"model"` to its **convex hull's vertices**,
+  `"mesh"` welds its triangles by position into an indexed triangle soup, and `"compound"` builds a
+  set of transformed **`"children"`** — each a primitive (`"box"` with `"halfExtents"`, `"sphere"`
+  or `"capsule"` with `"radius"`/`"halfHeight"`, described inline) or its own `"convex"`/`"mesh"`
+  (naming a `"model"`), placed by a per-child `"offset"` and quaternion `"rotation"` (default
+  identity). A `"model"` is relative to the source JSON (as a `*.mesh.json`'s is — there is no
+  `"part"` concept at cook time). An optional `"import": { "scale": …, "orientation": … }` matches
+  the mesh importer's and, for a compound, applies to every child model that does not declare its
+  own — so a collision shape and the render mesh cooked from one model stay the same size and the
+  same way round. Welding is the point of the mesh modes — a render mesh splits a vertex per normal
+  and per UV seam, which a solver has no use for. The hull
   is the **cooker's own** implementation (`Importers/ConvexHull.{h,cpp}`), which is why
   `veng_cook_objs` / `libveng_cook` **link no physics library**: the cook emits neutral geometry
   and the runtime builds the solver's shape from it, so the cooker's dependency set is unchanged

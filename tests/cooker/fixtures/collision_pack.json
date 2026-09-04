@@ -10,6 +10,11 @@
       "id": "0x0000000000002C02",
       "type": "CollisionShape",
       "source": "meshes/cube_mesh.collision.json"
+    },
+    {
+      "id": "0x0000000000002C03",
+      "type": "CollisionShape",
+      "source": "meshes/cube_compound.collision.json"
     }
   ]
 }

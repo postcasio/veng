@@ -18,6 +18,7 @@
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
 #include <Jolt/Physics/Constraints/PointConstraint.h>
@@ -150,8 +151,8 @@ namespace Veng
         [[nodiscard]] bool SameSettings(const Collider& a, const Collider& b)
         {
             return a.Shape == b.Shape && a.Extents == b.Extents && a.Offset == b.Offset &&
-                   a.Friction == b.Friction && a.Restitution == b.Restitution &&
-                   a.Geometry.Get() == b.Geometry.Get();
+                   a.Rotation == b.Rotation && a.Friction == b.Friction &&
+                   a.Restitution == b.Restitution && a.Geometry.Get() == b.Geometry.Get();
         }
 
         /// @brief Whether two CharacterController settings would produce the same capsule.
@@ -212,43 +213,138 @@ namespace Veng
     {
         namespace
         {
-            /// @brief Builds the solver shape a cooked CollisionShape describes.
-            /// @param geometry  The cooked points and indices.
+            /// @brief Builds one leaf solver shape from a convex point cloud or an indexed mesh.
+            /// @param points        The hull vertices, or the mesh vertices.
+            /// @param indices       The mesh triangle indices; empty for a convex hull.
+            /// @param triangleMesh  Whether the points form a triangle mesh rather than a hull.
             /// @return The built shape; never null (unbuildable geometry is a fatal assert).
-            [[nodiscard]] JPH::RefConst<JPH::Shape> BuildCookedShape(const CollisionShape& geometry)
+            [[nodiscard]] JPH::RefConst<JPH::Shape>
+            BuildGeometryLeaf(const std::span<const vec3> points,
+                              const std::span<const u32> indices, const bool triangleMesh)
             {
                 JPH::Ref<JPH::ShapeSettings> settings;
-                if (geometry.Geometry == CollisionGeometry::Convex)
+                if (!triangleMesh)
                 {
-                    JPH::Array<JPH::Vec3> points;
-                    points.reserve(geometry.Points.size());
-                    for (const vec3 point : geometry.Points)
+                    JPH::Array<JPH::Vec3> hull;
+                    hull.reserve(points.size());
+                    for (const vec3 point : points)
                     {
-                        points.push_back(ToJolt(point));
+                        hull.push_back(ToJolt(point));
                     }
-                    settings = new JPH::ConvexHullShapeSettings(points);
+                    settings = new JPH::ConvexHullShapeSettings(hull);
                 }
                 else
                 {
                     JPH::VertexList vertices;
-                    vertices.reserve(geometry.Points.size());
-                    for (const vec3 point : geometry.Points)
+                    vertices.reserve(points.size());
+                    for (const vec3 point : points)
                     {
                         vertices.push_back(JPH::Float3(point.x, point.y, point.z));
                     }
                     JPH::IndexedTriangleList triangles;
-                    triangles.reserve(geometry.GetTriangleCount());
-                    for (usize i = 0; i + 2 < geometry.Indices.size(); i += 3)
+                    triangles.reserve(indices.size() / 3);
+                    for (usize i = 0; i + 2 < indices.size(); i += 3)
                     {
-                        triangles.push_back(JPH::IndexedTriangle(geometry.Indices[i],
-                                                                 geometry.Indices[i + 1],
-                                                                 geometry.Indices[i + 2], 0));
+                        triangles.push_back(
+                            JPH::IndexedTriangle(indices[i], indices[i + 1], indices[i + 2], 0));
                     }
                     settings = new JPH::MeshShapeSettings(vertices, triangles);
                 }
 
                 const JPH::ShapeSettings::ShapeResult result = settings->Create();
                 VE_ASSERT(result.IsValid(), "CollisionShape is not buildable: {}",
+                          result.GetError().c_str());
+                return result.Get();
+            }
+
+            /// @brief Builds one primitive leaf solver shape (box/sphere/capsule) from its extents.
+            [[nodiscard]] JPH::RefConst<JPH::Shape>
+            BuildPrimitiveLeaf(const CollisionChildKind kind, const vec3 extents)
+            {
+                JPH::Ref<JPH::ShapeSettings> settings;
+                switch (kind)
+                {
+                case CollisionChildKind::Box:
+                {
+                    // Jolt refuses a box thinner than its convex radius, so clamp the half extents
+                    // up to the default radius rather than asserting inside the solver.
+                    const vec3 half = glm::max(extents, vec3(JPH::cDefaultConvexRadius));
+                    settings = new JPH::BoxShapeSettings(ToJolt(half));
+                    break;
+                }
+                case CollisionChildKind::Sphere:
+                    settings = new JPH::SphereShapeSettings(extents.x);
+                    break;
+                case CollisionChildKind::Capsule:
+                    settings = new JPH::CapsuleShapeSettings(extents.y, extents.x);
+                    break;
+                case CollisionChildKind::Convex:
+                case CollisionChildKind::Mesh:
+                    break;
+                }
+                VE_ASSERT(settings != nullptr, "BuildPrimitiveLeaf on non-primitive child kind {}",
+                          static_cast<u32>(kind));
+
+                const JPH::ShapeSettings::ShapeResult result = settings->Create();
+                VE_ASSERT(result.IsValid(), "CollisionShape child is not buildable: {}",
+                          result.GetError().c_str());
+                return result.Get();
+            }
+
+            /// @brief Builds one compound child's leaf shape (primitive, hull, or mesh).
+            [[nodiscard]] JPH::RefConst<JPH::Shape> BuildChildLeaf(const CollisionChild& child)
+            {
+                if (child.Kind == CollisionChildKind::Convex)
+                {
+                    return BuildGeometryLeaf(child.Points, {}, /*triangleMesh=*/false);
+                }
+                if (child.Kind == CollisionChildKind::Mesh)
+                {
+                    return BuildGeometryLeaf(child.Points, child.Indices, /*triangleMesh=*/true);
+                }
+                return BuildPrimitiveLeaf(child.Kind, child.Extents);
+            }
+
+            /// @brief Builds the solver shape a cooked CollisionShape describes.
+            /// @param geometry  The cooked hull, mesh, or compound of transformed children.
+            /// @return The built shape; never null (unbuildable geometry is a fatal assert).
+            [[nodiscard]] JPH::RefConst<JPH::Shape> BuildCookedShape(const CollisionShape& geometry)
+            {
+                if (geometry.Geometry == CollisionGeometry::Convex)
+                {
+                    return BuildGeometryLeaf(geometry.Points, {}, /*triangleMesh=*/false);
+                }
+                if (geometry.Geometry == CollisionGeometry::Mesh)
+                {
+                    return BuildGeometryLeaf(geometry.Points, geometry.Indices,
+                                             /*triangleMesh=*/true);
+                }
+
+                // A StaticCompoundShape needs at least two children, so a one-child compound is that
+                // child under its own transform; a zero-child one the loader already rejected.
+                VE_ASSERT(!geometry.Children.empty(),
+                          "A compound CollisionShape carries no children");
+                if (geometry.Children.size() == 1)
+                {
+                    const CollisionChild& child = geometry.Children.front();
+                    const JPH::Ref<JPH::RotatedTranslatedShapeSettings> placed =
+                        new JPH::RotatedTranslatedShapeSettings(
+                            ToJolt(child.Offset), ToJolt(child.Rotation), BuildChildLeaf(child));
+                    const JPH::ShapeSettings::ShapeResult result = placed->Create();
+                    VE_ASSERT(result.IsValid(), "CollisionShape child is not buildable: {}",
+                              result.GetError().c_str());
+                    return result.Get();
+                }
+
+                const JPH::Ref<JPH::StaticCompoundShapeSettings> compound =
+                    new JPH::StaticCompoundShapeSettings();
+                for (const CollisionChild& child : geometry.Children)
+                {
+                    compound->AddShape(ToJolt(child.Offset), ToJolt(child.Rotation),
+                                       BuildChildLeaf(child).GetPtr());
+                }
+                const JPH::ShapeSettings::ShapeResult result = compound->Create();
+                VE_ASSERT(result.IsValid(), "Compound CollisionShape is not buildable: {}",
                           result.GetError().c_str());
                 return result.Get();
             }
@@ -298,12 +394,14 @@ namespace Veng
                 shape = result.Get();
             }
 
-            if (collider.Offset != vec3(0.0f))
+            // The shape is re-placed when the collider carries a local offset or orientation; a
+            // RotatedTranslatedShape rotates the child by Rotation then translates by Offset.
+            if (collider.Offset != vec3(0.0f) || collider.Rotation != quat(1.0f, 0.0f, 0.0f, 0.0f))
             {
-                const JPH::Ref<JPH::ShapeSettings> offset = new JPH::RotatedTranslatedShapeSettings(
-                    ToJolt(collider.Offset), JPH::Quat::sIdentity(), shape);
-                const JPH::ShapeSettings::ShapeResult result = offset->Create();
-                VE_ASSERT(result.IsValid(), "Collider offset shape is not buildable: {}",
+                const JPH::Ref<JPH::ShapeSettings> placed = new JPH::RotatedTranslatedShapeSettings(
+                    ToJolt(collider.Offset), ToJolt(collider.Rotation), shape);
+                const JPH::ShapeSettings::ShapeResult result = placed->Create();
+                VE_ASSERT(result.IsValid(), "Collider placed shape is not buildable: {}",
                           result.GetError().c_str());
                 shape = result.Get();
             }
@@ -389,7 +487,7 @@ namespace Veng
     {
         const bool triangleMesh = collider.Shape == ColliderShape::Mesh &&
                                   collider.Geometry.Get() != nullptr &&
-                                  collider.Geometry.Get()->Geometry == CollisionGeometry::Mesh;
+                                  collider.Geometry.Get()->ContainsTriangleMesh();
         VE_ASSERT(!(triangleMesh && body.Motion == MotionType::Dynamic),
                   "Entity {} carries a triangle-mesh CollisionShape on a Dynamic RigidBody; a "
                   "triangle mesh has no interior and no inertia, so Static and Kinematic are the "
@@ -1059,6 +1157,108 @@ namespace Veng
         return hash;
     }
 
+    namespace
+    {
+        /// @brief Draws a wireframe box's twelve edges at a pose.
+        void DrawWireBox(Renderer::DebugDraw& sink, const vec3 origin, const quat rotation,
+                         const vec3 half, const vec4 color)
+        {
+            vec3 corners[8];
+            for (u32 i = 0; i < 8; ++i)
+            {
+                const vec3 sign((i & 1U) != 0 ? 1.0f : -1.0f, (i & 2U) != 0 ? 1.0f : -1.0f,
+                                (i & 4U) != 0 ? 1.0f : -1.0f);
+                corners[i] = origin + rotation * (sign * half);
+            }
+            // Two corner indices differ in exactly one bit iff they share an edge.
+            for (u32 a = 0; a < 8; ++a)
+            {
+                for (u32 bit = 1; bit < 8; bit <<= 1)
+                {
+                    const u32 b = a | bit;
+                    if (b != a)
+                    {
+                        sink.DrawLine(corners[a], corners[b], color);
+                    }
+                }
+            }
+        }
+
+        /// @brief Draws a wireframe capsule about local Y at a pose.
+        void DrawWireCapsule(Renderer::DebugDraw& sink, const vec3 origin, const quat rotation,
+                             const f32 radius, const f32 halfHeight, const vec4 color)
+        {
+            const vec3 axis = rotation * vec3(0.0f, halfHeight, 0.0f);
+            sink.DrawSphere(origin + axis, radius, color);
+            sink.DrawSphere(origin - axis, radius, color);
+            for (const vec3 side : {vec3(1.0f, 0.0f, 0.0f), vec3(-1.0f, 0.0f, 0.0f),
+                                    vec3(0.0f, 0.0f, 1.0f), vec3(0.0f, 0.0f, -1.0f)})
+            {
+                const vec3 offset = rotation * (side * radius);
+                sink.DrawLine(origin + axis + offset, origin - axis + offset, color);
+            }
+        }
+
+        /// @brief Draws cooked geometry: a mesh's triangle edges, or a hull's points as crosses.
+        void DrawWireGeometry(Renderer::DebugDraw& sink, const vec3 origin, const quat rotation,
+                              const std::span<const vec3> points,
+                              const std::span<const u32> indices, const bool triangleMesh,
+                              const vec4 color)
+        {
+            if (triangleMesh)
+            {
+                for (usize i = 0; i + 2 < indices.size(); i += 3)
+                {
+                    const vec3 a = origin + rotation * points[indices[i]];
+                    const vec3 b = origin + rotation * points[indices[i + 1]];
+                    const vec3 c = origin + rotation * points[indices[i + 2]];
+                    sink.DrawLine(a, b, color);
+                    sink.DrawLine(b, c, color);
+                    sink.DrawLine(c, a, color);
+                }
+                return;
+            }
+            for (const vec3 point : points)
+            {
+                const vec3 world = origin + rotation * point;
+                sink.DrawLine(world - vec3(0.05f, 0.0f, 0.0f), world + vec3(0.05f, 0.0f, 0.0f),
+                              color);
+                sink.DrawLine(world - vec3(0.0f, 0.05f, 0.0f), world + vec3(0.0f, 0.05f, 0.0f),
+                              color);
+                sink.DrawLine(world - vec3(0.0f, 0.0f, 0.05f), world + vec3(0.0f, 0.0f, 0.05f),
+                              color);
+            }
+        }
+
+        /// @brief Draws one compound child at its composed pose.
+        void DrawCollisionChild(Renderer::DebugDraw& sink, const vec3 origin, const quat rotation,
+                                const CollisionChild& child, const vec4 color)
+        {
+            const vec3 childOrigin = origin + rotation * child.Offset;
+            const quat childRotation = rotation * child.Rotation;
+            switch (child.Kind)
+            {
+            case CollisionChildKind::Box:
+                DrawWireBox(sink, childOrigin, childRotation, child.Extents, color);
+                break;
+            case CollisionChildKind::Sphere:
+                sink.DrawSphere(childOrigin, child.Extents.x, color);
+                break;
+            case CollisionChildKind::Capsule:
+                DrawWireCapsule(sink, childOrigin, childRotation, child.Extents.x, child.Extents.y,
+                                color);
+                break;
+            case CollisionChildKind::Convex:
+                DrawWireGeometry(sink, childOrigin, childRotation, child.Points, {}, false, color);
+                break;
+            case CollisionChildKind::Mesh:
+                DrawWireGeometry(sink, childOrigin, childRotation, child.Points, child.Indices,
+                                 true, color);
+                break;
+            }
+        }
+    }
+
     void PhysicsWorld::DrawDebug(Renderer::DebugDraw& sink) const
     {
         const vec4 StaticColor(0.35f, 0.55f, 0.35f, 1.0f);
@@ -1085,84 +1285,41 @@ namespace Veng
             }
 
             const vec3 origin = center + rotation * record.Shape.Offset;
+            // The shape carries its own local orientation, composed under the body's.
+            const quat shapeRotation = rotation * record.Shape.Rotation;
             switch (record.Shape.Shape)
             {
             case ColliderShape::Box:
-            {
-                const vec3 half = record.Shape.Extents;
-                vec3 corners[8];
-                for (u32 i = 0; i < 8; ++i)
-                {
-                    const vec3 sign((i & 1U) != 0 ? 1.0f : -1.0f, (i & 2U) != 0 ? 1.0f : -1.0f,
-                                    (i & 4U) != 0 ? 1.0f : -1.0f);
-                    corners[i] = origin + rotation * (sign * half);
-                }
-                // Two corner indices differ in exactly one bit iff they share an edge.
-                for (u32 a = 0; a < 8; ++a)
-                {
-                    for (u32 bit = 1; bit < 8; bit <<= 1)
-                    {
-                        const u32 b = a | bit;
-                        if (b != a)
-                        {
-                            sink.DrawLine(corners[a], corners[b], color);
-                        }
-                    }
-                }
+                DrawWireBox(sink, origin, shapeRotation, record.Shape.Extents, color);
                 break;
-            }
             case ColliderShape::Sphere:
                 sink.DrawSphere(origin, record.Shape.Extents.x, color);
                 break;
             case ColliderShape::Capsule:
-            {
-                const f32 radius = record.Shape.Extents.x;
-                const vec3 axis = rotation * vec3(0.0f, record.Shape.Extents.y, 0.0f);
-                sink.DrawSphere(origin + axis, radius, color);
-                sink.DrawSphere(origin - axis, radius, color);
-                for (const vec3 side : {vec3(1.0f, 0.0f, 0.0f), vec3(-1.0f, 0.0f, 0.0f),
-                                        vec3(0.0f, 0.0f, 1.0f), vec3(0.0f, 0.0f, -1.0f)})
-                {
-                    const vec3 offset = rotation * (side * radius);
-                    sink.DrawLine(origin + axis + offset, origin - axis + offset, color);
-                }
+                DrawWireCapsule(sink, origin, shapeRotation, record.Shape.Extents.x,
+                                record.Shape.Extents.y, color);
                 break;
-            }
             case ColliderShape::Mesh:
             {
-                // Cooked geometry is drawn as its triangle edges, or as its hull points' bounding
-                // box when the shape is a convex point cloud with no edge list of its own.
+                // Cooked geometry is drawn as its triangle edges, its hull points as crosses, or —
+                // for a compound — each child at its own composed pose.
                 const CollisionShape* geometry = record.Shape.Geometry.Get();
                 if (geometry == nullptr)
                 {
                     break;
                 }
-                if (geometry->Geometry == CollisionGeometry::Mesh)
+                if (geometry->Geometry == CollisionGeometry::Compound)
                 {
-                    for (usize i = 0; i + 2 < geometry->Indices.size(); i += 3)
+                    for (const CollisionChild& child : geometry->Children)
                     {
-                        const vec3 a = origin + rotation * geometry->Points[geometry->Indices[i]];
-                        const vec3 b =
-                            origin + rotation * geometry->Points[geometry->Indices[i + 1]];
-                        const vec3 c =
-                            origin + rotation * geometry->Points[geometry->Indices[i + 2]];
-                        sink.DrawLine(a, b, color);
-                        sink.DrawLine(b, c, color);
-                        sink.DrawLine(c, a, color);
+                        DrawCollisionChild(sink, origin, shapeRotation, child, color);
                     }
                 }
                 else
                 {
-                    for (const vec3 point : geometry->Points)
-                    {
-                        const vec3 world = origin + rotation * point;
-                        sink.DrawLine(world - vec3(0.05f, 0.0f, 0.0f),
-                                      world + vec3(0.05f, 0.0f, 0.0f), color);
-                        sink.DrawLine(world - vec3(0.0f, 0.05f, 0.0f),
-                                      world + vec3(0.0f, 0.05f, 0.0f), color);
-                        sink.DrawLine(world - vec3(0.0f, 0.0f, 0.05f),
-                                      world + vec3(0.0f, 0.0f, 0.05f), color);
-                    }
+                    DrawWireGeometry(sink, origin, shapeRotation, geometry->Points,
+                                     geometry->Indices,
+                                     geometry->Geometry == CollisionGeometry::Mesh, color);
                 }
                 break;
             }

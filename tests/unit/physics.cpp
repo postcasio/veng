@@ -8,6 +8,7 @@
 #include <Veng/Physics/Layers.h>
 #include <Veng/Physics/PhysicsSystem.h>
 #include <Veng/Physics/PhysicsWorld.h>
+#include <Veng/Physics/Queries.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
@@ -130,6 +131,35 @@ TEST_CASE("a dynamic box dropped onto a static plane comes to rest on it")
     CHECK(transform.Position.y == doctest::Approx(0.5f).epsilon(0.02));
     CHECK(transform.Position.x == doctest::Approx(0.0f).epsilon(0.02));
     CHECK(transform.Position.z == doctest::Approx(0.0f).epsilon(0.02));
+}
+
+TEST_CASE("Collider::Rotation turns a primitive onto the axis it names")
+{
+    const PhysicsFixture fixture;
+
+    // A capsule of radius 0.5 and cylinder half-height 3 stands about local Y; a 90-degree turn
+    // about X lays it along Z instead. Kinematic, so the solver holds it where it is placed.
+    const Entity body = fixture.World->CreateEntity();
+    fixture.World->Add<Transform>(body, Transform{});
+    fixture.World->Add<RigidBody>(
+        body, RigidBody{.Motion = MotionType::Kinematic, .Layer = PhysicsLayer::Moving});
+    fixture.World->Add<Collider>(body,
+                                 Collider{.Shape = ColliderShape::Capsule,
+                                          .Extents = vec3(0.5f, 3.0f, 0.0f),
+                                          .Rotation = quat(0.7071068f, 0.7071068f, 0.0f, 0.0f)});
+    fixture.Step(1);
+
+    const Collider probe{.Shape = ColliderShape::Sphere, .Extents = vec3(0.1f)};
+    vector<Entity> hits;
+
+    // 2.5 m down the Z axis is inside the laid-down capsule; the same distance up Y — the axis the
+    // capsule stood on before the turn — is now well outside its 0.5 m radius.
+    Overlap(&fixture.Physics(), probe, PhysicsPose{.Position = dvec3(0.0, 0.0, 2.5)}, {}, hits);
+    CHECK_FALSE(hits.empty());
+
+    hits.clear();
+    Overlap(&fixture.Physics(), probe, PhysicsPose{.Position = dvec3(0.0, 2.5, 0.0)}, {}, hits);
+    CHECK(hits.empty());
 }
 
 TEST_CASE("the reconcile pass creates a body per physics entity and destroys an orphan's")

@@ -55,6 +55,45 @@ namespace
         }
         return decoded;
     }
+
+    // Reads a cooked compound blob's header, child table, and shared point/index region.
+    struct DecodedCompound
+    {
+        CookedCollisionShapeHeader Header{};
+        vector<CookedCollisionChild> Children;
+        vector<vec3> Points;
+        vector<u32> Indices;
+    };
+
+    DecodedCompound DecodeCompound(const std::span<const u8> blob)
+    {
+        DecodedCompound decoded;
+        std::memcpy(&decoded.Header, blob.data(), sizeof(decoded.Header));
+
+        usize cursor = sizeof(decoded.Header);
+        decoded.Children.resize(decoded.Header.ChildCount);
+        if (decoded.Header.ChildCount > 0)
+        {
+            std::memcpy(decoded.Children.data(), blob.data() + cursor,
+                        decoded.Children.size() * sizeof(CookedCollisionChild));
+            cursor += decoded.Children.size() * sizeof(CookedCollisionChild);
+        }
+        decoded.Points.resize(decoded.Header.PointCount);
+        for (u32 i = 0; i < decoded.Header.PointCount; ++i)
+        {
+            f32 xyz[3] = {};
+            std::memcpy(xyz, blob.data() + cursor, sizeof(xyz));
+            cursor += sizeof(xyz);
+            decoded.Points[i] = vec3(xyz[0], xyz[1], xyz[2]);
+        }
+        decoded.Indices.resize(decoded.Header.IndexCount);
+        if (decoded.Header.IndexCount > 0)
+        {
+            std::memcpy(decoded.Indices.data(), blob.data() + cursor,
+                        decoded.Indices.size() * sizeof(u32));
+        }
+        return decoded;
+    }
 }
 
 TEST_CASE("Cooker: a convex collision shape reduces a model to its hull vertices")
@@ -128,6 +167,72 @@ TEST_CASE("Cooker: a triangle-mesh collision shape welds the model's split verti
     {
         CHECK(index < shape.Header.PointCount);
     }
+}
+
+TEST_CASE("Cooker: a compound collision shape carries its children and their transforms")
+{
+    const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
+    const path packJson = fixtureDir / "collision_pack.json";
+    const path outArchive =
+        Veng::TestSupport::TempDir() / "veng_cooker_collision_compound.vengpack";
+
+    Cooker cooker;
+    RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+
+    const Result<ArchiveReader> reader = ArchiveReader::Open(outArchive);
+    REQUIRE(reader.has_value());
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0x2C03});
+    REQUIRE(entry.has_value());
+    CHECK(entry->Type == AssetTypes::CollisionShape);
+
+    const DecodedCompound shape = DecodeCompound(entry->Blob);
+    CHECK(shape.Header.Version == CookedCollisionShapeVersion);
+    CHECK(shape.Header.Mode == static_cast<u32>(CookedCollisionGeometry::Compound));
+    REQUIRE(shape.Header.ChildCount == 3);
+    // Only the convex child carries geometry: the cube's 8 hull corners, no indices.
+    CHECK(shape.Header.PointCount == 8);
+    CHECK(shape.Header.IndexCount == 0);
+
+    // Child 0: a box, its half extents and offset carried verbatim, identity rotation.
+    const CookedCollisionChild& box = shape.Children[0];
+    CHECK(box.Kind == static_cast<u32>(CookedCollisionChildKind::Box));
+    CHECK(box.Extents[0] == doctest::Approx(1.0f));
+    CHECK(box.Extents[1] == doctest::Approx(2.0f));
+    CHECK(box.Extents[2] == doctest::Approx(3.0f));
+    CHECK(box.Offset[0] == doctest::Approx(4.0f));
+    CHECK(box.Offset[1] == doctest::Approx(5.0f));
+    CHECK(box.Offset[2] == doctest::Approx(6.0f));
+    CHECK(box.Rotation[3] == doctest::Approx(1.0f));
+    CHECK(box.PointCount == 0);
+
+    // Child 1: a capsule, its radius/half-height and rotation carried.
+    const CookedCollisionChild& capsule = shape.Children[1];
+    CHECK(capsule.Kind == static_cast<u32>(CookedCollisionChildKind::Capsule));
+    CHECK(capsule.Extents[0] == doctest::Approx(0.5f));
+    CHECK(capsule.Extents[1] == doctest::Approx(2.0f));
+    CHECK(capsule.Rotation[1] == doctest::Approx(0.7071068f));
+    CHECK(capsule.Rotation[3] == doctest::Approx(0.7071068f));
+    CHECK(capsule.PointCount == 0);
+
+    // Child 2: a convex hull owning all eight points, its offset carried.
+    const CookedCollisionChild& convex = shape.Children[2];
+    CHECK(convex.Kind == static_cast<u32>(CookedCollisionChildKind::Convex));
+    CHECK(convex.Offset[0] == doctest::Approx(10.0f));
+    CHECK(convex.PointOffset == 0);
+    CHECK(convex.PointCount == 8);
+
+    // The shared point region is exactly the convex child's cube hull.
+    for (const vec3 point : shape.Points)
+    {
+        CHECK(std::abs(point.x) == doctest::Approx(0.5f));
+        CHECK(std::abs(point.y) == doctest::Approx(0.5f));
+        CHECK(std::abs(point.z) == doctest::Approx(0.5f));
+    }
+
+    // The blob is the header, the three children, then the eight points.
+    CHECK(entry->Blob.size() == sizeof(CookedCollisionShapeHeader) +
+                                    3 * sizeof(CookedCollisionChild) + 8 * 3 * sizeof(f32));
 }
 
 TEST_CASE("Cooker: a warm collision-shape cook at 8 jobs replays the cache byte for byte")

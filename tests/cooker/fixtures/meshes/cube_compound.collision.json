@@ -1,0 +1,8 @@
+{
+  "mode": "compound",
+  "children": [
+    { "shape": "box", "halfExtents": [1.0, 2.0, 3.0], "offset": [4.0, 5.0, 6.0] },
+    { "shape": "capsule", "radius": 0.5, "halfHeight": 2.0, "rotation": [0.0, 0.7071068, 0.0, 0.7071068] },
+    { "shape": "convex", "model": "cube.obj", "offset": [10.0, 0.0, 0.0] }
+  ]
+}

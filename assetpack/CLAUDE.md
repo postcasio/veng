@@ -119,16 +119,22 @@ the format and its serialization — neither importer nor loader.
   `RGBA16Uint` bone indices and `RGBA32Sfloat` weights); the attribute table is self-describing
   so the loader validates it against the engine's canonical *or* skinned layout by `SkeletonId`.
 - **`AssetTypes::CollisionShape` carries solver-neutral collision geometry.** A
-  **`CookedCollisionShapeHeader`** (`CookedCollisionShapeVersion`) is a `Mode` (a
-  `CookedCollisionGeometry` ordinal: `Convex` or `Mesh`), a `PointCount` and an `IndexCount`,
-  followed by `PointCount` xyz `f32` triples and then `IndexCount` `u32` triangle indices (none
-  under `Convex`). It is deliberately **not** a physics library's serialized shape: that form is
-  version-bound, so a library bump would silently invalidate every cooked shape in every pack, and
-  the layout is a public contract living here — in a library that carries no physics dependency at
-  all. The runtime builds the solver's shape from these points at load, so a library bump is a
-  rebuild rather than a re-cook. Convex hulling still happens once, offline: a `Convex` blob carries
-  the hull's vertices, not the source model's. The loader rejects a `Version` mismatch, an unknown
-  `Mode`, an index count that is not a multiple of three, and an index addressing past `PointCount`.
+  **`CookedCollisionShapeHeader`** (`CookedCollisionShapeVersion`, currently **2**) is a `Mode` (a
+  `CookedCollisionGeometry` ordinal: `Convex`, `Mesh`, or `Compound`), a `PointCount`, an
+  `IndexCount`, and a `ChildCount`, followed by `ChildCount` `CookedCollisionChild` entries, then
+  `PointCount` xyz `f32` triples and `IndexCount` `u32` triangle indices (none under `Convex`).
+  Under `Convex`/`Mesh` the point/index region is the shape's own geometry and `ChildCount` is 0;
+  under `Compound` it is every `Convex`/`Mesh` child's geometry concatenated — each child a
+  `CookedCollisionChildKind` (`Box`/`Sphere`/`Capsule` described inline by `Extents`, or
+  `Convex`/`Mesh` naming its slice of the two regions) placed by an `Offset` and a `Rotation`. It is
+  deliberately **not** a physics library's serialized shape: that form is version-bound, so a
+  library bump would silently invalidate every cooked shape in every pack, and the layout is a
+  public contract living here — in a library that carries no physics dependency at all. The runtime
+  builds the solver's shape from this at load, so a library bump is a rebuild rather than a re-cook.
+  Convex hulling still happens once, offline: a `Convex` blob (or child) carries the hull's
+  vertices, not the source model's. The loader rejects a `Version` mismatch, an unknown `Mode` or
+  child kind, an index count that is not a multiple of three, a child slice out of range, and an
+  index addressing past its points.
 - **`AssetTypes::Environment` carries an equirectangular HDR panorama for image-based lighting.**
   A **`CookedEnvironmentHeader`** (`CookedEnvironmentVersion`) is a `Format` (always the
   `RGBA16Sfloat` ordinal), `Width`, and `Height`, followed by `Width * Height` half-float texels

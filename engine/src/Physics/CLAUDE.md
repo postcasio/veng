@@ -38,7 +38,7 @@ costs resident memory whether or not the bodies exist.
 
 ```
 RigidBody       { Motion (Static|Kinematic|Dynamic); Layer; Mass; LinearDamping; AngularDamping; SyncTransform; }
-Collider        { Shape (Box|Sphere|Capsule|Mesh); Extents; Offset; Friction; Restitution; Geometry; }
+Collider        { Shape (Box|Sphere|Capsule|Mesh); Extents; Offset; Rotation; Friction; Restitution; Geometry; }
 PhysicsPose     { dvec3 Position; quat Rotation; }
 Sensor          { Layers; }
 SensorOverlaps  { vector<Entity> Current, Entered, Exited; }
@@ -55,6 +55,13 @@ runtime creates the backing body on the next step, removing either destroys it, 
 re-creates the body with the new settings. The three primitives are the shapes that need no cooked
 data, so a `Collider` describing one is complete on its own.
 
+**A primitive is oriented by `Collider::Rotation`, not by a compound.** A box is axis-aligned to the
+body and a capsule stands about local Y, so a hull that lies along the body's forward axis, or a
+tilted box, is a single primitive turned by `Rotation` — the shape is built through a
+`RotatedTranslatedShape` that rotates it by `Rotation` then offsets it by `Offset`, the same seam an
+offset already used. Reaching for a one-child compound to turn a capsule is the thing this exists to
+avoid; a compound is for genuinely *several* shapes.
+
 `PhysicsPose` is the solver's own pose channel, added by the step to every physics entity. It is
 registered fieldless (`VE_TYPE`), so it never serializes and never rides the wire — it is derived
 state, not authored state. `SensorOverlaps` is the same kind of thing for a sensor's overlap set.
@@ -66,13 +73,27 @@ state, not authored state. `SensorOverlaps` is the same kind of thing for a sens
 
 `Collider::Shape = Mesh` takes its shape from the `AssetHandle<CollisionShape>` in
 `Collider::Geometry` instead of from `Extents`. **`CollisionShape` is an ordinary cooked asset**
-(`AssetTypes::CollisionShape`, `Veng/Asset/CollisionShape.h`) carrying either a **convex hull** as
-its hull vertices or an **indexed triangle mesh**, authored as a `*.collision.json` naming a source
-model and a mode:
+(`AssetTypes::CollisionShape`, `Veng/Asset/CollisionShape.h`) carrying a **convex hull** (its hull
+vertices), an **indexed triangle mesh**, or a **compound** — a set of transformed child shapes,
+each a primitive (box/sphere/capsule) or its own hull/mesh. It is authored as a `*.collision.json`
+naming a mode:
 
 ```json
 { "model": "hull.glb", "mode": "convex" }
+{ "mode": "compound", "children": [
+    { "shape": "capsule", "radius": 2.8, "halfHeight": 10.0 },
+    { "shape": "box", "halfExtents": [3, 1, 4], "offset": [0, -2, 6] },
+    { "shape": "convex", "model": "wing.glb", "offset": [4, 0, 0], "rotation": [0, 0, 0.383, 0.924] }
+] }
 ```
+
+**A compound needs no cooked model for its primitive children** — a box/sphere/capsule is described
+inline, so a faithful multi-part envelope (a fuselage capsule plus wing boxes, an octagon ring as a
+handful of boxes) is authored without a modelling round-trip. The runtime builds a Jolt
+`StaticCompoundShape` from it; a one-child compound collapses to that child under its own transform.
+The `Collider` component is unchanged — a compound rides the same `Shape: Mesh, Geometry: <handle>`
+a convex hull or a triangle mesh does, so nothing about the body, the wire, or the prefab grew for
+it. The cooked-format layout is in [../../../assetpack/CLAUDE.md](../../../assetpack/CLAUDE.md).
 
 Two properties are load-bearing:
 
@@ -86,10 +107,14 @@ Two properties are load-bearing:
 - **A triangle mesh may not back a `Dynamic` body.** A triangle mesh is a surface: it has no
   interior and no inertia, and a dynamic one is a well-known way to get a solver that misbehaves
   for reasons the consumer cannot see. `PhysicsWorld::CreateBody` **asserts** on the pair rather
-  than letting it be discovered at runtime. `Static` and `Kinematic` are both permitted — a moving
-  piece of architecture is exactly a kinematic triangle mesh — and a kinematic one is given
-  synthetic mass properties, because the solver cannot derive them from a surface and refuses to
-  build the motion state otherwise.
+  than letting it be discovered at runtime — through `CollisionShape::ContainsTriangleMesh`, so a
+  **compound carrying a mesh child inherits the restriction** exactly as a bare mesh does; a
+  compound of only primitives and convex hulls is unrestricted. `Static` and `Kinematic` are both
+  permitted — a moving piece of architecture is exactly a kinematic triangle mesh — and a kinematic
+  one is given synthetic mass properties, because the solver cannot derive them from a surface and
+  refuses to build the motion state otherwise. The same `ContainsTriangleMesh` gate makes a
+  triangle mesh (or a compound holding one) an assert to **sweep**, since a concave shape has no
+  sweep — a compound of primitives and hulls sweeps fine.
 
 A `ColliderShape::Mesh` collider whose handle is **not resident** has no shape, so the step skips
 it exactly as it skips a `RigidBody` with no `Collider`, and the body is created on the tick the
