@@ -454,6 +454,30 @@ namespace Veng::Renderer
                                                   buffer->GetNative().Buffer, 1, &region);
     }
 
+    void CommandBuffer::CopyImage(const Ref<Image>& source, const Ref<Image>& destination)
+    {
+        const auto extent = source->GetExtent();
+        VE_ASSERT(extent == destination->GetExtent(),
+                  "CopyImage requires source and destination of equal extent");
+
+        const vk::ImageCopy region = {
+            .srcSubresource = {.aspectMask = Utils::GetAspectFlags(ToVk(source->GetFormat())),
+                               .mipLevel = 0,
+                               .baseArrayLayer = 0,
+                               .layerCount = 1},
+            .srcOffset = {.x = 0, .y = 0, .z = 0},
+            .dstSubresource = {.aspectMask = Utils::GetAspectFlags(ToVk(destination->GetFormat())),
+                               .mipLevel = 0,
+                               .baseArrayLayer = 0,
+                               .layerCount = 1},
+            .dstOffset = {.x = 0, .y = 0, .z = 0},
+            .extent = {.width = extent.x, .height = extent.y, .depth = extent.z}};
+
+        m_Native->CommandBuffer.copyImage(
+            source->GetNative().Image, vk::ImageLayout::eTransferSrcOptimal,
+            destination->GetNative().Image, vk::ImageLayout::eTransferDstOptimal, 1, &region);
+    }
+
     void CommandBuffer::BlitImage(const BlitImageInfo& info)
     {
         vk::Offset3D sourceOffset = {

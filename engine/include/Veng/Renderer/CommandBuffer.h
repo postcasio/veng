@@ -286,6 +286,18 @@ namespace Veng::Renderer
         void CopyImageSubresourceToBuffer(const Ref<Image>& image, const Ref<Buffer>& buffer,
                                           u32 mipLevel, u32 arrayLayer);
 
+        /// @brief Copies one image's mip 0 into another's, whole-extent.
+        ///
+        /// Records a single vkCmdCopyImage over the full extent of mip 0, array layer 0 — the
+        /// depth axis included, so a Type3D image copies all its z slices. The two images must
+        /// share extent and a copy-compatible format. Like the other copy recordings this sets no
+        /// barriers: @p source must already be in TransferSrc layout and @p destination in
+        /// TransferDst — within a RenderGraph those fall out of a TransferSrc/TransferDst
+        /// declaration, out of a graph they are the caller's PrepareForAccess.
+        /// @param source       Transfer source; must be in TransferSrc layout.
+        /// @param destination  Transfer destination; must be in TransferDst layout, same extent.
+        void CopyImage(const Ref<Image>& source, const Ref<Image>& destination);
+
         /// @brief Blits one image region into another.
         void BlitImage(const BlitImageInfo& info);
 
