@@ -108,11 +108,13 @@ namespace Veng::Renderer
         /// transfer command buffer in InitializeTransferPools.
         vk::CommandPool AllocationPoolOverride;
 
-        /// @brief Serializes every vkQueueSubmit to a shared queue.
+        /// @brief Serializes every externally-synchronized queue operation on a shared queue.
         ///
-        /// vkQueueSubmit is not thread-safe per VkQueue, and on MoltenVK the transfer and
-        /// graphics queues share a family (and may be one handle), so worker and main-thread
-        /// submits must serialize through this.
+        /// A VkQueue is not thread-safe: vkQueueSubmit, vkQueuePresentKHR, and vkDeviceWaitIdle
+        /// (which implicitly uses every queue) all require external synchronization. On MoltenVK
+        /// the transfer, graphics, and present queues share a family and may be one handle, so a
+        /// worker upload submit and a main-thread present or device-wait-idle touch the same queue
+        /// and must serialize through this — not only the submits.
         std::mutex SubmitMutex;
 
         /// @brief Transfer timeline semaphore.

@@ -1120,6 +1120,10 @@ namespace Veng::Renderer
 
     void Context::WaitIdle() const
     {
+        // vkDeviceWaitIdle implicitly uses every queue, so it needs the same external
+        // synchronization a submit does — a worker upload submit racing this on the shared
+        // MoltenVK queue is a VkQueue threading error.
+        const std::scoped_lock lock(m_Native->SubmitMutex);
         VK_ASSERT(m_Native->Device.waitIdle(), "failed to wait for device idle!");
     }
 
@@ -1733,7 +1737,15 @@ namespace Veng::Renderer
                                              .pSwapchains = &swapChain,
                                              .pImageIndices = &imageIndex};
 
-        auto result = m_Native->PresentQueue.presentKHR(presentInfo);
+        // vkQueuePresentKHR uses the queue and needs the same external synchronization a submit
+        // does — on MoltenVK the present queue is the shared graphics queue, so a worker upload
+        // submit racing this present is a VkQueue threading error. Scoped so the lock releases
+        // before the resize branch's WaitIdle re-takes it (the mutex is not recursive).
+        vk::Result result{};
+        {
+            const std::scoped_lock lock(m_Native->SubmitMutex);
+            result = m_Native->PresentQueue.presentKHR(presentInfo);
+        }
 
         if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR ||
             m_RenderExtentChanged)
