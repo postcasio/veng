@@ -106,13 +106,18 @@ frame: `Frame()` calls `TaskSystem::PumpMainThread()` at the top, before `BeginF
 the frame, so off-thread continuations land on the main thread.
 
 **`Veng::ParallelFor(count, body)`** (`Veng/Task/ParallelFor.h`) is the data-parallel complement to
-the pool: it splits `[0, count)` into contiguous ranges across short-lived threads it owns for the
-call, the caller participating in one range, and blocks until all finish. Because it owns its
-threads rather than re-entering the pool, it is safe to call from *any* thread — including a
-`TaskSystem` worker, where recursing into the pool could starve it — so a job already running off
-the main thread can still fan a coarse inner loop across cores. It is for occasional, CPU-bound
-batch work (a one-shot bake, a bulk transform), not per-frame hot paths; steady per-frame work
-submits to the pool.
+the pool: it splits `[0, count)` into contiguous ranges and blocks until all finish. When a
+`TaskSystem` pool is ambient on the calling thread — true on every worker and on the main thread —
+the split runs *on that pool* through `TaskSystem::RunParallel` with the caller participating, so it
+spawns no threads and total concurrency stays bounded to the pool plus the caller. Off a
+veng-spawned thread (a unit test, an external `std::thread`) no pool is ambient and it falls back to
+owning short-lived threads for the call. Caller participation is what keeps it safe from a
+`TaskSystem` worker — the caller's own claim-loop completes every range even if no helper runs, so a
+call from a worker (or a nested call) cannot starve or deadlock the pool — so a job already running
+off the main thread can still fan a coarse inner loop across cores. Concurrency is
+bounded/best-effort, not a guaranteed thread per range. It is for occasional, CPU-bound batch work
+(a one-shot bake, a bulk transform), not per-frame hot paths; steady per-frame work submits to the
+pool.
 
 **`Application` is a composition root that delegates to collaborators.** It owns the services
 above and three collaborators it drives each frame:

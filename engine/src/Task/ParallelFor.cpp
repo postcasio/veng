@@ -1,12 +1,26 @@
 #include <Veng/Task/ParallelFor.h>
 
+#include <Veng/Task/TaskSystem.h>
 #include <Veng/Diagnostics/Profiler.h>
 
 #include <algorithm>
+#include <atomic>
 #include <thread>
 
 namespace Veng
 {
+    namespace
+    {
+        // Cumulative std::threads spawned on the fallback path; read back through the Detail test
+        // seam so a test can assert the ambient-pool path added none.
+        std::atomic<u64> g_ThreadSpawnCount{0};
+    }
+
+    u64 Detail::GetParallelForThreadSpawnCount()
+    {
+        return g_ThreadSpawnCount.load(std::memory_order_relaxed);
+    }
+
     void ParallelFor(usize count, const function<void(usize begin, usize end)>& body,
                      u32 maxThreads)
     {
@@ -16,6 +30,16 @@ namespace Veng
         }
 
         VE_PROFILE_SCOPE("ParallelFor");
+
+        // A pool is ambient on every worker and on the main thread: route the split onto it with
+        // the caller participating, so no threads are spawned and total concurrency stays bounded
+        // to the pool plus the caller. The spawn-own-threads path below runs only off a
+        // veng-spawned thread, where no pool is reachable.
+        if (TaskSystem* pool = TaskSystem::GetAmbientPool())
+        {
+            pool->RunParallel(count, body, maxThreads);
+            return;
+        }
 
         u32 requested = maxThreads;
         if (requested == 0)
@@ -57,6 +81,7 @@ namespace Veng
             }
             else
             {
+                g_ThreadSpawnCount.fetch_add(1, std::memory_order_relaxed);
                 helpers.emplace_back(
                     [&body, begin, end]
                     {

@@ -873,6 +873,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/pure_logic.cpp
             tests/unit/task_system.cpp
             tests/unit/parallel_for.cpp
+            tests/unit/parallel_for_pool.cpp
             tests/unit/type_mapping.cpp
             tests/unit/format_info.cpp
             tests/unit/bindless_slots.cpp

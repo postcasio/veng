@@ -118,9 +118,10 @@ nothing. The fold's cost is a per-frame cost, separate from the per-scope budget
 ### Thread registration is RAII
 
 `RegisterThread` returns a `ProfilerThreadRegistration` whose destructor flushes the thread's
-remaining bytes and unlinks it from the registry. A transient `ParallelFor` thread whose
-`thread_local` buffer dies at thread exit must not leave the registry walking a dangling pointer, so a
-lazily attached thread is also unlinked at thread exit. The contract: **a profiler outlives every
+remaining bytes and unlinks it from the registry. A transient thread that registers lazily — a
+`ParallelFor` fallback thread off the pool, say — whose `thread_local` buffer dies at thread exit
+must not leave the registry walking a dangling pointer, so a lazily attached thread is also unlinked
+at thread exit. The contract: **a profiler outlives every
 thread that registered with it, except the main thread**, which it registers at construction and
 detaches at destruction. Registration beyond `MaxThreads` is **accounted** (a counter), never fatal;
 a dropped event increments a separate counter. A truncated capture that says so beats one that looks
@@ -228,7 +229,9 @@ The call sites that make a capture worth taking, plus the seam and bridge that p
   compiles); the queue element is a `QueuedJob` struct declared in every configuration, its
   profiling fields conditional on `VE_PROFILE`. Each job's execution is scoped on its worker (named
   by the job), `PumpMainThread` is scoped, workers name their tracks, and `ParallelFor` scopes its
-  region and each range and registers its transient threads. The counters the pool never had:
+  region; on its ambient-pool path the ranges run as pool jobs on already-registered worker tracks,
+  and on its fallback path it scopes each range and registers the transient threads it owns there.
+  The counters the pool never had:
   **queue depth** and **main-thread queue depth** (atomics maintained under the lock the
   enqueue/dequeue already hold, read lock-free at the sample point), **active jobs** (atomic), and
   **job latency** (submit→start, from a submit timestamp taken *only while recording*).
@@ -434,8 +437,9 @@ it a check rather than a tautology — shifting the stamps by +1 / −1 frame le
 in-window, by +2 / −2 leaves 3.6 % / 0.6 %, and by +3 / −3 leaves 0.2 % / 0.0 %.
 
 **The publication protocol is TSan-clean under a concurrent collector.** A recording load driving
-the frame spine, task-pool jobs, and `ParallelFor`'s transient threads, with a second thread
-repeatedly calling `DumpRing`, runs clean under ThreadSanitizer over ~4,600 frames and ~240 dumps.
+the frame spine, task-pool jobs, and transient lazily-registered threads (a `ParallelFor` fallback
+fan-out), with a second thread repeatedly calling `DumpRing`, runs clean under ThreadSanitizer over
+~4,600 frames and ~240 dumps.
 A chunk's `TimestampBase` and `SequenceNumber` are atomic for the same reason its write offset is:
 a collector sorts live chunks by sequence off the owning thread while the ring re-arms one under it.
 Their accesses are relaxed — `WriteOffset`'s release/acquire pair supplies the ordering.
