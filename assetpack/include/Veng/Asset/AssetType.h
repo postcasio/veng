@@ -87,6 +87,8 @@ namespace Veng
         inline constexpr AssetTypeId CollisionShape{0xE8DD0068DFCF2691ULL};
         /// @brief A playable sound: decoded PCM or an encoded Vorbis stream (see CookedAudioHeader).
         inline constexpr AssetTypeId AudioClip{0x3239B85A97C228A8ULL};
+        /// @brief A data-driven graphics-quality settings schema (see CookedGraphicsSchemaHeader).
+        inline constexpr AssetTypeId GraphicsSchema{0x875DD3DA10E56A08ULL};
     }
 
     /// @brief The reflection TypeIds of the AssetHandle\<T\> leaves that reference a builtin type.
@@ -244,7 +246,7 @@ namespace Veng
         std::unique_ptr<Impl> m_Impl;
     };
 
-    /// @brief Pre-fills a registry with the twenty asset types the engine defines.
+    /// @brief Pre-fills a registry with the twenty-one asset types the engine defines.
     ///
     /// Every host calls this on the registry it owns before any other registration, so a
     /// manifest naming a builtin resolves without the consumer re-declaring it.

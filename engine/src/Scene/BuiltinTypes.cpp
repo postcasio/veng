@@ -11,6 +11,7 @@
 #include <Veng/Physics/Components.h>
 #include <Veng/Physics/Gravity.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Render/GraphicsSchema.h>
 #include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Renderer/CaptureSurface.h>
 #include <Veng/Scene/AnimationBlend.h>
@@ -56,6 +57,9 @@ namespace Veng
         registry.Register<InputContextStack>();
         // The reflected on-disk payload of an input map, read by InputMapLoader.
         registry.Register<InputMapData>();
+        // The reflected on-disk payload of a graphics schema, read by GraphicsSchemaLoader; its
+        // nested category/setting/option/preset types auto-register through the describe walk.
+        registry.Register<GraphicsSchemaData>();
         registry.Register<Intent>();
         registry.Register<Possesses>();
         // The seat's device assignment: which keyboard/pad feed this seat, read per seat by

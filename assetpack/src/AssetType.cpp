@@ -236,5 +236,11 @@ namespace Veng
                            .DisplayName = "AudioClip",
                            .Glyph = "AUD",
                            .HandleFieldType = AssetHandleFieldTypes::AudioClip});
+        // No handle-field leaf: a graphics schema is loaded by id by the settings service, never
+        // referenced from a component — the same posture as Shader and VertexLayout.
+        registry.Register({.Id = AssetTypes::GraphicsSchema,
+                           .Name = "GraphicsSchema",
+                           .DisplayName = "GraphicsSchema",
+                           .Glyph = "GFX"});
     }
 }

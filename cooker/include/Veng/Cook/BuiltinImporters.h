@@ -50,6 +50,15 @@ namespace Veng::Cook
     /// @param cooker  The cooker to register into.
     void RegisterInputMapImporter(Cooker& cooker);
 
+    /// @brief Registers the graphics-schema importer.
+    ///
+    /// Links libveng's reflection serializer (WriteFields) and is therefore absent from the
+    /// veng-free bootstrap cooker. Needs no game module — a graphics schema references only engine
+    /// builtins (its own reflected structs). Folded into RegisterBuiltinImporters; exposed
+    /// individually for a cooker that wants the core set plus only this importer.
+    /// @param cooker  The cooker to register into.
+    void RegisterGraphicsSchemaImporter(Cooker& cooker);
+
     /// @brief Registers the stylesheet importer.
     ///
     /// References libveng's Gui/ style vocabulary (StyleProperty and the flex enums) and links a

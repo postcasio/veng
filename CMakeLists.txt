@@ -899,6 +899,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/launch_arguments.cpp
             tests/unit/asset_manager.cpp
             tests/unit/data_table.cpp
+            tests/unit/graphics_schema.cpp
             tests/unit/primitives.cpp
             # projection_shell.cpp pins Primitives::ProjectionShell's reprojection property —
             # every vertex reprojected through ProjectToScreen (never the generator's own
@@ -1929,6 +1930,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/prefab_save_roundtrip.cpp
             tests/cooker/level_cook.cpp
             tests/cooker/input_map_cook.cpp
+            tests/cooker/graphics_schema_cook.cpp
             tests/cooker/table_cook.cpp
             tests/cooker/asset_handle_leaf_deps.cpp
             tests/cooker/cook_source.cpp
