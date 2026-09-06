@@ -1232,7 +1232,8 @@ records how far away what it saw was and stops there.
 (`Context::GetGeneratedTextures()`) and **pumped once per frame from `BeginFrame`**, before any pass
 records, so a job's result is sampleable by the passes of the frame that finished it.
 
-A **job** is `{target images, tick count, tick callback, priority}`, keyed by a caller-chosen `u64`:
+A **job** is `{target images, tick count, tick cost, tick callback, priority}`, keyed by a
+caller-chosen `u64`:
 
 - **A target is an `ImageInfo`** — any format, extent, **layer count and mip count**, or an already
   created image to `Adopt`. So a 2D map, a 6-layer cube and a mip chain are all just targets. Each
@@ -1252,11 +1253,17 @@ A **job** is `{target images, tick count, tick callback, priority}`, keyed by a 
   a write-after-write barrier ordering tick N+1 behind tick N after that — and on the tick that
   exhausts a job every target is transitioned to `Sample`, the completion fires, and the job becomes
   queryable as **resident** (`IsResident` / `Find`, held until `Release`).
-- **Scheduling is priority-then-FIFO, re-evaluated per tick**, spending a tick budget per frame
-  (`SetTickBudget`, `UnlimitedTickBudget` for none). Raising a queued job's priority therefore
-  preempts a running one at the *next tick*, not the next job. Requests are **idempotent on the
-  key**, so re-requesting every frame while the result is still wanted is the intended usage;
-  `Cancel` tears an unfinished job down and simply releases its targets.
+- **Scheduling is priority-then-FIFO, re-evaluated per tick**, spending a **total cost budget** per
+  frame (`SetCostBudget`, `UnlimitedCostBudget` for none): each request declares a per-tick **cost**
+  (`GeneratedTextureRequest::Cost`, a relative weight, default 1), and the pump runs ticks until
+  their summed cost reaches the budget — so an expensive fragment amortizes over many frames and a
+  cheap one runs many ticks a frame, without the engine ever pricing a fragment it did not write. A
+  single tick dearer than the whole budget still runs one a frame (the one-tick minimum), so it
+  makes progress rather than stalling; at the default cost of 1 the budget is a tick count, the
+  schedule this replaced. Raising a queued job's priority preempts a running one at the *next tick*,
+  not the next job. Requests are **idempotent on the key**, so re-requesting every frame while the
+  result is still wanted is the intended usage; `Cancel` tears an unfinished job down and simply
+  releases its targets.
 
 **Nothing ever waits.** No immediate submits, no fences on the render thread, no job started outside
 the pump. A consumer whose approach outruns its bake gets "the result lands a moment later", never a

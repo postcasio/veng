@@ -152,7 +152,7 @@ namespace
     vector<u8> RenderSkyToCompletion(Context& context, SceneRenderer& renderer, Scene& scene,
                                      const CameraView& camera, const uvec2 extent)
     {
-        context.GetGeneratedTextures().SetTickBudget(GeneratedTextureService::UnlimitedTickBudget);
+        context.GetGeneratedTextures().SetCostBudget(GeneratedTextureService::UnlimitedCostBudget);
         const auto execute = [&]
         {
             context.ImmediateCommands(
@@ -539,7 +539,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // A budget of one tick is amortization at its most granular: one tile may be recorded per frame,
     // so the property under test — the tiles spread across ticks rather than the whole cube landing
     // in one frame — shows as exactly one tile render per pumped frame.
-    service.SetTickBudget(1);
+    service.SetCostBudget(1);
 
     // A fresh cube holds the initial black clear: not baked, revision zero.
     CHECK_FALSE(bake->IsBaked());
@@ -624,7 +624,7 @@ TEST_CASE_FIXTURE(
     }};
 
     GeneratedTextureService& service = Context.GetGeneratedTextures();
-    service.SetTickBudget(1);
+    service.SetCostBudget(1);
     bake->RequestBake(service, std::span<const BakedSkyCube::SkyBakeLayer>(layers));
     CHECK(bake->IsBakePending());
 

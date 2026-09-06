@@ -252,7 +252,7 @@ namespace Veng::Renderer
             return false;
         }
 
-        if (!m_Queue->Add(request.Key, request.TickCount, request.Priority))
+        if (!m_Queue->Add(request.Key, request.TickCount, request.Priority, request.Cost))
         {
             return false;
         }

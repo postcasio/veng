@@ -218,6 +218,14 @@ namespace Veng::Renderer
         /// The caller sizes a tick so one is a bounded slice of GPU work — one solver step, one
         /// cube face, one mip of a downsample chain.
         u32 TickCount = 1;
+        /// @brief The cost one of this job's ticks charges against the per-frame budget.
+        ///
+        /// A relative weight the caller declares, not a measured time: the engine cannot know how
+        /// dear one tile of a heavy volumetric march is against one star-point splat, so the request
+        /// says. The pump spends a total cost budget per frame, so a Cost of K runs a job at roughly
+        /// a Kth the ticks-per-frame of a baseline job. The default of one reproduces the pump's
+        /// prior tick-count schedule exactly, so a job that declares no cost is unchanged.
+        u32 Cost = 1;
         /// @brief Higher runs first; ties break by request order.
         i32 Priority = 0;
         /// @brief Records one tick's GPU work — compute dispatches, a raster pass, or both.
@@ -240,7 +248,7 @@ namespace Veng::Renderer
         u32 Running = 0;
         /// @brief Jobs whose targets are filled and held.
         u32 Resident = 0;
-        /// @brief Ticks spent by the most recent pump.
+        /// @brief Ticks run by the most recent pump.
         u32 TicksLastPump = 0;
         /// @brief Jobs waiting on a cache probe, which spend no ticks while they wait.
         u32 Probing = 0;
@@ -258,12 +266,13 @@ namespace Veng::Renderer
 
     /// @brief Persistent GPU textures filled by caller-recorded jobs the frame amortizes.
     ///
-    /// A job is `{target images, tick count, tick callback, priority}`. The service creates (or
-    /// adopts) the targets, and each frame runs up to a tick budget of ticks across the pending
-    /// jobs in priority-then-FIFO order, recording them into the frame's command buffer with the
-    /// layout transitions between a target's producer ticks and its final sampled state inserted
-    /// around them. When a job's ticks are exhausted its targets are transitioned to a sampled
-    /// layout, its completion fires, and it becomes queryable as resident.
+    /// A job is `{target images, tick count, tick cost, tick callback, priority}`. The service
+    /// creates (or adopts) the targets, and each frame runs ticks across the pending jobs in
+    /// priority-then-FIFO order until their summed cost reaches a per-frame cost budget, recording
+    /// them into the frame's command buffer with the layout transitions between a target's producer
+    /// ticks and its final sampled state inserted around them. When a job's ticks are exhausted its
+    /// targets are transitioned to a sampled layout, its completion fires, and it becomes queryable
+    /// as resident.
     ///
     /// **A frame never waits.** There are no immediate submits, no fences on the render thread, and
     /// no job is started outside the pump. An approach faster than a job degrades to "the result
@@ -283,7 +292,7 @@ namespace Veng::Renderer
     /// without the job's ticks running, a miss is the job running exactly as if no cache existed,
     /// and a deleted cache directory is a valid state at any moment.
     ///
-    /// Owned by Context and pumped once per frame from BeginFrame with the service's own tick
+    /// Owned by Context and pumped once per frame from BeginFrame with the service's own cost
     /// budget, so every consumer of one context shares one budget. It records around the
     /// RenderGraph rather than through it — the graph's transients are 2D single-layer and its
     /// compiled schedule is static between rebuilds, neither of which suits a per-frame-varying set
@@ -291,11 +300,14 @@ namespace Veng::Renderer
     class GeneratedTextureService
     {
     public:
-        /// @brief The default per-frame tick budget.
-        static constexpr u32 DefaultTickBudget = 4;
+        /// @brief The default per-frame cost budget.
+        ///
+        /// With every request at the default Cost of one, this spends this many ticks per frame —
+        /// the tick-count budget the cost budget replaced.
+        static constexpr u32 DefaultCostBudget = 4;
 
         /// @brief A budget meaning "run every pending tick each frame" — amortization off.
-        static constexpr u32 UnlimitedTickBudget = ~0u;
+        static constexpr u32 UnlimitedCostBudget = ~0u;
 
         /// @brief Constructs the service for a context.
         /// @param context The render context targets are created on.
@@ -366,12 +378,12 @@ namespace Veng::Renderer
         /// @brief The attached cache, or null when none is.
         [[nodiscard]] DerivedDataCache* GetCache() const { return m_Cache; }
 
-        /// @brief Sets the ticks the pump may spend per frame across every job.
-        /// @param ticksPerFrame The budget, or UnlimitedTickBudget for no amortization.
-        void SetTickBudget(u32 ticksPerFrame) { m_TickBudget = ticksPerFrame; }
+        /// @brief Sets the summed tick cost the pump may spend per frame across every job.
+        /// @param costPerFrame The budget, or UnlimitedCostBudget for no amortization.
+        void SetCostBudget(u32 costPerFrame) { m_CostBudget = costPerFrame; }
 
-        /// @brief The ticks the pump may spend per frame.
-        [[nodiscard]] u32 GetTickBudget() const { return m_TickBudget; }
+        /// @brief The summed tick cost the pump may spend per frame.
+        [[nodiscard]] u32 GetCostBudget() const { return m_CostBudget; }
 
         /// @brief What the service is holding right now.
         [[nodiscard]] GeneratedTextureStats GetStats() const;
@@ -379,13 +391,14 @@ namespace Veng::Renderer
     private:
         friend class Context;
 
-        /// @brief Spends up to @p budget ticks across the pending jobs, in priority-then-FIFO order.
+        /// @brief Spends up to @p budget of summed tick cost across the pending jobs, in
+        ///        priority-then-FIFO order.
         ///
         /// Called once per frame by Context::BeginFrame with the frame's command buffer, before any
         /// pass records. Completions fire after the tick loop, so a job requested from one is
         /// scheduled from the next pump.
         /// @param cmd    The frame's command buffer the ticks are recorded into.
-        /// @param budget Maximum ticks to spend this frame.
+        /// @param budget Maximum summed tick cost to spend this frame.
         void Pump(CommandBuffer& cmd, u32 budget);
 
         /// @brief Names the task system the service's own off-thread work runs on.
@@ -553,9 +566,9 @@ namespace Veng::Renderer
         vector<PendingStore> m_Stores;
         /// @brief Pumps run so far; a store's copies are readable framesInFlight pumps after theirs.
         u64 m_PumpCount = 0;
-        /// @brief Ticks the pump may spend per frame.
-        u32 m_TickBudget = DefaultTickBudget;
-        /// @brief Ticks the most recent pump spent.
+        /// @brief Summed tick cost the pump may spend per frame.
+        u32 m_CostBudget = DefaultCostBudget;
+        /// @brief Ticks the most recent pump ran.
         u32 m_TicksLastPump = 0;
         /// @brief Jobs completed over the service's lifetime.
         u64 m_CompletedTotal = 0;

@@ -141,24 +141,19 @@ namespace Veng::Renderer
             return mip;
         }
 
-        // Edge length in texels of one amortization tile. Each amortized bake tick renders one tile
-        // of a face through a scissor-clipped fullscreen draw, so the per-tick (and thus per-frame)
-        // GPU cost is bounded by tile area rather than face area — a heavy per-texel sky fragment (a
-        // volumetric ray-march) over a full 1024² face is otherwise one enormous dispatch. Smaller
-        // tiles bound the per-frame cost tighter but take more frames for a re-baked sky to appear
-        // (the previous cube stands meanwhile); 256 — 16 tiles per 1024² face — is the balance.
+        // The default edge length in texels of one amortization tile — the size a bake layer that
+        // names no tile size of its own takes (SkyBakeLayer::TilePixels). Each amortized bake tick
+        // renders one tile of a face through a scissor-clipped fullscreen draw, so the per-tick (and
+        // thus per-frame) GPU cost is bounded by tile area rather than face area — a heavy per-texel
+        // sky fragment (a volumetric ray-march) over a full 1024² face is otherwise one enormous
+        // dispatch. Smaller tiles bound the per-frame cost tighter but take more frames for a re-baked
+        // sky to appear (the previous cube stands meanwhile); 256 — 16 tiles per 1024² face — is the
+        // balance a layer keeps unless its owner sets a tile size to bound one tick's work itself.
         constexpr u32 SkyBakeTilePixels = 256;
 
-        // The reduced-resolution base layer (SkyBakeLayer::FaceSizeDivisor > 1) exists because its
-        // per-pixel fragment is expensive — a volumetric sky march, say — so its coarse bake amortizes
-        // at a finer tile than the detail layers: a quarter the edge, a sixteenth the area, so one bake
-        // tick's fragment work stays bounded and no single frame runs a whole heavy face-tile. The
-        // baked result is identical; only the number and size of the ticks it spreads across changes.
-        constexpr u32 SkyBakeCoarseTilePixels = SkyBakeTilePixels / 4;
-
-        // Tiles along one face axis at the given face size: ceil(faceSize / tile), so the last tile
-        // is clamped when the face is not a whole multiple of the tile.
-        constexpr u32 TilesPerFaceAxis(const u32 faceSize, const u32 tilePixels = SkyBakeTilePixels)
+        // Tiles along one face axis at the given face size and tile size: ceil(faceSize / tile), so
+        // the last tile is clamped when the face is not a whole multiple of the tile.
+        constexpr u32 TilesPerFaceAxis(const u32 faceSize, const u32 tilePixels)
         {
             return (faceSize + tilePixels - 1) / tilePixels;
         }
@@ -172,7 +167,7 @@ namespace Veng::Renderer
         };
 
         TileRect TileRectFor(const u32 tile, const u32 tilesPerAxis, const u32 faceSize,
-                             const u32 tilePixels = SkyBakeTilePixels)
+                             const u32 tilePixels)
         {
             const u32 tileX = tile % tilesPerAxis;
             const u32 tileY = tile / tilesPerAxis;
@@ -219,7 +214,7 @@ namespace Veng::Renderer
                                const Format sceneColorFormat, const u32 faceSize)
         : m_Context(context), m_SceneColorFormat(sceneColorFormat), m_FaceSize(faceSize),
           m_ShReadbackMip(ComputeShReadbackMip(faceSize)),
-          m_TilesPerAxis(TilesPerFaceAxis(faceSize)),
+          m_TilesPerAxis(TilesPerFaceAxis(faceSize, SkyBakeTilePixels)),
           m_TilesPerFace(m_TilesPerAxis * m_TilesPerAxis), m_FaceInvViewProj(BuildFaceMatrices())
     {
         // The radiance cube: six layers rendered as color attachments, sampled as a cube. Uses the
@@ -519,7 +514,7 @@ namespace Veng::Renderer
         // One view slot per face, reused by that face's tiles within a single recording (one frame's
         // command buffer). Every tile of a face writes the identical face basis, so one slot serves
         // them all — bounding a whole-cube bake to CubeFaces view slots per frame regardless of how
-        // many tiles it renders or how many run in one pump (an UnlimitedTickBudget re-bake of a
+        // many tiles it renders or how many run in one pump (an UnlimitedCostBudget re-bake of a
         // large face would otherwise claim one slot per tile, far past MaxViewsPerFrame). A fresh
         // slot is claimed at the face's first tile and whenever a new frame's command buffer starts
         // — an amortized face split across frames re-claims each frame, since a slot claimed in a
@@ -808,25 +803,10 @@ namespace Veng::Renderer
         // the scratch cube, not a completed or half-filled older one.
         CancelBake();
 
-        // Resolve each layer's (pipeline, material) and capture the list by value, so the tick lambda
-        // is decoupled from m_LayerPipelines — a superseding request rebuilds that in place, but this
-        // job (cancelled by the same request) holds its own resolved pipelines.
-        struct LayerRender
-        {
-            Ref<GraphicsPipeline> Pipeline;
-            const MaterialInstance* Material;
-        };
-        vector<LayerRender> render;
-        render.reserve(layers.size());
-        for (usize i = 0; i < layers.size(); ++i)
-        {
-            render.push_back({m_LayerPipelines[i].Pipeline, layers[i].Material});
-        }
-        const u32 perLayer = CubeFaces * m_TilesPerFace;
-
-        // The base layer (layer 0, the opaque clear) may bake at a reduced resolution, upsampled into
-        // the full cube before the finer layers composite over it; only it may, because the promote is
-        // a replacing blit the later blended layers must Load over at full resolution.
+        // The base layer (layer 0, the opaque clear) may bake at a reduced resolution into the coarse
+        // scratch cube, upsampled into the full cube by a replacing blit before the finer layers
+        // composite over it; only it may, because the later blended layers must Load over it at full
+        // resolution.
         const u32 baseDivisor = std::max(layers[0].FaceSizeDivisor, 1u);
         VE_ASSERT(
             (baseDivisor & (baseDivisor - 1)) == 0 && m_FaceSize % baseDivisor == 0,
@@ -841,27 +821,53 @@ namespace Veng::Renderer
                       i, layers[i].FaceSizeDivisor);
         }
 
-        // A full-resolution base renders straight into the scratch cube, layer-major: TickIndex
-        // enumerates (layer, face, tile). A reduced base runs three phases — the base into the coarse
-        // cube, one upsample-blit per face, then the finer layers full-res over the promoted base — so
-        // its fragment count falls by the divisor squared while the detail layers stay sharp.
-        u32 baseTicks = perLayer;
-        u32 coarseFaceSize = m_FaceSize;
-        u32 coarseTilesPerAxis = m_TilesPerAxis;
-        u32 coarseTilesPerFace = m_TilesPerFace;
-        u32 promoteTicks = 0;
+        // Resolve each layer into what its ticks need — the pipeline, the material, and the tile grid
+        // its own tile size induces over its face — and capture the list by value, so the tick lambda
+        // is decoupled from m_LayerPipelines (a superseding request rebuilds that in place) while each
+        // layer bounds one tick's work with its own caller-set granularity. A layer naming no tile
+        // size takes the engine default.
+        struct LayerRender
+        {
+            Ref<GraphicsPipeline> Pipeline;
+            const MaterialInstance* Material;
+            u32 FaceSize;     // the coarse face for a reduced base, else the full face
+            u32 TilePixels;   // this layer's tile size — its granularity
+            u32 TilesPerAxis; // tiles along one face axis
+            u32 TilesPerFace; // TilesPerAxis², so CubeFaces × this is the layer's tick span
+            bool Coarse;      // the base rendered into the coarse scratch cube
+        };
+        vector<LayerRender> render;
+        render.reserve(layers.size());
+        for (usize i = 0; i < layers.size(); ++i)
+        {
+            const bool coarse = i == 0 && baseDivisor > 1;
+            const u32 faceSize = coarse ? m_FaceSize / baseDivisor : m_FaceSize;
+            const u32 tilePixels =
+                layers[i].TilePixels != 0 ? layers[i].TilePixels : SkyBakeTilePixels;
+            const u32 tilesPerAxis = TilesPerFaceAxis(faceSize, tilePixels);
+            render.push_back({
+                .Pipeline = m_LayerPipelines[i].Pipeline,
+                .Material = layers[i].Material,
+                .FaceSize = faceSize,
+                .TilePixels = tilePixels,
+                .TilesPerAxis = tilesPerAxis,
+                .TilesPerFace = tilesPerAxis * tilesPerAxis,
+                .Coarse = coarse,
+            });
+        }
         if (baseDivisor > 1)
         {
-            coarseFaceSize = m_FaceSize / baseDivisor;
-            EnsureCoarseScratch(coarseFaceSize);
-            coarseTilesPerAxis = TilesPerFaceAxis(coarseFaceSize, SkyBakeCoarseTilePixels);
-            coarseTilesPerFace = coarseTilesPerAxis * coarseTilesPerAxis;
-            baseTicks = CubeFaces * coarseTilesPerFace;
-            promoteTicks = 1;
+            EnsureCoarseScratch(render[0].FaceSize);
         }
-        const u32 tickCount = baseDivisor > 1 ? baseTicks + promoteTicks +
-                                                    static_cast<u32>(layers.size() - 1) * perLayer
-                                              : static_cast<u32>(layers.size()) * perLayer;
+
+        // The tick index enumerates, in order: the base layer's (face, tile) over its grid, the one
+        // promote tick (a reduced base only), then each finer layer's (face, tile) over its own grid.
+        const u32 promoteTicks = baseDivisor > 1 ? 1u : 0u;
+        u32 tickCount = promoteTicks;
+        for (const LayerRender& r : render)
+        {
+            tickCount += CubeFaces * r.TilesPerFace;
+        }
 
         GeneratedTextureRequest request{
             .Key = m_JobKey,
@@ -874,53 +880,63 @@ namespace Veng::Renderer
             .CacheKey = std::move(cacheKey),
             .TickCount = tickCount,
             .OnTick =
-                [this, render = std::move(render), perLayer, baseDivisor, coarseFaceSize,
-                 coarseTilesPerAxis, coarseTilesPerFace, baseTicks,
+                [this, render = std::move(render),
                  promoteTicks](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
             {
-                const u32 idx = context.TickIndex;
-                if (baseDivisor <= 1)
+                u32 idx = context.TickIndex;
+
+                // The base layer, face-major over its own tile grid, into the coarse scratch cube (a
+                // reduced base) or the full scratch cube. Its first tile of each face clears; the rest
+                // Load.
                 {
-                    // One tile per tick, layer-major: every face of a layer is filled before the next
-                    // blends over it. The first layer's first tile of each face clears; the rest Load.
-                    const u32 layer = idx / perLayer;
-                    const u32 within = idx % perLayer;
-                    const u32 face = within / m_TilesPerFace;
-                    const u32 tile = within % m_TilesPerFace;
-                    const TileRect rect = TileRectFor(tile, m_TilesPerAxis, m_FaceSize);
-                    RecordMaterialRegion(cmd, render[layer].Pipeline, *render[layer].Material,
-                                         m_ScratchFaceViews[face], m_FaceSize, face, rect.Offset,
-                                         rect.Extent, layer == 0 && tile == 0);
-                    return;
+                    const LayerRender& base = render[0];
+                    const u32 baseTicks = CubeFaces * base.TilesPerFace;
+                    if (idx < baseTicks)
+                    {
+                        const u32 face = idx / base.TilesPerFace;
+                        const u32 tile = idx % base.TilesPerFace;
+                        const TileRect rect =
+                            TileRectFor(tile, base.TilesPerAxis, base.FaceSize, base.TilePixels);
+                        const Ref<ImageView>& faceView =
+                            base.Coarse ? m_CoarseScratchFaceViews[face] : m_ScratchFaceViews[face];
+                        RecordMaterialRegion(cmd, base.Pipeline, *base.Material, faceView,
+                                             base.FaceSize, face, rect.Offset, rect.Extent,
+                                             tile == 0);
+                        return;
+                    }
+                    idx -= baseTicks;
                 }
-                // Phase 1: the base layer into the coarse cube (its own tile grid; first tile clears).
-                if (idx < baseTicks)
+
+                // One blit upsamples the whole coarse base into the full scratch, when the base was
+                // reduced, before the finer layers composite over it.
+                if (promoteTicks != 0)
                 {
-                    const u32 face = idx / coarseTilesPerFace;
-                    const u32 tile = idx % coarseTilesPerFace;
-                    const TileRect rect = TileRectFor(tile, coarseTilesPerAxis, coarseFaceSize,
-                                                      SkyBakeCoarseTilePixels);
-                    RecordMaterialRegion(cmd, render[0].Pipeline, *render[0].Material,
-                                         m_CoarseScratchFaceViews[face], coarseFaceSize, face,
-                                         rect.Offset, rect.Extent, tile == 0);
-                    return;
+                    if (idx < promoteTicks)
+                    {
+                        RecordCoarsePromote(cmd);
+                        return;
+                    }
+                    idx -= promoteTicks;
                 }
-                // Phase 2: one blit upsamples the whole coarse cube into the full scratch as the base.
-                if (idx < baseTicks + promoteTicks)
+
+                // The finer layers, full-resolution, each over its own tile grid, Loading and blending
+                // over the base already in the scratch cube.
+                for (usize layer = 1; layer < render.size(); ++layer)
                 {
-                    RecordCoarsePromote(cmd);
-                    return;
+                    const LayerRender& r = render[layer];
+                    const u32 layerTicks = CubeFaces * r.TilesPerFace;
+                    if (idx < layerTicks)
+                    {
+                        const u32 face = idx / r.TilesPerFace;
+                        const u32 tile = idx % r.TilesPerFace;
+                        const TileRect rect =
+                            TileRectFor(tile, r.TilesPerAxis, r.FaceSize, r.TilePixels);
+                        RecordMaterialRegion(cmd, r.Pipeline, *r.Material, m_ScratchFaceViews[face],
+                                             r.FaceSize, face, rect.Offset, rect.Extent, false);
+                        return;
+                    }
+                    idx -= layerTicks;
                 }
-                // Phase 3: the finer layers full-res over the promoted base, Loading and blending.
-                const u32 j = idx - baseTicks - promoteTicks;
-                const u32 layer = 1 + j / perLayer;
-                const u32 within = j % perLayer;
-                const u32 face = within / m_TilesPerFace;
-                const u32 tile = within % m_TilesPerFace;
-                const TileRect rect = TileRectFor(tile, m_TilesPerAxis, m_FaceSize);
-                RecordMaterialRegion(cmd, render[layer].Pipeline, *render[layer].Material,
-                                     m_ScratchFaceViews[face], m_FaceSize, face, rect.Offset,
-                                     rect.Extent, false);
             },
             .OnComplete = [this](const GeneratedTextureResult&)
             { m_BakeState = BakeState::Landed; },
@@ -950,10 +966,12 @@ namespace Veng::Renderer
                 [this, pipeline, atmosphereSet, atmosphere, sunDirection,
                  intensity](CommandBuffer& cmd, const GeneratedTextureTickContext& context)
             {
-                // One tile per tick: TickIndex enumerates (face, tile) in face-major order.
+                // One tile per tick: TickIndex enumerates (face, tile) in face-major order over the
+                // default tile grid (an atmosphere bake is a single layer with no caller tile size).
                 const u32 face = context.TickIndex / m_TilesPerFace;
                 const u32 tile = context.TickIndex % m_TilesPerFace;
-                const TileRect rect = TileRectFor(tile, m_TilesPerAxis, m_FaceSize);
+                const TileRect rect =
+                    TileRectFor(tile, m_TilesPerAxis, m_FaceSize, SkyBakeTilePixels);
                 RecordAtmosphereRegion(cmd, pipeline, atmosphereSet, atmosphere, sunDirection,
                                        intensity, m_ScratchFaceViews[face], m_FaceSize, face,
                                        rect.Offset, rect.Extent, tile == 0);

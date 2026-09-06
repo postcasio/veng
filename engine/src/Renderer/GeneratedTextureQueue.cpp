@@ -6,7 +6,8 @@
 
 namespace Veng::Renderer
 {
-    bool GeneratedTextureQueue::Add(const u64 key, const u32 tickCount, const i32 priority)
+    bool GeneratedTextureQueue::Add(const u64 key, const u32 tickCount, const i32 priority,
+                                    const u32 cost)
     {
         if (Contains(key))
         {
@@ -17,6 +18,7 @@ namespace Veng::Renderer
             .Priority = priority,
             .Sequence = m_NextSequence++,
             .TickCount = std::max(1u, tickCount),
+            .Cost = std::max(1u, cost),
         });
         return true;
     }
@@ -121,8 +123,11 @@ namespace Veng::Renderer
     u32 GeneratedTextureQueue::Spend(const u32 budget, const function<void(u64, u32, u32)>& tick,
                                      const function<void(u64)>& complete)
     {
-        u32 spent = 0;
-        while (spent < budget)
+        u32 ticks = 0;
+        // u64 so an UnlimitedCost budget (~0u) never overflows the running sum, however many cheap
+        // ticks a pump runs.
+        u64 spentCost = 0;
+        while (true)
         {
             const optional<u64> key = NextKey();
             if (!key)
@@ -135,11 +140,22 @@ namespace Veng::Renderer
             GeneratedTextureJobRecord* record = FindMutable(*key);
             VE_ASSERT(record != nullptr, "generated-texture job {} vanished mid-spend", *key);
 
+            // The first tick of a pump runs whenever there is a positive budget to draw on, so a
+            // tick dearer than the whole budget still advances one-a-frame rather than stalling;
+            // after that, and always for a zero budget, a tick runs only while its cost fits.
+            const u64 cost = record->Cost;
+            const bool untouched = ticks == 0 && budget > 0;
+            if (!untouched && spentCost + cost > budget)
+            {
+                break;
+            }
+
             const u32 tickIndex = record->TicksDone;
             const u32 tickCount = record->TickCount;
             record->State = GeneratedTextureState::Running;
             record->TicksDone = tickIndex + 1;
-            spent++;
+            spentCost += cost;
+            ticks++;
 
             tick(*key, tickIndex, tickCount);
 
@@ -151,6 +167,6 @@ namespace Veng::Renderer
                 complete(*key);
             }
         }
-        return spent;
+        return ticks;
     }
 }

@@ -149,6 +149,18 @@ namespace Veng::Renderer
             /// that replaces (rather than blends) the region, so a later layer — which Loads and blends
             /// over what is already there — must be full resolution.
             u32 FaceSizeDivisor = 1;
+
+            /// @brief Edge length in texels of one amortization tile for this layer, or 0 for the
+            ///        engine default.
+            ///
+            /// An amortized bake renders one scissor-clipped tile of a face per tick, so the tile size
+            /// bounds one tick's fragment work — the granularity half of the caller's control, the
+            /// companion to the per-tick cost that bounds how many ticks a frame runs. A layer whose
+            /// per-pixel fragment is expensive (a volumetric backdrop) names a smaller tile so no
+            /// single tick runs a whole heavy face; a cheap point/splat layer leaves it at the default.
+            /// The tile need not divide the face — the last row and column are clamped to real texels.
+            /// Zero (the default) takes the engine's default tile size.
+            u32 TilePixels = 0;
         };
 
         /// @brief Records the six face renders of `material` into the radiance cube.

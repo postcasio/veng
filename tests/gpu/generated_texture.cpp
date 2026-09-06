@@ -157,9 +157,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::vector<u32> frameCounts;
 
     for (const u32 budget :
-         {1u, 2u, static_cast<u32>(GeneratedTextureService::UnlimitedTickBudget)})
+         {1u, 2u, static_cast<u32>(GeneratedTextureService::UnlimitedCostBudget)})
     {
-        service.SetTickBudget(budget);
+        service.SetCostBudget(budget);
 
         const GeneratedTextureKey key = 0x5721'0000ull + budget;
         u32 completions = 0;
@@ -212,7 +212,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 {
     GeneratedTextureService& service = Context.GetGeneratedTextures();
     const BindlessRegistry& bindless = Context.GetBindlessRegistry();
-    service.SetTickBudget(1);
+    service.SetCostBudget(1);
 
     const u32 freeBefore = bindless.GetFreeSlots().Textures;
 
@@ -256,7 +256,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 {
     GeneratedTextureService& service = Context.GetGeneratedTextures();
     AsyncReadback& readback = Context.GetAsyncReadback();
-    service.SetTickBudget(2);
+    service.SetCostBudget(2);
 
     constexpr u32 Faces = 6;
     constexpr u32 FaceEdge = 4;
@@ -448,7 +448,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     GeneratedTextureService& service = Context.GetGeneratedTextures();
     service.SetCache(cache->get(), &Tasks);
-    service.SetTickBudget(GeneratedTextureService::UnlimitedTickBudget);
+    service.SetCostBudget(GeneratedTextureService::UnlimitedCostBudget);
 
     constexpr string_view CacheKey = "stripe/8x8";
     constexpr GeneratedTextureKey ColdKey = 0x5721'CA01ull;
@@ -549,7 +549,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     GeneratedTextureService& service = Context.GetGeneratedTextures();
     service.SetCache(cache->get(), &Tasks);
-    service.SetTickBudget(GeneratedTextureService::UnlimitedTickBudget);
+    service.SetCostBudget(GeneratedTextureService::UnlimitedCostBudget);
 
     constexpr string_view CacheKey = "chain/8x8";
     constexpr GeneratedTextureKey WholeKey = 0x5721'CB01ull;
@@ -665,7 +665,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     GeneratedTextureService& service = Context.GetGeneratedTextures();
     const BindlessRegistry& bindless = Context.GetBindlessRegistry();
     service.SetCache(cache->get(), &Tasks);
-    service.SetTickBudget(GeneratedTextureService::UnlimitedTickBudget);
+    service.SetCostBudget(GeneratedTextureService::UnlimitedCostBudget);
 
     constexpr GeneratedTextureKey BakedKey = 0x5721'A110ull;
     constexpr GeneratedTextureKey CancelledKey = 0x5721'A111ull;

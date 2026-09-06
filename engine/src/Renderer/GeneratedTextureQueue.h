@@ -1,8 +1,8 @@
 #pragma once
 
 // The generated-texture service's scheduling core, separated from the GPU half so the policy —
-// idempotent keys, priority-then-FIFO selection, budget accounting across mixed jobs — is a pure
-// function of the job set and is unit-testable with no ICD (the FrameTopology / DrawBudget
+// idempotent keys, priority-then-FIFO selection, cost-budget accounting across mixed jobs — is a
+// pure function of the job set and is unit-testable with no ICD (the FrameTopology / DrawBudget
 // precedent). It records nothing, owns no resource, and knows nothing about what a tick does.
 
 #include <Veng/Veng.h>
@@ -33,6 +33,13 @@ namespace Veng::Renderer
         u32 TickCount = 1;
         /// @brief Ticks run so far.
         u32 TicksDone = 0;
+        /// @brief The cost one of this job's ticks charges against the per-frame budget.
+        ///
+        /// A relative weight the caller declares, not a measured time: a job whose single tick is
+        /// expensive (a heavy fragment, a long dispatch) sets it above the baseline of one, so the
+        /// budget spends fewer of its ticks per frame. At the default of one, a budget of N spends N
+        /// ticks per frame — the tick-count schedule this replaced.
+        u32 Cost = 1;
         /// @brief The job's lifecycle state.
         GeneratedTextureState State = GeneratedTextureState::Queued;
         /// @brief Whether the job is live but excluded from selection, so no tick is spent on it.
@@ -43,7 +50,7 @@ namespace Veng::Renderer
         bool Held = false;
     };
 
-    /// @brief Priority-then-FIFO scheduling over a keyed job set, spending a per-frame tick budget.
+    /// @brief Priority-then-FIFO scheduling over a keyed job set, spending a per-frame cost budget.
     ///
     /// The selection rule is the whole policy: among the jobs with ticks left, the one with the
     /// highest priority wins, ties broken by request order. It is re-evaluated per tick, so raising
@@ -52,7 +59,7 @@ namespace Veng::Renderer
     {
     public:
         /// @brief A budget meaning "run every pending tick this pump".
-        static constexpr u32 UnlimitedTicks = ~0u;
+        static constexpr u32 UnlimitedCost = ~0u;
 
         /// @brief Adds a job, idempotently on its key.
         ///
@@ -62,8 +69,10 @@ namespace Veng::Renderer
         /// @param key       The caller's key.
         /// @param tickCount Ticks the job takes; zero is treated as one.
         /// @param priority  Initial priority; higher runs first.
+        /// @param cost      Cost one of the job's ticks charges against a pump's budget; zero is
+        ///                  treated as one, and one — the default — reproduces the tick-count schedule.
         /// @return True when the job was added; false when the key was already live.
-        bool Add(u64 key, u32 tickCount, i32 priority);
+        bool Add(u64 key, u32 tickCount, i32 priority, u32 cost = 1);
 
         /// @brief Removes a job whatever its state.
         /// @param key The job's key.
@@ -111,16 +120,20 @@ namespace Veng::Renderer
         /// @brief The key of the job the next tick belongs to, or nullopt when nothing is pending.
         [[nodiscard]] optional<u64> NextKey() const;
 
-        /// @brief Spends up to @p budget ticks across the pending jobs, in selection order.
+        /// @brief Spends up to @p budget of summed tick cost across the pending jobs, in order.
         ///
+        /// Runs ticks in selection order, charging each job's Cost against the budget, and stops once
+        /// the next tick's cost would exceed what remains. The first tick of a pump always runs when
+        /// the budget is a positive, untouched one, so a single tick dearer than the whole budget
+        /// still advances one-a-frame instead of stalling forever; a budget of zero spends nothing.
         /// Invokes @p tick once per tick with the job's key, the index of the tick within that job,
         /// and the job's total; then, on the tick that exhausts a job, @p complete with its key. A
-        /// budget of UnlimitedTicks runs every pending tick. Neither callback may add or remove
-        /// jobs — the caller defers any such reaction until Spend has returned.
+        /// budget of UnlimitedCost runs every pending tick. Neither callback may add or remove jobs —
+        /// the caller defers any such reaction until Spend has returned.
         /// @param tick     Invoked per tick as (key, tickIndex, tickCount).
         /// @param complete Invoked once per job, on the tick that exhausts it.
-        /// @param budget   Maximum ticks to spend.
-        /// @return The number of ticks spent.
+        /// @param budget   Maximum summed tick cost to spend.
+        /// @return The number of ticks run.
         u32 Spend(u32 budget, const function<void(u64, u32, u32)>& tick,
                   const function<void(u64)>& complete);
 
