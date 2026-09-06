@@ -206,6 +206,10 @@ namespace Veng
 
         m_TaskSystem = CreateUnique<TaskSystem>();
 
+        // Bind the pool as the main thread's ambient pool so main-thread batch dispatch resolves
+        // it the way a worker's does.
+        m_TaskSystem->SetAmbientForCurrentThread();
+
         // The transfer command pools are keyed by worker index, so they can only
         // be created once the worker count is known. Done here, before any upload.
         m_RenderContext.InitializeTransferPools(*m_TaskSystem);

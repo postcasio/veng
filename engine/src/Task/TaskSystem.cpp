@@ -1,5 +1,6 @@
 #include <Veng/Task/TaskSystem.h>
 
+#include <algorithm>
 #include <string>
 
 namespace Veng
@@ -10,6 +11,59 @@ namespace Veng
         // lifetime of the thread. Sentinel on the main thread (and any non-worker
         // thread): GetCurrentWorkerIndex asserts it is queried only from a worker.
         thread_local u32 t_CurrentWorkerIndex = TaskSystem::NotAWorker;
+
+        // The pool the calling thread belongs to, set by WorkerLoop (workers) and
+        // SetAmbientForCurrentThread (the main thread). Null on a thread veng did not
+        // spawn, which is the signal RunParallel's callers key their fallback on.
+        thread_local TaskSystem* t_AmbientPool = nullptr;
+
+        // Shared, heap-owned claim-state for one RunParallel dispatch. Co-owned by the caller and
+        // every helper job (each holds a Ref), so a helper that first runs after the call returned
+        // still touches live state — the cursor, the range bounds, and the participant latch.
+        struct ParallelDispatch
+        {
+            std::atomic<u32> NextRange{0};
+            u32 Ranges = 0;
+            usize Base = 0;
+            usize Remainder = 0;
+            // Points at the caller's body. The caller waits until no participant is active before
+            // returning, and a helper dereferences this only while claiming a real range — which
+            // happens only while the cursor is unexhausted, i.e. while the caller is still inside
+            // RunParallel — so the pointee outlives every dereference.
+            const function<void(usize, usize)>* Body = nullptr;
+
+            std::mutex Mutex;
+            std::condition_variable Drained;
+            // Active participants, guarded by Mutex. The caller pre-counts itself as 1; each helper
+            // registers on entry and deregisters on exit, so the count reaches zero only once every
+            // participant that could still touch the state has left its claim-loop.
+            u32 Active = 0;
+        };
+
+        // Claims ranges off the shared cursor until it is exhausted, then leaves the active set,
+        // waking the caller when the last participant drops out. Common to the caller and helpers.
+        void DrainRanges(const Ref<ParallelDispatch>& state)
+        {
+            u32 index = 0;
+            while ((index = state->NextRange.fetch_add(1, std::memory_order_relaxed)) <
+                   state->Ranges)
+            {
+                const usize begin = static_cast<usize>(index) * state->Base +
+                                    std::min<usize>(index, state->Remainder);
+                const usize end = begin + state->Base + (index < state->Remainder ? 1u : 0u);
+                (*state->Body)(begin, end);
+            }
+
+            bool last = false;
+            {
+                const std::scoped_lock lock(state->Mutex);
+                last = (--state->Active == 0);
+            }
+            if (last)
+            {
+                state->Drained.notify_all();
+            }
+        }
 
         u32 DeriveWorkerCount(u32 requested)
         {
@@ -49,6 +103,14 @@ namespace Veng
                 worker.join();
             }
         }
+
+        // Clear the ambient binding on the destructing thread so a pointer to this pool cannot
+        // outlive it; workers cleared theirs by exiting. Application destructs the pool on the
+        // same main thread that bound it.
+        if (t_AmbientPool == this)
+        {
+            t_AmbientPool = nullptr;
+        }
     }
 
     u32 TaskSystem::GetCurrentWorkerIndex()
@@ -62,6 +124,16 @@ namespace Veng
     u32 TaskSystem::TryGetCurrentWorkerIndex()
     {
         return t_CurrentWorkerIndex;
+    }
+
+    TaskSystem* TaskSystem::GetAmbientPool()
+    {
+        return t_AmbientPool;
+    }
+
+    void TaskSystem::SetAmbientForCurrentThread()
+    {
+        t_AmbientPool = this;
     }
 
     void TaskSystem::Enqueue(function<void()> run, string_view name)
@@ -115,6 +187,7 @@ namespace Veng
     void TaskSystem::WorkerLoop(u32 workerIndex)
     {
         t_CurrentWorkerIndex = workerIndex;
+        t_AmbientPool = this;
 
 #if defined(VE_PROFILE) && VE_PROFILE
         // Name this worker's track when a profiler is installed; a worker started before the
@@ -181,6 +254,61 @@ namespace Veng
         {
             (void)task.Get();
         }
+    }
+
+    void TaskSystem::RunParallel(usize count, const function<void(usize begin, usize end)>& body,
+                                 u32 maxRanges)
+    {
+        if (count == 0)
+        {
+            return;
+        }
+
+        VE_PROFILE_SCOPE("TaskSystem/RunParallel");
+
+        const u32 cap = maxRanges != 0 ? maxRanges : m_WorkerCount + 1;
+        const u32 ranges = static_cast<u32>(std::min<usize>(count, cap));
+
+        // A single range runs fully inline; nothing is submitted and no shared state is needed.
+        if (ranges == 1)
+        {
+            body(0, count);
+            return;
+        }
+
+        const Ref<ParallelDispatch> dispatch = CreateRef<ParallelDispatch>();
+        dispatch->Ranges = ranges;
+        dispatch->Base = count / ranges;
+        dispatch->Remainder = count % ranges;
+        dispatch->Body = &body;
+        dispatch->Active = 1; // the caller participates
+
+        // One helper per pool worker at most, capped at R - 1 so the caller covers a range itself.
+        // Each helper registers before it claims, so the caller waits for any helper that took work;
+        // a helper that only ever runs after the caller returned finds the cursor exhausted and
+        // touches only the heap-owned state it co-owns.
+        const u32 helpers = std::min<u32>(ranges - 1, m_WorkerCount);
+        for (u32 i = 0; i < helpers; ++i)
+        {
+            // Ordinary pool jobs: Submit keeps the queue's in-flight accounting (so WaitForAll and
+            // the depth counters stay correct); the returned handle is discarded, the dispatch Ref
+            // co-owns the state instead.
+            (void)Submit(
+                [dispatch]
+                {
+                    {
+                        const std::scoped_lock lock(dispatch->Mutex);
+                        ++dispatch->Active;
+                    }
+                    DrainRanges(dispatch);
+                },
+                "TaskSystem/RunParallel");
+        }
+
+        DrainRanges(dispatch);
+
+        std::unique_lock lock(dispatch->Mutex);
+        dispatch->Drained.wait(lock, [&] { return dispatch->Active == 0; });
     }
 
     void TaskSystem::EnqueueMainThread(function<void()> fn)

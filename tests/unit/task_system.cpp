@@ -5,7 +5,10 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <thread>
 
 #include <Veng/Task/TaskSystem.h>
@@ -182,4 +185,253 @@ TEST_CASE("Stress: many small jobs across the pool")
 
     // Sum of 1..Count.
     CHECK(sum == static_cast<u64>(Count) * (Count + 1) / 2);
+}
+
+// --- RunParallel -------------------------------------------------------------
+
+TEST_CASE("RunParallel visits every index exactly once across a spread of splits")
+{
+    TaskSystem tasks;
+
+    for (const usize count : {usize{1}, usize{2}, usize{7}, usize{64}, usize{1000}, usize{4097}})
+    {
+        // maxRanges 0 derives the pool-sized default; the rest exercise a single range, a
+        // two-way split, and a bound above the index count (which clamps to count).
+        for (const u32 maxRanges : {0u, 1u, 2u, 4u, 64u})
+        {
+            vector<u32> visits(count, 0u);
+            tasks.RunParallel(
+                count,
+                [&](usize begin, usize end)
+                {
+                    for (usize i = begin; i < end; ++i)
+                    {
+                        // Disjoint ranges write disjoint slots, so no synchronization is needed.
+                        ++visits[i];
+                    }
+                },
+                maxRanges);
+
+            const bool everyIndexOnce =
+                std::ranges::all_of(visits, [](const u32 v) { return v == 1u; });
+            CHECK(everyIndexOnce);
+        }
+    }
+}
+
+TEST_CASE("RunParallel with an empty range runs the body not at all")
+{
+    TaskSystem tasks;
+
+    std::atomic<u32> calls{0};
+    tasks.RunParallel(0, [&](usize, usize) { calls.fetch_add(1); });
+    CHECK(calls.load() == 0u);
+}
+
+TEST_CASE("RunParallel is deadlock-safe when called from a pool worker, including nested")
+{
+    // A non-participating "submit sub-ranges then block" design deadlocks at these worker counts;
+    // the caller running the claim-loop inline is what keeps it live.
+    for (const u32 workers : {1u, 2u})
+    {
+        TaskSystem tasks(TaskSystemInfo{.WorkerCount = workers});
+
+        constexpr usize N = 1000;
+        std::atomic<u64> sum{0};
+        Task<void> outer = tasks.Submit(
+            [&]
+            {
+                tasks.RunParallel(N,
+                                  [&](usize begin, usize end)
+                                  {
+                                      u64 partial = 0;
+                                      for (usize i = begin; i < end; ++i)
+                                      {
+                                          partial += i;
+                                      }
+                                      sum.fetch_add(partial, std::memory_order_relaxed);
+                                  });
+            });
+        (void)outer.Get();
+        CHECK(sum.load() == static_cast<u64>(N) * (N - 1) / 2);
+
+        // A RunParallel whose body itself calls RunParallel: the inner dispatch runs from a worker
+        // already inside an outer dispatch, the case a pool-recursing design starves.
+        constexpr usize Outer = 8;
+        constexpr usize Inner = 100;
+        std::atomic<u64> nested{0};
+        Task<void> nestedOuter = tasks.Submit(
+            [&]
+            {
+                tasks.RunParallel(
+                    Outer,
+                    [&](usize ob, usize oe)
+                    {
+                        for (usize o = ob; o < oe; ++o)
+                        {
+                            tasks.RunParallel(
+                                Inner, [&](usize b, usize e)
+                                { nested.fetch_add(e - b, std::memory_order_relaxed); });
+                        }
+                    });
+            });
+        (void)nestedOuter.Get();
+        CHECK(nested.load() == static_cast<u64>(Outer) * Inner);
+    }
+}
+
+TEST_CASE("RunParallel adds no threads: body runs only on pool workers or the caller")
+{
+    TaskSystem tasks(TaskSystemInfo{.WorkerCount = 4});
+
+    std::mutex mutex;
+    set<std::thread::id> workerIds;
+    tasks.ForEachWorker(
+        [&](u32)
+        {
+            const std::scoped_lock lock(mutex);
+            workerIds.insert(std::this_thread::get_id());
+        });
+    const std::thread::id callerId = std::this_thread::get_id();
+
+    set<std::thread::id> bodyIds;
+    tasks.RunParallel(100000,
+                      [&](usize begin, usize end)
+                      {
+                          {
+                              const std::scoped_lock lock(mutex);
+                              bodyIds.insert(std::this_thread::get_id());
+                          }
+                          // A little work so ranges genuinely land on helpers, not just the caller.
+                          volatile u64 acc = 0;
+                          for (usize i = begin; i < end; ++i)
+                          {
+                              acc += i;
+                          }
+                          (void)acc;
+                      });
+
+    // Every thread that ran a range is either the caller or one of the existing workers — had
+    // RunParallel spawned a thread, an unknown id would appear here.
+    const bool onlyPoolOrCaller =
+        std::ranges::all_of(bodyIds, [&](const std::thread::id id)
+                            { return id == callerId || workerIds.contains(id); });
+    CHECK(onlyPoolOrCaller);
+}
+
+TEST_CASE("RunParallel completes on the caller alone when every worker is occupied")
+{
+    TaskSystem tasks(TaskSystemInfo{.WorkerCount = 4});
+    const u32 workers = tasks.GetWorkerCount();
+
+    // Park every worker so no helper job can run; the caller's inline claim-loop must still
+    // complete all ranges. If it depended on a helper, this would hang (caught by the ctest timeout).
+    std::mutex mutex;
+    std::condition_variable release;
+    std::atomic<u32> parked{0};
+    std::atomic<bool> go{false};
+    for (u32 i = 0; i < workers; ++i)
+    {
+        tasks.Submit(
+            [&]
+            {
+                parked.fetch_add(1);
+                std::unique_lock lock(mutex);
+                release.wait(lock, [&] { return go.load(); });
+            });
+    }
+    while (parked.load() < workers)
+    {
+        std::this_thread::yield();
+    }
+
+    vector<u32> visits(500, 0u);
+    tasks.RunParallel(500,
+                      [&](usize begin, usize end)
+                      {
+                          for (usize i = begin; i < end; ++i)
+                          {
+                              ++visits[i];
+                          }
+                      });
+    const bool everyIndexOnce = std::ranges::all_of(visits, [](const u32 v) { return v == 1u; });
+    CHECK(everyIndexOnce);
+
+    {
+        const std::scoped_lock lock(mutex);
+        go.store(true);
+    }
+    release.notify_all();
+    tasks.WaitForAll();
+}
+
+TEST_CASE("RunParallel stragglers running after it returns touch only live state")
+{
+    // The helper jobs are parked behind occupied workers, so they first run after RunParallel has
+    // already returned. With stack-owned claim-state this is a use-after-scope (a sanitiser build
+    // is where it bites); heap co-ownership keeps the state alive until the last helper drops it.
+    TaskSystem tasks(TaskSystemInfo{.WorkerCount = 4});
+    const u32 workers = tasks.GetWorkerCount();
+
+    std::mutex mutex;
+    std::condition_variable release;
+    std::atomic<u32> parked{0};
+    std::atomic<bool> go{false};
+    for (u32 i = 0; i < workers; ++i)
+    {
+        tasks.Submit(
+            [&]
+            {
+                parked.fetch_add(1);
+                std::unique_lock lock(mutex);
+                release.wait(lock, [&] { return go.load(); });
+            });
+    }
+    while (parked.load() < workers)
+    {
+        std::this_thread::yield();
+    }
+
+    std::atomic<u64> sum{0};
+    constexpr usize N = 4096;
+    tasks.RunParallel(N,
+                      [&](usize begin, usize end)
+                      {
+                          u64 partial = 0;
+                          for (usize i = begin; i < end; ++i)
+                          {
+                              partial += i;
+                          }
+                          sum.fetch_add(partial, std::memory_order_relaxed);
+                      });
+    CHECK(sum.load() == static_cast<u64>(N) * (N - 1) / 2);
+
+    // Release the parked workers; the queued helpers now run as stragglers, find the cursor
+    // exhausted, and unwind against the still-live shared state.
+    {
+        const std::scoped_lock lock(mutex);
+        go.store(true);
+    }
+    release.notify_all();
+    tasks.WaitForAll();
+}
+
+TEST_CASE("The ambient pool resolves on a worker and is null off veng-spawned threads")
+{
+    TaskSystem tasks(TaskSystemInfo{.WorkerCount = 2});
+
+    Task<TaskSystem*> onWorker = tasks.Submit([] { return TaskSystem::GetAmbientPool(); });
+    const Result<TaskSystem*> resolved = onWorker.Get();
+    REQUIRE(resolved.has_value());
+    CHECK(*resolved == &tasks);
+
+    std::atomic<bool> nullOnSpawnedThread{false};
+    std::thread external([&]
+                         { nullOnSpawnedThread.store(TaskSystem::GetAmbientPool() == nullptr); });
+    external.join();
+    CHECK(nullOnSpawnedThread.load());
+
+    // The unit-test main thread never called SetAmbientForCurrentThread (only Application does),
+    // so it reads null — the fallback signal a non-veng thread keys on.
+    CHECK(TaskSystem::GetAmbientPool() == nullptr);
 }

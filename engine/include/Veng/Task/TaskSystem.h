@@ -183,6 +183,21 @@ namespace Veng
         /// writer — without the assert. Automatic per-thread track registration keys off it.
         [[nodiscard]] static u32 TryGetCurrentWorkerIndex();
 
+        /// @brief Returns the pool whose thread the caller is running on, or null off such a thread.
+        ///
+        /// A worker thread resolves the pool it drains, and the thread that called
+        /// SetAmbientForCurrentThread() (the main thread, wired by Application when it constructs
+        /// the pool) resolves it too. A thread veng did not spawn — a unit-test main, an external
+        /// std::thread — reads null. It lets a caller decide whether it can dispatch a batch onto
+        /// the existing pool or must own its own threads.
+        [[nodiscard]] static TaskSystem* GetAmbientPool();
+
+        /// @brief Binds this pool as the calling thread's ambient pool for GetAmbientPool().
+        ///
+        /// Workers bind themselves at loop entry; Application calls this once on the main thread
+        /// it constructs the pool on, so main-thread dispatch resolves the pool as a worker does.
+        void SetAmbientForCurrentThread();
+
         /// @brief Submits a callable to run on a worker and returns a Task<T> handle.
         ///
         /// A callable returning Result<T> is unwrapped so the job can report a
@@ -198,6 +213,31 @@ namespace Veng
         /// Used for per-worker setup (e.g. allocating per-thread command pools).
         /// @param fn  Callable accepting a worker index.
         void ForEachWorker(const function<void(u32 workerIndex)>& fn);
+
+        /// @brief Runs body over [0, count) as contiguous ranges across the pool, the caller helping.
+        ///
+        /// [0, count) is split into R = clamp(1 .. min(count, maxRanges or WorkerCount + 1))
+        /// contiguous near-equal ranges (the remainder spread across the first ranges), matching
+        /// ParallelFor's split. Up to min(R - 1, WorkerCount) helper jobs are submitted to the pool
+        /// and the calling thread runs the same claim-loop inline, each participant claiming ranges
+        /// off a shared cursor until it is exhausted; the call blocks until every range has run.
+        ///
+        /// It adds no threads — helpers are ordinary pool jobs — and is safe to call from a pool
+        /// worker: the caller's inline claim-loop alone completes every range even if no helper ever
+        /// runs, so a worker calling it (or a nested RunParallel) cannot deadlock the pool. The
+        /// shared claim-state is heap-owned and co-owned by every participant, so a helper that first
+        /// runs after the call has returned touches only live state.
+        ///
+        /// @param count      Number of indices to cover; a count of 0 runs body not at all.
+        /// @param body       Invoked as body(begin, end) per range, concurrently from several
+        ///                   threads. It must not touch shared mutable state without synchronization,
+        ///                   and — like any off-main-thread work — must not call into veng APIs that
+        ///                   require the main thread.
+        /// @param maxRanges  Upper bound on the range count; 0 derives it from the pool size.
+        /// @warning body runs on threads other than the caller. Data races in body are the caller's
+        ///          responsibility; disjoint index ranges writing to disjoint outputs need none.
+        void RunParallel(usize count, const function<void(usize begin, usize end)>& body,
+                         u32 maxRanges = 0);
 
         /// @brief Drains the main-thread continuation queue on the calling thread.
         ///
