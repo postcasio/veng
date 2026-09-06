@@ -149,11 +149,18 @@ namespace Veng::Renderer
         // (the previous cube stands meanwhile); 256 — 16 tiles per 1024² face — is the balance.
         constexpr u32 SkyBakeTilePixels = 256;
 
+        // The reduced-resolution base layer (SkyBakeLayer::FaceSizeDivisor > 1) exists because its
+        // per-pixel fragment is expensive — a volumetric sky march, say — so its coarse bake amortizes
+        // at a finer tile than the detail layers: a quarter the edge, a sixteenth the area, so one bake
+        // tick's fragment work stays bounded and no single frame runs a whole heavy face-tile. The
+        // baked result is identical; only the number and size of the ticks it spreads across changes.
+        constexpr u32 SkyBakeCoarseTilePixels = SkyBakeTilePixels / 4;
+
         // Tiles along one face axis at the given face size: ceil(faceSize / tile), so the last tile
         // is clamped when the face is not a whole multiple of the tile.
-        constexpr u32 TilesPerFaceAxis(const u32 faceSize)
+        constexpr u32 TilesPerFaceAxis(const u32 faceSize, const u32 tilePixels = SkyBakeTilePixels)
         {
-            return (faceSize + SkyBakeTilePixels - 1) / SkyBakeTilePixels;
+            return (faceSize + tilePixels - 1) / tilePixels;
         }
 
         // A tile's pixel rect within a face: its top-left offset and its extent, the extent clamped
@@ -164,15 +171,16 @@ namespace Veng::Renderer
             uvec2 Extent;
         };
 
-        TileRect TileRectFor(const u32 tile, const u32 tilesPerAxis, const u32 faceSize)
+        TileRect TileRectFor(const u32 tile, const u32 tilesPerAxis, const u32 faceSize,
+                             const u32 tilePixels = SkyBakeTilePixels)
         {
             const u32 tileX = tile % tilesPerAxis;
             const u32 tileY = tile / tilesPerAxis;
-            const uvec2 offset{tileX * SkyBakeTilePixels, tileY * SkyBakeTilePixels};
+            const uvec2 offset{tileX * tilePixels, tileY * tilePixels};
             return {
                 .Offset = offset,
-                .Extent = {std::min(SkyBakeTilePixels, faceSize - offset.x),
-                           std::min(SkyBakeTilePixels, faceSize - offset.y)},
+                .Extent = {std::min(tilePixels, faceSize - offset.x),
+                           std::min(tilePixels, faceSize - offset.y)},
             };
         }
 
@@ -846,7 +854,7 @@ namespace Veng::Renderer
         {
             coarseFaceSize = m_FaceSize / baseDivisor;
             EnsureCoarseScratch(coarseFaceSize);
-            coarseTilesPerAxis = TilesPerFaceAxis(coarseFaceSize);
+            coarseTilesPerAxis = TilesPerFaceAxis(coarseFaceSize, SkyBakeCoarseTilePixels);
             coarseTilesPerFace = coarseTilesPerAxis * coarseTilesPerAxis;
             baseTicks = CubeFaces * coarseTilesPerFace;
             promoteTicks = 1;
@@ -890,7 +898,8 @@ namespace Veng::Renderer
                 {
                     const u32 face = idx / coarseTilesPerFace;
                     const u32 tile = idx % coarseTilesPerFace;
-                    const TileRect rect = TileRectFor(tile, coarseTilesPerAxis, coarseFaceSize);
+                    const TileRect rect = TileRectFor(tile, coarseTilesPerAxis, coarseFaceSize,
+                                                      SkyBakeCoarseTilePixels);
                     RecordMaterialRegion(cmd, render[0].Pipeline, *render[0].Material,
                                          m_CoarseScratchFaceViews[face], coarseFaceSize, face,
                                          rect.Offset, rect.Extent, tile == 0);
