@@ -1996,6 +1996,10 @@ namespace Veng
         // telemetry), the profiler's own once-per-frame point.
         SampleFrameCounters();
 
+        // Sample process CPU/memory at the same once-per-frame boundary so CpuPercent's interval is
+        // one frame; the snapshot is read back through GetSystemStats().
+        m_SystemStats.Sample();
+
         const f32 delta = Time::Update();
 
         {

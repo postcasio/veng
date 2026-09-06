@@ -112,4 +112,10 @@ namespace Veng::UI
     {
         return ImGui::GetTextLineHeight();
     }
+
+    vec2 CalcTextSize(const string_view text)
+    {
+        // The string_view is not guaranteed null-terminated, so measure the explicit byte range.
+        return ImGui::CalcTextSize(text.data(), text.data() + text.size());
+    }
 }

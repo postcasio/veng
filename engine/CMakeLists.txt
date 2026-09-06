@@ -178,6 +178,7 @@ add_library(veng SHARED
         src/Physics/Queries.cpp
         src/Physics/RemoteCharacterBodySystem.cpp
         src/Platform/CrashReport.cpp
+        src/Platform/SystemStats.cpp
         src/Platform/UserPaths.cpp
         src/Task/ParallelFor.cpp
         src/Task/TaskSystem.cpp
@@ -384,6 +385,8 @@ if (WIN32)
     target_compile_definitions(veng PRIVATE VULKAN_HPP_STORAGE_SHARED_EXPORT)
     # The crash reporter's symbol resolution (Veng/Platform/CrashReport.h); ships with Windows.
     target_link_libraries(veng PRIVATE dbghelp)
+    # GetProcessMemoryInfo for the process-memory reading in Veng/SystemStats.h; ships with Windows.
+    target_link_libraries(veng PRIVATE psapi)
 endif ()
 
 # veng raises no exceptions (see Veng/Assert.h): asserts are fatal, recoverable

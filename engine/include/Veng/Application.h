@@ -26,6 +26,7 @@
 #include <Veng/Net/Session.h>
 #include <Veng/Net/Blob.h>
 #include <Veng/Diagnostics/Profiler.h>
+#include <Veng/SystemStats.h>
 #include <Veng/Task/TaskSystem.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/LocalControl.h>
@@ -650,6 +651,13 @@ namespace Veng
         /// live under VE_PROFILE=ON; buffering is what a capture toggles. A shell of no-ops under
         /// VE_PROFILE=OFF.
         [[nodiscard]] Diagnostics::Profiler& GetProfiler() { return m_Profiler; }
+
+        /// @brief Returns the latest process CPU/memory snapshot, sampled at the frame boundary.
+        ///
+        /// The engine samples once per frame (Frame()), so CpuPercent reads as a per-frame rate and
+        /// the memory figures are current as of this frame. Always available regardless of build
+        /// configuration; fields the running platform cannot report stay zero (see SystemStats).
+        [[nodiscard]] const SystemStats& GetSystemStats() const { return m_SystemStats.GetLast(); }
 
         /// @brief Returns the task system.
         ///
@@ -1607,6 +1615,9 @@ namespace Veng
         /// profiler outlives every thread that registered with it. Its constructor registers the
         /// calling (main) thread.
         Diagnostics::Profiler m_Profiler;
+
+        /// @brief Process CPU/memory sampler; sampled once per frame, read via GetSystemStats().
+        SystemStatsSampler m_SystemStats;
 
         /// @brief The virtual GPU track the bridge emits back-dated pass timings onto; 0 until created.
         Diagnostics::TrackId m_GpuTrack = 0;

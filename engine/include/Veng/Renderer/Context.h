@@ -231,6 +231,26 @@ namespace Veng::Renderer
         /// @param cmd  Command buffer the end timestamp is recorded into.
         void EndGpuScope(CommandBuffer& cmd);
 
+        /// @brief Device-local GPU memory the allocator is using, and the budget it may use.
+        struct GpuMemoryUsage
+        {
+            /// @brief Bytes currently allocated from device-local heaps by the engine's allocator.
+            u64 UsedBytes = 0;
+            /// @brief Bytes the process may allocate from those heaps before eviction is risked.
+            u64 BudgetBytes = 0;
+        };
+
+        /// @brief Returns the allocator's device-local memory usage and budget, in bytes.
+        ///
+        /// Summed across the physical device's device-local heaps. UsedBytes is what the engine's
+        /// VMA allocator holds from those heaps (the process's own GPU allocations, not the whole
+        /// device); BudgetBytes is the OS-reported budget when VK_EXT_memory_budget is available,
+        /// else the heaps' total size. On a unified-memory device (MoltenVK on Apple silicon) the
+        /// device-local heap is system RAM, so the budget tracks available RAM rather than a
+        /// separate VRAM pool.
+        /// @return The device-local used and budget byte totals.
+        [[nodiscard]] GpuMemoryUsage GetGpuMemoryUsage() const;
+
         /// @brief Returns true when the device can linearly filter a sampled image of @p format.
         ///
         /// Queries the format's optimal-tiling feature flags for

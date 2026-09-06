@@ -229,6 +229,10 @@ namespace Veng::Renderer
         m_Native->PipelineCache = m_Native->Device.createPipelineCache(cacheInfo).value;
 
         const VmaAllocatorCreateInfo allocatorInfo{
+            // The budget bit lets vmaGetHeapBudgets report the OS budget/usage; only legal when the
+            // device extension was enabled above, else the allocator falls back to heap sizes.
+            .flags = m_Native->MemoryBudgetSupported ? VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT
+                                                     : VmaAllocatorCreateFlags{0},
             .physicalDevice = m_Native->PhysicalDevice,
             .device = m_Native->Device,
             .instance = m_Native->Instance,
@@ -635,6 +639,28 @@ namespace Veng::Renderer
     std::span<const Context::GpuPassTiming> Context::GetLastGpuPassTimings() const
     {
         return m_GpuPassTimings;
+    }
+
+    Context::GpuMemoryUsage Context::GetGpuMemoryUsage() const
+    {
+        const VkPhysicalDeviceMemoryProperties* memoryProperties = nullptr;
+        vmaGetMemoryProperties(m_Native->Allocator, &memoryProperties);
+
+        std::array<VmaBudget, VK_MAX_MEMORY_HEAPS> budgets{};
+        vmaGetHeapBudgets(m_Native->Allocator, budgets.data());
+
+        // Sum the device-local heaps: on a discrete GPU these are the VRAM heaps; on a
+        // unified-memory device (MoltenVK on Apple silicon) the one device-local heap is system RAM.
+        GpuMemoryUsage usage{};
+        for (u32 heap = 0; heap < memoryProperties->memoryHeapCount; ++heap)
+        {
+            if ((memoryProperties->memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0)
+            {
+                usage.UsedBytes += budgets[heap].usage;
+                usage.BudgetBytes += budgets[heap].budget;
+            }
+        }
+        return usage;
     }
 
     void Context::BeginGpuScope(CommandBuffer& cmd, const string_view name)
@@ -1248,6 +1274,8 @@ namespace Veng::Renderer
         // non-conformant implementation such as MoltenVK); a conformant native driver does
         // not expose it and must not be asked for it. Add it per-device here rather than in
         // the always-required list so desktop GPUs are not wrongly rejected as unsuitable.
+        // VK_EXT_memory_budget is enabled the same way — optional, per-device — so the allocator
+        // reports the OS memory budget rather than falling back to the heap size.
         {
             const auto available = PhysicalDevice.enumerateDeviceExtensionProperties(nullptr).value;
             for (const auto& extension : available)
@@ -1256,7 +1284,12 @@ namespace Veng::Renderer
                                 VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME) == 0)
                 {
                     deviceExtensions.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
-                    break;
+                }
+                else if (std::strcmp(extension.extensionName,
+                                     VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) == 0)
+                {
+                    deviceExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+                    MemoryBudgetSupported = true;
                 }
             }
         }

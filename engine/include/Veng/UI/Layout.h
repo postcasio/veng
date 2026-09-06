@@ -90,4 +90,12 @@ namespace Veng::UI
 
     /// @brief Returns the height of one line of text, in pixels.
     [[nodiscard]] f32 GetTextLineHeight();
+
+    /// @brief Returns the pixel size the given text would occupy if drawn.
+    ///
+    /// The extent `Text(text)` would take at the current font, measuring only — nothing is drawn.
+    /// A caller right-aligns a label by subtracting the width from the content region.
+    /// @param text  The string to measure.
+    /// @return The width and height of the text in pixels.
+    [[nodiscard]] vec2 CalcTextSize(string_view text);
 }

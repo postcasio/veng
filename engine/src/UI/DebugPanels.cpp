@@ -37,6 +37,15 @@ namespace Veng::UI
             UI::Text(fmt::format("GPU frame: {:.2f} ms", context.GetLastGpuFrameTimeMs()));
         }
 
+        const Renderer::Context::GpuMemoryUsage vram = context.GetGpuMemoryUsage();
+        if (vram.BudgetBytes > 0)
+        {
+            constexpr f64 mib = 1024.0 * 1024.0;
+            UI::Text(fmt::format("VRAM: {:.0f} / {:.0f} MiB",
+                                 static_cast<f64>(vram.UsedBytes) / mib,
+                                 static_cast<f64>(vram.BudgetBytes) / mib));
+        }
+
         // The live sub-rect scale (the inner loop writes it while dynamic resolution is on) and
         // the rendered extent, which shrinks with the scale while the window stays full size.
         UI::Text(fmt::format("Render scale: {:.2f}{}", viewport.GetRenderScale(),

@@ -328,5 +328,12 @@ namespace Veng::Renderer
         /// VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT; set in CreateDevice from the physical device's
         /// reported support.
         bool ExtendedStorageImageFormatsSupported = false;
+
+        /// @brief True when VK_EXT_memory_budget was advertised and enabled at device creation.
+        ///
+        /// When set the allocator carries VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT and
+        /// GetGpuMemoryUsage() reports the OS-provided budget; otherwise the budget falls back to
+        /// the heap size. Appended per-device in CreateDevice only when present.
+        bool MemoryBudgetSupported = false;
     };
 }
