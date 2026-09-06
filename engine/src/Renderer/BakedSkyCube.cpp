@@ -869,6 +869,11 @@ namespace Veng::Renderer
             tickCount += CubeFaces * r.TilesPerFace;
         }
 
+        // The amortized bake is one generated-texture job at a single per-tick cost; the base layer —
+        // the dear, tile-dominating backdrop — declares it, so a dear sky runs fewer ticks a frame
+        // while a cheap one runs its default weight.
+        const u32 jobCost = std::max(1u, layers[0].Cost);
+
         GeneratedTextureRequest request{
             .Key = m_JobKey,
             .Name = "Sky Bake",
@@ -879,6 +884,7 @@ namespace Veng::Renderer
             }},
             .CacheKey = std::move(cacheKey),
             .TickCount = tickCount,
+            .Cost = jobCost,
             .OnTick =
                 [this, render = std::move(render),
                  promoteTicks](CommandBuffer& cmd, const GeneratedTextureTickContext& context)

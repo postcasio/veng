@@ -161,6 +161,18 @@ namespace Veng::Renderer
             /// The tile need not divide the face — the last row and column are clamped to real texels.
             /// Zero (the default) takes the engine's default tile size.
             u32 TilePixels = 0;
+
+            /// @brief The per-tick cost this layer declares to the generated-texture budget, or the
+            ///        default weight of one.
+            ///
+            /// The pump spends a total cost budget per frame (see GeneratedTextureRequest::Cost), so a
+            /// higher cost runs fewer of this bake's ticks per frame — the amortization half of the
+            /// caller's control, the companion to TilePixels: TilePixels bounds one tick's work, Cost
+            /// bounds how many run a frame. **Only the base (first) layer's Cost is honored:** a
+            /// composited sky is one amortized job at a single per-tick cost, and the base — the dear,
+            /// tile-dominating backdrop — sets it; the overlay layers' Cost is ignored. A layer that
+            /// names none takes the default weight of one.
+            u32 Cost = 1;
         };
 
         /// @brief Records the six face renders of `material` into the radiance cube.
