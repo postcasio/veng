@@ -5,6 +5,7 @@
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
+#include <Veng/Task/TaskSystem.h>
 
 #include <span>
 
@@ -44,6 +45,16 @@ namespace Veng
             /// Null when the asset needs no finalize step. Runs once every Dependencies entry is resident.
             /// Returns VoidResult so a deferred failure surfaces as an AssetLoadError on the sync path.
             function<VoidResult()> Finalize;
+
+            /// @brief A worker Task producing the resource, for a loader whose decode is CPU-heavy.
+            ///
+            /// Set only on a loader's async path. When present, Resource and Finalize are unused: the
+            /// resource is produced off the render thread and the entry becomes resident through the
+            /// main-thread continuation pump when the Task lands, keeping the asset's own AssetId
+            /// (where Adopt would detach the entry). A null RefAny result means the decode failed and
+            /// the entry stalls unresident, the same shape a corrupt blob takes on the loader path. A
+            /// loader's sync path leaves this empty and returns a ready Resource.
+            optional<Task<RefAny>> AsyncResource;
         };
     }
 

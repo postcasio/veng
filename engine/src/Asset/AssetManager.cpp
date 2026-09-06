@@ -335,6 +335,27 @@ namespace Veng
             });
         m_Cache[id] = entry;
 
+        if (job->AsyncResource)
+        {
+            // A CPU-heavy loader decodes on a worker; the id-keyed entry becomes resident when the
+            // Task lands on the main-thread continuation pump, so the decode never blocks the render
+            // thread and the asset keeps its AssetId (unlike Adopt's detached entry). A null result
+            // stalls the entry unresident, the corrupt-blob shape.
+            AddPendingCreate(entry);
+            job->AsyncResource->Then(
+                [this, entry](Result<Detail::RefAny> result) mutable
+                {
+                    if (result && *result != nullptr)
+                    {
+                        FinalizePendingCreate(entry, std::move(*result));
+                        return;
+                    }
+                    FailPendingCreate(entry, result ? "loader decode produced no resource"
+                                                    : result.error());
+                });
+            return entry;
+        }
+
         if (job->Finalize)
         {
             m_Pending.push_back(PendingLoad{
