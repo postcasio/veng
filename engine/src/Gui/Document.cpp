@@ -2440,7 +2440,10 @@ namespace Veng::Gui
         const Rect& box = element.Layout;
         const f32 size = std::min(box.Size.x, box.Size.y) * DropdownArrowScale;
         const f32 border = BorderWidth(element.ComputedStyle);
-        arrow->Layout = Rect{.Min = vec2(box.Min.x + box.Size.x - size - border,
+        // The arrow sits inside the anchor's right edge, cleared of the border and of its own
+        // styled right margin (`DropdownArrow { margin-right: … }`), so a chevron never abuts the frame.
+        const f32 marginRight = arrow->ComputedStyle.Margin.Right;
+        arrow->Layout = Rect{.Min = vec2(box.Min.x + box.Size.x - size - border - marginRight,
                                          box.Min.y + (box.Size.y - size) * 0.5f),
                              .Size = vec2(size, size)};
     }
@@ -3228,6 +3231,44 @@ namespace Veng::Gui
         return changed;
     }
 
+    void Document::BuildDropdownChevron(const Element& element, DrawList& list,
+                                        const f32 opacity) const
+    {
+        vec4 color = element.ComputedStyle.Background;
+        if (color.a <= 0.0f)
+        {
+            return;
+        }
+        color.a *= opacity;
+
+        const Rect& box = element.Layout;
+        const vec2 center = box.Min + box.Size * 0.5f;
+        const f32 s = std::min(box.Size.x, box.Size.y);
+        const f32 halfWidth = s * 0.34f; // each arm's horizontal reach from the apex
+        const f32 drop = s * 0.22f;      // the apex's drop below the arms' tops
+        const f32 thickness = std::max(s * 0.16f, 1.0f);
+        const vec2 apex{center.x, center.y + drop * 0.5f};
+        const vec2 topLeft{center.x - halfWidth, center.y - drop * 0.5f};
+        const vec2 topRight{center.x + halfWidth, center.y - drop * 0.5f};
+
+        // Each arm is a thin rounded quad from an arm-top down to the apex, rotated into place about
+        // its own midpoint; the length is extended by the thickness so the two arms overlap cleanly
+        // at the point rather than leaving a notch.
+        const auto arm = [&](const vec2 from, const vec2 to)
+        {
+            const vec2 mid = (from + to) * 0.5f;
+            const vec2 delta = to - from;
+            const f32 length = glm::length(delta) + thickness;
+            list.PushTransform(mid, std::atan2(delta.y, delta.x));
+            list.Quad(
+                Rect{.Min = mid - vec2(length, thickness) * 0.5f, .Size = vec2(length, thickness)},
+                color, CornerRadii::All(thickness * 0.5f));
+            list.PopTransform();
+        };
+        arm(topLeft, apex);
+        arm(topRight, apex);
+    }
+
     void Document::BuildElement(const Element& element, DrawList& list, const f32 inherited) const
     {
         if (!element.Visible)
@@ -3268,6 +3309,18 @@ namespace Veng::Gui
             BoxShadow shadow = *style.Shadow;
             shadow.Color.a *= opacity;
             list.Shadow(rect, shadow, style.Radii);
+        }
+
+        // A DropdownArrow is a chevron marker, not a filled box: it draws two rotated bars meeting
+        // at a point in its own fill color, and takes no background, border, or children.
+        if (element.Kind == ElementKind::DropdownArrow)
+        {
+            BuildDropdownChevron(element, list, opacity);
+            if (rotated)
+            {
+                list.PopTransform();
+            }
+            return;
         }
 
         // Fill sources are exclusive and ranked BackgroundMaterial > BackgroundGradient >

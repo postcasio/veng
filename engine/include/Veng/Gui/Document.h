@@ -913,6 +913,12 @@ namespace Veng::Gui
         /// opacity fades its whole subtree as one. A zero product skips the subtree entirely.
         void BuildElement(const Element& element, DrawList& list, f32 inherited) const;
 
+        /// @brief Emits a DropdownArrow's downward chevron — two rotated bars in its fill color.
+        /// @param element  The DropdownArrow part element, positioned by LayoutDropdownParts.
+        /// @param list     The draw list the chevron's quads are appended to.
+        /// @param opacity  The composited subtree opacity folded into the chevron's alpha.
+        void BuildDropdownChevron(const Element& element, DrawList& list, f32 opacity) const;
+
         /// @brief Recursive front-to-back hit-test honoring the ancestor clip chain.
         [[nodiscard]] Element* HitTestElement(Element& element, vec2 point, optional<Rect> clip);
 
