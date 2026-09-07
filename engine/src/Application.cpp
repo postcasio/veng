@@ -709,6 +709,11 @@ namespace Veng
             {
                 viewport->Configure(output.Settings);
             }
+            // The static render scale is a display built-in, applied here like the dynamic-resolution
+            // choice below it: it is the allocation scale while DRS is off and the value DRS clamps
+            // into its band while on. Clamped to (0, 1] — the setting only downscales; supersampling
+            // past the backing extent is the separate MaxAllocationScale ceiling.
+            viewport->SetRenderScale(glm::clamp(display.RenderScale, 0.25f, 1.0f));
             if (output.DynamicResolutionEnabled)
             {
                 viewport->SetDynamicResolution(output.DynamicResolution);
