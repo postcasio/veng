@@ -1,5 +1,5 @@
 <Panel style="width: 200px;">
   <Text>host</Text>
-  <Component src="0x00C0FFEE0BAD6E01" param:title="Ready"/>
+  <Component src="0x00C0FFEE0BAD6E01" param:title="Ready" driver="0x00C0FFEE0D817E01"/>
   <Component src="0x00C0FFEE0BAD6E01" param:title="Set"/>
 </Panel>

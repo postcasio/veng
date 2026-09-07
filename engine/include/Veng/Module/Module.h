@@ -72,11 +72,15 @@ extern "C"
 /// of the wrong size, or reading a SystemContext whose fields have shifted, is exactly the silent
 /// corruption this token exists to turn into a loud rejection. Version 13 adds SystemContext::World
 /// (the runner handle of the ticking world), which shifts the fields after it for a stale module's
-/// per-tick reads.
+/// per-tick reads. Version 14 grows GuiDriverFrame with Root (the subtree root a driver drives — a
+/// component boundary, or the document root) and gives GuiDriver::OnInstantiate a boundary
+/// parameter: the frame is host-constructed and handed to a module-registered driver each drive,
+/// and the driver's vtable is what a module subclasses, so a stale module reads the frame's trailing
+/// fields shifted and overrides the wrong OnInstantiate slot.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 13u
+#define VENG_MODULE_ABI_VERSION 14u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

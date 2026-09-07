@@ -18,6 +18,7 @@ namespace Veng
     namespace Gui
     {
         class Document;
+        struct Element;
     }
 
     /// @brief Stable identity of a registered GuiDriver, authored exactly like a SystemId/ActionId.
@@ -43,6 +44,14 @@ namespace Veng
     {
         /// @brief The live document this driver drives (the driven component's instantiated tree).
         Gui::Document& Document;
+        /// @brief The subtree root this driver drives, never null while a driver runs.
+        ///
+        /// A whole-document driver (a GuiOverlay/GuiSurface) drives the document's root; a driver
+        /// scoped to an embedded component boundary drives that boundary — so a component driver
+        /// reads and writes its own controls (resolving within Root's subtree) without reaching
+        /// outside it. A driver must not add or remove Root itself, which would disturb the walk it
+        /// is driven inside.
+        Gui::Element* Root = nullptr;
         /// @brief The presented scene the driven component lives in; mutable within the driver boundary.
         Scene& Scene;
         /// @brief The entity carrying the driven GuiOverlay/GuiSurface — the driver's own instance.
@@ -112,17 +121,26 @@ namespace Veng
         /// @brief Virtual destructor; drivers are owned through GuiDriver pointers.
         virtual ~GuiDriver() = default;
 
-        /// @brief Once per (re)instantiate: resolve elements, build the view-model, SetContext.
+        /// @brief Once per (re)instantiate: resolve elements, build the view-model, bind the context.
         ///
         /// Runs on the first drive that instantiates the document and again on any re-instantiate
         /// (exactly like GuiOverlay::SetOnInstantiate), so cached element pointers stay valid. The
         /// default does nothing.
+        ///
+        /// @p root is the subtree this driver drives: the document root for a whole-document driver,
+        /// or the embedded component boundary for a driver scoped to one. A whole-document driver
+        /// binds its view-model with `document.BindContext(context)`; a component driver scopes the
+        /// bind to its subtree with `document.BindContext(document.GetHandle(root), context)`, so its
+        /// `{obj.field}` bindings and named handlers resolve against its own context.
         /// @param document  The freshly instantiated live document.
+        /// @param root      The subtree root the driver drives (document root, or a component boundary).
         /// @param scene     The presented scene the driven component lives in.
         /// @param seat      The claiming viewport's seat, or Entity::Null when unbound.
-        virtual void OnInstantiate(Gui::Document& document, Scene& scene, Entity seat)
+        virtual void OnInstantiate(Gui::Document& document, Gui::Element& root, Scene& scene,
+                                   Entity seat)
         {
             (void)document;
+            (void)root;
             (void)scene;
             (void)seat;
         }

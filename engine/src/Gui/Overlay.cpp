@@ -121,6 +121,27 @@ namespace Veng
         // Present first: it instantiates the document (or re-instantiates it) and returns the live
         // tree, which the driver's OnInstantiate/OnUpdate then read.
         Gui::Document* const document = runtime.Layer->Present(viewport);
+        if (document == nullptr)
+        {
+            return;
+        }
+
+        // The ambient frame every driver on this document reads; a component driver gets it rebased
+        // onto its boundary, so both the overlay's own driver and its components share one View/seat.
+        const GuiDriverFrame frame{
+            .Document = *document,
+            .Root = &document->Root(),
+            .Scene = scene,
+            .Owner = owner,
+            .Seat = viewport.GetSeat(),
+            .Delta = viewport.GetViewDelta(),
+            .Alpha = viewport.GetViewAlpha(),
+            .View = SystemViewInfo{.Camera = viewport.GetPresentedCamera(),
+                                   .Region = viewport.GetRegion(),
+                                   .UiScale = viewport.GetUiScale()},
+            .Assets = assets,
+            .Audio = audio,
+        };
 
         // Instantiate the named driver once, when a registry is available and the id resolves; an
         // unresolved id logs once and leaves the overlay undriven (a recoverable miss).
@@ -136,29 +157,23 @@ namespace Veng
             }
         }
 
-        if (runtime.Driver != nullptr && document != nullptr)
+        if (runtime.Driver != nullptr)
         {
             // Re-run OnInstantiate whenever the live document changed identity (first instantiate or
             // a re-instantiate), so cached element pointers stay valid — exactly like SetOnInstantiate.
+            // A whole-document driver drives the document root.
             if (document != runtime.DriverDocument)
             {
-                runtime.Driver->OnInstantiate(*document, scene, viewport.GetSeat());
+                runtime.Driver->OnInstantiate(*document, document->Root(), scene,
+                                              viewport.GetSeat());
                 runtime.DriverDocument = document;
             }
-            runtime.Driver->OnUpdate(GuiDriverFrame{
-                .Document = *document,
-                .Scene = scene,
-                .Owner = owner,
-                .Seat = viewport.GetSeat(),
-                .Delta = viewport.GetViewDelta(),
-                .Alpha = viewport.GetViewAlpha(),
-                .View = SystemViewInfo{.Camera = viewport.GetPresentedCamera(),
-                                       .Region = viewport.GetRegion(),
-                                       .UiScale = viewport.GetUiScale()},
-                .Assets = assets,
-                .Audio = audio,
-            });
+            runtime.Driver->OnUpdate(frame);
         }
+
+        // Drive the document's embedded component drivers — those run whether or not the overlay
+        // itself is driven, so a plain overlay may still host a self-driving component.
+        document->DriveComponents(drivers, frame);
     }
 
     void GuiOverlay::Detach(Renderer::Viewport& viewport) const

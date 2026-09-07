@@ -500,7 +500,7 @@ VE_SYSTEM(SpawnPlayerRule, 0x70CCE23C99D1C3A1ULL, "Spawn Player Rule");
 class HudDriver final : public GuiDriver
 {
 public:
-    void OnInstantiate(Gui::Document& document, Scene&, Entity) override
+    void OnInstantiate(Gui::Document& document, Gui::Element&, Scene&, Entity) override
     {
         m_Document = &document;
         m_Ticks = document.FindAllByClass("tick");

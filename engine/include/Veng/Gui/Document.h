@@ -15,6 +15,9 @@ namespace Veng
 {
     class AssetManager;
     class TypeRegistry;
+    class GuiDriver;
+    class GuiDriverRegistry;
+    struct GuiDriverFrame;
 }
 
 namespace Veng::Renderer
@@ -461,6 +464,48 @@ namespace Veng::Gui
         /// @param context  The game-owned binding context, or nullptr to clear.
         void BindContext(BindingContext* context);
 
+        /// @brief Binds a context scoped to one component boundary's subtree.
+        ///
+        /// A `{obj.field}` binding and a named handler *under* @p boundary resolve against this
+        /// context rather than the document's root context — the mechanism an embedded component's
+        /// driver uses to give its subtree its own behaviour (a component carries its markup and its
+        /// view-model, and a host embeds it knowing nothing of its internals). Resolution walks up to
+        /// the nearest ancestor boundary that binds a context, falling back to the document root
+        /// context when none does; a handler unresolved in the component's context falls back to the
+        /// root context (a component may fire a host-provided action deliberately). Each scoped
+        /// context keeps its own version watermark, so a component's binding re-read costs only its
+        /// own dirtied fields. A boundary handle that is empty or names the document root binds the
+        /// document context (the whole-document overload's effect). Passing a null context removes the
+        /// scoped binding. The context and registry are borrowed and must outlive the binding.
+        /// @param boundary  A handle to the component boundary the context scopes to.
+        /// @param context   The game-owned binding context, or nullptr to remove the scoped binding.
+        /// @param registry  The type registry the field paths resolve through; non-null when context is.
+        void BindContext(ElementHandle boundary, BindingContext* context,
+                         const TypeRegistry* registry);
+
+        /// @brief Binds a scoped context using the document's own instantiate-time registry.
+        ///
+        /// The self-sufficient form a component driver calls from OnInstantiate, resolving the
+        /// registry from the document's AssetManager exactly as the whole-document overload does.
+        /// @param boundary  A handle to the component boundary the context scopes to.
+        /// @param context   The game-owned binding context, or nullptr to remove the scoped binding.
+        void BindContext(ElementHandle boundary, BindingContext* context);
+
+        /// @brief Instantiates, binds, and updates the drivers of this document's component boundaries.
+        ///
+        /// Each embedded component boundary naming a scoped driver (its cooked GuiDriverId, authored
+        /// `<Component src="…" driver="…">`) has that driver instantiated from @p drivers on first
+        /// sight and **owned by this document** (destroyed with it), its OnInstantiate run once with
+        /// the boundary as its subtree root, and its OnUpdate called each drive with @p frame rebased
+        /// onto the boundary (its Root pointing at the boundary element). The same driver lifecycle a
+        /// GuiOverlay gives a whole document, applied to a subtree. A boundary naming no driver is
+        /// pure shared markup and is skipped. A null @p drivers leaves any not-yet-instantiated driver
+        /// undriven (already-instantiated ones still update), so a viewport that resolves no catalog
+        /// is a no-op rather than an error.
+        /// @param drivers  The driver catalog boundary ids resolve against, or nullptr.
+        /// @param frame    The ambient per-frame services; rebased per boundary (its Document is this).
+        void DriveComponents(GuiDriverRegistry* drivers, const GuiDriverFrame& frame);
+
         /// @brief Re-resolves every `{path}` binding whose context changed and writes the elements.
         ///
         /// Compares the bound context's version against the one last resolved; on a move it walks
@@ -888,7 +933,47 @@ namespace Veng::Gui
         /// @param target  The element under the pointer, or null to clear the hover entirely.
         void SetHovered(Element* target);
 
-        /// @brief Resolves and writes one element's bindings against the bound data object.
+        /// @brief A binding context and its registry — the pair a `{path}` resolves against.
+        struct EffectiveContext
+        {
+            /// @brief The context whose data object and handler table apply, or null when none binds.
+            BindingContext* Context = nullptr;
+            /// @brief The registry that context's field paths resolve through, or null.
+            const TypeRegistry* Registry = nullptr;
+        };
+
+        /// @brief One binding context scoped to a component boundary's subtree.
+        struct ScopedContext
+        {
+            /// @brief The boundary the context scopes to, held as a serial so a re-used slot cannot alias.
+            ElementHandle Boundary;
+            /// @brief The bound context, or null (the entry is dropped when a scoped bind clears).
+            BindingContext* Context = nullptr;
+            /// @brief The registry this context's field paths resolve through.
+            const TypeRegistry* Registry = nullptr;
+            /// @brief The context version this scope last resolved, so a re-read costs only its own fields.
+            u64 ResolvedVersion = 0;
+            /// @brief Transient per-UpdateBindings flag: whether this context moved since last resolve.
+            bool Moved = false;
+        };
+
+        /// @brief Returns the context+registry an element's bindings resolve against.
+        ///
+        /// The nearest ancestor boundary that binds a scoped context, else the document root context.
+        [[nodiscard]] EffectiveContext EffectiveContextFor(const Element& element) const;
+
+        /// @brief Returns the nearest ancestor boundary's scoped context, or null for the root context.
+        [[nodiscard]] const ScopedContext* FindScopedContext(const Element& element) const;
+
+        /// @brief Resolves a handler for an element's event: its scoped context first, then the root.
+        ///
+        /// The component-first, host-fallback lookup: the element's nearest scoped context is tried
+        /// first, and a name it does not define falls back to the document root context so a component
+        /// may fire a host-provided action.
+        [[nodiscard]] const EventHandler* FindEventHandler(const Element& element,
+                                                           string_view name) const;
+
+        /// @brief Resolves and writes one element's bindings against its effective context.
         void ResolveElementBindings(Element& element);
 
         /// @brief Re-syncs every List's item children against its bound array's current size.
@@ -1186,6 +1271,30 @@ namespace Veng::Gui
 
         /// @brief The context version the last binding resolve read; a move re-reads bindings.
         u64 m_BoundVersion = 0;
+
+        /// @brief The contexts scoped to component boundaries, each keyed by its boundary handle.
+        vector<ScopedContext> m_ScopedContexts;
+
+        /// @brief One embedded component boundary's owned scoped driver.
+        struct ComponentDriverInstance
+        {
+            /// @brief The boundary the driver drives, resolved fresh each drive (address stability).
+            ElementHandle Boundary;
+            /// @brief The authored driver id, resolved against the registry on first drive.
+            u64 DriverId = 0;
+            /// @brief The instantiated driver, owned by the document and destroyed with it; null until built.
+            Unique<GuiDriver> Instance;
+            /// @brief Whether OnInstantiate has run against the current tree (this document's lifetime).
+            bool Instantiated = false;
+            /// @brief Whether an unresolved id has already been logged, so the warning fires once.
+            bool WarnedUnresolved = false;
+        };
+
+        /// @brief The document's owned component drivers, one per boundary naming one; built lazily.
+        vector<ComponentDriverInstance> m_ComponentDrivers;
+
+        /// @brief Whether the component-boundary scan has run; the driver list is built once per document.
+        bool m_ComponentsScanned = false;
 
         /// @brief The focused element, or nullptr when nothing holds focus.
         Element* m_Focused = nullptr;

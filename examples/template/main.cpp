@@ -92,7 +92,7 @@ VE_VIEW_OUTPUT(::OverlayControl);
 class TemplateOverlayDriver final : public GuiDriver
 {
 public:
-    void OnInstantiate(Gui::Document& document, Scene& scene, Entity) override
+    void OnInstantiate(Gui::Document& document, Gui::Element&, Scene& scene, Entity) override
     {
         // Seed the model from the populate-hook snapshot, then bind it plus the dismiss handler to
         // the freshly instantiated document (re-run on any re-instantiate, so the binding survives).
@@ -121,6 +121,55 @@ private:
 };
 
 VE_GUI_DRIVER(TemplateOverlayDriver, 0xE9906144475EB699ULL, "Template Overlay");
+
+// The embedded emblem component's own view-model: a counter the component owns and no host knows
+// about. The emblem fragment's `{Beats}` binding resolves this through the component's scoped
+// context, not the primary HUD's.
+struct EmblemModel
+{
+    i32 Beats = 0;
+};
+
+VE_REFLECT(::EmblemModel, 0xEFD2B0E098C69502ULL)
+VE_FIELD(Beats)
+VE_REFLECT_END();
+
+// The embedded emblem's presentation driver, named on the primary HUD's `<Component driver="…">`.
+// It proves an embedded component carries its own behaviour: the engine instantiates one driver per
+// boundary, each owning an independent EmblemModel it advances from its own clock and binds *scoped
+// to its boundary's subtree*, so the emblem's `{Beats}` reads the component's view-model while the
+// surrounding HUD's `{Caption}`/`{Level}` read the host's — two contexts on one document, the
+// component's driven with no host knowledge of its internals.
+class EmblemDriver final : public GuiDriver
+{
+public:
+    void OnInstantiate(Gui::Document& document, Gui::Element& root, Scene&, Entity) override
+    {
+        // Bind the component's own view-model scoped to its boundary's subtree; the emblem's
+        // `{Beats}` resolves against this rather than the host HUD's context.
+        m_Context.SetData(m_Model);
+        document.BindContext(document.GetHandle(root), &m_Context);
+    }
+
+    void OnUpdate(const GuiDriverFrame& frame) override
+    {
+        // Advance the owned counter from the component's own clock and republish it — a value the
+        // component mutates itself, independent of anything the host drives.
+        m_Elapsed += frame.Delta;
+        if (const i32 beats = static_cast<i32>(m_Elapsed * 2.0f); beats != m_Model.Beats)
+        {
+            m_Model.Beats = beats;
+            m_Context.Invalidate();
+        }
+    }
+
+private:
+    EmblemModel m_Model;
+    Gui::BindingContext m_Context;
+    f32 m_Elapsed = 0.0f;
+};
+
+VE_GUI_DRIVER(EmblemDriver, 0xC8CA6B412AB63897ULL, "Emblem");
 
 // The cooked overlay level the Tab key opens as a secondary, simulated overlay. Its own prefab
 // authors an input seat, a spinning cube, and an interactive GuiOverlay HUD; its `systems` name the
@@ -518,6 +567,7 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
     host->Types.Register<TemplateHud>();
     host->Types.Register<OverlaySnapshot>();
     host->Types.Register<OverlayControl>();
+    host->Types.Register<EmblemModel>();
     // Registered like any other component; its AssetHandle field needs no special treatment
     // beyond the type's own HandleFieldType registration below.
     host->Types.Register<MarkerBeacon>();
@@ -526,6 +576,9 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
     if (host->Drivers != nullptr)
     {
         host->Drivers->Register<TemplateOverlayDriver>();
+        // The primary HUD embeds an emblem component that drives its own subtree — its driver is
+        // named on the `<Component>` boundary and instantiated by the engine, one per embed.
+        host->Drivers->Register<EmblemDriver>();
     }
 
     // The game-defined asset type registers here and nowhere else: this entry is reachable from

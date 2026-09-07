@@ -206,38 +206,20 @@ namespace Veng
     void GuiSurface::DriveDriver(GuiSurfaceRuntime& runtime, AssetManager& assets,
                                  const GuiSurfaceDriveContext& services, const f32 delta) const
     {
-        // Undriven is the common case and every one of these is a legitimate way to spell it: no
-        // driver named, no scene or catalog (a viewport that does not claim this surface), or a
-        // document that has not instantiated yet.
+        // A driver — the surface's own or an embedded component's — needs a scene to read against
+        // and a live document to drive; with neither there is nothing to do. A missing catalog is
+        // not fatal: it only leaves a not-yet-instantiated driver unbuilt.
         Gui::Document* const document = runtime.Host->Get();
-        if (Driver == GuiDriverId::Null || services.World == nullptr ||
-            services.Drivers == nullptr || document == nullptr)
+        if (services.World == nullptr || document == nullptr)
         {
             return;
         }
 
-        if (runtime.Driver == nullptr)
-        {
-            runtime.Driver = services.Drivers->Instantiate(Driver);
-            runtime.DriverDocument = nullptr;
-            if (runtime.Driver == nullptr)
-            {
-                Log::Warn("GuiSurface names GuiDriver {:#018x}, which no registered driver claims; "
-                          "leaving the surface undriven.",
-                          static_cast<u64>(Driver));
-                return;
-            }
-        }
-
-        // Re-run OnInstantiate whenever the live document changed identity, so cached element
-        // pointers stay valid — the same contract SetOnInstantiate carries.
-        if (document != runtime.DriverDocument)
-        {
-            runtime.Driver->OnInstantiate(*document, *services.World, services.Seat);
-            runtime.DriverDocument = document;
-        }
-        runtime.Driver->OnUpdate(GuiDriverFrame{
+        // The ambient frame the surface's driver and its components read; each component gets it
+        // rebased onto its boundary.
+        const GuiDriverFrame frame{
             .Document = *document,
+            .Root = &document->Root(),
             .Scene = *services.World,
             .Owner = services.Owner,
             .Seat = services.Seat,
@@ -246,6 +228,38 @@ namespace Veng
             .View = services.View,
             .Assets = assets,
             .Audio = services.Audio,
-        });
+        };
+
+        if (Driver != GuiDriverId::Null && services.Drivers != nullptr)
+        {
+            if (runtime.Driver == nullptr)
+            {
+                runtime.Driver = services.Drivers->Instantiate(Driver);
+                runtime.DriverDocument = nullptr;
+                if (runtime.Driver == nullptr)
+                {
+                    Log::Warn("GuiSurface names GuiDriver {:#018x}, which no registered driver "
+                              "claims; leaving the surface undriven.",
+                              static_cast<u64>(Driver));
+                }
+            }
+
+            if (runtime.Driver != nullptr)
+            {
+                // Re-run OnInstantiate whenever the live document changed identity, so cached element
+                // pointers stay valid — the same contract SetOnInstantiate carries. A whole-document
+                // driver drives the document root.
+                if (document != runtime.DriverDocument)
+                {
+                    runtime.Driver->OnInstantiate(*document, document->Root(), *services.World,
+                                                  services.Seat);
+                    runtime.DriverDocument = document;
+                }
+                runtime.Driver->OnUpdate(frame);
+            }
+        }
+
+        // Drive the document's embedded component drivers, whether or not the surface itself is driven.
+        document->DriveComponents(services.Drivers, frame);
     }
 }

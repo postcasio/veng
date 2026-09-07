@@ -462,17 +462,19 @@ namespace Veng::Cook
                                 const RepeatContext& subst, const CookContext& context,
                                 vector<EmbedFrame>& chain);
 
-        // Cooks a `<Component src="…">`: resolves the referenced UIDocument fragment, applies the
-        // element's `param:<name>` values as `${name}` substitutions inside it, and splices the
-        // fragment's element subtree in under a new ElementKind::Component boundary. The boundary
-        // records the fragment's AssetId (its driver id stays unbound), and the fragment's own
-        // referenced stylesheets fold into the host document's set. A fragment that (transitively)
-        // embeds itself, or one nested past MaxComponentDepth, is a located error naming the chain.
+        // Cooks a `<Component src="…" [driver="…"]>`: resolves the referenced UIDocument fragment,
+        // applies the element's `param:<name>` values as `${name}` substitutions inside it, and
+        // splices the fragment's element subtree in under a new ElementKind::Component boundary. The
+        // boundary records the fragment's AssetId and the optional scoped GuiDriverId `driver` names
+        // (0 = pure shared markup), and the fragment's own referenced stylesheets fold into the host
+        // document's set. A fragment that (transitively) embeds itself, or one nested past
+        // MaxComponentDepth, is a located error naming the chain.
         Result<u32> CookComponent(const pugi::xml_node& node, Build& build, const string& file,
                                   const string& located, const RepeatContext& subst,
                                   const CookContext& context, vector<EmbedFrame>& chain)
         {
             optional<AssetId> fragId;
+            u64 driverId = 0;
             std::map<string, string> params;
             for (const pugi::xml_attribute& attr : node.attributes())
             {
@@ -499,6 +501,19 @@ namespace Veng::Cook
                     fragId = *id;
                     continue;
                 }
+                if (name == "driver")
+                {
+                    // The scoped presentation driver the runtime instantiates for this boundary,
+                    // named as a hex GuiDriverId; the runtime resolves it against the GuiDriverRegistry.
+                    const optional<u64> id = ParseHexId(value);
+                    if (!id)
+                    {
+                        return std::unexpected(fmt::format(
+                            "{}: 'driver' value '{}' is not a hex GuiDriverId", located, value));
+                    }
+                    driverId = *id;
+                    continue;
+                }
                 if (name.rfind("param:", 0) == 0)
                 {
                     const string paramName = name.substr(std::strlen("param:"));
@@ -511,8 +526,8 @@ namespace Veng::Cook
                     continue;
                 }
                 return std::unexpected(
-                    fmt::format("{}: unrecognized attribute '{}' on <Component> (expected 'src' or "
-                                "'param:<name>')",
+                    fmt::format("{}: unrecognized attribute '{}' on <Component> (expected 'src', "
+                                "'driver', or 'param:<name>')",
                                 located, name));
             }
             if (!fragId)
@@ -593,7 +608,7 @@ namespace Veng::Cook
             boundary.FirstHandler = static_cast<u32>(build.Handlers.size());
             boundary.FirstInlineProperty = static_cast<u32>(build.InlineProperties.size());
             boundary.ComponentSource = fragId->Value;
-            boundary.ComponentDriver = 0;
+            boundary.ComponentDriver = driverId;
             const usize selfIndex = build.Elements.size();
             build.Elements.push_back(boundary);
 

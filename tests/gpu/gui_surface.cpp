@@ -207,7 +207,10 @@ namespace
     // ran *before* the document's dirty-gated record rather than after it.
     struct PanelDriver final : GuiDriver
     {
-        void OnInstantiate(Gui::Document&, Scene&, Entity) override { ++g_Trace.Instantiates; }
+        void OnInstantiate(Gui::Document&, Gui::Element&, Scene&, Entity) override
+        {
+            ++g_Trace.Instantiates;
+        }
 
         void OnUpdate(const GuiDriverFrame& frame) override
         {

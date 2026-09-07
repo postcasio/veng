@@ -30,6 +30,8 @@ namespace
     constexpr AssetId SheetId{0x5B33ACBEC98E1BD8ULL};
     constexpr AssetId FragmentId{0x00C0FFEE0BAD6E01ULL};
     constexpr AssetId HostId{0x00C0FFEE01057001ULL};
+    // The scoped driver id the host's first <Component> names; the second names none.
+    constexpr u64 DriverId = 0x00C0FFEE0D817E01ULL;
 
     bool Contains(const vector<AssetId>& ids, AssetId id)
     {
@@ -60,7 +62,7 @@ TEST_CASE("Cooker: a <Component> splices a fragment subtree under a boundary wit
     const vector<Gui::UIElementRecipe>& elements = decoded->Elements;
 
     // The two <Component>s each became an ElementKind::Component boundary recording the fragment's
-    // AssetId, its reserved driver id left unbound, with the fragment's single root as its one child.
+    // AssetId, with the fragment's single root as its one child.
     vector<usize> boundaries;
     for (usize i = 0; i < elements.size(); ++i)
     {
@@ -71,13 +73,16 @@ TEST_CASE("Cooker: a <Component> splices a fragment subtree under a boundary wit
     }
     REQUIRE(boundaries.size() == 2);
 
+    // The first embed names a scoped driver; the second names none, so it stays pure shared markup.
+    CHECK(elements[boundaries[0]].ComponentDriver == DriverId);
+    CHECK(elements[boundaries[1]].ComponentDriver == 0);
+
     const std::array<string, 2> titles{"Ready", "Set"};
     for (usize b = 0; b < boundaries.size(); ++b)
     {
         const usize idx = boundaries[b];
         const Gui::UIElementRecipe& boundary = elements[idx];
         CHECK(boundary.ComponentSource.Value == FragmentId.Value);
-        CHECK(boundary.ComponentDriver == 0);
         CHECK(boundary.ChildCount == 1);
 
         // The spliced subtree: the fragment's Panel root, its ${title} label (this embed's param),

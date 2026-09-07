@@ -1,5 +1,5 @@
 <Panel class="hud" stylesheets="0x9199FE52C60D7DF8" style="font: 0x9A6A7CD94A6DDBD7; width: 240px;">
-  <Component src="0x8C245DEE9B8C3576" param:name="veng"/>
+  <Component src="0x8C245DEE9B8C3576" param:name="veng" driver="0xC8CA6B412AB63897"/>
   <Text class="caption" value="{Caption}"/>
   <ProgressBar class="bar" value="{Level}"/>
 </Panel>

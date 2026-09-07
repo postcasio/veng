@@ -422,6 +422,14 @@ namespace Veng::Gui
         /// @brief Named bound-value slots a binding layer resolves against a context.
         map<string, string> Bindings;
 
+        /// @brief A Component boundary's scoped driver id; 0 on every other kind and an undriven boundary.
+        ///
+        /// Copied from the cooked recipe at instantiate. A non-zero id names a GuiDriver the document
+        /// instantiates for this boundary (DriveComponents), scoping its BindingContext to the
+        /// boundary's subtree. Stored as the raw u64 the recipe carries so Element.h stays free of the
+        /// driver header; the drive path casts it to GuiDriverId.
+        u64 ComponentDriver = 0;
+
         /// @brief The widget-layer runtime state a control's behavior reads and writes.
         WidgetState Widget;
 

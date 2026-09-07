@@ -8,9 +8,12 @@
 #include <Veng/Asset/Font.h>
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Texture.h>
+#include <Veng/Gui/Driver.h>
+#include <Veng/Gui/DriverRegistry.h>
 #include <Veng/Gui/Placement.h>
 #include <Veng/Gui/StyleSheet.h>
 #include <Veng/Gui/UIDocument.h>
+#include <Veng/Log.h>
 #include <Veng/Reflection/EnumName.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/Viewport.h>
@@ -613,6 +616,7 @@ namespace Veng::Gui
             element.Id = recipe.Id;
             element.Classes = recipe.Classes;
             element.Text = recipe.Text;
+            element.ComponentDriver = recipe.ComponentDriver;
 
             for (const UIBindingRecipe& binding : recipe.Bindings)
             {
@@ -3850,6 +3854,184 @@ namespace Veng::Gui
         BindContext(context, registry);
     }
 
+    void Document::BindContext(const ElementHandle boundary, BindingContext* const context,
+                               const TypeRegistry* const registry)
+    {
+        VE_ASSERT(context == nullptr || registry != nullptr,
+                  "BindContext requires a TypeRegistry when a context is bound");
+
+        // An empty handle, or one naming the document root, is the whole-document bind: a component
+        // driver written to scope its bind to whatever subtree it drives then works unchanged as a
+        // whole-document overlay driver, where its root is the document root.
+        if (!boundary.IsValid() || boundary == GetHandle(*m_Root))
+        {
+            BindContext(context, registry);
+            return;
+        }
+
+        const auto it = std::ranges::find_if(m_ScopedContexts, [&](const ScopedContext& sc)
+                                             { return sc.Boundary == boundary; });
+        if (context == nullptr)
+        {
+            if (it != m_ScopedContexts.end())
+            {
+                m_ScopedContexts.erase(it);
+            }
+            return;
+        }
+        if (it != m_ScopedContexts.end())
+        {
+            it->Context = context;
+            it->Registry = registry;
+            it->ResolvedVersion = 0;
+            return;
+        }
+        m_ScopedContexts.push_back(ScopedContext{.Boundary = boundary,
+                                                 .Context = context,
+                                                 .Registry = registry,
+                                                 .ResolvedVersion = 0,
+                                                 .Moved = false});
+    }
+
+    void Document::BindContext(const ElementHandle boundary, BindingContext* const context)
+    {
+        const TypeRegistry* const registry =
+            context != nullptr && m_Assets != nullptr ? &m_Assets->GetTypeRegistry() : nullptr;
+        BindContext(boundary, context, registry);
+    }
+
+    const Document::ScopedContext* Document::FindScopedContext(const Element& element) const
+    {
+        // Walk from the element up its ancestor chain, returning the first boundary that binds a
+        // scoped context — the nearest binding ancestor governs the element's resolution.
+        const Element* e = &element;
+        while (e != nullptr)
+        {
+            const u64 serial = e->Serial;
+            for (const ScopedContext& sc : m_ScopedContexts)
+            {
+                if (sc.Boundary.Value == serial && sc.Context != nullptr)
+                {
+                    return &sc;
+                }
+            }
+            if (e->Parent != nullptr)
+            {
+                e = e->Parent;
+                continue;
+            }
+            // A popup root has no parent; continue from the anchor it was opened over, so a popup
+            // (a Dropdown's option list, a menu) opened from inside a component still resolves
+            // against that component's context rather than the document root's.
+            const Element* anchor = nullptr;
+            for (const Popup& popup : m_Popups)
+            {
+                if (popup.Root == e)
+                {
+                    anchor = popup.AnchorElement;
+                    break;
+                }
+            }
+            e = anchor;
+        }
+        return nullptr;
+    }
+
+    Document::EffectiveContext Document::EffectiveContextFor(const Element& element) const
+    {
+        if (const ScopedContext* const sc = FindScopedContext(element))
+        {
+            return EffectiveContext{.Context = sc->Context, .Registry = sc->Registry};
+        }
+        return EffectiveContext{.Context = m_Context, .Registry = m_Registry};
+    }
+
+    const EventHandler* Document::FindEventHandler(const Element& element,
+                                                   const string_view name) const
+    {
+        // Component-first, host-fallback: the nearest scoped context is tried first, and a name it
+        // does not define falls back to the document root context so a component may still fire a
+        // host-provided action.
+        if (const ScopedContext* const sc = FindScopedContext(element); sc != nullptr)
+        {
+            if (const EventHandler* const handler = sc->Context->FindHandler(name);
+                handler != nullptr && *handler)
+            {
+                return handler;
+            }
+        }
+        if (m_Context != nullptr)
+        {
+            if (const EventHandler* const handler = m_Context->FindHandler(name);
+                handler != nullptr && *handler)
+            {
+                return handler;
+            }
+        }
+        return nullptr;
+    }
+
+    void Document::DriveComponents(GuiDriverRegistry* const drivers, const GuiDriverFrame& frame)
+    {
+        // Build the boundary list once: a document is instantiated fresh on every (re)instantiate,
+        // so the component drivers it owns are scoped to this document's own lifetime.
+        if (!m_ComponentsScanned)
+        {
+            m_ComponentsScanned = true;
+            for (const Unique<Element>& element : m_Elements)
+            {
+                if (element->Kind == ElementKind::Component && element->ComponentDriver != 0)
+                {
+                    m_ComponentDrivers.push_back(ComponentDriverInstance{
+                        .Boundary = GetHandle(*element), .DriverId = element->ComponentDriver});
+                }
+            }
+        }
+
+        for (ComponentDriverInstance& driver : m_ComponentDrivers)
+        {
+            Element* const boundary = Resolve(driver.Boundary);
+            if (boundary == nullptr)
+            {
+                continue;
+            }
+
+            // Instantiate lazily, when a catalog is available and the id resolves; an unresolved id
+            // warns once and leaves the component undriven — a recoverable miss, not an abort.
+            if (driver.Instance == nullptr)
+            {
+                if (drivers == nullptr)
+                {
+                    continue;
+                }
+                driver.Instance = drivers->Instantiate(static_cast<GuiDriverId>(driver.DriverId));
+                if (driver.Instance == nullptr)
+                {
+                    if (!driver.WarnedUnresolved)
+                    {
+                        Log::Warn("Gui component names GuiDriver {:#018x}, which no registered "
+                                  "driver claims; leaving the component undriven.",
+                                  driver.DriverId);
+                        driver.WarnedUnresolved = true;
+                    }
+                    continue;
+                }
+            }
+
+            if (!driver.Instantiated)
+            {
+                driver.Instance->OnInstantiate(*this, *boundary, frame.Scene, frame.Seat);
+                driver.Instantiated = true;
+            }
+
+            // Rebase the ambient frame onto this boundary — same document, scene, and services, with
+            // Root at the boundary so the driver reads and writes only its own subtree.
+            GuiDriverFrame scoped = frame;
+            scoped.Root = boundary;
+            driver.Instance->OnUpdate(scoped);
+        }
+    }
+
     namespace
     {
         // A `value` binding on a value-bearing control (Slider/Checkbox/ProgressBar/Dropdown) writes
@@ -3865,6 +4047,19 @@ namespace Veng::Gui
 
     void Document::ResolveElementBindings(Element& element)
     {
+        // An element resolves against its effective context — the nearest ancestor component
+        // boundary that binds one, else the document root context. A context with no data object is
+        // nothing to read against.
+        const EffectiveContext effective = EffectiveContextFor(element);
+        if (effective.Context == nullptr || effective.Context->GetData() == nullptr ||
+            effective.Registry == nullptr)
+        {
+            return;
+        }
+        const TypeRegistry& registry = *effective.Registry;
+        void* const data = effective.Context->GetData();
+        const TypeId dataType = effective.Context->GetDataType();
+
         for (const auto& [property, expression] : element.Bindings)
         {
             // Only `{obj.field}` value bindings resolve here; a handler entry (onClick, …) is keyed
@@ -3879,8 +4074,7 @@ namespace Veng::Gui
                     styleProperty.has_value() && IsBindableStyleProperty(*styleProperty))
                 {
                     if (const optional<vec4> value =
-                            ResolveNumericLeaf(*m_Registry, m_Context->GetData(),
-                                               m_Context->GetDataType(), expression);
+                            ResolveNumericLeaf(registry, data, dataType, expression);
                         value.has_value())
                     {
                         WriteProperty(element.BaseStyle, *styleProperty, *value);
@@ -3890,8 +4084,7 @@ namespace Veng::Gui
                 continue;
             }
 
-            const optional<string> resolved = ResolvePath(*m_Registry, m_Context->GetData(),
-                                                          m_Context->GetDataType(), expression);
+            const optional<string> resolved = ResolvePath(registry, data, dataType, expression);
             if (!resolved)
             {
                 continue;
@@ -3947,30 +4140,55 @@ namespace Veng::Gui
 
     void Document::UpdateBindings()
     {
-        if (m_Context == nullptr || m_Context->GetData() == nullptr || m_Registry == nullptr)
+        // A version watermark per context — the root and each component scope — so a component's
+        // re-read costs only its own dirtied fields and a static context costs no reflection walk.
+        const bool rootMoved = m_Context != nullptr && m_Context->GetData() != nullptr &&
+                               m_Registry != nullptr && m_Context->GetVersion() != m_BoundVersion;
+        bool anyMoved = rootMoved;
+        for (ScopedContext& sc : m_ScopedContexts)
+        {
+            sc.Moved = sc.Context != nullptr && sc.Context->GetData() != nullptr &&
+                       sc.Registry != nullptr && sc.Context->GetVersion() != sc.ResolvedVersion;
+            anyMoved = anyMoved || sc.Moved;
+        }
+        if (!anyMoved)
         {
             return;
         }
-        if (m_Context->GetVersion() == m_BoundVersion)
+        if (rootMoved)
         {
-            return;
+            m_BoundVersion = m_Context->GetVersion();
         }
-        m_BoundVersion = m_Context->GetVersion();
+        for (ScopedContext& sc : m_ScopedContexts)
+        {
+            if (sc.Moved)
+            {
+                sc.ResolvedVersion = sc.Context->GetVersion();
+            }
+        }
 
         // Re-materialize each List's item children against its bound array first — this may add or
         // remove elements, so it runs before the flat binding walk over m_Elements below and its
-        // freshly-created items already carry their per-item resolved values.
+        // freshly-created items already carry their per-item resolved values. Each host resolves
+        // against its own effective context, so a repeater inside a component reads the component's.
         SyncLists();
 
         // Refresh each Dropdown's option count, one-way index, and anchor label before the flat walk,
         // so its value clamp reads the current option count rather than a stale zero max.
         SyncDropdowns();
 
-        // Resolve every non-List-item element's bindings against the main context. A List item's own
-        // bindings resolve against its array element inside SyncList, so they are skipped here.
+        // Resolve every non-List-item element's bindings against its effective context, but only when
+        // that context moved — a component whose view-model is unchanged is not re-walked because the
+        // root context (or a sibling component's) moved. A List item's own bindings resolve against
+        // its array element inside SyncList, so they are skipped here.
         for (const Unique<Element>& element : m_Elements)
         {
-            if (!element->Bindings.empty() && !IsListItem(*element))
+            if (element->Bindings.empty() || IsListItem(*element))
+            {
+                continue;
+            }
+            const ScopedContext* const sc = FindScopedContext(*element);
+            if (sc != nullptr ? sc->Moved : rootMoved)
             {
                 ResolveElementBindings(*element);
             }
@@ -4066,8 +4284,17 @@ namespace Veng::Gui
         // they are the item template, cloned per array element, never laid out or drawn themselves.
         CaptureItemTemplate(list);
 
-        const optional<ResolvedField> field = ResolveFieldPtr(
-            *m_Registry, m_Context->GetData(), m_Context->GetDataType(), binding->second);
+        // The `items` array resolves against the list's effective context, so a repeater inside a
+        // component reads the component's view-model rather than the host document's.
+        const EffectiveContext effective = EffectiveContextFor(list);
+        if (effective.Context == nullptr || effective.Context->GetData() == nullptr ||
+            effective.Registry == nullptr)
+        {
+            return;
+        }
+        const optional<ResolvedField> field =
+            ResolveFieldPtr(*effective.Registry, effective.Context->GetData(),
+                            effective.Context->GetDataType(), binding->second);
         if (!field || field->Field->Class != FieldClass::Array ||
             field->Field->ArraySize == nullptr)
         {
@@ -4168,12 +4395,15 @@ namespace Veng::Gui
         const auto items = dropdown.Bindings.find("items");
         if (items != dropdown.Bindings.end())
         {
-            if (m_Context == nullptr || m_Registry == nullptr)
+            const EffectiveContext effective = EffectiveContextFor(dropdown);
+            if (effective.Context == nullptr || effective.Context->GetData() == nullptr ||
+                effective.Registry == nullptr)
             {
                 return 0;
             }
-            const optional<ResolvedField> field = ResolveFieldPtr(
-                *m_Registry, m_Context->GetData(), m_Context->GetDataType(), items->second);
+            const optional<ResolvedField> field =
+                ResolveFieldPtr(*effective.Registry, effective.Context->GetData(),
+                                effective.Context->GetDataType(), items->second);
             if (!field || field->Field->Class != FieldClass::Array ||
                 field->Field->ArraySize == nullptr)
             {
@@ -4195,7 +4425,9 @@ namespace Veng::Gui
         const auto items = dropdown.Bindings.find("items");
         if (items != dropdown.Bindings.end())
         {
-            if (m_Context == nullptr || m_Registry == nullptr || tmpl == m_ListTemplates.end())
+            const EffectiveContext effective = EffectiveContextFor(dropdown);
+            if (effective.Context == nullptr || effective.Context->GetData() == nullptr ||
+                effective.Registry == nullptr || tmpl == m_ListTemplates.end())
             {
                 return std::nullopt;
             }
@@ -4211,14 +4443,15 @@ namespace Veng::Gui
             {
                 return std::nullopt;
             }
-            const optional<ResolvedField> field = ResolveFieldPtr(
-                *m_Registry, m_Context->GetData(), m_Context->GetDataType(), items->second);
+            const optional<ResolvedField> field =
+                ResolveFieldPtr(*effective.Registry, effective.Context->GetData(),
+                                effective.Context->GetDataType(), items->second);
             if (!field || field->Field->ArrayElement == nullptr)
             {
                 return std::nullopt;
             }
             void* const itemPtr = field->Field->ArrayElement(field->Ptr, index);
-            return ResolvePath(*m_Registry, itemPtr, field->Field->ElementType, *labelExpr);
+            return ResolvePath(*effective.Registry, itemPtr, field->Field->ElementType, *labelExpr);
         }
         // Inline: the option's label is the template item's own text.
         if (tmpl == m_ListTemplates.end() || index >= tmpl->second.Roots.size())
@@ -4275,12 +4508,16 @@ namespace Veng::Gui
 
             // Resolve the one-way index binding here, before the flat binding walk, so the clamp
             // reads the fresh option count rather than last frame's — a bound index is never lost to
-            // a stale zero max on the frame the options first arrive.
+            // a stale zero max on the frame the options first arrive. It resolves against the
+            // dropdown's effective context, so a dropdown inside a component reads the component's.
+            const EffectiveContext effective = EffectiveContextFor(dropdown);
             if (const auto value = dropdown.Bindings.find("value");
-                value != dropdown.Bindings.end() && m_Context != nullptr && m_Registry != nullptr)
+                value != dropdown.Bindings.end() && effective.Context != nullptr &&
+                effective.Context->GetData() != nullptr && effective.Registry != nullptr)
             {
-                if (const optional<string> resolved = ResolvePath(
-                        *m_Registry, m_Context->GetData(), m_Context->GetDataType(), value->second))
+                if (const optional<string> resolved =
+                        ResolvePath(*effective.Registry, effective.Context->GetData(),
+                                    effective.Context->GetDataType(), value->second))
                 {
                     f32 index = dropdown.Widget.Value;
                     static_cast<void>(std::from_chars(resolved->data(),
@@ -4340,7 +4577,10 @@ namespace Veng::Gui
         CascadeWidgetElement(list);
 
         // SyncLists runs only on a context-version bump, so populate the freshly-opened list now.
-        if (dataBound && m_Context != nullptr && m_Registry != nullptr)
+        // The option list resolves against the dropdown's effective context (which the popup root
+        // inherits through its anchor), so a data-bound dropdown inside a component still fills.
+        if (const EffectiveContext effective = EffectiveContextFor(dropdown);
+            dataBound && effective.Context != nullptr && effective.Registry != nullptr)
         {
             SyncList(list);
         }
@@ -4822,16 +5062,14 @@ namespace Veng::Gui
 
     bool Document::FireHandler(Element& element, string_view event)
     {
-        if (m_Context == nullptr)
-        {
-            return false;
-        }
         const auto it = element.Bindings.find(string{event});
         if (it == element.Bindings.end())
         {
             return false;
         }
-        const EventHandler* handler = m_Context->FindHandler(it->second);
+        // Component-first with host fallback: the element's own component context first, then the
+        // document root context — so an onClick a component does not define fires a host action.
+        const EventHandler* const handler = FindEventHandler(element, it->second);
         if (handler == nullptr || !*handler)
         {
             return false;
@@ -5359,16 +5597,13 @@ namespace Veng::Gui
             return DriveWidgetText(*m_Focused, codepoint);
         }
 
-        if (m_Context == nullptr)
-        {
-            return false;
-        }
         const auto it = m_Focused->Bindings.find("onText");
         if (it == m_Focused->Bindings.end())
         {
             return false;
         }
-        const EventHandler* handler = m_Context->FindHandler(it->second);
+        // Component-first with host fallback, exactly as FireHandler resolves an onClick.
+        const EventHandler* const handler = FindEventHandler(*m_Focused, it->second);
         if (handler == nullptr || !*handler)
         {
             return false;
