@@ -290,8 +290,15 @@ namespace Veng::Mcp
             tool.Name = "render.stats";
             tool.Description =
                 "Reports a viewport's cull funnel (visible/frustum_survived/drawn/gpu_survivors, "
-                "broadphase state) and the last completed-frame GPU time in milliseconds. Optional "
-                "'viewport' names the viewport (default the primary).";
+                "broadphase state), the last completed-frame GPU time in milliseconds, and its "
+                "render-scale state: render_scale (the effective current scale dynamic resolution "
+                "drives), allocation_scale (the ceiling the render target is sized to; the "
+                "sub-rect "
+                "fraction rendered inside it is render_scale / allocation_scale), "
+                "allocation_extent (the render-target pixels, distinct from the full-window region "
+                "render.list_viewports reports), and dynamic_resolution — with drs_min_scale / "
+                "drs_max_scale / drs_target_frame_ms when it is on. Optional 'viewport' names the "
+                "viewport (default the primary).";
             tool.InputSchemaJson =
                 R"({"type":"object","properties":{"viewport":{"type":"string"}}})";
             tool.Handler = [&host](string_view argsJson) -> Result<string>
@@ -307,14 +314,48 @@ namespace Veng::Mcp
                 }
 
                 const Renderer::SceneRenderer& renderer = viewport->GetRenderer();
-                return Json{{"visible", renderer.GetLastVisibleCount()},
-                            {"frustum_survived", renderer.GetFrustumSurvivedCount()},
-                            {"drawn", renderer.GetLastDrawnCount()},
-                            {"gpu_survivors", renderer.GetLastGpuSurvivorCount()},
-                            {"broadphase_rebuilt", renderer.DidBroadphaseRebuildLastFrame()},
-                            {"broadphase_nodes", renderer.GetBroadphaseNodeCount()},
-                            {"gpu_frame_time_ms", host.Assets.GetContext().GetLastGpuFrameTimeMs()}}
-                    .dump();
+                const uvec2 alloc = viewport->GetAllocationExtent();
+                const uvec2 valid = renderer.GetValidExtent();
+                const Renderer::SceneRendererSettings& s = renderer.GetSettings();
+                const bool cullGpu =
+                    renderer.GetActiveCullMode() == Renderer::SceneRendererSettings::CullMode::GPU;
+                const bool bloomKawase = s.Bloom && s.Kernel == Renderer::BloomKernel::Kawase;
+                const bool debugView = s.Mode != Renderer::DebugView::Final;
+                // The sub-rect DRS scaling is applied only on this exact battery set; anything else
+                // forces full resolution (ResolveRenderScale), so the effective extent is valid_extent
+                // regardless of render_scale.
+                const bool subRectApplied =
+                    !s.TAA && !s.SSR && !(cullGpu && s.Occlusion) && !bloomKawase && !debugView;
+                Json result = {
+                    {"visible", renderer.GetLastVisibleCount()},
+                    {"frustum_survived", renderer.GetFrustumSurvivedCount()},
+                    {"drawn", renderer.GetLastDrawnCount()},
+                    {"gpu_survivors", renderer.GetLastGpuSurvivorCount()},
+                    {"broadphase_rebuilt", renderer.DidBroadphaseRebuildLastFrame()},
+                    {"broadphase_nodes", renderer.GetBroadphaseNodeCount()},
+                    {"gpu_frame_time_ms", host.Assets.GetContext().GetLastGpuFrameTimeMs()},
+                    {"render_scale", viewport->GetRenderScale()},
+                    {"allocation_scale", viewport->GetAllocationScale()},
+                    {"allocation_extent", {alloc.x, alloc.y}},
+                    {"valid_extent", {valid.x, valid.y}},
+                    {"sub_rect_applied", subRectApplied},
+                    {"render_features",
+                     {{"taa", s.TAA},
+                      {"ssr", s.SSR},
+                      {"cull_gpu", cullGpu},
+                      {"occlusion", s.Occlusion},
+                      {"bloom_kawase", bloomKawase},
+                      {"debug_view", debugView}}},
+                    {"dynamic_resolution", viewport->IsDynamicResolutionEnabled()}};
+                if (const optional<Renderer::DynamicResolutionSettings>& drs =
+                        viewport->GetDynamicResolution();
+                    drs.has_value())
+                {
+                    result["drs_min_scale"] = drs->MinScale;
+                    result["drs_max_scale"] = drs->MaxScale;
+                    result["drs_target_frame_ms"] = drs->TargetFrameTimeMs;
+                }
+                return result.dump();
             };
             server.RegisterTool(std::move(tool));
         }
