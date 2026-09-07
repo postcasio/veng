@@ -1007,6 +1007,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_surface_input.cpp
             tests/unit/gui_widgets.cpp
             tests/unit/gui_list_selection.cpp
+            tests/unit/gui_dropdown.cpp
             tests/unit/gui_scroll.cpp
             tests/unit/gui_document_api.cpp
             tests/unit/gui_presence.cpp
@@ -1944,6 +1945,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/cook_source.cpp
             tests/cooker/ui_document_cook.cpp
             tests/cooker/ui_list_selection_cook.cpp
+            tests/cooker/ui_dropdown_cook.cpp
             tests/cooker/stylesheet_cook.cpp
             tests/cooker/ui_document_repeat.cpp
     )

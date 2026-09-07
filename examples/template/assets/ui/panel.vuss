@@ -25,3 +25,27 @@
     font-size: 96px;
     color: rgb(0.4, 6, 7);
 }
+
+/* A compact mode chooser: the Dropdown anchor draws the selected option's label and opens a
+   single-select List of the options below it. Its chevron part inherits the anchor's classes, so
+   DropdownArrow.mode reaches this instance's arrow. */
+Dropdown.mode {
+    font-size: 22px;
+    color: rgb(0, 2, 3);
+    background: rgba(0.02, 0.06, 0.09, 0.9);
+    corner-radius: 6px;
+    padding: 8px;
+    width: 260px;
+    height: 44px;
+}
+
+DropdownArrow.mode {
+    background: rgb(0, 2, 3);
+    corner-radius: 2px;
+}
+
+.option {
+    font-size: 22px;
+    color: rgb(0, 2, 3);
+    padding: 6px;
+}

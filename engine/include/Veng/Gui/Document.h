@@ -972,6 +972,56 @@ namespace Veng::Gui
         /// @brief Places a Slider's fill and thumb against its solved box and value fraction.
         void LayoutSliderParts(Element& element);
 
+        /// @brief Creates a Dropdown's chevron arrow part, once, if it has none.
+        void SyncDropdownParts(Element& element);
+
+        /// @brief Places a Dropdown's arrow part against the right edge of its solved box.
+        void LayoutDropdownParts(Element& element);
+
+        /// @brief Lifts a host's authored content children into the item-template store, once.
+        ///
+        /// Shared by a List's first sync and a Dropdown's first sync: the authored children are the
+        /// item template — cloned per array element (or per inline option) and never laid out or
+        /// drawn in the host — while the widget-owned tail parts stay live children. Idempotent.
+        void CaptureItemTemplate(Element& host);
+
+        /// @brief Captures a Dropdown's option template, and for an inline Dropdown seeds its label.
+        ///
+        /// A data-bound Dropdown (an `items` binding) has its option count and label refreshed each
+        /// frame by SyncDropdowns; an inline one (its options authored as children) is fully resolved
+        /// here, since it needs no bound context — its selected option's label reaches the anchor
+        /// even on a display-only document.
+        void EnsureDropdownTemplate(Element& dropdown);
+
+        /// @brief Refreshes every Dropdown's option count, one-way value, and anchor label.
+        void SyncDropdowns();
+
+        /// @brief Opens a Dropdown's option popup below its anchor and focuses the current option.
+        ///
+        /// Builds a single-select List of the options in a popup placed `PopupSide::Below` the
+        /// anchor — data-bound to the same `items` array the anchor names, or holding its inline
+        /// option children — reflects the anchor's current index as the List's selection, and moves
+        /// focus onto it so arrow keys walk the options. A no-op on a non-Dropdown element.
+        /// @return Whether the popup was opened.
+        bool OpenDropdown(Element& dropdown);
+
+        /// @brief Commits an option chosen in a Dropdown's popup List, if the list is one.
+        ///
+        /// When the list is the option List of an open Dropdown popup, writes the chosen index into
+        /// the anchor's value (firing `onChange`), writes the chosen label onto the anchor, and
+        /// closes the popup. A no-op — returning false — for any other selectable List.
+        /// @param list   The item host an activation landed on.
+        /// @param index  The activated slot index.
+        /// @return Whether a Dropdown selection was committed (and the popup closed).
+        bool CommitDropdownSelection(Element& list, u32 index);
+
+        /// @brief Returns a Dropdown's option count: its bound array size, or its inline option count.
+        [[nodiscard]] u32 DropdownOptionCount(const Element& dropdown) const;
+
+        /// @brief Returns a Dropdown option's label, resolved from the bound array or the inline item.
+        [[nodiscard]] optional<string> DropdownOptionLabel(const Element& dropdown,
+                                                           u32 index) const;
+
         /// @brief Applies a user activation of one item slot under the host's selection mode.
         ///
         /// The one place the mode's meaning lives: Single replaces, Multiple toggles, Extended

@@ -63,6 +63,10 @@ namespace VengEditor
                 return "SliderFill";
             case Gui::ElementKind::SliderThumb:
                 return "SliderThumb";
+            case Gui::ElementKind::Dropdown:
+                return "Dropdown";
+            case Gui::ElementKind::DropdownArrow:
+                return "DropdownArrow";
             }
             return "Element";
         }

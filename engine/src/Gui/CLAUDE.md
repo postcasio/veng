@@ -481,11 +481,19 @@ its authored children are an item template cloned once per element of a bound ar
 row widens to the column's widest cell via a measured min-width between the Solve's two layout
 passes; a flex-grow cell is an elastic filler that absorbs row slack instead of becoming a column,
 right-anchoring the columns after it; with an `items` binding it repeats its row template exactly
-as a List does). A numeric Table column pairs with the `text-align` Text style property
-(`left`/`center`/`right`, a paint-only glyph alignment inside the solved box). Each is an
+as a List does), and `Dropdown` (a single-select popup chooser: an anchor drawing the selected
+option's label that opens a `List` of the options below it; `items`/`value`/`onChange`, the value the
+selected **index** — see below). A numeric Table column pairs with the `text-align` Text style
+property (`left`/`center`/`right`, a paint-only glyph alignment inside the solved box). Each is an
 `ElementKind` the cooker recognizes and the widget layer gives behavior; a control's literal config
-attributes (`min`/`max`/`step`/`value`/`checked`/`orientation`/`selection`) are read at `Instantiate` and its `{value}`
+attributes (`min`/`max`/`step`/`value`/`checked`/`orientation`/`selection`/`items`) are read at `Instantiate` and its `{value}`
 binding is one-way (the model drives the widget without firing `onChange`).
+
+**The widget-owned part `ElementKind`s** — `ScrollBar`, `ScrollBarThumb`, `SliderFill`,
+`SliderThumb`, and `DropdownArrow` — are appended to the enum after the authorable kinds and are
+**not** in the cooker's tag table, so authoring `<ScrollBar>` or `<DropdownArrow>` is a cook error.
+**`ElementKind` ordinals are cooked-blob-stable: append, never insert** (a document's cooked recipe
+stores the kind as an ordinal).
 
 **`pointer-events` is three-valued, splitting "not me" from "not us".** `auto` hit-tests, `none`
 makes the element *and its subtree* transparent, and `children` makes only the element itself
@@ -621,6 +629,23 @@ the value fraction against the host's solved box. This retires the overload wher
 its `color` and its thumb its `border-color` — one color per part, no hover state, and a border that
 could not differ from the handle. A value change re-places the parts **directly** rather than
 dirtying the tree, so dragging a slider does not re-run the flex solve per pointer move.
+
+**A `Dropdown` composes the popup layer and a single-select `List` into one control.** The anchor
+draws its own `Element::Text` — the selected option's label, centered as a `Button`'s label is — and
+holds the selected option's **index** in its widget value (the f32 `Slider`/`Checkbox` value surface,
+so `GetWidgetValue`/`SetWidgetValue` read and write it and the declarative `value=` binding is
+one-way; there is **no** string value accessor — a driver maps index↔option-id). Activation (click,
+Enter, gamepad confirm) opens a popup `PopupSide::Below` the anchor holding a single-select `List`;
+arrow keys move the selection, Enter or a click commits it — writing the index, writing the chosen
+label onto the anchor, firing `onChange`, and closing the popup — and Escape or a light-dismiss
+closes it unchanged. Its options are **data-bound** to a view-model array through an `items` binding
+exactly as a `List`'s items are (the anchor's authored children are the option template, lifted into
+the template store on first sync like a `List`'s, so the popup's items and the anchor label both
+resolve through it), or authored **inline** as its children (each option a static item, its own text
+the label). A `DropdownArrow` chevron part rides the anchor's right edge, styled through the ordinary
+cascade (`Dropdown`, `DropdownArrow`, and the `:hover`/`:focused`/`:selected` variants) exactly as
+`SliderFill`/`SliderThumb` are; the popup list carries the `dropdown-list` class and its root the
+`dropdown-popup` class for styling, and its options reuse `List` item styling.
 
 **The widget parts live in `Children`, as a trailing tail.** That buys the layout mirror, the
 cascade, paint order, and hit-testing with no parallel paths — a bar or thumb is drawn and hit like

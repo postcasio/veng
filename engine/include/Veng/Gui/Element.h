@@ -71,6 +71,23 @@ namespace Veng::Gui
         /// (`SliderThumb { background: … }`, `SliderThumb:hover { … }`) rather than through the
         /// Slider's border color, so a Slider's border and its thumb are independent.
         SliderThumb,
+        /// @brief A single-select popup chooser: an anchor that opens a List of its options below it.
+        ///
+        /// The anchor draws its own Text — the selected option's label, centered as a Button's
+        /// label is — and holds the selected option's **index** in its widget value (an f32, the
+        /// value surface Slider and Checkbox use). Activation (click, Enter, gamepad confirm) opens
+        /// a popup below it (`PopupSide::Below`) holding a single-select List of the options;
+        /// choosing one writes the index, writes the chosen label onto the anchor, closes the popup,
+        /// and fires `onChange`; Escape or a light-dismiss closes it unchanged. Options are
+        /// data-bound to a view-model array through an `items` binding exactly as a List's are (its
+        /// authored children are the popup item template), or authored inline as its children.
+        Dropdown,
+        /// @brief The chevron marker part of a Dropdown — widget-owned, not authorable.
+        ///
+        /// Placed against the anchor's right edge by the widget layer, so a `<DropdownArrow>` tag is
+        /// a cook error exactly as a `<ScrollBar>` is. It is a real element purely so it styles
+        /// through the ordinary cascade — `DropdownArrow { background: … }` is a plain type selector.
+        DropdownArrow,
     };
 
     /// @brief Transient interaction-state bits an element carries for styling and events.

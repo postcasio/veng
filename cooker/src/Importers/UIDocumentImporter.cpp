@@ -68,6 +68,10 @@ namespace Veng::Cook
             {
                 return Gui::ElementKind::Table;
             }
+            if (tag == "Dropdown")
+            {
+                return Gui::ElementKind::Dropdown;
+            }
             return std::nullopt;
         }
 

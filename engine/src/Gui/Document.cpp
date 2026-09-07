@@ -331,6 +331,10 @@ namespace Veng::Gui
                 return "SliderFill";
             case ElementKind::SliderThumb:
                 return "SliderThumb";
+            case ElementKind::Dropdown:
+                return "Dropdown";
+            case ElementKind::DropdownArrow:
+                return "DropdownArrow";
             }
             return "Panel";
         }
@@ -440,6 +444,7 @@ namespace Veng::Gui
             case ElementKind::ScrollBarThumb:
             case ElementKind::SliderFill:
             case ElementKind::SliderThumb:
+            case ElementKind::DropdownArrow:
                 return true;
             default:
                 return false;
@@ -475,6 +480,12 @@ namespace Veng::Gui
 
         /// @brief The fill color a SliderThumb paints with when no rule styles it.
         constexpr vec4 DefaultSliderThumb{0.85f, 0.88f, 0.92f, 1.0f};
+
+        /// @brief The fill color a DropdownArrow paints with when no rule styles it.
+        constexpr vec4 DefaultDropdownArrow{0.85f, 0.88f, 0.92f, 1.0f};
+
+        /// @brief The DropdownArrow's marker size as a fraction of the anchor's shorter box edge.
+        constexpr f32 DropdownArrowScale = 0.4f;
 
         // A rule's selector matches an element when each constrained axis (type/class/id) agrees
         // and an unconstrained (empty) axis is a wildcard. A class constraint matches if the tag
@@ -974,6 +985,23 @@ namespace Veng::Gui
             }
         };
         build(document->Root(), build);
+
+        // Lift each Dropdown's authored option children into its template store now the whole tree
+        // exists (InitWidget ran before an element's children were added, so it could not). An inline
+        // dropdown's selected label is seeded here; a data-bound one's arrives with its first bind.
+        // Collect first: the capture erases the option children from m_Elements as it lifts them.
+        vector<Element*> dropdowns;
+        for (const Unique<Element>& element : document->m_Elements)
+        {
+            if (element->Kind == ElementKind::Dropdown)
+            {
+                dropdowns.push_back(element.get());
+            }
+        }
+        for (Element* const dropdown : dropdowns)
+        {
+            document->EnsureDropdownTemplate(*dropdown);
+        }
 
         // The cascaded base includes layout inputs, so the tree must re-solve.
         document->m_Dirty = true;
@@ -2103,6 +2131,7 @@ namespace Veng::Gui
             case ElementKind::Slider:
             case ElementKind::TextInput:
             case ElementKind::ScrollView:
+            case ElementKind::Dropdown:
                 return true;
             case ElementKind::Panel:
             case ElementKind::Text:
@@ -2114,6 +2143,7 @@ namespace Veng::Gui
             case ElementKind::ScrollBarThumb:
             case ElementKind::SliderFill:
             case ElementKind::SliderThumb:
+            case ElementKind::DropdownArrow:
                 return false;
             }
             return false;
@@ -2158,7 +2188,7 @@ namespace Veng::Gui
     void Document::SetWidgetValue(Element& element, f32 value)
     {
         if (element.Kind != ElementKind::Slider && element.Kind != ElementKind::Checkbox &&
-            element.Kind != ElementKind::ProgressBar)
+            element.Kind != ElementKind::ProgressBar && element.Kind != ElementKind::Dropdown)
         {
             return;
         }
@@ -2365,6 +2395,39 @@ namespace Veng::Gui
         fill->Visible = fraction > 0.0f;
     }
 
+    void Document::SyncDropdownParts(Element& element)
+    {
+        if (element.Kind != ElementKind::Dropdown || FindPart(element, ElementKind::DropdownArrow))
+        {
+            return;
+        }
+
+        // The anchor draws its own label text; the arrow is a marker part over its right edge,
+        // styled through the ordinary cascade (`DropdownArrow { … }`) like a Slider's parts.
+        Element& arrow = CreateWidgetPart(element, ElementKind::DropdownArrow, {});
+        if (arrow.BaseStyle.Background.a == 0.0f)
+        {
+            arrow.BaseStyle.Background = DefaultDropdownArrow;
+            arrow.ComputedStyle.Background = DefaultDropdownArrow;
+        }
+    }
+
+    void Document::LayoutDropdownParts(Element& element)
+    {
+        Element* const arrow = FindPart(element, ElementKind::DropdownArrow);
+        if (arrow == nullptr)
+        {
+            return;
+        }
+
+        const Rect& box = element.Layout;
+        const f32 size = std::min(box.Size.x, box.Size.y) * DropdownArrowScale;
+        const f32 border = BorderWidth(element.ComputedStyle);
+        arrow->Layout = Rect{.Min = vec2(box.Min.x + box.Size.x - size - border,
+                                         box.Min.y + (box.Size.y - size) * 0.5f),
+                             .Size = vec2(size, size)};
+    }
+
     Element* Document::FindScrollBar(const Element& element, const bool vertical) const
     {
         for (Element* child : element.Children)
@@ -2546,6 +2609,7 @@ namespace Veng::Gui
         ApplyWidgetFocusability(element);
         SyncScrollBars(element);
         SyncSliderParts(element);
+        SyncDropdownParts(element);
         element.Widget.HasScrollBars = IsScrollable(element.ComputedStyle);
 
         if (element.Kind == ElementKind::Slider)
@@ -2580,6 +2644,17 @@ namespace Veng::Gui
         else if (element.Kind == ElementKind::TextInput)
         {
             element.Widget.Caret = static_cast<u32>(DecodeUtf8(element.Text).size());
+        }
+        else if (element.Kind == ElementKind::Dropdown)
+        {
+            // The value is the selected option index: a non-negative integer clamped to the option
+            // count. Min/Step give ClampStep integer snapping from zero; Max is refined to
+            // (count - 1) once the option source is known (SyncDropdowns / on open).
+            element.Widget.Min = 0.0f;
+            element.Widget.Step = 1.0f;
+            element.Widget.Max = 0.0f;
+            element.Widget.Value =
+                std::max(0.0f, std::round(ReadConfigScalar(element, "value", 0.0f)));
         }
         else if (IsSelectionHost(element.Kind))
         {
@@ -2968,6 +3043,10 @@ namespace Veng::Gui
         {
             LayoutSliderParts(element);
         }
+        if (element.Kind == ElementKind::Dropdown)
+        {
+            LayoutDropdownParts(element);
+        }
     }
 
     void Document::Solve(vec2 available)
@@ -3324,17 +3403,18 @@ namespace Veng::Gui
 
         const Font* const font = ResolveFont(element);
         if (!element.Text.empty() && font != nullptr &&
-            (element.Kind == ElementKind::Text || element.Kind == ElementKind::Button))
+            (element.Kind == ElementKind::Text || element.Kind == ElementKind::Button ||
+             element.Kind == ElementKind::Dropdown))
         {
             // A Text leaf draws at its content-box origin (inside the border and padding, the box
-            // the measure sized); a Button keeps its label vertically centered in its box, and both
-            // kinds place it horizontally by text-align — so a button's label aligns exactly as a
-            // Text does, rather than centering regardless of what the sheet says.
+            // the measure sized); a Button and a Dropdown keep their label vertically centered in
+            // their box, and every kind places it horizontally by text-align — so a control's label
+            // aligns exactly as a Text does, rather than centering regardless of what the sheet says.
             string cased;
             const string_view run = RunOf(element, cased);
             const f32 border = BorderWidth(style);
             vec2 origin = rect.Min + vec2(border + style.Padding.Left, border + style.Padding.Top);
-            if (element.Kind == ElementKind::Button)
+            if (element.Kind == ElementKind::Button || element.Kind == ElementKind::Dropdown)
             {
                 const vec2 label = MeasureElementText(element, std::nullopt);
                 origin.y = rect.Min.y + (rect.Size.y - label.y) * 0.5f;
@@ -3769,12 +3849,14 @@ namespace Veng::Gui
 
     namespace
     {
-        // A `value` binding on a value-bearing control (Slider/Checkbox/ProgressBar) writes the
-        // resolved scalar into the widget state; on any other kind it writes the element's text.
+        // A `value` binding on a value-bearing control (Slider/Checkbox/ProgressBar/Dropdown) writes
+        // the resolved scalar into the widget state; on any other kind it writes the element's text.
+        // A Dropdown's value is its selected option index, carried in the same f32 the other three
+        // carry their scalar in.
         bool IsValueWidget(ElementKind kind)
         {
             return kind == ElementKind::Slider || kind == ElementKind::Checkbox ||
-                   kind == ElementKind::ProgressBar;
+                   kind == ElementKind::ProgressBar || kind == ElementKind::Dropdown;
         }
     }
 
@@ -3877,6 +3959,10 @@ namespace Veng::Gui
         // freshly-created items already carry their per-item resolved values.
         SyncLists();
 
+        // Refresh each Dropdown's option count, one-way index, and anchor label before the flat walk,
+        // so its value clamp reads the current option count rather than a stale zero max.
+        SyncDropdowns();
+
         // Resolve every non-List-item element's bindings against the main context. A List item's own
         // bindings resolve against its array element inside SyncList, so they are skipped here.
         for (const Unique<Element>& element : m_Elements)
@@ -3913,6 +3999,40 @@ namespace Veng::Gui
         return false;
     }
 
+    void Document::CaptureItemTemplate(Element& host)
+    {
+        // Lift the host's authored content children out of the live tree into the template store —
+        // they are the item template, cloned per array element (a List's rows, a Dropdown's popup
+        // options), never laid out or drawn in the host itself. Idempotent: a host already captured
+        // keeps its template. The widget-owned parts in the tail (a scrollbar, a dropdown arrow) are
+        // not content, so they stay live children of the host.
+        if (m_ListTemplates.find(&host) != m_ListTemplates.end())
+        {
+            return;
+        }
+
+        ListTemplate captured;
+        const std::span<Element* const> content = ContentChildren(host);
+        const vector<Element*> authored(content.begin(), content.end());
+        const YGNodeRef hostNode = m_Yoga->Get(host);
+        for (Element* child : authored)
+        {
+            // Unlink the authored child from the host's layout node before detaching its subtree
+            // (DetachTemplate frees the child nodes), so the host node never references a freed node.
+            if (hostNode != nullptr)
+            {
+                if (const YGNodeRef childNode = m_Yoga->Get(*child); childNode != nullptr)
+                {
+                    YGNodeRemoveChild(hostNode, childNode);
+                }
+            }
+            captured.Roots.push_back(DetachTemplate(*child, captured.Owned));
+        }
+        host.Children.erase(host.Children.begin(),
+                            host.Children.begin() + static_cast<std::ptrdiff_t>(authored.size()));
+        m_ListTemplates.emplace(&host, std::move(captured));
+    }
+
     void Document::SyncLists()
     {
         // Collect the repeaters first: SyncList mutates m_Elements (adding/removing item clones), so
@@ -3941,33 +4061,7 @@ namespace Veng::Gui
 
         // On first sync, lift the authored children out of the live tree into the template store —
         // they are the item template, cloned per array element, never laid out or drawn themselves.
-        if (m_ListTemplates.find(&list) == m_ListTemplates.end())
-        {
-            ListTemplate captured;
-            const std::span<Element* const> content = ContentChildren(list);
-            const vector<Element*> authored(content.begin(), content.end());
-            const YGNodeRef listNode = m_Yoga->Get(list);
-            for (Element* child : authored)
-            {
-                // Unlink the authored child from the list's layout node before detaching its subtree
-                // (DetachTemplate frees the child nodes), so the list node never references a freed
-                // node.
-                if (listNode != nullptr)
-                {
-                    if (const YGNodeRef childNode = m_Yoga->Get(*child); childNode != nullptr)
-                    {
-                        YGNodeRemoveChild(listNode, childNode);
-                    }
-                }
-                captured.Roots.push_back(DetachTemplate(*child, captured.Owned));
-            }
-            // Only the content is lifted into the template; a scrollbar the widget layer already
-            // created sits in the tail and stays a live child of the list.
-            list.Children.erase(list.Children.begin(),
-                                list.Children.begin() +
-                                    static_cast<std::ptrdiff_t>(authored.size()));
-            m_ListTemplates.emplace(&list, std::move(captured));
-        }
+        CaptureItemTemplate(list);
 
         const optional<ResolvedField> field = ResolveFieldPtr(
             *m_Registry, m_Context->GetData(), m_Context->GetDataType(), binding->second);
@@ -4021,6 +4115,291 @@ namespace Veng::Gui
                 ResolveItemBindings(itemRoot, itemPtr, field->Field->ElementType);
             }
         }
+    }
+
+    namespace
+    {
+        // The first non-empty Text content in a subtree, in pre-order — a dropdown option's visible
+        // label, whether the option is a bare Text item or a Text nested in a row.
+        optional<string> FirstElementText(const Element& element)
+        {
+            if (!element.Text.empty())
+            {
+                return element.Text;
+            }
+            for (const Element* child : element.Children)
+            {
+                if (optional<string> found = FirstElementText(*child); found)
+                {
+                    return found;
+                }
+            }
+            return std::nullopt;
+        }
+
+        // The first `text` binding expression in a template subtree — how a data-bound dropdown reads
+        // an option's label off an array element, mirroring the item template's own `text="{path}"`.
+        optional<string> FirstTextBinding(const Element& node)
+        {
+            if (const auto it = node.Bindings.find("text"); it != node.Bindings.end())
+            {
+                return it->second;
+            }
+            for (const Element* child : node.Children)
+            {
+                if (optional<string> found = FirstTextBinding(*child); found)
+                {
+                    return found;
+                }
+            }
+            return std::nullopt;
+        }
+    }
+
+    u32 Document::DropdownOptionCount(const Element& dropdown) const
+    {
+        if (dropdown.Kind != ElementKind::Dropdown)
+        {
+            return 0;
+        }
+        const auto items = dropdown.Bindings.find("items");
+        if (items != dropdown.Bindings.end())
+        {
+            if (m_Context == nullptr || m_Registry == nullptr)
+            {
+                return 0;
+            }
+            const optional<ResolvedField> field = ResolveFieldPtr(
+                *m_Registry, m_Context->GetData(), m_Context->GetDataType(), items->second);
+            if (!field || field->Field->Class != FieldClass::Array ||
+                field->Field->ArraySize == nullptr)
+            {
+                return 0;
+            }
+            return static_cast<u32>(field->Field->ArraySize(field->Ptr));
+        }
+        const auto tmpl = m_ListTemplates.find(&dropdown);
+        return tmpl == m_ListTemplates.end() ? 0 : static_cast<u32>(tmpl->second.Roots.size());
+    }
+
+    optional<string> Document::DropdownOptionLabel(const Element& dropdown, const u32 index) const
+    {
+        if (dropdown.Kind != ElementKind::Dropdown || index >= DropdownOptionCount(dropdown))
+        {
+            return std::nullopt;
+        }
+        const auto tmpl = m_ListTemplates.find(&dropdown);
+        const auto items = dropdown.Bindings.find("items");
+        if (items != dropdown.Bindings.end())
+        {
+            if (m_Context == nullptr || m_Registry == nullptr || tmpl == m_ListTemplates.end())
+            {
+                return std::nullopt;
+            }
+            optional<string> labelExpr;
+            for (const Element* root : tmpl->second.Roots)
+            {
+                if ((labelExpr = FirstTextBinding(*root)))
+                {
+                    break;
+                }
+            }
+            if (!labelExpr)
+            {
+                return std::nullopt;
+            }
+            const optional<ResolvedField> field = ResolveFieldPtr(
+                *m_Registry, m_Context->GetData(), m_Context->GetDataType(), items->second);
+            if (!field || field->Field->ArrayElement == nullptr)
+            {
+                return std::nullopt;
+            }
+            void* const itemPtr = field->Field->ArrayElement(field->Ptr, index);
+            return ResolvePath(*m_Registry, itemPtr, field->Field->ElementType, *labelExpr);
+        }
+        // Inline: the option's label is the template item's own text.
+        if (tmpl == m_ListTemplates.end() || index >= tmpl->second.Roots.size())
+        {
+            return std::nullopt;
+        }
+        return FirstElementText(*tmpl->second.Roots[index]);
+    }
+
+    void Document::EnsureDropdownTemplate(Element& dropdown)
+    {
+        if (dropdown.Kind != ElementKind::Dropdown)
+        {
+            return;
+        }
+        CaptureItemTemplate(dropdown);
+
+        // An inline dropdown resolves entirely without a bound context, so its option count and
+        // selected label are set here rather than in the context-gated SyncDropdowns.
+        if (dropdown.Bindings.find("items") == dropdown.Bindings.end())
+        {
+            const u32 count = DropdownOptionCount(dropdown);
+            dropdown.Widget.Max = count > 0 ? static_cast<f32>(count - 1) : 0.0f;
+            dropdown.Widget.Value =
+                ClampStep(dropdown.Widget.Value, 0.0f, dropdown.Widget.Max, 1.0f);
+            if (optional<string> label =
+                    DropdownOptionLabel(dropdown, static_cast<u32>(dropdown.Widget.Value));
+                label)
+            {
+                SetText(dropdown, *label);
+            }
+        }
+    }
+
+    void Document::SyncDropdowns()
+    {
+        // Collect the dropdowns first: EnsureDropdownTemplate lifts a dropdown's option children out
+        // of m_Elements on first sync, so the walk cannot iterate m_Elements directly.
+        vector<Element*> dropdowns;
+        for (const Unique<Element>& element : m_Elements)
+        {
+            if (element->Kind == ElementKind::Dropdown)
+            {
+                dropdowns.push_back(element.get());
+            }
+        }
+        for (Element* const element : dropdowns)
+        {
+            Element& dropdown = *element;
+            EnsureDropdownTemplate(dropdown);
+
+            const u32 count = DropdownOptionCount(dropdown);
+            dropdown.Widget.Max = count > 0 ? static_cast<f32>(count - 1) : 0.0f;
+
+            // Resolve the one-way index binding here, before the flat binding walk, so the clamp
+            // reads the fresh option count rather than last frame's — a bound index is never lost to
+            // a stale zero max on the frame the options first arrive.
+            if (const auto value = dropdown.Bindings.find("value");
+                value != dropdown.Bindings.end() && m_Context != nullptr && m_Registry != nullptr)
+            {
+                if (const optional<string> resolved = ResolvePath(
+                        *m_Registry, m_Context->GetData(), m_Context->GetDataType(), value->second))
+                {
+                    f32 index = dropdown.Widget.Value;
+                    static_cast<void>(std::from_chars(resolved->data(),
+                                                      resolved->data() + resolved->size(), index));
+                    dropdown.Widget.Value = index;
+                }
+            }
+            dropdown.Widget.Value =
+                ClampStep(dropdown.Widget.Value, 0.0f, dropdown.Widget.Max, 1.0f);
+
+            if (optional<string> label =
+                    DropdownOptionLabel(dropdown, static_cast<u32>(dropdown.Widget.Value));
+                label)
+            {
+                SetText(dropdown, *label);
+            }
+        }
+    }
+
+    bool Document::OpenDropdown(Element& dropdown)
+    {
+        if (dropdown.Kind != ElementKind::Dropdown)
+        {
+            return false;
+        }
+        EnsureDropdownTemplate(dropdown);
+
+        const PopupId id = OpenPopup(dropdown, PopupOptions{.Side = PopupSide::Below});
+        Element* const root = GetPopupRoot(id);
+        if (root == nullptr)
+        {
+            return false;
+        }
+        root->Classes.emplace_back("dropdown-popup");
+        CascadeWidgetElement(*root);
+
+        Element& list = Add(*root, ElementKind::List);
+        list.Classes.emplace_back("dropdown-list");
+        list.Bindings["selection"] = "single";
+        const auto items = dropdown.Bindings.find("items");
+        const bool dataBound = items != dropdown.Bindings.end();
+        if (dataBound)
+        {
+            list.Bindings["items"] = items->second;
+        }
+
+        // The dropdown's captured children are the option template: cloned per array element when
+        // data-bound, or the static option items when inline.
+        if (const auto tmpl = m_ListTemplates.find(&dropdown); tmpl != m_ListTemplates.end())
+        {
+            for (const Element* node : tmpl->second.Roots)
+            {
+                static_cast<void>(CloneTemplate(list, *node));
+            }
+        }
+        InitWidget(list);
+        CascadeWidgetElement(list);
+
+        // SyncLists runs only on a context-version bump, so populate the freshly-opened list now.
+        if (dataBound && m_Context != nullptr && m_Registry != nullptr)
+        {
+            SyncList(list);
+        }
+        else
+        {
+            ApplyItemFocusability(list);
+        }
+
+        // Reflect the anchor's current index as the list's selection and focus it, so the arrow keys
+        // walk the options from where the value already sits.
+        const u32 count = GetItemCount(list);
+        const u32 index = static_cast<u32>(std::max(0.0f, dropdown.Widget.Value));
+        if (index < count)
+        {
+            SetSelectedItems(list, std::span<const u32>(&index, 1));
+            if (Element* const item = GetItemElement(list, index))
+            {
+                SetFocus(item);
+            }
+        }
+        else if (count > 0)
+        {
+            SetFocus(GetItemElement(list, 0));
+        }
+        return true;
+    }
+
+    bool Document::CommitDropdownSelection(Element& list, const u32 index)
+    {
+        // The list belongs to a popup exactly when a popup's root is its topmost ancestor.
+        Element* root = &list;
+        while (root->Parent != nullptr)
+        {
+            root = root->Parent;
+        }
+        for (const Popup& popup : m_Popups)
+        {
+            if (popup.Root != root)
+            {
+                continue;
+            }
+            Element* const anchor = popup.AnchorElement;
+            if (anchor == nullptr || anchor->Kind != ElementKind::Dropdown)
+            {
+                return false;
+            }
+
+            // Read the chosen label off the live option before the popup (and the list) is destroyed.
+            if (Element* const item = GetItemElement(list, index))
+            {
+                if (optional<string> label = FirstElementText(*item); label)
+                {
+                    SetText(*anchor, *label);
+                }
+            }
+            const u32 count = GetItemCount(list);
+            anchor->Widget.Max = count > 0 ? static_cast<f32>(count - 1) : 0.0f;
+            SetWidgetValue(*anchor, static_cast<f32>(index));
+            ClosePopup(PopupId{.Value = popup.Id});
+            return true;
+        }
+        return false;
     }
 
     Element* Document::DetachTemplate(Element& element, vector<Unique<Element>>& owned)
@@ -4668,25 +5047,36 @@ namespace Veng::Gui
 
                 // A click inside a selectable host's item applies the selection chord before the
                 // item's own activation below, so a Button inside an item both selects its row and
-                // fires its onClick.
+                // fires its onClick. Choosing an option in a Dropdown's popup List commits it here —
+                // which closes the popup and destroys the item, so nothing below may touch `target`.
+                bool committed = false;
                 if (Element* const host = GetItemHost(*target);
                     host != nullptr && event.Button == PointerButton::Primary)
                 {
                     if (const optional<u32> index = GetItemIndex(*target))
                     {
                         static_cast<void>(ActivateItem(*host, *index, event.Modifiers));
+                        committed = CommitDropdownSelection(*host, *index);
                     }
                 }
-                // A Checkbox click toggles its bound value (which fires onChange); every other kind
-                // fires onClick. A completed click is consumed whether or not a handler was
-                // registered — the press was already claimed by this document on the Down.
-                if (target->Kind == ElementKind::Checkbox)
+                // A Checkbox click toggles its bound value (which fires onChange), a Dropdown click
+                // opens its option popup, and every other kind fires onClick. A completed click is
+                // consumed whether or not a handler was registered — the press was already claimed by
+                // this document on the Down.
+                if (!committed)
                 {
-                    SetWidgetValue(*target, target->Widget.Value != 0.0f ? 0.0f : 1.0f);
-                }
-                else
-                {
-                    static_cast<void>(FireHandler(*target, "onClick"));
+                    if (target->Kind == ElementKind::Checkbox)
+                    {
+                        SetWidgetValue(*target, target->Widget.Value != 0.0f ? 0.0f : 1.0f);
+                    }
+                    else if (target->Kind == ElementKind::Dropdown)
+                    {
+                        static_cast<void>(OpenDropdown(*target));
+                    }
+                    else
+                    {
+                        static_cast<void>(FireHandler(*target, "onClick"));
+                    }
                 }
                 consumed = true;
             }
@@ -4810,6 +5200,12 @@ namespace Veng::Gui
                 if (const optional<u32> index = GetItemIndex(*m_Focused))
                 {
                     selected = ActivateItem(*host, *index, modifiers);
+                    // Enter on an option in a Dropdown's popup commits it and closes the popup —
+                    // m_Focused is then the destroyed option, so return before anything reads it.
+                    if (CommitDropdownSelection(*host, *index))
+                    {
+                        return true;
+                    }
                 }
             }
             // A Checkbox Confirm toggles its bound value the same way a click does — one path.
@@ -4817,6 +5213,11 @@ namespace Veng::Gui
             {
                 SetWidgetValue(*m_Focused, m_Focused->Widget.Value != 0.0f ? 0.0f : 1.0f);
                 return true;
+            }
+            // A Confirm on a Dropdown anchor opens its option popup, the keyboard mirror of a click.
+            if (m_Focused->Kind == ElementKind::Dropdown)
+            {
+                return OpenDropdown(*m_Focused);
             }
             // Confirm activates the focused element the same way a click does — one handler path.
             SetState(*m_Focused, WithBit(m_Focused->State, ElementState::Active, true));
