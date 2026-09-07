@@ -396,6 +396,8 @@ namespace Veng::Renderer
             .DofCocScale = m_ViewState.DofCocScale,
             .DofMaxCoc = m_ViewState.DofMaxCoc,
             .DofRingCount = m_ViewState.DofRingCount,
+            .OutputBrightness = m_ViewState.OutputBrightness,
+            .OutputGamma = m_ViewState.OutputGamma,
         };
         // Drive any GuiSurface panels in the scene into their HDR targets before the scene render,
         // so a translucent/emissive panel material samples a shader-readable target the same frame.

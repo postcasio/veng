@@ -141,6 +141,18 @@ namespace Veng::Renderer
         /// can show DofFocusDistance and DofAperture inactive rather than let an author edit values
         /// that are not consulted. It is a report, never an input: writing it changes nothing.
         bool DofFromPhysicalCamera = false;
+
+        /// @brief Output brightness multiplier applied in the terminal tonemap; 1 is no adjustment.
+        ///
+        /// A display-calibration knob applied to the tonemapped color before the swapchain's display
+        /// encode. Neutral (1) skips the step entirely, so the default output is bit-identical. Carried
+        /// into SceneView::OutputBrightness each push; it is not preset-eligible.
+        f32 OutputBrightness = 1.0f;
+        /// @brief Output gamma adjustment applied in the terminal tonemap; 1 is no adjustment.
+        ///
+        /// The display-calibration companion of OutputBrightness, applied in the same step and skipped
+        /// at neutral (1). Carried into SceneView::OutputGamma each push; not preset-eligible.
+        f32 OutputGamma = 1.0f;
     };
 
     /// @brief Construction parameters for Viewport.

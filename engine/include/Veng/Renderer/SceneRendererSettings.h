@@ -341,5 +341,13 @@ namespace Veng::Renderer
         /// editor enables it for a viewport's lifetime), never a runtime one. The pass early-outs
         /// on a frame with no pending pick request, so its amortized cost is near zero.
         bool Picking = false;
+
+        /// @brief Compares two settings field-for-field for topology equivalence.
+        ///
+        /// Every field here is a topology/sizing knob whose change forces a Viewport::Configure
+        /// recompile, so this is the dirty-compare a re-apply path uses to skip a needless recompile
+        /// when only per-frame (SceneView) knobs moved. Defaulted, so a field added to this struct is
+        /// covered automatically.
+        [[nodiscard]] bool operator==(const SceneRendererSettings&) const = default;
     };
 }

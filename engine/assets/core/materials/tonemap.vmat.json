@@ -26,6 +26,16 @@
       "value": 2.0
     },
     {
+      "name": "OutputBrightness",
+      "type": "float",
+      "value": 1.0
+    },
+    {
+      "name": "OutputGamma",
+      "type": "float",
+      "value": 1.0
+    },
+    {
       "name": "RenderScale",
       "type": "vec4",
       "value": [

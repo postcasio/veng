@@ -27,6 +27,8 @@ struct MaterialParams
     uint   HdrSampler;  // bindless sampler index (runtime-bound each frame)
     float  Exposure;    // authored param, set per frame from the SceneView
     float  Tonemapper;  // the Renderer::Tonemapper enum as a float, set per frame from the SceneView
+    float  OutputBrightness; // display-calibration multiply, set per frame from the SceneView
+    float  OutputGamma;      // display-calibration gamma, set per frame from the SceneView
 };
 
 MaterialParams LoadMaterialParams(uint index)
@@ -146,6 +148,14 @@ float4 fsMain(PostProcessFragmentInput input) : SV_Target0
     default: // PBRNeutral
         tonemapped = TonemapPbrNeutral(exposed);
         break;
+    }
+
+    // Display-calibration output knobs. Applied to the tonemapped (still-linear) color before the
+    // swapchain composite's display encode: a brightness multiply then a gamma power. The neutral
+    // pair (1, 1) skips the step, so the default output is bit-identical to before this existed.
+    if (p.OutputBrightness != 1.0 || p.OutputGamma != 1.0)
+    {
+        tonemapped = pow(max(tonemapped * p.OutputBrightness, 0.0), (1.0 / p.OutputGamma).xxx);
     }
     return float4(tonemapped, 1.0);
 }

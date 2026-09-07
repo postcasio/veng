@@ -309,6 +309,18 @@ namespace Veng::Renderer
         /// and ceilinged again in the gather shader.
         u32 DofRingCount = 4;
 
+        /// @brief Output brightness multiplier; written into the tonemap param block each Execute.
+        ///
+        /// A display-calibration knob multiplied onto the tonemapped color before the swapchain's
+        /// display encode. The terminal tonemap branches the step out at the neutral pair
+        /// (OutputBrightness 1, OutputGamma 1), so the default output is bit-identical.
+        f32 OutputBrightness = 1.0f;
+        /// @brief Output gamma adjustment; written into the tonemap param block each Execute.
+        ///
+        /// The display-calibration companion of OutputBrightness, applied in the same terminal step
+        /// and skipped with it at the neutral pair (1, 1).
+        f32 OutputGamma = 1.0f;
+
         /// @brief RAW (non-tile-remapped) per-set, per-cascade world → light-clip transforms.
         ///
         /// Computed by the renderer on every Execute, one set per light granted the cascade arm

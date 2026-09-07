@@ -631,6 +631,80 @@ namespace Veng
         primary->Configure(settings);
     }
 
+    LevelRenderSettings Application::ResolveActiveAuthoredLook() const
+    {
+        if (m_WorldRunner && m_ManagedViewports)
+        {
+            const WorldInstanceId world = m_ManagedViewports->GetViewportWorld(0);
+            if (const World* active = m_WorldRunner->ResolveWorld(world))
+            {
+                if (const LevelRenderSettings* render =
+                        active->GetScene().TryGetFirst<LevelRenderSettings>())
+                {
+                    return *render;
+                }
+            }
+        }
+        return LevelRenderSettings{};
+    }
+
+    void Application::ApplyGraphicsSettings()
+    {
+        // An empty managed set (the editor) has no renderer surface to reconfigure: a clean no-op.
+        if (!m_ManagedViewports || m_ManagedViewports->Empty() || !m_GraphicsSettings)
+        {
+            return;
+        }
+
+        const LevelRenderSettings authored = ResolveActiveAuthoredLook();
+        const BuiltinDisplayChoices& display = m_GraphicsSettings->GetDisplay();
+
+        // Build the authored baseline: the authored look mapped onto the primary viewport's current
+        // topology and the app's per-frame view knobs, plus the viewport's current dynamic-resolution
+        // choice. The resolver receives this pre-filled, so the identity default returns it unchanged.
+        Renderer::Viewport* primary = m_ManagedViewports->Get(0);
+        GraphicsResolveOutput output;
+        output.Settings = primary->GetSettings();
+        output.View = m_WorldView;
+        ApplyLevelRenderSettings(authored, output.Settings, output.View);
+        const optional<Renderer::DynamicResolutionSettings>& dynamic =
+            primary->GetDynamicResolution();
+        output.DynamicResolutionEnabled = dynamic.has_value();
+        output.DynamicResolution = dynamic.value_or(Renderer::DynamicResolutionSettings{});
+
+        const GraphicsResolveInput input{
+            .Settings = *m_GraphicsSettings, .Display = display, .AuthoredLook = authored};
+        OnResolveGraphics(input, output);
+
+        // Brightness/gamma are engine-owned display calibration, not preset-eligible and never the
+        // game resolver's to set: this apply path is their single writer.
+        output.View.OutputBrightness = display.Brightness;
+        output.View.OutputGamma = display.Gamma;
+
+        // Settings are machine-global — every managed viewport (split-screen included) receives the
+        // same resolved settings. The per-frame view knobs ride m_WorldView, which PushViews carries
+        // into every managed viewport each frame.
+        m_WorldView = output.View;
+        for (usize i = 0; i < m_ManagedViewports->GetCount(); ++i)
+        {
+            Renderer::Viewport* viewport = m_ManagedViewports->Get(i);
+            // Dirty-compare: a topology field is the only thing that forces a Configure recompile, so
+            // a resolve that touched only per-frame knobs reconfigures nothing.
+            if (!(viewport->GetSettings() == output.Settings))
+            {
+                viewport->Configure(output.Settings);
+            }
+            if (output.DynamicResolutionEnabled)
+            {
+                viewport->SetDynamicResolution(output.DynamicResolution);
+            }
+            else
+            {
+                viewport->ClearDynamicResolution();
+            }
+        }
+    }
+
     VoidResult Application::StartServer(const AssetId levelId)
     {
         const GameNetInfo net = m_Info.Net.value_or(GameNetInfo{});

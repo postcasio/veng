@@ -1311,6 +1311,9 @@ namespace Veng::Renderer
             tonemap.SetParam("Tonemapper", static_cast<f32>(static_cast<u32>(view.Tonemapper)));
             // The terminal tonemap reads the sub-rect HDR and upscales it to the full output.
             tonemap.SetParam("RenderScale", vec4(renderScaleUV, maxValidUV));
+            // Display-calibration output knobs; the shader skips the step at the neutral (1, 1) pair.
+            tonemap.SetParam("OutputBrightness", view.OutputBrightness);
+            tonemap.SetParam("OutputGamma", view.OutputGamma);
         }
 
         // Sync the broadphase first: re-gathers and rebuilds only when the scene's spatial

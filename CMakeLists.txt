@@ -1016,6 +1016,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_surface_component.cpp
             tests/unit/gui_driver_registry.cpp
             tests/unit/level_render_settings.cpp
+            tests/unit/graphics_resolve.cpp
             tests/unit/capture_surface_component.cpp
             tests/unit/capture_drive.cpp
             tests/unit/sim_clock.cpp
@@ -1683,6 +1684,11 @@ if (VENG_BUILD_TESTS)
             # closed-world cleared target, and set teardown order (it needs a Context for the
             # Application/viewports, so it rides the gpu band though it pins no pixels).
             tests/gpu/managed_viewport_set.cpp
+            # graphics_settings_apply.cpp drives a headless Application through ApplyGraphicsSettings,
+            # asserting the no-world-reload apply path: recompile only on a topology change, every
+            # managed viewport reconfigured, and an empty set a clean no-op (needs a Context for the
+            # Application/viewports, so it rides the gpu band).
+            tests/gpu/graphics_settings_apply.cpp
     )
     target_link_libraries(veng_test_gpu PRIVATE veng::veng veng_test_support doctest::doctest)
     target_precompile_headers(veng_test_gpu PRIVATE <Veng/Veng.h> <doctest/doctest.h>)

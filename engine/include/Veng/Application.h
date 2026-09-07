@@ -29,6 +29,7 @@
 #include <Veng/SystemStats.h>
 #include <Veng/Task/TaskSystem.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Render/GraphicsResolve.h>
 #include <Veng/Render/GraphicsSchema.h>
 #include <Veng/Render/GraphicsSettings.h>
 #include <Veng/Scene/LocalControl.h>
@@ -715,6 +716,26 @@ namespace Veng
             return *m_GraphicsSettings;
         }
 
+        /// @brief Resolves the current graphics settings and applies them to every managed viewport.
+        ///
+        /// Closes the loop between the chosen values and the renderer: it builds the authored baseline
+        /// for the active world (the presented world's LevelRenderSettings, or a default-constructed one
+        /// when none is active), invokes OnResolveGraphics once so the game composes the user's chosen
+        /// quality with that look, then applies the resolved SceneRendererSettings to every managed
+        /// viewport — calling Viewport::Configure only when a topology field actually changed (a
+        /// dirty-compare that avoids a needless recompile) — pushes the resolved per-frame view knobs,
+        /// and applies the dynamic-resolution choice. It is the single writer of the applied
+        /// OutputBrightness/OutputGamma display-calibration knobs, filled from the built-in display
+        /// selections after the resolver runs.
+        ///
+        /// Settings are machine-global, so every managed viewport receives the same resolved settings
+        /// (split-screen included). It no-ops cleanly on an empty managed set (the editor) and is safe
+        /// to call on a live, presented viewport at a frame-safe point — this is the "no world reload"
+        /// property — so the menu calls it on Apply and the boot path calls it after loading the store.
+        /// The built-in display selections (resolution, window, present mode) are applied by the display
+        /// group, which extends this same entry point; this call applies the renderer surfaces.
+        void ApplyGraphicsSettings();
+
         /// @brief Returns the host-owned, process-wide registry of scene systems.
         ///
         /// Borrowed: the host constructs it and calls VengModuleRegister before passing
@@ -1208,6 +1229,30 @@ namespace Veng
         /// @param pending  The world spawn's not-yet-resident assets; wait on it before a capture.
         virtual void OnWorldLoaded(WorldInstanceId world, Scene& scene, ResidencyBatch& pending) {}
 
+        /// @brief Composes the player's chosen graphics quality with a scene's authored look.
+        ///
+        /// The resolve seam ApplyGraphicsSettings invokes once per apply: given the user's chosen
+        /// values and the authoring context (@p input), it produces the concrete renderer state the
+        /// engine applies (@p output). The engine does not fix how the two axes combine — a game maps
+        /// its own quality options onto the renderer surfaces here, reaching global knobs and per-object
+        /// features the engine cannot tier generically.
+        ///
+        /// @p output arrives pre-filled with the authored baseline (the authored look mapped onto the
+        /// two renderer surfaces plus the viewport's current dynamic-resolution choice), so the default
+        /// implementation does nothing and returns that baseline unchanged — an app that declares no
+        /// schema is byte-identical to one that never resolved. A resolver must be total on the input,
+        /// including the default-constructed authored look the no-world case supplies. It must not set
+        /// output.View.OutputBrightness/OutputGamma — those are engine-owned display calibration the
+        /// apply path writes from the built-in display selections.
+        /// @param input   The chosen values and the authoring context to compose with.
+        /// @param output  The renderer state to apply, pre-filled with the authored baseline.
+        virtual void OnResolveGraphics(const GraphicsResolveInput& input,
+                                       GraphicsResolveOutput& output)
+        {
+            static_cast<void>(input);
+            static_cast<void>(output);
+        }
+
         /// @brief Called once per frame before rendering.
         /// @param delta  Time in seconds since the previous frame.
         virtual void OnUpdate(f32 delta) {}
@@ -1314,6 +1359,14 @@ namespace Veng
         /// and by the client when its join-loaded scene starts.
         /// @param world  The world scene to seed the viewport from.
         void SeedViewportFromWorld(Scene& world);
+
+        /// @brief Returns the authored look ApplyGraphicsSettings resolves against.
+        ///
+        /// The LevelRenderSettings of the world managed viewport 0 presents, or a default-constructed
+        /// value when no world is active or the presented world authors none — the total-on-the-default
+        /// input the resolve seam promises.
+        /// @return The active world's authored render settings, or a default-constructed value.
+        [[nodiscard]] LevelRenderSettings ResolveActiveAuthoredLook() const;
 
         /// @brief Opens the ServerHost on the started managed world (`--server` and runtime StartHosting).
         ///
