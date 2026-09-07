@@ -138,6 +138,47 @@ namespace Veng::Cook
                 }
             }
 
+            // Visibility dependencies, checked after every setting is collected so a dependency may
+            // name a setting declared in any category. A dependency must name a real discrete setting
+            // (not the depending setting itself) and one of that setting's options.
+            for (const auto& [id, setting] : settingsById)
+            {
+                if (setting->VisibleWhen.empty())
+                {
+                    continue;
+                }
+                if (setting->VisibleWhen == setting->Id)
+                {
+                    return std::unexpected(Located(
+                        file, fmt::format("setting '{}' declares a VisibleWhen on itself", id)));
+                }
+                const auto target = settingsById.find(setting->VisibleWhen);
+                if (target == settingsById.end())
+                {
+                    return std::unexpected(Located(
+                        file, fmt::format("setting '{}' declares VisibleWhen '{}', which is not a "
+                                          "schema setting",
+                                          id, setting->VisibleWhen)));
+                }
+                if (target->second->Kind != GraphicsSettingKind::Discrete)
+                {
+                    return std::unexpected(Located(
+                        file, fmt::format("setting '{}' declares VisibleWhen '{}', which is not a "
+                                          "discrete setting",
+                                          id, setting->VisibleWhen)));
+                }
+                const bool known =
+                    std::ranges::any_of(target->second->Options, [&](const GraphicsOption& option)
+                                        { return option.Id == setting->VisibleWhenOption; });
+                if (!known)
+                {
+                    return std::unexpected(Located(
+                        file, fmt::format("setting '{}' declares VisibleWhenOption '{}', which "
+                                          "setting '{}' does not declare",
+                                          id, setting->VisibleWhenOption, setting->VisibleWhen)));
+                }
+            }
+
             // Presets: unique ids, and every entry names a real target.
             std::unordered_set<string> presetIds;
             for (const GraphicsPreset& preset : schema.Presets)
