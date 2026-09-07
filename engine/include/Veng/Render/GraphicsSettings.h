@@ -141,6 +141,15 @@ namespace Veng
         /// @brief Returns the id of the last preset applied; empty when none has been.
         [[nodiscard]] const string& GetActivePreset() const { return m_Choices.ActivePreset; }
 
+        /// @brief Whether the last Load() found an existing config file on disk.
+        ///
+        /// True when a settings file was present at the config path (a returning install), even if it
+        /// was then unreadable or malformed and the store fell back to defaults; false after the
+        /// first-run missing-file default, when no config path is set, and before any Load(). Lets a
+        /// consumer tell a first launch from a returning one without re-deriving the engine's private
+        /// config path itself.
+        [[nodiscard]] bool WasLoadedFromFile() const { return m_LoadedFromFile; }
+
         /// @brief Loads the choices from the config file, or leaves defaults when it cannot.
         ///
         /// A missing file yields the schema/engine defaults (the first-run path); a present file at
@@ -230,6 +239,9 @@ namespace Veng
         path m_ConfigPath;
         /// @brief The current choices.
         GraphicsChoices m_Choices;
+
+        /// @brief Whether the last Load() found an existing config file (see WasLoadedFromFile).
+        bool m_LoadedFromFile = false;
     };
 }
 

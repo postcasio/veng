@@ -112,6 +112,7 @@ TEST_CASE("GraphicsSettings: choices round-trip through the config file")
         GraphicsSettingsInfo{.Schema = schema.get(), .Types = &types, .ConfigPath = configPath});
     REQUIRE(reloaded.Load().has_value());
 
+    CHECK(reloaded.WasLoadedFromFile());
     CHECK(reloaded.GetActivePreset() == "low");
     CHECK(reloaded.GetChosenOption("shadows") == "off");
     CHECK(reloaded.GetChosenOption("aa") == "none");
@@ -181,6 +182,8 @@ TEST_CASE("GraphicsSettings: a missing file yields schema defaults")
     CHECK(settings.GetActivePreset() == "high");
     CHECK_FALSE(settings.IsCustom());
     CHECK(settings.GetChosenOption("shadows") == "high");
+    // The first-run signal: no file was present, so the consumer's first-run default should fire.
+    CHECK_FALSE(settings.WasLoadedFromFile());
 }
 
 TEST_CASE("GraphicsSettings: a corrupt file falls back to defaults with a warning")
@@ -214,6 +217,9 @@ TEST_CASE("GraphicsSettings: a corrupt file falls back to defaults with a warnin
     // Defaults, not a crash: the schema default preset is active.
     CHECK(settings.GetActivePreset() == "high");
     CHECK(settings.GetChosenOption("shadows") == "high");
+    // The file was present, however malformed, so this is a returning install, not a first run —
+    // the consumer must not overwrite it with a first-run default.
+    CHECK(settings.WasLoadedFromFile());
 }
 
 TEST_CASE("GraphicsSettings: applying a preset leaves the display-identity built-ins untouched")

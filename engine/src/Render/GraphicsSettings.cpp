@@ -241,6 +241,7 @@ namespace Veng
         // the file omits keeps its default, which is what makes a newly-added setting gain its
         // default on an older file.
         ResetToDefaults();
+        m_LoadedFromFile = false;
 
         if (m_ConfigPath.empty())
         {
@@ -253,6 +254,8 @@ namespace Veng
             // A missing file is the ordinary first-run path, not an error.
             return {};
         }
+        // The file is present: a returning install, whatever its contents parse to below.
+        m_LoadedFromFile = true;
 
         const Result<string> text = ReadFileText(m_ConfigPath);
         if (!text)
