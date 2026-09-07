@@ -314,7 +314,10 @@ family registers from the editor side.
   transfer-source usage on its swap chain images, and is unavailable headless — where there is
   no swap chain and, because ImGui needs a window, no UI overlay to capture),
   `render.list_viewports` (over `McpHost::ViewportNames`), `render.stats` (cull counts +
-  `GetLastGpuFrameTimeMs`), and the two bindless reads below. The PNG encode uses stb_image_write,
+  `GetLastGpuFrameTimeMs`), `render.pass_times` (the last frame's per-pass GPU timings over
+  `Context::GetLastGpuPassTimings` — the per-pass breakdown of the single number `render.stats`
+  reports as `gpu_frame_time_ms`, from the backend's timestamp queries so it is profiler-independent;
+  `gpu_timing_supported` is false where the device has no timestamps), and the two bindless reads below. The PNG encode uses stb_image_write,
   vendored PRIVATE into `src/Vendor/StbImageWrite.cpp` — never a public header. A null/unknown
   viewport reports "no viewport".
 

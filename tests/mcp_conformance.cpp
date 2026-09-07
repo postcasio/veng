@@ -169,6 +169,26 @@ int main()
             Check(payload.contains("visible") && payload.contains("gpu_frame_time_ms"),
                   "render.stats reported the cull funnel and GPU frame time");
         }
+
+        // render.pass_times reaches the same render context for the last frame's per-pass GPU
+        // timings. It executes on any device; only its passes list is device-dependent, so the
+        // shape (never an error, carries gpu_timing_supported) is what is pinned.
+        const Json passTimes =
+            Post(client,
+                 Json{{"jsonrpc", "2.0"},
+                      {"id", 5},
+                      {"method", "tools/call"},
+                      {"params", {{"name", "render.pass_times"}, {"arguments", Json::object()}}}});
+        Check(passTimes.contains("result"), "render.pass_times returned a result");
+        Check(passTimes["result"].value("isError", true) == false,
+              "render.pass_times was not an error");
+        if (passTimes.contains("result") && !passTimes["result"]["content"].empty())
+        {
+            const std::string text = passTimes["result"]["content"][0].value("text", std::string{});
+            const Json payload = Json::parse(text, nullptr, false);
+            Check(payload.contains("gpu_timing_supported") && payload.contains("passes"),
+                  "render.pass_times reported the per-pass breakdown");
+        }
     }
 
     VengTest::Terminate(launched);

@@ -319,6 +319,42 @@ namespace Veng::Mcp
             server.RegisterTool(std::move(tool));
         }
 
+        // render.pass_times — the last frame's per-pass GPU timings, from the backend's timestamp
+        // queries (independent of the profiler, so available in any build). This is the per-pass
+        // breakdown of the single number render.stats reports as gpu_frame_time_ms.
+        {
+            McpTool tool;
+            tool.Name = "render.pass_times";
+            tool.Description =
+                "Reports the last completed frame's per-pass GPU timings — each RenderGraph pass's "
+                "name and GPU duration in milliseconds, in submission order, plus the whole-frame "
+                "GPU time. Sourced from the backend's timestamp queries (not the profiler), so it "
+                "is available in any build where the device supports GPU timestamps; an empty "
+                "'passes' with 'gpu_timing_supported' false means the device does not. A pass name "
+                "may repeat (per-mip bloom, per-face captures); the entries are the raw scopes. "
+                "Takes no arguments — the timings are the render context's, not a viewport's.";
+            tool.InputSchemaJson = R"({"type":"object","properties":{}})";
+            tool.Handler = [&host](string_view /*argsJson*/) -> Result<string>
+            {
+                const Renderer::Context& context = host.Assets.GetContext();
+                const std::span<const Renderer::Context::GpuPassTiming> timings =
+                    context.GetLastGpuPassTimings();
+                Json passes = Json::array();
+                for (const Renderer::Context::GpuPassTiming& pass : timings)
+                {
+                    passes.push_back(Json{{"name", pass.Name},
+                                          {"ms", pass.Milliseconds},
+                                          {"begin_ns", pass.BeginNanos},
+                                          {"end_ns", pass.EndNanos}});
+                }
+                return Json{{"gpu_frame_time_ms", context.GetLastGpuFrameTimeMs()},
+                            {"gpu_timing_supported", !timings.empty()},
+                            {"passes", std::move(passes)}}
+                    .dump();
+            };
+            server.RegisterTool(std::move(tool));
+        }
+
         // render.bindless — how much of each arrayed binding is left. Every one has a fixed
         // capacity whose exhaustion is a fatal assert on an otherwise ordinary registration, and
         // nothing warns on the way down — a free list just gets shorter. Read across a consumer's
