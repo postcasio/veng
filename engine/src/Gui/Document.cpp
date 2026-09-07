@@ -2971,6 +2971,23 @@ namespace Veng::Gui
             style.MinHeight, [&](f32 v) { YGNodeStyleSetMinHeight(node, v); },
             [&](f32 v) { YGNodeStyleSetMinHeightPercent(node, v); },
             [&] { YGNodeStyleSetMinHeight(node, YGUndefined); });
+
+        // A Dropdown is not a measured leaf — its arrow is a child, so Yoga cannot measure it — and so
+        // its box would collapse to its padding, standing shorter than a TextInput of the same
+        // typography and padding, which holds one line box open. Give it that same one-line floor so a
+        // dropdown and a text field authored alike stand the same height. Only when the sheet authored
+        // neither an explicit height nor a min-height, so an authored size still wins.
+        if (element.Kind == ElementKind::Dropdown && style.Height.Kind == LengthKind::Auto &&
+            style.MinHeight.Kind == LengthKind::Auto)
+        {
+            if (const Font* const font = ResolveFont(element))
+            {
+                const f32 line = MeasureRun("", font, style, std::nullopt, true).y;
+                const f32 border = BorderWidth(style);
+                YGNodeStyleSetMinHeight(node, line + style.Padding.Top + style.Padding.Bottom +
+                                                  2.0f * border);
+            }
+        }
         ApplyLength(
             style.MaxWidth, [&](f32 v) { YGNodeStyleSetMaxWidth(node, v); },
             [&](f32 v) { YGNodeStyleSetMaxWidthPercent(node, v); },
