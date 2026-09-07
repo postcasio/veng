@@ -78,17 +78,6 @@ namespace Veng
         f32 Step = 0.0f;
         /// @brief Value chosen by default, within [Min, Max] (Scalar only).
         f32 DefaultValue = 0.0f;
-
-        /// @brief Id of another discrete setting this one's visibility depends on.
-        ///
-        /// Empty (the default) means the setting is always shown. When set, the settings UI
-        /// presents this setting only while the named setting's chosen option equals
-        /// VisibleWhenOption — a dependency the UI honors and the resolver ignores (a hidden
-        /// setting still carries and resolves its value). Appended so a schema authoring no
-        /// dependency cooks unchanged.
-        string VisibleWhen;
-        /// @brief The option id of VisibleWhen's setting that makes this setting visible.
-        string VisibleWhenOption;
     };
 
     /// @brief A named group of graphics settings, presented together in the settings UI.
@@ -226,8 +215,6 @@ VE_FIELD(Min, .DisplayName = "Min")
 VE_FIELD(Max, .DisplayName = "Max")
 VE_FIELD(Step, .DisplayName = "Step")
 VE_FIELD(DefaultValue, .DisplayName = "Default Value")
-VE_FIELD(VisibleWhen, .DisplayName = "Visible When")
-VE_FIELD(VisibleWhenOption, .DisplayName = "Visible When Option")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::GraphicsCategory, 0x25AF3AEED7EF2135ULL)
