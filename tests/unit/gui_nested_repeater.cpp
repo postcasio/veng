@@ -203,6 +203,64 @@ TEST_CASE("gui nested repeater: per-row dropdowns and sliders resolve against th
     CHECK(dropdown1.Text == "One");                        // untouched row keeps its label
 }
 
+TEST_CASE("gui nested repeater: a nested dropdown resolves against its row under a scoped context")
+{
+    // Mirror the embedded case: a Component boundary carrying a scoped context (no root context),
+    // the list a level beneath it, and the dropdown two levels under the item root — the shape a
+    // spliced settings panel takes.
+    Document doc;
+    Element& boundary = doc.Add(doc.Root(), ElementKind::Component);
+    Element& wrap = doc.Add(boundary, ElementKind::Panel);
+    Element& list = doc.Add(wrap, ElementKind::List);
+    list.Bindings["items"] = "Rows";
+    Element& item = doc.Add(list, ElementKind::Panel);
+    Element& rowPanel = doc.Add(item, ElementKind::Panel);
+    Element& dropdown = doc.Add(rowPanel, ElementKind::Dropdown);
+    dropdown.Bindings["items"] = "Options";
+    dropdown.Bindings["value"] = "Value";
+    Element& option = doc.Add(dropdown, ElementKind::Text);
+    option.Bindings["text"] = "Label";
+    doc.InitWidget(list);
+
+    TypeRegistry registry;
+    registry.Register<NestModel>();
+    NestModel model;
+    model.Rows = {
+        NestRow{.Options = {NestOption{.Label = "Alpha"}, NestOption{.Label = "Beta"},
+                            NestOption{.Label = "Gamma"}},
+                .Value = 1},
+        NestRow{.Options = {NestOption{.Label = "One"}, NestOption{.Label = "Two"}}, .Value = 0},
+    };
+
+    // Mirror the embedded case: the host binds the document root, and the component binds a context
+    // scoped to its boundary — so the panel's rows resolve against the scoped context.
+    NestModel hostModel;
+    BindingContext hostContext;
+    hostContext.SetData(hostModel);
+    doc.BindContext(&hostContext, &registry);
+
+    BindingContext context;
+    context.SetData(model);
+    doc.BindContext(doc.GetHandle(boundary), &context, &registry); // scoped to the boundary
+    doc.UpdateBindings();
+
+    REQUIRE(doc.GetItemCount(list) == 2);
+    Element* const row0 = doc.GetItemElement(list, 0);
+    REQUIRE(row0 != nullptr);
+    REQUIRE(row0->Children.size() == 1);              // the row panel
+    REQUIRE(row0->Children[0]->Children.size() >= 1); // the dropdown
+    const Element& dd0 = *row0->Children[0]->Children[0];
+    REQUIRE(dd0.Kind == ElementKind::Dropdown);
+    CHECK(dd0.Widget.Max == doctest::Approx(2.0f));
+    CHECK(dd0.Widget.Value == doctest::Approx(1.0f));
+    CHECK(dd0.Text == "Beta");
+    // The option template was lifted into the template store, not left rendering in-flow.
+    for (const Element* child : dd0.Children)
+    {
+        CHECK(child->Kind != ElementKind::Text);
+    }
+}
+
 TEST_CASE("gui nested repeater: opening a nested dropdown's popup fills from that row's array")
 {
     Document doc;

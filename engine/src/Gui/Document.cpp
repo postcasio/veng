@@ -983,7 +983,14 @@ namespace Veng::Gui
             PopulateElement(live, node);
             ResolveElementStyle(live, &node, sheets, &assets, resolveGradient);
             ResolveElementImage(live, node, assets);
-            document->InitWidget(live);
+            // A widget inside a repeater's authored item template is inert template data, not a live
+            // control: its clones are the live widgets, each initialized by CloneTemplate. Initializing
+            // the template copy here would give a Dropdown an arrow part and (below) lift its option
+            // template before the repeater captures the item template, corrupting what it clones.
+            if (!document->IsListItem(live))
+            {
+                document->InitWidget(live);
+            }
             for (u32 i = 0; i < node.ChildCount; ++i)
             {
                 Element& child = document->Add(live, elements[cursor].Kind);
@@ -995,11 +1002,14 @@ namespace Veng::Gui
         // Lift each Dropdown's authored option children into its template store now the whole tree
         // exists (InitWidget ran before an element's children were added, so it could not). An inline
         // dropdown's selected label is seeded here; a data-bound one's arrives with its first bind.
-        // Collect first: the capture erases the option children from m_Elements as it lifts them.
+        // Collect first: the capture erases the option children from m_Elements as it lifts them. A
+        // Dropdown inside a repeater's item template is skipped: it is inert template data whose clones
+        // are the live dropdowns (each captured by SyncDropdowns), and lifting its option template here
+        // would strip it from what the repeater clones.
         vector<Element*> dropdowns;
         for (const Unique<Element>& element : document->m_Elements)
         {
-            if (element->Kind == ElementKind::Dropdown)
+            if (element->Kind == ElementKind::Dropdown && !document->IsListItem(*element))
             {
                 dropdowns.push_back(element.get());
             }
