@@ -358,6 +358,45 @@ namespace Veng
             return;
         }
 
+        // The per-machine graphics-settings store: resolve the game's schema (if it named one, now
+        // that its packs are mounted) and root the settings file under the user config directory
+        // beside imgui.ini. Built here so a consumer can read it during the world bootstrap; the
+        // boot-time load and apply are the consumer's to drive.
+        {
+            const GraphicsSchema* schema = nullptr;
+            if (m_Info.GraphicsSchema)
+            {
+                const AssetResult<AssetHandle<GraphicsSchema>> loaded =
+                    m_AssetManager->LoadSync<GraphicsSchema>(*m_Info.GraphicsSchema);
+                if (loaded)
+                {
+                    m_GraphicsSchemaHandle = *loaded;
+                    schema = m_GraphicsSchemaHandle.Get();
+                }
+                else
+                {
+                    Log::Warn("graphics settings: schema {} did not load ({}); the quality section "
+                              "will be empty",
+                              m_Info.GraphicsSchema->Value, loaded.error().Detail);
+                }
+            }
+
+            path configPath;
+            if (const Result<path> configDir = UserConfigDir(m_Info.Name))
+            {
+                configPath = *configDir / "graphics.json";
+            }
+            else
+            {
+                Log::Warn("graphics settings: no writable configuration directory ({}); "
+                          "preferences will not persist",
+                          configDir.error());
+            }
+
+            m_GraphicsSettings = CreateUnique<GraphicsSettings>(GraphicsSettingsInfo{
+                .Schema = schema, .Types = &m_TypeRegistry, .ConfigPath = std::move(configPath)});
+        }
+
         // The engine-managed game world bootstraps after OnInitialize, so a subclass has already
         // set up its ImGui surface and read the managed viewport.
         if (project)

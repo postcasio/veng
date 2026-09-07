@@ -12,6 +12,7 @@
 #include <Veng/Physics/Gravity.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Render/GraphicsSchema.h>
+#include <Veng/Render/GraphicsSettings.h>
 #include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Renderer/CaptureSurface.h>
 #include <Veng/Scene/AnimationBlend.h>
@@ -60,6 +61,9 @@ namespace Veng
         // The reflected on-disk payload of a graphics schema, read by GraphicsSchemaLoader; its
         // nested category/setting/option/preset types auto-register through the describe walk.
         registry.Register<GraphicsSchemaData>();
+        // The per-machine graphics preferences the settings store persists as JSON; its nested
+        // choice/display types and the fullscreen/present-mode enums auto-register through the walk.
+        registry.Register<GraphicsChoices>();
         registry.Register<Intent>();
         registry.Register<Possesses>();
         // The seat's device assignment: which keyboard/pad feed this seat, read per seat by

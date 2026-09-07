@@ -29,6 +29,8 @@
 #include <Veng/SystemStats.h>
 #include <Veng/Task/TaskSystem.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Render/GraphicsSchema.h>
+#include <Veng/Render/GraphicsSettings.h>
 #include <Veng/Scene/LocalControl.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SimClock.h>
@@ -567,6 +569,13 @@ namespace Veng
         /// is built. Null (the default) means no module-defined loaders.
         /// @warning Borrowed. The module handle must outlive the Application.
         const AssetLoaderRegistry* AssetLoaders = nullptr;
+        /// @brief The game's graphics-quality schema asset; nullopt leaves the quality section empty.
+        ///
+        /// The engine cannot name a game asset, so a game declares its schema here by id. Application
+        /// resolves it at boot and hands it to the GraphicsSettings store (GetGraphicsSettings());
+        /// unset means no schema — the built-in display group still works and there are no
+        /// game-authored quality settings. Non-breaking: an app naming none gets an empty store.
+        optional<AssetId> GraphicsSchema = std::nullopt;
     };
 
     /// @brief The destination of an Application::Travel: the key, arrival payload, and presentation choice.
@@ -691,6 +700,20 @@ namespace Veng
         /// Borrowed: the host constructs it, pre-registers builtins, and calls
         /// VengModuleRegister before passing it here. Must outlive this Application.
         [[nodiscard]] TypeRegistry& GetTypeRegistry() { return m_TypeRegistry; }
+
+        /// @brief Returns the per-machine graphics-settings store.
+        ///
+        /// Constructed at boot with the schema named by ApplicationInfo::GraphicsSchema (or none),
+        /// the type registry, and the per-user config path. The menu reads and writes it; the boot
+        /// path loads and applies it.
+        /// @pre Run() has initialized the engine — the store exists only inside Run().
+        [[nodiscard]] GraphicsSettings& GetGraphicsSettings()
+        {
+            VE_ASSERT(m_GraphicsSettings,
+                      "GetGraphicsSettings before Run(): the graphics-settings "
+                      "store exists only once Run() has initialized the engine");
+            return *m_GraphicsSettings;
+        }
 
         /// @brief Returns the host-owned, process-wide registry of scene systems.
         ///
@@ -1652,6 +1675,15 @@ namespace Veng
         /// @brief Owns every cached asset; borrows m_RenderContext, so declared after it and destructs
         ///        first, retiring each asset's GPU resources while the context is still live.
         Unique<AssetManager> m_AssetManager;
+
+        /// @brief Keeps the graphics-quality schema resident for the settings store to borrow; empty
+        ///        when ApplicationInfo::GraphicsSchema is unset. Declared before m_GraphicsSettings so
+        ///        the schema outlives the store that points at it.
+        AssetHandle<GraphicsSchema> m_GraphicsSchemaHandle;
+
+        /// @brief The per-machine graphics-settings store; borrows the schema handle above and the
+        ///        type registry, so it destructs before them.
+        Unique<GraphicsSettings> m_GraphicsSettings;
 
         /// @brief The ImGui integration; borrows m_RenderContext, so declared after it — its backend,
         ///        descriptor pool, and offscreen target release while the device is still alive.
