@@ -7,6 +7,8 @@
 #include <Veng/Renderer/Native.h>
 #include <nfd.h>
 
+#include "Render/DisplayResolve.h"
+
 #define GLFW_BOOL(x) ((x) ? GLFW_TRUE : GLFW_FALSE)
 
 namespace Veng
@@ -227,6 +229,24 @@ namespace Veng
         if (m_MouseCaptured)
         {
             CaptureMouse();
+        }
+
+        // Remember the windowed rectangle so a later return from fullscreen restores it.
+        {
+            int x = 0;
+            int y = 0;
+            glfwGetWindowPos(m_Handle, &x, &y);
+            m_WindowedPosition = {x, y};
+            int w = 0;
+            int h = 0;
+            glfwGetWindowSize(m_Handle, &w, &h);
+            m_WindowedExtent = {static_cast<u32>(w), static_cast<u32>(h)};
+        }
+
+        // A non-windowed initial mode moves the freshly created window onto its monitor.
+        if (info.Fullscreen != FullscreenMode::Windowed)
+        {
+            ApplyDisplayMode(info.Fullscreen, info.MonitorId, uvec2{0, 0}, 0);
         }
     }
 
@@ -469,6 +489,140 @@ namespace Veng
     string Window::GetTitle() const
     {
         return m_Title;
+    }
+
+    vector<MonitorInfo> Window::EnumerateMonitors()
+    {
+        if (!s_GlfwInitialized)
+        {
+            return {};
+        }
+
+        int count = 0;
+        GLFWmonitor** monitors = glfwGetMonitors(&count);
+        vector<MonitorInfo> result;
+        result.reserve(static_cast<usize>(count));
+
+        for (int i = 0; i < count; ++i)
+        {
+            GLFWmonitor* monitor = monitors[i];
+            MonitorInfo info;
+            // GLFW returns the primary monitor first, so the array index is the stable MonitorId
+            // the persisted selection keys on.
+            info.MonitorId = static_cast<u32>(i);
+            if (const char* name = glfwGetMonitorName(monitor))
+            {
+                info.Name = name;
+            }
+
+            if (const GLFWvidmode* current = glfwGetVideoMode(monitor))
+            {
+                info.CurrentResolution = {static_cast<u32>(current->width),
+                                          static_cast<u32>(current->height)};
+                info.CurrentRefreshRateHz = static_cast<u32>(current->refreshRate);
+            }
+
+            int modeCount = 0;
+            const GLFWvidmode* modes = glfwGetVideoModes(monitor, &modeCount);
+            vector<DisplayVideoMode> raw;
+            raw.reserve(static_cast<usize>(modeCount));
+            for (int k = 0; k < modeCount; ++k)
+            {
+                raw.push_back(
+                    DisplayVideoMode{.Resolution = {static_cast<u32>(modes[k].width),
+                                                    static_cast<u32>(modes[k].height)},
+                                     .RefreshRateHz = static_cast<u32>(modes[k].refreshRate)});
+            }
+            info.Modes = DedupVideoModes(raw);
+
+            result.push_back(std::move(info));
+        }
+
+        return result;
+    }
+
+    void Window::ApplyDisplayMode(const FullscreenMode mode, const u32 monitorId,
+                                  const uvec2 resolution, const u32 refreshHz)
+    {
+        if (mode == FullscreenMode::Windowed)
+        {
+            // Returning to (or staying) windowed: detach from any monitor and restore the remembered
+            // windowed rectangle, resizing to the requested resolution when one was named.
+            const uvec2 size = resolution != uvec2{0, 0} ? resolution : m_WindowedExtent;
+            const int width = size.x != 0 ? static_cast<int>(size.x) : static_cast<int>(m_Extent.x);
+            const int height =
+                size.y != 0 ? static_cast<int>(size.y) : static_cast<int>(m_Extent.y);
+            glfwSetWindowMonitor(m_Handle, nullptr, m_WindowedPosition.x, m_WindowedPosition.y,
+                                 width, height, GLFW_DONT_CARE);
+            m_Fullscreen = FullscreenMode::Windowed;
+            return;
+        }
+
+        // Capture the windowed rectangle before leaving it, so a later return restores it.
+        if (m_Fullscreen == FullscreenMode::Windowed)
+        {
+            int x = 0;
+            int y = 0;
+            glfwGetWindowPos(m_Handle, &x, &y);
+            m_WindowedPosition = {x, y};
+            int w = 0;
+            int h = 0;
+            glfwGetWindowSize(m_Handle, &w, &h);
+            m_WindowedExtent = {static_cast<u32>(w), static_cast<u32>(h)};
+        }
+
+        int monitorCount = 0;
+        GLFWmonitor** monitors = glfwGetMonitors(&monitorCount);
+        if (monitorCount == 0)
+        {
+            Log::Warn("ApplyDisplayMode: no monitors connected; staying windowed");
+            return;
+        }
+        const int index =
+            monitorId < static_cast<u32>(monitorCount) ? static_cast<int>(monitorId) : 0;
+        GLFWmonitor* monitor = monitors[index];
+        const GLFWvidmode* current = glfwGetVideoMode(monitor);
+
+#if defined(__APPLE__)
+        // MoltenVK/macOS has no true exclusive-fullscreen mode (Metal exposes none) and the
+        // fullscreen transition is asynchronous and animated, so Exclusive collapses to Borderless:
+        // the window takes the monitor's current mode rather than a requested mode/refresh.
+        const bool useCurrentMode = true;
+        if (mode == FullscreenMode::Exclusive)
+        {
+            Log::Warn("Exclusive fullscreen is unavailable on macOS; using Borderless");
+        }
+#else
+        const bool useCurrentMode = mode == FullscreenMode::Borderless;
+#endif
+
+        int width = current != nullptr ? current->width : static_cast<int>(m_Extent.x);
+        int height = current != nullptr ? current->height : static_cast<int>(m_Extent.y);
+        int refresh = current != nullptr ? current->refreshRate : GLFW_DONT_CARE;
+        if (!useCurrentMode)
+        {
+            // Exclusive on a platform that supports it: take the requested mode/refresh, native
+            // (the monitor's current mode) where a field is left zero.
+            if (resolution.x != 0 && resolution.y != 0)
+            {
+                width = static_cast<int>(resolution.x);
+                height = static_cast<int>(resolution.y);
+            }
+            if (refreshHz != 0)
+            {
+                refresh = static_cast<int>(refreshHz);
+            }
+        }
+
+        glfwSetWindowMonitor(m_Handle, monitor, 0, 0, width, height, refresh);
+        m_Fullscreen = mode == FullscreenMode::Exclusive && !useCurrentMode
+                           ? FullscreenMode::Exclusive
+                           : FullscreenMode::Borderless;
+
+        // The single VkSurfaceKHR (created once in CreateSurface) is not recreated here: on
+        // MoltenVK the surface wraps the window's CAMetalLayer, which persists across a monitor
+        // move, so moving the same window between monitors does not invalidate it. A platform whose
+        // surface does not survive a monitor switch would need surface recreation added to this path.
     }
 
     Unique<Window> Window::Create(const WindowInfo& info)

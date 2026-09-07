@@ -1017,6 +1017,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_driver_registry.cpp
             tests/unit/level_render_settings.cpp
             tests/unit/graphics_resolve.cpp
+            tests/unit/display_settings.cpp
             tests/unit/capture_surface_component.cpp
             tests/unit/capture_drive.cpp
             tests/unit/sim_clock.cpp

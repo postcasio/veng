@@ -6,6 +6,8 @@
 #include <Veng/Veng.h>
 #include <Veng/Event.h>
 #include <Veng/Input.h>
+#include <Veng/Render/DisplayCapabilities.h>
+#include <Veng/Render/DisplayModes.h>
 
 struct GLFWwindow;
 
@@ -27,6 +29,14 @@ namespace Veng
         string Title;
         /// @brief Whether to capture the mouse cursor on creation.
         bool CaptureMouse;
+        /// @brief How the window occupies the display at creation; Windowed is the default.
+        ///
+        /// Applied after the window is created (a non-windowed value moves it onto its monitor). The
+        /// runtime setter ApplyDisplayMode changes it later. Exclusive is best-effort — see
+        /// FullscreenMode.
+        FullscreenMode Fullscreen = FullscreenMode::Windowed;
+        /// @brief Index of the monitor to target when Fullscreen is not Windowed; 0 is the primary.
+        u32 MonitorId = 0;
     };
 
     /// @brief File-dialog filter entry, e.g. {"Images", "png,jpg"}.
@@ -184,6 +194,33 @@ namespace Veng
         /// @brief Returns the current window title bar text.
         [[nodiscard]] string GetTitle() const;
 
+        /// @brief Enumerates the connected monitors and the video modes each can drive.
+        ///
+        /// GLFW-backed, so it reports the live hardware (index 0 the primary, matching
+        /// BuiltinDisplayChoices::MonitorId). Each monitor's mode list is deduplicated and ordered.
+        /// Returns an empty list before GLFW is initialized (no window has been created). The
+        /// present-mode half of the display capabilities is a swapchain concern and lives on Context.
+        /// @return One MonitorInfo per connected monitor.
+        [[nodiscard]] static vector<MonitorInfo> EnumerateMonitors();
+
+        /// @brief Applies a display mode to the live window: windowed / borderless / exclusive.
+        ///
+        /// Windowed leaves the window on the desktop, resizing it to @p resolution when non-zero.
+        /// Borderless (and Exclusive on a platform without true exclusive fullscreen) moves the window
+        /// onto @p monitorId at that monitor's current mode. Exclusive, where supported, takes the
+        /// requested @p resolution and @p refreshHz. A zero resolution or refresh means the display's
+        /// native value. The framebuffer-size change this causes drives the existing swapchain
+        /// recreation on the next frame, so the caller applies it at a frame-safe point and needs no
+        /// separate recreate call. Exclusive is best-effort and its transition may be asynchronous.
+        /// @param mode        The target fullscreen mode.
+        /// @param monitorId   The monitor to target for a non-windowed mode; 0 is the primary.
+        /// @param resolution  The requested pixel resolution, or (0, 0) for the display's native size.
+        /// @param refreshHz   The requested refresh rate in Hz, or 0 for the display's native refresh.
+        void ApplyDisplayMode(FullscreenMode mode, u32 monitorId, uvec2 resolution, u32 refreshHz);
+
+        /// @brief Returns the window's current fullscreen mode.
+        [[nodiscard]] FullscreenMode GetFullscreenMode() const { return m_Fullscreen; }
+
         struct Native;
         /// @brief Returns the backend-private native handle struct.
         [[nodiscard]] Native& GetNative() const;
@@ -201,6 +238,12 @@ namespace Veng
         bool m_FramebufferResized = false;
         bool m_Resizable;
         string m_Title;
+        /// @brief How the window currently occupies the display.
+        FullscreenMode m_Fullscreen = FullscreenMode::Windowed;
+        /// @brief The windowed position (window coords) captured before going fullscreen, to restore.
+        ivec2 m_WindowedPosition{0, 0};
+        /// @brief The windowed size (window coords) captured before going fullscreen, to restore.
+        uvec2 m_WindowedExtent{0, 0};
         bool m_MouseCaptured;
         /// @brief Whether the free cursor is drawn; applied on release while captured.
         bool m_CursorVisible = true;

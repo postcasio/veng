@@ -989,6 +989,56 @@ namespace Veng::Renderer
         VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");
         return m_Native->SwapChain->GetDisplayColorSpace();
     }
+    vector<PresentMode> Context::GetSupportedPresentModes() const
+    {
+        // No surface headless: report the always-available mode so callers get a well-formed list.
+        if (!m_Native->SwapChain)
+        {
+            return {PresentMode::Vsync};
+        }
+
+        const SwapChainSupportDetails support =
+            m_Native->QuerySwapChainSupport(m_Native->PhysicalDevice);
+
+        vector<PresentMode> modes;
+        const auto add = [&](const PresentMode mode)
+        {
+            if (std::ranges::find(modes, mode) == modes.end())
+            {
+                modes.push_back(mode);
+            }
+        };
+        for (const vk::PresentModeKHR mode : support.PresentModes)
+        {
+            switch (mode)
+            {
+            case vk::PresentModeKHR::eFifo:
+                add(PresentMode::Vsync);
+                break;
+            case vk::PresentModeKHR::eImmediate:
+                add(PresentMode::Immediate);
+                break;
+            case vk::PresentModeKHR::eMailbox:
+                add(PresentMode::Mailbox);
+                break;
+            default:
+                break;
+            }
+        }
+        // FIFO is guaranteed by the spec, so Vsync is always offered even if the report omitted it.
+        add(PresentMode::Vsync);
+        return modes;
+    }
+    void Context::SetRequestedPresentMode(const PresentMode mode)
+    {
+        if (!m_Native->SwapChain)
+        {
+            return;
+        }
+        m_Native->SwapChain->SetRequestedPresentMode(mode);
+        // Recreate at the next frame-safe point (BeginFrame), never mid-record.
+        m_RenderExtentChanged = true;
+    }
     Ref<Image> Context::GetCurrentSwapChainImage() const
     {
         VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");

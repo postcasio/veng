@@ -6,40 +6,12 @@
 #include <Veng/Path.h>
 #include <Veng/Result.h>
 #include <Veng/Reflection/Reflect.h>
+#include <Veng/Render/DisplayModes.h>
 #include <Veng/Render/GraphicsSchema.h>
 
 namespace Veng
 {
     class TypeRegistry;
-
-    /// @brief How the window occupies the display: a bordered window, a borderless full-screen
-    ///        window, or an exclusive full-screen mode.
-    ///
-    /// The engine resolves the selection against the window and swapchain; the persisted store
-    /// carries only the choice. Windowed is the engine default.
-    enum class FullscreenMode : u32
-    {
-        /// @brief A bordered, movable window at the chosen resolution.
-        Windowed = 0,
-        /// @brief A borderless window covering the whole monitor at its current mode.
-        Borderless = 1,
-        /// @brief An exclusive full-screen mode owning the display output.
-        Exclusive = 2,
-    };
-
-    /// @brief How presented frames synchronize with the display's refresh.
-    ///
-    /// The engine maps the selection onto a concrete swapchain present mode against what the
-    /// device offers; the persisted store carries only the choice. Vsync is the engine default.
-    enum class PresentMode : u32
-    {
-        /// @brief Presentation waits for vertical blank — no tearing, refresh-bounded frame rate.
-        Vsync = 0,
-        /// @brief Presentation never waits — lowest latency, may tear.
-        Immediate = 1,
-        /// @brief Triple-buffered presentation — no tearing, no hard refresh cap.
-        Mailbox = 2,
-    };
 
     /// @brief The engine's own built-in display/output selections, persisted per machine.
     ///
@@ -260,18 +232,6 @@ namespace Veng
         GraphicsChoices m_Choices;
     };
 }
-
-VE_ENUM(::Veng::FullscreenMode, 0x5132C91170D8002BULL)
-VE_ENUMERATOR(Windowed)
-VE_ENUMERATOR(Borderless)
-VE_ENUMERATOR(Exclusive)
-VE_ENUM_END();
-
-VE_ENUM(::Veng::PresentMode, 0xD45111C1D3B1C65EULL)
-VE_ENUMERATOR(Vsync)
-VE_ENUMERATOR(Immediate)
-VE_ENUMERATOR(Mailbox)
-VE_ENUM_END();
 
 VE_REFLECT(::Veng::BuiltinDisplayChoices, 0xABF64230971FF76AULL)
 VE_FIELD(Resolution, .DisplayName = "Resolution")

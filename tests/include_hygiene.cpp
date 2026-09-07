@@ -72,6 +72,10 @@
 #include <Veng/Time.h>
 #include <Veng/Veng.h>
 #include <Veng/Window.h>
+
+#include <Veng/Render/DisplayCapabilities.h>
+#include <Veng/Render/DisplayModes.h>
+#include <Veng/Render/FrameRateLimiter.h>
 #include <Veng/WindowEvents.h>
 #include <Veng/WorldDirectory.h>
 

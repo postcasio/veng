@@ -286,6 +286,7 @@ add_library(veng SHARED
         src/Renderer/GeneratedTextureService.cpp
         src/Renderer/RenderGraph.cpp
         src/Renderer/SceneCapture.cpp
+        src/Render/DisplayResolve.cpp
         src/Render/GraphicsSchema.cpp
         src/Render/GraphicsSettings.cpp
         src/Renderer/CaptureSurface.cpp

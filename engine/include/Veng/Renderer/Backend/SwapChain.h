@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Render/DisplayModes.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/Semaphore.h>
@@ -138,6 +139,15 @@ namespace Veng::Renderer
             return *m_RenderFinishedSemaphores[m_CurrentImageIndex];
         }
 
+        /// @brief Requests a present mode, honored on the next recreation.
+        ///
+        /// Stores the engine present-mode preference; the next Initialize / RenderExtentChanged maps it
+        /// onto a concrete vk present mode against what the surface offers, falling back to Vsync (FIFO)
+        /// with a warning if unsupported. Unset (the default), the swapchain keeps its own preference
+        /// (Mailbox where available, else FIFO). The caller drives the recreation (Context requests it).
+        /// @param mode  The requested present mode.
+        void SetRequestedPresentMode(const PresentMode mode) { m_RequestedPresent = mode; }
+
         /// @brief Registers a callback fired after the swapchain has been recreated.
         void AddInvalidationCallback(std::function<void()> func)
         {
@@ -157,6 +167,8 @@ namespace Veng::Renderer
         u32 m_ImageCount{};
         u32 m_CurrentImageIndex = 0;
         DisplayMode m_RequestedMode;
+        /// @brief The requested present mode; unset keeps the swapchain's own Mailbox-else-FIFO choice.
+        optional<PresentMode> m_RequestedPresent;
         vk::Format m_Format;
         vk::ColorSpaceKHR m_ColorSpace;
         DisplayMode m_DisplayMode;

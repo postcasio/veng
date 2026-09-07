@@ -42,6 +42,7 @@
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SceneViewport.h>
 
+#include "Render/DisplayResolve.h"
 #include "Scene/FocusRequestReconcile.h"
 #include "Scene/RequestDrain.h"
 
@@ -49,10 +50,12 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <deque>
 #include <span>
+#include <thread>
 #include <unordered_map>
 
 namespace Veng
@@ -650,14 +653,26 @@ namespace Veng
 
     void Application::ApplyGraphicsSettings()
     {
-        // An empty managed set (the editor) has no renderer surface to reconfigure: a clean no-op.
-        if (!m_ManagedViewports || m_ManagedViewports->Empty() || !m_GraphicsSettings)
+        // No store, nothing to apply from.
+        if (!m_GraphicsSettings)
+        {
+            return;
+        }
+
+        const BuiltinDisplayChoices& display = m_GraphicsSettings->GetDisplay();
+
+        // The built-in display group (window / swapchain / frame cap) applies first and independently
+        // of the renderer surfaces — a no-op beyond the frame cap on a headless run.
+        ApplyBuiltinDisplay(display);
+
+        // An empty managed set (the editor) has no renderer surface to reconfigure: the display group
+        // above is the whole apply there.
+        if (!m_ManagedViewports || m_ManagedViewports->Empty())
         {
             return;
         }
 
         const LevelRenderSettings authored = ResolveActiveAuthoredLook();
-        const BuiltinDisplayChoices& display = m_GraphicsSettings->GetDisplay();
 
         // Build the authored baseline: the authored look mapped onto the primary viewport's current
         // topology and the app's per-frame view knobs, plus the viewport's current dynamic-resolution
@@ -703,6 +718,64 @@ namespace Veng
                 viewport->ClearDynamicResolution();
             }
         }
+    }
+
+    DisplayCapabilities Application::GetDisplayCapabilities() const
+    {
+        DisplayCapabilities caps;
+        if (!m_Window)
+        {
+            // Headless: no monitors, but still report the present mode a surfaceless run resolves to.
+            caps.PresentModes = m_RenderContext.GetSupportedPresentModes();
+            return caps;
+        }
+        caps.Monitors = Window::EnumerateMonitors();
+        caps.PresentModes = m_RenderContext.GetSupportedPresentModes();
+        // MoltenVK/macOS exposes no true exclusive-fullscreen mode; every other platform we target
+        // does. Exclusive on macOS collapses to Borderless (Window::ApplyDisplayMode enforces the same).
+#if defined(__APPLE__)
+        caps.SupportsExclusiveFullscreen = false;
+#else
+        caps.SupportsExclusiveFullscreen = true;
+#endif
+        return caps;
+    }
+
+    void Application::ApplyBuiltinDisplay(const BuiltinDisplayChoices& display)
+    {
+        // Headless: the window/swapchain half has nothing to act on, but the frame cap is still a
+        // meaningful run-loop knob.
+        if (!m_Window)
+        {
+            m_FrameLimiter.SetCapHz(display.FrameCapHz);
+            BuiltinDisplayChoices applied = m_ActiveDisplay.value_or(BuiltinDisplayChoices{});
+            applied.FrameCapHz = display.FrameCapHz;
+            m_ActiveDisplay = applied;
+            return;
+        }
+
+        // Validate against the live hardware first, so a stored selection naming gone hardware clamps
+        // to something presentable rather than landing off-screen.
+        const DisplayCapabilities caps = GetDisplayCapabilities();
+        const BuiltinDisplayChoices resolved = ResolveDisplaySelection(display, caps);
+
+        // Diff against the current state and perform only the changes that moved.
+        const DisplayApplyActions actions = ComputeDisplayApplyActions(m_ActiveDisplay, resolved);
+        if (actions.ChangeFrameCap)
+        {
+            m_FrameLimiter.SetCapHz(resolved.FrameCapHz);
+        }
+        if (actions.ChangePresentMode)
+        {
+            m_RenderContext.SetRequestedPresentMode(resolved.Present);
+        }
+        if (actions.ChangeWindow)
+        {
+            m_Window->ApplyDisplayMode(resolved.Fullscreen, resolved.MonitorId, resolved.Resolution,
+                                       resolved.RefreshRateHz);
+        }
+
+        m_ActiveDisplay = resolved;
     }
 
     VoidResult Application::StartServer(const AssetId levelId)
@@ -2485,6 +2558,20 @@ namespace Veng
         // Lift the last completed frame's GPU pass timings onto the virtual GPU track, back-dated to
         // the frame that executed them.
         BridgeGpuTimings();
+
+        // Honor the run-loop frame cap (0 = uncapped), independent of present-mode vsync: a
+        // best-effort sleep to the next-frame deadline against a monotonic clock.
+        {
+            const f64 now =
+                std::chrono::duration<f64>(std::chrono::steady_clock::now().time_since_epoch())
+                    .count();
+            const f64 sleep = m_FrameLimiter.AcquireSleepSeconds(now);
+            if (sleep > 0.0)
+            {
+                VE_PROFILE_SCOPE("Frame/FrameCap");
+                std::this_thread::sleep_for(std::chrono::duration<f64>(sleep));
+            }
+        }
     }
 
     void Application::SampleFrameCounters()

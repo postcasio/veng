@@ -29,6 +29,8 @@
 #include <Veng/SystemStats.h>
 #include <Veng/Task/TaskSystem.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Render/DisplayCapabilities.h>
+#include <Veng/Render/FrameRateLimiter.h>
 #include <Veng/Render/GraphicsResolve.h>
 #include <Veng/Render/GraphicsSchema.h>
 #include <Veng/Render/GraphicsSettings.h>
@@ -735,6 +737,33 @@ namespace Veng
         /// The built-in display selections (resolution, window, present mode) are applied by the display
         /// group, which extends this same entry point; this call applies the renderer surfaces.
         void ApplyGraphicsSettings();
+
+        /// @brief Reports what the hardware offers for the built-in Display group, at runtime.
+        ///
+        /// The connected monitors (each with its supported resolutions and refresh rates, from GLFW),
+        /// the present modes the surface supports (from the swapchain query), and whether the platform
+        /// can drive true exclusive fullscreen. This is what the built-in Display dropdowns are
+        /// populated from and what ApplyBuiltinDisplay validates a selection against. Returns empty
+        /// monitors on a headless/dedicated run (no window).
+        /// @return The live display capabilities.
+        [[nodiscard]] DisplayCapabilities GetDisplayCapabilities() const;
+
+        /// @brief Applies the engine's built-in display selections to the live window and swapchain.
+        ///
+        /// The display half of the settings apply, extending ApplyGraphicsSettings (which calls it).
+        /// Validates @p display against GetDisplayCapabilities() first — an absent monitor falls back to
+        /// the primary, a mode the hardware cannot drive clamps to the nearest supported, and an
+        /// unavailable exclusive mode drops to borderless — so a settings file naming gone hardware
+        /// never lands on a black or off-screen surface. It then diffs against the current display
+        /// state and does only the needed work: a resolution / fullscreen / monitor / refresh change
+        /// re-applies the window (recreating the swapchain through the existing resize path), a
+        /// present-mode change recreates the swapchain, a frame-cap change re-sets the run-loop limiter
+        /// (no swapchain work). Render scale and brightness/gamma are not applied here — they route
+        /// through the resolve output in ApplyGraphicsSettings. A no-op on a headless run beyond the
+        /// frame cap. Safe at a frame-safe point; the window/swapchain recreation lands at the next
+        /// BeginFrame.
+        /// @param display  The built-in display selections to apply.
+        void ApplyBuiltinDisplay(const BuiltinDisplayChoices& display);
 
         /// @brief Returns the host-owned, process-wide registry of scene systems.
         ///
@@ -1883,6 +1912,15 @@ namespace Veng
 
         /// @brief Per-frame view knobs pushed into the managed viewport; seeded from the level.
         Renderer::ViewState m_WorldView;
+
+        /// @brief The built-in display selections last applied, or nullopt before the first apply.
+        ///
+        /// ApplyBuiltinDisplay diffs against this so an apply performs only the changes that moved; the
+        /// first apply (nullopt) forces the present mode and frame cap so the persisted defaults take.
+        optional<BuiltinDisplayChoices> m_ActiveDisplay;
+
+        /// @brief The run-loop frame-rate cap; honored once per frame, independent of present-mode vsync.
+        FrameRateLimiter m_FrameLimiter;
 
         /// @brief This frame's interpolation fraction (GetSimAlpha), retained for the view pushes.
         f32 m_SimAlpha = 0.0f;

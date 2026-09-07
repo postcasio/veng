@@ -5,6 +5,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Path.h>
+#include <Veng/Render/DisplayModes.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
@@ -419,6 +420,22 @@ namespace Veng::Renderer
 
         /// @brief Returns the resolved color space of the presentable swapchain images.
         [[nodiscard]] DisplayColorSpace GetActiveDisplayColorSpace() const;
+
+        /// @brief Returns the present modes the surface supports, in engine vocabulary.
+        ///
+        /// Mapped from the device's reported vk present modes (FIFO→Vsync, Immediate→Immediate,
+        /// Mailbox→Mailbox) and deduplicated; Vsync is always present. This is the present-mode half of
+        /// the display-capability query the built-in Display group reads. Returns just {Vsync} on a
+        /// headless run (no surface).
+        [[nodiscard]] vector<PresentMode> GetSupportedPresentModes() const;
+
+        /// @brief Requests a swapchain present mode, applied by recreating the swapchain frame-safe.
+        ///
+        /// Records the preference on the swapchain and flags a recreation, performed at the next
+        /// BeginFrame (never mid-record). An unsupported request falls back to Vsync (FIFO) with a
+        /// warning when the recreation resolves it. A no-op on a headless run.
+        /// @param mode  The requested present mode.
+        void SetRequestedPresentMode(PresentMode mode);
 
         /// @brief Returns the swap chain image for the current frame.
         [[nodiscard]] Ref<Image> GetCurrentSwapChainImage() const;

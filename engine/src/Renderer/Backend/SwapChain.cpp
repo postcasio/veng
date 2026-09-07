@@ -121,18 +121,46 @@ namespace Veng::Renderer
                 .Mode = DisplayMode::SDR};
     }
 
-    /// @brief Selects mailbox present mode if available, falling back to FIFO.
+    /// @brief Maps an engine present mode onto the concrete vk mode the surface offers.
+    ///
+    /// FIFO (vsync) is guaranteed by the Vulkan spec, so an unsupported request falls back to it with
+    /// a warning rather than failing. An unset request keeps the swapchain's own preference — Mailbox
+    /// where available, else FIFO — so a consumer that never chose a mode is unchanged.
     static vk::PresentModeKHR
-    GetPresentMode(const vector<vk::PresentModeKHR>& availablePresentModes)
+    GetPresentMode(const vector<vk::PresentModeKHR>& availablePresentModes,
+                   const optional<PresentMode>& requested)
     {
-        for (const auto& availablePresentMode : availablePresentModes)
+        const auto available = [&](const vk::PresentModeKHR mode)
+        { return std::ranges::find(availablePresentModes, mode) != availablePresentModes.end(); };
+
+        if (requested.has_value())
         {
-            if (availablePresentMode == vk::PresentModeKHR::eMailbox)
+            vk::PresentModeKHR wanted = vk::PresentModeKHR::eFifo;
+            switch (*requested)
             {
-                return availablePresentMode;
+            case PresentMode::Vsync:
+                wanted = vk::PresentModeKHR::eFifo;
+                break;
+            case PresentMode::Immediate:
+                wanted = vk::PresentModeKHR::eImmediate;
+                break;
+            case PresentMode::Mailbox:
+                wanted = vk::PresentModeKHR::eMailbox;
+                break;
             }
+            if (available(wanted))
+            {
+                return wanted;
+            }
+            Log::Warn("Requested present mode {} is unsupported; falling back to FIFO (vsync)",
+                      static_cast<u32>(*requested));
+            return vk::PresentModeKHR::eFifo;
         }
 
+        if (available(vk::PresentModeKHR::eMailbox))
+        {
+            return vk::PresentModeKHR::eMailbox;
+        }
         return vk::PresentModeKHR::eFifo;
     }
 
@@ -205,7 +233,8 @@ namespace Veng::Renderer
 
         swapChainCreateInfo.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
 
-        swapChainCreateInfo.presentMode = GetPresentMode(swapChainSupport.PresentModes);
+        swapChainCreateInfo.presentMode =
+            GetPresentMode(swapChainSupport.PresentModes, m_RequestedPresent);
         swapChainCreateInfo.clipped = VK_TRUE;
 
         // Hand the old swapchain to the driver on recreate. MoltenVK uses it to transfer
