@@ -741,10 +741,10 @@ namespace Veng
         /// @brief Reports what the hardware offers for the built-in Display group, at runtime.
         ///
         /// The connected monitors (each with its supported resolutions and refresh rates, from GLFW),
-        /// the present modes the surface supports (from the swapchain query), and whether the platform
-        /// can drive true exclusive fullscreen. This is what the built-in Display dropdowns are
-        /// populated from and what ApplyBuiltinDisplay validates a selection against. Returns empty
-        /// monitors on a headless/dedicated run (no window).
+        /// the present modes the surface supports (from the swapchain query), and the fullscreen modes
+        /// the platform offers (a single native toggle on macOS, the three-way set elsewhere). This is
+        /// what the built-in Display dropdowns are populated from and what ApplyBuiltinDisplay validates
+        /// a selection against. Returns empty monitors on a headless/dedicated run (no window).
         /// @return The live display capabilities.
         [[nodiscard]] DisplayCapabilities GetDisplayCapabilities() const;
 
@@ -752,8 +752,9 @@ namespace Veng
         ///
         /// The display half of the settings apply, extending ApplyGraphicsSettings (which calls it).
         /// Validates @p display against GetDisplayCapabilities() first — an absent monitor falls back to
-        /// the primary, a mode the hardware cannot drive clamps to the nearest supported, and an
-        /// unavailable exclusive mode drops to borderless — so a settings file naming gone hardware
+        /// the primary, a mode the hardware cannot drive clamps to the nearest supported, and a
+        /// fullscreen mode the platform does not offer drops to its fullscreen choice — so a settings
+        /// file naming gone hardware
         /// never lands on a black or off-screen surface. It then diffs against the current display
         /// state and does only the needed work: a resolution / fullscreen / monitor / refresh change
         /// re-applies the window (recreating the swapchain through the existing resize path), a

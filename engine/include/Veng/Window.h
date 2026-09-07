@@ -205,13 +205,15 @@ namespace Veng
 
         /// @brief Applies a display mode to the live window: windowed / borderless / exclusive.
         ///
-        /// Windowed leaves the window on the desktop, resizing it to @p resolution when non-zero.
-        /// Borderless (and Exclusive on a platform without true exclusive fullscreen) moves the window
-        /// onto @p monitorId at that monitor's current mode. Exclusive, where supported, takes the
-        /// requested @p resolution and @p refreshHz. A zero resolution or refresh means the display's
-        /// native value. The framebuffer-size change this causes drives the existing swapchain
-        /// recreation on the next frame, so the caller applies it at a frame-safe point and needs no
-        /// separate recreate call. Exclusive is best-effort and its transition may be asynchronous.
+        /// On macOS full-screen is driven natively (Cocoa's -[NSWindow toggleFullScreen:], a separate
+        /// Space, the same state the green title-bar button toggles): any non-windowed @p mode enters
+        /// it and Windowed leaves it, with @p monitorId and @p refreshHz not applying to a native
+        /// toggle. Elsewhere Windowed leaves the window on the desktop (resizing it to @p resolution
+        /// when non-zero), Borderless moves it onto @p monitorId at that monitor's current mode, and
+        /// Exclusive takes the requested @p resolution and @p refreshHz. A zero resolution or refresh
+        /// means the display's native value. The framebuffer-size change this causes drives the
+        /// existing swapchain recreation on the next frame, so the caller applies it at a frame-safe
+        /// point and needs no separate recreate call. The transition may be asynchronous.
         /// @param mode        The target fullscreen mode.
         /// @param monitorId   The monitor to target for a non-windowed mode; 0 is the primary.
         /// @param resolution  The requested pixel resolution, or (0, 0) for the display's native size.
@@ -219,7 +221,17 @@ namespace Veng
         void ApplyDisplayMode(FullscreenMode mode, u32 monitorId, uvec2 resolution, u32 refreshHz);
 
         /// @brief Returns the window's current fullscreen mode.
-        [[nodiscard]] FullscreenMode GetFullscreenMode() const { return m_Fullscreen; }
+        ///
+        /// On macOS this reads the live native Cocoa full-screen state, so a full-screen entered or
+        /// left by the green title-bar button is reflected here — the persisted selection and the
+        /// window can never disagree. Elsewhere it returns the last mode ApplyDisplayMode set.
+        [[nodiscard]] FullscreenMode GetFullscreenMode() const;
+
+        /// @brief Returns whether the window is currently full-screen (any non-windowed mode).
+        [[nodiscard]] bool IsFullscreen() const
+        {
+            return GetFullscreenMode() != FullscreenMode::Windowed;
+        }
 
         struct Native;
         /// @brief Returns the backend-private native handle struct.

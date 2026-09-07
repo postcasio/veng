@@ -51,11 +51,13 @@ namespace Veng
         vector<MonitorInfo> Monitors;
         /// @brief The present modes the surface supports; Vsync (FIFO) is always among them.
         vector<PresentMode> PresentModes;
-        /// @brief Whether the platform can drive a true exclusive full-screen mode.
+        /// @brief The full-screen modes this platform offers, so the menu draws its control from data.
         ///
-        /// False on MoltenVK/macOS, where Metal exposes no exclusive-fullscreen and a request for it
-        /// collapses to Borderless. A validated Exclusive selection drops to Borderless when this is
-        /// false.
-        bool SupportsExclusiveFullscreen = false;
+        /// Windowed is always present. macOS offers {Windowed, Borderless} only — a single native
+        /// full-screen toggle (Cocoa's separate Space); Borderless is that one fullscreen choice and
+        /// Exclusive is meaningless there. Windows/Linux offer {Windowed, Borderless, Exclusive}. A
+        /// selection naming a mode absent from this set is clamped to the platform's fullscreen choice.
+        /// Empty when the run has no window (a headless/dedicated process).
+        vector<FullscreenMode> AvailableFullscreenModes;
     };
 }

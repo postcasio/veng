@@ -8,6 +8,7 @@
 #include <nfd.h>
 
 #include "Render/DisplayResolve.h"
+#include "WindowCocoa.h"
 
 #define GLFW_BOOL(x) ((x) ? GLFW_TRUE : GLFW_FALSE)
 
@@ -544,6 +545,34 @@ namespace Veng
     void Window::ApplyDisplayMode(const FullscreenMode mode, const u32 monitorId,
                                   const uvec2 resolution, const u32 refreshHz)
     {
+#if defined(__APPLE__)
+        // macOS drives full-screen through native Cocoa (-[NSWindow toggleFullScreen:], a separate
+        // Space) — the same state the green title-bar button toggles, so the settings menu and the
+        // button can never disagree. Borderless is the one fullscreen choice here (Exclusive resolves
+        // to it upstream); monitorId/refreshHz do not apply to a native toggle.
+        (void)monitorId;
+        (void)refreshHz;
+        if (mode == FullscreenMode::Windowed)
+        {
+            // Cocoa restores the pre-fullscreen frame on exit, so no windowed-rectangle bookkeeping
+            // is needed; a windowed resolution request then resizes the restored window.
+            SetNativeFullscreen(m_Handle, false);
+            if (resolution != uvec2{0, 0})
+            {
+                glfwSetWindowSize(m_Handle, static_cast<int>(resolution.x),
+                                  static_cast<int>(resolution.y));
+            }
+        }
+        else
+        {
+            SetNativeFullscreen(m_Handle, true);
+        }
+        // The toggle is animated/asynchronous, so read the real state back rather than assuming it
+        // took; GetFullscreenMode also queries it live, so a green-button change stays reflected.
+        m_Fullscreen =
+            IsNativeFullscreen(m_Handle) ? FullscreenMode::Borderless : FullscreenMode::Windowed;
+        return;
+#else
         if (mode == FullscreenMode::Windowed)
         {
             // Returning to (or staying) windowed: detach from any monitor and restore the remembered
@@ -583,18 +612,8 @@ namespace Veng
         GLFWmonitor* monitor = monitors[index];
         const GLFWvidmode* current = glfwGetVideoMode(monitor);
 
-#if defined(__APPLE__)
-        // MoltenVK/macOS has no true exclusive-fullscreen mode (Metal exposes none) and the
-        // fullscreen transition is asynchronous and animated, so Exclusive collapses to Borderless:
-        // the window takes the monitor's current mode rather than a requested mode/refresh.
-        const bool useCurrentMode = true;
-        if (mode == FullscreenMode::Exclusive)
-        {
-            Log::Warn("Exclusive fullscreen is unavailable on macOS; using Borderless");
-        }
-#else
+        // Borderless takes the monitor's current mode; Exclusive takes the requested mode/refresh.
         const bool useCurrentMode = mode == FullscreenMode::Borderless;
-#endif
 
         int width = current != nullptr ? current->width : static_cast<int>(m_Extent.x);
         int height = current != nullptr ? current->height : static_cast<int>(m_Extent.y);
@@ -619,10 +638,22 @@ namespace Veng
                            ? FullscreenMode::Exclusive
                            : FullscreenMode::Borderless;
 
-        // The single VkSurfaceKHR (created once in CreateSurface) is not recreated here: on
-        // MoltenVK the surface wraps the window's CAMetalLayer, which persists across a monitor
-        // move, so moving the same window between monitors does not invalidate it. A platform whose
-        // surface does not survive a monitor switch would need surface recreation added to this path.
+        // The single VkSurfaceKHR (created once in CreateSurface) is not recreated here: the surface
+        // wraps the window's swapchain-backing layer, which persists across a monitor move, so moving
+        // the same window between monitors does not invalidate it. A platform whose surface does not
+        // survive a monitor switch would need surface recreation added to this path.
+#endif
+    }
+
+    FullscreenMode Window::GetFullscreenMode() const
+    {
+#if defined(__APPLE__)
+        // macOS full-screen is the native Cocoa state, which the green title-bar button can change
+        // behind us, so query it live rather than trusting the cached value.
+        return IsNativeFullscreen(m_Handle) ? FullscreenMode::Borderless : FullscreenMode::Windowed;
+#else
+        return m_Fullscreen;
+#endif
     }
 
     Unique<Window> Window::Create(const WindowInfo& info)

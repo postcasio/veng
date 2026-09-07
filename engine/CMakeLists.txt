@@ -513,3 +513,13 @@ if (NOT APPLE AND NOT WIN32)
     find_package(Threads REQUIRED)
     target_link_libraries(veng PRIVATE Threads::Threads m)
 endif ()
+
+# macOS drives full-screen through native Cocoa (-[NSWindow toggleFullScreen:]); the Objective-C++
+# call lives in its own .mm and needs the Cocoa framework.
+if (APPLE)
+    target_sources(veng PRIVATE src/WindowCocoa.mm)
+    # The engine PCH is a C++ header; force-including it into an Objective-C++ TU is rejected
+    # ("Objective-C was disabled in precompiled file"), so this TU compiles without it.
+    set_source_files_properties(src/WindowCocoa.mm PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    target_link_libraries(veng PRIVATE "-framework Cocoa")
+endif ()

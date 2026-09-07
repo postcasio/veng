@@ -18,6 +18,15 @@ namespace Veng
     /// @return The sorted, deduplicated modes.
     [[nodiscard]] vector<DisplayVideoMode> DedupVideoModes(std::span<const DisplayVideoMode> modes);
 
+    /// @brief The full-screen modes the host platform offers, in menu order.
+    ///
+    /// A compile-time platform fact: {Windowed, Borderless} on macOS — where full-screen is a single
+    /// native Cocoa toggle and Exclusive is meaningless — and {Windowed, Borderless, Exclusive}
+    /// elsewhere. GetDisplayCapabilities publishes this as AvailableFullscreenModes, and
+    /// ResolveDisplaySelection clamps a selection against it. Pure and device-free.
+    /// @return The offered full-screen modes for this platform.
+    [[nodiscard]] vector<FullscreenMode> PlatformFullscreenModes();
+
     /// @brief Resolves a requested present mode against what the surface supports.
     ///
     /// Returns the requested mode when it is offered, else Vsync (FIFO), which every Vulkan surface
@@ -34,8 +43,9 @@ namespace Veng
     /// Validates every hardware-facing field against @p caps so a settings file naming gone hardware
     /// never lands the player off-screen: an absent MonitorId falls back to the primary, a
     /// resolution/refresh the monitor cannot drive clamps to the nearest supported mode, an
-    /// unsupported present mode drops to Vsync, and an Exclusive selection the platform cannot honor
-    /// drops to Borderless — each with a warning. A zero Resolution/RefreshRateHz means "the
+    /// unsupported present mode drops to Vsync, and a fullscreen mode the platform does not offer
+    /// (an Exclusive selection on macOS) drops to the platform's fullscreen choice (Borderless) —
+    /// each with a warning. A zero Resolution/RefreshRateHz means "the
     /// display's native value" and is left as zero (resolved at apply against the current mode). The
     /// non-hardware fields (frame cap, render scale, brightness, gamma) pass through untouched.
     /// @param requested  The persisted selection.

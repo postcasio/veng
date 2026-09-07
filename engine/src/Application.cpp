@@ -731,13 +731,9 @@ namespace Veng
         }
         caps.Monitors = Window::EnumerateMonitors();
         caps.PresentModes = m_RenderContext.GetSupportedPresentModes();
-        // MoltenVK/macOS exposes no true exclusive-fullscreen mode; every other platform we target
-        // does. Exclusive on macOS collapses to Borderless (Window::ApplyDisplayMode enforces the same).
-#if defined(__APPLE__)
-        caps.SupportsExclusiveFullscreen = false;
-#else
-        caps.SupportsExclusiveFullscreen = true;
-#endif
+        // The full-screen modes this platform offers: macOS a single native toggle (Windowed +
+        // Borderless), every other target the three-way Windowed/Borderless/Exclusive set.
+        caps.AvailableFullscreenModes = PlatformFullscreenModes();
         return caps;
     }
 

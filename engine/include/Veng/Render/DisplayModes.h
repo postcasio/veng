@@ -9,16 +9,18 @@ namespace Veng
     ///        window, or an exclusive full-screen mode.
     ///
     /// The engine resolves the selection against the window and swapchain; the persisted store
-    /// carries only the choice. Windowed is the engine default. Exclusive is best-effort and
-    /// platform-dependent: on a platform with no true exclusive-fullscreen (MoltenVK/macOS, where
-    /// Metal exposes none) it collapses to Borderless.
+    /// carries only the choice. Windowed is the engine default. macOS offers only Windowed and
+    /// Borderless — where Borderless is the platform's single native full-screen (Cocoa's separate
+    /// Space) and Exclusive is meaningless, so an Exclusive selection resolves to Borderless there.
     enum class FullscreenMode : u32
     {
         /// @brief A bordered, movable window at the chosen resolution.
         Windowed = 0,
-        /// @brief A borderless window covering the whole monitor at its current mode.
+        /// @brief A full-screen window covering the whole monitor; the platform's native full-screen
+        ///        on macOS (a separate Space), a borderless monitor-covering window elsewhere.
         Borderless = 1,
-        /// @brief An exclusive full-screen mode owning the display output.
+        /// @brief An exclusive full-screen mode owning the display output; resolves to Borderless on
+        ///        macOS, which offers no exclusive mode.
         Exclusive = 2,
     };
 

@@ -3,9 +3,11 @@
 //  - the capability-query parsing half: DedupVideoModes sorts and collapses a monitor's raw mode
 //    list (the GLFW-backed enumeration itself is smoke-tier — it needs a window);
 //  - present-mode fallback: an unsupported request resolves to Vsync, never a hard failure;
+//  - the per-platform fullscreen set: PlatformFullscreenModes offers Windowed + a single native
+//    fullscreen (Borderless) on macOS, and adds Exclusive elsewhere;
 //  - invalid-selection fallback against a stubbed capability set: a persisted monitor / resolution /
-//    refresh the hardware no longer offers resolves to a supported one, and an unavailable exclusive
-//    mode drops to borderless;
+//    refresh the hardware no longer offers resolves to a supported one, an exclusive mode a platform
+//    does not offer drops to its fullscreen choice, and a three-way platform keeps exclusive intact;
 //  - the diffed apply: a frame-cap-only change asks for no swapchain work; a resolution change asks
 //    for exactly the window (swapchain-recreating) action;
 //  - the frame-rate limiter spaces frames to the requested rate against a synthetic clock and is a
@@ -34,7 +36,8 @@ namespace
     {
         DisplayCapabilities caps;
         caps.PresentModes = {PresentMode::Vsync, PresentMode::Immediate};
-        caps.SupportsExclusiveFullscreen = false;
+        // The macOS dev host: full-screen is a single native toggle (no Exclusive).
+        caps.AvailableFullscreenModes = {FullscreenMode::Windowed, FullscreenMode::Borderless};
 
         MonitorInfo primary;
         primary.MonitorId = 0;
@@ -130,12 +133,24 @@ TEST_CASE("ResolveDisplaySelection clamps a selection naming gone hardware")
         CHECK(out.RefreshRateHz == 120);
     }
 
-    SUBCASE("an unsupported exclusive mode drops to borderless")
+    SUBCASE("an exclusive mode the platform does not offer drops to the fullscreen choice")
     {
+        // caps offers only {Windowed, Borderless} (the macOS set), so Exclusive clamps to Borderless.
         BuiltinDisplayChoices sel;
         sel.Fullscreen = FullscreenMode::Exclusive;
         const BuiltinDisplayChoices out = ResolveDisplaySelection(sel, caps);
         CHECK(out.Fullscreen == FullscreenMode::Borderless);
+    }
+
+    SUBCASE("a three-way platform leaves an exclusive selection intact")
+    {
+        DisplayCapabilities threeWay = caps;
+        threeWay.AvailableFullscreenModes = {FullscreenMode::Windowed, FullscreenMode::Borderless,
+                                             FullscreenMode::Exclusive};
+        BuiltinDisplayChoices sel;
+        sel.Fullscreen = FullscreenMode::Exclusive;
+        const BuiltinDisplayChoices out = ResolveDisplaySelection(sel, threeWay);
+        CHECK(out.Fullscreen == FullscreenMode::Exclusive);
     }
 
     SUBCASE("an unsupported present mode drops to Vsync")
@@ -161,6 +176,25 @@ TEST_CASE("ResolveDisplaySelection clamps a selection naming gone hardware")
         CHECK(out.Present == PresentMode::Immediate);
         CHECK(out.Fullscreen == FullscreenMode::Borderless);
     }
+}
+
+TEST_CASE("PlatformFullscreenModes reports the platform's fullscreen set")
+{
+    const vector<FullscreenMode> modes = PlatformFullscreenModes();
+
+    // Windowed and a single native fullscreen choice (Borderless) are offered everywhere.
+    CHECK(std::ranges::find(modes, FullscreenMode::Windowed) != modes.end());
+    CHECK(std::ranges::find(modes, FullscreenMode::Borderless) != modes.end());
+
+    const bool offersExclusive = std::ranges::find(modes, FullscreenMode::Exclusive) != modes.end();
+#if defined(__APPLE__)
+    // macOS full-screen is one native Cocoa toggle; Exclusive is meaningless there.
+    CHECK_FALSE(offersExclusive);
+    CHECK(modes.size() == 2);
+#else
+    CHECK(offersExclusive);
+    CHECK(modes.size() == 3);
+#endif
 }
 
 TEST_CASE("ComputeDisplayApplyActions performs only the changes that moved")

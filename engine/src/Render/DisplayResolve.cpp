@@ -30,6 +30,17 @@ namespace Veng
         }
     }
 
+    vector<FullscreenMode> PlatformFullscreenModes()
+    {
+#if defined(__APPLE__)
+        // macOS full-screen is one native Cocoa toggle; Borderless is that single choice and
+        // Exclusive is meaningless under it.
+        return {FullscreenMode::Windowed, FullscreenMode::Borderless};
+#else
+        return {FullscreenMode::Windowed, FullscreenMode::Borderless, FullscreenMode::Exclusive};
+#endif
+    }
+
     vector<DisplayVideoMode> DedupVideoModes(std::span<const DisplayVideoMode> modes)
     {
         vector<DisplayVideoMode> result(modes.begin(), modes.end());
@@ -76,11 +87,21 @@ namespace Veng
         // Present mode: fall back against the surface's supported set.
         resolved.Present = ResolvePresentMode(requested.Present, caps.PresentModes);
 
-        // Exclusive collapses to Borderless where the platform has no true exclusive fullscreen.
-        if (resolved.Fullscreen == FullscreenMode::Exclusive && !caps.SupportsExclusiveFullscreen)
+        // A fullscreen mode the platform does not offer (Exclusive on macOS) clamps to the
+        // platform's fullscreen choice, Borderless. An empty set is a headless run with nothing to
+        // validate against, so the selection passes through.
+        if (!caps.AvailableFullscreenModes.empty() &&
+            std::ranges::find(caps.AvailableFullscreenModes, resolved.Fullscreen) ==
+                caps.AvailableFullscreenModes.end())
         {
-            Log::Warn("Exclusive fullscreen is unavailable on this platform; using Borderless");
-            resolved.Fullscreen = FullscreenMode::Borderless;
+            const bool offersBorderless =
+                std::ranges::find(caps.AvailableFullscreenModes, FullscreenMode::Borderless) !=
+                caps.AvailableFullscreenModes.end();
+            const FullscreenMode fallback =
+                offersBorderless ? FullscreenMode::Borderless : FullscreenMode::Windowed;
+            Log::Warn("Fullscreen mode {} is unavailable on this platform; using {}",
+                      static_cast<u32>(resolved.Fullscreen), static_cast<u32>(fallback));
+            resolved.Fullscreen = fallback;
         }
 
         // With no monitors reported (a headless run), leave the identity fields alone — there is
