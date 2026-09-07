@@ -1008,6 +1008,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_widgets.cpp
             tests/unit/gui_list_selection.cpp
             tests/unit/gui_dropdown.cpp
+            tests/unit/gui_nested_repeater.cpp
             tests/unit/gui_scroll.cpp
             tests/unit/gui_document_api.cpp
             tests/unit/gui_presence.cpp

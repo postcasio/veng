@@ -4254,21 +4254,138 @@ namespace Veng::Gui
         m_ListTemplates.emplace(&host, std::move(captured));
     }
 
+    bool Document::EnclosingItemSlot(const Element& element, Element*& outHost, u32& outIndex) const
+    {
+        const Element* node = &element;
+        while (node != nullptr)
+        {
+            if (Element* const parent = node->Parent; parent != nullptr)
+            {
+                if (IsItemHost(*parent))
+                {
+                    const std::span<Element* const> content = ContentChildren(*parent);
+                    if (const auto it = std::ranges::find(content, node); it != content.end())
+                    {
+                        outHost = parent;
+                        outIndex = static_cast<u32>(it - content.begin()) / ItemStride(*parent);
+                        return true;
+                    }
+                }
+                node = parent;
+                continue;
+            }
+            // A popup root has no parent; continue from the anchor it was opened over, so an option
+            // list opened from a nested dropdown resolves against that dropdown's own row.
+            const Element* anchor = nullptr;
+            for (const Popup& popup : m_Popups)
+            {
+                if (popup.Root == node)
+                {
+                    anchor = popup.AnchorElement;
+                    break;
+                }
+            }
+            node = anchor;
+        }
+        return false;
+    }
+
+    Document::ResolvedBase Document::NodeBase(const Element& element) const
+    {
+        // A node nested in a repeated item resolves against that item's array element: take the
+        // host's own base recursively, resolve the host's `items` array against it, and index it by
+        // the slot. The recursion walks up one host at a time, so it handles nesting at any depth.
+        Element* host = nullptr;
+        u32 index = 0;
+        if (EnclosingItemSlot(element, host, index))
+        {
+            const ResolvedBase hostBase = NodeBase(*host);
+            const auto binding = host->Bindings.find("items");
+            if (hostBase.Data == nullptr || hostBase.Registry == nullptr ||
+                binding == host->Bindings.end())
+            {
+                return ResolvedBase{};
+            }
+            const optional<ResolvedField> field =
+                ResolveFieldPtr(*hostBase.Registry, hostBase.Data, hostBase.Type, binding->second);
+            if (!field || field->Field->Class != FieldClass::Array ||
+                field->Field->ArrayElement == nullptr || field->Field->ArraySize == nullptr ||
+                index >= field->Field->ArraySize(field->Ptr))
+            {
+                return ResolvedBase{};
+            }
+            return ResolvedBase{.Data = field->Field->ArrayElement(field->Ptr, index),
+                                .Type = field->Field->ElementType,
+                                .Registry = hostBase.Registry};
+        }
+
+        const EffectiveContext effective = EffectiveContextFor(element);
+        if (effective.Context == nullptr || effective.Registry == nullptr)
+        {
+            return ResolvedBase{};
+        }
+        return ResolvedBase{.Data = effective.Context->GetData(),
+                            .Type = effective.Context->GetDataType(),
+                            .Registry = effective.Registry};
+    }
+
     void Document::SyncLists()
     {
-        // Collect the repeaters first: SyncList mutates m_Elements (adding/removing item clones), so
-        // the walk cannot iterate m_Elements directly.
-        vector<Element*> lists;
-        for (const Unique<Element>& element : m_Elements)
+        // Sync item hosts outer-to-inner (a nested repeater's NodeBase reads an already-synced
+        // ancestor slot), and popup option lists last (a parentless popup list resolves through its
+        // anchor's row, which must be synced first). Syncing an outer host clones fresh nested hosts
+        // into the tree and frees the authored ones, so the host to sync next is re-found each round
+        // rather than snapshotted once. A host synced this pass is never re-synced or freed by a
+        // later one, since shallower hosts always go first.
+        const auto depth = [](const Element& element)
         {
-            if (IsItemHost(*element))
+            usize d = 0;
+            for (const Element* p = element.Parent; p != nullptr; p = p->Parent)
             {
-                lists.push_back(element.get());
+                ++d;
             }
-        }
-        for (Element* list : lists)
+            return d;
+        };
+        const auto underPopupRoot = [&](const Element& element)
         {
-            SyncList(*list);
+            const Element* root = &element;
+            while (root->Parent != nullptr)
+            {
+                root = root->Parent;
+            }
+            return std::ranges::any_of(m_Popups,
+                                       [&](const Popup& popup) { return popup.Root == root; });
+        };
+
+        vector<Element*> synced;
+        for (;;)
+        {
+            Element* next = nullptr;
+            usize nextDepth = 0;
+            bool nextPopup = false;
+            for (const Unique<Element>& element : m_Elements)
+            {
+                if (!IsItemHost(*element) ||
+                    std::ranges::find(synced, element.get()) != synced.end())
+                {
+                    continue;
+                }
+                const usize elementDepth = depth(*element);
+                const bool popup = underPopupRoot(*element);
+                if (next == nullptr || (nextPopup && !popup) ||
+                    (nextPopup == popup && elementDepth < nextDepth))
+                {
+                    next = element.get();
+                    nextDepth = elementDepth;
+                    nextPopup = popup;
+                }
+            }
+            if (next == nullptr)
+            {
+                break;
+            }
+            synced.push_back(next);
+            SyncList(*next);
         }
     }
 
@@ -4284,17 +4401,17 @@ namespace Veng::Gui
         // they are the item template, cloned per array element, never laid out or drawn themselves.
         CaptureItemTemplate(list);
 
-        // The `items` array resolves against the list's effective context, so a repeater inside a
-        // component reads the component's view-model rather than the host document's.
-        const EffectiveContext effective = EffectiveContextFor(list);
-        if (effective.Context == nullptr || effective.Context->GetData() == nullptr ||
-            effective.Registry == nullptr)
+        // The `items` array resolves against the list's node base: the enclosing repeated item's
+        // array element when the list is nested in another repeater, else the effective context —
+        // so a repeater inside a component reads the component's view-model and one nested in a row
+        // reads that row's own array.
+        const ResolvedBase base = NodeBase(list);
+        if (base.Data == nullptr || base.Registry == nullptr)
         {
             return;
         }
         const optional<ResolvedField> field =
-            ResolveFieldPtr(*effective.Registry, effective.Context->GetData(),
-                            effective.Context->GetDataType(), binding->second);
+            ResolveFieldPtr(*base.Registry, base.Data, base.Type, binding->second);
         if (!field || field->Field->Class != FieldClass::Array ||
             field->Field->ArraySize == nullptr)
         {
@@ -4395,15 +4512,13 @@ namespace Veng::Gui
         const auto items = dropdown.Bindings.find("items");
         if (items != dropdown.Bindings.end())
         {
-            const EffectiveContext effective = EffectiveContextFor(dropdown);
-            if (effective.Context == nullptr || effective.Context->GetData() == nullptr ||
-                effective.Registry == nullptr)
+            const ResolvedBase base = NodeBase(dropdown);
+            if (base.Data == nullptr || base.Registry == nullptr)
             {
                 return 0;
             }
             const optional<ResolvedField> field =
-                ResolveFieldPtr(*effective.Registry, effective.Context->GetData(),
-                                effective.Context->GetDataType(), items->second);
+                ResolveFieldPtr(*base.Registry, base.Data, base.Type, items->second);
             if (!field || field->Field->Class != FieldClass::Array ||
                 field->Field->ArraySize == nullptr)
             {
@@ -4425,9 +4540,8 @@ namespace Veng::Gui
         const auto items = dropdown.Bindings.find("items");
         if (items != dropdown.Bindings.end())
         {
-            const EffectiveContext effective = EffectiveContextFor(dropdown);
-            if (effective.Context == nullptr || effective.Context->GetData() == nullptr ||
-                effective.Registry == nullptr || tmpl == m_ListTemplates.end())
+            const ResolvedBase base = NodeBase(dropdown);
+            if (base.Data == nullptr || base.Registry == nullptr || tmpl == m_ListTemplates.end())
             {
                 return std::nullopt;
             }
@@ -4444,14 +4558,13 @@ namespace Veng::Gui
                 return std::nullopt;
             }
             const optional<ResolvedField> field =
-                ResolveFieldPtr(*effective.Registry, effective.Context->GetData(),
-                                effective.Context->GetDataType(), items->second);
+                ResolveFieldPtr(*base.Registry, base.Data, base.Type, items->second);
             if (!field || field->Field->ArrayElement == nullptr)
             {
                 return std::nullopt;
             }
             void* const itemPtr = field->Field->ArrayElement(field->Ptr, index);
-            return ResolvePath(*effective.Registry, itemPtr, field->Field->ElementType, *labelExpr);
+            return ResolvePath(*base.Registry, itemPtr, field->Field->ElementType, *labelExpr);
         }
         // Inline: the option's label is the template item's own text.
         if (tmpl == m_ListTemplates.end() || index >= tmpl->second.Roots.size())
@@ -4509,15 +4622,15 @@ namespace Veng::Gui
             // Resolve the one-way index binding here, before the flat binding walk, so the clamp
             // reads the fresh option count rather than last frame's — a bound index is never lost to
             // a stale zero max on the frame the options first arrive. It resolves against the
-            // dropdown's effective context, so a dropdown inside a component reads the component's.
-            const EffectiveContext effective = EffectiveContextFor(dropdown);
+            // dropdown's node base, so a dropdown inside a component reads the component's and one
+            // nested in a row reads that row's own field.
+            const ResolvedBase base = NodeBase(dropdown);
             if (const auto value = dropdown.Bindings.find("value");
-                value != dropdown.Bindings.end() && effective.Context != nullptr &&
-                effective.Context->GetData() != nullptr && effective.Registry != nullptr)
+                value != dropdown.Bindings.end() && base.Data != nullptr &&
+                base.Registry != nullptr)
             {
                 if (const optional<string> resolved =
-                        ResolvePath(*effective.Registry, effective.Context->GetData(),
-                                    effective.Context->GetDataType(), value->second))
+                        ResolvePath(*base.Registry, base.Data, base.Type, value->second))
                 {
                     f32 index = dropdown.Widget.Value;
                     static_cast<void>(std::from_chars(resolved->data(),
@@ -4577,10 +4690,11 @@ namespace Veng::Gui
         CascadeWidgetElement(list);
 
         // SyncLists runs only on a context-version bump, so populate the freshly-opened list now.
-        // The option list resolves against the dropdown's effective context (which the popup root
-        // inherits through its anchor), so a data-bound dropdown inside a component still fills.
-        if (const EffectiveContext effective = EffectiveContextFor(dropdown);
-            dataBound && effective.Context != nullptr && effective.Registry != nullptr)
+        // The option list resolves through the dropdown's node base (which the popup root reaches
+        // through its anchor), so a data-bound dropdown inside a component — or nested in a row —
+        // still fills from the right array.
+        if (const ResolvedBase base = NodeBase(dropdown);
+            dataBound && base.Data != nullptr && base.Registry != nullptr)
         {
             SyncList(list);
         }
@@ -4720,7 +4834,7 @@ namespace Veng::Gui
         return live;
     }
 
-    void Document::ResolveItemBindings(Element& element, void* itemBase, TypeId itemType)
+    void Document::ResolveNodeBindings(Element& element, void* itemBase, TypeId itemType)
     {
         for (const auto& [property, expression] : element.Bindings)
         {
@@ -4765,8 +4879,52 @@ namespace Veng::Gui
                 SetText(element, *resolved);
             }
         }
+
+        // A Slider's bounds are config attributes InitWidget read as literals, so a per-row `{path}`
+        // stored de-braced never parsed and fell back to the default. Re-resolve each against the
+        // row: a path resolves and overrides, a literal fails ResolvePath and keeps InitWidget's.
+        if (element.Kind == ElementKind::Slider)
+        {
+            const auto resolveScalar = [&](const string& name, f32& target)
+            {
+                const auto it = element.Bindings.find(name);
+                if (it == element.Bindings.end())
+                {
+                    return;
+                }
+                if (const optional<string> resolved =
+                        ResolvePath(*m_Registry, itemBase, itemType, it->second))
+                {
+                    f32 value = target;
+                    if (std::from_chars(resolved->data(), resolved->data() + resolved->size(),
+                                        value)
+                            .ec == std::errc{})
+                    {
+                        target = value;
+                    }
+                }
+            };
+            resolveScalar("min", element.Widget.Min);
+            resolveScalar("max", element.Widget.Max);
+            resolveScalar("step", element.Widget.Step);
+            element.Widget.Value = ClampStep(element.Widget.Value, element.Widget.Min,
+                                             element.Widget.Max, element.Widget.Step);
+        }
+    }
+
+    void Document::ResolveItemBindings(Element& element, void* itemBase, TypeId itemType)
+    {
+        ResolveNodeBindings(element, itemBase, itemType);
         for (Element* child : element.Children)
         {
+            // A nested item host owns its own subtree through its own SyncList(child) call, which
+            // resolves its items against this row; resolve only its own bindings here (its
+            // `visible`, a bound tint) and do not descend into the template it repeats.
+            if (IsItemHost(*child))
+            {
+                ResolveNodeBindings(*child, itemBase, itemType);
+                continue;
+            }
             ResolveItemBindings(*child, itemBase, itemType);
         }
     }

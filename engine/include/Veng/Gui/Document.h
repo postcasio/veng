@@ -957,6 +957,17 @@ namespace Veng::Gui
             bool Moved = false;
         };
 
+        /// @brief The data object, its type, and the registry a node's bindings resolve against.
+        struct ResolvedBase
+        {
+            /// @brief The base object bindings resolve field paths against, or null when none binds.
+            void* Data = nullptr;
+            /// @brief The registered TypeId of that base object.
+            TypeId Type = InvalidTypeId;
+            /// @brief The registry that base's field paths resolve through, or null.
+            const TypeRegistry* Registry = nullptr;
+        };
+
         /// @brief Returns the context+registry an element's bindings resolve against.
         ///
         /// The nearest ancestor boundary that binds a scoped context, else the document root context.
@@ -975,6 +986,27 @@ namespace Veng::Gui
 
         /// @brief Resolves and writes one element's bindings against its effective context.
         void ResolveElementBindings(Element& element);
+
+        /// @brief Finds the repeated item slot an element is nested in, if any.
+        ///
+        /// Walks the ancestor chain (crossing a parentless popup root to its anchor, as
+        /// FindScopedContext does) for the nearest item host holding this element in one of its
+        /// content slots.
+        /// @param element  The element to locate.
+        /// @param outHost  Set to the enclosing item host on success.
+        /// @param outIndex Set to the array index of the slot the element sits in, on success.
+        /// @return True when an enclosing item slot was found.
+        [[nodiscard]] bool EnclosingItemSlot(const Element& element, Element*& outHost,
+                                             u32& outIndex) const;
+
+        /// @brief Returns the data object an element's bindings (and, for a repeater, its `items`)
+        /// resolve against.
+        ///
+        /// The enclosing item slot's array element when the element is nested in a repeated item —
+        /// resolved by walking up host by host, so nesting works at arbitrary depth — else the
+        /// element's effective context data. Data is null when nothing binds or the slot resolves
+        /// out of range.
+        [[nodiscard]] ResolvedBase NodeBase(const Element& element) const;
 
         /// @brief Re-syncs every List's item children against its bound array's current size.
         void SyncLists();
@@ -997,6 +1029,16 @@ namespace Veng::Gui
 
         /// @brief Resolves a List item subtree's bindings against one array element's fields.
         void ResolveItemBindings(Element& element, void* itemBase, TypeId itemType);
+
+        /// @brief Resolves one node's own bindings against an array element, without recursing.
+        ///
+        /// Writes the node's text/value/visible and bindable paint properties, and a Slider's
+        /// per-row min/max/step (a bound `{path}` resolves and overrides; a literal keeps the
+        /// InitWidget value), then re-clamps a Slider's value. Its children are not descended into.
+        /// @param element  The node whose own bindings resolve.
+        /// @param itemBase The array element the paths resolve against.
+        /// @param itemType The registered TypeId of that array element.
+        void ResolveNodeBindings(Element& element, void* itemBase, TypeId itemType);
 
         /// @brief Returns how many elements one item slot of a host holds (its template root count).
         [[nodiscard]] u32 ItemStride(const Element& host) const;
