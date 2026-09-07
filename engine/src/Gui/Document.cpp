@@ -335,6 +335,8 @@ namespace Veng::Gui
                 return "Dropdown";
             case ElementKind::DropdownArrow:
                 return "DropdownArrow";
+            case ElementKind::Component:
+                return "Component";
             }
             return "Panel";
         }
@@ -2144,6 +2146,7 @@ namespace Veng::Gui
             case ElementKind::SliderFill:
             case ElementKind::SliderThumb:
             case ElementKind::DropdownArrow:
+            case ElementKind::Component:
                 return false;
             }
             return false;

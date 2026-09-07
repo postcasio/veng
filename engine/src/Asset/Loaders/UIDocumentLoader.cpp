@@ -162,6 +162,10 @@ namespace Veng
                 recipe.Src = AssetId{ce.Src};
                 recipe.Tint = {ce.Tint[0], ce.Tint[1], ce.Tint[2], ce.Tint[3]};
                 recipe.Uv = Gui::Rect{.Min = {ce.Uv[0], ce.Uv[1]}, .Size = {ce.Uv[2], ce.Uv[3]}};
+                // Component-boundary provenance and its reserved driver id ride the recipe; neither
+                // is a load-time dependency — the spliced fragment elements carry their own.
+                recipe.ComponentSource = AssetId{ce.ComponentSource};
+                recipe.ComponentDriver = ce.ComponentDriver;
                 if (ce.Src != 0)
                 {
                     AddUnique(decoded.TextureIds, AssetId{ce.Src});

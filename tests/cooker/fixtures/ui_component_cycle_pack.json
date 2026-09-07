@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x00C0FFEE0C17C1E0",
+      "type": "UIDocument",
+      "source": "gui/component_cycle.vui.xml"
+    }
+  ]
+}

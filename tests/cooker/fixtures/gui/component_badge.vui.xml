@@ -1,0 +1,5 @@
+<Panel class="badge" stylesheets="0x5B33ACBEC98E1BD8" style="font: 0xFB6782CABF076640;">
+  <Text class="label">${title}</Text>
+  <Image class="icon" src="0x4DE87D318251BC1E"/>
+  <Text class="dot" count="2">dot-${i}</Text>
+</Panel>

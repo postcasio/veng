@@ -88,6 +88,16 @@ namespace Veng::Gui
         /// a cook error exactly as a `<ScrollBar>` is. It is a real element purely so it styles
         /// through the ordinary cascade — `DropdownArrow { background: … }` is a plain type selector.
         DropdownArrow,
+        /// @brief A cook-time-spliced boundary wrapping an embedded reusable document fragment.
+        ///
+        /// Authored as `<Component src="…">`, resolved and inserted by the cooker: the referenced
+        /// fragment's element subtree is spliced in as this boundary's children, so the runtime
+        /// loads one flat tree and treats the boundary as a plain container — it lays out, styles,
+        /// and paints as a Panel does. The boundary records the fragment's AssetId as provenance and
+        /// reserves a driver id; unbound, so the embedded subtree resolves its bindings and handlers
+        /// against the host document's single context, exactly as inline markup does. Appended last
+        /// to keep every existing ordinal stable, since a cooked recipe stores the kind as an ordinal.
+        Component,
     };
 
     /// @brief Transient interaction-state bits an element carries for styling and events.

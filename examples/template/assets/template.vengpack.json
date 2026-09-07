@@ -72,6 +72,11 @@
       "source": "ui/hud.vui.xml"
     },
     {
+      "id": "0x8C245DEE9B8C3576",
+      "type": "UIDocument",
+      "source": "ui/emblem.vui.xml"
+    },
+    {
       "id": "0x5B1B7515FB2FCDC0",
       "type": "InputMap",
       "source": "input/overlay.inputmap.json"

@@ -1944,6 +1944,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/asset_handle_leaf_deps.cpp
             tests/cooker/cook_source.cpp
             tests/cooker/ui_document_cook.cpp
+            tests/cooker/ui_document_component.cpp
             tests/cooker/ui_list_selection_cook.cpp
             tests/cooker/ui_dropdown_cook.cpp
             tests/cooker/stylesheet_cook.cpp

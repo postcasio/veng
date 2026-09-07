@@ -5,6 +5,7 @@
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cstring>
@@ -72,8 +73,25 @@ namespace Veng::Cook
             {
                 return Gui::ElementKind::Dropdown;
             }
+            if (tag == "Component")
+            {
+                return Gui::ElementKind::Component;
+            }
             return std::nullopt;
         }
+
+        // The include chain of fragments currently being spliced, innermost last. Used to name a
+        // cycle and to bound nesting depth; the host document is not a frame (it is not embedded).
+        struct EmbedFrame
+        {
+            AssetId Id;
+            string Path;
+        };
+
+        // A sane ceiling on `<Component>` nesting: a fragment embedding a fragment embedding …. A
+        // cycle is caught exactly by the chain check; this bounds an acyclic but pathologically deep
+        // chain rather than recursing without limit.
+        constexpr usize MaxComponentDepth = 16;
 
         // A growing UTF-8 string region with byte-offset deduplication: an identical string is
         // stored once and returns the same span, so a repeated class/id appears once in the blob.
@@ -117,7 +135,20 @@ namespace Veng::Cook
             vector<CookedUIBinding> Bindings;
             vector<CookedUIHandler> Handlers;
             vector<CookedStyleProperty> InlineProperties;
+            // The referenced StyleSheet ids, seeded from the host root and grown (deduplicated) by
+            // each spliced fragment's own `stylesheets`, so a fragment's styles fold into the host.
+            vector<u64> StyleSheetIds;
         };
+
+        // Appends a stylesheet id to the document's set, skipping a duplicate so a fragment
+        // reusing a sheet the host already references does not list it twice.
+        void AddStyleSheet(vector<u64>& ids, u64 id)
+        {
+            if (std::ranges::find(ids, id) == ids.end())
+            {
+                ids.push_back(id);
+            }
+        }
 
         vector<string> SplitWhitespace(std::string_view text)
         {
@@ -143,61 +174,92 @@ namespace Veng::Cook
             return parts;
         }
 
-        // The active markup-repetition context threaded through the element cook: whether the
-        // element sits inside a `count` subtree and, if so, its 0-based repeat index. `${}`
-        // substitution is enabled only while Active, and a `count` seen while Active is a nested
-        // repeat (a located error).
+        // The active substitution context threaded through the element cook. Active/Index carry the
+        // `count` repeat state — whether the element sits inside a `count` subtree and its 0-based
+        // repeat index — and a `count` seen while Active is a nested repeat (a located error). Params,
+        // when non-null, is a spliced `<Component>`'s literal parameters: inside a fragment,
+        // `${name}` resolves to `param:name`. `${}` substitution is enabled while Active or while
+        // Params is bound.
         struct RepeatContext
         {
             bool Active = false;
             u32 Index = 0;
+            const std::map<string, string>* Params = nullptr;
         };
 
-        // Evaluates one `${…}` body against the repeat index: `i` (0-based), `n` (1-based), each
-        // optionally with a `:0W` zero-pad spec (W a single digit 1–9). An unknown name or a
-        // malformed pad spec is a located error.
-        Result<string> EvalSubstitution(std::string_view body, u32 index, const string& located)
+        // Evaluates one `${…}` body against the active context. `i` (0-based) and `n` (1-based) are
+        // the `count` repeat index, each optionally with a `:0W` zero-pad spec (W a single digit
+        // 1–9); every other name is a component parameter, resolved against ctx.Params. An index
+        // used outside a `count` subtree, an unknown name, a pad spec on a parameter, and a malformed
+        // pad spec are all located errors.
+        Result<string> EvalSubstitution(std::string_view body, const RepeatContext& ctx,
+                                        const string& located)
         {
             const usize colon = body.find(':');
             const std::string_view name = body.substr(0, colon);
 
-            u32 value = 0;
-            if (name == "i")
+            if (name == "i" || name == "n")
             {
-                value = index;
+                if (!ctx.Active)
+                {
+                    return std::unexpected(
+                        fmt::format("{}: '${{{}}}' index substitution appears outside a 'count' "
+                                    "subtree",
+                                    located, body));
+                }
+                const u32 value = name == "i" ? ctx.Index : ctx.Index + 1;
+                if (colon == std::string_view::npos)
+                {
+                    return fmt::format("{}", value);
+                }
+                const std::string_view spec = body.substr(colon + 1);
+                if (spec.size() != 2 || spec[0] != '0' || spec[1] < '1' || spec[1] > '9')
+                {
+                    return std::unexpected(fmt::format(
+                        "{}: '${{{}}}' has a malformed pad spec (expected ':0W', W a digit "
+                        "1–9, e.g. ':02')",
+                        located, body));
+                }
+                const int width = spec[1] - '0';
+                return fmt::format("{:0{}}", value, width);
             }
-            else if (name == "n")
+
+            if (ctx.Params != nullptr)
             {
-                value = index + 1;
+                if (colon != std::string_view::npos)
+                {
+                    return std::unexpected(fmt::format(
+                        "{}: '${{{}}}' — a pad spec is only valid for the 'count' index 'i'/'n'",
+                        located, body));
+                }
+                const auto it = ctx.Params->find(string(name));
+                if (it != ctx.Params->end())
+                {
+                    return it->second;
+                }
+                return std::unexpected(
+                    fmt::format("{}: '${{{}}}' names an unknown parameter (no matching 'param:{}' "
+                                "on the <Component>)",
+                                located, body, name));
             }
-            else
+
+            // No parameters are bound (a top-level document cook, or a fragment cooked standalone as
+            // its own manifest entry). Inside a `count` subtree a non-index name is a typo; outside
+            // one, a `${name}` is a component-parameter placeholder that survives verbatim so the
+            // fragment cooks standalone and resolves the name only when it is embedded.
+            if (ctx.Active)
             {
                 return std::unexpected(fmt::format(
                     "{}: '${{{}}}' names an unknown index (expected 'i' or 'n')", located, body));
             }
-
-            if (colon == std::string_view::npos)
-            {
-                return fmt::format("{}", value);
-            }
-
-            const std::string_view spec = body.substr(colon + 1);
-            if (spec.size() != 2 || spec[0] != '0' || spec[1] < '1' || spec[1] > '9')
-            {
-                return std::unexpected(
-                    fmt::format("{}: '${{{}}}' has a malformed pad spec (expected ':0W', W a digit "
-                                "1–9, e.g. ':02')",
-                                located, body));
-            }
-            const int width = spec[1] - '0';
-            return fmt::format("{:0{}}", value, width);
+            return fmt::format("${{{}}}", body);
         }
 
-        // Applies `${}` index substitution to one attribute value or text run. Runs on every value
-        // after XML parse and before attribute interpretation. `$${` emits a literal `${`; a `$`
-        // not opening `${` passes through. A `${…}` form substitutes the repeat index while
-        // `ctx.Active`; encountered outside a repeat subtree it is a located error (a typo-catch),
-        // as is an unterminated `${`.
+        // Applies `${}` substitution to one attribute value or text run. Runs on every value after
+        // XML parse and before attribute interpretation. `$${` emits a literal `${`; a `$` not
+        // opening `${` passes through. A `${…}` form substitutes the repeat index or a component
+        // parameter (EvalSubstitution decides, and a stray index name is the typo-catch); an
+        // unterminated `${` is a located error.
         Result<string> Substitute(std::string_view value, const RepeatContext& ctx,
                                   const string& located)
         {
@@ -220,12 +282,6 @@ namespace Veng::Cook
                 }
                 if (i + 1 < n && value[i + 1] == '{')
                 {
-                    if (!ctx.Active)
-                    {
-                        return std::unexpected(fmt::format("{}: index substitution '${{' appears "
-                                                           "outside a 'count' subtree in '{}'",
-                                                           located, value));
-                    }
                     const usize close = value.find('}', i + 2);
                     if (close == std::string_view::npos)
                     {
@@ -233,7 +289,7 @@ namespace Veng::Cook
                             fmt::format("{}: unterminated '${{' in '{}'", located, value));
                     }
                     const Result<string> replaced =
-                        EvalSubstitution(value.substr(i + 2, close - (i + 2)), ctx.Index, located);
+                        EvalSubstitution(value.substr(i + 2, close - (i + 2)), ctx, located);
                     if (!replaced)
                     {
                         return std::unexpected(replaced.error());
@@ -399,10 +455,214 @@ namespace Veng::Cook
         // Recursively cooks one XML element into the flat tables, returning its recursive subtree
         // node count (so a parent counts only its direct children). The element's own record is
         // appended first (pre-order), then its children follow. `subst` carries the active
-        // repetition context: while Active, every attribute value and text run has `${}` index
+        // substitution context: while Active, every attribute value and text run has `${}` index
         // substitution applied, and a child bearing `count` (a nested repeat) is a located error.
+        // `context` resolves a `<Component>`'s fragment and `chain` bounds/guards its nesting.
         Result<u32> CookElement(const pugi::xml_node& node, Build& build, const string& file,
-                                const RepeatContext& subst)
+                                const RepeatContext& subst, const CookContext& context,
+                                vector<EmbedFrame>& chain);
+
+        // Cooks a `<Component src="…">`: resolves the referenced UIDocument fragment, applies the
+        // element's `param:<name>` values as `${name}` substitutions inside it, and splices the
+        // fragment's element subtree in under a new ElementKind::Component boundary. The boundary
+        // records the fragment's AssetId (its driver id stays unbound), and the fragment's own
+        // referenced stylesheets fold into the host document's set. A fragment that (transitively)
+        // embeds itself, or one nested past MaxComponentDepth, is a located error naming the chain.
+        Result<u32> CookComponent(const pugi::xml_node& node, Build& build, const string& file,
+                                  const string& located, const RepeatContext& subst,
+                                  const CookContext& context, vector<EmbedFrame>& chain)
+        {
+            optional<AssetId> fragId;
+            std::map<string, string> params;
+            for (const pugi::xml_attribute& attr : node.attributes())
+            {
+                const string name = attr.name();
+                // `count` is consumed by the caller's repetition handling, as on any element.
+                if (name == "count")
+                {
+                    continue;
+                }
+                const Result<string> substituted = Substitute(attr.value(), subst, located);
+                if (!substituted)
+                {
+                    return std::unexpected(substituted.error());
+                }
+                const string& value = *substituted;
+                if (name == "src")
+                {
+                    const optional<AssetId> id = ParseAssetId(value);
+                    if (!id)
+                    {
+                        return std::unexpected(fmt::format(
+                            "{}: 'src' value '{}' is not a hex AssetId", located, value));
+                    }
+                    fragId = *id;
+                    continue;
+                }
+                if (name.rfind("param:", 0) == 0)
+                {
+                    const string paramName = name.substr(std::strlen("param:"));
+                    if (paramName.empty())
+                    {
+                        return std::unexpected(fmt::format(
+                            "{}: a 'param:' attribute needs a name after the colon", located));
+                    }
+                    params[paramName] = value;
+                    continue;
+                }
+                return std::unexpected(
+                    fmt::format("{}: unrecognized attribute '{}' on <Component> (expected 'src' or "
+                                "'param:<name>')",
+                                located, name));
+            }
+            if (!fragId)
+            {
+                return std::unexpected(fmt::format(
+                    "{}: <Component> requires a 'src' naming a UIDocument fragment", located));
+            }
+
+            // Child-content projection is not a feature here: a component's content is its fragment,
+            // so an authored child element is a mistake rather than a slot.
+            for (const pugi::xml_node& child : node.children())
+            {
+                if (child.type() == pugi::node_element)
+                {
+                    return std::unexpected(fmt::format(
+                        "{}: <Component> takes no child elements; its content comes from the "
+                        "fragment named by 'src'",
+                        located));
+                }
+            }
+
+            if (!context.Resolve)
+            {
+                return std::unexpected(fmt::format(
+                    "{}: <Component> cannot resolve 'src' — no asset resolver in this cook",
+                    located));
+            }
+            const optional<ResolvedSource> resolved = context.Resolve(*fragId);
+            if (!resolved)
+            {
+                return std::unexpected(
+                    fmt::format("{}: <Component> src {} does not resolve to an asset in the pack",
+                                located, FormatAssetId(*fragId)));
+            }
+            if (resolved->Type != AssetTypes::UIDocument)
+            {
+                return std::unexpected(fmt::format("{}: <Component> src {} is not a UIDocument",
+                                                   located, FormatAssetId(*fragId)));
+            }
+            if (context.RecordDependency)
+            {
+                context.RecordDependency(resolved->AbsolutePath);
+            }
+
+            // Cycle + depth guard: name the whole include chain, closing the loop on the repeat.
+            const auto formatChain = [&chain](const string& tail)
+            {
+                string out;
+                for (const EmbedFrame& frame : chain)
+                {
+                    out += frame.Path;
+                    out += " -> ";
+                }
+                out += tail;
+                return out;
+            };
+            for (const EmbedFrame& frame : chain)
+            {
+                if (frame.Id.Value == fragId->Value)
+                {
+                    return std::unexpected(
+                        fmt::format("{}: <Component> include cycle: {}", located,
+                                    formatChain(resolved->AbsolutePath.string())));
+                }
+            }
+            if (chain.size() >= MaxComponentDepth)
+            {
+                return std::unexpected(fmt::format(
+                    "{}: <Component> nesting exceeds the maximum depth of {}: {}", located,
+                    MaxComponentDepth, formatChain(resolved->AbsolutePath.string())));
+            }
+
+            // Emit the boundary; it carries no author-facing identity of its own here.
+            CookedUIElement boundary{};
+            boundary.Kind = static_cast<u32>(Gui::ElementKind::Component);
+            boundary.FirstClass = static_cast<u32>(build.Classes.size());
+            boundary.FirstBinding = static_cast<u32>(build.Bindings.size());
+            boundary.FirstHandler = static_cast<u32>(build.Handlers.size());
+            boundary.FirstInlineProperty = static_cast<u32>(build.InlineProperties.size());
+            boundary.ComponentSource = fragId->Value;
+            boundary.ComponentDriver = 0;
+            const usize selfIndex = build.Elements.size();
+            build.Elements.push_back(boundary);
+
+            // Parse the fragment and splice its root subtree under the boundary.
+            pugi::xml_document fragDoc;
+            const pugi::xml_parse_result parsed =
+                fragDoc.load_file(resolved->AbsolutePath.string().c_str());
+            if (!parsed)
+            {
+                return std::unexpected(
+                    fmt::format("{}: <Component> fragment '{}': XML parse error at offset {}: {}",
+                                located, resolved->AbsolutePath.string(),
+                                static_cast<long long>(parsed.offset), parsed.description()));
+            }
+            pugi::xml_node fragRoot = fragDoc.first_child();
+            if (!fragRoot || fragRoot.type() != pugi::node_element)
+            {
+                return std::unexpected(
+                    fmt::format("{}: <Component> fragment '{}' has no root element", located,
+                                resolved->AbsolutePath.string()));
+            }
+
+            const string fragFile = resolved->AbsolutePath.string();
+
+            // Fold the fragment's referenced stylesheets into the host set (deduplicated), so the
+            // host eager-loads them exactly as if the fragment's markup had been authored inline.
+            if (const pugi::xml_attribute sheets = fragRoot.attribute("stylesheets"))
+            {
+                for (const string& idText : SplitWhitespace(sheets.value()))
+                {
+                    const optional<AssetId> id = ParseAssetId(idText);
+                    if (!id)
+                    {
+                        return std::unexpected(fmt::format(
+                            "ui document importer: '{}': 'stylesheets' entry '{}' is not a hex "
+                            "AssetId",
+                            fragFile, idText));
+                    }
+                    AddStyleSheet(build.StyleSheetIds, id->Value);
+                }
+                fragRoot.remove_attribute("stylesheets");
+            }
+            if (fragRoot.attribute("count"))
+            {
+                return std::unexpected(fmt::format(
+                    "ui document importer: '{}': 'count' is not allowed on a fragment root",
+                    fragFile));
+            }
+
+            // The fragment cooks in a fresh context carrying only its parameters: the host's repeat
+            // index does not leak in (the fragment's own `count`s drive its `${i}`/`${n}`), while
+            // `${name}` resolves to `param:name`.
+            chain.push_back(EmbedFrame{.Id = *fragId, .Path = fragFile});
+            const RepeatContext fragCtx{.Active = false, .Index = 0, .Params = &params};
+            const Result<u32> subtree =
+                CookElement(fragRoot, build, fragFile, fragCtx, context, chain);
+            chain.pop_back();
+            if (!subtree)
+            {
+                return std::unexpected(subtree.error());
+            }
+
+            build.Elements[selfIndex].ChildCount = 1;
+            return *subtree + 1;
+        }
+
+        Result<u32> CookElement(const pugi::xml_node& node, Build& build, const string& file,
+                                const RepeatContext& subst, const CookContext& context,
+                                vector<EmbedFrame>& chain)
         {
             const string tag = node.name();
             const optional<Gui::ElementKind> kind = ParseElementKind(tag);
@@ -412,10 +672,16 @@ namespace Veng::Cook
                     fmt::format("ui document importer: '{}': unknown element tag '{}'", file, tag));
             }
 
+            const string located = fmt::format("ui document importer: '{}': <{}>", file, tag);
+
+            // A `<Component>` is spliced, not cooked as an ordinary element.
+            if (*kind == Gui::ElementKind::Component)
+            {
+                return CookComponent(node, build, file, located, subst, context, chain);
+            }
+
             CookedUIElement element{};
             element.Kind = static_cast<u32>(*kind);
-
-            const string located = fmt::format("ui document importer: '{}': <{}>", file, tag);
 
             element.FirstClass = static_cast<u32>(build.Classes.size());
             element.FirstBinding = static_cast<u32>(build.Bindings.size());
@@ -657,8 +923,12 @@ namespace Veng::Cook
                     }
                     for (u32 index = 0; index < *repeats; ++index)
                     {
+                        // Carry the active parameter scope so a repeated element inside a fragment
+                        // still resolves the component's `${name}` values.
                         const Result<u32> subtree = CookElement(
-                            child, build, file, RepeatContext{.Active = true, .Index = index});
+                            child, build, file,
+                            RepeatContext{.Active = true, .Index = index, .Params = subst.Params},
+                            context, chain);
                         if (!subtree)
                         {
                             return std::unexpected(subtree.error());
@@ -668,7 +938,7 @@ namespace Veng::Cook
                     continue;
                 }
 
-                const Result<u32> subtree = CookElement(child, build, file, subst);
+                const Result<u32> subtree = CookElement(child, build, file, subst, context, chain);
                 if (!subtree)
                 {
                     return std::unexpected(subtree.error());
@@ -707,9 +977,11 @@ namespace Veng::Cook
                 fmt::format("ui document importer: '{}': document has no root element", file));
         }
 
+        Build build;
+
         // The root's `stylesheets` attribute lists the referenced StyleSheet ids (hex, space
-        // separated); it is consumed here, not passed to the element cook.
-        vector<u64> styleSheetIds;
+        // separated); it seeds the document's set, which each spliced fragment then grows. It is
+        // consumed here, not passed to the element cook.
         if (const pugi::xml_attribute sheets = root.attribute("stylesheets"))
         {
             for (const string& idText : SplitWhitespace(sheets.value()))
@@ -721,7 +993,7 @@ namespace Veng::Cook
                         "ui document importer: '{}': 'stylesheets' entry '{}' is not a hex AssetId",
                         file, idText));
                 }
-                styleSheetIds.push_back(id->Value);
+                AddStyleSheet(build.StyleSheetIds, id->Value);
             }
             // The attribute is not an element attribute; remove it so the element cook does not
             // reject it as unrecognized.
@@ -736,8 +1008,9 @@ namespace Veng::Cook
                 "ui document importer: '{}': 'count' is not allowed on the root element", file));
         }
 
-        Build build;
-        const Result<u32> rootResult = CookElement(root, build, file, RepeatContext{});
+        vector<EmbedFrame> chain;
+        const Result<u32> rootResult =
+            CookElement(root, build, file, RepeatContext{}, context, chain);
         if (!rootResult)
         {
             return std::unexpected(rootResult.error());
@@ -745,7 +1018,7 @@ namespace Veng::Cook
 
         CookedUIDocumentHeader header{};
         header.Version = CookedUIDocumentVersion;
-        header.StyleSheetCount = static_cast<u32>(styleSheetIds.size());
+        header.StyleSheetCount = static_cast<u32>(build.StyleSheetIds.size());
         header.ElementCount = static_cast<u32>(build.Elements.size());
         header.ClassCount = static_cast<u32>(build.Classes.size());
         header.BindingCount = static_cast<u32>(build.Bindings.size());
@@ -755,7 +1028,7 @@ namespace Veng::Cook
 
         vector<u8> blob;
         Append(blob, header);
-        for (const u64 id : styleSheetIds)
+        for (const u64 id : build.StyleSheetIds)
         {
             Append(blob, id);
         }

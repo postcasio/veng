@@ -1,0 +1,4 @@
+<Panel class="emblem" stylesheets="0x9199FE52C60D7DF8">
+  <Image class="badge" src="0x502E61AE5D720E64"/>
+  <Text class="title">${name}</Text>
+</Panel>

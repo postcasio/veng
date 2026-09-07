@@ -1180,8 +1180,8 @@ namespace Veng
     /// Bumped on any CookedUIDocumentHeader/CookedUIElement/inline-property/blob-region layout
     /// change, and on any renumbering of the StyleProperty enumerators the inline-property table
     /// stores by ordinal; the loader rejects a blob whose Version != this. v3 renumbered them for
-    /// the per-axis overflow properties.
-    inline constexpr u32 CookedUIDocumentVersion = 3u;
+    /// the per-axis overflow properties. v4 added the component-boundary fields to CookedUIElement.
+    inline constexpr u32 CookedUIDocumentVersion = 4u;
 
     /// @brief Cooked header for a UI-document asset.
     ///
@@ -1279,6 +1279,14 @@ namespace Veng
         f32 Tint[4] = {1.0f, 1.0f, 1.0f, 1.0f};
         /// @brief An Image element's UV sub-rect {minX, minY, sizeX, sizeY}; the whole texture (0,0,1,1) by default.
         f32 Uv[4] = {0.0f, 0.0f, 1.0f, 1.0f};
+        /// @brief A Component boundary's embedded-fragment AssetId (provenance); 0 for every other kind.
+        ///
+        /// Distinct from Src: Src is an Image's texture dependency the loader eager-loads, whereas
+        /// this records which fragment the cooker spliced in under this boundary and is never itself
+        /// a load-time dependency (the spliced elements carry their own).
+        u64 ComponentSource = 0;
+        /// @brief A Component boundary's scoped driver id; 0 (unbound) leaves it as pure shared markup.
+        u64 ComponentDriver = 0;
     };
 
     /// @brief One binding on a cooked UI element: the target property name and its expression.

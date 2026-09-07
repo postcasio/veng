@@ -68,6 +68,14 @@ namespace Veng::Gui
         vec4 Tint{1.0f};
         /// @brief An Image element's UV sub-rect (an atlas region); the whole texture by default.
         Rect Uv{.Min = vec2(0.0f), .Size = vec2(1.0f)};
+        /// @brief A Component boundary's embedded-fragment AssetId (provenance); invalid on other kinds.
+        ///
+        /// Records which fragment the cooker spliced under this boundary. It is not a load-time
+        /// dependency — the spliced fragment elements carry their own — so it is kept separate from
+        /// the Image `Src` the loader eager-loads as a texture.
+        AssetId ComponentSource;
+        /// @brief A Component boundary's scoped driver id; 0 (unbound) leaves it as pure shared markup.
+        u64 ComponentDriver = 0;
     };
 
     /// @brief A cached, immutable cooked-UI-document asset: a recipe for a live element tree.

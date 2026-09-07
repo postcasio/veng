@@ -157,6 +157,11 @@
       "source": "ui/hud.vui.xml"
     },
     {
+      "id": "0x3AD1F7F91B86955D",
+      "type": "UIDocument",
+      "source": "ui/legend.vui.xml"
+    },
+    {
       "id": "0xFE4B4248C884357A",
       "type": "AudioClip",
       "source": "audio/ambient.audio.json"
