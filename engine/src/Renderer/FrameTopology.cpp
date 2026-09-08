@@ -15,9 +15,14 @@ namespace Veng::Renderer
         // to drive).
         topology.AutoExposureActive = settings.Mode == DebugView::Final && settings.AutoExposure;
 
-        // TAA is a Final-only resolve: it inserts the resolve + history-copy passes between
-        // lighting and the tonemap tail and routes lighting into a separate lit target.
-        topology.TaaActive = settings.Mode == DebugView::Final && settings.TAA;
+        // The anti-aliasing resolves are Final-only and mutually exclusive. The temporal resolve (TAA
+        // and TAAU alike) inserts the HDR resolve + history-copy between lighting and the tonemap tail
+        // and routes lighting into a separate lit target; FXAA and CMAA2 insert a post-tonemap resolve
+        // reading the tonemapped LDR the tonemap writes into an intermediate.
+        const bool aaFinal = settings.Mode == DebugView::Final;
+        topology.TaaActive = aaFinal && settings.UsesTaa();
+        topology.FxaaActive = aaFinal && settings.AntiAliasing == AntiAliasingMode::FXAA;
+        topology.Cmaa2Active = aaFinal && settings.AntiAliasing == AntiAliasingMode::CMAA2;
 
         topology.DebugShadow = settings.Mode == DebugView::Shadows;
         topology.DebugAo = settings.Mode == DebugView::AO;

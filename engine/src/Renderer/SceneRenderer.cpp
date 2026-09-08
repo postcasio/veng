@@ -35,6 +35,8 @@
 #include "DofChain.h"
 #include "Passes/DofCompositeScenePass.h"
 #include "SsrChain.h"
+#include "AaResolve.h"
+#include "Passes/AaScenePasses.h"
 #include "TaaResolve.h"
 
 #include <algorithm>
@@ -176,6 +178,7 @@ namespace Veng::Renderer
         // (after the HDR target). TAA is grouped with it; both build their pipelines in their ctors.
         m_Bloom = BloomPyramid::Create(m_Context, m_Assets, m_Settings.Kernel);
         m_Taa = TaaResolve::Create(m_Context, m_Assets);
+        m_Aa = AaResolve::Create(m_Context, m_Assets, m_OutputFormat);
         m_Refraction = RefractionGrab::Create(m_Context, m_Assets);
         m_HalfResTranslucent = HalfResTranslucency::Create(m_Context, m_Assets);
         // The GPU cull subsystem owns the hi-Z reduce layouts the SSR chain's min-Z reduce borrows,
@@ -200,7 +203,9 @@ namespace Veng::Renderer
         CreateCullResources();
         CreateHdr();
         CreateBloomMask();
-        m_Taa->Resize(m_Extent, m_Settings.TAA);
+        m_Taa->Resize(m_Extent, m_Settings.UsesTaa());
+        m_Aa->Resize(m_Extent, m_Settings.Mode == DebugView::Final ? m_Settings.AntiAliasing
+                                                                   : AntiAliasingMode::None);
         // The pyramid's level-0 source and composite sets bind the fresh HDR view.
         m_Bloom->Resize(m_Extent, m_HdrView);
         // The min-Z reduce sets bind the fresh depth view from the g-buffer above.
@@ -368,6 +373,19 @@ namespace Veng::Renderer
         {
             m_HalfResLayerId = graph.Import("SceneRenderer Half-Res Translucent Layer");
             m_HalfResDepthReducedId = graph.Import("SceneRenderer Half-Res Translucent Depth");
+        }
+
+        // The post-tonemap AA intermediate: the tonemap writes it (instead of the output) and the
+        // FXAA/CMAA2 resolve reads it and writes the output. Imported only when a spatial mode runs.
+        m_AaInputId = ResourceId{};
+        m_Cmaa2EdgeId = ResourceId{};
+        if (m_Topology->PostTonemapAa())
+        {
+            m_AaInputId = graph.Import("SceneRenderer AA Input");
+        }
+        if (m_Topology->Cmaa2Active)
+        {
+            m_Cmaa2EdgeId = graph.Import("SceneRenderer CMAA2 Edges");
         }
 
         const TextureHandle dofTargetHandle =
@@ -646,6 +664,11 @@ namespace Veng::Renderer
             // The HDR tail declares just before the tonemap — never after it, even when a
             // post-tonemap pass (DebugDraw) follows in the list.
             hdrTailAnchor = m_Passes.size();
+
+            // Under a spatial AA mode the tonemap writes the LDR intermediate and the resolve pass
+            // below turns it into the output; otherwise the tonemap writes the output directly.
+            const ResourceId tonemapOutputId =
+                m_Topology->PostTonemapAa() ? m_AaInputId : m_OutputId;
             m_Passes.push_back(
                 CreateUnique<PostProcessScenePass>(m_Context, m_TonemapMaterial,
                                                    PostProcessInput{
@@ -655,7 +678,29 @@ namespace Veng::Renderer
                                                        .TextureField = "Hdr",
                                                        .SamplerField = "HdrSampler",
                                                    },
-                                                   m_OutputId, m_OutputFormat, m_Extent));
+                                                   tonemapOutputId, m_OutputFormat, m_Extent));
+
+            // The spatial AA resolve reads the tonemapped LDR intermediate and writes the output. It
+            // sits after the tonemap and before DebugDraw so gizmos composite over the resolved scene.
+            if (m_Topology->FxaaActive)
+            {
+                m_Passes.push_back(CreateUnique<FxaaScenePass>(
+                    m_Context, m_Aa->GetFxaaPipeline(), m_AaInputId, m_OutputId,
+                    m_Aa->GetInputHandle(), m_SamplerHandle, m_Extent));
+            }
+            // CMAA2 is two passes: the edge detector writes the RG8 edge map (reusing the FXAA pass
+            // shape with the edge pipeline), then the apply pass follows those edges and writes the
+            // output. The edge write precedes the apply read, so the graph orders them.
+            if (m_Topology->Cmaa2Active)
+            {
+                m_Passes.push_back(CreateUnique<FxaaScenePass>(
+                    m_Context, m_Aa->GetCmaa2EdgePipeline(), m_AaInputId, m_Cmaa2EdgeId,
+                    m_Aa->GetInputHandle(), m_SamplerHandle, m_Extent, "CMAA2 Edges"));
+                m_Passes.push_back(CreateUnique<Cmaa2ApplyScenePass>(
+                    m_Context, m_Aa->GetCmaa2ApplyPipeline(), m_AaInputId, m_Cmaa2EdgeId,
+                    m_OutputId, m_Aa->GetInputHandle(), m_Aa->GetEdgeHandle(), m_SamplerHandle,
+                    m_Extent));
+            }
 
             // Debug-draw composites the accumulator over the tonemapped LDR scene color, after
             // the terminal tonemap, so gizmos render at native resolution with exact colors. It
@@ -1234,7 +1279,9 @@ namespace Veng::Renderer
         CreateGBuffer();
         CreateHdr();
         CreateBloomMask();
-        m_Taa->Resize(m_Extent, m_Settings.TAA);
+        m_Taa->Resize(m_Extent, m_Settings.UsesTaa());
+        m_Aa->Resize(m_Extent, m_Settings.Mode == DebugView::Final ? m_Settings.AntiAliasing
+                                                                   : AntiAliasingMode::None);
         m_Bloom->Resize(m_Extent, m_HdrView);
         m_Ssr->Recreate(m_Settings, m_Extent, m_DepthView, m_GpuCull->GetHiZReduceSetLayout(),
                         m_Bloom->GetDownUpSetLayout());
@@ -1266,7 +1313,9 @@ namespace Veng::Renderer
         m_Settings = settings;
         ShadowSystem::ClampResolutions(m_Context, m_Settings);
         m_GpuCull->ResolveActiveCullMode(m_Settings);
-        m_Taa->Resize(m_Extent, m_Settings.TAA);
+        m_Taa->Resize(m_Extent, m_Settings.UsesTaa());
+        m_Aa->Resize(m_Extent, m_Settings.Mode == DebugView::Final ? m_Settings.AntiAliasing
+                                                                   : AntiAliasingMode::None);
         // The bloom pyramid is extent-driven (unchanged here); only the kernel choice may change.
         m_Bloom->Reconfigure(m_Settings.Kernel);
         m_Ssr->Recreate(m_Settings, m_Extent, m_DepthView, m_GpuCull->GetHiZReduceSetLayout(),
@@ -1297,6 +1346,14 @@ namespace Veng::Renderer
         const vec2 renderScaleUV = scale.RenderScaleUV;
         const vec2 maxValidUV = scale.MaxValidUV;
 
+        // The temporal (TAA/TAAU) resolve reconstructs the full allocation from the sub-rect, so the
+        // HDR tail after it — bloom, the point-field accumulation, the tonemap — runs at the full
+        // extent with an identity sub-rect map. Without a temporal resolve the sub-rect carries
+        // through to the terminal tonemap upscale, so these equal the render sub-rect.
+        const uvec2 postResolveExtent = m_Topology->TaaActive ? m_Extent : validExtent;
+        const vec2 postResolveScaleUV = m_Topology->TaaActive ? vec2(1.0f) : renderScaleUV;
+        const vec2 postResolveMaxUV = m_Topology->TaaActive ? vec2(1.0f) : maxValidUV;
+
         // Auto-exposure: the meter reads the histogram a completed frame wrote, eases the adapted
         // luminance, and resolves the exposure the tonemap uses (SceneView::Exposure directly when
         // metering is inactive). The bloom bright-pass later reads the same resolved exposure.
@@ -1309,8 +1366,9 @@ namespace Veng::Renderer
             tonemap.SetParam("Exposure", exposure);
             // The tone curve selector, carried as a float the fragment casts back to the enum.
             tonemap.SetParam("Tonemapper", static_cast<f32>(static_cast<u32>(view.Tonemapper)));
-            // The terminal tonemap reads the sub-rect HDR and upscales it to the full output.
-            tonemap.SetParam("RenderScale", vec4(renderScaleUV, maxValidUV));
+            // The terminal tonemap reads the sub-rect HDR and upscales it to the full output; after a
+            // temporal resolve the HDR is already the full allocation, so the map is the identity.
+            tonemap.SetParam("RenderScale", vec4(postResolveScaleUV, postResolveMaxUV));
             // Display-calibration output knobs; the shader skips the step at the neutral (1, 1) pair.
             tonemap.SetParam("OutputBrightness", view.OutputBrightness);
             tonemap.SetParam("OutputGamma", view.OutputGamma);
@@ -1372,6 +1430,7 @@ namespace Veng::Renderer
         // which renders each cascade with its viewport placing it in the atlas tile.
         SceneView resolvedView = view;
         resolvedView.RenderExtent = validExtent;
+        resolvedView.PostResolveExtent = postResolveExtent;
         resolvedView.LightCount = packed.LightCount;
         for (u32 s = 0; s < cascadeSetCount; ++s)
         {
@@ -1597,14 +1656,21 @@ namespace Veng::Renderer
 
     SceneRenderer::FrameScale SceneRenderer::ResolveRenderScale(const SceneView& view) const
     {
-        // Scale applies only on the Final path with the sub-rect-aware battery set: a debug view, the
-        // TAA resolve, the GPU hi-Z occlusion test, and the Dual-Kawase bloom kernel do not carry the
-        // sub-rect sampling yet, so each forces full resolution (correct, just no scaling).
+        // Scale applies only on the Final path with the sub-rect-aware battery set. The temporal
+        // (TAA/TAAU) resolve is now sub-rect-aware — it reconstructs the full allocation from the
+        // sub-rect, which is what makes TAAU an upscaler — so it no longer forces full resolution.
+        // The remaining exclusions do not carry the sub-rect sampling and each forces full resolution
+        // (correct, just no scaling): the GPU hi-Z occlusion test, the SSR trace, and the Dual-Kawase
+        // bloom kernel. Depth of field composites after the temporal resolve, so it stays sub-rect
+        // through the plain dynamic-resolution tail but cannot compose with the resolve's upscale —
+        // with the temporal resolve active it forces full resolution rather than reworking its
+        // five-stage chain onto the post-resolve extent.
         const bool drsSupported =
-            m_Settings.Mode == DebugView::Final && !m_Settings.TAA && !m_Settings.SSR &&
+            m_Settings.Mode == DebugView::Final && !m_Settings.SSR &&
             !(m_GpuCull->GetActiveCull() == SceneRendererSettings::CullMode::GPU &&
               m_Settings.Occlusion) &&
-            !(m_Settings.Bloom && m_Settings.Kernel == BloomKernel::Kawase);
+            !(m_Settings.Bloom && m_Settings.Kernel == BloomKernel::Kawase) &&
+            !(m_Topology->TaaActive && m_Topology->DofComposited());
         const f32 renderScale = drsSupported ? view.RenderScale : 1.0f;
         const uvec2 validExtent =
             glm::clamp(uvec2(glm::round(vec2(m_Extent) * renderScale)), uvec2(1), m_Extent);
@@ -1677,6 +1743,16 @@ namespace Veng::Renderer
         {
             bindings.push_back({m_LitId, m_Taa->GetLitView()});
             bindings.push_back({m_TaaHistoryId, m_Taa->GetHistoryView()});
+        }
+        // The spatial AA intermediate: the tonemap writes it and the resolve reads it, so it is
+        // bound whenever FXAA or CMAA2 declared it.
+        if (m_Topology->PostTonemapAa())
+        {
+            bindings.push_back({m_AaInputId, m_Aa->GetInputView()});
+        }
+        if (m_Topology->Cmaa2Active)
+        {
+            bindings.push_back({m_Cmaa2EdgeId, m_Aa->GetEdgeView()});
         }
         // Velocity is a g-buffer channel the surface pass writes every frame, so it is always bound.
         bindings.push_back({m_VelocityId, m_VelocityView});

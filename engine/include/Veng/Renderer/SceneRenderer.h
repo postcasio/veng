@@ -51,6 +51,7 @@ namespace Veng::Renderer
     class BloomPyramid;
     class AutoExposureMeter;
     class TaaResolve;
+    class AaResolve;
     class SsrChain;
     class DofChain;
     class RefractionGrab;
@@ -699,6 +700,9 @@ namespace Veng::Renderer
         /// @brief The TAA resolve battery — resolve/copy pipelines, lit/history targets, reset gate.
         Unique<TaaResolve> m_Taa;
 
+        /// @brief The post-tonemap spatial AA battery (FXAA/CMAA2) — the LDR intermediate + pipeline.
+        Unique<AaResolve> m_Aa;
+
         /// @brief Number of frames-in-flight the renderer-owned rings are sized for.
         ///
         /// Seeded at construction (before the ring allocations below) and read by the draw-data,
@@ -913,6 +917,13 @@ namespace Veng::Renderer
         MipChainId m_SsrReflectionChainId;
         /// @brief Per-mip subresource handle for the SSR min-Z pyramid (reduction + trace).
         MipChainId m_SsrHiZChainId;
+        /// @brief Imported id for the post-tonemap LDR intermediate a spatial AA resolve reads.
+        ///
+        /// Under FXAA/CMAA2 the tonemap writes this (AaResolve owns the backing image) instead of
+        /// the output, and the resolve pass reads it and writes the output. Unset otherwise.
+        ResourceId m_AaInputId;
+        /// @brief Imported id for the CMAA2 RG8 edge map (edge pass → apply pass). Unset otherwise.
+        ResourceId m_Cmaa2EdgeId;
         /// @brief Imported id for the final output target.
         ResourceId m_OutputId;
 

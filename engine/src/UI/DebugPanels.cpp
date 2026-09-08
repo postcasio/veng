@@ -692,7 +692,15 @@ namespace Veng::UI
         if (auto section = UI::CollapsingHeader("Lighting & effects", TreeFlags::DefaultOpen))
         {
             changed |= UI::Checkbox("SSAO", settings.AO);
-            changed |= UI::Checkbox("TAA", settings.TAA);
+
+            // Anti-aliasing is a single mutually-exclusive mode (None/FXAA/TAA/CMAA2); the index
+            // casts straight to the enum through AntiAliasingModeNames.
+            i32 aa = static_cast<i32>(settings.AntiAliasing);
+            if (UI::Combo("Anti-aliasing", aa, Renderer::AntiAliasingModeNames))
+            {
+                settings.AntiAliasing = static_cast<Renderer::AntiAliasingMode>(aa);
+                changed = true;
+            }
         }
 
         if (auto section = UI::CollapsingHeader("Bloom", TreeFlags::DefaultOpen))

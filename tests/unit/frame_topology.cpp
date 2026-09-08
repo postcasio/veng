@@ -33,7 +33,7 @@ namespace
         settings.AO = false;
         settings.SSR = false;
         settings.DepthOfField = false;
-        settings.TAA = false;
+        settings.AntiAliasing = AntiAliasingMode::None;
         settings.AutoExposure = false;
         settings.Refraction = false;
         return settings;
@@ -125,7 +125,7 @@ TEST_CASE("frame topology: the Final-only effects are inactive under every debug
     settings.AO = true;
     settings.SSR = true;
     settings.DepthOfField = true;
-    settings.TAA = true;
+    settings.AntiAliasing = AntiAliasingMode::TAA;
     settings.AutoExposure = true;
     settings.Refraction = true;
 
@@ -135,6 +135,8 @@ TEST_CASE("frame topology: the Final-only effects are inactive under every debug
         const FrameTopology topology = ResolveFrameTopology(settings, NoSky);
         CAPTURE(DebugViewNames[arm]);
         CHECK_FALSE(topology.TaaActive);
+        CHECK_FALSE(topology.FxaaActive);
+        CHECK_FALSE(topology.Cmaa2Active);
         CHECK_FALSE(topology.AutoExposureActive);
         CHECK(topology.Dof != DofStages::Full);
         // SSR and refraction survive only on the arms that own them: the Reflections
@@ -142,6 +144,69 @@ TEST_CASE("frame topology: the Final-only effects are inactive under every debug
         CHECK(topology.SsrActive == (settings.Mode == DebugView::Reflections));
         CHECK(topology.RefractionActive == (settings.Mode == DebugView::Bloom));
     }
+}
+
+TEST_CASE("frame topology: the anti-aliasing mode wires exactly one resolve on Final")
+{
+    struct Case
+    {
+        AntiAliasingMode Mode;
+        bool Taa;
+        bool Fxaa;
+        bool Cmaa2;
+    };
+    constexpr std::array cases{
+        Case{.Mode = AntiAliasingMode::None, .Taa = false, .Fxaa = false, .Cmaa2 = false},
+        Case{.Mode = AntiAliasingMode::FXAA, .Taa = false, .Fxaa = true, .Cmaa2 = false},
+        Case{.Mode = AntiAliasingMode::TAA, .Taa = true, .Fxaa = false, .Cmaa2 = false},
+        Case{.Mode = AntiAliasingMode::CMAA2, .Taa = false, .Fxaa = false, .Cmaa2 = true},
+        // TAAU shares the temporal machinery with TAA, so it resolves the same TaaActive flag.
+        Case{.Mode = AntiAliasingMode::TAAU, .Taa = true, .Fxaa = false, .Cmaa2 = false},
+    };
+
+    for (const Case& c : cases)
+    {
+        // On Final each mode wires only its own resolve; the three flags are mutually exclusive.
+        SceneRendererSettings final;
+        final.AntiAliasing = c.Mode;
+        const FrameTopology onFinal = ResolveFrameTopology(final, NoSky);
+        CHECK(onFinal.TaaActive == c.Taa);
+        CHECK(onFinal.FxaaActive == c.Fxaa);
+        CHECK(onFinal.Cmaa2Active == c.Cmaa2);
+        CHECK(onFinal.PostTonemapAa() == (c.Fxaa || c.Cmaa2));
+
+        // A debug arm wires no anti-aliasing resolve whatever the mode.
+        SceneRendererSettings debug = final;
+        debug.Mode = DebugView::Albedo;
+        const FrameTopology onDebug = ResolveFrameTopology(debug, NoSky);
+        CHECK_FALSE(onDebug.TaaActive);
+        CHECK_FALSE(onDebug.FxaaActive);
+        CHECK_FALSE(onDebug.Cmaa2Active);
+    }
+}
+
+TEST_CASE("frame topology: the temporal predicates separate TAA from its upscaling mode")
+{
+    // UsesTaa gates the shared temporal machinery (both modes); UsesTaaUpscaling gates only the
+    // viewport's native-allocation routing (TAAU alone).
+    SceneRendererSettings settings;
+
+    settings.AntiAliasing = AntiAliasingMode::None;
+    CHECK_FALSE(settings.UsesTaa());
+    CHECK_FALSE(settings.UsesTaaUpscaling());
+
+    settings.AntiAliasing = AntiAliasingMode::TAA;
+    CHECK(settings.UsesTaa());
+    CHECK_FALSE(settings.UsesTaaUpscaling());
+
+    settings.AntiAliasing = AntiAliasingMode::TAAU;
+    CHECK(settings.UsesTaa());
+    CHECK(settings.UsesTaaUpscaling());
+
+    // A spatial mode drives neither.
+    settings.AntiAliasing = AntiAliasingMode::FXAA;
+    CHECK_FALSE(settings.UsesTaa());
+    CHECK_FALSE(settings.UsesTaaUpscaling());
 }
 
 TEST_CASE("frame topology: every sky source selects exactly one display path")

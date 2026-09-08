@@ -107,6 +107,21 @@
       "source": "shaders/tonemap.frag.shader.json"
     },
     {
+      "id": "0x4ADEE68A7BED1025",
+      "type": "Shader",
+      "source": "shaders/fxaa.frag.shader.json"
+    },
+    {
+      "id": "0x54767E7678A44ADD",
+      "type": "Shader",
+      "source": "shaders/cmaa2_edges.frag.shader.json"
+    },
+    {
+      "id": "0x8C7CE6BB3884EBAB",
+      "type": "Shader",
+      "source": "shaders/cmaa2_apply.frag.shader.json"
+    },
+    {
       "id": "0x5A2CD7B270EAE5CD",
       "type": "Shader",
       "source": "shaders/normal_blit.frag.shader.json"

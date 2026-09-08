@@ -31,9 +31,11 @@ namespace Veng::Renderer
                     CommandBuffer& cmd = inner.Cmd();
                     const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
                     cmd.BindPipeline(m_ResolvePipeline);
-                    const uvec2 renderExtent = Wrap(inner).View().RenderExtent;
-                    cmd.SetViewport({0, 0}, renderExtent);
-                    cmd.SetScissor({0, 0}, renderExtent);
+                    // The resolve reconstructs the full allocation: the current frame rides a sub-rect
+                    // of it (mapped by the shader through the view-constants render scale), but the
+                    // output and history are the whole allocation, so this pass covers m_Extent.
+                    cmd.SetViewport({0, 0}, m_Extent);
+                    cmd.SetScissor({0, 0}, m_Extent);
                     registry.Bind(cmd);
                     cmd.PushConstants(TaaResolvePush{
                         .CurrentTexture = m_LitHandle.Index,
@@ -43,7 +45,7 @@ namespace Veng::Renderer
                         .Sampler = samplerHandle.Index,
                         .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
                         .HistoryValid = *m_HistoryResetPtr ? 0u : 1u,
-                        .Extent = renderExtent,
+                        .Extent = m_Extent,
                     });
                     cmd.DrawFullscreenTriangle();
                 });
@@ -65,9 +67,9 @@ namespace Veng::Renderer
                     CommandBuffer& cmd = inner.Cmd();
                     const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
                     cmd.BindPipeline(m_CopyPipeline);
-                    const uvec2 renderExtent = Wrap(inner).View().RenderExtent;
-                    cmd.SetViewport({0, 0}, renderExtent);
-                    cmd.SetScissor({0, 0}, renderExtent);
+                    // History mirrors the resolved output: both are the full allocation.
+                    cmd.SetViewport({0, 0}, m_Extent);
+                    cmd.SetScissor({0, 0}, m_Extent);
                     registry.Bind(cmd);
                     cmd.PushConstants(TaaCopyPush{
                         .SourceTexture = hdrHandle.Index,

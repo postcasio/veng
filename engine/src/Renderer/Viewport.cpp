@@ -48,6 +48,10 @@ namespace Veng::Renderer
                                        ? info.Context.GetOutputFormat()
                                        : info.ColorFormat;
 
+        // Mirror the AA mode's upscaling bit before the allocation is sized (ScaledExtent reads it
+        // through GetAllocationScale, and the renderer does not exist yet).
+        m_TaaUpscaling = info.Settings.UsesTaaUpscaling();
+
         m_Renderer = SceneRenderer::Create({
             .Context = info.Context,
             .Assets = info.Assets,
@@ -240,7 +244,15 @@ namespace Veng::Renderer
 
     f32 Viewport::GetAllocationScale() const
     {
-        // The allocation is sized to the upper bound of the render scale: MaxScale when the
+        // TAAU pins the allocation to native (the MaxAllocationScale factor still applies) and routes
+        // the render scale into the sub-rect through GetViewRenderScale, so the temporal resolve
+        // reconstructs the native image from a cheaper render — whether the render scale is the static
+        // slider or the per-frame dynamic-resolution scale.
+        if (m_TaaUpscaling)
+        {
+            return 1.0f;
+        }
+        // Otherwise the allocation is sized to the upper bound of the render scale: MaxScale when the
         // controller owns the scale, else the static scale (its own ceiling). Sizing to the ceiling
         // lets a current-scale move render into a sub-rect without a resize, and lets a sub-1 ceiling
         // actually shrink the images rather than allocating full-region.
@@ -318,7 +330,12 @@ namespace Veng::Renderer
 
     void Viewport::Configure(const SceneRendererSettings& settings)
     {
+        // Switching the AA mode into or out of TAAU changes the allocation scale (native vs. the
+        // render scale), so debounce a resize against the allocation the old mode implied.
+        const uvec2 priorAlloc = GetAllocationExtent();
+        m_TaaUpscaling = settings.UsesTaaUpscaling();
         m_Renderer->Configure(settings);
+        DebounceAllocationResize(priorAlloc);
         RefreshOutputHandle();
     }
 

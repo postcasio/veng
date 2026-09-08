@@ -124,7 +124,9 @@ namespace Veng::Renderer
             settings.PunctualShadows = shadows;
             settings.AO = false;
             settings.SSR = false;
-            settings.TAA = false;
+            // A capture samples pre-tonemap HDR, so no post-tonemap AA reaches it; the temporal
+            // resolve is dropped as another cost multiplied across the faces.
+            settings.AntiAliasing = AntiAliasingMode::None;
             return settings;
         }
     }

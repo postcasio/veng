@@ -702,6 +702,13 @@ namespace Veng::Renderer
         f32 m_MaxAllocationScale = 1.0f;
         /// @brief Automatic render-scale controller tuning; unset when control is disabled.
         optional<DynamicResolutionSettings> m_DynamicResolution;
+        /// @brief Whether the renderer's AA mode is TAAU (mirrored from the settings).
+        ///
+        /// TAAU pins the allocation to native and routes the render scale into the rendered sub-rect,
+        /// so the temporal resolve upscales to native. Mirrored here rather than read through the
+        /// renderer because the allocation extent is computed during construction, before the renderer
+        /// exists. Kept in step by the constructor and Configure.
+        bool m_TaaUpscaling = false;
         /// @brief Whether the engine compositor places this viewport.
         ViewportRole m_Role;
 

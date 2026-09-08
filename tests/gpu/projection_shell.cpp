@@ -376,8 +376,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Assets = assets,
         .Region = {.Offset = {0, 0}, .Extent = Extent},
         .ColorFormat = Format::RGBA16Sfloat,
-        .Settings =
-            {.Bloom = false, .TAA = false, .Shadows = false, .PunctualShadows = false, .AO = false},
+        .Settings = {.Bloom = false,
+                     .AntiAliasing = AntiAliasingMode::None,
+                     .Shadows = false,
+                     .PunctualShadows = false,
+                     .AO = false},
         .Role = ViewportRole::Offscreen,
     });
 

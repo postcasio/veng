@@ -111,9 +111,18 @@ namespace Veng::Renderer
 
         /// @brief This frame's render-target sub-rect extent; set by the renderer each Execute.
         ///
-        /// round(allocExtent * RenderScale), clamped to [1, allocExtent]. Every pass sizes its
+        /// round(allocExtent * RenderScale), clamped to [1, allocExtent]. Every scene pass sizes its
         /// viewport/scissor and compute dispatch to it; a caller's value is overwritten.
         uvec2 RenderExtent = {};
+
+        /// @brief The extent the post-resolve HDR tail runs at; set by the renderer each Execute.
+        ///
+        /// The scene renders into the RenderExtent sub-rect, but the temporal (TAA/TAAU) resolve
+        /// reconstructs the full allocation, so every pass after it — bloom, the point-field
+        /// accumulation, the tonemap — runs at the full extent rather than the sub-rect. Equal to
+        /// RenderExtent when no temporal resolve is active (the sub-rect carries through to the
+        /// terminal tonemap upscale), else the full allocation extent. A caller's value is overwritten.
+        uvec2 PostResolveExtent = {};
 
         /// @brief Live light count this frame; set by the renderer on every Execute.
         ///

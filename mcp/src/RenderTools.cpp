@@ -323,9 +323,10 @@ namespace Veng::Mcp
                 const bool debugView = s.Mode != Renderer::DebugView::Final;
                 // The sub-rect DRS scaling is applied only on this exact battery set; anything else
                 // forces full resolution (ResolveRenderScale), so the effective extent is valid_extent
-                // regardless of render_scale.
-                const bool subRectApplied =
-                    !s.TAA && !s.SSR && !(cullGpu && s.Occlusion) && !bloomKawase && !debugView;
+                // regardless of render_scale. The temporal (TAA/TAAU) resolve is sub-rect-aware and no
+                // longer forces full resolution, but depth of field composited after it does.
+                const bool subRectApplied = !s.SSR && !(cullGpu && s.Occlusion) && !bloomKawase &&
+                                            !debugView && !(s.UsesTaa() && s.DepthOfField);
                 Json result = {
                     {"visible", renderer.GetLastVisibleCount()},
                     {"frustum_survived", renderer.GetFrustumSurvivedCount()},
@@ -340,7 +341,8 @@ namespace Veng::Mcp
                     {"valid_extent", {valid.x, valid.y}},
                     {"sub_rect_applied", subRectApplied},
                     {"render_features",
-                     {{"taa", s.TAA},
+                     {{"aa", Veng::string(Renderer::AntiAliasingModeNames[static_cast<Veng::usize>(
+                                 s.AntiAliasing)])},
                       {"ssr", s.SSR},
                       {"cull_gpu", cullGpu},
                       {"occlusion", s.Occlusion},

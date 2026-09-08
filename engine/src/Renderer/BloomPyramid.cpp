@@ -419,9 +419,9 @@ namespace Veng::Renderer
                     const auto* view = static_cast<const SceneView*>(inner.UserData());
                     VE_ASSERT(view != nullptr, "Bloom down pass: null SceneView");
                     const MipSubRect dst =
-                        ComputeMipSubRect(view->RenderExtent, allocExtent, level);
+                        ComputeMipSubRect(view->PostResolveExtent, allocExtent, level);
                     const MipSubRect src =
-                        ComputeMipSubRect(view->RenderExtent, allocExtent, srcLevel);
+                        ComputeMipSubRect(view->PostResolveExtent, allocExtent, srcLevel);
                     CommandBuffer& cmd = inner.Cmd();
                     cmd.BindPipeline(pipeline);
                     if (levelMask)
@@ -477,9 +477,9 @@ namespace Veng::Renderer
                     const auto* view = static_cast<const SceneView*>(inner.UserData());
                     VE_ASSERT(view != nullptr, "Bloom up pass: null SceneView");
                     const MipSubRect dst =
-                        ComputeMipSubRect(view->RenderExtent, allocExtent, level);
+                        ComputeMipSubRect(view->PostResolveExtent, allocExtent, level);
                     const MipSubRect src =
-                        ComputeMipSubRect(view->RenderExtent, allocExtent, srcLevel);
+                        ComputeMipSubRect(view->PostResolveExtent, allocExtent, srcLevel);
                     CommandBuffer& cmd = inner.Cmd();
                     cmd.BindPipeline(pipeline);
                     cmd.BindDescriptorSets(DescriptorSetBindInfo{
@@ -513,7 +513,7 @@ namespace Veng::Renderer
                 {
                     const auto* view = static_cast<const SceneView*>(inner.UserData());
                     VE_ASSERT(view != nullptr, "Bloom composite pass: null SceneView");
-                    const MipSubRect r = ComputeMipSubRect(view->RenderExtent, allocExtent, 0);
+                    const MipSubRect r = ComputeMipSubRect(view->PostResolveExtent, allocExtent, 0);
                     CommandBuffer& cmd = inner.Cmd();
                     cmd.BindPipeline(pipeline);
                     cmd.BindDescriptorSets(DescriptorSetBindInfo{

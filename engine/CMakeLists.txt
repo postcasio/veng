@@ -265,6 +265,7 @@ add_library(veng SHARED
         src/Renderer/Passes/SceneColorDownsampleScenePass.cpp
         src/Renderer/Passes/DeferredLightingScenePass.cpp
         src/Renderer/Passes/TaaScenePass.cpp
+        src/Renderer/Passes/AaScenePasses.cpp
         src/Renderer/Passes/DebugBlitScenePasses.cpp
         src/Renderer/Passes/PostProcessScenePass.cpp
         src/Renderer/DebugBlitPipelines.cpp
@@ -309,6 +310,7 @@ add_library(veng SHARED
         src/Renderer/BloomPyramid.cpp
         src/Renderer/AutoExposureMeter.cpp
         src/Renderer/TaaResolve.cpp
+        src/Renderer/AaResolve.cpp
         src/Renderer/SsrChain.cpp
         src/Renderer/DofChain.cpp
         src/Renderer/HalfResTranslucency.cpp

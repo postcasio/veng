@@ -104,6 +104,47 @@ namespace Veng::Renderer
         Kawase,
     };
 
+    /// @brief Selects the full-screen anti-aliasing resolve, or none.
+    ///
+    /// The resolves are **mutually exclusive** — a frame wires at most one. A change re-wires
+    /// the pass set through the Configure recompile. FXAA and CMAA2 are spatial post-tonemap passes
+    /// reading the tonemapped LDR; TAA and TAAU are the HDR-space temporal resolve (they additionally
+    /// jitter the projection and route lighting into a separate lit target — see the TAA field). The
+    /// per-object velocity channel (G3) is written every frame regardless, so the temporal resolve
+    /// needs no velocity prepass. **Supersampling is not a mode here**: it is orthogonal, driven by
+    /// the viewport's MaxAllocationScale, and composes with any mode (SSAA under CMAA2, say).
+    ///
+    /// TAA and TAAU share the whole temporal machinery (jitter, history, resolve, history-copy) and
+    /// differ only in the render/output resolution relationship. TAA resolves at the allocation
+    /// resolution (the render scale is an allocation/supersampling scale). TAAU is temporal
+    /// upscaling: the viewport pins the allocation to native and routes the render scale — the static
+    /// slider or the per-frame dynamic-resolution scale — into the rendered sub-rect, so the resolve
+    /// reconstructs the native image from a cheaper, jittered low-resolution render.
+    enum class AntiAliasingMode : u8
+    {
+        /// @brief No anti-aliasing resolve — the plain deferred output.
+        None,
+        /// @brief FXAA: one post-tonemap luma-directed edge blur (spatial, no history).
+        FXAA,
+        /// @brief TAA: an HDR-space temporal resolve over a jittered, reprojected history.
+        TAA,
+        /// @brief CMAA2: post-tonemap conservative morphological AA (a compute battery).
+        CMAA2,
+        /// @brief TAAU: the temporal resolve as an upscaler — render below native, reconstruct native.
+        TAAU,
+    };
+
+    /// @brief Display names for the AntiAliasingMode arms, indexed by enum value.
+    ///
+    /// One source of truth for an AA-mode selector in a debug panel or editor viewport, the
+    /// DebugViewNames precedent: entry N names AntiAliasingMode N, so a combo's selected index
+    /// casts straight to the enum.
+    inline constexpr std::array<string_view, 5> AntiAliasingModeNames{"None", "FXAA", "TAA",
+                                                                      "CMAA2", "TAAU"};
+    static_assert(
+        AntiAliasingModeNames.size() == static_cast<usize>(AntiAliasingMode::TAAU) + 1,
+        "AntiAliasingModeNames must list every AntiAliasingMode arm in declaration order.");
+
     /// @brief Topology and sizing knobs for SceneRenderer.
     ///
     /// A change to any field here is a Configure → recompile. Knobs that turn a pass
@@ -160,14 +201,18 @@ namespace Veng::Renderer
         /// default is the golden's kernel; Kawase is the bandwidth-optimized alternative.
         BloomKernel Kernel = BloomKernel::Cod;
 
-        /// @brief Whether temporal anti-aliasing resolves the lit image.
+        /// @brief Which full-screen anti-aliasing resolve the frame wires (default None).
         ///
-        /// A topology change: it jitters the projection, inserts the TAA resolve and
-        /// history-copy passes between lighting and tonemap, and routes lighting into a
-        /// separate target the resolve reads. Off by default. Motion vectors are per-object,
-        /// read from the g-buffer velocity channel (G3) the surface pass writes every frame
-        /// (camera and object motion combined), so dynamic objects reproject correctly too.
-        bool TAA = false;
+        /// A topology change through Configure. FXAA and CMAA2 insert a post-tonemap resolve that
+        /// reads the tonemapped LDR and writes the output; TAA and TAAU jitter the projection, insert
+        /// the HDR-space resolve + history-copy passes between lighting and the tonemap tail, and
+        /// route lighting into a separate target the resolve reads (TAAU reconstructs the native image
+        /// from a sub-native render — see the enum). The modes are mutually exclusive. Motion vectors
+        /// are per-object, read from the g-buffer velocity channel (G3) the surface pass writes every
+        /// frame (camera and object motion combined), so the temporal resolve needs no velocity
+        /// prepass and dynamic objects reproject correctly. Supersampling composes on top through
+        /// the viewport's MaxAllocationScale — it is not one of these modes.
+        AntiAliasingMode AntiAliasing = AntiAliasingMode::None;
 
         /// @brief Whether the directional light casts a shadow.
         ///
@@ -341,6 +386,28 @@ namespace Veng::Renderer
         /// editor enables it for a viewport's lifetime), never a runtime one. The pass early-outs
         /// on a frame with no pending pick request, so its amortized cost is near zero.
         bool Picking = false;
+
+        /// @brief Whether the frame runs the temporal (jittered-history) AA resolve.
+        ///
+        /// The temporal path is the one several batteries gate on (jitter, the history-reset, the
+        /// post-resolve full-resolution chain), so it earns a named predicate rather than a bare enum
+        /// compare at each site. Both TAA and TAAU run it; they share the whole temporal machinery.
+        /// @return True for AntiAliasingMode::TAA and AntiAliasingMode::TAAU.
+        [[nodiscard]] bool UsesTaa() const
+        {
+            return AntiAliasing == AntiAliasingMode::TAA || AntiAliasing == AntiAliasingMode::TAAU;
+        }
+
+        /// @brief Whether the temporal resolve is acting as an upscaler (render below native).
+        ///
+        /// TAAU-only: the viewport reads this to pin the allocation to native and route the render
+        /// scale into the rendered sub-rect, so the resolve reconstructs the native image. TAA leaves
+        /// the render scale an allocation scale, so it returns false there.
+        /// @return True only for AntiAliasingMode::TAAU.
+        [[nodiscard]] bool UsesTaaUpscaling() const
+        {
+            return AntiAliasing == AntiAliasingMode::TAAU;
+        }
 
         /// @brief Compares two settings field-for-field for topology equivalence.
         ///

@@ -440,11 +440,18 @@ namespace VengEditor
                 m_SettingsDirty = true;
             }
             UI::SameLine();
-            if (UI::ToggleButton("TAA", m_Settings.TAA))
             {
-                m_SettingsDirty = true;
+                // Anti-aliasing is one mutually-exclusive mode; the index casts straight to the
+                // enum through AntiAliasingModeNames.
+                i32 aa = static_cast<i32>(m_Settings.AntiAliasing);
+                UI::SetNextItemWidth(96.0f);
+                if (UI::Combo("##aa", aa, Renderer::AntiAliasingModeNames))
+                {
+                    m_Settings.AntiAliasing = static_cast<Renderer::AntiAliasingMode>(aa);
+                    m_SettingsDirty = true;
+                }
+                UI::Tooltip("Anti-aliasing mode");
             }
-            UI::Tooltip("Temporal anti-aliasing");
             UI::SameLine();
             if (UI::ToggleButton("DoF", m_Settings.DepthOfField))
             {

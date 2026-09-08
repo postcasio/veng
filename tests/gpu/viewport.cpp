@@ -198,6 +198,55 @@ TEST_CASE_FIXTURE(
 
 TEST_CASE_FIXTURE(
     Veng::Test::GpuFixture,
+    "viewport: TAAU pins the allocation to native and routes the render scale into the sub-rect")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
+
+    constexpr uvec2 region{64, 48};
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Ref<Mesh> cube = PopulateCubeScene(Context, assets, *scene);
+
+    // TAAU: unlike the plain static scale above (which sizes the allocation to the scale), the
+    // allocation stays native and the render scale drives the rendered sub-rect, so the temporal
+    // resolve reconstructs the full native image from a cheaper render.
+    SceneRendererSettings settings;
+    settings.AntiAliasing = AntiAliasingMode::TAAU;
+    const Unique<Viewport> viewport = Viewport::Create({
+        .Context = Context,
+        .Assets = assets,
+        .Region = {.Offset = {0, 0}, .Extent = region},
+        .Settings = settings,
+        .RenderScale = 0.5f,
+        .Role = ViewportRole::Offscreen,
+    });
+    // The allocation (and the output) is the full native region despite the 0.5 render scale.
+    CHECK(viewport->GetAllocationScale() == doctest::Approx(1.0f));
+    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x);
+    CHECK(viewport->GetOutput()->GetImage()->GetHeight() == region.y);
+
+    viewport->SetViewState({.World = scene.get(), .Camera = FrontCamera(region), .Delta = 0.0f});
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
+    // The scene rendered into a half sub-rect of the native allocation; the resolve reconstructs the
+    // full native output.
+    CHECK(viewport->GetRenderer().GetValidExtent() == uvec2{32, 24});
+
+    // Changing the render scale under TAAU moves only the sub-rect — no allocation resize, the
+    // dynamic-resolution win carried into the upscaler.
+    const Ref<ImageView> beforeScale = viewport->GetOutput();
+    const u64 generationBefore = viewport->GetOutputGeneration();
+    viewport->SetRenderScale(0.75f);
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
+    CHECK(viewport->GetOutputGeneration() == generationBefore);
+    CHECK(viewport->GetOutput().get() == beforeScale.get());
+    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x);
+    CHECK(viewport->GetRenderer().GetValidExtent() == uvec2{48, 36});
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
     "viewport: MaxAllocationScale caps the allocation below the region; resize re-applies the cap")
 {
     RegisterBuiltinTypes(Types);

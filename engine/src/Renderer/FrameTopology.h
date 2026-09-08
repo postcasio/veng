@@ -68,6 +68,10 @@ namespace Veng::Renderer
         bool AutoExposureActive = false;
         /// @brief The TAA resolve and history copy are wired, routing lighting into a lit target.
         bool TaaActive = false;
+        /// @brief The FXAA post-tonemap resolve is wired (reads the tonemapped LDR).
+        bool FxaaActive = false;
+        /// @brief The CMAA2 post-tonemap compute resolve is wired (reads the tonemapped LDR).
+        bool Cmaa2Active = false;
         /// @brief The directional shadow pass is wired.
         bool ShadowActive = false;
         /// @brief The punctual shadow pass is wired.
@@ -109,6 +113,14 @@ namespace Veng::Renderer
         /// @brief Whether the depth-of-field composite is wired and re-routes the HDR tail.
         /// @return True only for the fully active chain.
         [[nodiscard]] bool DofComposited() const { return Dof == DofStages::Full; }
+
+        /// @brief Whether a post-tonemap AA resolve (FXAA or CMAA2) is wired.
+        ///
+        /// The two spatial resolves share the wiring shape — the tonemap writes an intermediate LDR
+        /// target and the resolve reads it and writes the output — so the intermediate-target
+        /// decision keys on this rather than on either flag alone.
+        /// @return True when FXAA or CMAA2 is wired.
+        [[nodiscard]] bool PostTonemapAa() const { return FxaaActive || Cmaa2Active; }
     };
 
     /// @brief Decides which passes a frame wires from the topology settings and the resolved sky.

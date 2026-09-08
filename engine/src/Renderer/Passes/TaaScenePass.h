@@ -13,7 +13,8 @@ namespace Veng::Renderer
 
     // The TAA resolve push block, matching taa_resolve.frag PushConstants: the
     // current/history/depth bindless slots, the shared sampler, the view-constants
-    // region, the history-validity flag, and the target extent.
+    // region, the history-validity flag, and the full output/history extent (the current
+    // frame's sub-rect extent is read from the view-constants block).
     struct TaaResolvePush
     {
         u32 CurrentTexture;

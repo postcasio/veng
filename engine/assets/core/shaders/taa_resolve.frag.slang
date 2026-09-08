@@ -2,6 +2,15 @@
 // reprojected history of previous frames so the jitter sequence integrates into a
 // supersampled, edge-stable image. Runs in linear HDR before bloom and tonemap.
 //
+// The current frame is rendered into a sub-rect of the allocation (the render scale — static,
+// dynamic-resolution, or a TAAU upscale factor), while the history and this pass's output are the
+// full allocation. So the current, depth, and velocity reads map the full-resolution output UV into
+// the current frame's valid sub-rect through ScaledSampleUV (RenderScaleUV.xy / MaxValidUV.xy), while
+// the history reads and the neighborhood output grid are full resolution. At render scale 1.0 the
+// sub-rect is the whole allocation and every map is the identity, so a native frame is unchanged. This
+// is what makes the resolve a temporal upscaler: TAAU renders a cheaper low-resolution frame and the
+// history reconstructs the native image from the jitter sequence.
+//
 // Motion is per-object: geometry reads the screen-space motion vector the surface pass
 // wrote into the g-buffer velocity channel (which combines camera and object movement),
 // so both a moving camera and a moving object reproject correctly. The background, which
@@ -31,7 +40,7 @@ struct PushConstants
     uint ViewConstantsIndex; // current frame-in-flight's view-constants region
     uint HistoryValid;    // 0 on the first frame / after a resize → ignore history
     uint Pad0;            // pads to an even uint count so uint2 Extent is 8-byte aligned
-    uint2 Extent;         // target pixel dimensions (for texel size and 3×3 taps)
+    uint2 Extent;         // full output/history pixel dimensions (Catmull-Rom + output grid)
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
@@ -131,15 +140,26 @@ float3 SampleHistoryCatmullRom(uint texture, uint samp, float2 uv, float2 texelS
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target0
 {
+    // uv is the full-resolution output UV; the current/depth/velocity reads map it into the current
+    // frame's rendered sub-rect through ScaledSampleUV, while the history and output grid are full
+    // resolution.
     const float2 uv = input.v_UV;
-    const float2 texelSize = 1.0 / float2(g_PC.Extent);
+    ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
+    const float2 currentScaleUV = vc.RenderScaleUV.xy;
+    const float2 currentMaxUV = vc.MaxValidUV.xy;
+    // The current frame's rendered sub-rect extent (for the neighborhood's texel spacing); Extent is
+    // the full output/history extent (for the Catmull-Rom history fetch and the output grid).
+    const float2 renderExtent = vc.ExtentParams.xy;
+    const float2 currentTexel = 1.0 / renderExtent;
+    const float2 outputTexel = 1.0 / float2(g_PC.Extent);
     SamplerState samp = g_Samplers[NonUniformResourceIndex(g_PC.Sampler)];
     Texture2D current = g_Textures[NonUniformResourceIndex(g_PC.CurrentTexture)];
 
-    const float3 color = current.Sample(samp, uv).rgb;
+    const float3 color = current.Sample(samp, ScaledSampleUV(uv, currentScaleUV, currentMaxUV)).rgb;
 
-    // The 3×3 current neighborhood in YCoCg: its mean and variance bound the
-    // history (variance clipping), and its min/max widen the box for thin features.
+    // The 3×3 current neighborhood in YCoCg: its mean and variance bound the history (variance
+    // clipping), and its min/max widen the box for thin features. The taps step one current-frame
+    // texel apart (1/renderExtent) in output UV, then map into the sub-rect.
     float3 m1 = 0.0;
     float3 m2 = 0.0;
     float3 neighborMin = 1e9;
@@ -150,7 +170,9 @@ float4 fsMain(VSOutput input) : SV_Target0
         [unroll]
         for (int x = -1; x <= 1; ++x)
         {
-            const float3 tap = current.Sample(samp, uv + float2(x, y) * texelSize).rgb;
+            const float2 tapUv =
+                ScaledSampleUV(uv + float2(x, y) * currentTexel, currentScaleUV, currentMaxUV);
+            const float3 tap = current.Sample(samp, tapUv).rgb;
             const float3 ycc = RgbToYCoCg(tap);
             m1 += ycc;
             m2 += ycc * ycc;
@@ -164,18 +186,20 @@ float4 fsMain(VSOutput input) : SV_Target0
     const float3 boxMin = max(mean - ClipGamma * sigma, neighborMin);
     const float3 boxMax = min(mean + ClipGamma * sigma, neighborMax);
 
-    // Find this pixel's previous-frame screen position. Geometry uses the per-object
-    // motion vector the surface pass wrote into the g-buffer (camera + object motion); the
-    // background (reverse-Z cleared depth 0) has no velocity, so it reprojects by reconstructing
-    // the far-plane world position from depth and projecting through last frame's view-projection.
-    const float depth = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, uv).r;
-    ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
+    // Find this pixel's previous-frame screen position. Geometry uses the per-object motion vector the
+    // surface pass wrote into the g-buffer (camera + object motion), sampled from the current sub-rect;
+    // the motion vector itself is in full-frame UV, so prevUv is full-resolution. The background
+    // (reverse-Z cleared depth 0) has no velocity, so it reprojects by reconstructing the far-plane
+    // world position from depth and projecting through last frame's view-projection.
+    const float2 currentUv = ScaledSampleUV(uv, currentScaleUV, currentMaxUV);
+    const float depth =
+        g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, currentUv).r;
 
     float2 prevUv;
     if (depth > 0.0)
     {
         const float2 velocity =
-            g_Textures[NonUniformResourceIndex(g_PC.VelocityTexture)].Sample(samp, uv).rg;
+            g_Textures[NonUniformResourceIndex(g_PC.VelocityTexture)].Sample(samp, currentUv).rg;
         prevUv = uv - velocity;
     }
     else
@@ -197,7 +221,8 @@ float4 fsMain(VSOutput input) : SV_Target0
         return float4(color, 1.0);
     }
 
-    float3 history = SampleHistoryCatmullRom(g_PC.HistoryTexture, g_PC.Sampler, prevUv, texelSize);
+    float3 history =
+        SampleHistoryCatmullRom(g_PC.HistoryTexture, g_PC.Sampler, prevUv, outputTexel);
     history = YCoCgToRgb(ClipToAabb(boxMin, boxMax, RgbToYCoCg(history)));
 
     // Luminance-weighted blend: a brighter sample carries less weight, so a transient

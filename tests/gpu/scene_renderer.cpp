@@ -3949,7 +3949,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Extent = extent,
         .Settings = {.Mode = DebugView::Final,
                      .Bloom = false,
-                     .TAA = true,
+                     .AntiAliasing = AntiAliasingMode::TAA,
                      .Shadows = false,
                      .PunctualShadows = false,
                      .AO = false},
@@ -4002,7 +4002,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // across each must stay clean (the validation gate runs this binary).
     renderer->Configure({.Mode = DebugView::Final,
                          .Bloom = false,
-                         .TAA = false,
+                         .AntiAliasing = AntiAliasingMode::None,
                          .Shadows = false,
                          .PunctualShadows = false,
                          .AO = false});
@@ -4012,13 +4012,229 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     renderer->Configure({.Mode = DebugView::Final,
                          .Bloom = false,
-                         .TAA = true,
+                         .AntiAliasing = AntiAliasingMode::TAA,
                          .Shadows = false,
                          .PunctualShadows = false,
                          .AO = false});
     REQUIRE(renderer->GetTaaHistoryView() != nullptr);
     Render();
     Render();
+
+    CHECK(renderer->GetOutput()->GetImage()->GetWidth() == extent.x);
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: the temporal resolve reconstructs a full image from a sub-rect "
+                  "render (TAAU)")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_taau.vengpack");
+
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(material.has_value());
+
+    constexpr uvec2 extent{96, 72};
+
+    const Ref<Mesh> cube = Mesh::BuildSync(Context, Primitives::Cube(1.4f, *material), "TAAU Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
+
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Direction = vec3(0.0f, 0.0f, -1.0f),
+        .Color = vec3(1.0f),
+        .Intensity = DirectionalLux(1.0f),
+    };
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f),
+                          static_cast<f32>(extent.x) / static_cast<f32>(extent.y), 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final,
+                     .Bloom = false,
+                     .AntiAliasing = AntiAliasingMode::TAA,
+                     .Shadows = false,
+                     .PunctualShadows = false,
+                     .AO = false},
+    });
+
+    // A half-resolution render: the temporal resolve now honours the sub-rect (it used to force full
+    // resolution), so the scene rasterizes into a half-extent sub-rect and the resolve reconstructs
+    // the full-extent output. This is the engine core of TAAU — the viewport decides whether the
+    // scale is a static factor or dynamic-resolution, but the reconstruction is this path.
+    auto Render = [&]()
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                           .Camera = camera,
+                                                           .Delta = 0.016f,
+                                                           .RenderScale = 0.5f});
+            });
+    };
+    for (u32 frame = 0; frame < 6; ++frame)
+    {
+        Render();
+    }
+
+    // The scene rendered into the half sub-rect, but the history/output are the full allocation.
+    CHECK(renderer->GetValidExtent() == uvec2{extent.x / 2, extent.y / 2});
+    CHECK(renderer->GetTaaHistoryView()->GetImage()->GetWidth() == extent.x);
+    CHECK(renderer->GetOutput()->GetImage()->GetWidth() == extent.x);
+    CHECK(renderer->GetOutput()->GetImage()->GetHeight() == extent.y);
+
+    // The reconstructed output carries content across its full extent (the resolve upscaled from the
+    // sub-rect, not left the outer region cleared).
+    const vector<u8> output = renderer->GetOutput()->GetImage()->Download();
+    REQUIRE(output.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+    f64 outputMean = 0.0;
+    for (u32 y = 0; y < extent.y; ++y)
+    {
+        for (u32 x = 0; x < extent.x; ++x)
+        {
+            const vec3 c = DecodeTexel(output, extent.x, x, y);
+            outputMean += static_cast<f64>(c.r + c.g + c.b);
+        }
+    }
+    outputMean /= static_cast<f64>(extent.x) * extent.y;
+    CHECK(outputMean > 0.0);
+
+    // Full scale renders clean too — the identity upscale path, and no allocation resize since the
+    // sub-rect rides inside the fixed allocation.
+    const Ref<ImageView> beforeFull = renderer->GetOutput();
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            renderer->Execute(
+                cmd, Renderer::SceneView{
+                         .World = *scene, .Camera = camera, .Delta = 0.016f, .RenderScale = 1.0f});
+        });
+    CHECK(renderer->GetValidExtent() == extent);
+    CHECK(renderer->GetOutput().get() == beforeFull.get());
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: FXAA and CMAA2 resolve post-tonemap and toggle cleanly")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_spatial_aa.vengpack");
+
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(material.has_value());
+
+    constexpr uvec2 extent{96, 72};
+
+    // A lit cube filling the view so the tonemapped LDR the spatial passes read carries a genuine
+    // silhouette to detect and blend.
+    const Ref<Mesh> cube = Mesh::BuildSync(Context, Primitives::Cube(1.4f, *material), "AA Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
+
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Direction = vec3(0.2f, -0.3f, -1.0f),
+        .Color = vec3(1.0f),
+        .Intensity = DirectionalLux(1.0f),
+    };
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f),
+                          static_cast<f32>(extent.x) / static_cast<f32>(extent.y), 0.1f, 100.0f);
+    // Off-axis so the cube's edges are stair-stepped rather than screen-aligned.
+    camera.SetView(vec3(1.1f, 0.8f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final,
+                     .Bloom = false,
+                     .AntiAliasing = AntiAliasingMode::FXAA,
+                     .Shadows = false,
+                     .PunctualShadows = false,
+                     .AO = false},
+    });
+
+    auto Render = [&]()
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.016f});
+            });
+    };
+
+    // Each mode's resolve runs clean (the validation gate runs this binary) and the output carries
+    // the scene edge to edge at the right size.
+    auto CheckOutputHasContent = [&]()
+    {
+        const vector<u8> output = renderer->GetOutput()->GetImage()->Download();
+        REQUIRE(output.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+        f64 mean = 0.0;
+        for (u32 y = 0; y < extent.y; ++y)
+        {
+            for (u32 x = 0; x < extent.x; ++x)
+            {
+                const vec3 c = DecodeTexel(output, extent.x, x, y);
+                mean += static_cast<f64>(c.r + c.g + c.b);
+            }
+        }
+        mean /= static_cast<f64>(extent.x) * extent.y;
+        CHECK(mean > 0.0);
+    };
+
+    // FXAA: the intermediate is allocated, the edge map is not (CMAA2 alone owns it).
+    REQUIRE(renderer->GetSettings().AntiAliasing == AntiAliasingMode::FXAA);
+    Render();
+    Render();
+    CheckOutputHasContent();
+
+    // Switch to CMAA2: a Configure recompile wires the edge + apply passes; a render across it is
+    // clean and still produces content.
+    renderer->Configure({.Mode = DebugView::Final,
+                         .Bloom = false,
+                         .AntiAliasing = AntiAliasingMode::CMAA2,
+                         .Shadows = false,
+                         .PunctualShadows = false,
+                         .AO = false});
+    Render();
+    Render();
+    CheckOutputHasContent();
+
+    // Back to no AA: the intermediate and edge targets are released and the plain path still renders.
+    renderer->Configure({.Mode = DebugView::Final,
+                         .Bloom = false,
+                         .AntiAliasing = AntiAliasingMode::None,
+                         .Shadows = false,
+                         .PunctualShadows = false,
+                         .AO = false});
+    Render();
+    CheckOutputHasContent();
 
     CHECK(renderer->GetOutput()->GetImage()->GetWidth() == extent.x);
 

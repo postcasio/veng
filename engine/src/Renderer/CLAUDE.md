@@ -201,9 +201,21 @@ lights, **SSAO** folded into the ambient/occlusion term, a **compute mip-pyramid
 tonemap, and an optional **TAA** resolve (off by default) between lighting and tonemap. Each
 battery is a `SceneRendererSettings` toggle driving the `Configure` recompile.
 
-### TAA
+### Anti-aliasing
 
-**TAA is an HDR-space temporal resolve** (`Settings.TAA`, off by default). It jitters the
+**`Settings.AntiAliasing` is one mutually-exclusive `AntiAliasingMode`** — `None` (default), `FXAA`,
+`TAA`, `CMAA2`, or `TAAU` — resolved by `FrameTopology` into at most one wired resolve. `TAA` and
+`TAAU` are the HDR-space temporal resolve below; `FXAA` and `CMAA2` are the post-tonemap **spatial**
+resolves under "Spatial anti-aliasing" further down. **Supersampling (SSAA) is not one of these
+modes** — it is orthogonal, driven by the viewport's render/allocation scale (see "Adaptive
+resolution" and the `Viewport` section), and composes with `TAA` (not `TAAU`, which claims the render
+scale for its own input). `Settings::UsesTaa()` is the named predicate the jitter, the history-reset,
+and the post-resolve full-resolution chain key on (true for both temporal modes);
+`Settings::UsesTaaUpscaling()` is `TAAU` alone, read by the viewport to pin its allocation to native.
+
+#### TAA
+
+**TAA is an HDR-space temporal resolve** (`AntiAliasingMode::TAA`, off by default). It jitters the
 projection by a Halton(2, 3) sub-pixel offset each frame (`Renderer/TaaJitter.h`, a pure
 device-free helper), routes the lighting pass into a separate **lit** target, and inserts a
 **resolve** pass (lit + reprojected history + velocity/depth → the HDR target the bloom/tonemap
@@ -230,6 +242,89 @@ with **luminance weighting** (Karis anti-flicker); offscreen reprojection and th
 after a `Resize`/`Configure` fall back to the current color (`m_TaaHistoryReset`). The history is
 a renderer-owned persisted image written and read within the renderer's own single-queue graph
 each frame, so it needs no cross-frame ring or semaphore.
+
+**The resolve is sub-rect-aware, which is what makes it compose with dynamic resolution and act as an
+upscaler.** The scene renders into the `round(allocExtent · RenderScale)` sub-rect like any
+dynamic-resolution frame, but the resolve **reconstructs the full allocation**: it maps the
+full-resolution output UV into the current frame's sub-rect through `ScaledSampleUV`
+(`RenderScaleUV.xy`/`MaxValidUV.xy`) for the current/depth/velocity reads, while the **history and
+output are the full allocation** (so the history read is the plain reprojected UV, and the velocity —
+full-frame motion — needs no remap against it). Both the resolve and history-copy passes therefore
+cover `m_Extent`, and the history is allocation-sized, so a per-frame render-scale change never resets
+it. The temporal resolve is consequently **no longer in the `drsSupported` exclusion**
+(`ResolveRenderScale`): `TAA` composes with dynamic resolution, and the same reconstruction is what
+`TAAU` uses to upscale. At render scale 1.0 every map is the identity and the frame is unchanged.
+
+**The sub-rect ends at the resolve; the HDR tail after it runs at the full allocation.** Because the
+resolve writes the full-extent HDR, the passes after it — the bloom pyramid, the point-field
+accumulation, the tonemap — read `SceneView::PostResolveExtent` (the full allocation under a temporal
+mode, else the sub-rect) rather than `RenderExtent`, and the tonemap's upscale becomes the identity.
+The point-field fragment still remaps its depth-fade sample into the sub-rect through the
+view-constants render scale, so it composes. **Depth of field is the one post-resolve scene-color
+effect that does not**: it composites after the temporal resolve, so with a temporal mode active it
+forces full resolution (the `!(TaaActive && DofComposited)` guard in `ResolveRenderScale`) rather than
+reworking its five-stage chain onto the post-resolve extent — `TAAU` with depth of field degrades to
+native `TAA`, no upscale. SSR, the GPU hi-Z occlusion test, and the Dual-Kawase bloom kernel keep
+their own exclusions for the same reason (not sub-rect-aware), so a temporal mode alongside one of
+them likewise runs at native.
+
+#### Temporal upscaling (TAAU)
+
+**TAAU is the temporal resolve driving a native reconstruction from a sub-native render**
+(`AntiAliasingMode::TAAU`). It reuses the entire `TAA` path above — jitter, the lit target, the
+resolve, the history-copy — and differs only in **where the render scale is spent**: TAA leaves the
+render scale an allocation/supersampling scale (native at 1, SSAA above), while under TAAU the
+**viewport pins the allocation to native and routes the render scale into the rendered sub-rect**, so
+the resolve reconstructs the native image from a cheaper render. The whole difference lives in one
+`Viewport` method — `GetAllocationScale()` returns `1.0` under TAAU (the `MaxAllocationScale` factor
+still applies), so the existing `GetViewRenderScale() = min(RenderScale / allocScale, 1)` then feeds
+the render scale — **static slider or per-frame dynamic-resolution scale alike** — straight into the
+sub-rect. Switching into or out of TAAU changes the allocation, so `Viewport::Configure` debounces an
+allocation resize on the mode change. The reconstruction itself is entirely the renderer's
+sub-rect-aware resolve above, so the renderer draws no distinction between TAA and TAAU — it renders
+whatever sub-rect it is handed and reconstructs the allocation.
+
+#### Spatial anti-aliasing — FXAA and CMAA2
+
+**FXAA and CMAA2 are post-tonemap fullscreen resolves** (`AaResolve`, `src/Renderer/AaResolve.{h,cpp}`,
+off by default). Both read the **tonemapped LDR** the tonemap writes: under either mode the tonemap
+writes an owned LDR intermediate (`AaResolve` allocates it only when a spatial mode is active) instead
+of the output, and the resolve reads that and writes the output — inserted after the tonemap and
+before the debug-draw pass, so gizmos composite over the resolved scene. Both run at the **full
+allocation** resolution on the already-upscaled LDR, so they compose with dynamic resolution and need
+no sub-rect awareness (unlike TAA, they do not force full resolution). The tonemap output is **linear**
+(the swapchain composite does the display encode), so both compute a cheap perceptual (`sqrt`) luma
+internally rather than keying on linear values.
+
+- **FXAA** (`fxaa.frag.slang`, one pass) is Lottes' quality-path luma-directed edge blur: a 3×3 luma
+  neighbourhood finds the edge, an end-of-edge search places the blend, and a sub-pixel term catches
+  thin features. `FxaaScenePass` is the pass.
+- **CMAA2** (`cmaa2_edges.frag.slang` + `cmaa2_apply.frag.slang`, two passes) is Intel's conservative
+  morphological AA, implemented as **two fragment passes** rather than the reference compute /
+  deferred-blend-list design: the edge pass writes an `RG8` edge map (right/bottom edges) using
+  local-contrast-adaptive detection, and the apply pass (`Cmaa2ApplyScenePass`) follows each silhouette
+  to its ends and blends across it by the shape's morphological coverage, leaving every non-edge pixel
+  untouched. The edge pass reuses `FxaaScenePass` (same texture+sampler+rcp push) with the edge
+  pipeline. The `RG8` edge map is a second owned target allocated only under CMAA2.
+
+`AaResolve` owns the vertical slice (the LDR intermediate + its bindless slot, the CMAA2 edge map, and
+the FXAA/edge/apply pipelines), releasing its handles in its own destructor — the `TaaResolve`
+precedent. Nothing is allocated until a spatial mode is active, so the shipping path holds no extra
+memory and the smoke golden is unmoved.
+
+#### Supersampling (SSAA) is the render scale above 1
+
+SSAA is not an `AntiAliasingMode` — it is the viewport rendering **above** its region resolution and
+the gather/composite tail box-downsampling on the way back. `Viewport::SetRenderScale(scale)` with
+`scale > 1` (dynamic resolution off) grows the allocation to `round(region · scale)`, the whole
+pipeline renders at that larger extent, and `GatherPass`'s linear-filter blit averages it down into
+the region — a proper 2×2 box at exactly 2× (the standard SSAA factor), a bilinear approximation at
+other factors. `MaxAllocationScale` is the same lever expressed as an allocation ceiling that composes
+with dynamic resolution. It stacks with `None`/`FXAA`/`CMAA2`/`TAA`, and needs no renderer change —
+the resolution model already renders into an allocation the tail resamples (`tests/gpu/viewport.cpp`
+pins the supersample allocation). It does **not** stack with `TAAU`, which claims the render scale as
+its own sub-native input and pins the allocation to native (a supersample there is inert) — SSAA and
+temporal upscaling are opposite uses of the one render-scale lever, so a viewport picks one.
 
 ### Shadows: directional cascades + the punctual atlas
 
@@ -1078,7 +1173,9 @@ budget, rendering into a `round(allocExtent · RenderScale)` sub-rect of the all
 the terminal tonemap upscales. It is **free**: a sub-rect change moves no allocation, only the
 per-frame `SceneView::RenderScale` fraction — so it adapts **cost**, never the allocation
 footprint, and never hitches. `GetAllocationScale()` reports the fixed allocation scale
-(`MaxScale` while dynamic resolution is on, else the static `RenderScale`). The allocation is
+(`MaxScale` while dynamic resolution is on, else the static `RenderScale`; but `1.0` under the `TAAU`
+AA mode, which pins the allocation to native and spends the render scale on the sub-rect instead — see
+"Temporal upscaling" in the anti-aliasing section). The allocation is
 sized **once** to the region's native extent (capped by `MaxAllocationScale`), and the expensive
 `SceneRenderer::Resize` — which retires every target, re-registers bindless, and recompiles the
 graph — fires only on a genuine region/window extent change or an explicit
