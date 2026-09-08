@@ -406,6 +406,15 @@ namespace Veng::Renderer
         /// @return The device's maximum 2D image edge length, in texels.
         [[nodiscard]] u32 GetMaxImageDimension2D() const;
 
+        /// @brief The maximum anisotropy sample count this device supports.
+        ///
+        /// The physical device's @c maxSamplerAnisotropy limit — guaranteed at least 16 when the
+        /// samplerAnisotropy feature is enabled (which the engine requires). Every anisotropy value
+        /// the engine sends to Vulkan is clamped to this, since a settable value can otherwise
+        /// exceed what the device allows.
+        /// @return The device's maximum anisotropy sample count.
+        [[nodiscard]] f32 GetMaxSamplerAnisotropy() const;
+
         /// @brief Returns the current swap chain extent.
         [[nodiscard]] uvec2 GetSwapChainExtent() const;
 

@@ -313,6 +313,22 @@ namespace Veng::Renderer
         /// @return The shared sampler and the slot it occupies.
         [[nodiscard]] SharedSampler AcquireSampler(const SamplerInfo& info);
 
+        /// @brief Sets the global anisotropy applied to scene-texture samplers, live.
+        ///
+        /// Governs every shared sampler whose description opted in through
+        /// SamplerInfo::HonorGlobalAnisotropy — the scene-texture path — and no other: the funnel's
+        /// aniso-off and internal render-target samplers are left exactly as authored. Early-outs
+        /// when the value is unchanged (it runs on every graphics apply). On a real change it walks
+        /// the opted-in cache entries, rebuilds each sampler with the new value clamped to
+        /// Context::GetMaxSamplerAnisotropy(), and rewrites its set-0 descriptor **in place** at the
+        /// same slot, so every texture's SamplerHandle keeps pointing at the now-refiltered sampler
+        /// with no re-registration. The rewrite is guarded by Context::WaitIdle(): the bindless set
+        /// is UPDATE_UNUSED_WHILE_PENDING, under which rewriting a slot an in-flight draw samples is
+        /// a hazard, and a settings apply is rare enough that idling the device is the honest fix.
+        /// @param enabled  Whether anisotropic filtering is active on scene-texture samplers.
+        /// @param max      The requested sample count, clamped to the device maximum per sampler.
+        void SetGlobalAnisotropy(bool enabled, f32 max);
+
         /// @brief Registers a storage image view and returns its handle.
         [[nodiscard]] StorageImageHandle RegisterStorage(const Ref<ImageView>& storage);
 
@@ -718,6 +734,16 @@ namespace Veng::Renderer
         /// @brief Writes a byte-address storage buffer into the descriptor set at the given buffer slot.
         void WriteStorageBuffer(u32 index, const Ref<Buffer>& buffer) const;
 
+        /// @brief The description a sampler is actually built from, given the current global state.
+        ///
+        /// For a description that opted into HonorGlobalAnisotropy, returns a copy with the
+        /// anisotropy fields replaced by the current global state resolved against the device
+        /// maximum; every other description is returned unchanged. This is the one transform the
+        /// global override applies, at both AcquireSampler and SetGlobalAnisotropy.
+        /// @param authored  The author's description (the cache key).
+        /// @return The description to build the Vulkan sampler from.
+        [[nodiscard]] SamplerInfo EffectiveSamplerInfo(const SamplerInfo& authored) const;
+
         /// @brief The slot allocator backing one arrayed binding, or null when @p array is unmapped.
         /// @param array  Which arrayed binding.
         /// @return Its allocator, borrowed.
@@ -774,6 +800,16 @@ namespace Veng::Renderer
         /// search already applies, which is where a memcmp or a whole-struct hash would go wrong on
         /// the padding between those fields.
         vector<SamplerCacheEntry> m_SharedSamplers;
+
+        /// @brief Whether the global anisotropy control has filtering enabled.
+        ///
+        /// Applied only to shared samplers that opted in via SamplerInfo::HonorGlobalAnisotropy.
+        /// Defaults to the value scene textures baked before the control existed, so the default
+        /// state reproduces today's sampling exactly.
+        bool m_GlobalAnisotropyEnabled = true;
+        /// @brief The global anisotropy sample count, clamped to the device maximum per sampler.
+        f32 m_GlobalMaxAnisotropy = DefaultMaxAnisotropy;
+
         /// @brief Slot allocator for the storage-image array.
         SlotArray m_StorageImages;
         /// @brief Slot allocator for the byte-address storage-buffer array.

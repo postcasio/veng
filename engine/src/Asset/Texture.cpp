@@ -77,6 +77,10 @@ namespace Veng
         // the clamp never having reached below it — and keeps two textures whose settings agree
         // from asking for different samplers merely because their chains are different lengths.
         m_SamplerInfo.MaxLod = LodClampNone;
+        // A Texture asset is a scene texture, so its sampler follows the engine's global anisotropy
+        // control: the cooked per-texture anisotropy above becomes the per-texture gate the override
+        // honors, and the player's filtering choice governs the sample count live.
+        m_SamplerInfo.HonorGlobalAnisotropy = true;
     }
 
     Ref<Texture> Texture::PrepareSync(Context& context, const TextureData& data)

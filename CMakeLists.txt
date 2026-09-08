@@ -877,6 +877,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/type_mapping.cpp
             tests/unit/format_info.cpp
             tests/unit/bindless_slots.cpp
+            tests/unit/sampler_anisotropy.cpp
             tests/unit/barrier_decision.cpp
             tests/unit/render_graph_schedule.cpp
             tests/unit/input_events.cpp

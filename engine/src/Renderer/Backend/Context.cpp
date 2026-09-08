@@ -969,6 +969,11 @@ namespace Veng::Renderer
         return m_Native->PhysicalDevice.getProperties().limits.maxImageDimension2D;
     }
 
+    f32 Context::GetMaxSamplerAnisotropy() const
+    {
+        return m_Native->PhysicalDevice.getProperties().limits.maxSamplerAnisotropy;
+    }
+
     uvec2 Context::GetSwapChainExtent() const
     {
         VE_ASSERT(m_Native->SwapChain, "no swapchain (headless)");

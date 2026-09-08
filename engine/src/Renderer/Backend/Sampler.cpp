@@ -18,7 +18,7 @@ namespace Veng::Renderer
     /// @param context  The owning render context.
     /// @param info     Sampler parameters (filtering, addressing, LOD, anisotropy, comparison, etc.).
     Sampler::Sampler(Context& context, const SamplerInfo& info)
-        : m_Context(context), m_Name(info.Name), m_Native(CreateUnique<Native>())
+        : m_Context(context), m_Info(info), m_Native(CreateUnique<Native>())
     {
         const vk::SamplerCreateInfo samplerCreateInfo{
             .magFilter = ToVk(info.MagFilter),
@@ -40,7 +40,7 @@ namespace Veng::Renderer
 
         m_Native->Sampler = GetVkDevice(m_Context).createSampler(samplerCreateInfo).value;
 
-        DebugMarkers::MarkSampler(GetVkDevice(m_Context), m_Native->Sampler, m_Name);
+        DebugMarkers::MarkSampler(GetVkDevice(m_Context), m_Native->Sampler, m_Info.Name);
     }
 
     /// @brief Defers destruction of the Vulkan sampler handle until the GPU is done with it.

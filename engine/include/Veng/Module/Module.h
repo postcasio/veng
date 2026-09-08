@@ -76,11 +76,14 @@ extern "C"
 /// component boundary, or the document root) and gives GuiDriver::OnInstantiate a boundary
 /// parameter: the frame is host-constructed and handed to a module-registered driver each drive,
 /// and the driver's vtable is what a module subclasses, so a stale module reads the frame's trailing
-/// fields shifted and overrides the wrong OnInstantiate slot.
+/// fields shifted and overrides the wrong OnInstantiate slot. Version 15 grows GraphicsResolveOutput
+/// with the Global facet (the machine-global renderer state a resolve produces): the struct is
+/// host-constructed and handed by reference to a module-registered OnResolveGraphics override, so a
+/// stale module would fill a short struct and the engine would read the facet past its end.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 14u
+#define VENG_MODULE_ABI_VERSION 15u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

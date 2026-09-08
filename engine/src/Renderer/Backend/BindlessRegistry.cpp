@@ -68,7 +68,8 @@ namespace Veng::Renderer
                    a.CompareEnable == b.CompareEnable && a.CompareOp == b.CompareOp &&
                    SameBits(a.MinLod, b.MinLod) && SameBits(a.MaxLod, b.MaxLod) &&
                    a.BorderColor == b.BorderColor &&
-                   a.UnnormalizedCoordinates == b.UnnormalizedCoordinates;
+                   a.UnnormalizedCoordinates == b.UnnormalizedCoordinates &&
+                   a.HonorGlobalAnisotropy == b.HonorGlobalAnisotropy;
         }
     }
 
@@ -431,8 +432,24 @@ namespace Veng::Renderer
         return SamplerHandle{index};
     }
 
+    SamplerInfo BindlessRegistry::EffectiveSamplerInfo(const SamplerInfo& authored) const
+    {
+        if (!authored.HonorGlobalAnisotropy)
+        {
+            return authored;
+        }
+        SamplerInfo effective = authored;
+        const ResolvedAnisotropy resolved = ResolveAnisotropy(
+            m_GlobalAnisotropyEnabled, m_GlobalMaxAnisotropy, m_Context.GetMaxSamplerAnisotropy());
+        effective.AnisotropyEnabled = resolved.Enabled;
+        effective.MaxAnisotropy = resolved.MaxAnisotropy;
+        return effective;
+    }
+
     SharedSampler BindlessRegistry::AcquireSampler(const SamplerInfo& info)
     {
+        // The cache keys on the author description, so an opted-in and an opted-out description that
+        // are otherwise identical stay distinct entries — the confinement the global control needs.
         for (const SamplerCacheEntry& entry : m_SharedSamplers)
         {
             if (SameSampling(entry.Info, info))
@@ -441,13 +458,57 @@ namespace Veng::Renderer
             }
         }
 
-        const Ref<Sampler> sampler = Sampler::Create(m_Context, info);
+        // The Vulkan sampler is built from the effective description (the global override folded in
+        // for an opted-in one); the author description is what the entry stores, to key the cache
+        // and to rebuild from on a later SetGlobalAnisotropy.
+        const Ref<Sampler> sampler = Sampler::Create(m_Context, EffectiveSamplerInfo(info));
         const u32 index = m_Samplers.Allocate(sampler, "sampler");
         WriteSampler(index, sampler);
 
         const SharedSampler shared{.Sampler = sampler, .Handle = SamplerHandle{index}};
         m_SharedSamplers.emplace_back(SamplerCacheEntry{.Info = info, .Shared = shared});
         return shared;
+    }
+
+    void BindlessRegistry::SetGlobalAnisotropy(bool enabled, f32 max)
+    {
+        // Runs on every graphics apply and re-resolve, so an unchanged value must do no work —
+        // mirroring the per-viewport Configure dirty-compare. Floats compared by bit pattern, as
+        // the sampler cache compares them.
+        if (enabled == m_GlobalAnisotropyEnabled && SameBits(max, m_GlobalMaxAnisotropy))
+        {
+            return;
+        }
+        m_GlobalAnisotropyEnabled = enabled;
+        m_GlobalMaxAnisotropy = max;
+
+        const bool anyEligible =
+            std::ranges::any_of(m_SharedSamplers, [](const SamplerCacheEntry& entry)
+                                { return entry.Info.HonorGlobalAnisotropy; });
+        if (!anyEligible)
+        {
+            return;
+        }
+
+        // In-place rewrite of an occupied set-0 sampler slot. The bindless set is
+        // eUpdateUnusedWhilePending, which permits updating only descriptors not dynamically used by
+        // a pending submission — a slot read by in-flight textured draws is used, so idling the
+        // device first is what makes the rewrite legal. A settings apply is a rare user action.
+        m_Context.WaitIdle();
+        for (SamplerCacheEntry& entry : m_SharedSamplers)
+        {
+            if (!entry.Info.HonorGlobalAnisotropy)
+            {
+                continue;
+            }
+            const Ref<Sampler> sampler =
+                Sampler::Create(m_Context, EffectiveSamplerInfo(entry.Info));
+            // The slot's Ref is the registry's keep-alive for the shared sampler; swapping it drops
+            // the previous one, which retires through the ordinary per-frame path.
+            m_Samplers.Slots[entry.Shared.Handle.Index] = sampler;
+            entry.Shared.Sampler = sampler;
+            WriteSampler(entry.Shared.Handle.Index, sampler);
+        }
     }
 
     StorageImageHandle BindlessRegistry::RegisterStorage(const Ref<ImageView>& storage)

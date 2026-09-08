@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+
 #include <Veng/Veng.h>
 #include <Veng/Renderer/Types.h>
 
@@ -15,6 +17,44 @@ namespace Veng::Renderer
     /// the whole chain is wanted, because it does not vary with the image and so keeps otherwise
     /// identical descriptions identical.
     inline constexpr f32 LodClampNone = 1000.0f;
+
+    /// @brief The engine's default anisotropy sample count for scene-texture sampling.
+    ///
+    /// The one value shared by SamplerInfo::MaxAnisotropy's default and the BindlessRegistry's
+    /// default global anisotropy state, so a sampler built at the default global state is
+    /// byte-identical to one built before the global control existed. The Vulkan spec guarantees a
+    /// device maximum of at least 16 when the samplerAnisotropy feature is enabled, so this value
+    /// is always representable.
+    inline constexpr f32 DefaultMaxAnisotropy = 8.0f;
+
+    /// @brief The anisotropy a sampler may actually use, resolved against the device limit.
+    struct ResolvedAnisotropy
+    {
+        /// @brief Whether anisotropic filtering is active.
+        bool Enabled = false;
+        /// @brief The sample count, in [1, deviceMax] when enabled, else 1.
+        f32 MaxAnisotropy = 1.0f;
+    };
+
+    /// @brief Resolves an anisotropy request against a device's maximum sample count.
+    ///
+    /// A disabled request resolves to filtering off at 1x regardless of the requested value; an
+    /// enabled request is clamped into [1, deviceMax]. This is the one place a settable anisotropy
+    /// is bounded, and it is pure so the clamp is unit-testable with no device.
+    /// @param enabled    Whether anisotropic filtering was requested.
+    /// @param requested  The requested sample count.
+    /// @param deviceMax  The device's maxSamplerAnisotropy limit.
+    /// @return The enabled flag and clamped sample count a sampler may be built with.
+    [[nodiscard]] inline ResolvedAnisotropy ResolveAnisotropy(bool enabled, f32 requested,
+                                                              f32 deviceMax)
+    {
+        if (!enabled)
+        {
+            return ResolvedAnisotropy{.Enabled = false, .MaxAnisotropy = 1.0f};
+        }
+        return ResolvedAnisotropy{.Enabled = true,
+                                  .MaxAnisotropy = std::clamp(requested, 1.0f, deviceMax)};
+    }
 
     /// @brief Construction parameters for a Sampler.
     struct SamplerInfo
@@ -38,7 +78,7 @@ namespace Veng::Renderer
         /// @brief Whether anisotropic filtering is active.
         bool AnisotropyEnabled = true;
         /// @brief Maximum anisotropy samples (1–device maximum).
-        f32 MaxAnisotropy = 8;
+        f32 MaxAnisotropy = DefaultMaxAnisotropy;
         /// @brief Whether depth-comparison sampling is active.
         bool CompareEnable = false;
         /// @brief Comparison operator used when CompareEnable is true.
@@ -51,6 +91,16 @@ namespace Veng::Renderer
         BorderColor BorderColor = BorderColor::OpaqueBlack;
         /// @brief Whether texture coordinates are in texel space rather than [0,1].
         bool UnnormalizedCoordinates = false;
+        /// @brief Whether this sampler's anisotropy follows the engine's global filtering control.
+        ///
+        /// Set only by the scene-texture path (the cooked/runtime Texture asset). When true,
+        /// BindlessRegistry::AcquireSampler builds the sampler with the current global anisotropy in
+        /// place of the AnisotropyEnabled/MaxAnisotropy above, and a later SetGlobalAnisotropy
+        /// rebuilds it live. It is part of the cache key, so an opted-in description never shares a
+        /// slot with an otherwise-identical one that opted out — which is what confines the global
+        /// override to scene textures and leaves the funnel's internal render-target samplers as
+        /// authored.
+        bool HonorGlobalAnisotropy = false;
     };
 
     /// @brief A GPU sampler object controlling how images are filtered and addressed.
@@ -74,7 +124,13 @@ namespace Veng::Renderer
         Sampler& operator=(const Sampler&) = delete;
 
         /// @brief Returns the debug name supplied at creation.
-        [[nodiscard]] const string& GetName() const { return m_Name; }
+        [[nodiscard]] const string& GetName() const { return m_Info.Name; }
+
+        /// @brief Returns the description this sampler was actually created from.
+        ///
+        /// The resolved description — for a sampler the registry built under the global anisotropy
+        /// control, the anisotropy fields are the resolved global values, not the caller's request.
+        [[nodiscard]] const SamplerInfo& GetInfo() const { return m_Info; }
 
         /// @brief Opaque backend handle; defined in Sampler.cpp.
         struct Native;
@@ -86,8 +142,8 @@ namespace Veng::Renderer
 
         /// @brief Context this resource was created with; must outlive the sampler.
         Context& m_Context;
-        /// @brief Debug name.
-        string m_Name;
+        /// @brief The description the sampler was created from.
+        SamplerInfo m_Info;
         /// @brief Backend Vulkan sampler.
         Unique<Native> m_Native;
     };

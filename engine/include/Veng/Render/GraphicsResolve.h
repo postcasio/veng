@@ -3,6 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Render/GraphicsSettings.h>
 #include <Veng/Renderer/DynamicResolution.h>
+#include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/SceneRendererSettings.h>
 #include <Veng/Renderer/Viewport.h>
 
@@ -33,6 +34,20 @@ namespace Veng
         const LevelRenderSettings& AuthoredLook;
     };
 
+    /// @brief The machine-global renderer state a resolve produces, applied once per apply.
+    ///
+    /// State that is neither viewport-shaped (Viewport::Configure) nor a per-frame view knob: the
+    /// engine applies it to the render Context / BindlessRegistry beside the display arms. It
+    /// defaults to the values the engine used before the control existed, so an identity resolver
+    /// leaves sampling unchanged.
+    struct GraphicsGlobalFacet
+    {
+        /// @brief Whether anisotropic filtering is active on scene-texture samplers.
+        bool AnisotropyEnabled = true;
+        /// @brief The anisotropy sample count for scene-texture samplers (clamped to the device max).
+        f32 MaxAnisotropy = Renderer::DefaultMaxAnisotropy;
+    };
+
     /// @brief The output of a graphics resolve: the concrete renderer state the engine applies.
     ///
     /// The engine fills this with the authored baseline (the authored look mapped onto the two
@@ -40,7 +55,8 @@ namespace Veng
     /// Application::OnResolveGraphics, so the identity default resolver returns the authored look
     /// unchanged by doing nothing. A game's resolver mutates these fields from the user's chosen
     /// values; the engine then applies Settings through Viewport::Configure (only when a topology
-    /// field changed), pushes View's per-frame knobs, and applies the dynamic-resolution choice.
+    /// field changed), pushes View's per-frame knobs, applies the dynamic-resolution choice, and
+    /// applies the Global facet to the render Context / BindlessRegistry.
     ///
     /// View is Renderer::ViewState — the per-frame knob subset of the renderer's SceneView — and the
     /// engine is the single writer of its display-calibration OutputBrightness/OutputGamma fields
@@ -55,5 +71,7 @@ namespace Veng
         Renderer::DynamicResolutionSettings DynamicResolution;
         /// @brief Whether adaptive render resolution is enabled; false clears it on the viewports.
         bool DynamicResolutionEnabled = false;
+        /// @brief The machine-global renderer state applied beside the display arms.
+        GraphicsGlobalFacet Global;
     };
 }

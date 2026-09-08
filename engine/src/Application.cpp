@@ -12,6 +12,7 @@
 
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/MaterialInstance.h>
+#include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CaptureSurface.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/GatherPass.h>
@@ -695,6 +696,12 @@ namespace Veng
         // game resolver's to set: this apply path is their single writer.
         output.View.OutputBrightness = display.Brightness;
         output.View.OutputGamma = display.Gamma;
+
+        // The global facet is machine-global, not viewport-shaped: it applies to the render Context's
+        // one sampler funnel here, beside the display arm, rather than through Viewport::Configure.
+        // SetGlobalAnisotropy early-outs on an unchanged value and clamps to the device maximum.
+        m_RenderContext.GetBindlessRegistry().SetGlobalAnisotropy(output.Global.AnisotropyEnabled,
+                                                                  output.Global.MaxAnisotropy);
 
         // Settings are machine-global — every managed viewport (split-screen included) receives the
         // same resolved settings. The per-frame view knobs ride m_WorldView, which PushViews carries

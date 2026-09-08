@@ -302,6 +302,68 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "bindless registry: global anisotropy rebuilds only the "
+                  "opted-in samplers, in place, and clamps to the device max")
+{
+    // The confinement property: SetGlobalAnisotropy reaches a scene-texture description (one that
+    // opted into HonorGlobalAnisotropy) and no other — an aniso-off description and a default-on one
+    // that relied on the SamplerInfo default are left exactly as authored. The rebuild is in place
+    // (same slot, no handle churn), which the validation gate over this binary proves is properly
+    // synchronized (the WaitIdle guarding the in-flight-slot rewrite).
+    auto& bindless = Context.GetBindlessRegistry();
+
+    const SamplerInfo sceneInfo{.Name = "Scene Texture", .HonorGlobalAnisotropy = true};
+    const SamplerInfo defaultInfo{.Name = "Internal Default"};
+    const SamplerInfo offInfo{.Name = "Aniso Off", .AnisotropyEnabled = false};
+
+    const SharedSampler scene = bindless.AcquireSampler(sceneInfo);
+    const SharedSampler defaulted = bindless.AcquireSampler(defaultInfo);
+    const SharedSampler off = bindless.AcquireSampler(offInfo);
+
+    // The distinct descriptions take distinct slots — the opted-in flag is part of the cache key, so
+    // the scene and default descriptions do not share despite matching in every other field.
+    CHECK(scene.Handle.Index != defaulted.Handle.Index);
+
+    // The default global state reproduces today: the opted-in sampler filters at the shared 8x.
+    CHECK(scene.Sampler->GetInfo().AnisotropyEnabled);
+    CHECK(scene.Sampler->GetInfo().MaxAnisotropy == doctest::Approx(DefaultMaxAnisotropy));
+
+    const Sampler* const sceneBefore = scene.Sampler.get();
+    const Sampler* const defaultBefore = defaulted.Sampler.get();
+    const Sampler* const offBefore = off.Sampler.get();
+
+    // Change the global value to a distinct, in-range one (the device max is >= 16 with the feature).
+    bindless.SetGlobalAnisotropy(true, 2.0f);
+
+    // Re-acquiring returns the same cache entries (same author descriptions).
+    const SharedSampler sceneAfter = bindless.AcquireSampler(sceneInfo);
+    const SharedSampler defaultAfter = bindless.AcquireSampler(defaultInfo);
+    const SharedSampler offAfter = bindless.AcquireSampler(offInfo);
+
+    // The opted-in sampler kept its slot but was rebuilt to the new value — the in-place rewrite.
+    CHECK(sceneAfter.Handle.Index == scene.Handle.Index);
+    CHECK(sceneAfter.Sampler.get() != sceneBefore);
+    CHECK(sceneAfter.Sampler->GetInfo().MaxAnisotropy == doctest::Approx(2.0f));
+
+    // Confinement: the default-on and aniso-off samplers are untouched — same object, same value.
+    CHECK(defaultAfter.Sampler.get() == defaultBefore);
+    CHECK(defaultAfter.Sampler->GetInfo().MaxAnisotropy == doctest::Approx(DefaultMaxAnisotropy));
+    CHECK(offAfter.Sampler.get() == offBefore);
+    CHECK_FALSE(offAfter.Sampler->GetInfo().AnisotropyEnabled);
+
+    // A value above the device max clamps to it (the correctness fix the unclamped 8x skated on).
+    const f32 deviceMax = Context.GetMaxSamplerAnisotropy();
+    bindless.SetGlobalAnisotropy(true, deviceMax * 4.0f);
+    CHECK(bindless.AcquireSampler(sceneInfo).Sampler->GetInfo().MaxAnisotropy ==
+          doctest::Approx(deviceMax));
+
+    // An unchanged apply rebuilds nothing — the dirty-compare early-out.
+    const Sampler* const clampedScene = bindless.AcquireSampler(sceneInfo).Sampler.get();
+    bindless.SetGlobalAnisotropy(true, deviceMax * 4.0f);
+    CHECK(bindless.AcquireSampler(sceneInfo).Sampler.get() == clampedScene);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "bindless registry: a typed registry holds exactly its own view type")
 {
     // The homogeneity invariant is the whole point of the typed sets: a 3D view registers into the
