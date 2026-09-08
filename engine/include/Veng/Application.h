@@ -766,6 +766,18 @@ namespace Veng
         /// @param display  The built-in display selections to apply.
         void ApplyBuiltinDisplay(const BuiltinDisplayChoices& display);
 
+        /// @brief Persists a full-screen change the user made outside the settings path.
+        ///
+        /// The macOS green title-bar button (and any OS full-screen gesture) toggles the window's
+        /// native state directly, bypassing ApplyBuiltinDisplay — so the persisted store would go
+        /// stale and boot would re-apply the old mode. Called once per frame, this observes the
+        /// window's live full-screen mode: on a change that is not the engine's own async
+        /// ApplyDisplayMode landing (told apart by the live mode differing from m_ActiveDisplay's), it
+        /// writes the mode into the graphics store's display choices, updates m_ActiveDisplay, and
+        /// saves. A no-op without a window or a settings store, and inert where GetFullscreenMode only
+        /// moves through the engine's own apply.
+        void SyncUserFullscreenChange();
+
         /// @brief Returns the host-owned, process-wide registry of scene systems.
         ///
         /// Borrowed: the host constructs it and calls VengModuleRegister before passing
@@ -1919,6 +1931,14 @@ namespace Veng
         /// ApplyBuiltinDisplay diffs against this so an apply performs only the changes that moved; the
         /// first apply (nullopt) forces the present mode and frame cap so the persisted defaults take.
         optional<BuiltinDisplayChoices> m_ActiveDisplay;
+
+        /// @brief The window's fullscreen mode as of the previous frame, or nullopt before the first
+        ///        observation.
+        ///
+        /// Seeded on the first frame and compared each frame after, so a change is detected as an
+        /// event. It is how a user-driven native full-screen toggle (the macOS green title-bar
+        /// button) is caught and written back into the persisted store — see SyncUserFullscreenChange.
+        optional<FullscreenMode> m_ObservedFullscreen;
 
         /// @brief The run-loop frame-rate cap; honored once per frame, independent of present-mode vsync.
         FrameRateLimiter m_FrameLimiter;

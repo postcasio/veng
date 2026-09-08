@@ -779,6 +779,31 @@ namespace Veng
         m_ActiveDisplay = resolved;
     }
 
+    void Application::SyncUserFullscreenChange()
+    {
+        // Nothing to observe without a window, nowhere to persist without a store.
+        if (!m_Window || !m_GraphicsSettings)
+        {
+            return;
+        }
+        const FullscreenMode live = m_Window->GetFullscreenMode();
+        const FullscreenMode applied =
+            m_ActiveDisplay ? m_ActiveDisplay->Fullscreen : FullscreenMode::Windowed;
+        const optional<FullscreenMode> writeBack =
+            DecideFullscreenWriteBack(live, m_ObservedFullscreen, applied);
+        m_ObservedFullscreen = live;
+        if (!writeBack.has_value())
+        {
+            return;
+        }
+        m_GraphicsSettings->GetDisplay().Fullscreen = *writeBack;
+        if (m_ActiveDisplay)
+        {
+            m_ActiveDisplay->Fullscreen = *writeBack;
+        }
+        static_cast<void>(m_GraphicsSettings->Save());
+    }
+
     VoidResult Application::StartServer(const AssetId levelId)
     {
         const GameNetInfo net = m_Info.Net.value_or(GameNetInfo{});
@@ -2186,6 +2211,10 @@ namespace Veng
         // Sample process CPU/memory at the same once-per-frame boundary so CpuPercent's interval is
         // one frame; the snapshot is read back through GetSystemStats().
         m_SystemStats.Sample();
+
+        // Catch a full-screen toggle the user drove through the window itself (the macOS green button)
+        // and persist it, so the setting the next boot applies matches the window it left.
+        SyncUserFullscreenChange();
 
         const f32 delta = Time::Update();
 

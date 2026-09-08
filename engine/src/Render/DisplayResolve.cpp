@@ -210,4 +210,22 @@ namespace Veng
         actions.ChangeFrameCap = prev.FrameCapHz != resolved.FrameCapHz;
         return actions;
     }
+
+    optional<FullscreenMode> DecideFullscreenWriteBack(const FullscreenMode live,
+                                                       const optional<FullscreenMode> observed,
+                                                       const FullscreenMode applied)
+    {
+        // No prior frame to compare, or nothing changed since it: not an event.
+        if (!observed.has_value() || live == *observed)
+        {
+            return std::nullopt;
+        }
+        // The change reached the engine's own last-applied mode — its async apply completing, already
+        // in the store. Any other change is the user's own toggle, which the store has not recorded.
+        if (live == applied)
+        {
+            return std::nullopt;
+        }
+        return live;
+    }
 }

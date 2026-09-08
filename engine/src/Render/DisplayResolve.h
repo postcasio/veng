@@ -82,4 +82,21 @@ namespace Veng
     [[nodiscard]] DisplayApplyActions
     ComputeDisplayApplyActions(const optional<BuiltinDisplayChoices>& current,
                                const BuiltinDisplayChoices& resolved);
+
+    /// @brief Decides whether a user-driven full-screen toggle must be written back to the store.
+    ///
+    /// The macOS green title-bar button toggles the window's native full-screen directly, so the
+    /// persisted selection can drift from the live window. Called once per frame with the window's
+    /// live mode, the previous frame's observed mode, and the mode the engine last applied, it returns
+    /// the mode to persist when the live mode changed to one the engine did not apply itself — and
+    /// nullopt otherwise: no prior observation to compare against (the seed frame), no change since
+    /// last frame, or a change that merely reaches the last-applied mode (the engine's own async apply
+    /// completing, which the store already holds). Pure and device-free.
+    /// @param live      The window's current full-screen mode.
+    /// @param observed  The mode observed the previous frame, or nullopt before the first observation.
+    /// @param applied   The full-screen mode the engine last applied.
+    /// @return The mode to persist, or nullopt when no write-back is needed.
+    [[nodiscard]] optional<FullscreenMode>
+    DecideFullscreenWriteBack(FullscreenMode live, optional<FullscreenMode> observed,
+                              FullscreenMode applied);
 }

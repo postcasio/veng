@@ -261,6 +261,46 @@ TEST_CASE("ComputeDisplayApplyActions performs only the changes that moved")
     }
 }
 
+TEST_CASE("DecideFullscreenWriteBack catches a user toggle and ignores the engine's own apply")
+{
+    using Veng::DecideFullscreenWriteBack;
+    constexpr FullscreenMode Windowed = FullscreenMode::Windowed;
+    constexpr FullscreenMode Full = FullscreenMode::Borderless;
+
+    SUBCASE("the seed frame writes nothing")
+    {
+        // No prior observation: whatever the live mode, there is no change to attribute yet.
+        CHECK_FALSE(DecideFullscreenWriteBack(Full, std::nullopt, Windowed).has_value());
+    }
+
+    SUBCASE("no change since last frame writes nothing")
+    {
+        CHECK_FALSE(DecideFullscreenWriteBack(Windowed, Windowed, Windowed).has_value());
+        CHECK_FALSE(DecideFullscreenWriteBack(Full, Full, Full).has_value());
+    }
+
+    SUBCASE("a user toggle into and out of fullscreen is written back")
+    {
+        // The window changed to a mode the engine did not apply (applied is still the old one): the
+        // green-button toggle, in both directions.
+        const optional<FullscreenMode> intoFull =
+            DecideFullscreenWriteBack(Full, Windowed, Windowed);
+        REQUIRE(intoFull.has_value());
+        CHECK(*intoFull == Full);
+
+        const optional<FullscreenMode> outOfFull = DecideFullscreenWriteBack(Windowed, Full, Full);
+        REQUIRE(outOfFull.has_value());
+        CHECK(*outOfFull == Windowed);
+    }
+
+    SUBCASE("the engine's own async apply completing writes nothing")
+    {
+        // The engine applied Full; the window was still Windowed (async) and now reaches Full. The
+        // change matches what was applied, so it is that apply landing — the store already holds it.
+        CHECK_FALSE(DecideFullscreenWriteBack(Full, Windowed, Full).has_value());
+    }
+}
+
 TEST_CASE("FrameRateLimiter spaces frames to the requested rate")
 {
     FrameRateLimiter limiter;
