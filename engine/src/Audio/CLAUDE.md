@@ -74,12 +74,40 @@ does **not** re-route to a new device or follow a sample-rate change.
 
 ## The bus tree
 
-`AudioBus` is a fixed enum (`Master / Music / SFX / UI / Ambience`), each a mixing group under the
-master, created at init and living for the run. It is deliberately closed — no designer-authorable
-graph. Each bus carries an independent gain and a small typed effect surface (gain, a one-pole
-low-pass, a send into the master reverb); the master reverb is a first-party Freeverb-style node,
-since miniaudio has none, its per-block cost inside the voice budget. A voice's own occlusion
+The bus set is a **data-driven graph** the game authors, not a fixed enum. A voice is tagged with a
+**`BusId`** — the interned hash of a bus-name string, constructible without the graph
+(`BusId{"Engines"}`); the well-known root names (`Master / Music / SFX / UI / Ambience`) are engine
+constants (`AudioBuses::Master()` …) that resolve only if the active graph declares them. A game's
+complete topology is a cooked **`AudioBusGraph`** asset (`AudioBusGraphData`, a
+`vector<AudioBusDef>` — each `{ Id, Parent, DefaultGain, LowpassCutoff, ReverbSend }`), adopted at
+boot through **`AudioEngine::ConfigureBusGraph`** (named by `ApplicationInfo::AudioBusGraph`,
+mirroring the graphics schema). An authored graph is the **complete** topology and **replaces** the
+engine default; the engine does not inject its roots into it. With no authored graph the engine runs
+a built-in **roots-only default** (`Master ⊃ {Music, SFX, UI, Ambience}` at unity), so the editor and
+both examples get the roots free. A graph is validated at adoption — exactly one root and it is
+`Master`, every parent resolves, acyclic, depth ≤ `MaxBusDepth`, count ≤ `MaxBuses`, no interned-hash
+collision — and a rejected graph falls back to the default with a logged error. An id absent from the
+active graph resolves to **`Master`** with a one-time warning.
+
+Each bus carries an independent gain and a small typed effect surface (gain, a one-pole low-pass, a
+send into the master reverb); the master reverb is a first-party Freeverb-style node, since miniaudio
+has none, its per-block cost inside the voice budget. **Gain composes down the tree** (an SFX-parent
+gain scales all its children); **per-bus DSP is leaf-only** — a low-pass or reverb-send on a bus with
+children would filter that summed mix (hierarchical DSP routing, out of scope), so
+`SetBusLowpassCutoff` / `SetBusReverbSend` on a non-leaf bus is ignored. A voice's own occlusion
 low-pass, pan, and reverb send ride the snapshot per voice.
+
+**The tree lives only on the control thread; the RT callback reads a flat table.** `SetBusGain` and
+`ConfigureBusGraph` write control-thread state, and the once-per-frame `Publish()` flattens the tree
+into fixed-capacity POD arrays (`[MaxBuses]`) in the snapshot: a **deterministic, index-stable
+child-before-parent order** (Master last), each bus's parent index, gain, and leaf-only DSP. Each
+voice's `BusId` is resolved to its leaf-bus **index** on the control thread at `Publish` (unknown ⇒
+the Master index), so the RT does no lookup. The RT-owned accumulators and per-bus filter state are
+sized to **`MaxBuses` once in `PrepareScratch`** and never resized by `ConfigureBusGraph` (resizing a
+vector the RT reads would race). The RT **fold** is one bounded
+pass — sum each voice into its leaf index, then fold each bus (through its low-pass, scaled by its
+gain) into its parent index, Master last as the output — allocation-free, recursion-free, no tree
+walk. Gain composition is a consequence of the fold.
 
 **The reverb is a public, embeddable effect (`Veng/Audio/Reverb.h`), used two ways.** It is one
 `Reverb` class — a bank of feedback-comb and all-pass filters expressed on `Dsp::DelayLine` (and

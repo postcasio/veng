@@ -1498,4 +1498,30 @@ namespace Veng
         /// @brief Byte size of the reflection record following this header.
         u32 RecordBytes = 0;
     };
+
+    /// @brief The current audio-bus-graph-format version.
+    ///
+    /// Bumped on any CookedAudioBusGraphHeader layout change; the loader rejects a blob whose
+    /// Version != this. The embedded reflection record evolves tolerantly within a fixed version —
+    /// a new bus field does not require a bump.
+    inline constexpr u32 CookedAudioBusGraphVersion = 1u;
+
+    /// @brief Cooked header for an audio-bus-graph asset.
+    ///
+    /// A bus graph is a game's complete mixer topology: a single root Master and every bus beneath
+    /// it, each with a parent and DSP defaults. The whole graph rides the reflection serializer's
+    /// name-keyed WriteFields record — assetpack treats it as opaque bytes, exactly as a settings
+    /// schema does, so this file gains no reflection dependency. The runtime loader ReadFields the
+    /// record.
+    ///
+    /// The blob is, in order:
+    ///   CookedAudioBusGraphHeader
+    ///   graph record   — WriteFields record of the reflected graph (RecordBytes)
+    struct CookedAudioBusGraphHeader
+    {
+        /// @brief Must equal CookedAudioBusGraphVersion; the loader rejects mismatches.
+        u32 Version = 0;
+        /// @brief Byte size of the reflection record following this header.
+        u32 RecordBytes = 0;
+    };
 }

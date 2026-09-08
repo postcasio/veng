@@ -124,7 +124,7 @@ namespace
 
         const std::vector<f32> alternating = {1.0f, -1.0f};
         const Ref<AudioBuffer> buffer = AudioBuffer::Create(alternating, 1, 48000);
-        engine.AddVoice(buffer, VoiceParams{.Bus = AudioBus::SFX,
+        engine.AddVoice(buffer, VoiceParams{.Bus = AudioBuses::SFX(),
                                             .Gain = 1.0f,
                                             .Pan = 0.0f,
                                             .Occlusion = occlusion,
@@ -165,7 +165,8 @@ TEST_CASE("occlusion drives the low-pass monotonically, and zero is an exact byp
     const std::vector<f32> alternating = {1.0f, -1.0f};
     const Ref<AudioBuffer> buffer = AudioBuffer::Create(alternating, 1, 48000);
     engine.AddVoice(
-        buffer, VoiceParams{.Bus = AudioBus::SFX, .Gain = 1.0f, .Occlusion = 0.0f, .Loop = true});
+        buffer,
+        VoiceParams{.Bus = AudioBuses::SFX(), .Gain = 1.0f, .Occlusion = 0.0f, .Loop = true});
     engine.Publish();
     std::vector<f32> output(8, 0.0f);
     device->RenderBlock(output, 4);

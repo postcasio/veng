@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Audio/AudioBus.h>
+#include <Veng/Audio/AudioBusGraph.h>
 #include <Veng/Audio/AudioBuffer.h>
 #include <Veng/Audio/AudioClip.h>
 #include <Veng/Audio/AudioGenerator.h>
@@ -10,6 +11,9 @@
 
 #include <array>
 #include <span>
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace Veng::Audio
 {
@@ -21,8 +25,8 @@ namespace Veng::Audio
     /// @brief Parameters of a code-triggered non-spatial one-shot voice.
     struct OneShotParams
     {
-        /// @brief The bus the voice mixes into.
-        AudioBus Bus = AudioBus::SFX;
+        /// @brief The bus the voice mixes into; an id absent from the active graph routes to Master.
+        BusId Bus = AudioBuses::SFX();
         /// @brief Linear gain, 0 = silent, 1 = unity.
         f32 Gain = 1.0f;
         /// @brief Playback pitch (resample ratio); 1 = the clip's native rate.
@@ -38,8 +42,8 @@ namespace Veng::Audio
     /// PlayAt and then repositioned each frame through AudioEngine::SetVoicePose.
     struct SpatialOneShotParams
     {
-        /// @brief The bus the voice mixes into.
-        AudioBus Bus = AudioBus::SFX;
+        /// @brief The bus the voice mixes into; an id absent from the active graph routes to Master.
+        BusId Bus = AudioBuses::SFX();
         /// @brief Linear gain applied before spatialization; 0 = silent, 1 = unity.
         f32 Gain = 1.0f;
         /// @brief Base playback pitch (resample ratio); Doppler multiplies this.
@@ -77,8 +81,8 @@ namespace Veng::Audio
     {
         /// @brief The voice handle (slot + generation).
         VoiceHandle Handle;
-        /// @brief The bus the voice mixes into.
-        AudioBus Bus = AudioBus::SFX;
+        /// @brief The bus the voice mixes into; an id absent from the active graph routes to Master.
+        BusId Bus = AudioBuses::SFX();
         /// @brief What role the voice plays.
         VoiceOrigin Origin = VoiceOrigin::Source;
         /// @brief Whether the voice is fed by a live generator (true) or a PCM buffer (false).
@@ -138,26 +142,64 @@ namespace Veng::Audio
         /// embedded reverb, say — reads the real rate here instead of assuming a default.
         [[nodiscard]] u32 GetOutputSampleRate() const;
 
-        /// @brief Sets a bus's linear gain.
+        /// @brief Adopts a bus graph as the complete mixer topology (main thread).
+        ///
+        /// Replaces the active graph — the engine does not merge or extend. The graph is validated
+        /// (single root Master, every parent resolves, acyclic, within the depth/count caps, no
+        /// interned-hash collision); an invalid graph is rejected with a logged error and the
+        /// roots-only default is installed instead. Each bus's gain is seeded from its
+        /// AudioBusDef.DefaultGain. The flatten (a deterministic, index-stable child-before-parent
+        /// order) is recomputed here and copied into the snapshot by the next Publish; the real-time
+        /// thread's per-bus accumulators and filter state are not resized. Adopt at boot, before
+        /// meaningful mixing: a mid-run re-topology may transiently reset per-bus filter state.
+        /// @param graph  The complete authored graph.
+        void ConfigureBusGraph(const AudioBusGraph& graph);
+
+        /// @brief Resolves a bus name to its BusId against the active graph.
+        ///
+        /// A name the active graph declares returns its BusId; a name it does not declare returns
+        /// the Master fallback id with a one-time warning. The graph-aware complement to the
+        /// graph-independent BusId{name} constructor.
+        /// @param name  The bus name.
+        /// @return The bus's id, or Master's id when the name is absent.
+        [[nodiscard]] BusId ResolveBus(std::string_view name);
+
+        /// @brief Returns the name of the bus a BusId resolves to in the active graph.
+        ///
+        /// The graph's declared name for @p bus, or — for an id the graph does not declare, which
+        /// routes to Master — the Master bus's name. A read seam for tooling (audio.list_voices).
+        /// @param bus  The bus id.
+        /// @return The resolved bus's name.
+        [[nodiscard]] string GetBusName(BusId bus) const;
+
+        /// @brief Sets a bus's linear gain; an unknown id targets Master with a one-time warning.
         /// @param bus  The bus.
         /// @param gain Linear gain (clamped to >= 0).
-        void SetBusGain(AudioBus bus, f32 gain);
-        /// @brief Returns a bus's linear gain.
-        [[nodiscard]] f32 GetBusGain(AudioBus bus) const;
+        void SetBusGain(BusId bus, f32 gain);
+        /// @brief Returns a bus's linear gain (Master's when the id is unknown).
+        [[nodiscard]] f32 GetBusGain(BusId bus) const;
 
         /// @brief Sets a bus's low-pass cutoff in Hz; 0 (or above Nyquist) bypasses the filter.
+        ///
+        /// Honoured only on a leaf bus (one with no children): applying a low-pass to a bus that
+        /// sums children would filter that summed mix, which is hierarchical DSP routing and out of
+        /// scope, so this call is ignored (with a one-time warning) on a non-leaf bus.
         /// @param bus       The bus.
         /// @param cutoffHz  Cutoff frequency in Hz.
-        void SetBusLowpassCutoff(AudioBus bus, f32 cutoffHz);
-        /// @brief Returns a bus's low-pass cutoff in Hz.
-        [[nodiscard]] f32 GetBusLowpassCutoff(AudioBus bus) const;
+        void SetBusLowpassCutoff(BusId bus, f32 cutoffHz);
+        /// @brief Returns a bus's low-pass cutoff in Hz (0 for a non-leaf bus).
+        [[nodiscard]] f32 GetBusLowpassCutoff(BusId bus) const;
 
         /// @brief Sets a bus's send level into the master reverb, 0..1.
+        ///
+        /// Honoured only on a leaf bus, for the same reason as SetBusLowpassCutoff: a non-leaf bus's
+        /// send would route its summed children through the reverb, so the call is ignored (with a
+        /// one-time warning) on a bus with children.
         /// @param bus  The bus.
         /// @param send Send level, clamped to 0..1.
-        void SetBusReverbSend(AudioBus bus, f32 send);
-        /// @brief Returns a bus's send level into the master reverb.
-        [[nodiscard]] f32 GetBusReverbSend(AudioBus bus) const;
+        void SetBusReverbSend(BusId bus, f32 send);
+        /// @brief Returns a bus's send level into the master reverb (0 for a non-leaf bus).
+        [[nodiscard]] f32 GetBusReverbSend(BusId bus) const;
 
         /// @brief Sets the master reverb parameters.
         /// @param params The reverb parameters.
@@ -376,7 +418,7 @@ namespace Veng::Audio
             /// @brief What kind of engine-owned voice occupies this slot.
             ManagedKind Kind = ManagedKind::None;
             /// @brief The voice's bus.
-            AudioBus Bus = AudioBus::SFX;
+            BusId Bus = AudioBuses::SFX();
             /// @brief Pre-spatialization linear gain.
             f32 BaseGain = 1.0f;
             /// @brief Base pitch, before any Doppler multiply.
@@ -426,14 +468,54 @@ namespace Veng::Audio
         /// @param incomingGain The incoming voice's pre-spatialization gain.
         [[nodiscard]] bool ReserveOneShotSlot(f32 incomingGain);
 
+        /// @brief One bus of the flattened, deterministic child-before-parent bus order.
+        ///
+        /// The control thread's view of the active graph: an index-stable topological order (a
+        /// child strictly before its parent, Master last) that Publish copies into the snapshot's
+        /// flat POD arrays for the real-time fold. A fixed graph yields the same order across
+        /// republishes, so a bus keeps its slot and its persistent filter state stays coherent.
+        struct BusRuntime
+        {
+            /// @brief The bus's interned id.
+            BusId Id;
+            /// @brief The bus's declared name (for GetBusName / tooling readout).
+            string Name;
+            /// @brief Index of this bus's parent in the flattened order (Master indexes itself).
+            u32 ParentIndex = 0;
+            /// @brief The bus's current linear gain; seeded from DefaultGain, set by SetBusGain.
+            f32 Gain = 1.0f;
+            /// @brief The bus's low-pass cutoff in Hz (leaf-only; a non-leaf bus keeps 0).
+            f32 LowpassCutoff = 0.0f;
+            /// @brief The bus's reverb send, 0..1 (leaf-only; a non-leaf bus keeps 0).
+            f32 ReverbSend = 0.0f;
+            /// @brief Whether the bus has no children — DSP is honoured only when true.
+            bool IsLeaf = true;
+        };
+
+        /// @brief Flattens a graph into m_Buses / m_BusIndexById / m_MasterIndex (input assumed valid).
+        /// @param data  The graph to install.
+        void InstallGraph(const AudioBusGraphData& data);
+
+        /// @brief Resolves a BusId to its flattened index, or the Master index when unknown (no warn).
+        /// @param bus  The bus id.
+        /// @return The bus's index, or the Master index.
+        [[nodiscard]] u32 ResolveBusIndex(BusId bus) const;
+
+        /// @brief Resolves a BusId to its index, warning once when the id is absent (routes to Master).
+        /// @param bus  The bus id.
+        /// @return The bus's index, or the Master index.
+        u32 ResolveBusIndexWarn(BusId bus);
+
         /// @brief The owning device.
         AudioDevice& m_Device;
-        /// @brief Per-bus linear gain.
-        std::array<f32, AudioBusCount> m_BusGain = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
-        /// @brief Per-bus low-pass cutoff in Hz (0 = bypass).
-        std::array<f32, AudioBusCount> m_BusLowpassCutoff = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-        /// @brief Per-bus reverb send, 0..1.
-        std::array<f32, AudioBusCount> m_BusReverbSend = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+        /// @brief The active graph's buses in flattened child-before-parent order (Master last).
+        vector<BusRuntime> m_Buses;
+        /// @brief BusId value → index into m_Buses, for O(1) resolution.
+        std::unordered_map<u64, u32> m_BusIndexById;
+        /// @brief Index of the Master (root) bus in m_Buses — the fallback for an unknown id.
+        u32 m_MasterIndex = 0;
+        /// @brief Ids already warned about as absent, so the fallback warning fires once per id.
+        std::unordered_set<u64> m_WarnedMissingBuses;
         /// @brief The master reverb parameters.
         ReverbParams m_Reverb;
         /// @brief The voice table.

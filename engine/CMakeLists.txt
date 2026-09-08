@@ -77,7 +77,7 @@ set_source_files_properties(src/Renderer/Backend/Context.cpp
 add_library(veng SHARED
         src/Application.cpp
         src/Assert.cpp
-        src/Audio/AudioBus.cpp
+        src/Audio/AudioBusGraph.cpp
         src/Audio/AudioBuffer.cpp
         src/Audio/AudioClip.cpp
         src/Audio/AudioDevice.cpp
@@ -102,6 +102,7 @@ add_library(veng SHARED
         src/Asset/Skeleton.cpp
         src/Asset/Texture.cpp
         src/Asset/Loaders/AnimationLoader.cpp
+        src/Asset/Loaders/AudioBusGraphLoader.cpp
         src/Asset/Loaders/AudioClipLoader.cpp
         src/Asset/Loaders/DataTableLoader.cpp
         src/Asset/Loaders/SettingsSchemaLoader.cpp

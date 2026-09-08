@@ -243,5 +243,11 @@ namespace Veng
                            .Name = "GraphicsSchema",
                            .DisplayName = "GraphicsSchema",
                            .Glyph = "GFX"});
+        // No handle-field leaf: a bus graph is loaded by id by the audio subsystem and adopted via
+        // ConfigureBusGraph, never referenced from a component — the same posture as SettingsSchema.
+        registry.Register({.Id = AssetTypes::AudioBusGraph,
+                           .Name = "AudioBusGraph",
+                           .DisplayName = "AudioBusGraph",
+                           .Glyph = "ABG"});
     }
 }

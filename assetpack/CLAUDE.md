@@ -29,7 +29,7 @@ the format and its serialization — neither importer nor loader.
   jobs that need it — decoding a pack manifest's `"type"` string and naming a type for a human.
   It is a **host-owned instance threaded by reference**, never a global: assetpack is static and
   linked into libveng, the cooker, the bootstrap cooker, and the editor, so a global would give
-  each image its own divergent copy. `RegisterBuiltinAssetTypes` pre-fills the twenty-one builtins.
+  each image its own divergent copy. `RegisterBuiltinAssetTypes` pre-fills the twenty-two builtins.
   Its `std::unordered_map` storage lives in an `Impl` struct defined in the registry's own
   implementation TU rather than in the public class definition, so a TU that merely parses the
   class instantiates no map; every accessor keeps its exact signature (including the `All()`

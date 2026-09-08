@@ -48,8 +48,8 @@ TEST_CASE("null device satisfies the whole API")
     CHECK(device->GetChannels() == 2);
 
     AudioEngine& engine = device->GetEngine();
-    for (const AudioBus bus :
-         {AudioBus::Master, AudioBus::Music, AudioBus::SFX, AudioBus::UI, AudioBus::Ambience})
+    for (const BusId bus : {AudioBuses::Master(), AudioBuses::Music(), AudioBuses::SFX(),
+                            AudioBuses::UI(), AudioBuses::Ambience()})
     {
         engine.SetBusGain(bus, 0.75f);
         CHECK(engine.GetBusGain(bus) == doctest::Approx(0.75f));
@@ -57,7 +57,7 @@ TEST_CASE("null device satisfies the whole API")
 
     const Ref<AudioBuffer> loop = ConstantMono(0.5f, 64, 48000);
     const VoiceHandle voice =
-        engine.AddVoice(loop, VoiceParams{.Bus = AudioBus::SFX, .Gain = 1.0f, .Loop = true});
+        engine.AddVoice(loop, VoiceParams{.Bus = AudioBuses::SFX(), .Gain = 1.0f, .Loop = true});
     CHECK(voice.IsValid());
     CHECK(engine.IsVoiceLive(voice));
     CHECK(engine.GetActiveVoiceCount() == 1);
@@ -82,7 +82,7 @@ TEST_CASE("a finite voice retires through the virtual clock")
     const std::vector<f32> samples(4800, 0.3f);
     const Ref<AudioBuffer> clip = AudioBuffer::Create(samples, 1, 48000);
     const VoiceHandle voice =
-        engine.AddVoice(clip, VoiceParams{.Bus = AudioBus::SFX, .Gain = 1.0f, .Loop = false});
+        engine.AddVoice(clip, VoiceParams{.Bus = AudioBuses::SFX(), .Gain = 1.0f, .Loop = false});
     CHECK(engine.GetActiveVoiceCount() == 1);
 
     for (int i = 0; i < 30 && engine.GetActiveVoiceCount() > 0; ++i)
@@ -98,14 +98,14 @@ TEST_CASE("bus gain composes as documented")
     Unique<AudioDevice> device = MakeNullDevice();
     AudioEngine& engine = device->GetEngine();
 
-    engine.SetBusGain(AudioBus::Master, 0.5f);
-    engine.SetBusGain(AudioBus::Music, 0.5f);
+    engine.SetBusGain(AudioBuses::Master(), 0.5f);
+    engine.SetBusGain(AudioBuses::Music(), 0.5f);
 
     // Unit voice on the Music bus, panned hard left so the left channel carries the full pan gain:
     // 1.0 (sample) * 1.0 (voice) * 0.5 (Music) * 0.5 (Master) = 0.25, and nothing on the right.
     const Ref<AudioBuffer> loop = ConstantMono(1.0f, 64, 48000);
-    engine.AddVoice(loop,
-                    VoiceParams{.Bus = AudioBus::Music, .Gain = 1.0f, .Pan = -1.0f, .Loop = true});
+    engine.AddVoice(
+        loop, VoiceParams{.Bus = AudioBuses::Music(), .Gain = 1.0f, .Pan = -1.0f, .Loop = true});
     engine.Publish();
 
     constexpr u32 frames = 128;
@@ -180,8 +180,8 @@ TEST_CASE("reclamation waits for the RT generation to pass")
     const Ref<AudioBuffer> resource = ConstantMono(0.4f, 64, 48000);
     CHECK(resource.use_count() == 1);
 
-    const VoiceHandle voice =
-        engine.AddVoice(resource, VoiceParams{.Bus = AudioBus::SFX, .Gain = 1.0f, .Loop = true});
+    const VoiceHandle voice = engine.AddVoice(
+        resource, VoiceParams{.Bus = AudioBuses::SFX(), .Gain = 1.0f, .Loop = true});
     CHECK(resource.use_count() == 2); // the engine's voice table holds it
 
     // Publish and mix once: the snapshot now references the resource, and the mixer's consumed

@@ -861,6 +861,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/sanity.cpp
             tests/unit/animation.cpp
             tests/unit/audio_device.cpp
+            tests/unit/audio_bus_graph.cpp
             tests/unit/audio_spatial.cpp
             tests/unit/audio_system.cpp
             tests/unit/audio_api.cpp
@@ -1587,6 +1588,7 @@ if (VENG_BUILD_TESTS)
     # entry, labelled `gpu`, same skip contract as the rest of the band.
     add_executable(veng_test_gpu
             tests/gpu/main.cpp
+            tests/gpu/audio_bus_graph_device.cpp
             tests/gpu/buffer_roundtrip.cpp
             tests/gpu/typed_buffer_roundtrip.cpp
             tests/gpu/image_clear_format.cpp

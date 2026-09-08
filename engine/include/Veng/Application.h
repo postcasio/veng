@@ -579,6 +579,14 @@ namespace Veng
         /// unset means no schema — the built-in display group still works and there are no
         /// game-authored quality settings. Non-breaking: an app naming none gets an empty store.
         optional<AssetId> GraphicsSchema = std::nullopt;
+
+        /// @brief The game's audio mixer bus graph asset; nullopt keeps the roots-only default.
+        ///
+        /// A game declares its complete mixer topology here by id. Application resolves it at boot
+        /// and adopts it into the audio engine (ConfigureBusGraph) before the main loop; unset (or
+        /// a graph that fails to load or validate) leaves the engine on its built-in roots-only
+        /// default (Master ⊃ {Music, SFX, UI, Ambience}), so an app naming none gets the roots free.
+        optional<AssetId> AudioBusGraph = std::nullopt;
     };
 
     /// @brief The destination of an Application::Travel: the key, arrival payload, and presentation choice.

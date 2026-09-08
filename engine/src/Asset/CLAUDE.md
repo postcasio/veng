@@ -144,12 +144,12 @@ engine *mounts* archives and resolves assets against them.
   component: `VE_LEAF` the handle leaf with a minted `TypeId`, register the component type that
   holds it, and set `HandleFieldType` to that same leaf id on the `AssetTypeInfo` it registers.
   A leaf no registered type claims is an **error** at both load and cook — never a skipped check.
-  Eighteen of the twenty-one builtins claim a leaf. `Shader` and
+  Eighteen of the twenty-two builtins claim a leaf. `Shader` and
   `VertexLayout` are wiring inside the material system: a draw binds a `MaterialInstance`, and
   nothing outside that system can consume a bare shader or vertex layout, so a reference to one
-  would be authorable but unusable. `GraphicsSchema` is the third: it is loaded by id by the
-  settings service and never referenced from a component. All three leave `HandleFieldType` 0 and
-  cannot sit on a component.
+  would be authorable but unusable. `GraphicsSchema` and `AudioBusGraph` are the other two: each is
+  loaded by id by a subsystem (the settings service; the audio mixer) and never referenced from a
+  component. All four leave `HandleFieldType` 0 and cannot sit on a component.
 - **The `AssetManager` always owns a complete `AssetTypeRegistry`.** It fills its own with
   `RegisterBuiltinAssetTypes` at construction and merges `AssetManagerInfo::AssetTypes` on top —
   the same shape as the builtin-then-module loader registration beside it. `GetAssetTypes()` is

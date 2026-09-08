@@ -144,11 +144,11 @@ TEST_CASE("a stream clip plays the same signal a resident clip of its source doe
     // an identity for either source, so the only variable is whether the decode happened ahead of
     // time or streams in — the signals must match within codec tolerance (here, exactly).
     const Unique<AudioDevice> residentDevice = MakeMonoNullDevice(rate);
-    residentDevice->GetEngine().PlayOneShot(resident, OneShotParams{.Bus = AudioBus::Master});
+    residentDevice->GetEngine().PlayOneShot(resident, OneShotParams{.Bus = AudioBuses::Master()});
     const std::vector<f32> residentOut = Capture(*residentDevice, mono.size());
 
     const Unique<AudioDevice> streamDevice = MakeMonoNullDevice(rate);
-    streamDevice->GetEngine().PlayOneShot(streamed, OneShotParams{.Bus = AudioBus::Master});
+    streamDevice->GetEngine().PlayOneShot(streamed, OneShotParams{.Bus = AudioBuses::Master()});
     std::this_thread::sleep_for(std::chrono::milliseconds(100)); // let the ring fill before capture
     const std::vector<f32> streamOut = Capture(*streamDevice, mono.size());
 
@@ -185,7 +185,7 @@ TEST_CASE("a looping stream repeats seamlessly across the loop seam")
     const AssetHandle<AudioClip> streamed = MakeEncodedClip(ogg, rate, channels, period);
 
     const VoiceHandle voice =
-        engine.PlayOneShot(streamed, OneShotParams{.Bus = AudioBus::Master, .Loop = true});
+        engine.PlayOneShot(streamed, OneShotParams{.Bus = AudioBuses::Master(), .Loop = true});
     REQUIRE(voice.IsValid());
     std::this_thread::sleep_for(std::chrono::milliseconds(100)); // ring holds several loop copies
     const std::vector<f32> out = Capture(*device, period * 2);
@@ -217,7 +217,7 @@ TEST_CASE("a stream voice's decoder is freed only after the reclamation handshak
     const AssetHandle<AudioClip> streamed = MakeEncodedClip(ogg, rate, channels, mono.size());
 
     const VoiceHandle voice =
-        engine.PlayOneShot(streamed, OneShotParams{.Bus = AudioBus::Master, .Loop = true});
+        engine.PlayOneShot(streamed, OneShotParams{.Bus = AudioBuses::Master(), .Loop = true});
     REQUIRE(voice.IsValid());
     CHECK(engine.GetPendingReclaimCount() == 0);
 
@@ -277,7 +277,8 @@ TEST_CASE("a stream underrun is silence, never a hang or garbage")
     AudioEngine& engine = device->GetEngine();
     const AssetHandle<AudioClip> streamed = MakeEncodedClip(ogg, rate, channels, mono.size());
 
-    const VoiceHandle voice = engine.PlayOneShot(streamed, OneShotParams{.Bus = AudioBus::Master});
+    const VoiceHandle voice =
+        engine.PlayOneShot(streamed, OneShotParams{.Bus = AudioBuses::Master()});
     REQUIRE(voice.IsValid());
 
     // Pump before the decode thread can fill the ring: an empty ring outputs silence and returns —

@@ -82,10 +82,13 @@ extern "C"
 /// stale module would fill a short struct and the engine would read the facet past its end.
 /// Version 16 grows that same Global facet with the texture-quality mip-skip level, the second
 /// machine-global apply target the resolve produces, so a stale module fills a short facet the
-/// same way. The loader compares host vs. module values before calling VengModuleRegister.
+/// same way. Version 17 changes the reflected AudioSource component: its Bus field's type moves
+/// from the removed AudioBus enum to a bus-name string resolved to a BusId at load, so a stale
+/// module would register a component descriptor whose Bus field carries the wrong leaf type. The
+/// loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 16u
+#define VENG_MODULE_ABI_VERSION 17u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

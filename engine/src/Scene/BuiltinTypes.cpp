@@ -3,6 +3,7 @@
 #include <Veng/Asset/AssetHandleType.h>
 #include <Veng/Behavior/BehaviorAgent.h>
 #include <Veng/Asset/InputMappingContext.h>
+#include <Veng/Audio/AudioBusGraph.h>
 #include <Veng/Audio/AudioComponents.h>
 #include <Veng/Gui/Overlay.h>
 #include <Veng/Gui/Surface.h>
@@ -64,6 +65,9 @@ namespace Veng
         // The domain-neutral per-machine settings document a SettingsStore persists as JSON; its
         // nested choice type auto-registers through the walk.
         registry.Register<SettingsChoices>();
+        // The reflected on-disk payload of an audio bus graph, read by AudioBusGraphLoader; its
+        // nested AudioBusDef auto-registers through the describe walk.
+        registry.Register<Audio::AudioBusGraphData>();
         // The per-machine graphics preferences the graphics store persists as JSON; its nested
         // choice/display types and the fullscreen/present-mode enums auto-register through the walk.
         registry.Register<GraphicsChoices>();
@@ -79,7 +83,7 @@ namespace Veng
         registry.Register<ConstantMotion>();
 
         // A placed sound and the entity whose Transform is the listener pose, consumed by the
-        // View-phase AudioSystem. Audio::AudioBus registers transitively through AudioSource's Bus.
+        // View-phase AudioSystem. AudioSource's Bus is a plain bus-name string leaf.
         registry.Register<AudioSource>();
         registry.Register<AudioListener>();
         // The level's authored initial background-music track, handed to the music director on start.

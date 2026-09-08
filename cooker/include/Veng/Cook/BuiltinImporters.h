@@ -59,6 +59,15 @@ namespace Veng::Cook
     /// @param cooker  The cooker to register into.
     void RegisterSettingsSchemaImporter(Cooker& cooker);
 
+    /// @brief Registers the audio-bus-graph importer.
+    ///
+    /// Links libveng's reflection serializer (WriteFields) and graph validation, so it is absent
+    /// from the veng-free bootstrap cooker. Needs no game module — a bus graph references only
+    /// engine builtins (its own reflected structs). Folded into RegisterBuiltinImporters; exposed
+    /// individually for a cooker that wants the core set plus only this importer.
+    /// @param cooker  The cooker to register into.
+    void RegisterAudioBusGraphImporter(Cooker& cooker);
+
     /// @brief Registers the stylesheet importer.
     ///
     /// References libveng's Gui/ style vocabulary (StyleProperty and the flex enums) and links a

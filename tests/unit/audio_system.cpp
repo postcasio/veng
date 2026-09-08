@@ -89,7 +89,7 @@ TEST_CASE("a PlayOnStart non-spatial source plays with no listener in the scene"
     const Entity entity = scene->CreateEntity();
     scene->Add<Transform>(entity, Transform{});
     scene->Add<AudioSource>(entity, AudioSource{.Clip = MakePcmClip(0.5f, 4800),
-                                                .Bus = Audio::AudioBus::Music,
+                                                .Bus = "Music",
                                                 .PlayOnStart = true,
                                                 .Spatial = false});
 

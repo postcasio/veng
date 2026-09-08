@@ -21,8 +21,11 @@ namespace Veng
     {
         /// @brief The clip this source plays; a Pcm clip is placed directly, an unresident one is silent.
         AssetHandle<Audio::AudioClip> Clip;
-        /// @brief The bus the voice mixes into.
-        Audio::AudioBus Bus = Audio::AudioBus::SFX;
+        /// @brief The name of the bus the voice mixes into; resolved to a BusId when the voice plays.
+        ///
+        /// A bus name from the active bus graph (`"Music"`, `"SFX"`, a game-defined class). A name
+        /// the active graph does not declare routes to Master with a one-time warning.
+        string Bus = string(Audio::AudioBuses::SFXName);
         /// @brief Linear gain applied before spatialization; 0 = silent, 1 = unity.
         f32 Gain = 1.0f;
         /// @brief Base playback pitch (resample ratio); Doppler multiplies this for a spatial source.
@@ -70,14 +73,6 @@ namespace Veng
         bool Loop = true;
     };
 }
-
-VE_ENUM(::Veng::Audio::AudioBus, 0x6200F1CAA558FF3DULL)
-VE_ENUMERATOR(Master)
-VE_ENUMERATOR(Music)
-VE_ENUMERATOR(SFX)
-VE_ENUMERATOR(UI)
-VE_ENUMERATOR(Ambience)
-VE_ENUM_END();
 
 VE_REFLECT(::Veng::AudioSource, 0x473BC42991887B82ULL)
 VE_FIELD(Clip, .DisplayName = "Clip")

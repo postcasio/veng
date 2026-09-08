@@ -92,6 +92,12 @@ namespace Veng
         /// Domain-neutral: graphics and audio schemas are both this type. Its manifest wire name
         /// stays "GraphicsSchema" so an existing graphics-schema pack entry resolves unchanged.
         inline constexpr AssetTypeId SettingsSchema{0x875DD3DA10E56A08ULL};
+        /// @brief A data-driven audio mixer bus graph (see CookedAudioBusGraphHeader).
+        ///
+        /// The complete mixer topology a game authors — a single root Master with every bus
+        /// beneath it — adopted at boot via AudioEngine::ConfigureBusGraph. Loaded by id by the
+        /// audio subsystem, never referenced from a component (no handle-field leaf).
+        inline constexpr AssetTypeId AudioBusGraph{0xA2B3C42CB19E1E25ULL};
     }
 
     /// @brief The reflection TypeIds of the AssetHandle\<T\> leaves that reference a builtin type.
@@ -249,7 +255,7 @@ namespace Veng
         std::unique_ptr<Impl> m_Impl;
     };
 
-    /// @brief Pre-fills a registry with the twenty-one asset types the engine defines.
+    /// @brief Pre-fills a registry with the twenty-two asset types the engine defines.
     ///
     /// Every host calls this on the registry it owns before any other registration, so a
     /// manifest naming a builtin resolves without the consumer re-declaring it.

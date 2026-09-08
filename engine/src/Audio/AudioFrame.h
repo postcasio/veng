@@ -48,8 +48,11 @@ namespace Veng::Audio
         /// @brief Sample rate of @ref Pcm, in Hz.
         u32 PcmSampleRate = 0;
 
-        /// @brief The bus this voice mixes into.
-        AudioBus Bus = AudioBus::SFX;
+        /// @brief The flattened-table index of the bus this voice mixes into.
+        ///
+        /// Resolved from the voice's BusId on the control thread at Publish (an id absent from the
+        /// active graph resolves to the Master index), so the real-time fold does no lookup.
+        u32 BusIndex = 0;
         /// @brief Final linear gain.
         f32 Gain = 1.0f;
         /// @brief Stereo pan, -1..+1.
@@ -74,12 +77,21 @@ namespace Veng::Audio
         /// @brief A monotonically increasing publish serial; drives the reclamation handshake.
         u64 Serial = 0;
 
-        /// @brief Per-bus linear gain.
-        std::array<f32, AudioBusCount> BusGain = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
-        /// @brief Per-bus low-pass cutoff in Hz; 0 (or above Nyquist) is bypass.
-        std::array<f32, AudioBusCount> BusLowpassCutoff = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-        /// @brief Per-bus send into the master reverb, 0..1.
-        std::array<f32, AudioBusCount> BusReverbSend = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+        /// @brief Number of active buses in the flattened table below (0..MaxBuses).
+        u32 BusCount = 0;
+        /// @brief Index of the Master (root/output) bus in the flattened table.
+        u32 MasterBusIndex = 0;
+        /// @brief Per-bus parent index in the flattened order (Master indexes itself).
+        ///
+        /// The order is child-before-parent (Master last), so folding buses in index order adds
+        /// each into its already-earlier-processed parent's accumulator before the parent is folded.
+        std::array<u32, MaxBuses> BusParent{};
+        /// @brief Per-bus linear gain (composes down the tree; always applied).
+        std::array<f32, MaxBuses> BusGain{};
+        /// @brief Per-bus low-pass cutoff in Hz; 0 is bypass. Non-zero only on a leaf bus.
+        std::array<f32, MaxBuses> BusLowpassCutoff{};
+        /// @brief Per-bus send into the master reverb, 0..1. Non-zero only on a leaf bus.
+        std::array<f32, MaxBuses> BusReverbSend{};
 
         /// @brief The master reverb parameters.
         ReverbParams Reverb;

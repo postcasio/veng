@@ -14,25 +14,6 @@ namespace Veng::Mcp
 
     namespace
     {
-        /// @brief The bus enumerator name, matching the reflected AudioBus spelling.
-        const char* BusName(const Audio::AudioBus bus)
-        {
-            switch (bus)
-            {
-            case Audio::AudioBus::Master:
-                return "Master";
-            case Audio::AudioBus::Music:
-                return "Music";
-            case Audio::AudioBus::SFX:
-                return "SFX";
-            case Audio::AudioBus::UI:
-                return "UI";
-            case Audio::AudioBus::Ambience:
-                return "Ambience";
-            }
-            return "Unknown";
-        }
-
         /// @brief The voice-origin name reported for a voice.
         const char* OriginName(const Audio::VoiceOrigin origin)
         {
@@ -90,7 +71,7 @@ namespace Veng::Mcp
                 Json item{
                     {"slot", info.Handle.Slot},
                     {"generation", info.Handle.Generation},
-                    {"bus", BusName(info.Bus)},
+                    {"bus", engine->GetBusName(info.Bus)},
                     {"origin", OriginName(info.Origin)},
                     {"source", info.Generator ? "generator" : "clip"},
                     {"gain", info.Gain},

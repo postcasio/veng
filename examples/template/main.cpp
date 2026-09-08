@@ -396,7 +396,7 @@ private:
         m_SynthVoice = GetAudioEngine().PlayGenerator(
             &m_Synth,
             Audio::GeneratorVoiceParams{
-                .Bus = Audio::AudioBus::Music, .Spatial = false, .Channels = 2, .Gain = 0.5f});
+                .Bus = Audio::AudioBuses::Music(), .Spatial = false, .Channels = 2, .Gain = 0.5f});
     }
 
     // Reads the prefab-authored reference to the game-defined asset and reports what it resolved

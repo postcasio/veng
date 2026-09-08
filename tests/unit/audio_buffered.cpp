@@ -91,8 +91,9 @@ TEST_CASE("a buffered generator eventually plays exactly what it produces, conti
     StereoRampGenerator generator;
 
     const VoiceHandle voice = engine.PlayGenerator(
-        &generator, GeneratorVoiceParams{
-                        .Bus = AudioBus::Master, .Channels = 2, .Buffered = true, .Gain = 1.0f});
+        &generator,
+        GeneratorVoiceParams{
+            .Bus = AudioBuses::Master(), .Channels = 2, .Buffered = true, .Gain = 1.0f});
     REQUIRE(voice.IsValid());
 
     // Give the fill thread time to render the head of the ramp into the ring before draining begins.
@@ -145,7 +146,8 @@ TEST_CASE("a buffered spatial generator request is rejected; a non-spatial one i
     CHECK(engine.GetActiveVoiceCount() == 0);
 
     const VoiceHandle ok = engine.PlayGenerator(
-        &generator, GeneratorVoiceParams{.Bus = AudioBus::Master, .Buffered = true, .Gain = 1.0f});
+        &generator,
+        GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Buffered = true, .Gain = 1.0f});
     CHECK(ok.IsValid());
     CHECK(engine.GetActiveVoiceCount() == 1);
     engine.StopVoice(ok);
@@ -159,8 +161,9 @@ TEST_CASE("StopVoice on a buffered generator returns only once no thread can rea
     StereoRampGenerator generator;
 
     const VoiceHandle voice = engine.PlayGenerator(
-        &generator, GeneratorVoiceParams{
-                        .Bus = AudioBus::Master, .Channels = 2, .Buffered = true, .Gain = 1.0f});
+        &generator,
+        GeneratorVoiceParams{
+            .Bus = AudioBuses::Master(), .Channels = 2, .Buffered = true, .Gain = 1.0f});
     REQUIRE(voice.IsValid());
 
     // Let the fill thread render into the ring and the mixer drain some, so both threads are actively
@@ -203,7 +206,8 @@ TEST_CASE("a buffered generator underrun is silence, never a hang or garbage")
     ConstantGenerator generator;
 
     const VoiceHandle voice = engine.PlayGenerator(
-        &generator, GeneratorVoiceParams{.Bus = AudioBus::Master, .Buffered = true, .Gain = 1.0f});
+        &generator,
+        GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Buffered = true, .Gain = 1.0f});
     REQUIRE(voice.IsValid());
 
     // Pump before the fill thread is guaranteed to have filled the ring: an empty ring drains as

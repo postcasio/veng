@@ -294,7 +294,7 @@ public:
                     // Fire a code-triggered UI blip through SystemContext::Audio, the fire-and-forget
                     // path any system reaches; the clip retires itself when it ends.
                     context.Audio.PlayOneShot(
-                        m_Blip, Audio::OneShotParams{.Bus = Audio::AudioBus::UI, .Gain = 0.8f});
+                        m_Blip, Audio::OneShotParams{.Bus = Audio::AudioBuses::UI(), .Gain = 0.8f});
                     FireInteract(scene, possesses.Pawn);
                 }
 
@@ -1425,7 +1425,7 @@ private:
     {
         m_ToneVoice = GetAudioEngine().PlayGenerator(
             &m_Tone, Audio::GeneratorVoiceParams{
-                         .Bus = Audio::AudioBus::SFX, .Spatial = false, .Gain = 0.12f});
+                         .Bus = Audio::AudioBuses::SFX(), .Spatial = false, .Gain = 0.12f});
 
         // A short descending two-partial chirp, built in code and adopted as a clip — a finite
         // one-shot with no source file, indistinguishable downstream from a cooked one.
@@ -1454,7 +1454,7 @@ private:
         if (GetInput().WasKeyPressed(Key::G))
         {
             GetAudioEngine().PlayOneShot(m_GeneratedClip,
-                                         Audio::OneShotParams{.Bus = Audio::AudioBus::UI});
+                                         Audio::OneShotParams{.Bus = Audio::AudioBuses::UI()});
         }
     }
 

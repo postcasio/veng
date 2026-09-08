@@ -3,6 +3,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Asset/CookedProject.h>
 #include <Veng/Audio/AudioDevice.h>
+#include <Veng/Audio/AudioEngine.h>
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Gui/GuiConsumer.h>
 #include <Veng/Log.h>
@@ -399,6 +400,26 @@ namespace Veng
 
             m_GraphicsSettings = CreateUnique<GraphicsSettings>(GraphicsSettingsInfo{
                 .Schema = schema, .Types = &m_TypeRegistry, .ConfigPath = std::move(configPath)});
+        }
+
+        // Adopt the game's authored mixer bus graph (if any) before the main loop. The engine
+        // already runs the roots-only default, so voices submitted during OnInitialize mix
+        // correctly; a graph that fails to load leaves that default in place. ConfigureBusGraph
+        // copies the topology it needs, so the handle need not outlive this block.
+        if (m_Info.AudioBusGraph && m_AudioDevice)
+        {
+            const AssetResult<AssetHandle<Audio::AudioBusGraph>> loaded =
+                m_AssetManager->LoadSync<Audio::AudioBusGraph>(*m_Info.AudioBusGraph);
+            if (loaded && loaded->Get() != nullptr)
+            {
+                m_AudioDevice->GetEngine().ConfigureBusGraph(*loaded->Get());
+            }
+            else
+            {
+                Log::Warn("audio: bus graph {} did not load ({}); using the roots-only default",
+                          m_Info.AudioBusGraph->Value,
+                          loaded ? "null asset" : loaded.error().Detail);
+            }
         }
 
         // The engine-managed game world bootstraps after OnInitialize, so a subclass has already

@@ -96,8 +96,8 @@ TEST_CASE("a one-shot appears in the snapshot, retires after its duration, and s
     AudioEngine& engine = device->GetEngine();
 
     // A short one-shot: one pump (800 frames at 48 kHz / 60 Hz) plays its 8 frames out.
-    const VoiceHandle voice =
-        engine.PlayOneShot(MakePcmClip(0.5f, 8), OneShotParams{.Bus = AudioBus::SFX, .Gain = 0.8f});
+    const VoiceHandle voice = engine.PlayOneShot(
+        MakePcmClip(0.5f, 8), OneShotParams{.Bus = AudioBuses::SFX(), .Gain = 0.8f});
     REQUIRE(voice.IsValid());
     CHECK(engine.GetActiveVoiceCount() == 1);
     CHECK(engine.IsVoiceLive(voice));

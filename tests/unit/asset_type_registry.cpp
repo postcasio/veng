@@ -13,7 +13,7 @@ TEST_CASE("AssetTypeRegistry: the builtins round-trip name -> id -> name")
     AssetTypeRegistry types;
     RegisterBuiltinAssetTypes(types);
 
-    CHECK(types.All().size() == 21);
+    CHECK(types.All().size() == 22);
 
     for (const auto& [id, info] : types.All())
     {

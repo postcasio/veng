@@ -50,8 +50,8 @@ namespace Veng::Audio
     /// backend.
     struct VoiceParams
     {
-        /// @brief The bus this voice mixes into.
-        AudioBus Bus = AudioBus::SFX;
+        /// @brief The bus this voice mixes into; an id absent from the active graph routes to Master.
+        BusId Bus = AudioBuses::SFX();
         /// @brief Final linear gain (post-attenuation), 0 = silent, 1 = unity.
         f32 Gain = 1.0f;
         /// @brief Stereo pan, -1 = hard left, 0 = centre, +1 = hard right (equal-power).

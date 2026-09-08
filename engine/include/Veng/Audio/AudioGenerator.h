@@ -91,8 +91,8 @@ namespace Veng::Audio
     /// spatialization path; a non-spatial generator routes to its bus at Gain with no attenuation.
     struct GeneratorVoiceParams
     {
-        /// @brief The bus the voice mixes into.
-        AudioBus Bus = AudioBus::SFX;
+        /// @brief The bus the voice mixes into; an id absent from the active graph routes to Master.
+        BusId Bus = AudioBuses::SFX();
         /// @brief Whether the voice is placed and spatialized against the listener.
         bool Spatial = false;
         /// @brief Rendered channel count: 1 (mono, the default) or 2 (an interleaved stereo image).

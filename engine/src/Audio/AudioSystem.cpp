@@ -102,7 +102,9 @@ namespace Veng
                                       const Audio::ListenerPose& listener)
         {
             Audio::VoiceParams params;
-            params.Bus = source.Bus;
+            // Intern the authored bus name to a BusId; the mixer resolves it against the active
+            // graph at publish (a name the graph does not declare routes to Master with a warning).
+            params.Bus = Audio::BusId{source.Bus};
             params.Loop = source.Looping;
 
             if (!source.Spatial)

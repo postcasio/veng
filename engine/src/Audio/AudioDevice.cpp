@@ -185,15 +185,15 @@ namespace Veng::Audio
         };
         std::array<RtVoice, MaxVoices> RtVoices{};
 
-        /// @brief Per-bus low-pass state (stereo).
-        std::array<f32, AudioBusCount> BusLpL{};
-        std::array<f32, AudioBusCount> BusLpR{};
+        /// @brief Per-bus low-pass state (stereo), sized to MaxBuses once and never resized.
+        std::array<f32, MaxBuses> BusLpL{};
+        std::array<f32, MaxBuses> BusLpR{};
 
         /// @brief The first-party master reverb node.
         Reverb MasterReverb;
 
-        /// @brief Per-bus stereo accumulation scratch (sized kMaxChunkFrames * 2).
-        std::array<vector<f32>, AudioBusCount> BusAccum;
+        /// @brief Per-bus stereo accumulation scratch (sized kMaxChunkFrames * 2), MaxBuses of them.
+        std::array<vector<f32>, MaxBuses> BusAccum;
         /// @brief The mono reverb-send accumulation (sized kMaxChunkFrames).
         vector<f32> ReverbSend;
         /// @brief The stereo wet reverb output (sized kMaxChunkFrames each).
@@ -681,9 +681,9 @@ namespace Veng::Audio
             const u32 sampleRate = native.SampleRate;
             const u32 channels = native.Channels;
 
-            for (auto& bus : native.BusAccum)
+            for (u32 b = 0; b < frame.BusCount; ++b)
             {
-                std::fill_n(bus.data(), static_cast<usize>(frames) * 2, 0.0f);
+                std::fill_n(native.BusAccum[b].data(), static_cast<usize>(frames) * 2, 0.0f);
             }
             std::fill_n(native.ReverbSend.data(), frames, 0.0f);
 
@@ -776,7 +776,7 @@ namespace Veng::Audio
                 }
 
                 const f32 gain = std::max(voice.Gain, 0.0f);
-                vector<f32>& bus = native.BusAccum[static_cast<usize>(voice.Bus)];
+                vector<f32>& bus = native.BusAccum[voice.BusIndex];
                 const f32 send = std::clamp(voice.ReverbSend, 0.0f, 1.0f);
                 if (stereoImage)
                 {
@@ -813,16 +813,21 @@ namespace Veng::Audio
                 }
             }
 
-            // Sum the category buses into the master, each through its own low-pass and gain, then
-            // apply the master's own low-pass and gain, then add the reverb wet.
-            vector<f32>& master = native.BusAccum[static_cast<usize>(AudioBus::Master)];
-            for (usize b = 0; b < AudioBusCount; ++b)
+            // Fold the flattened bus tree child-before-parent: each non-master bus applies its own
+            // low-pass and gain to its accumulator and adds the result into its parent's, so a
+            // parent (processed later, being nearer the root) sees its children already summed in.
+            // The published order guarantees a child precedes its parent, so this one bounded pass
+            // composes gain down the tree with no recursion and no lookup.
+            const u32 busCount = frame.BusCount;
+            const u32 masterIdx = frame.MasterBusIndex;
+            for (u32 b = 0; b < busCount; ++b)
             {
-                if (b == static_cast<usize>(AudioBus::Master))
+                if (b == masterIdx)
                 {
                     continue;
                 }
                 vector<f32>& bus = native.BusAccum[b];
+                vector<f32>& parent = native.BusAccum[frame.BusParent[b]];
                 const f32 coef = OnePoleCoefficient(frame.BusLowpassCutoff[b], sampleRate);
                 const f32 gain = std::max(frame.BusGain[b], 0.0f);
                 const f32 busSend = std::clamp(frame.BusReverbSend[b], 0.0f, 1.0f);
@@ -832,13 +837,15 @@ namespace Veng::Audio
                     native.BusLpR[b] += coef * (bus[i * 2 + 1] - native.BusLpR[b]);
                     const f32 l = native.BusLpL[b] * gain;
                     const f32 r = native.BusLpR[b] * gain;
-                    master[i * 2] += l;
-                    master[i * 2 + 1] += r;
+                    parent[i * 2] += l;
+                    parent[i * 2 + 1] += r;
                     native.ReverbSend[i] += (l + r) * 0.5f * busSend;
                 }
             }
 
-            const auto masterIdx = static_cast<usize>(AudioBus::Master);
+            // Master is the output: apply its low-pass, take its reverb send from the pre-gain
+            // filtered mix, and defer its gain to the output write below.
+            vector<f32>& master = native.BusAccum[masterIdx];
             const f32 masterCoef =
                 OnePoleCoefficient(frame.BusLowpassCutoff[masterIdx], sampleRate);
             const f32 masterGain = std::max(frame.BusGain[masterIdx], 0.0f);
@@ -978,7 +985,7 @@ namespace Veng::Audio
         const Ref<AudioBuffer> buffer =
             AudioBuffer::Create(tone.Samples, tone.Channels, tone.SampleRate);
         m_Engine->AddVoice(buffer,
-                           VoiceParams{.Bus = AudioBus::Master, .Gain = 1.0f, .Loop = false});
+                           VoiceParams{.Bus = AudioBuses::Master(), .Gain = 1.0f, .Loop = false});
     }
 
     void AudioDevice::Pump(f32 deltaSeconds)
@@ -1032,38 +1039,201 @@ namespace Veng::Audio
     AudioEngine::AudioEngine(AudioDevice& device)
         : m_Device(device), m_Music(CreateUnique<MusicDirector>(*this))
     {
+        // Start on the roots-only default graph, so voices submitted before a game adopts its own
+        // graph mix correctly. The default is known-valid, so it installs without validation.
+        InstallGraph(DefaultAudioBusGraphData());
     }
 
     AudioEngine::~AudioEngine() = default;
 
-    void AudioEngine::SetBusGain(AudioBus bus, f32 gain)
+    void AudioEngine::InstallGraph(const AudioBusGraphData& data)
     {
-        m_BusGain[static_cast<usize>(bus)] = std::max(gain, 0.0f);
+        // Build a deterministic child-before-parent order: sort by (depth descending, authored
+        // index ascending). A child's depth exceeds its parent's, so it sorts strictly earlier;
+        // Master (depth 0) sorts last. The order is stable for a fixed graph, so a bus keeps its
+        // slot across republishes and its persistent RT filter state stays index-coherent.
+        std::unordered_map<string, const AudioBusDef*> byName;
+        for (const AudioBusDef& bus : data.Buses)
+        {
+            byName.emplace(bus.Id, &bus);
+        }
+        const auto depthOf = [&byName](const AudioBusDef* bus)
+        {
+            u32 depth = 0;
+            while (!bus->Parent.empty())
+            {
+                ++depth;
+                bus = byName.at(bus->Parent);
+            }
+            return depth;
+        };
+
+        struct Ordered
+        {
+            const AudioBusDef* Def;
+            u32 Depth;
+            u32 AuthoredIndex;
+        };
+        vector<Ordered> ordered;
+        ordered.reserve(data.Buses.size());
+        for (u32 i = 0; i < data.Buses.size(); ++i)
+        {
+            ordered.push_back(Ordered{
+                .Def = &data.Buses[i], .Depth = depthOf(&data.Buses[i]), .AuthoredIndex = i});
+        }
+        std::ranges::sort(ordered,
+                          [](const Ordered& a, const Ordered& b)
+                          {
+                              if (a.Depth != b.Depth)
+                              {
+                                  return a.Depth > b.Depth;
+                              }
+                              return a.AuthoredIndex < b.AuthoredIndex;
+                          });
+
+        m_Buses.clear();
+        m_BusIndexById.clear();
+        m_WarnedMissingBuses.clear();
+        m_Buses.reserve(ordered.size());
+        for (const Ordered& entry : ordered)
+        {
+            const BusId id{entry.Def->Id};
+            const u32 index = static_cast<u32>(m_Buses.size());
+            m_Buses.push_back(
+                BusRuntime{.Id = id,
+                           .Name = entry.Def->Id,
+                           .ParentIndex = index, // patched below once all ids mapped
+                           .Gain = std::max(entry.Def->DefaultGain, 0.0f),
+                           .LowpassCutoff = std::max(entry.Def->LowpassCutoff, 0.0f),
+                           .ReverbSend = std::clamp(entry.Def->ReverbSend, 0.0f, 1.0f),
+                           .IsLeaf = true});
+            m_BusIndexById.emplace(id.Value, index);
+            if (id == AudioBuses::Master())
+            {
+                m_MasterIndex = index;
+            }
+        }
+        // Patch parent indices and mark non-leaf buses. A parent naming DSP is inert (leaf-only),
+        // so drop a non-leaf bus's cutoff/send here in case a default authored one on an inner bus.
+        for (u32 i = 0; i < m_Buses.size(); ++i)
+        {
+            const AudioBusDef* def = ordered[i].Def;
+            if (def->Parent.empty())
+            {
+                m_Buses[i].ParentIndex = i; // Master indexes itself; the fold never reads it
+                continue;
+            }
+            const u32 parentIndex = m_BusIndexById.at(BusId{def->Parent}.Value);
+            m_Buses[i].ParentIndex = parentIndex;
+            m_Buses[parentIndex].IsLeaf = false;
+        }
+        for (BusRuntime& bus : m_Buses)
+        {
+            if (!bus.IsLeaf)
+            {
+                bus.LowpassCutoff = 0.0f;
+                bus.ReverbSend = 0.0f;
+            }
+        }
     }
 
-    f32 AudioEngine::GetBusGain(AudioBus bus) const
+    void AudioEngine::ConfigureBusGraph(const AudioBusGraph& graph)
     {
-        return m_BusGain[static_cast<usize>(bus)];
+        const VoidResult valid = ValidateAudioBusGraph(graph.GetData());
+        if (!valid)
+        {
+            Log::Error("audio: rejecting invalid bus graph ({}); using the roots-only default",
+                       valid.error());
+            InstallGraph(DefaultAudioBusGraphData());
+            return;
+        }
+        InstallGraph(graph.GetData());
     }
 
-    void AudioEngine::SetBusLowpassCutoff(AudioBus bus, f32 cutoffHz)
+    u32 AudioEngine::ResolveBusIndex(BusId bus) const
     {
-        m_BusLowpassCutoff[static_cast<usize>(bus)] = std::max(cutoffHz, 0.0f);
+        const auto found = m_BusIndexById.find(bus.Value);
+        return found != m_BusIndexById.end() ? found->second : m_MasterIndex;
     }
 
-    f32 AudioEngine::GetBusLowpassCutoff(AudioBus bus) const
+    u32 AudioEngine::ResolveBusIndexWarn(BusId bus)
     {
-        return m_BusLowpassCutoff[static_cast<usize>(bus)];
+        const auto found = m_BusIndexById.find(bus.Value);
+        if (found != m_BusIndexById.end())
+        {
+            return found->second;
+        }
+        if (m_WarnedMissingBuses.insert(bus.Value).second)
+        {
+            Log::Warn("audio: bus id {:#018x} is not in the active graph; routing to Master",
+                      bus.Value);
+        }
+        return m_MasterIndex;
     }
 
-    void AudioEngine::SetBusReverbSend(AudioBus bus, f32 send)
+    BusId AudioEngine::ResolveBus(std::string_view name)
     {
-        m_BusReverbSend[static_cast<usize>(bus)] = std::clamp(send, 0.0f, 1.0f);
+        const BusId id{name};
+        if (m_BusIndexById.contains(id.Value))
+        {
+            return id;
+        }
+        if (m_WarnedMissingBuses.insert(id.Value).second)
+        {
+            Log::Warn("audio: bus '{}' is not in the active graph; routing to Master", name);
+        }
+        return AudioBuses::Master();
     }
 
-    f32 AudioEngine::GetBusReverbSend(AudioBus bus) const
+    string AudioEngine::GetBusName(BusId bus) const
     {
-        return m_BusReverbSend[static_cast<usize>(bus)];
+        return m_Buses[ResolveBusIndex(bus)].Name;
+    }
+
+    void AudioEngine::SetBusGain(BusId bus, f32 gain)
+    {
+        m_Buses[ResolveBusIndexWarn(bus)].Gain = std::max(gain, 0.0f);
+    }
+
+    f32 AudioEngine::GetBusGain(BusId bus) const
+    {
+        return m_Buses[ResolveBusIndex(bus)].Gain;
+    }
+
+    void AudioEngine::SetBusLowpassCutoff(BusId bus, f32 cutoffHz)
+    {
+        const u32 index = ResolveBusIndexWarn(bus);
+        if (!m_Buses[index].IsLeaf)
+        {
+            Log::Warn("audio: SetBusLowpassCutoff on non-leaf bus '{}' is ignored (per-bus DSP is "
+                      "leaf-only)",
+                      m_Buses[index].Name);
+            return;
+        }
+        m_Buses[index].LowpassCutoff = std::max(cutoffHz, 0.0f);
+    }
+
+    f32 AudioEngine::GetBusLowpassCutoff(BusId bus) const
+    {
+        return m_Buses[ResolveBusIndex(bus)].LowpassCutoff;
+    }
+
+    void AudioEngine::SetBusReverbSend(BusId bus, f32 send)
+    {
+        const u32 index = ResolveBusIndexWarn(bus);
+        if (!m_Buses[index].IsLeaf)
+        {
+            Log::Warn("audio: SetBusReverbSend on non-leaf bus '{}' is ignored (per-bus DSP is "
+                      "leaf-only)",
+                      m_Buses[index].Name);
+            return;
+        }
+        m_Buses[index].ReverbSend = std::clamp(send, 0.0f, 1.0f);
+    }
+
+    f32 AudioEngine::GetBusReverbSend(BusId bus) const
+    {
+        return m_Buses[ResolveBusIndex(bus)].ReverbSend;
     }
 
     void AudioEngine::SetReverbParams(const ReverbParams& params)
@@ -1485,11 +1655,17 @@ namespace Veng::Audio
         AudioDevice::Native& native = m_Device.GetNative();
         AudioFrame& frame = native.Snapshots.BackBuffer();
 
-        for (usize b = 0; b < AudioBusCount; ++b)
+        // Flatten the control-thread bus tree into the snapshot's fixed POD arrays. The order is
+        // already child-before-parent (Master last); a non-leaf bus publishes no DSP (leaf-only).
+        frame.BusCount = static_cast<u32>(m_Buses.size());
+        frame.MasterBusIndex = m_MasterIndex;
+        for (u32 b = 0; b < frame.BusCount; ++b)
         {
-            frame.BusGain[b] = m_BusGain[b];
-            frame.BusLowpassCutoff[b] = m_BusLowpassCutoff[b];
-            frame.BusReverbSend[b] = m_BusReverbSend[b];
+            const BusRuntime& bus = m_Buses[b];
+            frame.BusParent[b] = bus.ParentIndex;
+            frame.BusGain[b] = bus.Gain;
+            frame.BusLowpassCutoff[b] = bus.IsLeaf ? bus.LowpassCutoff : 0.0f;
+            frame.BusReverbSend[b] = bus.IsLeaf ? bus.ReverbSend : 0.0f;
         }
         frame.Reverb = m_Reverb;
 
@@ -1524,7 +1700,7 @@ namespace Veng::Audio
                     // the ring is mono, so the buffer channel count is unused on the stream path.
                     snapshot.PcmSampleRate = voice.Stream ? voice.Stream->SampleRate : 0;
                 }
-                snapshot.Bus = voice.Params.Bus;
+                snapshot.BusIndex = ResolveBusIndexWarn(voice.Params.Bus);
                 snapshot.Gain = voice.Params.Gain;
                 snapshot.Pan = voice.Params.Pan;
                 snapshot.Pitch = voice.Params.Pitch;
@@ -1787,7 +1963,7 @@ namespace Veng::Audio
     {
         m_Engine.SetVoiceParams(
             track.Voice,
-            VoiceParams{.Bus = AudioBus::Music, .Gain = TrackGain(track), .Loop = track.Loop});
+            VoiceParams{.Bus = AudioBuses::Music(), .Gain = TrackGain(track), .Loop = track.Loop});
     }
 
     void MusicDirector::Set(const AssetHandle<AudioClip>& track, const MusicTransition& transition)
@@ -1834,7 +2010,7 @@ namespace Veng::Audio
             incoming.Phase = 0.0f;
             incoming.FadeDuration = transition.FadeSeconds;
             incoming.Steady = hardCut;
-            incoming.Voice = m_Engine.AddClipVoice(track, VoiceParams{.Bus = AudioBus::Music,
+            incoming.Voice = m_Engine.AddClipVoice(track, VoiceParams{.Bus = AudioBuses::Music(),
                                                                       .Gain = TrackGain(incoming),
                                                                       .Loop = transition.Loop});
             if (incoming.Voice.IsValid())

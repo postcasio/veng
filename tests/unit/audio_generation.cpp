@@ -277,7 +277,8 @@ TEST_CASE("a generator voice mixes through the null device and StopVoice reclaim
     generator.Value = 0.5f;
 
     const VoiceHandle voice = engine.PlayGenerator(
-        &generator, GeneratorVoiceParams{.Bus = AudioBus::Master, .Spatial = false, .Gain = 1.0f});
+        &generator,
+        GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false, .Gain = 1.0f});
     REQUIRE(voice.IsValid());
     CHECK(engine.GetActiveVoiceCount() == 1);
 
