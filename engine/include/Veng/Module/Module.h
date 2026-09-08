@@ -84,11 +84,15 @@ extern "C"
 /// machine-global apply target the resolve produces, so a stale module fills a short facet the
 /// same way. Version 17 changes the reflected AudioSource component: its Bus field's type moves
 /// from the removed AudioBus enum to a bus-name string resolved to a BusId at load, so a stale
-/// module would register a component descriptor whose Bus field carries the wrong leaf type. The
-/// loader compares host vs. module values before calling VengModuleRegister.
+/// module would register a component descriptor whose Bus field carries the wrong leaf type.
+/// Version 18 grows the Application vtable with the OnResolveAudio resolve seam and grows
+/// ApplicationInfo with AudioSettingsSchema: the module subclasses Application (its vtable is what
+/// the engine calls through) and constructs the ApplicationInfo it hands back, so a stale module
+/// would lay out the vtable and the info struct short of what the engine reads.
+/// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 17u
+#define VENG_MODULE_ABI_VERSION 18u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

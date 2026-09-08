@@ -1023,6 +1023,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_component_driver.cpp
             tests/unit/level_render_settings.cpp
             tests/unit/graphics_resolve.cpp
+            tests/unit/audio_resolve.cpp
             tests/unit/display_settings.cpp
             tests/unit/capture_surface_component.cpp
             tests/unit/capture_drive.cpp

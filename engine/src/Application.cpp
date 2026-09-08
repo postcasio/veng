@@ -422,6 +422,45 @@ namespace Veng
             }
         }
 
+        // The per-machine audio-settings store: mirrors the graphics block above, but the engine
+        // drives its boot load and apply here (audio applies live, so there is no reload-to-apply
+        // gate and the identity default resolver makes an unconfigured apply a no-op). Absent when
+        // no schema is named — the store is not constructed and GetAudioSettings() stays null.
+        if (m_Info.AudioSettingsSchema)
+        {
+            const SettingsSchema* schema = nullptr;
+            const AssetResult<AssetHandle<SettingsSchema>> loaded =
+                m_AssetManager->LoadSync<SettingsSchema>(*m_Info.AudioSettingsSchema);
+            if (loaded)
+            {
+                m_AudioSchemaHandle = *loaded;
+                schema = m_AudioSchemaHandle.Get();
+            }
+            else
+            {
+                Log::Warn("audio settings: schema {} did not load ({}); the audio settings will be "
+                          "empty",
+                          m_Info.AudioSettingsSchema->Value, loaded.error().Detail);
+            }
+
+            path configPath;
+            if (const Result<path> configDir = UserConfigDir(m_Info.Name))
+            {
+                configPath = *configDir / "audio.json";
+            }
+            else
+            {
+                Log::Warn("audio settings: no writable configuration directory ({}); preferences "
+                          "will not persist",
+                          configDir.error());
+            }
+
+            m_AudioSettings = CreateUnique<SettingsStore<SettingsChoices>>(SettingsStoreInfo{
+                .Schema = schema, .Types = &m_TypeRegistry, .ConfigPath = std::move(configPath)});
+            static_cast<void>(m_AudioSettings->Load());
+            ApplyAudioSettings();
+        }
+
         // The engine-managed game world bootstraps after OnInitialize, so a subclass has already
         // set up its ImGui surface and read the managed viewport.
         if (project)
@@ -754,6 +793,43 @@ namespace Veng
             {
                 viewport->ClearDynamicResolution();
             }
+        }
+    }
+
+    void Application::ApplyAudioSettings()
+    {
+        // Absent domain (no schema named) or no device: nothing to resolve or apply against.
+        if (!m_AudioSettings || !m_AudioDevice)
+        {
+            return;
+        }
+        ApplyAudioSettings(m_AudioDevice->GetEngine(), *m_AudioSettings);
+    }
+
+    void Application::ApplyAudioSettings(Audio::AudioEngine& engine,
+                                         const SettingsStore<SettingsChoices>& store)
+    {
+        const Audio::AudioBusGraphData& graph = engine.GetActiveBusGraphData();
+
+        // Pre-fill one entry per active-graph bus at its graph-default gain, so an identity resolver
+        // leaves every bus at its authored default (and a re-apply restores defaults before the
+        // resolver's overrides — the single-writer property).
+        AudioResolveOutput output;
+        output.Gains.reserve(graph.Buses.size());
+        for (const Audio::AudioBusDef& bus : graph.Buses)
+        {
+            output.Gains.push_back(
+                AudioBusGain{.Bus = Audio::BusId{bus.Id}, .Gain = std::max(bus.DefaultGain, 0.0f)});
+        }
+
+        const AudioResolveInput input{.Settings = store, .BusGraph = graph};
+        OnResolveAudio(input, output);
+
+        // SetBusGain writes control-thread bus state; the mixer republishes once per frame, so
+        // re-applying every gain each call — even unchanged ones — is idempotent and cheap.
+        for (const AudioBusGain& gain : output.Gains)
+        {
+            engine.SetBusGain(gain.Bus, gain.Gain);
         }
     }
 

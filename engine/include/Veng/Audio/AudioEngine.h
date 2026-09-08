@@ -155,6 +155,18 @@ namespace Veng::Audio
         /// @param graph  The complete authored graph.
         void ConfigureBusGraph(const AudioBusGraph& graph);
 
+        /// @brief Returns the authored data of the active bus graph (the roots-only default when none).
+        ///
+        /// The complete topology currently installed — every bus with its parent and default DSP —
+        /// so a consumer can enumerate the buses and their default gains without holding the graph
+        /// asset (an audio-settings resolve pre-fills its output from these defaults). Reflects the
+        /// last ConfigureBusGraph, or the roots-only default before any adoption.
+        /// @return The active graph's authored data.
+        [[nodiscard]] const AudioBusGraphData& GetActiveBusGraphData() const
+        {
+            return m_ActiveGraph;
+        }
+
         /// @brief Resolves a bus name to its BusId against the active graph.
         ///
         /// A name the active graph declares returns its BusId; a name it does not declare returns
@@ -508,6 +520,11 @@ namespace Veng::Audio
 
         /// @brief The owning device.
         AudioDevice& m_Device;
+        /// @brief The authored data of the active graph, kept for GetActiveBusGraphData.
+        ///
+        /// The topology as adopted (or the roots-only default), retained so a consumer can read each
+        /// bus's default gain; the flattened runtime view lives in m_Buses.
+        AudioBusGraphData m_ActiveGraph;
         /// @brief The active graph's buses in flattened child-before-parent order (Master last).
         vector<BusRuntime> m_Buses;
         /// @brief BusId value → index into m_Buses, for O(1) resolution.

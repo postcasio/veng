@@ -1048,6 +1048,10 @@ namespace Veng::Audio
 
     void AudioEngine::InstallGraph(const AudioBusGraphData& data)
     {
+        // Retain the authored data so GetActiveBusGraphData can report each bus's default gain
+        // (the flattened runtime view below carries only current, mutated gains).
+        m_ActiveGraph = data;
+
         // Build a deterministic child-before-parent order: sort by (depth descending, authored
         // index ascending). A child's depth exceeds its parent's, so it sorts strictly earlier;
         // Master (depth 0) sorts last. The order is stable for a fixed graph, so a bus keeps its

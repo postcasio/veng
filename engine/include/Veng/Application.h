@@ -31,6 +31,7 @@
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Render/DisplayCapabilities.h>
 #include <Veng/Render/FrameRateLimiter.h>
+#include <Veng/Audio/AudioResolve.h>
 #include <Veng/Render/GraphicsResolve.h>
 #include <Veng/Render/GraphicsSchema.h>
 #include <Veng/Render/GraphicsSettings.h>
@@ -587,6 +588,16 @@ namespace Veng
         /// a graph that fails to load or validate) leaves the engine on its built-in roots-only
         /// default (Master ⊃ {Music, SFX, UI, Ambience}), so an app naming none gets the roots free.
         optional<AssetId> AudioBusGraph = std::nullopt;
+
+        /// @brief The game's audio-settings schema asset; nullopt leaves the audio settings domain absent.
+        ///
+        /// The engine cannot name a game asset, so a game declares its audio schema here by id.
+        /// Application resolves it at boot, constructs the per-machine audio SettingsStore over it
+        /// (config audio.json), loads persisted choices, and applies them once through
+        /// ApplyAudioSettings (GetAudioSettings()). Unset means no audio settings domain: no store is
+        /// constructed and GetAudioSettings() is null, so an engine/headless consumer that wants none
+        /// pays nothing. An instance of the same SettingsSchema asset type the graphics schema uses.
+        optional<AssetId> AudioSettingsSchema = std::nullopt;
     };
 
     /// @brief The destination of an Application::Travel: the key, arrival payload, and presentation choice.
@@ -745,6 +756,33 @@ namespace Veng
         /// The built-in display selections (resolution, window, present mode) are applied by the display
         /// group, which extends this same entry point; this call applies the renderer surfaces.
         void ApplyGraphicsSettings();
+
+        /// @brief Returns the per-machine audio-settings store, or null when the domain is absent.
+        ///
+        /// Constructed at boot with the schema named by ApplicationInfo::AudioSettingsSchema, the
+        /// type registry, and the per-user config path (audio.json); null when no schema is named
+        /// (the domain is absent). The menu reads and writes it; the boot path loads and applies it.
+        /// @pre Run() has initialized the engine — the store exists only inside Run().
+        /// @return The audio store, or nullptr when no audio schema was named.
+        [[nodiscard]] SettingsStore<SettingsChoices>* GetAudioSettings()
+        {
+            return m_AudioSettings.get();
+        }
+
+        /// @brief Resolves the current audio settings and applies the resulting bus gains to the mixer.
+        ///
+        /// Closes the loop between the chosen values and the mixer: it pre-fills the resolve output
+        /// with one entry per active-graph bus at its graph-default gain, invokes OnResolveAudio once
+        /// so the game maps the player's chosen values onto bus gains, then applies each resolved
+        /// {bus, gain} through AudioEngine::SetBusGain. A no restart, no reload apply — SetBusGain
+        /// takes effect on the next mix, so a settings change is audible immediately (already-playing
+        /// voices included). Applying is idempotent and cheap: re-applying every gain each call — even
+        /// unchanged ones — costs nothing on the audio thread (the mixer republishes once per frame).
+        ///
+        /// A no-op when the audio settings domain is absent (no schema named) or there is no audio
+        /// device. The boot path calls it after loading the store and adopting the bus graph; the
+        /// menu calls it on Apply.
+        void ApplyAudioSettings();
 
         /// @brief Reports what the hardware offers for the built-in Display group, at runtime.
         ///
@@ -1303,6 +1341,36 @@ namespace Veng
             static_cast<void>(output);
         }
 
+        /// @brief Maps the player's chosen audio settings onto the mixer's bus gains.
+        ///
+        /// The resolve seam ApplyAudioSettings invokes once per apply: given the chosen values and
+        /// the active bus graph (@p input), it produces the bus gains the engine applies (@p output).
+        /// The engine does not fix what a choice means — a game maps its own audio options (a volume
+        /// slider through a perceptual taper, say) onto bus gains here.
+        ///
+        /// @p output arrives pre-filled with one entry per active-graph bus at its graph-default
+        /// gain, so the default implementation does nothing and leaves every bus at its authored
+        /// default — an app that declares no audio schema never reaches this. A resolver overrides
+        /// the entries it cares about through AudioResolveOutput::SetGain and leaves the rest.
+        /// @param input   The chosen values and the active bus graph to map onto gains.
+        /// @param output  The bus gains to apply, pre-filled with the graph's default gains.
+        virtual void OnResolveAudio(const AudioResolveInput& input, AudioResolveOutput& output)
+        {
+            static_cast<void>(input);
+            static_cast<void>(output);
+        }
+
+        /// @brief Resolves an audio store against a mixer and applies the resulting bus gains.
+        ///
+        /// The reusable core the public ApplyAudioSettings() drives with the app's own store and
+        /// engine: it pre-fills @p output-equivalent graph defaults from @p engine, invokes
+        /// OnResolveAudio, and applies each resolved gain through @p engine's SetBusGain. Separated
+        /// so the resolve/apply path is exercisable against a specific engine and store.
+        /// @param engine  The mixer whose bus gains are set.
+        /// @param store   The audio store supplying the resolve input's chosen values.
+        void ApplyAudioSettings(Audio::AudioEngine& engine,
+                                const SettingsStore<SettingsChoices>& store);
+
         /// @brief Called once per frame before rendering.
         /// @param delta  Time in seconds since the previous frame.
         virtual void OnUpdate(f32 delta) {}
@@ -1787,6 +1855,15 @@ namespace Veng
         /// @brief The per-machine graphics-settings store; borrows the schema handle above and the
         ///        type registry, so it destructs before them.
         Unique<GraphicsSettings> m_GraphicsSettings;
+
+        /// @brief Keeps the audio-settings schema resident for the audio store to borrow; empty when
+        ///        ApplicationInfo::AudioSettingsSchema is unset. Declared before m_AudioSettings so
+        ///        the schema outlives the store that points at it.
+        AssetHandle<SettingsSchema> m_AudioSchemaHandle;
+
+        /// @brief The per-machine audio-settings store; null when no audio schema was named. Borrows
+        ///        the schema handle above and the type registry, so it destructs before them.
+        Unique<SettingsStore<SettingsChoices>> m_AudioSettings;
 
         /// @brief The ImGui integration; borrows m_RenderContext, so declared after it — its backend,
         ///        descriptor pool, and offscreen target release while the device is still alive.
