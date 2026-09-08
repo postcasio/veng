@@ -624,6 +624,14 @@ namespace Veng::Cook
         header.Height = baseHeight;
         header.MipCount = mipCount;
         header.ChannelLayout = static_cast<u32>(resolved.ChannelLayout);
+        header.Version = CookedTextureVersion;
+
+        // The runtime's texture-quality mip cap may drop the top mips of a Color/Normal/HDR texture;
+        // UI and mask/data textures keep every level (a capped atlas softens menus, a capped mask
+        // corrupts data-like sampling). A single-mip texture has nothing to cap.
+        const bool roleCappable = role == CompressionRole::Color ||
+                                  role == CompressionRole::Normal || role == CompressionRole::HDR;
+        header.MipCappable = (roleCappable && mipCount > 1) ? 1u : 0u;
 
         // Sampler defaults mirror Veng::Renderer::SamplerInfo's defaults
         // (Renderer/Sampler.h).

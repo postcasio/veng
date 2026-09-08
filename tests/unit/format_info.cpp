@@ -59,6 +59,68 @@ TEST_CASE("FormatInfo: BytesForLevel over BC5 and BC4 block counts")
     CHECK(BytesForLevel(Format::BC4Unorm, 16, 16) == BytesForLevel(Format::BC5Unorm, 16, 16) / 2);
 }
 
+TEST_CASE("FormatInfo: ComputeMipSkip base offset, extent, and level count")
+{
+    // An 8x8 uncompressed RGBA8 chain: levels 8 (256B), 4 (64B), 2 (16B), 1 (4B), tightly packed.
+    // skip 0 is the whole chain from offset 0 — byte-identical to an uncapped upload.
+    {
+        const MipSkipLayout l = ComputeMipSkip(Format::RGBA8Unorm, 8, 8, 4, 0);
+        CHECK(l.BaseOffset == 0u);
+        CHECK(l.BaseExtent == uvec2{8, 8});
+        CHECK(l.LevelCount == 4u);
+    }
+    // skip 1 begins at cooked level 1 (4x4): offset is level 0's 256 bytes, three levels remain.
+    {
+        const MipSkipLayout l = ComputeMipSkip(Format::RGBA8Unorm, 8, 8, 4, 1);
+        CHECK(l.BaseOffset == 256u);
+        CHECK(l.BaseExtent == uvec2{4, 4});
+        CHECK(l.LevelCount == 3u);
+    }
+    // skip 2 begins at level 2 (2x2): offset is 256 + 64 = 320, two levels remain.
+    {
+        const MipSkipLayout l = ComputeMipSkip(Format::RGBA8Unorm, 8, 8, 4, 2);
+        CHECK(l.BaseOffset == 320u);
+        CHECK(l.BaseExtent == uvec2{2, 2});
+        CHECK(l.LevelCount == 2u);
+    }
+    // A skip past the last level clamps to leave exactly one level (the 1x1 base at offset 336).
+    {
+        const MipSkipLayout l = ComputeMipSkip(Format::RGBA8Unorm, 8, 8, 4, 9);
+        CHECK(l.BaseOffset == 336u);
+        CHECK(l.BaseExtent == uvec2{1, 1});
+        CHECK(l.LevelCount == 1u);
+    }
+    // A non-power-of-two, non-square chain: 6x3 halves to 3x1 then 1x1 (three levels). skip 1 begins
+    // at the 3x1 level, offset = BytesForLevel(6,3) = 72 bytes; the extent floors each edge.
+    {
+        const MipSkipLayout l = ComputeMipSkip(Format::RGBA8Unorm, 6, 3, 3, 1);
+        CHECK(l.BaseOffset == BytesForLevel(Format::RGBA8Unorm, 6, 3));
+        CHECK(l.BaseExtent == uvec2{3, 1});
+        CHECK(l.LevelCount == 2u);
+    }
+    // The base offset uses the format's block geometry: an ASTC 4x4 8x8 chain's level 0 is one
+    // 2x2-block level (64 bytes), so skip 1's base offset is 64, not the uncompressed 256.
+    {
+        const MipSkipLayout l = ComputeMipSkip(Format::ASTC4x4Unorm, 8, 8, 4, 1);
+        CHECK(l.BaseOffset == 64u);
+        CHECK(l.BaseExtent == uvec2{4, 4});
+        CHECK(l.LevelCount == 3u);
+    }
+}
+
+TEST_CASE("FormatInfo: EffectiveMipSkip gates the requested level by cappability")
+{
+    // A non-cappable texture ignores the request entirely.
+    CHECK(EffectiveMipSkip(false, 4, 2) == 0u);
+    // A single-mip texture has nothing to cap, cappable or not.
+    CHECK(EffectiveMipSkip(true, 1, 3) == 0u);
+    // A cappable multi-mip texture applies the request, clamped to leave one level.
+    CHECK(EffectiveMipSkip(true, 4, 1) == 1u);
+    CHECK(EffectiveMipSkip(true, 4, 2) == 2u);
+    CHECK(EffectiveMipSkip(true, 4, 9) == 3u);
+    CHECK(EffectiveMipSkip(true, 4, 0) == 0u);
+}
+
 TEST_CASE("FormatInfo: FormatName covers every declared enumerator, distinctly")
 {
     // The property that matters is coverage: a format added to Types.h and left out of the switch

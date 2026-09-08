@@ -46,6 +46,13 @@ namespace Veng
         bool AnisotropyEnabled = true;
         /// @brief The anisotropy sample count for scene-texture samplers (clamped to the device max).
         f32 MaxAnisotropy = Renderer::DefaultMaxAnisotropy;
+        /// @brief The texture-quality mip-skip level applied to the AssetManager's texture build path.
+        ///
+        /// 0 (the default) uploads the full cooked mip chain; a higher level drops that many top mip
+        /// levels from every cappable texture built afterward, uploading a smaller image. Read at
+        /// build time, so it is reload-to-apply — resident textures the AssetManager already caches
+        /// are not rebuilt, and the change lands on textures loaded fresh (in practice, next start).
+        u32 TextureQualityMipSkip = 0;
     };
 
     /// @brief The output of a graphics resolve: the concrete renderer state the engine applies.

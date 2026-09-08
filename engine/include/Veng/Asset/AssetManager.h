@@ -380,6 +380,17 @@ namespace Veng
         /// AssetManager is in hand.
         [[nodiscard]] TaskSystem& GetTaskSystem() const { return m_Tasks; }
 
+        /// @brief Sets the global texture-quality mip-skip level read by future texture builds.
+        ///
+        /// A cappable texture built afterward drops its top @p level mip levels at upload, so a
+        /// lower tier uploads a genuinely smaller image. Read at build time only: a resident texture
+        /// is a cache hit and is not rebuilt, so a change takes effect for textures loaded fresh
+        /// afterward — in practice on the next process start. 0 (the default) uploads the full chain.
+        void SetTextureQualityMipSkip(u32 level) { m_TextureQualityMipSkip = level; }
+
+        /// @brief Returns the global texture-quality mip-skip level future texture builds read.
+        [[nodiscard]] u32 GetTextureQualityMipSkip() const { return m_TextureQualityMipSkip; }
+
         /// @brief Runs any pending async finalizes whose uploads completed and whose dependencies are resident.
         ///
         /// Called from the frame loop after the task system's continuation pump, on the main thread.
@@ -482,6 +493,9 @@ namespace Veng
         TypeRegistry& m_Types;
         /// @brief Owned: the builtins, plus whatever AssetManagerInfo::AssetTypes added.
         AssetTypeRegistry m_AssetTypes;
+
+        /// @brief The global texture-quality mip-skip level applied to future cappable texture builds.
+        u32 m_TextureQualityMipSkip = 0;
 
         vector<MountedArchive> m_Mounts;
         vector<MemoryMount> m_MemoryMounts;

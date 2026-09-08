@@ -5,6 +5,7 @@
 
 #include <fmt/format.h>
 
+#include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Log.h>
 #include <Veng/Renderer/Context.h>
@@ -130,7 +131,7 @@ namespace Veng
         }
     }
 
-    AssetResult<Detail::LoadJob> TextureLoader::Load(AssetManager& /*manager*/,
+    AssetResult<Detail::LoadJob> TextureLoader::Load(AssetManager& manager,
                                                      Renderer::Context& context, TaskSystem& tasks,
                                                      TypeRegistry& /*types*/, AssetId id,
                                                      std::span<const u8> cooked, bool async) const
@@ -146,6 +147,16 @@ namespace Veng
 
         CookedTextureHeader header;
         std::memcpy(&header, cooked.data(), sizeof(header));
+
+        if (header.Version != CookedTextureVersion)
+        {
+            return std::unexpected(AssetLoadError{
+                .Kind = AssetError::Corrupt,
+                .Id = id,
+                .Detail = fmt::format("texture: cooked version {} != CookedTextureVersion {}",
+                                      header.Version, CookedTextureVersion),
+            });
+        }
 
         if (header.MipCount < 1)
         {
@@ -235,12 +246,23 @@ namespace Veng
             });
         }
 
+        // The texture-quality mip cap drops the top N cooked levels of a cappable texture at upload,
+        // so a lower tier uploads a genuinely smaller image from a recomputed base offset. The whole
+        // cooked chain is validated above; the retained sub-chain from the base level is itself a
+        // tightly-packed chain, so the Texture build path uploads it unchanged. A non-cappable or
+        // single-mip texture resolves to skip 0 and the full chain, byte-identical to before.
+        const u32 skip = Renderer::EffectiveMipSkip(header.MipCappable != 0, header.MipCount,
+                                                    manager.GetTextureQualityMipSkip());
+        const Renderer::MipSkipLayout layout =
+            Renderer::ComputeMipSkip(*format, header.Width, header.Height, header.MipCount, skip);
+        const usize retainedBytes = pixelBytes - layout.BaseOffset;
+
         const TextureData info{
             .Name = fmt::format("Texture {}", id.Value),
-            .Extent = {header.Width, header.Height},
+            .Extent = layout.BaseExtent,
             .Format = *format,
-            .MipLevels = header.MipCount,
-            .Pixels = cooked.subspan(sizeof(header), pixelBytes),
+            .MipLevels = layout.LevelCount,
+            .Pixels = cooked.subspan(sizeof(header) + layout.BaseOffset, retainedBytes),
             .Sampler =
                 {
                     .MagFilter = *magFilter,

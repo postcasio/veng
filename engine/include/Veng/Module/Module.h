@@ -80,10 +80,12 @@ extern "C"
 /// with the Global facet (the machine-global renderer state a resolve produces): the struct is
 /// host-constructed and handed by reference to a module-registered OnResolveGraphics override, so a
 /// stale module would fill a short struct and the engine would read the facet past its end.
-/// The loader compares host vs. module values before calling VengModuleRegister.
+/// Version 16 grows that same Global facet with the texture-quality mip-skip level, the second
+/// machine-global apply target the resolve produces, so a stale module fills a short facet the
+/// same way. The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 15u
+#define VENG_MODULE_ABI_VERSION 16u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

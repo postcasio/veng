@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+
 #include <Veng/Veng.h>
 #include <Veng/Renderer/Types.h>
 
@@ -91,6 +93,66 @@ namespace Veng::Renderer
         const u32 blocksWide = (width + block.BlockWidth - 1) / block.BlockWidth;
         const u32 blocksHigh = (height + block.BlockHeight - 1) / block.BlockHeight;
         return static_cast<usize>(blocksWide) * blocksHigh * block.Bytes;
+    }
+
+    /// @brief The upload geometry of a mip-capped texture: where its retained chain begins in the
+    ///        tightly-packed blob, its base level's extent, and how many levels it spans.
+    struct MipSkipLayout
+    {
+        /// @brief Byte offset of the first retained level within the tightly-packed mip blob.
+        u64 BaseOffset = 0;
+        /// @brief Extent of the first retained level in texels.
+        uvec2 BaseExtent = {0, 0};
+        /// @brief Number of mip levels retained (always >= 1).
+        u32 LevelCount = 1;
+    };
+
+    /// @brief The effective mip-skip level for a texture, gating the requested level by cappability.
+    ///
+    /// A texture that is not mip-cappable, or that has a single level, ignores the request and
+    /// keeps its full chain (skip 0). Otherwise the request is clamped to leave at least one level.
+    /// @param mipCappable    Whether the texture opted into the mip cap (the cooked MipCappable flag).
+    /// @param mipCount       The cooked mip-level count (>= 1).
+    /// @param requestedSkip  The global texture-quality mip-skip level.
+    /// @return The number of top mip levels to drop at upload.
+    inline constexpr u32 EffectiveMipSkip(bool mipCappable, u32 mipCount, u32 requestedSkip)
+    {
+        if (!mipCappable || mipCount <= 1)
+        {
+            return 0;
+        }
+        return std::min(requestedSkip, mipCount - 1);
+    }
+
+    /// @brief Computes the upload geometry when the top @p skip mip levels of a chain are dropped.
+    ///
+    /// Level 0 is the full-resolution base; dropping @p skip levels uploads a smaller image
+    /// beginning at cooked level min(skip, MipCount - 1), so at least one level always remains. The
+    /// base offset is the sum of BytesForLevel over the dropped levels — the offset of the retained
+    /// base level in the tightly-packed, offset-table-free blob — the base extent is that level's
+    /// dimensions, and the level count is the retained tail. A @p skip of 0 returns { 0, {Width,
+    /// Height}, MipCount }: the full chain, byte-identical to an uncapped upload.
+    /// @param format   The pixel format (drives the block-aware per-level byte size).
+    /// @param width    The full-resolution base width in texels.
+    /// @param height   The full-resolution base height in texels.
+    /// @param mipCount The cooked mip-level count (>= 1).
+    /// @param skip     The requested number of top levels to drop.
+    /// @return The retained chain's base offset, base extent, and level count.
+    inline constexpr MipSkipLayout ComputeMipSkip(Format format, u32 width, u32 height,
+                                                  u32 mipCount, u32 skip)
+    {
+        const u32 clamped = mipCount > 0 ? std::min(skip, mipCount - 1) : 0;
+        u64 baseOffset = 0;
+        for (u32 level = 0; level < clamped; level++)
+        {
+            baseOffset +=
+                BytesForLevel(format, std::max(1u, width >> level), std::max(1u, height >> level));
+        }
+        return MipSkipLayout{
+            .BaseOffset = baseOffset,
+            .BaseExtent = {std::max(1u, width >> clamped), std::max(1u, height >> clamped)},
+            .LevelCount = mipCount - clamped,
+        };
     }
 
     /// @brief Returns the enumerator spelling of @p format, as declared in Renderer/Types.h.

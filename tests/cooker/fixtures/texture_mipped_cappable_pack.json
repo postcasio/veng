@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x9C41A7E3D2F60B58",
+      "type": "Texture",
+      "source": "textures/texture_mipped_cappable.tex.json"
+    }
+  ]
+}

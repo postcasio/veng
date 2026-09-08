@@ -703,6 +703,10 @@ namespace Veng
         m_RenderContext.GetBindlessRegistry().SetGlobalAnisotropy(output.Global.AnisotropyEnabled,
                                                                   output.Global.MaxAnisotropy);
 
+        // The mip-skip level is read when a texture is built, so this is reload-to-apply: it governs
+        // future texture builds, not the resident textures the AssetManager already caches by id.
+        m_AssetManager->SetTextureQualityMipSkip(output.Global.TextureQualityMipSkip);
+
         // Settings are machine-global — every managed viewport (split-screen included) receives the
         // same resolved settings. The per-frame view knobs ride m_WorldView, which PushViews carries
         // into every managed viewport each frame.

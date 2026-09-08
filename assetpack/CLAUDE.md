@@ -69,12 +69,15 @@ the format and its serialization — neither importer nor loader.
   cook artifact) is written atomically — a sibling temporary renamed into place — so a killed
   or concurrent build never strands a torn pack the build would treat as up to date.
 - **`AssetTypes::Texture` carries a mipped, block-compressed image.** A **`CookedTextureHeader`**
-  (`Format`, `Width`, `Height`, `MipCount`) is followed by the mip levels **tightly packed,
-  largest-first** — no offset table, since each level's byte size derives from its halved
-  dimensions and the format's block geometry. `Format` is a `Renderer::Format` integer that may
-  be a block-compressed codec (BC7 / ASTC 4×4) as well as an uncompressed format; `assetpack`
-  treats the level bytes as opaque and computes nothing from the format. A single-mip texture is
-  the degenerate one-level case.
+  (`Format`, `Width`, `Height`, `MipCount`, … `MipCappable`, `Version` = `CookedTextureVersion`) is
+  followed by the mip levels **tightly packed, largest-first** — no offset table, since each level's
+  byte size derives from its halved dimensions and the format's block geometry. `Format` is a
+  `Renderer::Format` integer that may be a block-compressed codec (BC7 / ASTC 4×4) as well as an
+  uncompressed format; `assetpack` treats the level bytes as opaque and computes nothing from the
+  format. `MipCappable` (cooker-stamped from the compression role) says whether the runtime's
+  texture-quality mip cap may drop this texture's top mips at upload. A single-mip texture is the
+  degenerate one-level case. The header is read by a fixed-offset `memcpy` after a size guard, so the
+  loader rejects a `Version` mismatch — an added field would otherwise be misread as garbage.
 - **`AssetTypes::MaterialInstance` is a parameter override over a parent `Material`.** Its blob is a
   **`CookedMaterialInstanceHeader`** (`CookedMaterialInstanceVersion`, currently `1`) — `ParentId`
   (the parent `Material`'s `AssetId`, resolved as a load-time dependency), `OverrideCount`, and the

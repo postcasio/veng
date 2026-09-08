@@ -193,6 +193,122 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "texture loader: the texture-quality mip cap uploads a genuinely smaller cappable image")
+{
+    // Exactly representable in RGBA8Unorm: the fixture's solid 8x8 color, identical at every level.
+    constexpr std::array<u8, 4> expected = {200, 80, 40, 255};
+
+    const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
+    const path packJson = fixtureDir / "texture_mipped_cappable_pack.json";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_texture_mip_cap.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+
+    constexpr AssetId TextureId{0x9C41A7E3D2F60B58ULL};
+
+    // skip 0 uploads the full cooked chain: 8x8 base, four levels — byte-identical to an uncapped
+    // load, the default-preserving baseline.
+    {
+        AssetManager assets(Context, Tasks, Types);
+        REQUIRE(assets.Mount(outArchive).has_value());
+        CHECK(assets.GetTextureQualityMipSkip() == 0u);
+
+        const AssetResult<AssetHandle<Texture>> handle = assets.LoadSync<Texture>(TextureId);
+        REQUIRE(handle.has_value());
+        REQUIRE(handle->IsLoaded());
+
+        const Texture& texture = *handle->Get();
+        CHECK(texture.GetExtent() == uvec2{8, 8});
+        CHECK(texture.GetImage()->GetMipLevels() == 4u);
+    }
+
+    // skip 1 drops the top level: the uploaded image's base is cooked level 1 (4x4), three levels
+    // remain, and sampling it returns the source color — proving the reduced base holds the cooked
+    // level-1 content rather than the full-resolution level 0.
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+    assets.SetTextureQualityMipSkip(1);
+
+    const AssetResult<AssetHandle<Texture>> handle = assets.LoadSync<Texture>(TextureId);
+    REQUIRE(handle.has_value());
+    REQUIRE(handle->IsLoaded());
+
+    const Texture& texture = *handle->Get();
+    CHECK(texture.GetFormat() == Format::RGBA8Unorm);
+    CHECK(texture.GetExtent() == uvec2{4, 4});
+    CHECK(texture.GetImage()->GetMipLevels() == 3u);
+    CHECK(texture.GetHandle().IsValid());
+    CHECK(texture.GetSamplerHandle().IsValid());
+
+    auto outputImage =
+        Image::Create(Context, {
+                                   .Name = "Mip Cap Sample Output",
+                                   .Extent = {Size, Size, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                               });
+    auto outputView =
+        ImageView::Create(Context, {.Name = "Mip Cap Sample Output View", .Image = outputImage});
+
+    AssetManager shaderAssets(Context, Tasks, Types);
+    REQUIRE(shaderAssets.Mount(path(TEST_SHADER_PACK)).has_value());
+
+    const AssetResult<AssetHandle<Shader>> vertexAsset =
+        shaderAssets.LoadSync<Shader>(AssetId{0x1F42});
+    const AssetResult<AssetHandle<Shader>> fragmentAsset =
+        shaderAssets.LoadSync<Shader>(AssetId{0x1F44});
+    REQUIRE(vertexAsset.has_value());
+    REQUIRE(fragmentAsset.has_value());
+
+    Ref<PipelineLayout> layout;
+    auto pipeline = CreateSamplePipeline(Context, layout, vertexAsset->Get()->Module,
+                                         fragmentAsset->Get()->Module);
+
+    auto& bindless = Context.GetBindlessRegistry();
+
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            RenderGraph graph(Context);
+            const ResourceId outputId = graph.Import("Output");
+
+            graph.AddPass("Sample Mip-Capped Texture")
+                .Color({
+                    .Resource = outputId,
+                    .Load = LoadOp::Clear,
+                    .Store = StoreOp::Store,
+                    .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+                })
+                .Execute(
+                    [&](PassContext& ctx)
+                    {
+                        CommandBuffer& passCmd = ctx.Cmd();
+                        passCmd.BindPipeline(pipeline);
+                        passCmd.SetViewport({0, 0}, {Size, Size});
+                        passCmd.SetScissor({0, 0}, {Size, Size});
+                        bindless.Bind(passCmd);
+                        passCmd.PushConstants(SamplePushConstants{
+                            .TextureIndex = texture.GetHandle().Index,
+                            .SamplerIndex = texture.GetSamplerHandle().Index,
+                        });
+                        passCmd.DrawFullscreenTriangle();
+                    });
+
+            const RenderGraph::ImportBinding binding{.Id = outputId, .View = outputView};
+            graph.Compile()->Execute(cmd, {&binding, 1});
+        });
+
+    const vector<u8> pixels = outputImage->Download();
+    REQUIRE(pixels.size() == static_cast<size_t>(Size) * Size * 4);
+    CHECK(Test::PixelsMatch(pixels, expected));
+
+    std::filesystem::remove(outArchive);
+}
+
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "texture loader: a BC7 cooked fixture loads and samples (skips without BC)")
 {

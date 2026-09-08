@@ -44,6 +44,14 @@ namespace Veng
         NormalXY = 1,
     };
 
+    /// @brief The current texture-format version.
+    ///
+    /// Bumped on any CookedTextureHeader layout change; the loader rejects a blob whose
+    /// Version != this. The header is read by a fixed-offset memcpy after a size guard, so a
+    /// field added without a version bump would be misread as garbage — the version turns that
+    /// into a loud reject, the discipline every other cooked header already follows.
+    inline constexpr u32 CookedTextureVersion = 1u;
+
     /// @brief Cooked header for a texture asset.
     ///
     /// Sampler fields mirror Veng::Renderer::SamplerInfo, stored as underlying integer/float
@@ -56,9 +64,10 @@ namespace Veng
     /// no per-level offset table; the loader walks the levels arithmetically. A single-mip
     /// texture (MipCount == 1) is the degenerate one-level case of this layout.
     ///
-    /// The trailing ChannelLayout field carries the texture's channel convention; adding it set
-    /// the texture header's on-disk layout, so a pack cooked before the field is size-mismatched
-    /// and re-cooks (the loader rejects a blob shorter than this header).
+    /// The trailing MipCappable and Version fields set the texture header's on-disk layout, so a
+    /// pack cooked before they existed is shorter than this header and rejected as Corrupt until
+    /// re-cooked (the loader guards the size and checks the version). MipCappable carries whether
+    /// the texture-quality mip cap may drop this texture's top mips at upload.
     struct CookedTextureHeader
     {
         /// @brief Pixel format; underlying Renderer::Format integer.
@@ -88,6 +97,15 @@ namespace Veng
         f32 MaxAnisotropy = 1.0f;
         /// @brief Channel convention; underlying CookedChannelLayout integer (0 = Direct).
         u32 ChannelLayout = 0;
+        /// @brief Whether the texture-quality mip cap may drop this texture's top mips at upload.
+        ///
+        /// Set by the cooker from the compression role — Color/Normal/HDR cappable, UI/Mask not —
+        /// and never set for a single-mip texture. The upload path honors the global mip-skip level
+        /// only where this is non-zero, so a UI atlas or a mask/data texture keeps every level
+        /// regardless of the chosen texture-quality tier.
+        u32 MipCappable = 0;
+        /// @brief Must equal CookedTextureVersion; the loader rejects a mismatch.
+        u32 Version = 0;
     };
 
     /// @brief The current mesh-format version.

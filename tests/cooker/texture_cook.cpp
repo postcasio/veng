@@ -56,6 +56,10 @@ TEST_CASE("Cooker: cooks a texture pack into a CookedTextureHeader + RGBA8 pixel
     CHECK(header.AnisotropyEnabled == 0);
     CHECK(header.MaxAnisotropy == 1.0f);
 
+    CHECK(header.Version == CookedTextureVersion);
+    // A single-mip, non-sRGB (Mask-role default) texture is never mip-cappable.
+    CHECK(header.MipCappable == 0);
+
     const usize pixelBytes = static_cast<usize>(header.Width) * header.Height * 4;
     REQUIRE(entry->Blob.size() == sizeof(CookedTextureHeader) + pixelBytes);
 
@@ -99,6 +103,9 @@ TEST_CASE("Cooker: generates a full mip chain by default and packs it largest-fi
     CHECK(header.Height == 8);
     // An 8x8 source halves through 8, 4, 2, 1 — four levels.
     CHECK(header.MipCount == 4);
+    // A multi-mip texture whose role is the non-sRGB Mask default is still not cappable — the cap
+    // gate is the role, not the presence of mips.
+    CHECK(header.MipCappable == 0);
 
     // The blob is the header followed by every level tightly packed largest-first; each level's
     // size derives from its halved dimensions, with no offset table.

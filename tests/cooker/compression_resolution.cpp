@@ -73,6 +73,28 @@ TEST_CASE("Cooker: a role resolves to the zero-config ASTC default with no confi
     CHECK(format == static_cast<u32>(Renderer::Format::ASTC4x4Srgb));
 }
 
+TEST_CASE("Cooker: the MipCappable flag follows the compression role")
+{
+    const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
+
+    // Color and Normal roles are mip-cappable; a multi-mip texture in either carries the flag, and
+    // the header is stamped at the current version.
+    const CookedTextureHeader color = CookHeader(fixtureDir / "texture_role_pack.json",
+                                                 AssetId{0x87D4E44F6ED405CEULL}, nullptr, {});
+    CHECK(color.Version == CookedTextureVersion);
+    CHECK(color.MipCount > 1);
+    CHECK(color.MipCappable == 1);
+
+    const CookedTextureHeader normal = CookHeader(fixtureDir / "texture_normal_role_pack.json",
+                                                  AssetId{0x163E4F0689B83AECULL}, nullptr, {});
+    CHECK(normal.MipCappable == 1);
+
+    // An absent role on an sRGB source guesses Color, so it is cappable too.
+    const CookedTextureHeader guessed = CookHeader(fixtureDir / "texture_norole_pack.json",
+                                                   AssetId{0x605F613507654CD5ULL}, nullptr, {});
+    CHECK(guessed.MipCappable == 1);
+}
+
 TEST_CASE("Cooker: a Color role resolves to the configuration's BC7 format")
 {
     const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);

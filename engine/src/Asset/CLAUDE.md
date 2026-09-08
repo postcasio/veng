@@ -187,6 +187,19 @@ transcode: on a device lacking the cooked codec's feature the loader logs **once
 recoverable `AssetError::Unsupported`, so the affected materials sample their fallback (untextured)
 and the app still runs — only `smoke_golden` (gated to skip on a non-ASTC device) would diverge.
 
+**A global texture-quality mip cap drops the top mips at upload.** `AssetManager::SetTextureQualityMipSkip(level)`
+holds a global mip-skip level the `TextureLoader` reads when it builds a texture: a **cappable**
+texture (the cooked `CookedTextureHeader::MipCappable` flag, stamped by the cooker from the
+compression role — Color/Normal/HDR cappable, UI/Mask not) with more than one level uploads from
+cooked level `min(level, MipCount - 1)`, so a lower tier uploads a **genuinely smaller image** (real
+VRAM + bandwidth saved, not a sampler bias). The geometry is the pure `Renderer::ComputeMipSkip` /
+`EffectiveMipSkip` helpers in `Veng/Renderer/FormatInfo.h`; the loader subspans the retained tail
+(itself a tightly-packed chain) so the upload path is unchanged. It is **read at build time only** —
+`AssetManager` caches by `AssetId`, so a resident texture is a cache hit a scene reload does not
+rebuild; the change takes effect on textures loaded fresh, in practice the next process start. Level
+0 (the default) uploads the full chain, byte-identical to an uncapped load. The engine drives the
+level from the resolve seam's global facet (`GraphicsGlobalFacet::TextureQualityMipSkip`).
+
 ## Meshes
 
 - **`AssetHandle<T>` is refcounted indirection into the manager's cache**, not a `Ref` to a GPU
