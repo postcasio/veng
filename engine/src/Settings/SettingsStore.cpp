@@ -1,4 +1,4 @@
-#include <Veng/Render/GraphicsSettings.h>
+#include <Veng/Settings/SettingsStore.h>
 
 #include <algorithm>
 #include <cmath>
@@ -11,7 +11,6 @@
 #include <Veng/Asset/AtomicFile.h>
 #include <Veng/Log.h>
 #include <Veng/Reflection/JsonSerialize.h>
-#include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>
 
 namespace Veng
@@ -21,11 +20,6 @@ namespace Veng
         // A scalar choice (render scale, a slider) survives a JSON text round-trip with tiny
         // rounding, so a preset match compares floats within a small tolerance rather than bit-exact.
         constexpr f32 ScalarMatchEpsilon = 1e-4f;
-
-        bool ScalarsMatch(const f32 a, const f32 b)
-        {
-            return std::fabs(a - b) <= ScalarMatchEpsilon;
-        }
 
         Result<string> ReadFileText(const path& filePath)
         {
@@ -44,15 +38,14 @@ namespace Veng
         }
     }
 
-    GraphicsSettings::GraphicsSettings(GraphicsSettingsInfo info)
-        : m_Schema(info.Schema), m_Types(info.Types), m_ConfigPath(std::move(info.ConfigPath))
+    bool SettingsStoreBase::ScalarsMatch(const f32 a, const f32 b)
     {
-        ResetToDefaults();
+        return std::fabs(a - b) <= ScalarMatchEpsilon;
     }
 
-    const GraphicsChoice* GraphicsSettings::FindChoice(const std::string_view settingId) const
+    const SettingsChoice* SettingsStoreBase::FindChoice(const std::string_view settingId) const
     {
-        for (const GraphicsChoice& choice : m_Choices.Choices)
+        for (const SettingsChoice& choice : AccessChoices())
         {
             if (choice.SettingId == settingId)
             {
@@ -62,10 +55,10 @@ namespace Veng
         return nullptr;
     }
 
-    void GraphicsSettings::SetChoice(const std::string_view settingId,
-                                     const std::string_view optionId, const f32 scalarValue)
+    void SettingsStoreBase::SetChoice(const std::string_view settingId,
+                                      const std::string_view optionId, const f32 scalarValue)
     {
-        for (GraphicsChoice& choice : m_Choices.Choices)
+        for (SettingsChoice& choice : AccessChoices())
         {
             if (choice.SettingId == settingId)
             {
@@ -74,31 +67,31 @@ namespace Veng
                 return;
             }
         }
-        m_Choices.Choices.push_back(GraphicsChoice{.SettingId = string(settingId),
-                                                   .OptionId = string(optionId),
-                                                   .ScalarValue = scalarValue});
+        AccessChoices().push_back(SettingsChoice{.SettingId = string(settingId),
+                                                 .OptionId = string(optionId),
+                                                 .ScalarValue = scalarValue});
     }
 
-    void GraphicsSettings::DropStaleChoices()
+    void SettingsStoreBase::DropStaleChoices()
     {
         if (m_Schema == nullptr)
         {
             return;
         }
-        std::erase_if(m_Choices.Choices, [this](const GraphicsChoice& choice)
+        std::erase_if(AccessChoices(), [this](const SettingsChoice& choice)
                       { return m_Schema->FindSetting(choice.SettingId) == nullptr; });
     }
 
-    string GraphicsSettings::GetChosenOption(const std::string_view settingId) const
+    string SettingsStoreBase::GetChosenOption(const std::string_view settingId) const
     {
-        if (const GraphicsChoice* choice = FindChoice(settingId))
+        if (const SettingsChoice* choice = FindChoice(settingId))
         {
             return choice->OptionId;
         }
         if (m_Schema != nullptr)
         {
-            if (const GraphicsSetting* setting = m_Schema->FindSetting(settingId);
-                setting != nullptr && setting->Kind == GraphicsSettingKind::Discrete &&
+            if (const SettingsSetting* setting = m_Schema->FindSetting(settingId);
+                setting != nullptr && setting->Kind == SettingsSettingKind::Discrete &&
                 !setting->Options.empty())
             {
                 const u32 index =
@@ -109,15 +102,15 @@ namespace Veng
         return {};
     }
 
-    f32 GraphicsSettings::GetChosenScalar(const std::string_view settingId) const
+    f32 SettingsStoreBase::GetChosenScalar(const std::string_view settingId) const
     {
-        if (const GraphicsChoice* choice = FindChoice(settingId))
+        if (const SettingsChoice* choice = FindChoice(settingId))
         {
             return choice->ScalarValue;
         }
         if (m_Schema != nullptr)
         {
-            if (const GraphicsSetting* setting = m_Schema->FindSetting(settingId))
+            if (const SettingsSetting* setting = m_Schema->FindSetting(settingId))
             {
                 return setting->DefaultValue;
             }
@@ -125,50 +118,49 @@ namespace Veng
         return 0.0f;
     }
 
-    void GraphicsSettings::SetChosenOption(const std::string_view settingId,
-                                           const std::string_view optionId)
+    void SettingsStoreBase::SetChosenOption(const std::string_view settingId,
+                                            const std::string_view optionId)
     {
         SetChoice(settingId, optionId, 0.0f);
     }
 
-    void GraphicsSettings::SetChosenScalar(const std::string_view settingId, const f32 value)
+    void SettingsStoreBase::SetChosenScalar(const std::string_view settingId, const f32 value)
     {
         SetChoice(settingId, {}, value);
     }
 
-    VoidResult GraphicsSettings::ApplyPreset(const std::string_view presetId)
+    VoidResult SettingsStoreBase::ApplyPreset(const std::string_view presetId)
     {
         if (m_Schema == nullptr)
         {
             return std::unexpected(string("cannot apply a preset without a schema"));
         }
-        const GraphicsPreset* preset = m_Schema->FindPreset(presetId);
+        const SettingsPreset* preset = m_Schema->FindPreset(presetId);
         if (preset == nullptr)
         {
             return std::unexpected(fmt::format("no such preset '{}'", presetId));
         }
 
-        for (const GraphicsPresetEntry& entry : preset->Entries)
+        for (const SettingsPresetEntry& entry : preset->Entries)
         {
-            // The one preset-eligible built-in a preset may carry; the display-identity built-ins
-            // are never touched here.
-            if (entry.SettingId == GraphicsRenderScaleBuiltinId)
+            // A domain built-in (the graphics render scale) is routed by the domain hook; every
+            // other entry is a schema setting stored as an ordinary keyed choice.
+            if (ApplyBuiltinPresetEntry(entry))
             {
-                m_Choices.Display.RenderScale = entry.ScalarValue;
                 continue;
             }
             SetChoice(entry.SettingId, entry.OptionId, entry.ScalarValue);
         }
-        m_Choices.ActivePreset = string(presetId);
+        AccessActivePreset() = string(presetId);
         return {};
     }
 
-    void GraphicsSettings::ResetToDefaults()
+    void SettingsStoreBase::ResetToDefaults()
     {
-        m_Choices.Choices.clear();
-        m_Choices.ActivePreset.clear();
-        m_Choices.Display = BuiltinDisplayChoices{};
-        m_Choices.Version = GraphicsChoicesVersion;
+        AccessChoices().clear();
+        AccessActivePreset().clear();
+        ResetBuiltinsToDefaults();
+        StampDocVersion();
 
         if (m_Schema != nullptr && !m_Schema->GetDefaultPreset().empty())
         {
@@ -177,34 +169,35 @@ namespace Veng
             const VoidResult applied = ApplyPreset(m_Schema->GetDefaultPreset());
             if (!applied)
             {
-                Log::Warn("graphics settings: default preset '{}' is not declared; leaving "
-                          "settings at their schema defaults",
-                          m_Schema->GetDefaultPreset());
+                Log::Warn(
+                    "settings store: default preset '{}' is not declared; leaving settings at "
+                    "their schema defaults",
+                    m_Schema->GetDefaultPreset());
             }
         }
     }
 
-    bool GraphicsSettings::PresetMatches(const GraphicsPreset& preset) const
+    bool SettingsStoreBase::PresetMatches(const SettingsPreset& preset) const
     {
-        for (const GraphicsPresetEntry& entry : preset.Entries)
+        for (const SettingsPresetEntry& entry : preset.Entries)
         {
-            if (entry.SettingId == GraphicsRenderScaleBuiltinId)
+            if (const optional<bool> builtin = MatchBuiltinPresetEntry(entry))
             {
-                if (!ScalarsMatch(m_Choices.Display.RenderScale, entry.ScalarValue))
+                if (!*builtin)
                 {
                     return false;
                 }
                 continue;
             }
 
-            const GraphicsSetting* setting =
+            const SettingsSetting* setting =
                 m_Schema != nullptr ? m_Schema->FindSetting(entry.SettingId) : nullptr;
             if (setting == nullptr)
             {
                 // An entry the schema no longer declares cannot disqualify a match.
                 continue;
             }
-            if (setting->Kind == GraphicsSettingKind::Discrete)
+            if (setting->Kind == SettingsSettingKind::Discrete)
             {
                 if (GetChosenOption(entry.SettingId) != entry.OptionId)
                 {
@@ -219,13 +212,13 @@ namespace Veng
         return true;
     }
 
-    optional<string> GraphicsSettings::MatchingPreset() const
+    optional<string> SettingsStoreBase::MatchingPreset() const
     {
         if (m_Schema == nullptr)
         {
             return std::nullopt;
         }
-        for (const GraphicsPreset& preset : m_Schema->GetPresets())
+        for (const SettingsPreset& preset : m_Schema->GetPresets())
         {
             if (PresetMatches(preset))
             {
@@ -235,11 +228,11 @@ namespace Veng
         return std::nullopt;
     }
 
-    VoidResult GraphicsSettings::Load()
+    VoidResult SettingsStoreBase::Load()
     {
-        // Start from the schema/engine defaults, then overlay whatever the file supplies. A field
-        // the file omits keeps its default, which is what makes a newly-added setting gain its
-        // default on an older file.
+        // Start from the schema defaults, then overlay whatever the file supplies. A field the file
+        // omits keeps its default, which is what makes a newly-added setting gain its default on an
+        // older file.
         ResetToDefaults();
         m_LoadedFromFile = false;
 
@@ -260,7 +253,7 @@ namespace Veng
         const Result<string> text = ReadFileText(m_ConfigPath);
         if (!text)
         {
-            Log::Warn("graphics settings: {}; using defaults", text.error());
+            Log::Warn("settings store: {}; using defaults", text.error());
             return std::unexpected(text.error());
         }
 
@@ -268,45 +261,40 @@ namespace Veng
             nlohmann::json::parse(*text, nullptr, /*allow_exceptions=*/false);
         if (doc.is_discarded() || !doc.is_object())
         {
-            Log::Warn("graphics settings: '{}' is not valid JSON; using defaults",
+            Log::Warn("settings store: '{}' is not valid JSON; using defaults",
                       m_ConfigPath.string());
             return std::unexpected(fmt::format("'{}' is not valid JSON", m_ConfigPath.string()));
         }
 
-        VE_ASSERT(m_Types != nullptr, "GraphicsSettings::Load requires a type registry");
-        GraphicsChoices loaded;
-        const VoidResult read =
-            JsonReadFields(&loaded, m_Types->Info(TypeIdOf<GraphicsChoices>()), doc, *m_Types, {},
-                           /*allowUnknownFields=*/true);
+        VE_ASSERT(m_Types != nullptr, "SettingsStore::Load requires a type registry");
+        // Overlay onto a fresh struct-default document, so an omitted key keeps its default.
+        SetDocToStructDefaults();
+        const VoidResult read = JsonReadFields(DocData(), m_Types->Info(DocTypeId()), doc, *m_Types,
+                                               {}, /*allowUnknownFields=*/true);
         if (!read)
         {
-            Log::Warn("graphics settings: '{}' is malformed ({}); using defaults",
+            Log::Warn("settings store: '{}' is malformed ({}); using defaults",
                       m_ConfigPath.string(), read.error());
             ResetToDefaults();
             return std::unexpected(read.error());
         }
 
-        m_Choices = std::move(loaded);
         DropStaleChoices();
         // A migrated document is re-stamped so a later save carries the current version.
-        m_Choices.Version = GraphicsChoicesVersion;
+        StampDocVersion();
         return {};
     }
 
-    VoidResult GraphicsSettings::Save() const
+    VoidResult SettingsStoreBase::Save() const
     {
         if (m_ConfigPath.empty())
         {
-            Log::Warn("graphics settings: no config path; not saving");
+            Log::Warn("settings store: no config path; not saving");
             return std::unexpected(string("no config path set"));
         }
-        VE_ASSERT(m_Types != nullptr, "GraphicsSettings::Save requires a type registry");
+        VE_ASSERT(m_Types != nullptr, "SettingsStore::Save requires a type registry");
 
-        GraphicsChoices out = m_Choices;
-        out.Version = GraphicsChoicesVersion;
-
-        const nlohmann::json doc =
-            JsonWriteFields(&out, m_Types->Info(TypeIdOf<GraphicsChoices>()), *m_Types);
+        const nlohmann::json doc = JsonWriteFields(DocData(), m_Types->Info(DocTypeId()), *m_Types);
         const string text = doc.dump(2);
         const auto* bytes = reinterpret_cast<const u8*>(text.data());
         return WriteFileAtomic(m_ConfigPath, std::span<const u8>(bytes, text.size()));

@@ -104,7 +104,7 @@ add_library(veng SHARED
         src/Asset/Loaders/AnimationLoader.cpp
         src/Asset/Loaders/AudioClipLoader.cpp
         src/Asset/Loaders/DataTableLoader.cpp
-        src/Asset/Loaders/GraphicsSchemaLoader.cpp
+        src/Asset/Loaders/SettingsSchemaLoader.cpp
         src/Asset/Loaders/CollisionShapeLoader.cpp
         src/Asset/Loaders/TableSchemaLoader.cpp
         src/Asset/Loaders/EnvironmentLoader.cpp
@@ -287,8 +287,8 @@ add_library(veng SHARED
         src/Renderer/RenderGraph.cpp
         src/Renderer/SceneCapture.cpp
         src/Render/DisplayResolve.cpp
-        src/Render/GraphicsSchema.cpp
-        src/Render/GraphicsSettings.cpp
+        src/Settings/SettingsSchema.cpp
+        src/Settings/SettingsStore.cpp
         src/Renderer/CaptureSurface.cpp
         src/Renderer/DrawGather.cpp
         src/Renderer/FrameTopology.cpp

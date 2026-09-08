@@ -1,4 +1,4 @@
-#include "GraphicsSchemaImporter.h"
+#include "SettingsSchemaImporter.h"
 
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
@@ -15,17 +15,17 @@
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>
-#include <Veng/Render/GraphicsSchema.h>
 #include <Veng/Scene/BuiltinTypes.h>
+#include <Veng/Settings/SettingsSchema.h>
 
 namespace Veng::Cook
 {
     namespace
     {
-        // Located-error prefix for a graphics-schema field.
+        // Located-error prefix for a settings-schema field.
         string Located(const string& file, const string& reason)
         {
-            return fmt::format("graphics schema importer: '{}': {}", file, reason);
+            return fmt::format("settings schema importer: '{}': {}", file, reason);
         }
 
         template <class T>
@@ -37,14 +37,14 @@ namespace Veng::Cook
 
         // Validates the decoded schema. Every failure is a located error naming the offending id,
         // matching the LevelImporter's diagnostics.
-        VoidResult Validate(const GraphicsSchemaData& schema, const string& file)
+        VoidResult Validate(const SettingsSchemaData& schema, const string& file)
         {
             // Every schema setting id, for the preset cross-check, and each setting's option set.
             std::unordered_set<string> settingIds;
-            std::unordered_map<string, const GraphicsSetting*> settingsById;
+            std::unordered_map<string, const SettingsSetting*> settingsById;
             std::unordered_set<string> categoryIds;
 
-            for (const GraphicsCategory& category : schema.Categories)
+            for (const SettingsCategory& category : schema.Categories)
             {
                 if (category.Id.empty())
                 {
@@ -57,7 +57,7 @@ namespace Veng::Cook
                                                   category.Id)));
                 }
 
-                for (const GraphicsSetting& setting : category.Settings)
+                for (const SettingsSetting& setting : category.Settings)
                 {
                     if (setting.Id.empty())
                     {
@@ -80,7 +80,7 @@ namespace Veng::Cook
                     }
                     settingsById.emplace(setting.Id, &setting);
 
-                    if (setting.Kind == GraphicsSettingKind::Discrete)
+                    if (setting.Kind == SettingsSettingKind::Discrete)
                     {
                         if (setting.Options.empty())
                         {
@@ -89,7 +89,7 @@ namespace Veng::Cook
                                                   setting.Id)));
                         }
                         std::unordered_set<string> optionIds;
-                        for (const GraphicsOption& option : setting.Options)
+                        for (const SettingsOption& option : setting.Options)
                         {
                             if (option.Id.empty())
                             {
@@ -116,7 +116,7 @@ namespace Veng::Cook
                                             setting.Options.size())));
                         }
                     }
-                    else // GraphicsSettingKind::Scalar
+                    else // SettingsSettingKind::Scalar
                     {
                         if (!(setting.Min < setting.Max))
                         {
@@ -140,7 +140,7 @@ namespace Veng::Cook
 
             // Presets: unique ids, and every entry names a real target.
             std::unordered_set<string> presetIds;
-            for (const GraphicsPreset& preset : schema.Presets)
+            for (const SettingsPreset& preset : schema.Presets)
             {
                 if (preset.Id.empty())
                 {
@@ -152,7 +152,7 @@ namespace Veng::Cook
                         file, fmt::format("preset id '{}' is declared more than once", preset.Id)));
                 }
 
-                for (const GraphicsPresetEntry& presetEntry : preset.Entries)
+                for (const SettingsPresetEntry& presetEntry : preset.Entries)
                 {
                     if (presetEntry.SettingId == GraphicsRenderScaleBuiltinId)
                     {
@@ -170,11 +170,11 @@ namespace Veng::Cook
                                               GraphicsRenderScaleBuiltinId)));
                     }
 
-                    const GraphicsSetting& setting = *found->second;
-                    if (setting.Kind == GraphicsSettingKind::Discrete)
+                    const SettingsSetting& setting = *found->second;
+                    if (setting.Kind == SettingsSettingKind::Discrete)
                     {
                         const bool known =
-                            std::ranges::any_of(setting.Options, [&](const GraphicsOption& option)
+                            std::ranges::any_of(setting.Options, [&](const SettingsOption& option)
                                                 { return option.Id == presetEntry.OptionId; });
                         if (!known)
                         {
@@ -199,20 +199,20 @@ namespace Veng::Cook
         }
     }
 
-    Result<vector<u8>> GraphicsSchemaImporter::Cook(const CookContext& context,
+    Result<vector<u8>> SettingsSchemaImporter::Cook(const CookContext& context,
                                                     const json& entry) const
     {
-        // --- 1. Read + parse the external *.gfxschema.json ---
+        // --- 1. Read + parse the external settings-schema source ---
 
         if (!entry.contains("source") || !entry["source"].is_string())
         {
-            return std::unexpected("graphics schema importer: missing or invalid 'source'");
+            return std::unexpected("settings schema importer: missing or invalid 'source'");
         }
 
         const path sourcePath = context.PackDir / entry["source"].get<string>();
         const string file = sourcePath.string();
 
-        const Result<json> docResult = ReadJsonFile(sourcePath, "graphics schema importer");
+        const Result<json> docResult = ReadJsonFile(sourcePath, "settings schema importer");
         if (!docResult)
         {
             return std::unexpected(docResult.error());
@@ -231,8 +231,8 @@ namespace Veng::Cook
 
         // --- 2. Bind the whole schema through the shared walker (strict: unknown key → error) ---
 
-        const TypeInfo& type = registry.Info(TypeIdOf<GraphicsSchemaData>());
-        GraphicsSchemaData schema;
+        const TypeInfo& type = registry.Info(TypeIdOf<SettingsSchemaData>());
+        SettingsSchemaData schema;
         const VoidResult bound = JsonReadFields(&schema, type, doc, registry);
         if (!bound)
         {
@@ -252,20 +252,20 @@ namespace Veng::Cook
         vector<u8> record;
         WriteFields(record, &schema, type, registry);
 
-        CookedGraphicsSchemaHeader header{};
-        header.Version = CookedGraphicsSchemaVersion;
+        CookedSettingsSchemaHeader header{};
+        header.Version = CookedSettingsSchemaVersion;
         header.RecordBytes = static_cast<u32>(record.size());
 
         vector<u8> blob;
-        blob.reserve(sizeof(CookedGraphicsSchemaHeader) + record.size());
+        blob.reserve(sizeof(CookedSettingsSchemaHeader) + record.size());
         Append(blob, header);
         blob.insert(blob.end(), record.begin(), record.end());
 
         return blob;
     }
 
-    void RegisterGraphicsSchemaImporter(Cooker& cooker)
+    void RegisterSettingsSchemaImporter(Cooker& cooker)
     {
-        cooker.Register(CreateUnique<GraphicsSchemaImporter>());
+        cooker.Register(CreateUnique<SettingsSchemaImporter>());
     }
 }

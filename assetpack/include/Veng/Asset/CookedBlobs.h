@@ -1472,27 +1472,28 @@ namespace Veng
         u32 Pad = 0;
     };
 
-    /// @brief The current graphics-schema-format version.
+    /// @brief The current settings-schema-format version.
     ///
-    /// Bumped on any CookedGraphicsSchemaHeader layout change; the loader rejects a blob whose
+    /// Bumped on any CookedSettingsSchemaHeader layout change; the loader rejects a blob whose
     /// Version != this. The embedded reflection record evolves tolerantly within a fixed version —
     /// a new category/setting/preset field does not require a bump.
-    inline constexpr u32 CookedGraphicsSchemaVersion = 1u;
+    inline constexpr u32 CookedSettingsSchemaVersion = 1u;
 
-    /// @brief Cooked header for a graphics-schema asset.
+    /// @brief Cooked header for a settings-schema asset.
     ///
-    /// A graphics schema is a game's data-driven quality-settings declaration: its categories,
-    /// each setting's kind and choices, the labels, and the presets. The whole schema rides the
-    /// reflection serializer's name-keyed WriteFields record — assetpack treats it as opaque bytes,
-    /// exactly as a prefab blob treats a component record, so this file gains no reflection
-    /// dependency (cycle-avoidance rule at the top). The runtime loader ReadFields the record.
+    /// A settings schema is a domain's data-driven settings declaration (graphics or audio): its
+    /// categories, each setting's kind and choices, the labels, and the optional presets. The whole
+    /// schema rides the reflection serializer's name-keyed WriteFields record — assetpack treats it
+    /// as opaque bytes, exactly as a prefab blob treats a component record, so this file gains no
+    /// reflection dependency (cycle-avoidance rule at the top). The runtime loader ReadFields the
+    /// record.
     ///
     /// The blob is, in order:
-    ///   CookedGraphicsSchemaHeader
+    ///   CookedSettingsSchemaHeader
     ///   schema record   — WriteFields record of the reflected schema (RecordBytes)
-    struct CookedGraphicsSchemaHeader
+    struct CookedSettingsSchemaHeader
     {
-        /// @brief Must equal CookedGraphicsSchemaVersion; the loader rejects mismatches.
+        /// @brief Must equal CookedSettingsSchemaVersion; the loader rejects mismatches.
         u32 Version = 0;
         /// @brief Byte size of the reflection record following this header.
         u32 RecordBytes = 0;

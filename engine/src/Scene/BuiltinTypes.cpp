@@ -58,10 +58,13 @@ namespace Veng
         registry.Register<InputContextStack>();
         // The reflected on-disk payload of an input map, read by InputMapLoader.
         registry.Register<InputMapData>();
-        // The reflected on-disk payload of a graphics schema, read by GraphicsSchemaLoader; its
+        // The reflected on-disk payload of a settings schema, read by SettingsSchemaLoader; its
         // nested category/setting/option/preset types auto-register through the describe walk.
-        registry.Register<GraphicsSchemaData>();
-        // The per-machine graphics preferences the settings store persists as JSON; its nested
+        registry.Register<SettingsSchemaData>();
+        // The domain-neutral per-machine settings document a SettingsStore persists as JSON; its
+        // nested choice type auto-registers through the walk.
+        registry.Register<SettingsChoices>();
+        // The per-machine graphics preferences the graphics store persists as JSON; its nested
         // choice/display types and the fullscreen/present-mode enums auto-register through the walk.
         registry.Register<GraphicsChoices>();
         registry.Register<Intent>();

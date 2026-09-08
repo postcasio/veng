@@ -902,6 +902,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/data_table.cpp
             tests/unit/graphics_schema.cpp
             tests/unit/graphics_settings.cpp
+            tests/unit/settings_store.cpp
             tests/unit/primitives.cpp
             # projection_shell.cpp pins Primitives::ProjectionShell's reprojection property —
             # every vertex reprojected through ProjectToScreen (never the generator's own

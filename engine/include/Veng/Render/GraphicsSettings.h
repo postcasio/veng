@@ -1,17 +1,20 @@
 #pragma once
 
-#include <string_view>
-
 #include <Veng/Veng.h>
 #include <Veng/Path.h>
-#include <Veng/Result.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Render/DisplayModes.h>
 #include <Veng/Render/GraphicsSchema.h>
+#include <Veng/Settings/SettingsStore.h>
 
 namespace Veng
 {
     class TypeRegistry;
+
+    /// @brief The graphics-domain spelling of a persisted per-setting choice.
+    ///
+    /// An alias of the shared SettingsChoice — kept so graphics-domain code reads in graphics terms.
+    using GraphicsChoice = SettingsChoice;
 
     /// @brief The engine's own built-in display/output selections, persisted per machine.
     ///
@@ -46,33 +49,17 @@ namespace Veng
 
     /// @brief The on-disk format version of a persisted GraphicsChoices document.
     ///
-    /// Written into every saved file and read back to drive tolerant migration: an older document
-    /// still loads, its added settings gaining their schema defaults and its stale setting ids
-    /// dropped. Bumped only when the migration a load performs must change.
+    /// Written into every saved file and read back to drive tolerant migration. Bumped only when the
+    /// migration a load performs must change.
     inline constexpr u32 GraphicsChoicesVersion = 1;
-
-    /// @brief One persisted value for a single schema setting, keyed by setting id.
-    ///
-    /// The stored analogue of a GraphicsPresetEntry (a chosen value vs. a preset's declared one):
-    /// for a discrete setting OptionId names the chosen option, for a scalar setting ScalarValue
-    /// carries it. Keyed by SettingId rather than by index, so reordering the schema never silently
-    /// repoints a saved choice.
-    struct GraphicsChoice
-    {
-        /// @brief The schema setting this value is for.
-        string SettingId;
-        /// @brief The chosen option id (discrete settings only); empty for a scalar choice.
-        string OptionId;
-        /// @brief The chosen scalar value (scalar settings only).
-        f32 ScalarValue = 0.0f;
-    };
 
     /// @brief The complete persisted graphics preferences of one machine.
     ///
     /// The reflected document GraphicsSettings saves and loads: the format version, the last-applied
     /// preset id (a display hint; the live Custom query is authoritative), the per-setting chosen
-    /// values, and the engine's built-in display selections. It serializes through the shared
-    /// reflection/JSON walker, so a new field evolves tolerantly within the version.
+    /// values, and the engine's built-in display selections. It serializes flat through the shared
+    /// reflection/JSON walker, so a new field evolves tolerantly within the version; the Display
+    /// built-ins ride the same flat document with no sub-object of their own.
     struct GraphicsChoices
     {
         /// @brief The on-disk format version; stamped to GraphicsChoicesVersion on save.
@@ -105,143 +92,73 @@ namespace Veng
         path ConfigPath;
     };
 
-    /// @brief The per-machine graphics-preferences store: the loaded schema, the chosen values, and
-    ///        the engine's built-in display selections, persisted as versioned JSON.
+    /// @brief The per-machine graphics-preferences store: the graphics-domain façade over the
+    ///        shared settings core, adding the engine's built-in display selections.
     ///
-    /// Holds the state the settings menu reads and writes and the boot path applies. It carries ids
-    /// and values, never their meaning — the schema bounds the choices; the resolver (game code)
-    /// gives them effect. Persistence is per machine/install (a file under the user config
-    /// directory), deliberately not the per-account save store: graphics config is a property of
-    /// the install, and a save must not carry it.
-    ///
-    /// The store is standalone: it takes a schema, a type registry, and a config path, so it is
-    /// exercised without an Application. Load is tolerant (a missing file yields defaults, an older
-    /// version migrates, a corrupt file falls back to defaults with a warning and never aborts), and
-    /// Save is atomic (a temporary renamed into place, so a crash mid-write leaves the previous file
-    /// intact).
-    class GraphicsSettings
+    /// A thin façade over SettingsStore<GraphicsChoices>: the core owns the schema, the tolerant
+    /// versioned JSON persistence, and preset apply/reset/Custom detection, while this class adds
+    /// the graphics-only display built-ins (which have no analogue in another settings domain) and
+    /// routes the one preset-eligible built-in — the render scale — through the core's built-in
+    /// hooks. It carries ids and values, never their meaning: the schema bounds the choices; a
+    /// resolver (game code) gives them effect. Persistence is per machine/install, deliberately not
+    /// the per-account save store: graphics config is a property of the install, and a save must
+    /// not carry it.
+    class GraphicsSettings : public SettingsStore<GraphicsChoices>
     {
     public:
         /// @brief Constructs the store; the current choices start at the schema/engine defaults.
         /// @param info  The schema, type registry, and config path.
-        explicit GraphicsSettings(GraphicsSettingsInfo info);
-
-        /// @brief Returns the bounding schema, or null when none was supplied.
-        [[nodiscard]] const GraphicsSchema* GetSchema() const { return m_Schema; }
+        explicit GraphicsSettings(GraphicsSettingsInfo info)
+            : SettingsStore<GraphicsChoices>(
+                  SettingsStoreInfo{.Schema = info.Schema,
+                                    .Types = info.Types,
+                                    .ConfigPath = std::move(info.ConfigPath)})
+        {
+            // Run the reset now that the render-scale built-in hooks are live (a base-constructor
+            // reset would route the render-scale preset entry as an ordinary choice).
+            ResetToDefaults();
+        }
 
         /// @brief Returns the complete current choices.
-        [[nodiscard]] const GraphicsChoices& GetChoices() const { return m_Choices; }
+        [[nodiscard]] const GraphicsChoices& GetChoices() const { return GetDocument(); }
 
         /// @brief Returns the current built-in display selections.
-        [[nodiscard]] const BuiltinDisplayChoices& GetDisplay() const { return m_Choices.Display; }
+        [[nodiscard]] const BuiltinDisplayChoices& GetDisplay() const
+        {
+            return GetDocument().Display;
+        }
 
         /// @brief Returns the current built-in display selections for in-place editing by the menu.
-        [[nodiscard]] BuiltinDisplayChoices& GetDisplay() { return m_Choices.Display; }
+        [[nodiscard]] BuiltinDisplayChoices& GetDisplay() { return MutableDocument().Display; }
 
-        /// @brief Returns the id of the last preset applied; empty when none has been.
-        [[nodiscard]] const string& GetActivePreset() const { return m_Choices.ActivePreset; }
+    protected:
+        /// @brief Routes the render-scale built-in preset entry to the display selections.
+        [[nodiscard]] bool ApplyBuiltinPresetEntry(const SettingsPresetEntry& entry) override
+        {
+            if (entry.SettingId == GraphicsRenderScaleBuiltinId)
+            {
+                MutableDocument().Display.RenderScale = entry.ScalarValue;
+                return true;
+            }
+            return false;
+        }
 
-        /// @brief Whether the last Load() found an existing config file on disk.
-        ///
-        /// True when a settings file was present at the config path (a returning install), even if it
-        /// was then unreadable or malformed and the store fell back to defaults; false after the
-        /// first-run missing-file default, when no config path is set, and before any Load(). Lets a
-        /// consumer tell a first launch from a returning one without re-deriving the engine's private
-        /// config path itself.
-        [[nodiscard]] bool WasLoadedFromFile() const { return m_LoadedFromFile; }
+        /// @brief Matches the render-scale built-in preset entry against the display selection.
+        [[nodiscard]] optional<bool>
+        MatchBuiltinPresetEntry(const SettingsPresetEntry& entry) const override
+        {
+            if (entry.SettingId == GraphicsRenderScaleBuiltinId)
+            {
+                return ScalarsMatch(GetDocument().Display.RenderScale, entry.ScalarValue);
+            }
+            return std::nullopt;
+        }
 
-        /// @brief Loads the choices from the config file, or leaves defaults when it cannot.
-        ///
-        /// A missing file yields the schema/engine defaults (the first-run path); a present file at
-        /// an older version migrates tolerantly (added settings read their schema default, stale
-        /// setting ids are dropped); an unreadable or corrupt file falls back to defaults and logs a
-        /// warning. The store is always left usable.
-        /// @return Empty on a clean load or a normal missing-file default; an error (state still
-        ///         valid defaults) when the file was present but could not be read or parsed.
-        VoidResult Load();
-
-        /// @brief Writes the current choices to the config file atomically.
-        ///
-        /// The document is stamped with the current version and written through a temporary renamed
-        /// into place, so a crash mid-write never truncates the file. Called by the menu on Apply,
-        /// never per frame.
-        /// @return Empty on success; an error when no config path is set or the write failed.
-        [[nodiscard]] VoidResult Save() const;
-
-        /// @brief Applies a named preset to the preset-eligible settings.
-        ///
-        /// Every schema setting the preset names gets a chosen value, and the reserved render-scale
-        /// entry routes to the render-scale display built-in. The display-identity built-ins
-        /// (resolution, monitor, refresh, fullscreen, present mode, frame cap, brightness/gamma) are
-        /// never touched. ActivePreset is set to the applied preset.
-        /// @param presetId  The preset to apply.
-        /// @return Empty on success; an error when there is no schema or no such preset.
-        VoidResult ApplyPreset(std::string_view presetId);
-
-        /// @brief Resets every setting to its default and the display built-ins to engine defaults.
-        ///
-        /// Applies the schema's default preset to the preset-eligible settings — so ActivePreset
-        /// becomes the default preset and the Custom query does not immediately fire — and resets
-        /// the display-identity built-ins to their engine defaults (native resolution and refresh,
-        /// windowed, vsync, no cap, no scale or brightness/gamma adjustment).
-        void ResetToDefaults();
-
-        /// @brief Returns the id of a preset the current choices match exactly, if any.
-        ///
-        /// A preset matches when every entry it declares equals the current chosen value (a schema
-        /// setting's option/scalar, or the render-scale built-in). Returns the first such preset, or
-        /// nullopt when the choices match none — the "Custom" state.
-        [[nodiscard]] optional<string> MatchingPreset() const;
-
-        /// @brief Returns whether the current choices match no preset — the "Custom" state.
-        [[nodiscard]] bool IsCustom() const { return !MatchingPreset().has_value(); }
-
-        /// @brief Returns the chosen option id for a discrete setting, or its schema default.
-        /// @param settingId  The setting to read.
-        /// @return The chosen option id, the setting's default option id when unset, or empty when
-        ///         no schema declares the setting.
-        [[nodiscard]] string GetChosenOption(std::string_view settingId) const;
-
-        /// @brief Returns the chosen scalar value for a scalar setting, or its schema default.
-        /// @param settingId  The setting to read.
-        /// @return The chosen scalar, the setting's default value when unset, or 0 when no schema
-        ///         declares the setting.
-        [[nodiscard]] f32 GetChosenScalar(std::string_view settingId) const;
-
-        /// @brief Sets the chosen option id for a discrete setting.
-        /// @param settingId  The setting to write.
-        /// @param optionId   The chosen option id.
-        void SetChosenOption(std::string_view settingId, std::string_view optionId);
-
-        /// @brief Sets the chosen scalar value for a scalar setting.
-        /// @param settingId  The setting to write.
-        /// @param value      The chosen scalar value.
-        void SetChosenScalar(std::string_view settingId, f32 value);
-
-    private:
-        /// @brief Finds the stored choice for a setting id, or null when unset.
-        [[nodiscard]] const GraphicsChoice* FindChoice(std::string_view settingId) const;
-
-        /// @brief Inserts or updates the stored choice for a setting id.
-        void SetChoice(std::string_view settingId, std::string_view optionId, f32 scalarValue);
-
-        /// @brief Drops stored choices for setting ids the schema no longer declares.
-        void DropStaleChoices();
-
-        /// @brief Returns whether the current choices match the given preset exactly.
-        [[nodiscard]] bool PresetMatches(const GraphicsPreset& preset) const;
-
-        /// @brief The bounding schema (borrowed, nullable).
-        const GraphicsSchema* m_Schema = nullptr;
-        /// @brief The registry the JSON walker resolves the choices' types through (borrowed).
-        const TypeRegistry* m_Types = nullptr;
-        /// @brief The per-machine settings file; empty disables persistence.
-        path m_ConfigPath;
-        /// @brief The current choices.
-        GraphicsChoices m_Choices;
-
-        /// @brief Whether the last Load() found an existing config file (see WasLoadedFromFile).
-        bool m_LoadedFromFile = false;
+        /// @brief Resets the display-identity built-ins to their engine defaults.
+        void ResetBuiltinsToDefaults() override
+        {
+            MutableDocument().Display = BuiltinDisplayChoices{};
+        }
     };
 }
 
@@ -255,12 +172,6 @@ VE_FIELD(FrameCapHz, .DisplayName = "Frame Cap Hz")
 VE_FIELD(RenderScale, .DisplayName = "Render Scale")
 VE_FIELD(Brightness, .DisplayName = "Brightness")
 VE_FIELD(Gamma, .DisplayName = "Gamma")
-VE_REFLECT_END();
-
-VE_REFLECT(::Veng::GraphicsChoice, 0x13CA5388C2FC3B58ULL)
-VE_FIELD(SettingId, .DisplayName = "Setting Id")
-VE_FIELD(OptionId, .DisplayName = "Option Id")
-VE_FIELD(ScalarValue, .DisplayName = "Scalar Value")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::GraphicsChoices, 0x82D18C94E0BA3680ULL)

@@ -10,7 +10,7 @@
 #include "Loaders/AudioClipLoader.h"
 #include "Loaders/CollisionShapeLoader.h"
 #include "Loaders/DataTableLoader.h"
-#include "Loaders/GraphicsSchemaLoader.h"
+#include "Loaders/SettingsSchemaLoader.h"
 #include "Loaders/EnvironmentLoader.h"
 #include "Loaders/FontLoader.h"
 #include "Loaders/InputMapLoader.h"
@@ -77,7 +77,7 @@ namespace Veng
         RegisterLoader(CreateUnique<DataTableLoader>());
         RegisterLoader(CreateUnique<CollisionShapeLoader>());
         RegisterLoader(CreateUnique<AudioClipLoader>());
-        RegisterLoader(CreateUnique<GraphicsSchemaLoader>());
+        RegisterLoader(CreateUnique<SettingsSchemaLoader>());
 
         // Module-registered loaders come last, so a factory claiming a type the engine already
         // handles is caught rather than silently shadowing the builtin — override semantics for

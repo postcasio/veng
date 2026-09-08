@@ -16,7 +16,7 @@ namespace Veng::Cook
         RegisterPrefabImporter(cooker);
         RegisterLevelImporter(cooker);
         RegisterInputMapImporter(cooker);
-        RegisterGraphicsSchemaImporter(cooker);
+        RegisterSettingsSchemaImporter(cooker);
         RegisterStyleSheetImporter(cooker);
         RegisterUIDocumentImporter(cooker);
         RegisterTableImporters(cooker);

@@ -1,4 +1,4 @@
-#include "GraphicsSchemaLoader.h"
+#include "SettingsSchemaLoader.h"
 
 #include <cstring>
 
@@ -21,45 +21,45 @@ namespace Veng
     }
 
     AssetResult<Detail::LoadJob>
-    GraphicsSchemaLoader::Load(AssetManager& /*manager*/, Renderer::Context& /*context*/,
+    SettingsSchemaLoader::Load(AssetManager& /*manager*/, Renderer::Context& /*context*/,
                                TaskSystem& /*tasks*/, TypeRegistry& types, AssetId id,
                                std::span<const u8> cooked, bool /*async*/) const
     {
-        if (cooked.size() < sizeof(CookedGraphicsSchemaHeader))
+        if (cooked.size() < sizeof(CookedSettingsSchemaHeader))
         {
             return std::unexpected(Corrupt(
-                id, "graphics schema: cooked blob smaller than CookedGraphicsSchemaHeader"));
+                id, "settings schema: cooked blob smaller than CookedSettingsSchemaHeader"));
         }
 
-        CookedGraphicsSchemaHeader header;
+        CookedSettingsSchemaHeader header;
         std::memcpy(&header, cooked.data(), sizeof(header));
 
         // A stale/foreign blob is a recoverable load failure, not a crash.
-        if (header.Version != CookedGraphicsSchemaVersion)
+        if (header.Version != CookedSettingsSchemaVersion)
         {
             return std::unexpected(Corrupt(
                 id,
-                fmt::format("graphics schema: blob version {} does not match expected version {}",
-                            header.Version, CookedGraphicsSchemaVersion)));
+                fmt::format("settings schema: blob version {} does not match expected version {}",
+                            header.Version, CookedSettingsSchemaVersion)));
         }
 
-        const usize cursor = sizeof(CookedGraphicsSchemaHeader);
+        const usize cursor = sizeof(CookedSettingsSchemaHeader);
         if (cooked.size() < cursor + header.RecordBytes)
         {
-            return std::unexpected(Corrupt(id, "graphics schema: cooked blob truncated"));
+            return std::unexpected(Corrupt(id, "settings schema: cooked blob truncated"));
         }
 
         const std::span<const u8> record = cooked.subspan(cursor, header.RecordBytes);
 
-        GraphicsSchemaData data;
+        SettingsSchemaData data;
         const VoidResult read =
-            ReadFields(record, &data, types.Info(TypeIdOf<GraphicsSchemaData>()), types);
+            ReadFields(record, &data, types.Info(TypeIdOf<SettingsSchemaData>()), types);
         if (!read)
         {
             return std::unexpected(Corrupt(id, read.error()));
         }
 
-        const Ref<GraphicsSchema> schema = GraphicsSchema::Create(std::move(data));
+        const Ref<SettingsSchema> schema = SettingsSchema::Create(std::move(data));
         return Detail::LoadJob{.Resource = Detail::RefAny(schema)};
     }
 }

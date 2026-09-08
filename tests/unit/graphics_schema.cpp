@@ -179,7 +179,7 @@ TEST_CASE(
     WriteFields(record, &authored, older, types);
 
     // The current loader reads it through the full descriptor; the missing field stays at its
-    // default, so an existing cooked schema loads unchanged within CookedGraphicsSchemaVersion.
+    // default, so an existing cooked schema loads unchanged within CookedSettingsSchemaVersion.
     GraphicsSetting loaded;
     REQUIRE(ReadFields(record, &loaded, full, types).has_value());
     CHECK(loaded.Id == "shadows");
@@ -197,8 +197,8 @@ TEST_CASE("GraphicsSchema: a truncated blob is Corrupt, not a crash")
     vector<u8> record;
     WriteFields(record, &authored, host.Types.Info(TypeIdOf<GraphicsSchemaData>()), host.Types);
 
-    CookedGraphicsSchemaHeader header{};
-    header.Version = CookedGraphicsSchemaVersion;
+    CookedSettingsSchemaHeader header{};
+    header.Version = CookedSettingsSchemaVersion;
     header.RecordBytes = static_cast<u32>(record.size());
 
     vector<u8> blob;
@@ -208,7 +208,7 @@ TEST_CASE("GraphicsSchema: a truncated blob is Corrupt, not a crash")
     blob.insert(blob.end(), record.begin(), record.begin() + record.size() / 2);
 
     ArchiveWriter writer;
-    writer.Add(SchemaId, AssetTypes::GraphicsSchema, blob);
+    writer.Add(SchemaId, AssetTypes::SettingsSchema, blob);
     const path archivePath =
         Veng::TestSupport::TempDir() / "veng_graphics_schema_truncated.vengpack";
     REQUIRE(writer.Write(archivePath).has_value());

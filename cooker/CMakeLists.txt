@@ -484,7 +484,7 @@ add_library(libveng_cook STATIC
         src/Importers/PrefabImporter.cpp
         src/Importers/LevelImporter.cpp
         src/Importers/InputMapImporter.cpp
-        src/Importers/GraphicsSchemaImporter.cpp
+        src/Importers/SettingsSchemaImporter.cpp
         # The UI-document + stylesheet importers reference libveng's Gui/ style vocabulary
         # (ElementKind/StyleProperty and the flex enums), so they live here (links veng::veng)
         # rather than in veng_cook_objs (kept veng-free for the core-pack bootstrap). pugixml (the

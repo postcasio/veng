@@ -1,5 +1,5 @@
-// Graphics-schema cook test: cooks a *.gfxschema.json through the GraphicsSchemaImporter and checks
-// the CookedGraphicsSchemaHeader plus that the schema record round-trips back through ReadFields.
+// Graphics-schema cook test: cooks a *.gfxschema.json through the SettingsSchemaImporter and checks
+// the CookedSettingsSchemaHeader plus that the schema record round-trips back through ReadFields.
 // Also covers each validation failure — a duplicate setting id, a discrete setting with no options,
 // an out-of-range scalar default, a DefaultPreset naming no preset, a preset entry naming a missing
 // setting, and a preset entry naming a non-render_scale built-in. A graphics schema needs no
@@ -140,16 +140,16 @@ TEST_CASE("graphics schema cook: happy path — header + schema record round-tri
                     "cook failed: ", blobResult ? string{} : blobResult.error());
 
     const vector<u8>& blob = *blobResult;
-    REQUIRE(blob.size() >= sizeof(CookedGraphicsSchemaHeader));
+    REQUIRE(blob.size() >= sizeof(CookedSettingsSchemaHeader));
 
-    CookedGraphicsSchemaHeader header{};
+    CookedSettingsSchemaHeader header{};
     std::memcpy(&header, blob.data(), sizeof(header));
-    CHECK(header.Version == CookedGraphicsSchemaVersion);
-    REQUIRE(blob.size() == sizeof(CookedGraphicsSchemaHeader) + header.RecordBytes);
+    CHECK(header.Version == CookedSettingsSchemaVersion);
+    REQUIRE(blob.size() == sizeof(CookedSettingsSchemaHeader) + header.RecordBytes);
 
     TypeRegistry registry;
     RegisterBuiltinTypes(registry);
-    const std::span<const u8> record(blob.data() + sizeof(CookedGraphicsSchemaHeader),
+    const std::span<const u8> record(blob.data() + sizeof(CookedSettingsSchemaHeader),
                                      header.RecordBytes);
     GraphicsSchemaData data;
     REQUIRE(ReadFields(record, &data, registry.Info(TypeIdOf<GraphicsSchemaData>()), registry)
