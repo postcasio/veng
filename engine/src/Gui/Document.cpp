@@ -492,6 +492,29 @@ namespace Veng::Gui
         /// @brief The DropdownArrow's marker size as a fraction of the anchor's shorter box edge.
         constexpr f32 DropdownArrowScale = 0.4f;
 
+        /// @brief A slider thumb's authored extent along one axis, or the track thickness by default.
+        ///
+        /// The thumb is placed directly (not through the flex solve), so its styled Width/Height are
+        /// read here rather than from a solved box. Auto falls back to the track's cross-axis
+        /// thickness — the square handle the slider draws when a rule styles no thumb size — so an
+        /// unstyled thumb is unchanged; Points is the length, Percent is against the track thickness.
+        /// @param length    The thumb's styled Width or Height.
+        /// @param thickness The track's cross-axis extent (the fallback and the Percent basis).
+        /// @return The thumb's extent along that axis, in points.
+        f32 SliderThumbExtent(const Length& length, const f32 thickness)
+        {
+            switch (length.Kind)
+            {
+            case LengthKind::Points:
+                return length.Value;
+            case LengthKind::Percent:
+                return length.Value * 0.01f * thickness;
+            case LengthKind::Auto:
+                break;
+            }
+            return thickness;
+        }
+
         // A rule's selector matches an element when each constrained axis (type/class/id) agrees
         // and an unconstrained (empty) axis is a wildcard. A class constraint matches if the tag
         // is among the element's classes.
@@ -2388,26 +2411,32 @@ namespace Veng::Gui
                 ? std::clamp((element.Widget.Value - element.Widget.Min) / range, 0.0f, 1.0f)
                 : 0.0f;
 
+        // The thumb takes its authored width/height (defaulting to the track thickness — a square
+        // handle) and rides the fill's leading edge, centred across the track so a thumb larger than
+        // the track bulges past it evenly. The slider does not clip (overflow is visible), so a large
+        // handle draws whole rather than being cut to the thin bar.
         if (element.Widget.Vertical)
         {
-            // A vertical slider fills from the bottom (Min) toward the top (Max); the square thumb
-            // spans the track's width and rides the fill's top edge.
+            // A vertical slider fills from the bottom (Min) toward the top (Max).
             const f32 filled = box.Size.y * fraction;
             fill->Layout = Rect{.Min = vec2(box.Min.x, box.Min.y + box.Size.y - filled),
                                 .Size = vec2(box.Size.x, filled)};
-            const f32 size = box.Size.x;
-            thumb->Layout =
-                Rect{.Min = vec2(box.Min.x,
-                                 box.Min.y + (1.0f - fraction) * std::max(box.Size.y - size, 0.0f)),
-                     .Size = vec2(size, size)};
+            const f32 thumbW = SliderThumbExtent(thumb->ComputedStyle.Width, box.Size.x);
+            const f32 thumbH = SliderThumbExtent(thumb->ComputedStyle.Height, box.Size.x);
+            thumb->Layout = Rect{
+                .Min = vec2(box.Min.x + (box.Size.x - thumbW) * 0.5f,
+                            box.Min.y + (1.0f - fraction) * std::max(box.Size.y - thumbH, 0.0f)),
+                .Size = vec2(thumbW, thumbH)};
         }
         else
         {
             fill->Layout = Rect{.Min = box.Min, .Size = vec2(box.Size.x * fraction, box.Size.y)};
-            const f32 size = box.Size.y;
-            thumb->Layout = Rect{
-                .Min = vec2(box.Min.x + fraction * std::max(box.Size.x - size, 0.0f), box.Min.y),
-                .Size = vec2(size, size)};
+            const f32 thumbW = SliderThumbExtent(thumb->ComputedStyle.Width, box.Size.y);
+            const f32 thumbH = SliderThumbExtent(thumb->ComputedStyle.Height, box.Size.y);
+            thumb->Layout =
+                Rect{.Min = vec2(box.Min.x + fraction * std::max(box.Size.x - thumbW, 0.0f),
+                                 box.Min.y + (box.Size.y - thumbH) * 0.5f),
+                     .Size = vec2(thumbW, thumbH)};
         }
         fill->Visible = fraction > 0.0f;
     }

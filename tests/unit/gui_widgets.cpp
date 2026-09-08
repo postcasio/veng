@@ -180,6 +180,54 @@ TEST_CASE("gui widget: a Slider drag and directional nudge change the value, cla
     CHECK(doc.GetWidgetValue(slider) == doctest::Approx(9.0f));
 }
 
+TEST_CASE("gui widget: a Slider thumb takes its authored size, else the track thickness")
+{
+    Document doc;
+
+    Element& root = doc.Root();
+    PlaceAt(root, {0, 0}, {200, 200});
+    Element& slider = doc.Add(root, ElementKind::Slider);
+    // A thin 6px track, the shape a styled slider draws (the handle rides proud of it).
+    PlaceAt(slider, {0, 0}, {100, 6});
+    slider.Bindings["min"] = "0";
+    slider.Bindings["max"] = "10";
+    slider.Bindings["step"] = "1";
+    doc.InitWidget(slider);
+
+    const auto findThumb = [&]() -> Element*
+    {
+        for (Element* child : slider.Children)
+        {
+            if (child->Kind == ElementKind::SliderThumb)
+            {
+                return child;
+            }
+        }
+        return nullptr;
+    };
+
+    // Mid-range so the thumb is placed inside the track and its centring is testable.
+    doc.SetWidgetValue(slider, 5.0f);
+    Element* thumb = findThumb();
+    REQUIRE(thumb != nullptr);
+
+    // Unstyled: the thumb is a square handle the size of the track thickness (the status quo).
+    CHECK(thumb->Layout.Size.x == doctest::Approx(6.0f));
+    CHECK(thumb->Layout.Size.y == doctest::Approx(6.0f));
+
+    // An authored size larger than the track is honoured, not clamped to the bar, and the handle is
+    // centred across the track (so it bulges evenly past a thin one).
+    thumb->ComputedStyle.Width = Length::Points(20.0f);
+    thumb->ComputedStyle.Height = Length::Points(20.0f);
+    doc.SetWidgetValue(slider, 6.0f);
+    CHECK(thumb->Layout.Size.x == doctest::Approx(20.0f));
+    CHECK(thumb->Layout.Size.y == doctest::Approx(20.0f));
+    // Cross-axis centred on the 6px track: (6 - 20) / 2 = -7, so it overhangs 7px each side.
+    CHECK(thumb->Layout.Min.y == doctest::Approx(-7.0f));
+    // Along-axis travel spans the track less the thumb: value 6/10 over (100 - 20) = 48.
+    CHECK(thumb->Layout.Min.x == doctest::Approx(48.0f));
+}
+
 TEST_CASE("gui widget: a vertical Slider maps the pointer bottom-up and nudges on up/down")
 {
     Document doc;
