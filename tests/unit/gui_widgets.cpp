@@ -391,6 +391,50 @@ TEST_CASE("gui widget: a TextInput paints its own value and a caret at the edit 
     }
 }
 
+TEST_CASE("gui widget: clicking a TextInput places the caret at the clicked codepoint")
+{
+    Document doc;
+    doc.SetInteractive(true);
+
+    // Eight pixels per codepoint, so a painted offset is the prefix's codepoint count times eight —
+    // the same stand-in the caret-paint case uses, so the click inverts exactly what the paint drew.
+    doc.SetTextMeasurer([](string_view text, const Style&, optional<f32>)
+                        { return vec2(static_cast<f32>(text.size()) * 8.0f, 16.0f); });
+
+    Element& root = doc.Root();
+    PlaceAt(root, {0, 0}, {200, 200});
+    Element& input = doc.Add(root, ElementKind::TextInput);
+    input.Focusable = true;
+    // Content origin x = 10 (no border/padding), so a click's local x is (click.x - 10).
+    PlaceAt(input, {10, 20}, {120, 24});
+    doc.SetText(input, "Hello");
+    doc.InitWidget(input);
+    // InitWidget leaves the caret past the last codepoint, so a click must move it to be observable.
+    CHECK(input.Widget.Caret == 5u);
+
+    const auto clickAt = [&](const f32 x)
+    {
+        PointerEvent down{.Kind = PointerEventKind::Down, .Position = vec2(x, 30.0f)};
+        doc.DispatchPointer(down);
+        PointerEvent up{.Kind = PointerEventKind::Up, .Position = vec2(x, 30.0f)};
+        doc.DispatchPointer(up);
+    };
+
+    // A press lands the caret at the nearest codepoint boundary: nineteen pixels in is left of the
+    // third glyph's midpoint (20), so before codepoint 2; twenty-one is right of it, so before 3.
+    clickAt(10.0f + 19.0f);
+    CHECK(input.Widget.Caret == 2u);
+    clickAt(10.0f + 21.0f);
+    CHECK(input.Widget.Caret == 3u);
+
+    // A click left of the text lands at the start; one past the text but still inside the field (the
+    // value is forty pixels wide in a hundred-and-twenty-pixel field) lands after the last codepoint.
+    clickAt(10.0f);
+    CHECK(input.Widget.Caret == 0u);
+    clickAt(10.0f + 90.0f);
+    CHECK(input.Widget.Caret == 5u);
+}
+
 TEST_CASE("gui widget: a ScrollView clips and offsets its children on scroll")
 {
     Document doc;

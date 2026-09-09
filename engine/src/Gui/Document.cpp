@@ -2716,6 +2716,43 @@ namespace Veng::Gui
 
     bool Document::DriveWidgetPointer(Element& element, const PointerEvent& event)
     {
+        if (element.Kind == ElementKind::TextInput)
+        {
+            // A press places the caret at the clicked codepoint boundary: walk the value's prefixes
+            // and take the boundary whose painted x is nearest the click. Measured in the same
+            // content-box space and through the same run measure the caret is painted with
+            // (BuildTextInput), so the placed caret lands exactly where the click fell.
+            if (event.Kind != PointerEventKind::Down)
+            {
+                return false;
+            }
+            // The font may be null under a device-free text measurer; MeasureRun honours the measurer
+            // when one is set, exactly as the caret paint (BuildTextInput) does.
+            const Font* const font = ResolveFont(element);
+            const Style& style = element.ComputedStyle;
+            const f32 originX = element.Layout.Min.x + BorderWidth(style) + style.Padding.Left;
+            const f32 localX = event.Position.x - originX;
+            const vector<u32> codepoints = DecodeUtf8(element.Text);
+            const auto count = static_cast<u32>(codepoints.size());
+            u32 caret = count;
+            string prefix;
+            f32 prevX = 0.0f;
+            for (u32 i = 0; i < count; ++i)
+            {
+                AppendUtf8(prefix, codepoints[i]);
+                const f32 x = MeasureRun(prefix, font, style, std::nullopt, false).x;
+                // The click sits before codepoint i once it falls left of glyph i's midpoint.
+                if (localX < (prevX + x) * 0.5f)
+                {
+                    caret = i;
+                    break;
+                }
+                prevX = x;
+            }
+            element.Widget.Caret = caret;
+            return true;
+        }
+
         if (element.Kind == ElementKind::Slider)
         {
             // A press or drag over the track sets the value from the pointer's fraction along the
