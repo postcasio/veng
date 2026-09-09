@@ -1317,6 +1317,27 @@ namespace Veng
         /// @param pending  The world spawn's not-yet-resident assets; wait on it before a capture.
         virtual void OnWorldLoaded(WorldInstanceId world, Scene& scene, ResidencyBatch& pending) {}
 
+        /// @brief Called when a presenting travel's rebind lands on its destination world.
+        ///
+        /// Where OnWorldLoaded fires once, when a world is *created*, this fires once per *travel* —
+        /// the moment a present-on-ready rebind (Travel) actually flips the viewport onto its
+        /// destination, whether that world was freshly opened or an already-live one reused. It
+        /// carries the travel's payload so a game can apply arrival state (spawn pose, and the like)
+        /// even into a reused world, whose OnWorldLoaded ran a session ago and whose factory did not
+        /// re-run. @p reused distinguishes the two: false for a world this travel opened (its
+        /// OnWorldLoaded fired this travel too), true for a reused live world (it did not). Fires only
+        /// for a local presenting travel; a data-world or non-presenting resolve does not present and
+        /// so does not arrive. Default is a no-op.
+        /// @param world    The destination world's handle.
+        /// @param scene    The destination world's Scene, live and started.
+        /// @param payload  The travel's opaque arrival payload; may be empty.
+        /// @param reused   True when the destination was an already-live world, false when this travel
+        ///                 opened it.
+        virtual void OnWorldArrival(WorldInstanceId world, Scene& scene, const Net::Blob& payload,
+                                    bool reused)
+        {
+        }
+
         /// @brief Composes the player's chosen graphics quality with a scene's authored look.
         ///
         /// The resolve seam ApplyGraphicsSettings invokes once per apply: given the user's chosen
@@ -1524,6 +1545,14 @@ namespace Veng
         /// the rebind apply point. The directory never reaches into presentation; Application translates
         /// bindings into pins here.
         void SyncPresentationPins();
+
+        /// @brief Fires OnWorldArrival for any pending travel whose rebind has now landed.
+        ///
+        /// Run once per frame right after the rebinds are applied: a pending arrival whose viewport
+        /// now shows its destination has arrived (fire and drop it), one whose viewport is no longer
+        /// even heading there was superseded or abandoned (drop it silently), and one still in flight
+        /// is left for a later frame.
+        void FireWorldArrivals();
 
         /// @brief Drives the directory's idle reap when no host owns it (the standalone path).
         ///
@@ -1994,6 +2023,27 @@ namespace Veng
         /// UI FocusRequest releases the seat. A FocusToken is a plain id, so dropping the map is inert;
         /// the router owns the actual focus stack.
         unordered_map<Entity, FocusToken> m_FocusRequestTokens;
+
+        /// @brief A presenting travel awaiting its rebind, so OnWorldArrival can fire when it lands.
+        ///
+        /// Recorded by Travel when it issues the present-on-ready rebind and drained each frame once
+        /// the viewport binding flips to the destination (or dropped when a later travel of the same
+        /// viewport supersedes it, or the rebind is abandoned). Carries the payload the arrival hook
+        /// hands back and whether the destination was a reused live world.
+        struct PendingArrival
+        {
+            /// @brief The managed viewport the travel presents on.
+            usize Index = 0;
+            /// @brief The destination world the rebind is landing on.
+            WorldInstanceId World;
+            /// @brief The travel's arrival payload, handed to OnWorldArrival.
+            Net::Blob Payload;
+            /// @brief True when the destination was an already-live world this travel reused.
+            bool Reused = false;
+        };
+
+        /// @brief Presenting travels whose rebind has not yet landed; drained in FireWorldArrivals.
+        vector<PendingArrival> m_PendingArrivals;
 
         /// @brief Scratch for one world's presenting seats, reused across the marker sweep's worlds.
         vector<Entity> m_PresentingSeats;

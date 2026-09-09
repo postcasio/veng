@@ -1388,6 +1388,32 @@ namespace Veng
         m_PinnedWorlds = std::move(present);
     }
 
+    void Application::FireWorldArrivals()
+    {
+        for (auto it = m_PendingArrivals.begin(); it != m_PendingArrivals.end();)
+        {
+            // The rebind has landed when the viewport now shows the destination.
+            if (m_ManagedViewports->GetViewportWorld(it->Index) == it->World)
+            {
+                if (World* const world = m_WorldRunner->ResolveWorld(it->World);
+                    world != nullptr && world->LiveScene != nullptr)
+                {
+                    OnWorldArrival(it->World, world->GetScene(), it->Payload, it->Reused);
+                }
+                it = m_PendingArrivals.erase(it);
+                continue;
+            }
+            // Still heading there: leave it for a later frame. Otherwise a newer travel superseded
+            // this viewport's rebind, or it was abandoned — either way this arrival never lands.
+            if (m_ManagedViewports->GetPendingViewportWorld(it->Index) != it->World)
+            {
+                it = m_PendingArrivals.erase(it);
+                continue;
+            }
+            ++it;
+        }
+    }
+
     void Application::ReapDirectory()
     {
         // While hosting, the ServerHost's Pump reaps the shared directory (and drops its per-world
@@ -1477,6 +1503,17 @@ namespace Veng
             if (info.ViewportIndex < m_ManagedViewports->GetCount())
             {
                 m_ManagedViewports->RebindWorldWhenReady(info.ViewportIndex, resolve.World);
+                // Record the arrival so OnWorldArrival fires when the rebind lands. A reused live
+                // world (Placed) ran no OnWorldLoaded this travel, so the payload reaches the game
+                // only here; a freshly-opened one (Opened) did, and the flag says which. Supersede any
+                // earlier pending arrival for this viewport — the newer travel is the one that lands.
+                std::erase_if(m_PendingArrivals, [&](const PendingArrival& pending)
+                              { return pending.Index == info.ViewportIndex; });
+                m_PendingArrivals.push_back(
+                    PendingArrival{.Index = info.ViewportIndex,
+                                   .World = resolve.World,
+                                   .Payload = info.Payload,
+                                   .Reused = resolve.Outcome == WorldResolveOutcome::Placed});
             }
             else
             {
@@ -2335,6 +2372,11 @@ namespace Veng
             // world rebinds run their departed-overlay detach and seat re-resolution through the
             // runner; present-on-ready rebinds accrue this frame's delta toward their ready timeout.
             m_ManagedViewports->ApplyPendingReconfigure(*m_WorldRunner, delta, m_WorldView);
+
+            // A present-on-ready rebind that landed this frame is an arrival: fire its hook before the
+            // pins and the request drain, so the game applies arrival state to the now-presented world
+            // ahead of anything it does this frame.
+            FireWorldArrivals();
 
             // Translate the managed viewports' world bindings into directory presence pins at the
             // rebind apply point (one-directional: presentation drives lifetime, never the reverse),
