@@ -30,20 +30,19 @@ namespace Veng
         /// DefaultEnvironmentCaptureLayers), while the ordinary camera view draws it like anything
         /// else.
         ViewAnchored = 1,
-        /// @brief Geometry that is its own light source and is backed by an explicit scene light: a
-        ///        surface that writes its emitted radiance directly (a self-lit disc, an emissive
-        ///        panel) while a real scene light reproduces its illumination on everything else.
+        /// @brief Distant background geometry — the far surroundings a reflection probe reflects as
+        ///        the scene's environment: a sky's celestial bodies, a distant skyline, any backdrop
+        ///        a positioned probe should see as its surroundings rather than as nearby content.
         ///
-        /// The layer exists so an image-based-lighting capture can drop it. Such a surface's light
-        /// reaches the rest of the scene twice over if the capture keeps it: once as the scene
-        /// light it is paired with already casts, and again as radiance the capture convolves into
-        /// reflected environment light. An IBL probe therefore declares this layer excluded from its
-        /// own capture (its light is already accounted for by the paired scene light), while a
-        /// specular reflection capture keeps it — a mirror shows the emitter with no double-count.
-        /// The engine offers the layer as a slot only and curates its exclusion into no shared
-        /// default (see DefaultEnvironmentCaptureLayers): the capture that needs it dropped names
-        /// the exclusion itself. The ordinary camera view draws it like Default.
-        SelfLit = 2,
+        /// The distinction from Default is exactly what a reflection probe placed *within* the scene
+        /// reflects. Such a probe sits amid the local (Default) geometry — often on the very surface
+        /// it is lighting — so that geometry is not its environment; the distant backdrop is. An
+        /// image-based-lighting probe that wants only its surroundings names this layer alone
+        /// (RenderLayerBit(Environment)), so the local geometry it sits within never convolves into
+        /// the light it casts back on that geometry. A general specular reflection keeps Default too
+        /// (see DefaultEnvironmentCaptureLayers), mirroring nearby geometry as well. The ordinary
+        /// camera view draws it like Default.
+        Environment = 2,
     };
 
     /// @brief Number of members in the closed RenderLayer table.
@@ -69,14 +68,14 @@ namespace Veng
         return (mask & RenderLayerBit(layer)) != 0;
     }
 
-    /// @brief The layers an environment-probe capture draws unless a consumer names another set.
+    /// @brief The layers a reflection capture draws unless a consumer names another set.
     ///
     /// Every layer but ViewAnchored: a probe captures the scene around a point, and camera-anchored
-    /// decoration is not part of that scene (see RenderLayer::ViewAnchored). This shared default
-    /// carries only the *universal* exclusion — ViewAnchored is wrong in every environment capture.
-    /// RenderLayer::SelfLit is deliberately **kept**: dropping it is a per-capture need (an IBL
-    /// probe wants it gone to avoid a double-count, a specular reflection wants it), so the capture
-    /// that needs it dropped names the exclusion itself rather than inheriting it from here.
+    /// decoration is not part of that scene (see RenderLayer::ViewAnchored). This carries only the
+    /// *universal* exclusion — ViewAnchored is wrong in every capture. It keeps both Default (nearby
+    /// scene geometry) and Environment (the distant backdrop), which is what a general specular
+    /// reflection wants; a capture that wants only the distant surroundings — an IBL probe sitting
+    /// within the local geometry — names RenderLayer::Environment alone instead.
     inline constexpr u32 DefaultEnvironmentCaptureLayers =
         AllRenderLayers & ~RenderLayerBit(RenderLayer::ViewAnchored);
 }
@@ -84,5 +83,5 @@ namespace Veng
 VE_ENUM(::Veng::RenderLayer, 0x357D35AA53685C1AULL)
 VE_ENUMERATOR(Default)
 VE_ENUMERATOR(ViewAnchored)
-VE_ENUMERATOR(SelfLit)
+VE_ENUMERATOR(Environment)
 VE_ENUM_END();

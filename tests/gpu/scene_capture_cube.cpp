@@ -11,10 +11,9 @@
 //  - the revision advances only on a completed sweep: fewer than six pushed faces leave it at zero,
 //    the sixth advances it, and a second six advances it again — the completion signal a consumer
 //    derives on;
-//  - the self-lit layer is kept by a capture at the shared default and dropped only when the capture
-//    declares the exclusion: the green cube on RenderLayer::SelfLit reaches the cube under
-//    DefaultEnvironmentCaptureLayers, and is absent when the capture clears the self-lit bit — the
-//    engine offers the layer but curates its exclusion into no shared default.
+//  - the Environment layer is kept by a capture at the shared default and dropped only when the
+//    capture clears it: the green cube on RenderLayer::Environment reaches the cube under
+//    DefaultEnvironmentCaptureLayers, and is absent when the capture names Default alone.
 //
 // Skips cleanly (exit 77) on a machine with no Vulkan ICD, like the rest of the gpu band.
 
@@ -267,9 +266,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(capture->GetCubeRevision() == 2);
 }
 
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "SceneCapture cube: the self-lit layer is kept by the shared default and dropped "
-                  "only when the capture declares the exclusion")
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "SceneCapture cube: the Environment layer is kept by the shared default and dropped "
+    "only when the capture clears it")
 {
     RegisterBuiltinTypes(Types);
     AssetManager assets(Context, Tasks, Types);
@@ -281,22 +281,23 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     vector<Ref<Mesh>> meshes;
     const Unique<Scene> scene =
-        BuildScene(Context, assets, Types, *green, RenderLayer::SelfLit, meshes);
+        BuildScene(Context, assets, Types, *green, RenderLayer::Environment, meshes);
 
     const u32 faceSize = EnvironmentIbl::GetIrradianceFaceSize();
 
-    // The shared environment-capture default keeps the self-lit layer, so the green cube reaches the
+    // The shared capture default keeps the Environment layer, so the green cube reaches the
     // cube and lights the -Y face.
     const Unique<EnvironmentIbl> keptIbl = EnvironmentIbl::Create(Context, assets);
     const vec3 kept = FaceCenter(
         CaptureAndConvolve(Context, assets, *scene, DefaultEnvironmentCaptureLayers, *keptIbl),
         faceSize, 3);
 
-    // A capture that declares the self-lit bit cleared drops it, so the same face goes dark.
-    const u32 noSelfLit = DefaultEnvironmentCaptureLayers & ~RenderLayerBit(RenderLayer::SelfLit);
+    // A capture that clears the Environment bit drops it, so the same face goes dark.
+    const u32 noEnvironment =
+        DefaultEnvironmentCaptureLayers & ~RenderLayerBit(RenderLayer::Environment);
     const Unique<EnvironmentIbl> droppedIbl = EnvironmentIbl::Create(Context, assets);
     const vec3 dropped = FaceCenter(
-        CaptureAndConvolve(Context, assets, *scene, noSelfLit, *droppedIbl), faceSize, 3);
+        CaptureAndConvolve(Context, assets, *scene, noEnvironment, *droppedIbl), faceSize, 3);
 
     CHECK(kept.g > 0.1f);
     CHECK(kept.g > dropped.g + 0.05f);
