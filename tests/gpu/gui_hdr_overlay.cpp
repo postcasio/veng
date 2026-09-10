@@ -341,6 +341,101 @@ TEST_CASE_FIXTURE(
     std::filesystem::remove(postArchive);
 }
 
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "gui hdr overlay: a composite material shapes the color "
+                                          "and blooms by its mask, not its brightness")
+{
+    RegisterBuiltinTypes(Types);
+
+    // A PostProcess-domain composite material declaring a bloom mask (the glow-split contract): it
+    // samples the overlay's document (which the renderer rendered to the intermediate), tints it, and
+    // writes shaped color + a flat bloom amplitude.
+    const path compositeDir = path(GPU_POSTPROCESS_FIXTURE_DIR);
+    const path archive = Veng::TestSupport::TempDir() / "veng_gui_hdr_overlay_composite.vengpack";
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker
+                .CookPack(compositeDir / "overlay_composite_pack.json", archive, {}, nullptr,
+                          nullptr, nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+                .has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(archive).has_value());
+
+    // The default instance tints (2.0, 0.5, 0.5) and asks for a flat mask amplitude of 6.
+    constexpr AssetId CompositeInstance{0x00000000008A0010ULL};
+    const AssetResult<AssetHandle<MaterialInstance>> composite =
+        assets.LoadSync<MaterialInstance>(CompositeInstance);
+    REQUIRE(composite.has_value());
+    REQUIRE(composite->Get()->GetDomain() == MaterialDomain::PostProcess);
+    MaterialInstance* const material = composite->Get();
+
+    // An empty scene: a black ground the mask-driven halo reads against.
+    const Unique<Scene> scene = Scene::Create(Types);
+    const CameraView camera = FrontCamera();
+
+    // A centered opaque quad in a saturated, non-white-hot colour — its luminance (~0.36) is far below
+    // the bloom threshold (1.0), so nothing about how bright it is drawn will bloom it.
+    const Gui::DrawList list = OverlayQuad(vec2(40.0f), vec2(48.0f), vec4(0.2f, 0.35f, 0.9f, 1.0f));
+
+    const auto render = [&](const bool bloom, const bool withMaterial, const bool withOverlay)
+    {
+        const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+            .Context = Context,
+            .Assets = assets,
+            .OutputFormat = Context.GetOutputFormat(),
+            .Extent = Extent,
+            .Settings = {.Mode = DebugView::Final, .Bloom = bloom, .Shadows = false, .AO = false},
+        });
+        GuiHdrOverlayView view = ScreenSpaceView(list);
+        view.Material = withMaterial ? material : nullptr;
+        const GuiHdrOverlayView views[] = {view};
+        const std::span<const GuiHdrOverlayView> conveyed =
+            withOverlay ? std::span<const GuiHdrOverlayView>(views)
+                        : std::span<const GuiHdrOverlayView>();
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                           .Camera = camera,
+                                                           .Delta = 0.0f,
+                                                           .BloomThreshold = 1.0f,
+                                                           .HdrOverlays = conveyed});
+            });
+        return renderer->GetOutput()->GetImage()->Download();
+    };
+
+    constexpr uvec2 CenterPix{64, 64}; // inside the quad
+    constexpr uvec2 HaloPix{64, 92};   // in the black margin below the quad's [40,88) bottom edge
+
+    // (1) The composited colour reaches the scene HDR, shaped by the material. Its tint boosts red and
+    // cuts green, so the material composite reads redder and less green than the straight document a
+    // direct (no-material) overlay blends — proof the material fragment ran and shaped the colour.
+    const vec3 matCenter =
+        DecodeTexel(render(false, true, true), Extent.x, CenterPix.x, CenterPix.y);
+    const vec3 directCenter =
+        DecodeTexel(render(false, false, true), Extent.x, CenterPix.x, CenterPix.y);
+    CHECK(matCenter.r > directCenter.r + 0.05f);
+    CHECK(matCenter.g < directCenter.g - 0.02f);
+    CHECK(matCenter.r > 0.1f);
+
+    // (2) The mask drives the bloom, decoupled from the drawn brightness. With bloom on, the material
+    // overlay leaves a halo in the black margin — energy the flat mask seeded — while the SAME dim
+    // element with NO material does not bloom, because its luminance is far below the threshold. That
+    // is the whole point of the split: an element glows in its own colour without going white to earn
+    // it. Both are differenced against the no-overlay baseline (black there).
+    const f32 baselineHalo =
+        DecodeTexel(render(true, false, false), Extent.x, HaloPix.x, HaloPix.y).r;
+    const f32 directHalo = DecodeTexel(render(true, false, true), Extent.x, HaloPix.x, HaloPix.y).r;
+    const vec3 matHalo = DecodeTexel(render(true, true, true), Extent.x, HaloPix.x, HaloPix.y);
+
+    CHECK(baselineHalo == doctest::Approx(0.0f).epsilon(0.01f));
+    // The masked overlay blooms into the margin; the unmasked one does not (it stays at the baseline).
+    CHECK(matHalo.r > directHalo + 0.02f);
+    CHECK(directHalo == doctest::Approx(baselineHalo).epsilon(0.01f));
+
+    std::filesystem::remove(archive);
+}
+
 TEST_CASE_FIXTURE(
     Veng::Test::GpuFixture,
     "gui hdr overlay: placement routes per component — HDR overlay skips the layer stack")

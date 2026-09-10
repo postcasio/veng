@@ -54,6 +54,14 @@ namespace Veng::Renderer
     {
         /// @brief The overlay's built draw list, in document logical coordinates; borrowed for the Execute.
         const Gui::DrawList* DrawList = nullptr;
+        /// @brief The composite material this overlay is drawn through, or nullptr for the direct blend.
+        ///
+        /// Null (the common case) blends the document straight into scene HDR, the byte-identical
+        /// direct path. Non-null (a resident PostProcess-domain MaterialInstance) routes the overlay
+        /// through the glow-split composite: the document is rendered to an intermediate HDR target and
+        /// the material samples it fullscreen, writing shaped color into scene HDR and, when it declares
+        /// a bloom mask, an amplitude into the bloom-mask target. Borrowed for the Execute.
+        MaterialInstance* Material = nullptr;
         /// @brief World-space model transform of the virtual plane (world-anchored).
         mat4 Model{1.0f};
         /// @brief The plane's world-space width and height (world-anchored).

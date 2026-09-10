@@ -3,6 +3,7 @@
 #include <utility>
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/DocumentHost.h>
 #include <Veng/Gui/DrawList.h>
@@ -31,6 +32,10 @@ namespace Veng
         Unique<GuiDriver> Driver;
         /// @brief The document the driver was last OnInstantiate'd against; detects a re-instantiate.
         Gui::Document* DriverDocument = nullptr;
+        /// @brief The resident composite material, LoadSync'd once from Material on the first DriveHdr.
+        AssetHandle<MaterialInstance> CompositeMaterial;
+        /// @brief Whether the composite-material load was attempted (so a failed load is not retried).
+        bool CompositeMaterialAttempted = false;
     };
 
     GuiOverlay::GuiOverlay() = default;
@@ -75,6 +80,11 @@ namespace Veng
     Gui::DocumentHost* GuiOverlay::GetHost() const
     {
         return Runtime != nullptr ? Runtime->Host.get() : nullptr;
+    }
+
+    MaterialInstance* GuiOverlay::GetCompositeMaterial() const
+    {
+        return Runtime != nullptr ? Runtime->CompositeMaterial.Get() : nullptr;
     }
 
     void GuiOverlay::EnsureHost(AssetManager& assets) const
@@ -185,6 +195,26 @@ namespace Veng
         out.Clear();
         EnsureHost(assets);
         GuiOverlayRuntime& runtime = *Runtime;
+
+        // Resolve the optional composite material once: a SceneHdrPreBloom overlay naming a material is
+        // composited through it (the glow-split path), an absent or failed one takes the direct blend.
+        // LoadSync is a cache hit on the resident pack dependency after the first call; a null id or a
+        // failed load leaves CompositeMaterial empty, and GetCompositeMaterial() then returns nullptr.
+        if (!runtime.CompositeMaterialAttempted && Material.Id().IsValid())
+        {
+            runtime.CompositeMaterialAttempted = true;
+            const AssetResult<AssetHandle<MaterialInstance>> loaded =
+                assets.LoadSync<MaterialInstance>(Material.Id());
+            if (loaded)
+            {
+                runtime.CompositeMaterial = *loaded;
+            }
+            else
+            {
+                Log::Error("GuiOverlay composite material {:#018x} load failed: {}",
+                           Material.Id().Value, loaded.error().Detail);
+            }
+        }
 
         // Drive the host directly (load, instantiate, bind refresh) rather than through the
         // DocumentLayer: an HDR overlay is composited by the engine's pre-bloom pass, not attached to

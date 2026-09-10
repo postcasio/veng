@@ -247,6 +247,9 @@ namespace Veng::Renderer
         // released here (a no-op when no effect ran) alongside the spine.
         bindless.Release(m_PpEffectHandleA);
         bindless.Release(m_PpEffectHandleB);
+        // The overlay-document intermediate is content-driven the same way (a no-op when no material
+        // overlay ran).
+        bindless.Release(m_HdrOverlayDocHandle);
     }
 
     void SceneRenderer::Rebuild()
@@ -280,6 +283,12 @@ namespace Veng::Renderer
         // while a SceneHdrPreBloom overlay is present and the frame renders the Final tail (a debug
         // arm has no pre-bloom scene-color chain to blend into).
         m_HdrOverlayActive = m_HasHdrOverlay && m_Settings.Mode == DebugView::Final;
+
+        // A material overlay renders its document to an intermediate HDR target before the composite
+        // samples it; allocate it here (registered bindless) so its handle exists before the tail
+        // wiring reads it, and release it when no material overlay composites. Content-driven.
+        const bool hdrOverlayComposite = m_HdrOverlayActive && m_HdrOverlayCompositeCount > 0;
+        UpdateHdrOverlayTargets(hdrOverlayComposite);
 
         // The skybox pass samples the IBL radiance set for an environment sky, or the resolved baked
         // cube's consumer set (same radiance binding) for a baked material/atmosphere sky or a CubeSky.
@@ -397,6 +406,15 @@ namespace Veng::Renderer
             ppEffectFinalId = oddCount ? m_PpEffectIdA : m_PpEffectIdB;
             ppEffectFinalHandle = oddCount ? m_PpEffectHandleA : m_PpEffectHandleB;
             ppEffectFinalView = oddCount ? m_PpEffectViewA : m_PpEffectViewB;
+        }
+
+        // The overlay-document intermediate is imported when a material overlay composites — the
+        // render-to-intermediate pass writes it and the composite samples it; its backing was
+        // allocated by UpdateHdrOverlayTargets above.
+        m_HdrOverlayDocId = ResourceId{};
+        if (m_HdrOverlayActive && m_HdrOverlayCompositeCount > 0)
+        {
+            m_HdrOverlayDocId = graph.Import("SceneRenderer Gui Overlay Doc");
         }
 
         // The refraction copy reads the same target the translucent pass blends over, whichever
@@ -730,6 +748,12 @@ namespace Veng::Renderer
                 }
                 m_GuiHdrOverlayPass->Resize(m_Extent);
                 m_GuiHdrOverlayPass->SetOutput(ppEffectFinalId);
+                // A material overlay renders to the intermediate, then composites through its material
+                // into the scene color and the bloom mask (present only under bloom). Each such overlay
+                // gets a declared pass pair.
+                m_GuiHdrOverlayPass->SetComposite(m_HdrOverlayDocId, m_HdrOverlayDocHandle,
+                                                  m_BloomMaskId, BloomMaskFormat);
+                m_GuiHdrOverlayPass->SetCompositeCount(m_HdrOverlayCompositeCount);
             }
 
             // Tonemap source: bloom composite when bloom is on, else the finished scene color — which
@@ -1201,13 +1225,63 @@ namespace Veng::Renderer
     {
         // A change in whether any pre-bloom overlay is present recompiles the pass set at the frame
         // boundary (insert or drop the overlay pass); a stable presence replays, and the overlays'
-        // per-frame content reaches the pass through the SceneView with no recompile.
+        // per-frame content reaches the pass through the SceneView with no recompile. The count of
+        // material-composited overlays is structural too — each needs its own render-to-intermediate +
+        // composite pass pair — so a change in it recompiles alongside presence.
         const bool present = !view.HdrOverlays.empty();
-        if (present != m_HasHdrOverlay)
+        u32 materialCount = 0;
+        for (const GuiHdrOverlayView& overlay : view.HdrOverlays)
+        {
+            if (overlay.Material != nullptr)
+            {
+                ++materialCount;
+            }
+        }
+        if (present != m_HasHdrOverlay || materialCount != m_HdrOverlayCompositeCount)
         {
             m_HasHdrOverlay = present;
+            m_HdrOverlayCompositeCount = materialCount;
             Rebuild();
         }
+    }
+
+    void SceneRenderer::UpdateHdrOverlayTargets(const bool active)
+    {
+        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
+        if (!active)
+        {
+            // Release the intermediate when no material overlay composites, so a renderer that stops
+            // running them carries no extra HDR target.
+            if (m_HdrOverlayDocExtent != uvec2{0, 0})
+            {
+                bindless.Release(m_HdrOverlayDocHandle);
+                m_HdrOverlayDocHandle = TextureHandle{};
+                m_HdrOverlayDocView.reset();
+                m_HdrOverlayDocImage.reset();
+                m_HdrOverlayDocExtent = uvec2{0, 0};
+            }
+            return;
+        }
+
+        // Already allocated at the current allocation extent — nothing to do (a plain topology Rebuild
+        // keeps the target).
+        if (m_HdrOverlayDocExtent == m_Extent)
+        {
+            return;
+        }
+
+        bindless.Release(m_HdrOverlayDocHandle);
+        m_HdrOverlayDocImage = Image::Create(m_Context, {
+                                                            .Name = "SceneRenderer Gui Overlay Doc",
+                                                            .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                            .Format = HdrFormat,
+                                                            .Usage = HdrUsage,
+                                                        });
+        m_HdrOverlayDocView =
+            ImageView::Create(m_Context, {.Name = "SceneRenderer Gui Overlay Doc View",
+                                          .Image = m_HdrOverlayDocImage});
+        m_HdrOverlayDocHandle = bindless.Register(m_HdrOverlayDocView);
+        m_HdrOverlayDocExtent = m_Extent;
     }
 
     void SceneRenderer::UpdatePostProcessEffectTargets(const bool active)
@@ -2080,6 +2154,12 @@ namespace Veng::Renderer
             {
                 bindings.push_back({m_PpEffectIdB, m_PpEffectViewB});
             }
+        }
+        // The overlay-document intermediate is bound whenever a material overlay composites (the id is
+        // imported then); a material renders its document into it and samples it back.
+        if (m_HdrOverlayDocId.IsValid())
+        {
+            bindings.push_back({m_HdrOverlayDocId, m_HdrOverlayDocView});
         }
         if (m_Topology->DofComposited())
         {

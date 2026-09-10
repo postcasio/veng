@@ -1,0 +1,14 @@
+{
+  "defaultInstance": "0x00000000008A0010",
+  "domain": "PostProcess",
+  "bloomMask": true,
+  "shaders": {
+    "vertex": "0x00000000008A0001",
+    "fragment": "0x00000000008A0002"
+  },
+  "fields": [
+    { "name": "Tint", "type": "vec4", "value": [2.0, 0.5, 0.5, 1.0] },
+    { "name": "Mask", "type": "float", "value": 6.0 },
+    { "name": "Document", "type": "texture" }
+  ]
+}

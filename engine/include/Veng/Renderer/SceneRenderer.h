@@ -420,6 +420,15 @@ namespace Veng::Renderer
         /// @param active  Whether the effect chain runs this pass set.
         void UpdatePostProcessEffectTargets(bool active);
 
+        /// @brief (Re)allocates or releases the overlay-document intermediate HDR target.
+        ///
+        /// Allocates one allocation-sized HDR target (registered bindless) when @p active and none is
+        /// current — a material overlay renders its document here before the composite samples it — and
+        /// releases it when inactive. Content-driven, so a renderer with no material overlay carries no
+        /// extra target. Modeled on UpdatePostProcessEffectTargets.
+        /// @param active  Whether a material overlay is composited this pass set.
+        void UpdateHdrOverlayTargets(bool active);
+
         /// @brief Resolves whether any scene-HDR-pre-bloom overlay is present this Execute.
         ///
         /// Reads SceneView::HdrOverlays (the engine-built pre-bloom overlays the viewport conveyed).
@@ -586,6 +595,17 @@ namespace Veng::Renderer
         /// @brief View over m_PpEffectImageB.
         Ref<ImageView> m_PpEffectViewB;
 
+        /// @brief The intermediate HDR target a material overlay's document renders to before compositing.
+        ///
+        /// A material overlay renders its document here (cleared transparent), then its material samples
+        /// it fullscreen into the scene HDR + bloom mask — the render-to-texture the composite needs
+        /// because a target cannot be both a color attachment and a sampled input in one pass. Reused by
+        /// every material overlay in the frame (allocation-sized, HDR). Content-driven: allocated only
+        /// while a material overlay is composited (UpdateHdrOverlayTargets), released otherwise.
+        Ref<Image> m_HdrOverlayDocImage;
+        /// @brief View over m_HdrOverlayDocImage.
+        Ref<ImageView> m_HdrOverlayDocView;
+
         /// @brief Per-object screen-space motion vector target — g-buffer channel G3.
         ///
         /// RG16Sfloat, full extent. The surface pass writes it as SV_Target3 alongside the
@@ -680,6 +700,8 @@ namespace Veng::Renderer
         TextureHandle m_PpEffectHandleA;
         /// @brief Bindless slot for the second ping-pong effect target; invalid when no effect is active.
         TextureHandle m_PpEffectHandleB;
+        /// @brief Bindless slot for the overlay-document intermediate; a composite material samples it.
+        TextureHandle m_HdrOverlayDocHandle;
         /// @brief Bindless slot of the linear clamp sampler the fullscreen passes read the g-buffer
         /// and HDR target through, shared out of the registry across every SceneRenderer.
         SamplerHandle m_SamplerHandle;
@@ -994,6 +1016,8 @@ namespace Veng::Renderer
         ResourceId m_PpEffectIdA;
         /// @brief Imported id for the second ping-pong post-process effect target.
         ResourceId m_PpEffectIdB;
+        /// @brief Imported id for the overlay-document intermediate; unset when no material overlay composites.
+        ResourceId m_HdrOverlayDocId;
         /// @brief Imported id for the final output target.
         ResourceId m_OutputId;
 
@@ -1138,6 +1162,17 @@ namespace Veng::Renderer
 
         /// @brief Whether the current pass set carries the pre-bloom overlay pass; gates its declare.
         bool m_HdrOverlayActive = false;
+
+        /// @brief Number of material-composited overlays in the last resolved SceneView.
+        ///
+        /// The count of SceneHdrPreBloom overlays naming a composite material. It is structural: each
+        /// gets its own render-to-intermediate + composite pass pair (reusing one intermediate), so a
+        /// change recompiles the pass set at the frame boundary, exactly as presence does. Refreshed by
+        /// ResolveHdrOverlays.
+        u32 m_HdrOverlayCompositeCount = 0;
+
+        /// @brief The allocation extent the overlay-document intermediate was last allocated at; zero while none.
+        uvec2 m_HdrOverlayDocExtent{0, 0};
 
         /// @brief The allocation extent the ping-pong effect targets were last allocated at.
         ///

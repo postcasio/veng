@@ -701,6 +701,9 @@ namespace Veng::Renderer
 
             m_HdrOverlayViews.push_back(GuiHdrOverlayView{
                 .DrawList = &drawList,
+                // DriveHdr loaded the overlay's optional composite material; a resident one routes the
+                // overlay through the glow-split composite, a null one keeps the direct blend.
+                .Material = overlay.GetCompositeMaterial(),
                 .Model = model,
                 .SurfaceSize = overlay.SurfaceSize,
                 .DocExtent = docExtent,

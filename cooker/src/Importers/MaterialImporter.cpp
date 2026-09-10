@@ -439,14 +439,30 @@ namespace Veng::Cook
         }
         else // PostProcess
         {
-            const bool ok = outputs->size() == 1 && (*outputs)[0].TargetIndex == 0 &&
-                            (*outputs)[0].IsFloat && (*outputs)[0].ComponentCount == 4;
-            if (!ok)
+            // A PostProcess material writes a single float4 SV_Target0 (the composited color).
+            // Declaring "bloomMask" adds exactly one more — a scalar float SV_Target1 carrying the
+            // glow amplitude apart from the color's luminance, the same second-output convention the
+            // Translucent domain uses. A fullscreen composite that seeds the bloom pyramid from a
+            // mask (a document composited into scene HDR pre-bloom) is the case this serves; a plain
+            // effect leaves the flag off and writes SV_Target0 alone. The flag and the output must
+            // agree: the consuming pass enables the mask attachment's writes from the flag, so a flag
+            // without the output writes undefined values into the mask and an output without the flag
+            // is silently discarded.
+            const bool colorOk = !outputs->empty() && (*outputs)[0].TargetIndex == 0 &&
+                                 (*outputs)[0].IsFloat && (*outputs)[0].ComponentCount == 4;
+            const bool maskOk =
+                !bloomMask ? outputs->size() == 1
+                           : outputs->size() == 2 && (*outputs)[1].TargetIndex == 1 &&
+                                 (*outputs)[1].IsFloat && (*outputs)[1].ComponentCount == 1;
+            if (!colorOk || !maskOk)
             {
                 return std::unexpected(fmt::format(
                     "material importer: '{}': postprocess material must write a single "
-                    "float4 SV_Target0 and no further targets; its fragment shader does not",
-                    vmatPath.string()));
+                    "float4 SV_Target0{}; its fragment shader does not",
+                    vmatPath.string(),
+                    bloomMask ? " plus a float SV_Target1 (the bloom mask it declares) and no "
+                                "further targets"
+                              : " and no further targets"));
             }
         }
 

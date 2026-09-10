@@ -11,6 +11,7 @@ namespace Veng
 {
     class AssetManager;
     class GuiDriverRegistry;
+    class MaterialInstance;
     class Scene;
 
     namespace Gui
@@ -120,6 +121,24 @@ namespace Veng
         /// output resolution; such an overlay never joins the layer stack.
         GuiOverlayPlacement Placement = GuiOverlayPlacement::PostTonemap;
 
+        /// @brief An optional material this overlay's document is composited through (SceneHdrPreBloom only).
+        ///
+        /// Null (the default, an empty handle) composites the document straight into scene HDR — the
+        /// direct blend every overlay took before, byte-for-byte. When set, a SceneHdrPreBloom overlay
+        /// is instead composited through the named MaterialInstance: the engine renders the overlay's
+        /// document to an intermediate HDR target and runs the material as a fullscreen composite that
+        /// samples it, writing the shaped color into scene HDR and, when the material declares a bloom
+        /// mask, an amplitude into the renderer's bloom-mask target — so the document can bloom by a
+        /// strength it names rather than by how bright it is, decoupled from its drawn luminance.
+        ///
+        /// The material is a PostProcess-domain MaterialInstance whose fragment samples the rendered
+        /// document through a runtime-bound `Document` texture handle (written by the composite each
+        /// frame, the PostProcess `Scene`-handle convention) by integer pixel coordinate — the
+        /// document is rasterized at the composite resolution, so it reads 1:1. A material declaring
+        /// `"bloomMask": true` additionally returns a float SV_Target1 amplitude. Ignored for a
+        /// PostTonemap overlay, which never reaches the pre-bloom composite.
+        AssetHandle<MaterialInstance> Material;
+
         /// @brief How this overlay maps into its target: flat screen-space (the default) or world-anchored.
         ///
         /// ScreenSpace is the flat placement — logical points at ScreenSpace's UI scale, the overlay's
@@ -183,6 +202,13 @@ namespace Veng
 
         /// @brief Returns the live document, or nullptr before the first Drive (or a failed load).
         [[nodiscard]] Gui::Document* GetDocument() const;
+
+        /// @brief Returns the resident composite material instance, or nullptr when none is set or resident.
+        ///
+        /// The material named by Material, loaded (LoadSync) into the runtime on the first DriveHdr and
+        /// cached there. Null when Material names nothing, before the first DriveHdr, or on a failed
+        /// load — in which case a SceneHdrPreBloom overlay takes the direct-composite path.
+        [[nodiscard]] MaterialInstance* GetCompositeMaterial() const;
 
         /// @brief Returns the runtime document host, or nullptr before the first Drive materializes it.
         ///
@@ -273,6 +299,7 @@ VE_FIELD(Driver, .DisplayName = "Driver")
 VE_FIELD(Interactive, .DisplayName = "Interactive")
 VE_FIELD(TargetSeat, .DisplayName = "Target Seat")
 VE_FIELD(Placement, .DisplayName = "Placement")
+VE_FIELD(Material, .DisplayName = "Material")
 VE_FIELD(Projection, .DisplayName = "Projection")
 VE_FIELD(AnchorPosition, .DisplayName = "Anchor Position")
 VE_FIELD(AnchorRotation, .DisplayName = "Anchor Rotation")

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x00000000008A0001",
+      "type": "Shader",
+      "source": "shaders/fullscreen.vert.shader.json"
+    },
+    {
+      "id": "0x00000000008A0002",
+      "type": "Shader",
+      "source": "shaders/overlay_composite.frag.shader.json"
+    },
+    {
+      "id": "0x00000000008A0003",
+      "type": "Material",
+      "source": "materials/overlay_composite.vmat.json"
+    }
+  ]
+}
