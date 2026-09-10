@@ -16,6 +16,7 @@
 #include "Passes/DebugDrawScenePass.h"
 #include "Passes/DeferredLightingScenePass.h"
 #include "Passes/GBufferScenePass.h"
+#include "Passes/IblCubeDebugScenePass.h"
 #include "Passes/PickingScenePass.h"
 #include "Passes/PointFieldScenePass.h"
 #include "Passes/GuiHdrOverlayScenePass.h"
@@ -521,6 +522,7 @@ namespace Veng::Renderer
         m_PunctualShadowPass = nullptr;
         m_SsaoPass = nullptr;
         m_SkyMaterialPass = nullptr;
+        m_IblCubeDebugPass = nullptr;
 
         // The pass index the HDR tail (SSR composite, point fields, bloom sweep) is declared
         // before: the tonemap in the Final arm (set below), else the terminal pass.
@@ -972,6 +974,18 @@ namespace Veng::Renderer
                 CreateUnique<FullscreenBlitScenePass>(m_Context, m_DebugBlits->Albedo, m_Extent,
                                                       FullscreenBlitScenePass::Source::Emissive));
             break;
+        case DebugView::EnvironmentIbl:
+        case DebugView::EnvironmentSource:
+        {
+            // One pass for both arms: it samples whatever cube Execute feeds it (the prefiltered
+            // specular cube, or the raw source cube) along the view ray, fullscreen. The IBL derive
+            // runs every Execute regardless of the arm, so the cube is current.
+            auto pass = CreateUnique<IblCubeDebugScenePass>(m_Context, m_IblCubeDebugPipeline,
+                                                            m_IblCubeDebugSetLayout, m_Extent);
+            m_IblCubeDebugPass = pass.get();
+            m_Passes.push_back(std::move(pass));
+            break;
+        }
         }
 
         // Point binding 0 at the punctual atlas for the debug blit (overwrites the
@@ -2046,6 +2060,27 @@ namespace Veng::Renderer
         if (m_SkyMaterialPass != nullptr)
         {
             m_SkyMaterialPass->SetMaterial(resolvedView.SkyMaterial);
+        }
+
+        // Feed the IBL-cube debug pass this frame's cube: the raw source cube for the
+        // EnvironmentSource arm (null when nothing backs the lighting — the pass shows black), the
+        // prefiltered specular cube (always valid) for the EnvironmentIbl arm.
+        if (m_IblCubeDebugPass != nullptr)
+        {
+            const EnvironmentIbl& ibl = m_SkyResolver->GetIbl();
+            if (m_Settings.Mode == DebugView::EnvironmentSource)
+            {
+                // The raw source cube, or the always-valid prefilter cube as the bound fallback with
+                // the arm shown black when nothing backs the lighting.
+                const Ref<ImageView> source = m_SkyResolver->GetLightingDebugCube();
+                m_IblCubeDebugPass->SetCube(source != nullptr ? source : ibl.GetPrefilterCubeView(),
+                                            ibl.GetSampler(), 0.0f, /*enabled=*/source != nullptr);
+            }
+            else
+            {
+                m_IblCubeDebugPass->SetCube(ibl.GetPrefilterCubeView(), ibl.GetSampler(), 0.0f,
+                                            /*enabled=*/true);
+            }
         }
     }
 

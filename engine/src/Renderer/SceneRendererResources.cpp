@@ -47,6 +47,7 @@ namespace Veng::Renderer
         constexpr AssetId DeferredLightingSsaoFragId{0x6EEF5D26BAF2849FULL};
         constexpr AssetId DeferredLightingCascadesFragId{0x834ED7C05F336E01ULL};
         constexpr AssetId SkyboxFragId{0xFCA568CC3463618FULL};
+        constexpr AssetId IblCubeDebugFragId{0xE9DE652D3C626F69ULL};
         constexpr AssetId AtmosphereSkyFragId{0x7DC6D927B2DF7858ULL};
         // The baked LTC lookup tables (matrix table then magnitude table, RGBA32F) for area lights.
         constexpr AssetId LtcLutId{0x27644C3AE58BB0D3ULL};
@@ -141,10 +142,10 @@ namespace Veng::Renderer
                            });
         };
 
-        // Both lighting layouts carry set 1 (the shadow system: atlas + immutable
-        // comparison sampler + ShadowConstants dynamic uniform) and set 2 (the IBL maps +
-        // sampler). Set 0 is the reserved registry slot prepended by PipelineLayout, so the
-        // shadow set is index 1 and the IBL set index 2.
+        // Both lighting layouts carry the shadow system (atlas + immutable comparison sampler +
+        // ShadowConstants dynamic uniform) and the IBL maps + sampler. Sets 0-2 are the reserved
+        // registry slots prepended by PipelineLayout, so the first author set (shadow) is index 3
+        // and the second (IBL) index 4 — matching deferred_lighting.frag's binding(_, 4) cubes.
         m_LightingLayout = PipelineLayout::Create(
             m_Context, {
                            .Name = "SceneRenderer Lighting Layout",
@@ -187,6 +188,37 @@ namespace Veng::Renderer
                        });
         m_SkyboxPipeline =
             MakePipeline("SceneRenderer Skybox Pipeline", m_SkyboxLayout, skyboxFs, HdrFormat);
+
+        // IBL-cube debug: a fullscreen pass sampling a radiance cube along each view ray, for the
+        // EnvironmentIbl / EnvironmentSource debug arms. It reads a dedicated cube set (set 3: cube
+        // + sampler) and writes the output format directly (a terminal debug arm, no tonemap tail).
+        // Its push is 16 bytes (matches IblCubePushConstants).
+        const AssetHandle<Veng::Shader> iblCubeDebugFs =
+            LoadShader(IblCubeDebugFragId, "IBL cube debug fragment");
+        m_IblCubeDebugSetLayout = DescriptorSetLayout::Create(
+            m_Context, {
+                           .Name = "IBL Cube Debug Set Layout",
+                           .Bindings =
+                               {
+                                   {.Binding = 0,
+                                    .Type = DescriptorType::SampledImage,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Fragment},
+                                   {.Binding = 1,
+                                    .Type = DescriptorType::Sampler,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Fragment},
+                               },
+                       });
+        m_IblCubeDebugLayout = PipelineLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer IBL Cube Debug Layout",
+                           .DescriptorSetLayouts = {m_IblCubeDebugSetLayout},
+                           .PushConstantRanges = {PushConstantRange{
+                               .Stages = ShaderStage::Fragment, .Offset = 0, .Size = 16}},
+                       });
+        m_IblCubeDebugPipeline = MakePipeline("SceneRenderer IBL Cube Debug Pipeline",
+                                              m_IblCubeDebugLayout, iblCubeDebugFs, m_OutputFormat);
 
         // Procedural atmosphere sky: a fullscreen pass sampling the precomputed LUTs along each
         // view ray. It reads the atmosphere set (set 1, scattering + transmittance + sampler) and

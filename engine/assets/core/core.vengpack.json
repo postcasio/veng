@@ -352,6 +352,11 @@
       "source": "shaders/skybox.frag.shader.json"
     },
     {
+      "id": "0xE9DE652D3C626F69",
+      "type": "Shader",
+      "source": "shaders/ibl_cube_blit.frag.shader.json"
+    },
+    {
       "id": "0x60BF176C73AC8D8E",
       "type": "Shader",
       "source": "shaders/atmosphere/atmosphere_transmittance.comp.shader.json"

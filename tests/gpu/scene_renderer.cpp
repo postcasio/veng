@@ -1583,6 +1583,27 @@ TEST_CASE_FIXTURE(
     CHECK(emissiveCenter.b < 0.02f);
     CHECK(Differs(finalCenter, emissiveCenter));
 
+    // The EnvironmentIbl arm samples the prefiltered specular IBL cube fullscreen along each view
+    // ray. The cube is always valid (EnsureInitialized transitions it before any environment
+    // arrives), so with no sky in this scene it reads black; the arm recompiles, builds its cube
+    // set, binds the pipeline and renders without error.
+    renderer->Configure(
+        {.Mode = DebugView::EnvironmentIbl, .Bloom = false, .Shadows = false, .AO = false});
+    const vec3 iblCenter = Center();
+    CHECK(std::isfinite(iblCenter.r));
+    CHECK(std::isfinite(iblCenter.g));
+    CHECK(std::isfinite(iblCenter.b));
+
+    // The EnvironmentSource arm samples the raw cube the IBL convolved from. This scene backs the
+    // lighting with no source cube, so the arm shows black — the null-source path (a valid set
+    // never built, the shader gated off by Enabled) renders without error.
+    renderer->Configure(
+        {.Mode = DebugView::EnvironmentSource, .Bloom = false, .Shadows = false, .AO = false});
+    const vec3 sourceCenter = Center();
+    CHECK(sourceCenter.r < 0.02f);
+    CHECK(sourceCenter.g < 0.02f);
+    CHECK(sourceCenter.b < 0.02f);
+
     // Velocity is a g-buffer channel, so it stays allocated under any mode (not TAA-gated).
     renderer->Configure({.Mode = DebugView::Albedo, .Bloom = false, .Shadows = false, .AO = false});
     CHECK(renderer->GetVelocityView() != nullptr);

@@ -733,6 +733,13 @@ namespace Veng::Renderer
         /// @brief Layout for m_SkyboxPipeline: the IBL set (set 1) + the skybox push block.
         Ref<class PipelineLayout> m_SkyboxLayout;
 
+        /// @brief Fullscreen IBL-cube debug pipeline (a cube over the view ray), writing the output.
+        Ref<class GraphicsPipeline> m_IblCubeDebugPipeline;
+        /// @brief Layout for m_IblCubeDebugPipeline: the debug cube set (set 3) + its push block.
+        Ref<class PipelineLayout> m_IblCubeDebugLayout;
+        /// @brief The debug cube set layout (binding 0 cube, binding 1 sampler) its pass builds sets on.
+        Ref<DescriptorSetLayout> m_IblCubeDebugSetLayout;
+
         /// @brief Fullscreen procedural-atmosphere sky pipeline (LUTs over the lit HDR), writing HdrFormat.
         Ref<class GraphicsPipeline> m_SkyPipeline;
         /// @brief Layout for m_SkyPipeline: the atmosphere set (set 1) + the sky push block.
@@ -1062,6 +1069,12 @@ namespace Veng::Renderer
         ///
         /// Execute forwards the resolved SceneView::SkyMaterial to it before the graph runs.
         class SkyMaterialScenePass* m_SkyMaterialPass = nullptr;
+
+        /// @brief Non-owning pointer into m_Passes to the IBL-cube debug pass; null outside its arms.
+        ///
+        /// Execute feeds it the arm's cube (the prefiltered IBL cube, or the raw source cube) before
+        /// the graph runs.
+        class IblCubeDebugScenePass* m_IblCubeDebugPass = nullptr;
 
         /// @brief The sky-resolve state machine and the three sky radiance-cube helpers; created at Create.
         ///

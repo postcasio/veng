@@ -145,6 +145,13 @@ namespace Veng::Renderer
         /// @brief The procedural-atmosphere precompute LUTs the sky pass samples.
         [[nodiscard]] AtmospherePrecompute& GetAtmosphere() const { return *m_Atmosphere; }
 
+        /// @brief The cube the IBL convolved its lighting from this resolve, for the debug view.
+        ///
+        /// The Sky::LightingSource cube when one is set (the probe capture that lights the scene),
+        /// else the resolved sky's own baked cube, else null when nothing backs the lighting — the
+        /// pre-convolution input, as opposed to GetIbl().GetPrefilterCubeView()'s convolved output.
+        [[nodiscard]] Ref<ImageView> GetLightingDebugCube() const;
+
         /// @brief The consumer set the skybox pass binds for the resolved baked cube (owned or borrowed).
         ///
         /// For a MaterialSky/AtmosphereSky in SkyMode::Baked this is the resolver's own bake cube's

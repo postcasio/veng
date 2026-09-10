@@ -320,6 +320,7 @@ add_library(veng SHARED
         src/Renderer/GpuCullSystem.cpp
         src/Renderer/PickingSystem.cpp
         src/Renderer/Passes/SkyboxScenePass.cpp
+        src/Renderer/Passes/IblCubeDebugScenePass.cpp
         src/Renderer/BakedSkyCube.cpp
         src/Renderer/SkyResolver.cpp
         src/Renderer/SkySourceResolve.cpp

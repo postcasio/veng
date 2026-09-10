@@ -120,6 +120,18 @@ namespace Veng::Renderer
         /// @brief Number of roughness mips in the prefiltered specular cube (the lighting LOD range).
         [[nodiscard]] u32 GetPrefilterMipCount() const;
 
+        /// @brief The prefiltered specular cube view (all roughness mips), for the IBL debug view.
+        ///
+        /// The map the specular IBL actually reads: mip 0 is the sharp environment, higher mips the
+        /// rougher convolutions. Always valid once EnsureInitialized has run, whatever the source.
+        [[nodiscard]] const Ref<ImageView>& GetPrefilterCubeView() const
+        {
+            return m_PrefilterCubeView;
+        }
+
+        /// @brief The linear IBL sampler (clamped, covers the prefilter mips), for the debug view.
+        [[nodiscard]] const Ref<Sampler>& GetSampler() const { return m_Sampler; }
+
         /// @brief The owned radiance cube image, exposed for tests reading back the convolution source.
         [[nodiscard]] const Ref<Image>& GetRadianceImage() const { return m_RadianceImage; }
 

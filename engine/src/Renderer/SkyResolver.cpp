@@ -95,6 +95,19 @@ namespace Veng::Renderer
         return m_ResolvedCube != nullptr ? m_ResolvedCube->GetSet() : m_SkyBake->GetSet();
     }
 
+    Ref<ImageView> SkyResolver::GetLightingDebugCube() const
+    {
+        // The lighting source cube wins — it is what a Sky::LightingSource fed the IBL, and it is
+        // held even when the displayed sky is something else (a probe lighting a star-field view).
+        // Otherwise the resolved baked cube is what the IBL convolved from; null when neither backs
+        // the lighting.
+        if (m_LightingSourceCube != nullptr)
+        {
+            return m_LightingSourceCube;
+        }
+        return m_ResolvedCube != nullptr ? m_ResolvedCube->GetCubeView() : nullptr;
+    }
+
     void SkyResolver::Resolve(SceneView& view)
     {
         // Start from the no-sky fallback; the resolved source overrides what it drives.
