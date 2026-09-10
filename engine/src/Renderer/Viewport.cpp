@@ -15,6 +15,7 @@
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/Transforms.h>
 
 #include "GuiOverlayProjection.h"
 #include "Passes/GuiScenePass.h"
@@ -688,9 +689,19 @@ namespace Veng::Renderer
             overlay.DriveHdr(*this, m_Assets, world, entity, m_GuiDrivers, m_Audio, docExtent,
                              m_ViewState.Delta, drawList);
 
+            // The plane's anchor is composed onto the carrying entity's world transform, so an
+            // overlay authored on a moving entity rides it — its anchor is entity-local, an offset
+            // from the entity's own pose, not a fixed world coordinate. An entity with no Transform
+            // contributes identity, so a world-anchored overlay authored on a bare entity keeps the
+            // plain world-space anchor.
+            const mat4 model = worldAnchored ? WorldMatrix(world, entity) *
+                                                   ComputeGuiOverlayModel(overlay.AnchorPosition,
+                                                                          overlay.AnchorRotation)
+                                             : mat4(1.0f);
+
             m_HdrOverlayViews.push_back(GuiHdrOverlayView{
                 .DrawList = &drawList,
-                .Model = ComputeGuiOverlayModel(overlay.AnchorPosition, overlay.AnchorRotation),
+                .Model = model,
                 .SurfaceSize = overlay.SurfaceSize,
                 .DocExtent = docExtent,
                 .WorldAnchored = worldAnchored,

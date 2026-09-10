@@ -124,15 +124,24 @@ namespace Veng
         ///
         /// ScreenSpace is the flat placement — logical points at ScreenSpace's UI scale, the overlay's
         /// existing screen mapping. WorldAnchored textures the document onto a flat virtual plane
-        /// posed by AnchorPosition/AnchorRotation at SurfaceSize world units and laid out at
-        /// SurfaceResolution logical points, projected through the live camera so it foreshortens and
-        /// slides under look-around like a real surface. Only SceneHdrPreBloom honors WorldAnchored.
+        /// posed by AnchorPosition/AnchorRotation (composed onto the carrying entity's world
+        /// transform) at SurfaceSize world units and laid out at SurfaceResolution logical points,
+        /// projected through the live camera so it foreshortens and slides under look-around like a
+        /// real surface — and rides the entity it is authored on. Only SceneHdrPreBloom honors
+        /// WorldAnchored.
         GuiOverlayProjection Projection = GuiOverlayProjection::ScreenSpace;
 
-        /// @brief World-space position of the virtual plane's center (WorldAnchored only).
+        /// @brief The virtual plane's center, offset from the carrying entity's pose (WorldAnchored only).
+        ///
+        /// Composed onto the entity's world transform, so it is an entity-local offset — an overlay
+        /// authored on a moving entity rides that entity. An entity with no Transform contributes
+        /// identity, so on a bare entity this is a plain world-space position.
         vec3 AnchorPosition{0.0f, 0.0f, -1.0f};
 
-        /// @brief World-space orientation of the virtual plane (WorldAnchored only).
+        /// @brief The virtual plane's orientation, relative to the carrying entity's pose (WorldAnchored only).
+        ///
+        /// Composed onto the entity's world transform like AnchorPosition; identity on a bare entity
+        /// leaves the plane in world orientation.
         quat AnchorRotation{1.0f, 0.0f, 0.0f, 0.0f};
 
         /// @brief The virtual plane's world-space width and height, in world units (WorldAnchored only).
