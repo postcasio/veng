@@ -278,6 +278,18 @@ namespace Veng::Renderer
         /// the cascade fit, not the atlas size or topology.
         f32 MaxShadowDistance = 100.0f;
 
+        /// @brief View-space floor on the directional-shadow near, in world units; 0 = the
+        ///        camera near.
+        ///
+        /// The near-side mirror of MaxShadowDistance: the cascade fit runs over
+        /// [near, far], and a camera rendering a huge depth range with a very small near
+        /// (a reverse-Z scene whose micron near keeps far-field depth precision) otherwise
+        /// packs every near cascade into a sub-pixel shell at the eye and reconstructs
+        /// degenerate slices, collapsing the shadow. Flooring the shadow near here decouples
+        /// the cascade fit from the render near. Recompile-safe: it changes the cascade fit,
+        /// not the atlas size or topology.
+        f32 MinShadowDistance = 0.0f;
+
         /// @brief Whether screen-space reflections run.
         ///
         /// A topology change: it inserts the SSR min-Z reduction, trace, blur, and composite

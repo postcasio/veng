@@ -243,11 +243,12 @@ TEST_CASE(
     "ComputeCascades: a fitted cascade's XY extent tracks the visible slab, not the far plane")
 {
     // A camera whose far plane (1000) sits far past the scene. The split range fits the
-    // scene, but each cascade's XY extent is the camera frustum slice at the cascade's
-    // *fitted* depth — so the slice fraction must be measured against the camera's near/far
-    // (what SliceCorners interpolates over), not the fitted slab. Measuring it against the
-    // fitted slab pushes the last cascade's far edge out to the 1000-unit far plane, blowing
-    // the ortho extent up ~16x and shrinking the scene to a tiny corner of the atlas tile.
+    // scene, and each cascade's XY extent is the camera frustum slice at the cascade's
+    // *fitted* depth: the shadow sub-frustum's near/far corners are placed at the fitted
+    // range first, and cascade slices interpolate between those — so the last cascade's far
+    // edge sits at the fitted far, not the 1000-unit far plane. Placing the sub-frustum
+    // against the whole camera range instead would blow the last cascade's extent up ~16x
+    // and shrink the scene to a tiny corner of the atlas tile.
     const CameraView camera = MakeTestCamera(0.1f, 1000.0f);
     const vec3 lightDir(0.3f, -1.0f, 0.2f);
     const CascadeSettings settings{};
@@ -355,6 +356,44 @@ TEST_CASE("ComputeCascades: MaxDistance caps the far split")
     const CascadeData tiny =
         ComputeCascades(camera, lightDir, AABB::Empty(), CascadeSettings{.MaxDistance = 0.05f});
     CHECK(tiny.SplitFar[tiny.Count - 1] == camera.GetFar());
+}
+
+TEST_CASE("ComputeCascades: MinDistance floors the shadow near for a tiny-near camera")
+{
+    // A reverse-Z far-field camera: a micron near keeps far-field depth precision while the
+    // far plane sits astronomically far, and the receivers are a small bound the camera sits
+    // inside (a cockpit). Without a shadow-near floor the near cascades pack into a sub-pixel
+    // shell at the eye; MinDistance decouples the cascade fit from the render near so the
+    // cascades stay well-formed and fit the receivers that matter.
+    CameraView camera;
+    camera.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, 1e-6f, 20000.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, -1.0f), vec3(0.0f, 1.0f, 0.0f));
+    const vec3 lightDir(0.3f, -1.0f, 0.2f);
+    const AABB cockpit{.Min = vec3(-3.0f, -3.0f, -3.0f), .Max = vec3(3.0f, 3.0f, 3.0f)};
+
+    const CascadeData floored =
+        ComputeCascades(camera, lightDir, cockpit, CascadeSettings{.MinDistance = 0.1f});
+
+    // Every cascade is well-formed: finite matrices, a positive depth range and texel size —
+    // none collapsed onto the eye.
+    for (u32 k = 0; k < floored.Count; ++k)
+    {
+        CHECK(IsFinite(floored.ViewProj[k]));
+        CHECK(floored.DepthRange[k] > 0.0f);
+        CHECK(floored.TexelWorldSize[k] > 0.0f);
+    }
+    // The first cascade already covers past the floored near — no cascade is spent on the
+    // sub-floor shell at the eye — and the splits stay strictly increasing.
+    CHECK(floored.SplitFar[0] > 0.1f);
+    for (u32 i = 1; i < floored.Count; ++i)
+    {
+        CHECK(floored.SplitFar[i] > floored.SplitFar[i - 1]);
+    }
+
+    // The floor raises the near split: with no floor the first cascade's far collapses toward
+    // the micron near, so the near cascades sit in a shell no receiver occupies.
+    const CascadeData unfloored = ComputeCascades(camera, lightDir, cockpit, CascadeSettings{});
+    CHECK(floored.SplitFar[0] > unfloored.SplitFar[0]);
 }
 
 TEST_CASE("ComputeCascades: without PancakeNear the cull matrix equals the render matrix")

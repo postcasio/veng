@@ -1757,6 +1757,7 @@ namespace Veng::Renderer
                                               .Lambda = m_Settings.CascadeSplitLambda,
                                               .Resolution = m_Settings.ShadowResolution,
                                               .MaxDistance = m_Settings.MaxShadowDistance,
+                                              .MinDistance = m_Settings.MinShadowDistance,
                                               .PancakeNear = m_Context.IsDepthClampSupported()});
         }
         const std::span<const CascadeData> cascades(cascadeSets.data(), cascadeSetCount);

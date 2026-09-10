@@ -423,7 +423,10 @@ punctual record array, or `-1` for unshadowed) rides `Cone.z` and its **flags wo
 two-sided bit, the area-light cascade arm, the cascade-set index and the cascade denial — rides
 `Cone.w`, keeping `LightStride` fixed; the bit meanings are `Renderer::LightFlags` and its shader
 mirror `Veng/light_flags.slang`. `CascadeCount`, `CascadeSplitLambda`, and `ShadowResolution`
-(default 1024) are the directional CSM knobs; `PunctualShadows` (the on/off toggle) and `PunctualShadowResolution` (the
+(default 1024) are the directional CSM knobs; `MaxShadowDistance` and `MinShadowDistance`
+bound the fitted cascade range at each end (the far cap, and the near-side mirror that keeps
+the fit from collapsing when a camera renders a huge depth range with a tiny reverse-Z near —
+0 on either leaves that end at the camera plane); `PunctualShadows` (the on/off toggle) and `PunctualShadowResolution` (the
 per-tile edge length) are the punctual knobs; `DebugView::Cascades` tints each fragment by the
 cascade it selects and `DebugView::PunctualShadows` blits the punctual atlas. **A Translucent submesh casts no shadow.** Both shadow passes gate each candidate on
 `Renderer::CastsShadow` (`src/Renderer/DrawGather.h`): a resident material that is not

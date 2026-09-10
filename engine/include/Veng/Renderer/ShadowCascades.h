@@ -86,6 +86,19 @@ namespace Veng::Renderer
         /// The lighting pass fades shadows out approaching the last split, so the cap reads
         /// as a fade, not a hard edge.
         f32 MaxDistance = 0.0f;
+        /// @brief View-space floor on the shadowed range's near plane; 0 uses the camera near.
+        ///
+        /// The split distribution and the per-cascade slice reconstruction run over
+        /// [near, far], and both degenerate when the camera near is tiny against a distant
+        /// far: the logarithmic splits pack every near cascade into a sub-pixel shell at the
+        /// eye, and the camera-range slice fractions underflow together and collapse the
+        /// reconstructed corners. A consumer rendering a huge depth range under reverse-Z
+        /// (where a near of microns keeps full far-field depth precision) hits exactly that.
+        /// Flooring the shadow near here bounds the fit independently of the render near —
+        /// the near-side mirror of MaxDistance — so the cascades fit the receivers that
+        /// matter rather than collapsing. The floor never rises above the fitted far, so a
+        /// scene whose casters all sit nearer than it keeps a valid range.
+        f32 MinDistance = 0.0f;
         /// @brief Keep each cascade's ortho near tight to its slice for depth-clamped rendering.
         ///
         /// Requires the shadow pipeline to rasterize with depth clamp enabled: casters between
