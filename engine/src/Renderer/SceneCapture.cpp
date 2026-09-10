@@ -25,6 +25,8 @@ namespace Veng::Renderer
         constexpr AssetId OctahedralFragId{0xF79D3A3F132A0D2DULL};
         // The octahedral distance resample fragment (depth atlas → distance map).
         constexpr AssetId DistanceFragId{0xA8E91C7EC4E595AEULL};
+        // The cube-face copy fragment (face HDR → cube layer, horizontally mirrored).
+        constexpr AssetId CubeFaceFragId{0xF54CFAA2CC8E65F6ULL};
 
         // The renderer's pre-tonemap HDR format, which the atlas and octahedral map carry
         // through unchanged so the capture output stays linear HDR.
@@ -78,7 +80,7 @@ namespace Veng::Renderer
     }
 
     SceneCapture::SceneCapture(const SceneCaptureInfo& info)
-        : m_Context(info.Context), m_FaceResolution(info.FaceResolution),
+        : m_Context(info.Context), m_FaceResolution(info.FaceResolution), m_CaptureCube(info.Cube),
           m_CaptureDistance(info.CaptureDistance), m_DistanceResolution(info.DistanceResolution)
     {
         VE_ASSERT(info.FaceResolution > 0, "SceneCapture FaceResolution must be > 0");
@@ -186,6 +188,62 @@ namespace Veng::Renderer
                                    {.Stage = ShaderStage::Fragment, .Module = octFs.Get()->Module},
                                },
                        });
+
+        if (m_CaptureCube)
+        {
+            const u32 cres = m_FaceResolution;
+
+            // The radiance cube: six layers rendered as color attachments, sampled as a cube for the
+            // IBL convolution. Uses the capture's linear-HDR format, so the cube round-trips the
+            // convolution sampler unchanged. No bindless registration — it is a convolution input,
+            // never a material-sampled bindless texture.
+            m_CubeImage = Image::Create(
+                m_Context, {
+                               .Name = "SceneCapture Radiance Cube",
+                               .Extent = {cres, cres, 1},
+                               .Layers = FaceCount,
+                               .Format = CaptureFormat,
+                               .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled,
+                           });
+            m_CubeView = ImageView::Create(m_Context, {
+                                                          .Name = "SceneCapture Radiance Cube View",
+                                                          .Image = m_CubeImage,
+                                                          .ViewType = ImageViewType::Cube,
+                                                          .ArrayLayers = FaceCount,
+                                                      });
+            for (u32 face = 0; face < FaceCount; ++face)
+            {
+                m_CubeFaceViews[face] = ImageView::Create(
+                    m_Context, {
+                                   .Name = fmt::format("SceneCapture Cube Face {} View", face),
+                                   .Image = m_CubeImage,
+                                   .ViewType = ImageViewType::Type2D,
+                                   .BaseArrayLayer = face,
+                                   .ArrayLayers = 1,
+                               });
+            }
+
+            const AssetHandle<Veng::Shader> cubeFs =
+                loadShader(CubeFaceFragId, "cube face copy fragment");
+            m_CubeFaceLayout = PipelineLayout::Create(
+                m_Context,
+                {
+                    .Name = "SceneCapture Cube Face Layout",
+                    .PushConstantRanges = {PushConstantRange::Of<CopyPush>(ShaderStage::Fragment)},
+                });
+            m_CubeFacePipeline = GraphicsPipeline::Create(
+                m_Context,
+                {
+                    .Name = "SceneCapture Cube Face Pipeline",
+                    .ColorAttachments = {{.Format = CaptureFormat}},
+                    .PipelineLayout = m_CubeFaceLayout,
+                    .ShaderStages =
+                        {
+                            {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},
+                            {.Stage = ShaderStage::Fragment, .Module = cubeFs.Get()->Module},
+                        },
+                });
+        }
 
         if (m_CaptureDistance)
         {
@@ -398,6 +456,47 @@ namespace Veng::Renderer
         cmd.DrawFullscreenTriangle();
         cmd.EndRendering();
         cmd.PrepareForAccess(m_OctahedralView, AccessKind::SampleGraphics);
+
+        if (m_CaptureCube)
+        {
+            // Copy this face's HDR into its cube layer, mirrored horizontally into the cube-sampling
+            // convention (see capture_cube_face.frag). The fullscreen copy overwrites the whole
+            // layer; the other five layers keep their last capture.
+            cmd.PrepareForAccess(m_CubeFaceViews[face], AccessKind::ColorAttachment);
+            cmd.BeginRendering({
+                .Extent = {res, res},
+                .ColorAttachments = {{
+                    .ImageView = m_CubeFaceViews[face],
+                    .LoadOp = LoadOp::Clear,
+                    .StoreOp = StoreOp::Store,
+                    .ClearValue = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+                }},
+            });
+            cmd.BindPipeline(m_CubeFacePipeline);
+            cmd.SetViewport({0, 0}, {res, res});
+            cmd.SetScissor({0, 0}, {res, res});
+            registry.Bind(cmd);
+            cmd.PushConstants(CopyPush{
+                .SourceTexture = m_HdrHandle.Index,
+                .Sampler = m_SamplerHandle.Index,
+            });
+            cmd.DrawFullscreenTriangle();
+            cmd.EndRendering();
+            // Only this face's layer was written this Render (one face per push, round-robin), so
+            // transition just it back to a sampled layout — the other five keep the sampled state
+            // their own last render left them in. A whole-cube transition here would carry mixed
+            // per-layer source layouts across the six separate submits and leave later faces in a
+            // color-attachment layout the convolution then samples.
+            cmd.PrepareForAccess(m_CubeFaceViews[face], AccessKind::SampleGraphics);
+
+            // A full six-face sweep completes on the last face of the round-robin; the revision
+            // advances only then, so a consumer never convolves a half-refreshed cube (mirrors
+            // BakedSkyCube::GetRevision, which advances only on a landed bake).
+            if (face == FaceCount - 1)
+            {
+                ++m_CubeRevision;
+            }
+        }
 
         if (!m_CaptureDistance)
         {

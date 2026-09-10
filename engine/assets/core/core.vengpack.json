@@ -247,6 +247,11 @@
       "source": "shaders/capture_octahedral_distance.frag.shader.json"
     },
     {
+      "id": "0xF54CFAA2CC8E65F6",
+      "type": "Shader",
+      "source": "shaders/capture_cube_face.frag.shader.json"
+    },
+    {
       "id": "0xCCD40C76935382FD",
       "type": "Shader",
       "source": "shaders/motion_blit.frag.shader.json"

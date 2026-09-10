@@ -6,6 +6,8 @@
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/RenderLayer.h>
 
+#include <array>
+
 namespace Veng
 {
     class AssetManager;
@@ -57,6 +59,18 @@ namespace Veng::Renderer
         /// radiance across a captured environment, so the distance map is cheap to under-size and
         /// expensive to over-size.
         u32 DistanceResolution = 128;
+
+        /// @brief Whether to also publish the six face renders as a radiance cubemap.
+        ///
+        /// Off by default. When set, the capture renders each of its six faces into the matching
+        /// layer of a radiance cube (beside the octahedral map) and exposes it through GetCubeView /
+        /// GetCubeFaceSize / GetCubeRevision — a cube-view in a sampled layout, the exact input
+        /// EnvironmentIbl::GenerateFromCube convolves. It is an image-based-lighting *convolution
+        /// input only* and is never registered into the set-0 bindless array, so the reason the
+        /// material-facing output is a 2D octahedral map (a cube view cannot ride that array) does
+        /// not apply to it. Off, none of the cube path's resources exist — no cube image, no per-face
+        /// views, no copy pipeline — so a capture nobody asks a cube of pays nothing for one.
+        bool Cube = false;
     };
 
     /// @brief The per-frame capture source, pushed by the owner (see SceneCapture::SetView).
@@ -149,7 +163,8 @@ namespace Veng::Renderer
         /// drift.
         static constexpr f32 DistanceSkySentinel = 1.0e30f;
 
-        /// @brief Creates the capture: the face renderer, atlas, octahedral map, and pipelines.
+        /// @brief Creates the capture: the face renderer, atlas, octahedral map, pipelines, and —
+        ///        when SceneCaptureInfo::Cube is set — the radiance cube and its face copy pipeline.
         /// @param info  Construction parameters.
         /// @return The owning Unique.
         static Unique<SceneCapture> Create(const SceneCaptureInfo& info);
@@ -196,6 +211,28 @@ namespace Veng::Renderer
         ///        none.
         [[nodiscard]] TextureHandle GetDistanceOutputHandle() const { return m_DistanceHandle; }
 
+        /// @brief Returns the radiance cube view (sampled cube layout), or null without a cube.
+        ///
+        /// A Cube-type ImageView over the six face layers, in a shader-read layout — the exact type
+        /// EnvironmentIbl::GenerateFromCube convolves. Non-null only when the capture was created
+        /// with SceneCaptureInfo::Cube. It is a convolution input only and is **never** registered
+        /// into the set-0 bindless array (nothing hands it a bindless handle); do not "fix" it back
+        /// to the octahedral map's 2D form, which exists solely because a material-sampled output
+        /// must ride that array and a cube view cannot.
+        [[nodiscard]] const Ref<ImageView>& GetCubeView() const { return m_CubeView; }
+
+        /// @brief Returns the radiance cube's face edge length in texels (the face resolution).
+        [[nodiscard]] u32 GetCubeFaceSize() const { return m_FaceResolution; }
+
+        /// @brief A revision that advances each time a full six-face sweep completes.
+        ///
+        /// Zero until the first sweep lands; it advances once per six pushed faces (one SetView +
+        /// Render per face, round-robin), never mid-sweep. A consumer re-derives whatever it
+        /// convolves from the cube (its IBL split-sum maps) when this moves — the same completion
+        /// contract BakedSkyCube::GetRevision applies to a shared cube. Because a capture is
+        /// push-to-render, it does not advance while the capture is idle.
+        [[nodiscard]] u64 GetCubeRevision() const { return m_CubeRevision; }
+
         /// @brief Attaches this capture to the Application capture drive-list.
         ///
         /// Called by Application::RegisterCapture; the capture erases its own pointer on
@@ -233,6 +270,23 @@ namespace Veng::Renderer
         /// @brief Bindless slot of the clamp sampler the atlas copy and the resample both read
         /// through, shared out of the registry with every other consumer of the same settings.
         SamplerHandle m_SamplerHandle;
+
+        /// @brief Whether the cube path (cube image, per-face views, copy pipeline) was built.
+        bool m_CaptureCube = false;
+
+        /// @brief The radiance cube the six faces render into. Null without the cube path.
+        Ref<Image> m_CubeImage;
+        /// @brief Cube-type view over all six layers — the convolution input GetCubeView exposes.
+        ///        Never registered bindless (a convolution input, not a material-sampled output).
+        Ref<ImageView> m_CubeView;
+        /// @brief One single-layer 2D view per cube face, rendered into by the face copy.
+        std::array<Ref<ImageView>, FaceCount> m_CubeFaceViews;
+        /// @brief Face copy pipeline (face HDR → cube layer, horizontally mirrored) + layout. Null
+        ///        without the cube path.
+        Ref<GraphicsPipeline> m_CubeFacePipeline;
+        Ref<PipelineLayout> m_CubeFaceLayout;
+        /// @brief Advances each time a full six-face sweep completes. See GetCubeRevision.
+        u64 m_CubeRevision = 0;
 
         /// @brief Whether the distance path (depth atlas, distance map, its pipelines) was built.
         bool m_CaptureDistance = false;

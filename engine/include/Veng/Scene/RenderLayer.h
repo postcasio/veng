@@ -30,10 +30,24 @@ namespace Veng
         /// DefaultEnvironmentCaptureLayers), while the ordinary camera view draws it like anything
         /// else.
         ViewAnchored = 1,
+        /// @brief Geometry that is its own light source and is backed by an explicit scene light: a
+        ///        surface that writes its emitted radiance directly (a self-lit disc, an emissive
+        ///        panel) while a real scene light reproduces its illumination on everything else.
+        ///
+        /// The layer exists so an image-based-lighting capture can drop it. Such a surface's light
+        /// reaches the rest of the scene twice over if the capture keeps it: once as the scene
+        /// light it is paired with already casts, and again as radiance the capture convolves into
+        /// reflected environment light. An IBL probe therefore declares this layer excluded from its
+        /// own capture (its light is already accounted for by the paired scene light), while a
+        /// specular reflection capture keeps it — a mirror shows the emitter with no double-count.
+        /// The engine offers the layer as a slot only and curates its exclusion into no shared
+        /// default (see DefaultEnvironmentCaptureLayers): the capture that needs it dropped names
+        /// the exclusion itself. The ordinary camera view draws it like Default.
+        SelfLit = 2,
     };
 
     /// @brief Number of members in the closed RenderLayer table.
-    inline constexpr u32 RenderLayerCount = 2;
+    inline constexpr u32 RenderLayerCount = 3;
 
     /// @brief The bit a layer occupies in a render-layer mask.
     /// @param layer  The layer whose bit to compute.
@@ -58,7 +72,11 @@ namespace Veng
     /// @brief The layers an environment-probe capture draws unless a consumer names another set.
     ///
     /// Every layer but ViewAnchored: a probe captures the scene around a point, and camera-anchored
-    /// decoration is not part of that scene (see RenderLayer::ViewAnchored).
+    /// decoration is not part of that scene (see RenderLayer::ViewAnchored). This shared default
+    /// carries only the *universal* exclusion — ViewAnchored is wrong in every environment capture.
+    /// RenderLayer::SelfLit is deliberately **kept**: dropping it is a per-capture need (an IBL
+    /// probe wants it gone to avoid a double-count, a specular reflection wants it), so the capture
+    /// that needs it dropped names the exclusion itself rather than inheriting it from here.
     inline constexpr u32 DefaultEnvironmentCaptureLayers =
         AllRenderLayers & ~RenderLayerBit(RenderLayer::ViewAnchored);
 }
@@ -66,4 +84,5 @@ namespace Veng
 VE_ENUM(::Veng::RenderLayer, 0x357D35AA53685C1AULL)
 VE_ENUMERATOR(Default)
 VE_ENUMERATOR(ViewAnchored)
+VE_ENUMERATOR(SelfLit)
 VE_ENUM_END();

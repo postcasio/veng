@@ -932,6 +932,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/punctual_shadows.cpp
             tests/unit/hi_z_history.cpp
             tests/unit/frame_topology.cpp
+            tests/unit/render_layer.cpp
             tests/unit/post_process_effect.cpp
             tests/unit/surface_claim.cpp
             tests/unit/generated_texture_queue.cpp
@@ -1656,6 +1657,12 @@ if (VENG_BUILD_TESTS)
             # settles then re-arms, every-frame never idles), and teardown unregistering the
             # capture from the drive-list on component/entity/scene destruction.
             tests/gpu/capture_surface.cpp
+            # scene_capture_cube.cpp drives SceneCapture's opt-in radiance cube over a green self-lit
+            # backdrop and feeds the published cube to EnvironmentIbl::GenerateFromCube — the cube is
+            # a valid IBL source carrying the scene in the right direction, the revision advances only
+            # on a completed six-face sweep, and the self-lit layer is kept by the shared capture
+            # default but dropped when the capture declares the exclusion.
+            tests/gpu/scene_capture_cube.cpp
             # world_slot_budget.cpp drives a headless Application through Run(), opening and closing
             # worlds whose systems hold bindless material instances, and reads BindlessRegistry's
             # free counts across the cycles: a closed world's slots come back, and worlds open at
