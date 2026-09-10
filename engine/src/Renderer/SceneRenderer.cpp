@@ -18,6 +18,7 @@
 #include "Passes/GBufferScenePass.h"
 #include "Passes/PickingScenePass.h"
 #include "Passes/PointFieldScenePass.h"
+#include "Passes/GuiHdrOverlayScenePass.h"
 #include "Passes/PostProcessEffectScenePass.h"
 #include "Passes/PunctualShadowScenePass.h"
 #include "Passes/ShadowScenePass.h"
@@ -274,6 +275,11 @@ namespace Veng::Renderer
                                      !m_PostProcessEffects.empty() &&
                                      m_Settings.Mode == DebugView::Final;
         UpdatePostProcessEffectTargets(m_PostProcessEffectsActive);
+
+        // The scene-HDR pre-bloom overlay pass is content-driven like the effect chain: active only
+        // while a SceneHdrPreBloom overlay is present and the frame renders the Final tail (a debug
+        // arm has no pre-bloom scene-color chain to blend into).
+        m_HdrOverlayActive = m_HasHdrOverlay && m_Settings.Mode == DebugView::Final;
 
         // The skybox pass samples the IBL radiance set for an environment sky, or the resolved baked
         // cube's consumer set (same radiance binding) for a baked material/atmosphere sky or a CubeSky.
@@ -703,6 +709,21 @@ namespace Veng::Renderer
                 }
             }
 
+            // The scene-HDR overlay pass blends the pre-bloom GUI overlays into the resolved scene
+            // color in place, after the effects and before bloom. Created lazily and kept resident
+            // (it owns a GuiScenePass recorder), it is wired to the effect chain's output so bloom
+            // reads the overlay's result.
+            if (m_HdrOverlayActive)
+            {
+                if (m_GuiHdrOverlayPass == nullptr)
+                {
+                    m_GuiHdrOverlayPass = CreateUnique<GuiHdrOverlayScenePass>(m_Context, m_Assets,
+                                                                               HdrFormat, m_Extent);
+                }
+                m_GuiHdrOverlayPass->Resize(m_Extent);
+                m_GuiHdrOverlayPass->SetOutput(ppEffectFinalId);
+            }
+
             // Tonemap source: bloom composite when bloom is on, else the finished scene color — which
             // is the last effect's output when the effect chain ran (ppEffectFinalId), m_HdrId
             // otherwise.
@@ -1039,6 +1060,13 @@ namespace Veng::Renderer
                         effectSourceHandle = evenIndex ? m_PpEffectHandleA : m_PpEffectHandleB;
                     }
                 }
+                // The GUI-overlay slot: after the post-process effects, before bloom. It loads and
+                // stores the effect chain's output (ppEffectFinalId) in place, blending the overlays
+                // over it, so bloom and the bloom-off tonemap read the overlay's result.
+                if (m_HdrOverlayActive && m_GuiHdrOverlayPass != nullptr)
+                {
+                    m_GuiHdrOverlayPass->Declare(graph, io);
+                }
                 if (m_Topology->BloomActive)
                 {
                     m_Bloom->Declare(graph, ppEffectFinalId, m_BloomChainId, m_BloomResultId,
@@ -1151,6 +1179,19 @@ namespace Veng::Renderer
              ++e)
         {
             m_PostProcessEffectPasses[e]->SetMaterial(m_PostProcessEffects[e]);
+        }
+    }
+
+    void SceneRenderer::ResolveHdrOverlays(const SceneView& view)
+    {
+        // A change in whether any pre-bloom overlay is present recompiles the pass set at the frame
+        // boundary (insert or drop the overlay pass); a stable presence replays, and the overlays'
+        // per-frame content reaches the pass through the SceneView with no recompile.
+        const bool present = !view.HdrOverlays.empty();
+        if (present != m_HasHdrOverlay)
+        {
+            m_HasHdrOverlay = present;
+            Rebuild();
         }
     }
 
@@ -1905,6 +1946,10 @@ namespace Veng::Renderer
         // insert/drop/reorder on an active-set change, and each active effect's material is forwarded
         // to its pass.
         ResolvePostProcessEffects(resolvedView);
+
+        // Resolve whether a scene-HDR pre-bloom overlay is present the same way — insert/drop the
+        // overlay pass on a presence change; the overlays' content reaches the pass through the view.
+        ResolveHdrOverlays(resolvedView);
 
         // Forward the resolved authored sky material to the sky-material pass (a no-op when the pass
         // is absent or no material is bound). The game has already written the material's own

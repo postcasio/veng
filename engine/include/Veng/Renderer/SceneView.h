@@ -30,6 +30,11 @@ namespace Veng
     class MaterialInstance;
     class EnvironmentMap;
     class SceneBroadphase;
+
+    namespace Gui
+    {
+        class DrawList;
+    }
 }
 
 namespace Veng::Renderer
@@ -37,6 +42,30 @@ namespace Veng::Renderer
     class Context;
     class DescriptorSet;
     class BakedSkyCube;
+
+    /// @brief One scene-HDR-pre-bloom overlay's engine-built content and projection, for the Execute.
+    ///
+    /// The engine drives a SceneHdrPreBloom GuiOverlay's document ahead of the scene render (the
+    /// RenderSurfaces precedent) and conveys the result here into the pre-bloom pass (the SkyMaterial
+    /// precedent) — an engine-internal per-frame channel, never a game push. The draw list is borrowed
+    /// for the Execute and built in the overlay's document logical space; the pass either scales it by
+    /// UiScale (screen-space) or projects it through the live camera onto the plane (world-anchored).
+    struct GuiHdrOverlayView
+    {
+        /// @brief The overlay's built draw list, in document logical coordinates; borrowed for the Execute.
+        const Gui::DrawList* DrawList = nullptr;
+        /// @brief World-space model transform of the virtual plane (world-anchored).
+        mat4 Model{1.0f};
+        /// @brief The plane's world-space width and height (world-anchored).
+        vec2 SurfaceSize{1.0f};
+        /// @brief The document's logical extent the draw list was built at.
+        ///
+        /// Screen-space scales this extent to fill the scene-color region; world-anchored maps it onto
+        /// the plane. Either way it is the logical space the draw list's positions live in.
+        vec2 DocExtent{1.0f};
+        /// @brief Whether to project through the live camera onto the plane, or scale flat to the region.
+        bool WorldAnchored = false;
+    };
 
     /// @brief Construction parameters for SceneRenderer.
     struct SceneRendererInfo
@@ -395,5 +424,15 @@ namespace Veng::Renderer
         /// Filled by the geometry-pass draw preparation; a shadow pass looks up a skinned caster's
         /// palette base here so it casts its posed shadow. Borrowed; valid only for this Execute.
         const unordered_map<u64, u32>* SkinnedPaletteBases = nullptr;
+
+        /// @brief Scene-HDR-pre-bloom overlays the engine composites before bloom; borrowed for the Execute.
+        ///
+        /// Filled by the engine (the viewport drives each SceneHdrPreBloom GuiOverlay ahead of the
+        /// scene render and points this at the built list) — an engine-internal channel, not a game
+        /// push. Empty when no such overlay is present, which is the today's-behavior topology.
+        std::span<const GuiHdrOverlayView> HdrOverlays;
+
+        /// @brief Seconds an animated overlay fill reads; forwarded to the pre-bloom overlay pass.
+        f32 GuiTime = 0.0f;
     };
 }

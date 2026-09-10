@@ -448,6 +448,20 @@ namespace Veng::Gui
         void Text(vec2 pen, const Font& font, string_view text, f32 pixelSize, vec4 color,
                   optional<f32> maxWidth = {});
 
+        /// @brief Appends another draw list's geometry with every vertex position remapped.
+        ///
+        /// Copies @p src's vertices (each position run through @p project), indices, runs, and
+        /// gradient records into this list, offsetting index and gradient references so the two
+        /// streams concatenate — the way several projected overlays merge into one screen-space list a
+        /// single pass records. A run's clip rectangle is projected to a screen-space bounding
+        /// scissor (dropped to full-surface when a corner maps behind the eye). @p project returns
+        /// nullopt for a point behind the projection's eye; a single such vertex culls the whole
+        /// source (a flat plane crossing the eye plane shows nothing) and nothing is appended.
+        /// @param src      The source draw list to append.
+        /// @param project  Maps a source position to an output position, or nullopt to cull.
+        /// @return True when the source was appended; false when it was culled behind the eye.
+        bool AppendProjected(const DrawList& src, const function<optional<vec2>(vec2)>& project);
+
         /// @brief Pushes a clip rectangle onto the scissor stack.
         ///
         /// The new clip is intersected with the current top of the stack, so nested clips

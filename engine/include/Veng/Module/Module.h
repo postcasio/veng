@@ -89,10 +89,14 @@ extern "C"
 /// ApplicationInfo with AudioSettingsSchema: the module subclasses Application (its vtable is what
 /// the engine calls through) and constructs the ApplicationInfo it hands back, so a stale module
 /// would lay out the vtable and the info struct short of what the engine reads.
+/// Version 19 grows the builtin GuiOverlay component with a placement, a projection, and the
+/// world-anchored plane transform/size/resolution fields: a module instantiates GuiOverlay
+/// (Add<GuiOverlay>) with the engine's layout, so a stale module built against the shorter struct
+/// would size and lay out the component short of what the engine reads and writes.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 18u
+#define VENG_MODULE_ABI_VERSION 19u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

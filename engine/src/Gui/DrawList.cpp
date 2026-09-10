@@ -544,4 +544,76 @@ namespace Veng::Gui
         VE_ASSERT(!m_TransformStack.empty(), "DrawList::PopTransform on an empty transform stack");
         m_TransformStack.pop_back();
     }
+
+    bool DrawList::AppendProjected(const DrawList& src,
+                                   const function<optional<vec2>(vec2)>& project)
+    {
+        if (src.m_Runs.empty())
+        {
+            return true;
+        }
+
+        // Project every source vertex first; a single point behind the eye culls the whole source,
+        // so a partially-behind plane appends nothing rather than smearing a wrapped quad.
+        vector<GuiVertex> projected;
+        projected.reserve(src.m_Vertices.size());
+        for (const GuiVertex& vertex : src.m_Vertices)
+        {
+            const optional<vec2> position = project(vertex.Position);
+            if (!position.has_value())
+            {
+                return false;
+            }
+            GuiVertex out = vertex;
+            out.Position = *position;
+            projected.push_back(out);
+        }
+
+        const auto vertexBase = static_cast<u32>(m_Vertices.size());
+        const auto indexBase = static_cast<u32>(m_Indices.size());
+        const auto gradientBase = static_cast<u32>(m_Gradients.size());
+
+        // Re-base each vertex's gradient selector onto the concatenated gradient table; a zero
+        // selector (no gradient) stays zero, else it is (record index + 1) and shifts by the base.
+        for (GuiVertex& vertex : projected)
+        {
+            if (vertex.GradientSelector != 0)
+            {
+                vertex.GradientSelector += gradientBase;
+            }
+        }
+        m_Vertices.insert(m_Vertices.end(), projected.begin(), projected.end());
+
+        for (const u32 index : src.m_Indices)
+        {
+            m_Indices.push_back(index + vertexBase);
+        }
+        m_Gradients.insert(m_Gradients.end(), src.m_Gradients.begin(), src.m_Gradients.end());
+
+        // Offset each run's index range onto the concatenated stream and project its clip rect to a
+        // screen-space bounding scissor; a clip corner behind the eye drops the scissor to full
+        // surface rather than fabricating one.
+        for (const DrawRun& run : src.m_Runs)
+        {
+            DrawRun copy = run;
+            copy.FirstIndex = run.FirstIndex + indexBase;
+            if (run.HasClip)
+            {
+                const optional<vec2> low = project(run.Clip.Min);
+                const optional<vec2> high = project(run.Clip.Max());
+                if (low.has_value() && high.has_value())
+                {
+                    const vec2 lo = glm::min(*low, *high);
+                    const vec2 hi = glm::max(*low, *high);
+                    copy.Clip = Rect{.Min = lo, .Size = hi - lo};
+                }
+                else
+                {
+                    copy.HasClip = false;
+                }
+            }
+            m_Runs.push_back(copy);
+        }
+        return true;
+    }
 }

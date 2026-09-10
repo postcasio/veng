@@ -170,6 +170,18 @@ namespace Veng::Renderer
         {
         }
 
+        // Builds the composite images + two-pass composite graph on first use. The overlay HDR sink
+        // (RecordInto) needs neither, so a pass used only that way allocates no UI/composite target.
+        void EnsureCompositeResources()
+        {
+            if (Graph)
+            {
+                return;
+            }
+            CreateImages();
+            CompileGraph();
+        }
+
         void CreateImages()
         {
             UiImage =
@@ -577,8 +589,8 @@ namespace Veng::Renderer
                      });
         m_Impl->GradientSlot = context.GetBindlessRegistry().Register(m_Impl->GradientBuffer);
 
-        m_Impl->CreateImages();
-        m_Impl->CompileGraph();
+        // The composite images + graph are built lazily on the first Render/GetOutput; a pass used
+        // only as the in-scene overlay sink (RecordInto) never allocates them.
     }
 
     GuiScenePass::~GuiScenePass()
@@ -651,13 +663,19 @@ namespace Veng::Renderer
             return;
         }
         m_Impl->Extent = extent;
-        m_Impl->CreateImages();
-        m_Impl->CompileGraph();
+        // Only rebuild the composite images/graph if they were already built; an overlay-sink pass
+        // has none and keeps deferring them.
+        if (m_Impl->Graph)
+        {
+            m_Impl->CreateImages();
+            m_Impl->CompileGraph();
+        }
     }
 
     void GuiScenePass::Render(CommandBuffer& cmd, const Ref<ImageView>& sceneOutput)
     {
         Impl& impl = *m_Impl;
+        impl.EnsureCompositeResources();
         BindlessRegistry& bindless = impl.Context.GetBindlessRegistry();
 
         // The scene output and the UI image are both sampled by the composite pass, out of the
@@ -704,13 +722,22 @@ namespace Veng::Renderer
         cmd.PrepareForAccess(target.GetOutput(), AccessKind::SampleGraphics);
     }
 
+    void GuiScenePass::RecordInto(CommandBuffer& cmd, uvec2 extent)
+    {
+        // The caller's render pass owns the rendering scope and the (loaded) target; only replay the
+        // cached runs into it, so the UI blends premultiplied-over whatever the target holds.
+        m_Impl->RecordRuns(cmd, extent);
+    }
+
     const Ref<ImageView>& GuiScenePass::GetOutput() const
     {
+        m_Impl->EnsureCompositeResources();
         return m_Impl->CompositeView;
     }
 
     const Ref<ImageView>& GuiScenePass::GetUiImage() const
     {
+        m_Impl->EnsureCompositeResources();
         return m_Impl->UiView;
     }
 }

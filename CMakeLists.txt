@@ -1004,6 +1004,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/dynamic_resolution.cpp
             tests/unit/dof_tile.cpp
             tests/unit/gui_draw_list.cpp
+            tests/unit/gui_overlay_projection.cpp
             tests/unit/gui_fill_geometry.cpp
             tests/unit/gui_layout.cpp
             tests/unit/gui_style_states.cpp
@@ -1774,6 +1775,12 @@ if (VENG_BUILD_TESTS)
             # viewports each claim only their seat's overlay (unbound → the primary), and a failed
             # load surfaces null rather than aborting.
             tests/gpu/gui_overlay.cpp
+            # gui_hdr_overlay.cpp drives the SceneHdrPreBloom overlay pass: an absent overlay is
+            # inert and a present one composites into the scene HDR, the overlay is in the HDR chain
+            # (its output scales with exposure), the cross-plan effect → overlay → bloom order holds,
+            # and a component routes by placement (HDR skips the layer stack). Needs both the cooker
+            # HUD fixture and the post-effect pack fixture dirs.
+            tests/gpu/gui_hdr_overlay.cpp
             tests/gpu/mesh_loader.cpp
             tests/gpu/shader_loader.cpp
             tests/gpu/material_loader.cpp

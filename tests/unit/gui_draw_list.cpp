@@ -624,3 +624,76 @@ TEST_CASE("gui draw list: a hard shadow still carries a non-zero blur lane")
     empty.Shadow(UnitRect, BoxShadow{.Blur = 4.0f, .Color = vec4(0.0f)});
     CHECK(empty.GetVertices().empty());
 }
+
+TEST_CASE("gui draw list: AppendProjected scales positions and offsets indices, runs, gradients")
+{
+    // A source with a solid quad, a gradient quad (merges into the shape run), and a textured quad
+    // (its own run) — two runs and one gradient record for the append to re-base.
+    DrawList src;
+    src.Quad(UnitRect, vec4(1.0f));
+    const GradientFill fill{
+        .Kind = GradientKind::Linear, .Ramp = Texture(7), .Sampler = Sampler(3)};
+    src.Gradient({.Min = {60.0f, 10.0f}, .Size = {40.0f, 40.0f}}, fill);
+    src.Texture({.Min = {110.0f, 10.0f}, .Size = {40.0f, 40.0f}}, Texture(4), Sampler(0));
+    REQUIRE(src.GetRuns().size() == 2);
+    REQUIRE(src.GetGradients().size() == 1);
+    const usize srcVerts = src.GetVertices().size();
+    const usize srcIndices = src.GetIndices().size();
+
+    // A destination already carrying one quad, so the append must offset onto its streams.
+    DrawList dst;
+    dst.Quad(UnitRect, vec4(0.5f));
+    const auto baseVerts = static_cast<u32>(dst.GetVertices().size());
+    const auto baseIndices = static_cast<u32>(dst.GetIndices().size());
+    const auto baseGradients = static_cast<u32>(dst.GetGradients().size());
+
+    // The screen-space mapping is a flat affine scale (the SetUiScale placement) — the same map the
+    // pre-bloom overlay pass uses for a screen-space overlay.
+    constexpr f32 Scale = 3.0f;
+    const bool appended =
+        dst.AppendProjected(src, [](vec2 point) -> optional<vec2> { return point * Scale; });
+    CHECK(appended);
+
+    // Positions scaled; the source's first vertex lands after the destination's own geometry.
+    REQUIRE(dst.GetVertices().size() == baseVerts + srcVerts);
+    const GuiVertex& first = dst.GetVertices()[baseVerts];
+    CHECK(first.Position.x == doctest::Approx(src.GetVertices()[0].Position.x * Scale));
+    CHECK(first.Position.y == doctest::Approx(src.GetVertices()[0].Position.y * Scale));
+
+    // Indices offset by the destination's vertex base.
+    REQUIRE(dst.GetIndices().size() == baseIndices + srcIndices);
+    CHECK(dst.GetIndices()[baseIndices] == src.GetIndices()[0] + baseVerts);
+
+    // Gradient records concatenate, and the appended gradient vertex's selector re-bases onto them.
+    REQUIRE(dst.GetGradients().size() == baseGradients + 1);
+    const GuiVertex& gradientVertex = dst.GetVertices()[baseVerts + 4];
+    CHECK(gradientVertex.GradientSelector == 1 + baseGradients);
+
+    // The two source runs carry over (the destination had one), index ranges offset.
+    REQUIRE(dst.GetRuns().size() == 3);
+    CHECK(dst.GetRuns()[1].FirstIndex == src.GetRuns()[0].FirstIndex + baseIndices);
+}
+
+TEST_CASE("gui draw list: AppendProjected culls the whole source when a vertex is behind the eye")
+{
+    DrawList src;
+    src.Quad(UnitRect, vec4(1.0f));
+
+    DrawList dst;
+    // A projection that reports the first vertex behind the eye culls the entire source — nothing is
+    // appended (a flat plane crossing the eye plane shows nothing).
+    bool first = true;
+    const bool appended = dst.AppendProjected(src,
+                                              [&first](vec2 point) -> optional<vec2>
+                                              {
+                                                  if (first)
+                                                  {
+                                                      first = false;
+                                                      return std::nullopt;
+                                                  }
+                                                  return point;
+                                              });
+    CHECK_FALSE(appended);
+    CHECK(dst.GetVertices().empty());
+    CHECK(dst.GetRuns().empty());
+}

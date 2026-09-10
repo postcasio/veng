@@ -16,6 +16,7 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 
+#include "GuiOverlayProjection.h"
 #include "Passes/GuiScenePass.h"
 #include "Picking.h"
 #include "SurfaceClaim.h"
@@ -384,6 +385,11 @@ namespace Veng::Renderer
             return;
         }
 
+        // Drive any SceneHdrPreBloom overlays into their draw lists before the scene render, so the
+        // renderer's pre-bloom pass composites current content this frame (the RenderSurfaces
+        // precedent); the built lists ride the SceneView below (the SkyMaterial precedent).
+        DriveHdrOverlays();
+
         const SceneView view{
             .World = *m_ViewState.World,
             .Camera = m_ViewState.Camera,
@@ -415,6 +421,8 @@ namespace Veng::Renderer
             .DofRingCount = m_ViewState.DofRingCount,
             .OutputBrightness = m_ViewState.OutputBrightness,
             .OutputGamma = m_ViewState.OutputGamma,
+            .HdrOverlays = m_HdrOverlayViews,
+            .GuiTime = m_GuiTime,
         };
         // Drive any GuiSurface panels in the scene into their HDR targets before the scene render,
         // so a translucent/emissive panel material samples a shader-readable target the same frame.
@@ -626,10 +634,68 @@ namespace Veng::Renderer
         auto& world = const_cast<Scene&>(*m_ViewState.World);
         for (auto [entity, overlay] : world.View<GuiOverlay>())
         {
+            // A SceneHdrPreBloom overlay is composited by the renderer's pre-bloom pass, driven ahead
+            // of the scene render by DriveHdrOverlays — never onto the post-tonemap layer stack.
+            if (overlay.Placement != GuiOverlayPlacement::PostTonemap)
+            {
+                continue;
+            }
             if (ClaimsOverlay(world, entity, overlay))
             {
                 overlay.Drive(*this, m_Assets, world, entity, m_GuiDrivers, m_Audio);
             }
+        }
+    }
+
+    void Viewport::DriveHdrOverlays()
+    {
+        m_HdrOverlayViews.clear();
+        if (m_ViewState.World == nullptr)
+        {
+            return;
+        }
+
+        // The engine owns the scene mutably to drive a document (the DriveOverlays rationale); a
+        // SceneHdrPreBloom overlay builds off the layer stack into its own reused draw list, and its
+        // resolved plane transform + extent ride m_HdrOverlayViews into the pre-bloom pass.
+        auto& world = const_cast<Scene&>(*m_ViewState.World);
+        usize index = 0;
+        for (auto [entity, overlay] : world.View<GuiOverlay>())
+        {
+            if (overlay.Placement != GuiOverlayPlacement::SceneHdrPreBloom)
+            {
+                continue;
+            }
+            if (!ClaimsOverlay(world, entity, overlay))
+            {
+                continue;
+            }
+
+            // Reuse a pooled draw list (grown, never shrunk); the Unique keeps the built list's
+            // address stable as the pool grows, so the conveyed pointer stays valid.
+            if (index >= m_HdrOverlayDrawLists.size())
+            {
+                m_HdrOverlayDrawLists.push_back(CreateUnique<Gui::DrawList>());
+            }
+            Gui::DrawList& drawList = *m_HdrOverlayDrawLists[index];
+
+            const bool worldAnchored = overlay.Projection == GuiOverlayProjection::WorldAnchored;
+            // A world-anchored plane lays out at its authored logical resolution; a screen-space
+            // overlay at the region divided by the UI scale, exactly as the layer-stack path does.
+            const vec2 docExtent =
+                worldAnchored ? vec2(overlay.SurfaceResolution) : vec2(m_Region.Extent) / m_UiScale;
+
+            overlay.DriveHdr(*this, m_Assets, world, entity, m_GuiDrivers, m_Audio, docExtent,
+                             m_ViewState.Delta, drawList);
+
+            m_HdrOverlayViews.push_back(GuiHdrOverlayView{
+                .DrawList = &drawList,
+                .Model = ComputeGuiOverlayModel(overlay.AnchorPosition, overlay.AnchorRotation),
+                .SurfaceSize = overlay.SurfaceSize,
+                .DocExtent = docExtent,
+                .WorldAnchored = worldAnchored,
+            });
+            ++index;
         }
     }
 

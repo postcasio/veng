@@ -1,0 +1,413 @@
+// Scene-HDR-pre-bloom GUI overlays — the GuiHdrOverlayScenePass the SceneRenderer runs after the
+// post-process effects and before bloom. These drive the renderer directly with a hand-built
+// Gui::DrawList conveyed on SceneView::HdrOverlays (the engine-internal channel the viewport fills),
+// so they pin the renderer-side contracts without a cooked document:
+//
+//   - an absent overlay is inert (byte-identical to no overlay), a present one composites into the
+//     scene color;
+//   - the overlay is in the HDR chain before tonemap — its output scales with exposure, which a
+//     post-tonemap composite could not;
+//   - the load-bearing cross-plan order: with a PostProcessEffect and a SceneHdrPreBloom overlay
+//     both active, the effect writes the scene color, the overlay composites over it (so it ran
+//     after the effect), and the overlay blooms (so it ran before bloom) — effect → overlay → bloom.
+//
+// A separate case drives a real GuiOverlay component through a Viewport to prove per-component
+// placement routing: a SceneHdrPreBloom component composites into the scene HDR and never joins the
+// post-tonemap layer stack, while a PostTonemap component does.
+
+#include <filesystem>
+
+#include <doctest/doctest.h>
+
+#include <glm/gtc/packing.hpp>
+
+#include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Material.h>
+#include <Veng/Asset/MaterialInstance.h>
+#include <Veng/Asset/Mesh.h>
+#include <Veng/Asset/Primitives.h>
+#include <Veng/Cook/BuiltinImporters.h>
+#include <Veng/Cook/Cooker.h>
+#include <Veng/Gui/DrawList.h>
+#include <Veng/Gui/Overlay.h>
+#include <Veng/Renderer/CommandBuffer.h>
+#include <Veng/Renderer/Image.h>
+#include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/LightPacking.h>
+#include <Veng/Renderer/SceneRenderer.h>
+#include <Veng/Renderer/Viewport.h>
+#include <Veng/Scene/BuiltinTypes.h>
+#include <Veng/Scene/Camera.h>
+#include <Veng/Scene/Components.h>
+#include <Veng/Scene/Scene.h>
+
+#include <gpu/fixture.h>
+#include "support/TempPath.h"
+
+using namespace Veng;
+using namespace Veng::Renderer;
+
+namespace
+{
+    constexpr uvec2 Extent{128, 128};
+
+    vec3 DecodeTexel(const vector<u8>& rgba16f, u32 width, u32 x, u32 y)
+    {
+        const auto* halves = reinterpret_cast<const u16*>(rgba16f.data());
+        const usize base = (static_cast<usize>(y) * width + x) * 4;
+        return vec3(glm::unpackHalf1x16(halves[base + 0]), glm::unpackHalf1x16(halves[base + 1]),
+                    glm::unpackHalf1x16(halves[base + 2]));
+    }
+
+    CameraView FrontCamera()
+    {
+        CameraView camera;
+        camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+        camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+        return camera;
+    }
+
+    // A screen-space overlay quad covering [min, min+size) document points, opaque unless a lower
+    // alpha is asked for. DocExtent == Extent, so the pass maps it 1:1 into the scene-color region.
+    Gui::DrawList OverlayQuad(vec2 min, vec2 size, vec4 color)
+    {
+        Gui::DrawList list;
+        list.Quad(Gui::Rect{.Min = min, .Size = size}, color);
+        return list;
+    }
+
+    GuiHdrOverlayView ScreenSpaceView(const Gui::DrawList& list)
+    {
+        return GuiHdrOverlayView{
+            .DrawList = &list,
+            .DocExtent = vec2(Extent),
+            .WorldAnchored = false,
+        };
+    }
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "gui hdr overlay: an absent overlay is inert; a present one composites into the scene")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const CameraView camera = FrontCamera();
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = Extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
+    });
+
+    const auto render = [&](std::span<const GuiHdrOverlayView> overlays)
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                           .Camera = camera,
+                                                           .Delta = 0.0f,
+                                                           .HdrOverlays = overlays});
+            });
+        return renderer->GetOutput()->GetImage()->Download();
+    };
+
+    // Baseline: no overlay conveyed.
+    const vector<u8> baseline = render({});
+
+    // A centered opaque overlay quad — covers [32,96), leaving a margin of empty scene.
+    const Gui::DrawList list = OverlayQuad(vec2(32.0f), vec2(64.0f), vec4(0.6f, 0.2f, 0.2f, 1.0f));
+    const GuiHdrOverlayView view = ScreenSpaceView(list);
+    const GuiHdrOverlayView views[] = {view};
+    const vector<u8> withOverlay = render(views);
+
+    const vec3 baseCenter = DecodeTexel(baseline, Extent.x, 64, 64);
+    const vec3 overlayCenter = DecodeTexel(withOverlay, Extent.x, 64, 64);
+    const vec3 baseCorner = DecodeTexel(baseline, Extent.x, 4, 4);
+    const vec3 overlayCorner = DecodeTexel(withOverlay, Extent.x, 4, 4);
+
+    // The overlay changed the covered center but left the uncovered corner untouched — it drew, and
+    // is inert where it does not cover.
+    CHECK(overlayCenter.r > baseCenter.r + 0.05f);
+    CHECK(overlayCorner.r == doctest::Approx(baseCorner.r).epsilon(0.01f));
+
+    // An empty conveyed span reproduces the baseline exactly — absent overlay, no extra work.
+    const vector<u8> emptyAgain = render({});
+    CHECK(emptyAgain == baseline);
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "gui hdr overlay: the overlay is in the HDR chain — its output scales with exposure")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const CameraView camera = FrontCamera();
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = Extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
+    });
+
+    const Gui::DrawList list = OverlayQuad(vec2(32.0f), vec2(64.0f), vec4(0.5f, 0.5f, 0.5f, 1.0f));
+    const GuiHdrOverlayView view = ScreenSpaceView(list);
+    const GuiHdrOverlayView views[] = {view};
+
+    const auto renderAtExposure = [&](const f32 exposure)
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                           .Camera = camera,
+                                                           .Delta = 0.0f,
+                                                           .Exposure = exposure,
+                                                           .HdrOverlays = views});
+            });
+        return DecodeTexel(renderer->GetOutput()->GetImage()->Download(), Extent.x, 64, 64);
+    };
+
+    // The overlay is composited into the HDR before tonemap, so a higher exposure brightens it — a
+    // post-tonemap composite would be exposure-independent.
+    const vec3 low = renderAtExposure(1.0f);
+    const vec3 high = renderAtExposure(4.0f);
+    CHECK(high.r > low.r + 0.05f);
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "gui hdr overlay: effect then overlay then bloom — the load-bearing cross-plan order")
+{
+    RegisterBuiltinTypes(Types);
+
+    const path gbufferDir = path(GPU_GBUFFER_FIXTURE_DIR);
+    const path postDir = path(GPU_POSTPROCESS_FIXTURE_DIR);
+    const path gbufferArchive =
+        Veng::TestSupport::TempDir() / "veng_gui_hdr_overlay_gbuffer.vengpack";
+    const path postArchive = Veng::TestSupport::TempDir() / "veng_gui_hdr_overlay_post.vengpack";
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker
+                .CookPack(gbufferDir / "gbuffer_pack.json", gbufferArchive, {}, nullptr, nullptr,
+                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+                .has_value());
+    REQUIRE(cooker
+                .CookPack(postDir / "post_effect_pack.json", postArchive, {}, nullptr, nullptr,
+                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+                .has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(gbufferArchive).has_value());
+    REQUIRE(assets.Mount(postArchive).has_value());
+
+    // A lit cube (a scene with real color to darken) and the scale-by-half post effect.
+    constexpr AssetId BrickMaterial{0x895443};
+    constexpr AssetId ScaleEffect{0x895640};
+    const AssetResult<AssetHandle<MaterialInstance>> brick =
+        assets.LoadSync<MaterialInstance>(BrickMaterial);
+    REQUIRE(brick.has_value());
+    const AssetResult<AssetHandle<MaterialInstance>> scale =
+        assets.LoadSync<MaterialInstance>(ScaleEffect);
+    REQUIRE(scale.has_value());
+    REQUIRE(scale->Get()->GetDomain() == MaterialDomain::PostProcess);
+
+    const Ref<Mesh> cube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.6f, brick.value()), "Overlay Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity cubeEntity = scene->CreateEntity();
+    scene->Add<Transform>(cubeEntity);
+    scene->Add<MeshRenderer>(cubeEntity).Mesh = assets.Adopt(cube);
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{.Direction = vec3(0.0f, 0.0f, -1.0f),
+                                           .Color = vec3(1.0f, 1.0f, 1.0f),
+                                           .Intensity = 1.0f / LuminousAnchor};
+
+    const Entity effectEntity = scene->CreateEntity();
+    const CameraView camera = FrontCamera();
+
+    // A fresh renderer per configuration (the plan-00 pattern): each first Execute resolves the
+    // effect and overlay sets from a clean state, avoiding a reused renderer's toggle churn.
+    const auto makeRenderer = [&](const bool bloom)
+    {
+        return SceneRenderer::Create({
+            .Context = Context,
+            .Assets = assets,
+            .OutputFormat = Context.GetOutputFormat(),
+            .Extent = Extent,
+            .Settings = {.Mode = DebugView::Final, .Bloom = bloom, .Shadows = false, .AO = false},
+        });
+    };
+    const auto renderOnce =
+        [&](SceneRenderer& renderer, std::span<const GuiHdrOverlayView> overlays)
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer.Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                          .Camera = camera,
+                                                          .Delta = 0.0f,
+                                                          .BloomThreshold = 1.0f,
+                                                          .HdrOverlays = overlays});
+            });
+        return renderer.GetOutput()->GetImage()->Download();
+    };
+    const auto setEffect = [&](const bool enabled)
+    {
+        if (scene->Has<PostProcessEffect>(effectEntity))
+        {
+            (void)scene->Remove<PostProcessEffect>(effectEntity);
+        }
+        if (enabled)
+        {
+            scene->Add<PostProcessEffect>(effectEntity) =
+                PostProcessEffect{.Material = scale.value(), .Order = 0, .Enabled = true};
+        }
+    };
+
+    // A bright opaque overlay over a small centered patch [48,80), on the cube face — its tonemapped
+    // value clears the lit cube and it blooms.
+    const Gui::DrawList list = OverlayQuad(vec2(48.0f), vec2(32.0f), vec4(8.0f, 8.0f, 8.0f, 1.0f));
+    const GuiHdrOverlayView view = ScreenSpaceView(list);
+    const GuiHdrOverlayView views[] = {view};
+
+    constexpr uvec2 OverlayPix{64, 64}; // inside the overlay patch, over the cube
+    constexpr uvec2 ScenePix{88, 64};   // lit cube, outside the patch
+
+    const auto frameSum = [](const vector<u8>& img)
+    {
+        f32 sum = 0.0f;
+        for (u32 y = 0; y < Extent.y; ++y)
+        {
+            for (u32 x = 0; x < Extent.x; ++x)
+            {
+                sum += DecodeTexel(img, Extent.x, x, y).r;
+            }
+        }
+        return sum;
+    };
+
+    // Effect off: the plain lit cube, and the opaque overlay over it.
+    setEffect(false);
+    const Unique<SceneRenderer> plainRenderer = makeRenderer(false);
+    const f32 scenePlain =
+        DecodeTexel(renderOnce(*plainRenderer, {}), Extent.x, ScenePix.x, ScenePix.y).r;
+    const Unique<SceneRenderer> overlayRenderer = makeRenderer(false);
+    const f32 overlayNoEffect =
+        DecodeTexel(renderOnce(*overlayRenderer, views), Extent.x, OverlayPix.x, OverlayPix.y).r;
+
+    // Effect on (scale-by-half): the darkened cube, then the overlay over the darkened cube, each
+    // rendered with bloom off and bloom on so the overlay's bloom contribution can be isolated.
+    setEffect(true);
+    const Unique<SceneRenderer> effectRenderer = makeRenderer(false);
+    const vector<u8> effectNoOverlay = renderOnce(*effectRenderer, {});
+    const f32 sceneEffect = DecodeTexel(effectNoOverlay, Extent.x, ScenePix.x, ScenePix.y).r;
+    const Unique<SceneRenderer> effectOverlayRenderer = makeRenderer(false);
+    const vector<u8> effectOverlay = renderOnce(*effectOverlayRenderer, views);
+    const f32 overlayEffect = DecodeTexel(effectOverlay, Extent.x, OverlayPix.x, OverlayPix.y).r;
+
+    const Unique<SceneRenderer> effectBloomRenderer = makeRenderer(true);
+    const f32 effectNoOverlayBloomSum = frameSum(renderOnce(*effectBloomRenderer, {}));
+    const Unique<SceneRenderer> effectOverlayBloomRenderer = makeRenderer(true);
+    const f32 effectOverlayBloomSum = frameSum(renderOnce(*effectOverlayBloomRenderer, views));
+
+    // The effect ran: the scale-by-half darkens the visible cube where the overlay does not cover.
+    CHECK(scenePlain > 0.1f);
+    CHECK(sceneEffect < scenePlain - 0.02f);
+
+    // effect → overlay: the opaque overlay pixel is the same with or without the effect — the effect
+    // darkened only the scene the overlay covers, so the overlay composited after the effect (had it
+    // run before, the scale would have halved the overlay too), and it clears the lit cube.
+    CHECK(overlayEffect == doctest::Approx(overlayNoEffect).epsilon(0.02f));
+    CHECK(overlayEffect > scenePlain + 0.1f);
+
+    // overlay → bloom: turning bloom on adds far more whole-frame energy when the bright overlay is
+    // present than when it is not — the extra spread is the overlay blooming, so the overlay was
+    // composited before the bloom read. Both bloom-on frames sit over the same effect-darkened cube,
+    // so the surplus is the overlay's own bloom halo, isolated from the cube's.
+    const f32 overlayBloomSurplus = effectOverlayBloomSum - frameSum(effectOverlay);
+    const f32 sceneBloomSurplus = effectNoOverlayBloomSum - frameSum(effectNoOverlay);
+    CHECK(overlayBloomSurplus > sceneBloomSurplus + 1.0f);
+
+    std::filesystem::remove(gbufferArchive);
+    std::filesystem::remove(postArchive);
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "gui hdr overlay: placement routes per component — HDR overlay skips the layer stack")
+{
+    RegisterBuiltinTypes(Types);
+
+    // The shared HUD fixture document (tests/cooker/fixtures/ui_hud_pack.json).
+    constexpr AssetId UIDocumentId{0xA09AA8B60AEAA8BEULL};
+    const path packJson = path(GPU_COOKER_FIXTURE_DIR) / "ui_hud_pack.json";
+    const path archive = Veng::TestSupport::TempDir() / "veng_gui_hdr_overlay_hud.vengpack";
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker.CookPack(packJson, archive).has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(archive).has_value());
+
+    const auto makeViewport = [&]
+    {
+        return Viewport::Create({
+            .Context = Context,
+            .Assets = assets,
+            .Region = {.Offset = {0, 0}, .Extent = Extent},
+            .ColorFormat = Format::RGBA16Sfloat,
+            .Role = ViewportRole::Presented,
+        });
+    };
+
+    // Baseline: an empty scene, no overlay.
+    const Unique<Scene> baseScene = Scene::Create(Types);
+    const Unique<Viewport> baseViewport = makeViewport();
+    baseViewport->SetViewState({.World = baseScene.get(), .Delta = 0.016f});
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { baseViewport->Render(cmd); });
+    const vector<u8> baseline = baseViewport->GetOutput()->GetImage()->Download();
+
+    // A SceneHdrPreBloom overlay component: driven ahead of the render, composited into the scene HDR,
+    // and never attached to the post-tonemap layer stack.
+    const Unique<Scene> hdrScene = Scene::Create(Types);
+    const Entity hdrEntity = hdrScene->CreateEntity();
+    {
+        auto& overlay = hdrScene->Add<GuiOverlay>(hdrEntity);
+        overlay.Document = *assets.LoadSync<Gui::UIDocument>(UIDocumentId);
+        overlay.Placement = GuiOverlayPlacement::SceneHdrPreBloom;
+    }
+    const Unique<Viewport> hdrViewport = makeViewport();
+    hdrViewport->SetViewState({.World = hdrScene.get(), .Delta = 0.016f});
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { hdrViewport->Render(cmd); });
+    const vector<u8> hdrOutput = hdrViewport->GetOutput()->GetImage()->Download();
+
+    // The HDR overlay changed the rendered scene but joined no layer stack.
+    CHECK(hdrOutput != baseline);
+    CHECK(hdrViewport->GetAttachedDocuments().empty());
+
+    // A PostTonemap overlay of the same document instead attaches to the layer stack (today's path).
+    const Unique<Scene> ldrScene = Scene::Create(Types);
+    const Entity ldrEntity = ldrScene->CreateEntity();
+    {
+        auto& overlay = ldrScene->Add<GuiOverlay>(ldrEntity);
+        overlay.Document = *assets.LoadSync<Gui::UIDocument>(UIDocumentId);
+        overlay.Placement = GuiOverlayPlacement::PostTonemap;
+    }
+    const Unique<Viewport> ldrViewport = makeViewport();
+    ldrViewport->SetViewState({.World = ldrScene.get(), .Delta = 0.016f});
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { ldrViewport->Render(cmd); });
+    CHECK(ldrViewport->GetAttachedDocuments().size() == 1);
+
+    std::filesystem::remove(archive);
+}

@@ -18,6 +18,7 @@ namespace Veng
         class Document;
         class DocumentHost;
         class BindingContext;
+        class DrawList;
     }
 
     namespace Renderer
@@ -27,6 +28,24 @@ namespace Veng
 
     /// @brief Runtime document state a GuiOverlay materializes lazily; defined in Overlay.cpp.
     struct GuiOverlayRuntime;
+
+    /// @brief Where in the compositing chain an overlay's document is drawn.
+    enum class GuiOverlayPlacement : u8
+    {
+        /// @brief Composited after tonemap, over the final LDR image (the default, un-bloomed).
+        PostTonemap,
+        /// @brief Blended into the scene HDR at the pre-bloom tail anchor, so it blooms at output resolution.
+        SceneHdrPreBloom,
+    };
+
+    /// @brief How an overlay's document maps into the target it draws on.
+    enum class GuiOverlayProjection : u8
+    {
+        /// @brief The flat screen-space placement: logical points magnified 1:1 by the UI scale (the default).
+        ScreenSpace,
+        /// @brief Textured onto a flat virtual plane at a static world transform, projected through the live camera.
+        WorldAnchored,
+    };
 
     /// @brief A Gui::Document presented on a viewport's screen-space layer stack.
     ///
@@ -93,6 +112,40 @@ namespace Veng
         /// reference.
         Entity TargetSeat = Entity::Null;
 
+        /// @brief Where this overlay composites: after tonemap (LDR, the default) or in the scene HDR pre-bloom.
+        ///
+        /// PostTonemap is today's behavior — the document is attached to the viewport's layer stack
+        /// and blended over the final image. SceneHdrPreBloom blends the document into the scene HDR
+        /// at the pre-bloom tail anchor instead, so it is tonemapped and blooms with the scene at
+        /// output resolution; such an overlay never joins the layer stack.
+        GuiOverlayPlacement Placement = GuiOverlayPlacement::PostTonemap;
+
+        /// @brief How this overlay maps into its target: flat screen-space (the default) or world-anchored.
+        ///
+        /// ScreenSpace is the flat placement — logical points at ScreenSpace's UI scale, the overlay's
+        /// existing screen mapping. WorldAnchored textures the document onto a flat virtual plane
+        /// posed by AnchorPosition/AnchorRotation at SurfaceSize world units and laid out at
+        /// SurfaceResolution logical points, projected through the live camera so it foreshortens and
+        /// slides under look-around like a real surface. Only SceneHdrPreBloom honors WorldAnchored.
+        GuiOverlayProjection Projection = GuiOverlayProjection::ScreenSpace;
+
+        /// @brief World-space position of the virtual plane's center (WorldAnchored only).
+        vec3 AnchorPosition{0.0f, 0.0f, -1.0f};
+
+        /// @brief World-space orientation of the virtual plane (WorldAnchored only).
+        quat AnchorRotation{1.0f, 0.0f, 0.0f, 0.0f};
+
+        /// @brief The virtual plane's world-space width and height, in world units (WorldAnchored only).
+        vec2 SurfaceSize{1.0f, 1.0f};
+
+        /// @brief Logical-point extent the document lays out at for a world-anchored plane.
+        ///
+        /// Splits the two jobs one extent would otherwise do: the document lays out at
+        /// SurfaceResolution logical points while the plane occupies SurfaceSize world units, so a
+        /// larger world plane does not shrink the text. Ignored for a ScreenSpace overlay, which lays
+        /// out at the viewport region divided by the UI scale.
+        uvec2 SurfaceResolution{512, 512};
+
         /// @brief Runtime document state (host, presenter, deferred binding); empty until first use.
         ///
         /// Materialized on the first SetContext/SetOnInstantiate (to hold the deferred binding) or the
@@ -152,6 +205,27 @@ namespace Veng
         void Drive(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene, Entity owner,
                    GuiDriverRegistry* drivers, Audio::AudioEngine* audio = nullptr) const;
 
+        /// @brief Drives the overlay's document and builds its geometry into a draw list, off the layer stack.
+        ///
+        /// The SceneHdrPreBloom path, the counterpart to Drive: it materializes the host, refreshes
+        /// bindings, runs the GuiDriver (OnInstantiate on a re-instantiate, OnUpdate each frame) and
+        /// the document's component drivers, then lays the document out at @p docExtent logical points
+        /// and builds it into @p out. It never attaches the document to a viewport layer stack — the
+        /// engine conveys @p out into the pre-bloom pass instead — so an HDR overlay leaves the
+        /// post-tonemap composite untouched. A failed document load leaves @p out empty.
+        /// @param viewport  The claiming viewport, read for the driver frame (seat, camera, region).
+        /// @param assets    The asset manager the document recipe and its fonts load through.
+        /// @param scene     The presented scene the overlay lives in, handed to the driver.
+        /// @param owner     The entity carrying this overlay, handed to the driver as its instance.
+        /// @param drivers   The driver catalog the Driver id resolves against, or nullptr (undriven).
+        /// @param audio     The audio engine handed to the driver's frame, or nullptr (silent).
+        /// @param docExtent The logical-point extent to lay the document out at.
+        /// @param delta     Frame delta seconds advanced into the document's animation clock.
+        /// @param out       The draw list the built geometry is appended into (cleared first).
+        void DriveHdr(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene,
+                      Entity owner, GuiDriverRegistry* drivers, Audio::AudioEngine* audio,
+                      vec2 docExtent, f32 delta, Gui::DrawList& out) const;
+
         /// @brief Detaches the presented document from a viewport's layer stack — the inverse of Drive.
         ///
         /// Removes the live document from @p viewport's layer stack when it is hosted there, leaving the
@@ -173,10 +247,26 @@ namespace Veng
     };
 }
 
+VE_ENUM(::Veng::GuiOverlayPlacement, 0x2A7C7C857C323E8CULL)
+VE_ENUMERATOR(PostTonemap)
+VE_ENUMERATOR(SceneHdrPreBloom)
+VE_ENUM_END();
+
+VE_ENUM(::Veng::GuiOverlayProjection, 0x9BEC8506284EF46BULL)
+VE_ENUMERATOR(ScreenSpace)
+VE_ENUMERATOR(WorldAnchored)
+VE_ENUM_END();
+
 VE_REFLECT(::Veng::GuiOverlay, 0xC703A9C84AC4BA09ULL)
 VE_FIELD(Document, .DisplayName = "Document")
 VE_FIELD(Layer, .DisplayName = "Layer")
 VE_FIELD(Driver, .DisplayName = "Driver")
 VE_FIELD(Interactive, .DisplayName = "Interactive")
 VE_FIELD(TargetSeat, .DisplayName = "Target Seat")
+VE_FIELD(Placement, .DisplayName = "Placement")
+VE_FIELD(Projection, .DisplayName = "Projection")
+VE_FIELD(AnchorPosition, .DisplayName = "Anchor Position")
+VE_FIELD(AnchorRotation, .DisplayName = "Anchor Rotation")
+VE_FIELD(SurfaceSize, .DisplayName = "Surface Size", .Display = {.Min = 0.001})
+VE_FIELD(SurfaceResolution, .DisplayName = "Surface Resolution", .Display = {.Min = 1})
 VE_REFLECT_END();

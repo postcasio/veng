@@ -5,6 +5,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/DocumentHost.h>
+#include <Veng/Gui/DrawList.h>
 #include <Veng/Gui/DocumentLayer.h>
 #include <Veng/Gui/Driver.h>
 #include <Veng/Gui/DriverRegistry.h>
@@ -174,6 +175,70 @@ namespace Veng
         // Drive the document's embedded component drivers — those run whether or not the overlay
         // itself is driven, so a plain overlay may still host a self-driving component.
         document->DriveComponents(drivers, frame);
+    }
+
+    void GuiOverlay::DriveHdr(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene,
+                              const Entity owner, GuiDriverRegistry* const drivers,
+                              Audio::AudioEngine* const audio, const vec2 docExtent,
+                              const f32 delta, Gui::DrawList& out) const
+    {
+        out.Clear();
+        EnsureHost(assets);
+        GuiOverlayRuntime& runtime = *Runtime;
+
+        // Drive the host directly (load, instantiate, bind refresh) rather than through the
+        // DocumentLayer: an HDR overlay is composited by the engine's pre-bloom pass, not attached to
+        // the viewport's post-tonemap layer stack, so its document never joins that stack.
+        Gui::Document* const document = runtime.Host->Drive();
+        if (document == nullptr)
+        {
+            return;
+        }
+
+        const GuiDriverFrame frame{
+            .Document = *document,
+            .Root = &document->Root(),
+            .Scene = scene,
+            .Owner = owner,
+            .Seat = viewport.GetSeat(),
+            .Delta = delta,
+            .Alpha = viewport.GetViewAlpha(),
+            .View = SystemViewInfo{.Camera = viewport.GetPresentedCamera(),
+                                   .Region = viewport.GetRegion(),
+                                   .UiScale = viewport.GetUiScale()},
+            .Assets = assets,
+            .Audio = audio,
+        };
+
+        // Instantiate and run the named driver, mirroring Drive: an unresolved id logs once and
+        // leaves the overlay undriven, OnInstantiate re-runs on a document re-instantiate, OnUpdate
+        // runs each frame.
+        if (runtime.Driver == nullptr && Driver != GuiDriverId::Null && drivers != nullptr)
+        {
+            runtime.Driver = drivers->Instantiate(Driver);
+            runtime.DriverDocument = nullptr;
+            if (runtime.Driver == nullptr)
+            {
+                Log::Warn("GuiOverlay names GuiDriver {:#018x}, which no registered driver claims; "
+                          "leaving the overlay undriven.",
+                          static_cast<u64>(Driver));
+            }
+        }
+        if (runtime.Driver != nullptr)
+        {
+            if (document != runtime.DriverDocument)
+            {
+                runtime.Driver->OnInstantiate(*document, document->Root(), scene,
+                                              viewport.GetSeat());
+                runtime.DriverDocument = document;
+            }
+            runtime.Driver->OnUpdate(frame);
+        }
+        document->DriveComponents(drivers, frame);
+
+        // Lay the document out at the authored logical extent and build its geometry into the caller's
+        // draw list; the engine projects and records it in the pre-bloom pass.
+        document->Drive(docExtent, delta, out);
     }
 
     void GuiOverlay::Detach(Renderer::Viewport& viewport) const

@@ -66,6 +66,7 @@ namespace Veng::Renderer
     class SkyResolver;
     class PointField;
     class PostProcessEffectScenePass;
+    class GuiHdrOverlayScenePass;
     struct DebugBlitPipelines;
     struct FrameTopology;
 
@@ -418,6 +419,16 @@ namespace Veng::Renderer
         /// inactive. Content-driven, so a renderer that never runs an effect carries no extra target.
         /// @param active  Whether the effect chain runs this pass set.
         void UpdatePostProcessEffectTargets(bool active);
+
+        /// @brief Resolves whether any scene-HDR-pre-bloom overlay is present this Execute.
+        ///
+        /// Reads SceneView::HdrOverlays (the engine-built pre-bloom overlays the viewport conveyed).
+        /// A change in presence recompiles the pass set at the frame boundary — inserting or dropping
+        /// the pre-bloom overlay pass — the point-field content-driven model; a stable presence
+        /// replays, and the overlays' per-frame content reaches the pass through SceneView with no
+        /// recompile. The overlays themselves are read directly by the pass at Execute.
+        /// @param view  The scene view whose HdrOverlays span is resolved.
+        void ResolveHdrOverlays(const SceneView& view);
 
         /// @brief Fills the per-draw DrawData buffer (and, under GPU mode, the candidate buffer + groups) for this Execute.
         ///
@@ -782,6 +793,14 @@ namespace Veng::Renderer
         /// unless the Final arm is built while an effect is active (m_PostProcessEffectsActive).
         vector<Unique<PostProcessEffectScenePass>> m_PostProcessEffectPasses;
 
+        /// @brief The scene-HDR-pre-bloom GUI overlay pass, held outside m_Passes.
+        ///
+        /// Declared at the pre-bloom tail anchor after the post-process effects and before bloom,
+        /// blending the engine-driven SceneHdrPreBloom overlays into the resolved scene color in
+        /// place (a load). Created lazily the first frame an overlay is present and kept resident (it
+        /// owns a GuiScenePass recorder); declared only while m_HdrOverlayActive.
+        Unique<GuiHdrOverlayScenePass> m_GuiHdrOverlayPass;
+
         /// @brief The scene-color point-field pass, for fields placed in the lit scene color.
         ///
         /// Rides m_Passes (it writes the in-list io.Hdr lit target), inserted ahead of the
@@ -1109,6 +1128,16 @@ namespace Veng::Renderer
 
         /// @brief Whether the current pass set carries the post-process effect chain; gates the Rebuild.
         bool m_PostProcessEffectsActive = false;
+
+        /// @brief Whether a scene-HDR-pre-bloom overlay was present in the last resolved SceneView.
+        ///
+        /// Refreshed each Execute by ResolveHdrOverlays; a change recompiles the pass set (insert or
+        /// drop the overlay pass) at the frame boundary. The overlays' content is not part of it, so
+        /// updating a HUD never recompiles.
+        bool m_HasHdrOverlay = false;
+
+        /// @brief Whether the current pass set carries the pre-bloom overlay pass; gates its declare.
+        bool m_HdrOverlayActive = false;
 
         /// @brief The allocation extent the ping-pong effect targets were last allocated at.
         ///

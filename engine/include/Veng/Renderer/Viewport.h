@@ -830,8 +830,19 @@ namespace Veng::Renderer
         /// viewport claims (ClaimsOverlay) — materializing its document host and attaching the live
         /// document to this viewport's layer stack at the component's Layer. Recorded before the
         /// layer composite (RenderDocuments) so a fresh attach composites the same frame. A no-op
-        /// when the scene holds no claimed GuiOverlay.
+        /// when the scene holds no claimed GuiOverlay. Only PostTonemap overlays are driven here; a
+        /// SceneHdrPreBloom overlay is driven ahead of the scene render by DriveHdrOverlays instead.
         void DriveOverlays();
+
+        /// @brief Drives the claimed SceneHdrPreBloom overlays into per-overlay draw lists, ahead of the render.
+        ///
+        /// The pre-bloom counterpart of DriveOverlays: for each claimed GuiOverlay whose Placement is
+        /// SceneHdrPreBloom, it builds the document into a reused per-overlay draw list (off the layer
+        /// stack) and records a GuiHdrOverlayView — the resolved plane transform, surface size, and
+        /// document extent — into m_HdrOverlayViews, which Render conveys on the SceneView so the
+        /// renderer's pre-bloom pass composites them. Runs before SceneRenderer::Execute (a
+        /// SceneHdrPreBloom overlay must be current before the tail). A no-op with no such overlay.
+        void DriveHdrOverlays();
 
         /// @brief Whether this viewport claims @p overlay, deciding the presenting viewport by seat.
         ///
@@ -903,6 +914,19 @@ namespace Veng::Renderer
 
         /// @brief The native output extent the GuiScenePass is sized to; a region change re-sizes it.
         uvec2 m_GuiPassExtent = {};
+
+        /// @brief Reused per-overlay draw lists for the SceneHdrPreBloom overlays this viewport drives.
+        ///
+        /// One list per claimed pre-bloom overlay, each built fresh (cleared) every DriveHdrOverlays;
+        /// held in a Unique so the pointers m_HdrOverlayViews conveys stay stable as the pool grows.
+        /// The pool grows to the frame's overlay count and is never shrunk.
+        vector<Unique<Gui::DrawList>> m_HdrOverlayDrawLists;
+
+        /// @brief This frame's SceneHdrPreBloom overlay descriptors, conveyed on the SceneView.
+        ///
+        /// Rebuilt every DriveHdrOverlays; each entry points at the matching m_HdrOverlayDrawLists
+        /// list. Empty when the scene holds no claimed pre-bloom overlay.
+        vector<GuiHdrOverlayView> m_HdrOverlayViews;
 
         /// @brief Seconds of document drive accumulated from the per-frame delta.
         ///

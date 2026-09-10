@@ -123,6 +123,18 @@ namespace Veng::Renderer
         /// @param target  The persistent target to record the UI into; left in a shader-read layout.
         void RenderToTarget(CommandBuffer& cmd, Gui::RenderTarget& target);
 
+        /// @brief Records the current draw list into the bound color attachment, blending premultiplied-over.
+        ///
+        /// The in-scene HDR sink: the caller's render pass has already bound (and loaded) a color
+        /// target, so this only replays the cached runs into it at @p extent — the UI blends over
+        /// whatever the target already holds. Distinct from Render (no scene copy, no owned composite
+        /// target) and RenderToTarget (no owned graph): it records directly into a command buffer
+        /// inside an externally-managed rendering scope, so it allocates none of the composite
+        /// resources those two sinks do. Call SetDrawList (and SetUiScale / SetTime) first.
+        /// @param cmd     Command buffer, already inside a rendering scope with the target bound.
+        /// @param extent  The target extent the runs' geometry maps onto.
+        void RecordInto(CommandBuffer& cmd, uvec2 extent);
+
         /// @brief Returns the composited output view (scene with the UI blended over it).
         ///
         /// Invalidated by Resize — re-fetch after.
