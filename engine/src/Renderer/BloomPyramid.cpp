@@ -370,14 +370,29 @@ namespace Veng::Renderer
     void BloomPyramid::SetSourceView(const Ref<ImageView>& source)
     {
         // The bright pass samples the source at level 0; the composite samples it as the base it
-        // adds bloom onto. Both slots must track Declare's hdrId, so re-point both.
+        // adds bloom onto. Both must track Declare's hdrId. A Rebuild can re-point the source while a
+        // prior frame's command buffer still references these sets, which are not update-after-bind,
+        // so recreate them fresh rather than writing in place — the old sets retire through the
+        // per-frame path. The AutoExposureMeter::RebindHdr / ShadowSystem::RebuildSets precedent.
         if (!m_DownSets.empty())
         {
-            m_DownSets[0]->Write(0, source);
+            Ref<DescriptorSet> set = DescriptorSet::Create(
+                m_Context, {.Name = "SceneRenderer Bloom Down Set 0", .Layout = m_DownUpSetLayout});
+            set->Write(0, source);
+            set->Write(1, m_Sampler);
+            set->Write(2, m_Mips[0]);
+            m_DownSets[0] = std::move(set);
         }
         if (m_CompositeSet)
         {
-            m_CompositeSet->Write(0, source);
+            Ref<DescriptorSet> set =
+                DescriptorSet::Create(m_Context, {.Name = "SceneRenderer Bloom Composite Set",
+                                                  .Layout = m_CompositeSetLayout});
+            set->Write(0, source);
+            set->Write(1, m_Mips[0]);
+            set->Write(2, m_Sampler);
+            set->Write(3, m_ResultView);
+            m_CompositeSet = std::move(set);
         }
     }
 
