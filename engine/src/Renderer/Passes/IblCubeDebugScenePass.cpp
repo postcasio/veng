@@ -63,6 +63,15 @@ namespace Veng::Renderer
             .Execute(
                 [this](PassContext& inner)
                 {
+                    // No cube fed yet (a recompile frame before ResolveScenePasses reaches the feed,
+                    // or a frame it early-returned): the attachment is already cleared to black by
+                    // the LoadOp, so draw nothing — binding a null set would fault, and skipping the
+                    // draw leaves set 3 unused so the static-use rule is satisfied too.
+                    if (m_Set == nullptr)
+                    {
+                        return;
+                    }
+
                     const ScenePassContext ctx = Wrap(inner);
                     CommandBuffer& cmd = ctx.Cmd();
                     const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
