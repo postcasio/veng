@@ -284,19 +284,6 @@ TEST_CASE_FIXTURE(
     constexpr uvec2 OverlayPix{64, 64}; // inside the overlay patch, over the cube
     constexpr uvec2 ScenePix{88, 64};   // lit cube, outside the patch
 
-    const auto frameSum = [](const vector<u8>& img)
-    {
-        f32 sum = 0.0f;
-        for (u32 y = 0; y < Extent.y; ++y)
-        {
-            for (u32 x = 0; x < Extent.x; ++x)
-            {
-                sum += DecodeTexel(img, Extent.x, x, y).r;
-            }
-        }
-        return sum;
-    };
-
     // Effect off: the plain lit cube, and the opaque overlay over it.
     setEffect(false);
     const Unique<SceneRenderer> plainRenderer = makeRenderer(false);
@@ -317,9 +304,9 @@ TEST_CASE_FIXTURE(
     const f32 overlayEffect = DecodeTexel(effectOverlay, Extent.x, OverlayPix.x, OverlayPix.y).r;
 
     const Unique<SceneRenderer> effectBloomRenderer = makeRenderer(true);
-    const f32 effectNoOverlayBloomSum = frameSum(renderOnce(*effectBloomRenderer, {}));
+    const vector<u8> effectNoOverlayBloom = renderOnce(*effectBloomRenderer, {});
     const Unique<SceneRenderer> effectOverlayBloomRenderer = makeRenderer(true);
-    const f32 effectOverlayBloomSum = frameSum(renderOnce(*effectOverlayBloomRenderer, views));
+    const vector<u8> effectOverlayBloom = renderOnce(*effectOverlayBloomRenderer, views);
 
     // The effect ran: the scale-by-half darkens the visible cube where the overlay does not cover.
     CHECK(scenePlain > 0.1f);
@@ -331,13 +318,24 @@ TEST_CASE_FIXTURE(
     CHECK(overlayEffect == doctest::Approx(overlayNoEffect).epsilon(0.02f));
     CHECK(overlayEffect > scenePlain + 0.1f);
 
-    // overlay → bloom: turning bloom on adds far more whole-frame energy when the bright overlay is
-    // present than when it is not — the extra spread is the overlay blooming, so the overlay was
-    // composited before the bloom read. Both bloom-on frames sit over the same effect-darkened cube,
-    // so the surplus is the overlay's own bloom halo, isolated from the cube's.
-    const f32 overlayBloomSurplus = effectOverlayBloomSum - frameSum(effectOverlay);
-    const f32 sceneBloomSurplus = effectNoOverlayBloomSum - frameSum(effectNoOverlay);
-    CHECK(overlayBloomSurplus > sceneBloomSurplus + 1.0f);
+    // overlay survives bloom: with an effect active and bloom on, the bright opaque overlay patch is
+    // still present in the final image — far brighter than the same pixel with no overlay conveyed.
+    // Bloom samples the effect chain's output (which the overlay composited into), not the raw HDR
+    // beneath the effect; sampling the raw HDR drops the overlay from every bloom-on frame.
+    const f32 overlayBloomPatch =
+        DecodeTexel(effectOverlayBloom, Extent.x, OverlayPix.x, OverlayPix.y).r;
+    const f32 noOverlayBloomPatch =
+        DecodeTexel(effectNoOverlayBloom, Extent.x, OverlayPix.x, OverlayPix.y).r;
+    CHECK(overlayBloomPatch > noOverlayBloomPatch + 0.3f);
+
+    // overlay → bloom: just outside the patch the overlay leaves a bloom halo — energy present only
+    // because the overlay was composited before the bloom read. Differencing the same pixel with and
+    // without the overlay isolates the overlay's own halo from the cube's.
+    constexpr uvec2 HaloPix{64, 84}; // 4 px below the [48,80) patch, over the cube
+    const f32 overlayBloomHalo = DecodeTexel(effectOverlayBloom, Extent.x, HaloPix.x, HaloPix.y).r;
+    const f32 noOverlayBloomHalo =
+        DecodeTexel(effectNoOverlayBloom, Extent.x, HaloPix.x, HaloPix.y).r;
+    CHECK(overlayBloomHalo > noOverlayBloomHalo + 0.02f);
 
     std::filesystem::remove(gbufferArchive);
     std::filesystem::remove(postArchive);

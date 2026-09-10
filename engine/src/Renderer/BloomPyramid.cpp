@@ -367,6 +367,20 @@ namespace Veng::Renderer
         m_CompositeSet->Write(3, m_ResultView);
     }
 
+    void BloomPyramid::SetSourceView(const Ref<ImageView>& source)
+    {
+        // The bright pass samples the source at level 0; the composite samples it as the base it
+        // adds bloom onto. Both slots must track Declare's hdrId, so re-point both.
+        if (!m_DownSets.empty())
+        {
+            m_DownSets[0]->Write(0, source);
+        }
+        if (m_CompositeSet)
+        {
+            m_CompositeSet->Write(0, source);
+        }
+    }
+
     void BloomPyramid::Declare(RenderGraph& graph, const ResourceId hdrId, const MipChainId chainId,
                                const ResourceId resultId, const AutoExposureMeter& autoExposure,
                                const ResourceId maskId, const TextureHandle maskHandle,

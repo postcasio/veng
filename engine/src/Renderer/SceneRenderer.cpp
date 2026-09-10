@@ -376,6 +376,13 @@ namespace Veng::Renderer
         m_PpEffectIdB = ResourceId{};
         ResourceId ppEffectFinalId = m_HdrId;
         TextureHandle ppEffectFinalHandle = m_HdrHandle;
+        // The concrete view ppEffectFinalId resolves to this Rebuild — the raw HDR with no effect,
+        // else the effect chain's final target. Bloom and the auto-exposure meter bind a fixed
+        // source descriptor (not a graph-resolved view), so they are re-pointed at this view where
+        // they are declared; without it they sample the raw HDR while their declared read barriers
+        // the effect target, silently dropping the effect chain — and any pre-bloom overlay
+        // composited into it — from their result.
+        Ref<ImageView> ppEffectFinalView = m_HdrView;
         if (m_PostProcessEffectsActive)
         {
             const usize effectCount = m_PostProcessEffects.size();
@@ -389,6 +396,7 @@ namespace Veng::Renderer
             const bool oddCount = (effectCount % 2) == 1;
             ppEffectFinalId = oddCount ? m_PpEffectIdA : m_PpEffectIdB;
             ppEffectFinalHandle = oddCount ? m_PpEffectHandleA : m_PpEffectHandleB;
+            ppEffectFinalView = oddCount ? m_PpEffectViewA : m_PpEffectViewB;
         }
 
         // The refraction copy reads the same target the translucent pass blends over, whichever
@@ -1069,12 +1077,19 @@ namespace Veng::Renderer
                 }
                 if (m_Topology->BloomActive)
                 {
+                    // Re-point the pyramid's source descriptors at the view its declared read
+                    // resolves to, so the bright pass and composite sample the effect chain's
+                    // output (with any pre-bloom overlay) rather than the raw HDR they were built on.
+                    m_Bloom->SetSourceView(ppEffectFinalView);
                     m_Bloom->Declare(graph, ppEffectFinalId, m_BloomChainId, m_BloomResultId,
                                      *m_AutoExposure, m_BloomMaskId, m_BloomMaskHandle,
                                      m_SamplerHandle);
                 }
                 if (m_Topology->AutoExposureActive)
                 {
+                    // Meter the same scene color the tonemap consumes: the effect chain's output
+                    // when active, matching the id declared below.
+                    m_AutoExposure->RebindHdr(ppEffectFinalView);
                     m_AutoExposure->Declare(graph, ppEffectFinalId, m_AutoExposureId, m_Extent);
                 }
             }

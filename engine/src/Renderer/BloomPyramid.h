@@ -68,6 +68,16 @@ namespace Veng::Renderer
         /// @param kernel The kernel selected this frame; read by Declare at record time.
         void Reconfigure(BloomKernel kernel) { m_Kernel = kernel; }
 
+        /// @brief Re-points the level-0 down set and the composite set at a new scene-color source.
+        ///
+        /// Resize binds the raw HDR target, but a pre-bloom post-process effect chain replaces the
+        /// scene color Declare reads (its `hdrId`) with the effect chain's final target. The bright
+        /// pass and the composite base both sample this view, so both sets are re-pointed; the id
+        /// passed to Declare must resolve to the same image, or the derived barrier and the sampled
+        /// image diverge. Cheap enough to call each Rebuild (two descriptor writes, no realloc).
+        /// @param source The live scene-color view Declare's `hdrId` resolves to this Rebuild.
+        void SetSourceView(const Ref<ImageView>& source);
+
         /// @brief Declares the down/up/composite compute sweep into the graph ahead of tonemap.
         ///
         /// Down-sweep (level 0..N-1, barrier between levels), in-place tent up-sweep (level
