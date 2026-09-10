@@ -1,0 +1,4 @@
+{
+  "source": "deferred_lighting_ibl.frag.slang",
+  "entry": "fsMain"
+}

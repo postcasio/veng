@@ -92,6 +92,11 @@
       "source": "shaders/deferred_lighting_cascades.frag.shader.json"
     },
     {
+      "id": "0x9381DDECCDB22B4E",
+      "type": "Shader",
+      "source": "shaders/deferred_lighting_ibl.frag.shader.json"
+    },
+    {
       "id": "0xCCBA63DB760A4E8E",
       "type": "Shader",
       "source": "shaders/ssao.frag.shader.json"

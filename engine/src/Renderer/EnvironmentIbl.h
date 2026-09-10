@@ -129,6 +129,16 @@ namespace Veng::Renderer
             return m_PrefilterCubeView;
         }
 
+        /// @brief The diffuse irradiance cube view, for the IBL debug view.
+        ///
+        /// The cosine-convolved diffuse map the lighting's diffuse IBL term reads — a smooth, very
+        /// low-frequency field, visibly distinct from the sharp source. Always valid once
+        /// EnsureInitialized has run.
+        [[nodiscard]] const Ref<ImageView>& GetIrradianceCubeView() const
+        {
+            return m_IrradianceCubeView;
+        }
+
         /// @brief The linear IBL sampler (clamped, covers the prefilter mips), for the debug view.
         [[nodiscard]] const Ref<Sampler>& GetSampler() const { return m_Sampler; }
 

@@ -61,6 +61,8 @@ namespace Veng::Renderer
         bool DebugPunctual = false;
         /// @brief The frame visualizes the raw SSR reflection target.
         bool DebugReflections = false;
+        /// @brief The frame visualizes the per-pixel IBL ambient contribution (runs the lighting pass).
+        bool DebugIblContribution = false;
 
         /// @brief The bloom sweep is wired and its pyramid imports are declared.
         bool BloomActive = false;

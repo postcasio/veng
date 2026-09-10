@@ -728,6 +728,13 @@ namespace Veng::Renderer
         /// writing the output format directly. Reuses m_LightingLayout.
         Ref<class GraphicsPipeline> m_CascadeDebugPipeline;
 
+        /// @brief IBL-contribution debug lighting variant (DebugView::IblContribution).
+        ///
+        /// Lighting fragment variant returning only the IBL ambient term (diffuse + specular IBL × AO)
+        /// over the plain lighting layout (set 1 + non-SSAO push block), writing the output format
+        /// directly. Reuses m_LightingLayout.
+        Ref<class GraphicsPipeline> m_IblContributionDebugPipeline;
+
         /// @brief Fullscreen skybox pipeline (radiance cube over the lit HDR), writing HdrFormat.
         Ref<class GraphicsPipeline> m_SkyboxPipeline;
         /// @brief Layout for m_SkyboxPipeline: the IBL set (set 1) + the skybox push block.

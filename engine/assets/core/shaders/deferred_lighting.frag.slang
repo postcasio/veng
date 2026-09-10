@@ -13,6 +13,11 @@
 // the cascade its view-space depth selects (the same selection the shadow sample
 // uses) and written to the output unlit, so cascade selection is observable.
 //
+// VE_DEBUG_IBL selects the DebugView::IblContribution arm: the fragment returns only
+// its indirect (IBL/skylight/flat) ambient term (diffuse + specular IBL × occlusion),
+// with the direct and emissive contributions dropped, so the environment lighting each
+// pixel receives is directly observable.
+//
 // Color space: G0 is an sRGB target, so the sample decodes albedo to linear; the
 // HDR output is a linear float target, so the lit color stays linear (the tail
 // tonemap/composite handles display encoding). World-space normals are sampled
@@ -601,6 +606,13 @@ float4 fsMain(VSOutput input) : SV_Target
     {
         ambient = g_PC.AmbientFloor * albedo * ambientOcclusion;
     }
+
+#if VE_DEBUG_IBL
+    // The IBL-contribution debug arm: the ambient term alone, unlit, so the environment
+    // lighting each pixel receives (whichever ambient arm it took) is directly observable.
+    // Background pixels already returned black above.
+    return float4(ambient, 1.0);
+#endif
 
     // G4 emissive: the linear HDR radiance the surface fragment authored, added into the
     // pixel's outgoing light. Placement here is equivalent to a post-lighting composite: the

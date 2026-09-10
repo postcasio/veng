@@ -17,8 +17,9 @@ namespace Veng::Renderer
     /// @brief Terminal debug pass: fills the whole output with a radiance cube sampled along each
     ///        view ray.
     ///
-    /// Serves the DebugView::EnvironmentIbl arm (the prefiltered specular cube the IBL lighting
-    /// reads) and the DebugView::EnvironmentSource arm (the raw cube the IBL convolved from). Unlike
+    /// Serves the DebugView::EnvironmentIrradiance arm (the diffuse irradiance cube the IBL lighting's
+    /// diffuse term reads) and the DebugView::EnvironmentSource arm (the raw cube the IBL convolved
+    /// from). Unlike
     /// the skybox it draws every pixel — the environment lighting the scene is visible whatever
     /// geometry is in front of it — and it writes the output target directly with no tonemap tail.
     ///

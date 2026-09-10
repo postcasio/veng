@@ -1583,12 +1583,12 @@ TEST_CASE_FIXTURE(
     CHECK(emissiveCenter.b < 0.02f);
     CHECK(Differs(finalCenter, emissiveCenter));
 
-    // The EnvironmentIbl arm samples the prefiltered specular IBL cube fullscreen along each view
+    // The EnvironmentIrradiance arm samples the diffuse irradiance cube fullscreen along each view
     // ray. The cube is always valid (EnsureInitialized transitions it before any environment
     // arrives), so with no sky in this scene it reads black; the arm recompiles, builds its cube
     // set, binds the pipeline and renders without error.
     renderer->Configure(
-        {.Mode = DebugView::EnvironmentIbl, .Bloom = false, .Shadows = false, .AO = false});
+        {.Mode = DebugView::EnvironmentIrradiance, .Bloom = false, .Shadows = false, .AO = false});
     const vec3 iblCenter = Center();
     CHECK(std::isfinite(iblCenter.r));
     CHECK(std::isfinite(iblCenter.g));
@@ -1603,6 +1603,17 @@ TEST_CASE_FIXTURE(
     CHECK(sourceCenter.r < 0.02f);
     CHECK(sourceCenter.g < 0.02f);
     CHECK(sourceCenter.b < 0.02f);
+
+    // The IblContribution arm runs the lighting pass and returns its ambient term alone. With no sky
+    // in this scene the ambient is the flat floor over the g-buffer albedo, so the arm renders a
+    // finite result without error; the pipeline recompiles, binds the lighting sets, and writes the
+    // output directly with no tonemap tail.
+    renderer->Configure(
+        {.Mode = DebugView::IblContribution, .Bloom = false, .Shadows = false, .AO = false});
+    const vec3 iblContributionCenter = Center();
+    CHECK(std::isfinite(iblContributionCenter.r));
+    CHECK(std::isfinite(iblContributionCenter.g));
+    CHECK(std::isfinite(iblContributionCenter.b));
 
     // Velocity is a g-buffer channel, so it stays allocated under any mode (not TAA-gated).
     renderer->Configure({.Mode = DebugView::Albedo, .Bloom = false, .Shadows = false, .AO = false});

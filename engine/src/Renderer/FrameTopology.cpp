@@ -66,13 +66,30 @@ namespace Veng::Renderer
             topology.SceneComposited && sky.Kind == SkySourceKind::Atmosphere && !sky.IsBaked;
         topology.SkyMaterialWanted =
             topology.SceneComposited && sky.Kind == SkySourceKind::Material && !sky.IsBaked;
-        topology.SkylightWanted = topology.CubeBacked && sky.Lighting == SkyLighting::SH;
+        // The IBL-contribution debug arm runs the lighting pass to visualize its ambient term alone,
+        // so it needs the sky's lighting inputs (the SH coefficients or the IBL maps) wired for it —
+        // even though it composites no sky display pass and so is not SceneComposited. The maps are
+        // generated every Execute regardless of the arm, so the resolved source facts alone decide
+        // the tier; CubeBacked stays composite-gated (it drives the sky display passes, which the
+        // debug arm wires none of).
+        topology.DebugIblContribution = settings.Mode == DebugView::IblContribution;
+        const bool debugIblCube =
+            topology.DebugIblContribution &&
+            (sky.Kind == SkySourceKind::Environment ||
+             ((sky.Kind == SkySourceKind::Material || sky.Kind == SkySourceKind::Atmosphere) &&
+              sky.IsBaked) ||
+             sky.Kind == SkySourceKind::Cube);
+
+        topology.SkylightWanted =
+            (topology.CubeBacked || debugIblCube) && sky.Lighting == SkyLighting::SH;
 
         // IBL lights the scene when the resolved sky is a cube-backed source on the IBL tier — an
         // environment (convolved from its equirect cube) or a baked material/atmosphere (convolved
         // from its bake cube). Either fills the IBL consumer set the lighting pass binds; a
-        // display-only source (any other tier) shows its sky without lighting from it.
-        topology.IblAllowed = topology.CubeBacked && sky.Lighting == SkyLighting::IBL;
+        // display-only source (any other tier) shows its sky without lighting from it. The
+        // IblContribution debug arm reads the same maps without compositing the sky.
+        topology.IblAllowed =
+            (topology.CubeBacked || debugIblCube) && sky.Lighting == SkyLighting::IBL;
 
         // SSR is a Final-only effect plus its own debug arm; the debug arm force-wires the
         // trace so the raw reflection target is visible regardless of the Settings.SSR toggle.

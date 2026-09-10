@@ -77,6 +77,17 @@ TEST_CASE("frame topology: a debug arm force-wires its producing battery with th
 
     const FrameTopology coc = Resolve(ModeOnly(DebugView::CoC));
     CHECK(coc.Dof == DofStages::CocOnly);
+
+    // The IBL-contribution arm runs the lighting pass to visualize its ambient term, so it wires the
+    // sky's IBL lighting input from the resolved source even though it composites no sky display
+    // pass (and so is not SceneComposited). With a display-only sky it takes the flat ambient and
+    // wires nothing.
+    const FrameTopology ibl = ResolveFrameTopology(
+        ModeOnly(DebugView::IblContribution),
+        SkyTopologyInput{.Kind = SkySourceKind::Environment, .Lighting = SkyLighting::IBL});
+    CHECK(ibl.IblAllowed);
+    CHECK_FALSE(ibl.SceneComposited);
+    CHECK_FALSE(ibl.SkyboxWanted);
 }
 
 TEST_CASE("frame topology: depth of field is a tri-state")
@@ -270,7 +281,13 @@ TEST_CASE("frame topology: a debug arm wires no sky pass at all")
         CAPTURE(DebugViewNames[arm]);
         CHECK_FALSE(topology.SkyboxWanted);
         CHECK_FALSE(topology.CubeBacked);
-        CHECK_FALSE(topology.IblAllowed);
+        // The IBL-contribution arm reads the IBL maps to visualize their contribution — it wires no
+        // sky *display* pass (asserted above) but does allow the lighting IBL path; every other arm
+        // allows neither.
+        if (static_cast<DebugView>(arm) != DebugView::IblContribution)
+        {
+            CHECK_FALSE(topology.IblAllowed);
+        }
     }
 }
 

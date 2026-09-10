@@ -46,6 +46,7 @@ namespace Veng::Renderer
         constexpr AssetId DeferredLightingFragId{0x6569EBAC0810CC1FULL};
         constexpr AssetId DeferredLightingSsaoFragId{0x6EEF5D26BAF2849FULL};
         constexpr AssetId DeferredLightingCascadesFragId{0x834ED7C05F336E01ULL};
+        constexpr AssetId DeferredLightingIblFragId{0x9381DDECCDB22B4EULL};
         constexpr AssetId SkyboxFragId{0xFCA568CC3463618FULL};
         constexpr AssetId IblCubeDebugFragId{0xE9DE652D3C626F69ULL};
         constexpr AssetId AtmosphereSkyFragId{0x7DC6D927B2DF7858ULL};
@@ -121,6 +122,8 @@ namespace Veng::Renderer
             LoadShader(DeferredLightingSsaoFragId, "deferred-lighting SSAO fragment");
         const AssetHandle<Veng::Shader> cascadeDebugFs =
             LoadShader(DeferredLightingCascadesFragId, "deferred-lighting cascade-debug fragment");
+        const AssetHandle<Veng::Shader> iblContributionDebugFs = LoadShader(
+            DeferredLightingIblFragId, "deferred-lighting IBL-contribution debug fragment");
         const AssetHandle<Veng::Shader> ssaoFs = LoadShader(SsaoFragId, "SSAO fragment");
 
         // Builds a fullscreen pipeline (shared vertex stage) over a layout, naming the
@@ -174,6 +177,12 @@ namespace Veng::Renderer
         // format directly — a terminal debug arm with no tonemap tail.
         m_CascadeDebugPipeline = MakePipeline("SceneRenderer Cascade Debug Pipeline",
                                               m_LightingLayout, cascadeDebugFs, m_OutputFormat);
+
+        // IBL-contribution variant reuses the plain lighting layout but writes the output
+        // format directly — a terminal debug arm with no tonemap tail.
+        m_IblContributionDebugPipeline =
+            MakePipeline("SceneRenderer IBL Contribution Debug Pipeline", m_LightingLayout,
+                         iblContributionDebugFs, m_OutputFormat);
 
         // Skybox: a fullscreen pass compositing the radiance cube over the lit HDR. It reads the
         // IBL set (set 1, radiance + sampler) and the depth target through bindless; its push is

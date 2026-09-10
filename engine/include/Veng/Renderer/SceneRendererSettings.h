@@ -40,10 +40,13 @@ namespace Veng::Renderer
     /// the per-object velocity g-buffer channel (G3, written by the surface pass every frame)
     /// colorized as an optical-flow field. Emissive blits the HDR emissive g-buffer channel (G4,
     /// written by the surface pass every frame) — the authored emissive contribution alone,
-    /// independent of lighting. EnvironmentIbl and EnvironmentSource fill the whole frame with a
-    /// radiance cube along each view ray — the prefiltered specular IBL cube the lighting reads,
-    /// and the raw cube it convolved from (a Sky::LightingSource probe, else the sky's own cube) —
-    /// so the environment lighting the scene is inspectable whatever geometry is in front of it.
+    /// independent of lighting. EnvironmentIrradiance and EnvironmentSource fill the whole frame with
+    /// a cube along each view ray — the diffuse irradiance cube the lighting's diffuse IBL reads, and
+    /// the raw cube it convolved from (a Sky::LightingSource probe, else the sky's own cube) — so the
+    /// environment lighting the scene is inspectable whatever geometry is in front of it.
+    /// IblContribution runs the full lighting pass and shows the IBL ambient term alone per pixel
+    /// (diffuse + specular IBL × ambient occlusion), force-wiring the IBL path so the contribution is
+    /// present whatever the sky tier resolves to.
     enum class DebugView : u8
     {
         /// @brief Full deferred pipeline output.
@@ -78,10 +81,12 @@ namespace Veng::Renderer
         Emissive,
         /// @brief Signed circle of confusion (force-wires the depth-of-field prefilter + tiles).
         CoC,
-        /// @brief The prefiltered specular IBL cube, sampled fullscreen along the view ray.
-        EnvironmentIbl,
+        /// @brief The diffuse irradiance cube (cosine-convolved), sampled fullscreen along the view ray.
+        EnvironmentIrradiance,
         /// @brief The raw cube the IBL convolved from (a Sky::LightingSource, else the sky cube).
         EnvironmentSource,
+        /// @brief The scene's per-pixel IBL ambient contribution alone (diffuse + specular IBL * AO).
+        IblContribution,
     };
 
     /// @brief Display names for the DebugView arms, indexed by enum value.
@@ -89,13 +94,13 @@ namespace Veng::Renderer
     /// The single source of truth for the "View" combo in both the engine debug panel and the
     /// editor viewport: entry N is the name of DebugView N, so a combo's selected index casts
     /// straight to the enum. The static_assert below keeps it in lockstep with the enum.
-    inline constexpr std::array<string_view, 18> DebugViewNames{
-        "Final",          "Albedo",         "Normal",           "Depth",
-        "Roughness",      "Metallic",       "Occlusion",        "AO",
-        "Shadows",        "Cascades",       "Punctual shadows", "Bloom",
-        "Motion vectors", "Reflections",    "Emissive",         "Circle of confusion",
-        "IBL cube",       "IBL source cube"};
-    static_assert(DebugViewNames.size() == static_cast<usize>(DebugView::EnvironmentSource) + 1,
+    inline constexpr std::array<string_view, 19> DebugViewNames{
+        "Final",          "Albedo",          "Normal",           "Depth",
+        "Roughness",      "Metallic",        "Occlusion",        "AO",
+        "Shadows",        "Cascades",        "Punctual shadows", "Bloom",
+        "Motion vectors", "Reflections",     "Emissive",         "Circle of confusion",
+        "IBL irradiance", "IBL source cube", "IBL contribution"};
+    static_assert(DebugViewNames.size() == static_cast<usize>(DebugView::IblContribution) + 1,
                   "DebugViewNames must list every DebugView arm in declaration order.");
 
     /// @brief Selects the bloom pyramid's down/up filter kernel.

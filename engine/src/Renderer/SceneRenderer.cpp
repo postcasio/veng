@@ -974,11 +974,11 @@ namespace Veng::Renderer
                 CreateUnique<FullscreenBlitScenePass>(m_Context, m_DebugBlits->Albedo, m_Extent,
                                                       FullscreenBlitScenePass::Source::Emissive));
             break;
-        case DebugView::EnvironmentIbl:
+        case DebugView::EnvironmentIrradiance:
         case DebugView::EnvironmentSource:
         {
-            // One pass for both arms: it samples whatever cube Execute feeds it (the prefiltered
-            // specular cube, or the raw source cube) along the view ray, fullscreen. The IBL derive
+            // One pass for both arms: it samples whatever cube Execute feeds it (the diffuse
+            // irradiance cube, or the raw source cube) along the view ray, fullscreen. The IBL derive
             // runs every Execute regardless of the arm, so the cube is current.
             auto pass = CreateUnique<IblCubeDebugScenePass>(m_Context, m_IblCubeDebugPipeline,
                                                             m_IblCubeDebugSetLayout, m_Extent);
@@ -986,6 +986,19 @@ namespace Veng::Renderer
             m_Passes.push_back(std::move(pass));
             break;
         }
+        case DebugView::IblContribution:
+            // Shows the IBL ambient term alone per pixel (diffuse + specular IBL × AO): the lighting
+            // variant that returns only its ambient contribution, writing the output directly (no
+            // tonemap tail). IblAllowed is force-extended for this arm in the topology, so the IBL
+            // path is present whatever the sky tier is.
+            m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
+                m_Context, m_IblContributionDebugPipeline, m_Extent, /*useSsao=*/false,
+                m_Shadows->GetSet(), m_Shadows->GetConstantsRingStride(),
+                m_Shadows->GetPunctualRingStride(), m_SkyResolver->GetIbl().GetSet(),
+                m_SkyResolver->GetIbl().GetPrefilterMipCount(), m_Topology->SkylightWanted,
+                m_Topology->IblAllowed,
+                /*writeToOutput=*/true));
+            break;
         }
 
         // Point binding 0 at the punctual atlas for the debug blit (overwrites the
@@ -2064,21 +2077,22 @@ namespace Veng::Renderer
 
         // Feed the IBL-cube debug pass this frame's cube: the raw source cube for the
         // EnvironmentSource arm (null when nothing backs the lighting — the pass shows black), the
-        // prefiltered specular cube (always valid) for the EnvironmentIbl arm.
+        // diffuse irradiance cube (always valid) for the EnvironmentIrradiance arm.
         if (m_IblCubeDebugPass != nullptr)
         {
             const EnvironmentIbl& ibl = m_SkyResolver->GetIbl();
             if (m_Settings.Mode == DebugView::EnvironmentSource)
             {
-                // The raw source cube, or the always-valid prefilter cube as the bound fallback with
+                // The raw source cube, or the always-valid irradiance cube as the bound fallback with
                 // the arm shown black when nothing backs the lighting.
                 const Ref<ImageView> source = m_SkyResolver->GetLightingDebugCube();
-                m_IblCubeDebugPass->SetCube(source != nullptr ? source : ibl.GetPrefilterCubeView(),
+                m_IblCubeDebugPass->SetCube(source != nullptr ? source
+                                                              : ibl.GetIrradianceCubeView(),
                                             ibl.GetSampler(), 0.0f, /*enabled=*/source != nullptr);
             }
             else
             {
-                m_IblCubeDebugPass->SetCube(ibl.GetPrefilterCubeView(), ibl.GetSampler(), 0.0f,
+                m_IblCubeDebugPass->SetCube(ibl.GetIrradianceCubeView(), ibl.GetSampler(), 0.0f,
                                             /*enabled=*/true);
             }
         }
