@@ -436,6 +436,98 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "gui hdr overlay: a composite material
     std::filesystem::remove(archive);
 }
 
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui hdr overlay: two material overlays in one frame both "
+                  "composite — neither overwrites the other's geometry")
+{
+    RegisterBuiltinTypes(Types);
+
+    // The same composite material both overlays name — the shared-instance case the HUD uses (its
+    // head-up pane and console MFD both composite through one glow-split material each frame).
+    const path compositeDir = path(GPU_POSTPROCESS_FIXTURE_DIR);
+    const path archive = Veng::TestSupport::TempDir() / "veng_gui_hdr_overlay_two.vengpack";
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker
+                .CookPack(compositeDir / "overlay_composite_pack.json", archive, {}, nullptr,
+                          nullptr, nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+                .has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(archive).has_value());
+
+    constexpr AssetId CompositeInstance{0x00000000008A0010ULL};
+    const AssetResult<AssetHandle<MaterialInstance>> composite =
+        assets.LoadSync<MaterialInstance>(CompositeInstance);
+    REQUIRE(composite.has_value());
+    MaterialInstance* const material = composite->Get();
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const CameraView camera = FrontCamera();
+
+    // Two overlays over disjoint screen regions: a top-left quad and a bottom-right one. Their
+    // documents are recorded through one GuiScenePass in the same frame, so this is the case where a
+    // frame-keyed geometry ring lets the second overwrite the first before either draw executes.
+    const Gui::DrawList listA =
+        OverlayQuad(vec2(16.0f), vec2(32.0f), vec4(0.2f, 0.35f, 0.9f, 1.0f));
+    const Gui::DrawList listB =
+        OverlayQuad(vec2(80.0f), vec2(32.0f), vec4(0.2f, 0.35f, 0.9f, 1.0f));
+
+    const auto render = [&](const std::span<const GuiHdrOverlayView> overlays)
+    {
+        const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+            .Context = Context,
+            .Assets = assets,
+            .OutputFormat = Context.GetOutputFormat(),
+            .Extent = Extent,
+            .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
+        });
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                           .Camera = camera,
+                                                           .Delta = 0.0f,
+                                                           .BloomThreshold = 1.0f,
+                                                           .HdrOverlays = overlays});
+            });
+        return renderer->GetOutput()->GetImage()->Download();
+    };
+
+    GuiHdrOverlayView viewA = ScreenSpaceView(listA);
+    viewA.Material = material;
+    GuiHdrOverlayView viewB = ScreenSpaceView(listB);
+    viewB.Material = material;
+    const GuiHdrOverlayView both[] = {viewA, viewB};
+
+    constexpr uvec2 CenterA{32, 32}; // inside quad A [16,48)
+    constexpr uvec2 CenterB{96, 96}; // inside quad B [80,112)
+    constexpr uvec2 Corner{112, 16}; // in neither quad
+
+    const vector<u8> pixels = render(both);
+    const vec3 a = DecodeTexel(pixels, Extent.x, CenterA.x, CenterA.y);
+    const vec3 b = DecodeTexel(pixels, Extent.x, CenterB.x, CenterB.y);
+    const vec3 corner = DecodeTexel(pixels, Extent.x, Corner.x, Corner.y);
+
+    // Both regions carry a material-shaped composite (its tint boosts red past 0.1) — the first
+    // overlay is not blanked by the second's document overwriting the shared geometry ring, which is
+    // the regression: with a frame-keyed ring the earlier draw reads the later document's vertices,
+    // leaving region A black. The margin between them stays black, so each drew only its own quad.
+    CHECK(a.r > 0.1f);
+    CHECK(b.r > 0.1f);
+    CHECK(corner.r == doctest::Approx(0.0f).epsilon(0.01f));
+
+    // Each overlay's region matches what it shows composited alone — neither perturbs the other.
+    const GuiHdrOverlayView onlyA[] = {viewA};
+    const GuiHdrOverlayView onlyB[] = {viewB};
+    const vec3 aAlone = DecodeTexel(render(onlyA), Extent.x, CenterA.x, CenterA.y);
+    const vec3 bAlone = DecodeTexel(render(onlyB), Extent.x, CenterB.x, CenterB.y);
+    CHECK(a.r == doctest::Approx(aAlone.r).epsilon(0.02f));
+    CHECK(b.r == doctest::Approx(bAlone.r).epsilon(0.02f));
+
+    std::filesystem::remove(archive);
+}
+
 TEST_CASE_FIXTURE(
     Veng::Test::GpuFixture,
     "gui hdr overlay: placement routes per component — HDR overlay skips the layer stack")

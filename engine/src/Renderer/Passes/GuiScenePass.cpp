@@ -144,6 +144,17 @@ namespace Veng::Renderer
         u32 IndexBase = 0;
         vector<Gui::DrawRun> Runs;
 
+        // Intra-frame sub-allocation within the current frame's region. Several draw lists recorded
+        // in one frame (the composite overlay path drives one per material overlay) each occupy a
+        // distinct sub-range, so a later SetDrawList does not overwrite geometry an earlier draw
+        // still reads at execute time — the memcpy lands at record time, the draws run later. The
+        // bump resets when the frame-in-flight index advances (once per frame), so a single draw
+        // list per frame starts at zero and reaches the exact base a frame-keyed region gave before.
+        u32 GeometryFrame = ~0u;
+        u64 VertexSubOffset = 0;
+        u64 IndexSubOffset = 0;
+        u64 GradientSubOffset = 0;
+
         // The compiled UI + composite graph, held across frames and re-Compile()d only on Resize.
         // Its topology is invariant (record the draw list, then blend it over the scene), so the
         // per-frame variation — the run table, the extent, and the composite's sampled scene/UI
@@ -602,6 +613,16 @@ namespace Veng::Renderer
     {
         const u32 frame = m_Impl->Context.GetCurrentFrameInFlight();
 
+        // A new frame-in-flight resets the intra-frame bump: the ring cycled back only after that
+        // region's prior fence was waited, so its geometry is free to overwrite from zero again.
+        if (frame != m_Impl->GeometryFrame)
+        {
+            m_Impl->GeometryFrame = frame;
+            m_Impl->VertexSubOffset = 0;
+            m_Impl->IndexSubOffset = 0;
+            m_Impl->GradientSubOffset = 0;
+        }
+
         const auto& vertices = drawList.GetVertices();
         const auto& indices = drawList.GetIndices();
         const auto& gradients = drawList.GetGradients();
@@ -609,21 +630,26 @@ namespace Veng::Renderer
         const u64 vertexBytes = vertices.size() * sizeof(Gui::GuiVertex);
         const u64 indexBytes = indices.size() * sizeof(u32);
         const u64 gradientBytes = gradients.size() * sizeof(Gui::GpuGradient);
-        VE_ASSERT(vertexBytes <= m_Impl->VertexRegionBytes,
-                  "GuiScenePass draw list exceeds the vertex ring capacity ({} > {})", vertexBytes,
-                  m_Impl->VertexRegionBytes);
-        VE_ASSERT(indexBytes <= m_Impl->IndexRegionBytes,
-                  "GuiScenePass draw list exceeds the index ring capacity ({} > {})", indexBytes,
-                  m_Impl->IndexRegionBytes);
-        VE_ASSERT(gradientBytes <= m_Impl->GradientRegionBytes,
-                  "GuiScenePass draw list exceeds the gradient ring capacity ({} > {})",
-                  gradientBytes, m_Impl->GradientRegionBytes);
+        // The sub-range must fit in the region alongside the frame's earlier draw lists, so the
+        // capacity is checked against the running sub-offset rather than the bare list size.
+        VE_ASSERT(m_Impl->VertexSubOffset + vertexBytes <= m_Impl->VertexRegionBytes,
+                  "GuiScenePass draw lists exceed the vertex ring capacity ({} > {})",
+                  m_Impl->VertexSubOffset + vertexBytes, m_Impl->VertexRegionBytes);
+        VE_ASSERT(m_Impl->IndexSubOffset + indexBytes <= m_Impl->IndexRegionBytes,
+                  "GuiScenePass draw lists exceed the index ring capacity ({} > {})",
+                  m_Impl->IndexSubOffset + indexBytes, m_Impl->IndexRegionBytes);
+        VE_ASSERT(m_Impl->GradientSubOffset + gradientBytes <= m_Impl->GradientRegionBytes,
+                  "GuiScenePass draw lists exceed the gradient ring capacity ({} > {})",
+                  m_Impl->GradientSubOffset + gradientBytes, m_Impl->GradientRegionBytes);
 
-        const u64 vertexByteBase = static_cast<u64>(frame) * m_Impl->VertexRegionBytes;
+        const u64 vertexByteBase =
+            static_cast<u64>(frame) * m_Impl->VertexRegionBytes + m_Impl->VertexSubOffset;
         m_Impl->VertexBase = static_cast<i32>(vertexByteBase / sizeof(Gui::GuiVertex));
-        const u64 indexByteBase = static_cast<u64>(frame) * m_Impl->IndexRegionBytes;
+        const u64 indexByteBase =
+            static_cast<u64>(frame) * m_Impl->IndexRegionBytes + m_Impl->IndexSubOffset;
         m_Impl->IndexBase = static_cast<u32>(indexByteBase / sizeof(u32));
-        const u64 gradientByteBase = static_cast<u64>(frame) * m_Impl->GradientRegionBytes;
+        const u64 gradientByteBase =
+            static_cast<u64>(frame) * m_Impl->GradientRegionBytes + m_Impl->GradientSubOffset;
         m_Impl->GradientBase = static_cast<u32>(gradientByteBase / sizeof(Gui::GpuGradient));
 
         if (vertexBytes > 0)
@@ -643,6 +669,12 @@ namespace Veng::Renderer
         }
 
         m_Impl->Runs = drawList.GetRuns();
+
+        // Advance the bump so the next draw list this frame lands past this one's geometry. Each
+        // list's bytes are a whole multiple of its element stride, so every base stays aligned.
+        m_Impl->VertexSubOffset += vertexBytes;
+        m_Impl->IndexSubOffset += indexBytes;
+        m_Impl->GradientSubOffset += gradientBytes;
     }
 
     void GuiScenePass::SetUiScale(const f32 scale)
