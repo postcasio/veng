@@ -65,6 +65,7 @@ namespace Veng::Renderer
     class DescriptorSetLayout;
     class SkyResolver;
     class PointField;
+    class PostProcessEffectScenePass;
     struct DebugBlitPipelines;
     struct FrameTopology;
 
@@ -399,6 +400,25 @@ namespace Veng::Renderer
         /// @param view  The scene to resolve the volume fields from.
         void ResolveVolumeFields(const SceneView& view);
 
+        /// @brief Resolves the scene's PostProcessEffect components into this Execute's active set.
+        ///
+        /// Walks View<PostProcessEffect> off @p view.World, filters to enabled components with a
+        /// loaded material, and orders them by Order — the lights model. When the active set changes
+        /// (count, identity, or order) drives an internal Rebuild to insert/drop/reorder the tail
+        /// passes at the frame boundary (reusing the imported output, so GetOutput() stays valid);
+        /// then forwards each active effect's material to its pass. A no-op when
+        /// Settings.PostProcessEffects is clear (a capture drops the effects).
+        /// @param view  The scene to resolve the effects from.
+        void ResolvePostProcessEffects(SceneView& view);
+
+        /// @brief (Re)allocates or releases the two ping-pong HDR targets the effect chain writes.
+        ///
+        /// Allocates two allocation-sized HDR targets when @p active and none are current (a
+        /// fullscreen effect samples its source and cannot run in place); releases them when
+        /// inactive. Content-driven, so a renderer that never runs an effect carries no extra target.
+        /// @param active  Whether the effect chain runs this pass set.
+        void UpdatePostProcessEffectTargets(bool active);
+
         /// @brief Fills the per-draw DrawData buffer (and, under GPU mode, the candidate buffer + groups) for this Execute.
         ///
         /// Computes the camera-frustum survivors, writes the current frame's DrawData region, and
@@ -540,6 +560,21 @@ namespace Veng::Renderer
         /// @brief View over m_BloomMaskImage.
         Ref<ImageView> m_BloomMaskView;
 
+        /// @brief The two ping-pong HDR targets the post-process effect chain writes into.
+        ///
+        /// A fullscreen effect samples its source and cannot run in place, so the chain alternates
+        /// between these two allocation-sized targets — the first effect reads the finished scene
+        /// color and writes A, the next reads A and writes B, and so on. Content-driven: allocated
+        /// only while an effect is active (UpdatePostProcessEffectTargets), released otherwise, so a
+        /// renderer that never runs one carries no extra target.
+        Ref<Image> m_PpEffectImageA;
+        /// @brief View over m_PpEffectImageA.
+        Ref<ImageView> m_PpEffectViewA;
+        /// @brief The second ping-pong HDR target.
+        Ref<Image> m_PpEffectImageB;
+        /// @brief View over m_PpEffectImageB.
+        Ref<ImageView> m_PpEffectViewB;
+
         /// @brief Per-object screen-space motion vector target — g-buffer channel G3.
         ///
         /// RG16Sfloat, full extent. The surface pass writes it as SV_Target3 alongside the
@@ -630,6 +665,10 @@ namespace Veng::Renderer
         TextureHandle m_HdrHandle;
         /// @brief Bindless slot for the bloom-mask view; the bloom down-sweep samples it through the registry.
         TextureHandle m_BloomMaskHandle;
+        /// @brief Bindless slot for the first ping-pong effect target; invalid when no effect is active.
+        TextureHandle m_PpEffectHandleA;
+        /// @brief Bindless slot for the second ping-pong effect target; invalid when no effect is active.
+        TextureHandle m_PpEffectHandleB;
         /// @brief Bindless slot of the linear clamp sampler the fullscreen passes read the g-buffer
         /// and HDR target through, shared out of the registry across every SceneRenderer.
         SamplerHandle m_SamplerHandle;
@@ -734,6 +773,14 @@ namespace Veng::Renderer
         /// Null unless the chain is fully wired (the Final arm with Settings.DepthOfField); the
         /// CoC debug arm declares only the chain's first two compute stages, never this.
         Unique<ScenePass> m_DofCompositePass;
+
+        /// @brief One post-process effect pass per active PostProcessEffect, held outside m_Passes.
+        ///
+        /// Declared at the pre-bloom tail anchor (after the DoF composite, before the GUI-overlay
+        /// slot and bloom) in Order, ping-ponging between the two effect targets. Rebuilt on an
+        /// active-set change; each Execute the resolved material is forwarded to its pass. Empty
+        /// unless the Final arm is built while an effect is active (m_PostProcessEffectsActive).
+        vector<Unique<PostProcessEffectScenePass>> m_PostProcessEffectPasses;
 
         /// @brief The scene-color point-field pass, for fields placed in the lit scene color.
         ///
@@ -924,6 +971,10 @@ namespace Veng::Renderer
         ResourceId m_AaInputId;
         /// @brief Imported id for the CMAA2 RG8 edge map (edge pass → apply pass). Unset otherwise.
         ResourceId m_Cmaa2EdgeId;
+        /// @brief Imported ids for the two ping-pong post-process effect targets; unset when inactive.
+        ResourceId m_PpEffectIdA;
+        /// @brief Imported id for the second ping-pong post-process effect target.
+        ResourceId m_PpEffectIdB;
         /// @brief Imported id for the final output target.
         ResourceId m_OutputId;
 
@@ -1040,6 +1091,30 @@ namespace Veng::Renderer
         /// HalfResTranslucentIdleFrameLimit, so a capture probe whose faces alternately see and
         /// miss the opted-in material does not recompile the graph every frame.
         u32 m_HalfResTranslucentIdleFrames = 0;
+
+        /// @brief This Execute's active post-process effect materials, in run order.
+        ///
+        /// Refilled every Execute by ResolvePostProcessEffects from the scene's PostProcessEffect
+        /// components (enabled, loaded, ordered by Order). Each entry's material is forwarded to the
+        /// matching pass in m_PostProcessEffectPasses; empty when no effect is active or a capture
+        /// dropped them.
+        vector<AssetHandle<MaterialInstance>> m_PostProcessEffects;
+
+        /// @brief The active-effect signature the current pass set was built for: (material id, Order) per effect.
+        ///
+        /// Compared against each Execute's freshly-resolved run; a change in count, identity, or order
+        /// recompiles the pass set at the frame boundary (reusing the imported output). The material's
+        /// own per-frame params are not part of it, so tuning them never recompiles.
+        vector<std::pair<u64, i32>> m_PostProcessEffectSignature;
+
+        /// @brief Whether the current pass set carries the post-process effect chain; gates the Rebuild.
+        bool m_PostProcessEffectsActive = false;
+
+        /// @brief The allocation extent the ping-pong effect targets were last allocated at.
+        ///
+        /// Compared in UpdatePostProcessEffectTargets so a Resize reallocates them; zero while none
+        /// are allocated.
+        uvec2 m_PpEffectExtent{0, 0};
 
         /// @brief Opaque compiled graph; replayed every Execute.
         ///

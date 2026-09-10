@@ -51,3 +51,35 @@ struct PostProcessFragmentInput
     float4 sv_position : SV_Position;
     float2 v_UV : TEXCOORD0;
 };
+
+// A game post-process EFFECT (a PostProcessEffect scene component) is a PostProcess material the
+// engine runs fullscreen over the finished scene color and the scene depth, before bloom. The
+// engine writes these runtime-bound fields into the material's parameter block each frame, where
+// the material declares them (an effect that ignores depth need not declare the depth fields):
+//
+//   uint  Scene;         // bindless index of the finished scene-color source
+//   uint  SceneSampler;  // bindless sampler index for the scene color
+//   uint  Depth;         // bindless index of the g-buffer depth (raw, reverse-Z: larger is nearer)
+//   uint  DepthSampler;  // bindless sampler index for the depth
+//   float4 SceneScaleUV; // xy scene-color valid-region scale, zw its half-texel clamp
+//   float4 DepthScaleUV; // xy depth valid-region scale, zw its half-texel clamp
+//
+// Scene color and depth live in different sub-rects of the render allocation under a temporal
+// mode or dynamic resolution (color at the post-resolve region, depth at the render sub-rect), so
+// each is sampled through its own scale map — both the identity at render scale 1.0. Sample them
+// through the helpers below so an effect co-samples color and depth at the same world pixel.
+float3 SamplePostProcessScene(uint tex, uint samp, float4 sceneScaleUV, float2 uv)
+{
+    float2 scaled = min(uv * sceneScaleUV.xy, sceneScaleUV.zw);
+    return g_Textures[NonUniformResourceIndex(tex)]
+        .Sample(g_Samplers[NonUniformResourceIndex(samp)], scaled)
+        .rgb;
+}
+
+float SamplePostProcessDepth(uint tex, uint samp, float4 depthScaleUV, float2 uv)
+{
+    float2 scaled = min(uv * depthScaleUV.xy, depthScaleUV.zw);
+    return g_Textures[NonUniformResourceIndex(tex)]
+        .Sample(g_Samplers[NonUniformResourceIndex(samp)], scaled)
+        .r;
+}

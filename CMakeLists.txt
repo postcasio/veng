@@ -932,6 +932,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/punctual_shadows.cpp
             tests/unit/hi_z_history.cpp
             tests/unit/frame_topology.cpp
+            tests/unit/post_process_effect.cpp
             tests/unit/surface_claim.cpp
             tests/unit/generated_texture_queue.cpp
             tests/unit/fluid_sim_config.cpp
@@ -1613,6 +1614,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/create_async.cpp
             tests/gpu/primitive_resolve.cpp
             tests/gpu/scene_renderer.cpp
+            tests/gpu/post_process_effect.cpp
             tests/gpu/debug_draw.cpp
             tests/gpu/point_field.cpp
             tests/gpu/viewport.cpp

@@ -1,0 +1,13 @@
+{
+  "defaultInstance": "0x0000000000895642",
+  "domain": "PostProcess",
+  "shaders": {
+    "vertex": "0x0000000000002530",
+    "fragment": "0x0000000000002521"
+  },
+  "fields": [
+    { "name": "DepthScaleUV", "type": "vec4", "value": [1.0, 1.0, 1.0, 1.0] },
+    { "name": "Depth", "type": "texture" },
+    { "name": "DepthSampler", "type": "sampler", "texture": "Depth" }
+  ]
+}

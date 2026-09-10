@@ -18,6 +18,7 @@
 #include "Passes/GBufferScenePass.h"
 #include "Passes/PickingScenePass.h"
 #include "Passes/PointFieldScenePass.h"
+#include "Passes/PostProcessEffectScenePass.h"
 #include "Passes/PunctualShadowScenePass.h"
 #include "Passes/ShadowScenePass.h"
 #include "Passes/SkyScenePass.h"
@@ -30,6 +31,7 @@
 #include "RefractionGrab.h"
 #include "HalfResTranslucency.h"
 #include <Veng/Renderer/BakedSkyCube.h>
+#include "PostProcessEffectResolver.h"
 #include "SceneRendererIds.h"
 #include "SkyResolver.h"
 #include "DofChain.h"
@@ -61,6 +63,7 @@
 #include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/GBuffer.h>
 #include <Veng/Renderer/HiZHistory.h>
+#include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/LightPacking.h>
 #include <Veng/Renderer/Native.h>
@@ -239,6 +242,10 @@ namespace Veng::Renderer
         bindless.Release(m_EmissiveHandle);
         bindless.Release(m_LtcMatHandle);
         bindless.Release(m_LtcMagHandle);
+        // The ping-pong effect targets are content-driven, not a subsystem, so their handles are
+        // released here (a no-op when no effect ran) alongside the spine.
+        bindless.Release(m_PpEffectHandleA);
+        bindless.Release(m_PpEffectHandleB);
     }
 
     void SceneRenderer::Rebuild()
@@ -257,6 +264,16 @@ namespace Veng::Renderer
         }
         *m_Topology = next;
         m_SkyResolver->SetSkylightActive(m_Topology->SkylightWanted);
+
+        // The post-process effect chain is content-driven (the point-field model): active only while
+        // the scene carries an enabled, loaded PostProcessEffect, the capture gate allows it, and the
+        // frame renders the Final tail (a debug arm has no pre-bloom scene-color chain). Its
+        // ping-pong targets are (re)allocated here so their handles exist before the tail wiring
+        // reads them.
+        m_PostProcessEffectsActive = m_Settings.PostProcessEffects &&
+                                     !m_PostProcessEffects.empty() &&
+                                     m_Settings.Mode == DebugView::Final;
+        UpdatePostProcessEffectTargets(m_PostProcessEffectsActive);
 
         // The skybox pass samples the IBL radiance set for an environment sky, or the resolved baked
         // cube's consumer set (same radiance binding) for a baked material/atmosphere sky or a CubeSky.
@@ -343,6 +360,30 @@ namespace Veng::Renderer
         const ResourceId dofTargetId = m_Topology->DofComposited() ? m_DofSceneId : hdrId;
         const ResourceId sceneColorId = m_Topology->SsrActive ? m_SsrSceneId : dofTargetId;
         const ResourceId lightingTargetId = m_Topology->TaaActive ? litId : sceneColorId;
+
+        // The pre-bloom post-process effect chain ping-pongs between two HDR targets. The finished
+        // scene color at the tail anchor (m_HdrId — whatever the tail's last writer, SSR / point
+        // fields / the DoF composite, produced) feeds the first effect, and the last effect's output
+        // replaces the scene-color id every downstream pre-bloom consumer reads (bloom,
+        // auto-exposure, the bloom-off tonemap). With no effect active it is m_HdrId unchanged.
+        m_PpEffectIdA = ResourceId{};
+        m_PpEffectIdB = ResourceId{};
+        ResourceId ppEffectFinalId = m_HdrId;
+        TextureHandle ppEffectFinalHandle = m_HdrHandle;
+        if (m_PostProcessEffectsActive)
+        {
+            const usize effectCount = m_PostProcessEffects.size();
+            m_PpEffectIdA = graph.Import("SceneRenderer PostProcess Effect A");
+            // The second target is only used when the chain ping-pongs (two or more effects); a
+            // single effect writes A and hands it straight to the downstream consumers.
+            if (effectCount >= 2)
+            {
+                m_PpEffectIdB = graph.Import("SceneRenderer PostProcess Effect B");
+            }
+            const bool oddCount = (effectCount % 2) == 1;
+            ppEffectFinalId = oddCount ? m_PpEffectIdA : m_PpEffectIdB;
+            ppEffectFinalHandle = oddCount ? m_PpEffectHandleA : m_PpEffectHandleB;
+        }
 
         // The refraction copy reads the same target the translucent pass blends over, whichever
         // intermediate the TAA/SSR routing picked; the handle is the bindless side of that id.
@@ -440,6 +481,7 @@ namespace Veng::Renderer
         m_Passes.clear();
         m_PointFieldPass.reset();
         m_DofCompositePass.reset();
+        m_PostProcessEffectPasses.clear();
         m_ScenePointFieldPass = nullptr;
         // The non-owning pass pointers die with m_Passes; the wiring below repopulates each one
         // whose pass this topology still wires.
@@ -649,9 +691,23 @@ namespace Veng::Renderer
                     m_Dof->GetSamplerHandle(), m_Dof->GetHalfExtent(), m_Extent);
             }
 
-            // Tonemap source: bloom composite when bloom is on, raw HDR otherwise.
-            ResourceId tonemapSourceId = m_HdrId;
-            TextureHandle tonemapSourceHandle = m_HdrHandle;
+            // One post-process effect pass per active effect, held outside m_Passes and declared at
+            // the tail anchor after the DoF composite, in resolved Order. They ping-pong between the
+            // two effect targets; the resolved material is forwarded to each pass every Execute.
+            if (m_PostProcessEffectsActive)
+            {
+                for (usize e = 0; e < m_PostProcessEffects.size(); ++e)
+                {
+                    m_PostProcessEffectPasses.push_back(
+                        CreateUnique<PostProcessEffectScenePass>(m_Context, HdrFormat, m_Extent));
+                }
+            }
+
+            // Tonemap source: bloom composite when bloom is on, else the finished scene color — which
+            // is the last effect's output when the effect chain ran (ppEffectFinalId), m_HdrId
+            // otherwise.
+            ResourceId tonemapSourceId = ppEffectFinalId;
+            TextureHandle tonemapSourceHandle = ppEffectFinalHandle;
 
             if (m_Topology->BloomActive)
             {
@@ -964,15 +1020,34 @@ namespace Veng::Renderer
                     dofIo.HdrHandle = m_Dof->GetSceneHandle();
                     m_DofCompositePass->Declare(graph, dofIo);
                 }
+                // The named pre-bloom compose order: post-process effects, then the GUI-overlay slot
+                // (a later pass wires here — a scene-HDR overlay composites after the effects and
+                // before bloom), then bloom. The effects ping-pong between the two effect targets,
+                // the first reading the finished scene color (m_HdrId).
+                if (!m_PostProcessEffectPasses.empty())
+                {
+                    ResourceId effectSourceId = m_HdrId;
+                    TextureHandle effectSourceHandle = m_HdrHandle;
+                    for (usize e = 0; e < m_PostProcessEffectPasses.size(); ++e)
+                    {
+                        const bool evenIndex = (e % 2) == 0;
+                        const ResourceId effectOutputId = evenIndex ? m_PpEffectIdA : m_PpEffectIdB;
+                        m_PostProcessEffectPasses[e]->SetWiring(effectSourceId, effectSourceHandle,
+                                                                effectOutputId);
+                        m_PostProcessEffectPasses[e]->Declare(graph, io);
+                        effectSourceId = effectOutputId;
+                        effectSourceHandle = evenIndex ? m_PpEffectHandleA : m_PpEffectHandleB;
+                    }
+                }
                 if (m_Topology->BloomActive)
                 {
-                    m_Bloom->Declare(graph, m_HdrId, m_BloomChainId, m_BloomResultId,
+                    m_Bloom->Declare(graph, ppEffectFinalId, m_BloomChainId, m_BloomResultId,
                                      *m_AutoExposure, m_BloomMaskId, m_BloomMaskHandle,
                                      m_SamplerHandle);
                 }
                 if (m_Topology->AutoExposureActive)
                 {
-                    m_AutoExposure->Declare(graph, m_HdrId, m_AutoExposureId, m_Extent);
+                    m_AutoExposure->Declare(graph, ppEffectFinalId, m_AutoExposureId, m_Extent);
                 }
             }
 
@@ -1025,6 +1100,109 @@ namespace Veng::Renderer
             m_ScenePointFieldActive = sceneActive;
             Rebuild();
         }
+    }
+
+    void SceneRenderer::ResolvePostProcessEffects(SceneView& view)
+    {
+        // Gather the scene's PostProcessEffect components — the lights model. The gate clears the set
+        // for a capture (or any renderer told to drop them), so a probe never runs a screen effect.
+        m_PostProcessEffects.clear();
+        vector<PostProcessEffectInput> inputs;
+        vector<AssetHandle<MaterialInstance>> handles;
+        if (m_Settings.PostProcessEffects)
+        {
+            for (auto [entity, effect] : view.World.View<Veng::PostProcessEffect>())
+            {
+                inputs.push_back({.Order = effect.Order,
+                                  .Enabled = effect.Enabled,
+                                  .MaterialLoaded = effect.Material.IsLoaded(),
+                                  .MaterialId = effect.Material.Id().Value});
+                handles.push_back(effect.Material);
+            }
+        }
+
+        // Filter to enabled, loaded effects and order them (device-free, unit-pinned); then build
+        // this frame's run of material handles and the (identity, order) signature the recompile
+        // compares.
+        const vector<PostProcessEffectEntry> active = ResolveActivePostProcessEffects(inputs);
+        vector<std::pair<u64, i32>> signature;
+        m_PostProcessEffects.reserve(active.size());
+        signature.reserve(active.size());
+        for (const PostProcessEffectEntry& entry : active)
+        {
+            m_PostProcessEffects.push_back(handles[entry.SourceIndex]);
+            signature.emplace_back(entry.MaterialId, entry.Order);
+        }
+
+        // A change in count, identity, or order recompiles the pass set at this frame boundary
+        // (reusing the imported output, so GetOutput() stays valid); a stable set replays. The
+        // material's own per-frame params are not part of the signature, so tuning them never
+        // recompiles.
+        if (signature != m_PostProcessEffectSignature)
+        {
+            m_PostProcessEffectSignature = std::move(signature);
+            Rebuild();
+        }
+
+        // Forward each active effect's resolved material to its pass (a no-op when no pass exists,
+        // e.g. a debug arm or a capture). The counts match after a Rebuild; the min guards the gap
+        // between a set change and its Rebuild on a frame the gate suppressed one.
+        for (usize e = 0; e < m_PostProcessEffectPasses.size() && e < m_PostProcessEffects.size();
+             ++e)
+        {
+            m_PostProcessEffectPasses[e]->SetMaterial(m_PostProcessEffects[e]);
+        }
+    }
+
+    void SceneRenderer::UpdatePostProcessEffectTargets(const bool active)
+    {
+        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
+        if (!active)
+        {
+            // Release the ping-pong targets when the chain goes inactive so a renderer that stops
+            // running effects carries no extra HDR target.
+            if (m_PpEffectExtent != uvec2{0, 0})
+            {
+                bindless.Release(m_PpEffectHandleA);
+                bindless.Release(m_PpEffectHandleB);
+                m_PpEffectHandleA = TextureHandle{};
+                m_PpEffectHandleB = TextureHandle{};
+                m_PpEffectViewA.reset();
+                m_PpEffectViewB.reset();
+                m_PpEffectImageA.reset();
+                m_PpEffectImageB.reset();
+                m_PpEffectExtent = uvec2{0, 0};
+            }
+            return;
+        }
+
+        // Already allocated at the current allocation extent — nothing to do (a plain topology
+        // Rebuild keeps the targets).
+        if (m_PpEffectExtent == m_Extent)
+        {
+            return;
+        }
+
+        bindless.Release(m_PpEffectHandleA);
+        bindless.Release(m_PpEffectHandleB);
+
+        const auto makeTarget = [&](const char* name, const char* viewName, Ref<Image>& image,
+                                    Ref<ImageView>& imageView, TextureHandle& handle)
+        {
+            image = Image::Create(m_Context, {
+                                                 .Name = name,
+                                                 .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                 .Format = HdrFormat,
+                                                 .Usage = HdrUsage,
+                                             });
+            imageView = ImageView::Create(m_Context, {.Name = viewName, .Image = image});
+            handle = bindless.Register(imageView);
+        };
+        makeTarget("SceneRenderer PostProcess Effect A", "SceneRenderer PostProcess Effect A View",
+                   m_PpEffectImageA, m_PpEffectViewA, m_PpEffectHandleA);
+        makeTarget("SceneRenderer PostProcess Effect B", "SceneRenderer PostProcess Effect B View",
+                   m_PpEffectImageB, m_PpEffectViewB, m_PpEffectHandleB);
+        m_PpEffectExtent = m_Extent;
     }
 
     void SceneRenderer::ResolveVolumeFields(const SceneView& view)
@@ -1723,6 +1901,11 @@ namespace Veng::Renderer
         // the first live field and drops when the last one goes.
         ResolveVolumeFields(resolvedView);
 
+        // Resolve the scene's post-process effect components the same way — the tail effect passes
+        // insert/drop/reorder on an active-set change, and each active effect's material is forwarded
+        // to its pass.
+        ResolvePostProcessEffects(resolvedView);
+
         // Forward the resolved authored sky material to the sky-material pass (a no-op when the pass
         // is absent or no material is bound). The game has already written the material's own
         // params/handles (e.g. SetStorageBufferHandle) before Render.
@@ -1828,6 +2011,15 @@ namespace Veng::Renderer
             bindings.push_back({m_DofFarId, m_Dof->GetFarView()});
             bindings.push_back({m_DofCocId, m_Dof->GetCocView()});
             bindings.push_back({m_DofTileId, m_Dof->GetTileView()});
+        }
+        if (m_PostProcessEffectsActive)
+        {
+            bindings.push_back({m_PpEffectIdA, m_PpEffectViewA});
+            // The second target is imported only when the chain ping-pongs (two or more effects).
+            if (m_PpEffectIdB.IsValid())
+            {
+                bindings.push_back({m_PpEffectIdB, m_PpEffectViewB});
+            }
         }
         if (m_Topology->DofComposited())
         {

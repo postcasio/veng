@@ -1182,6 +1182,33 @@ namespace Veng
         Ref<Renderer::VolumeField> Field;
     };
 
+    /// @brief A scene-authored fullscreen post-process effect the renderer runs over scene color.
+    ///
+    /// Resolved by the renderer via View<PostProcessEffect> each Execute — the lights model: every
+    /// present, Enabled component with a loaded PostProcess-domain Material contributes one
+    /// fullscreen pass to the HDR tail, run in Order (ascending) after the scene is composited and
+    /// before bloom, so the effect is bloomed and tonemapped with the scene. Each pass receives the
+    /// finished scene color and the scene depth as inputs, so an effect may distort, tint, or gate
+    /// on depth. The material owns its own parameters (a consumer writes them on the
+    /// MaterialInstance each frame); the engine owns the pass, its anchor, and the color/depth
+    /// wiring. Adding or removing an enabled effect (or reordering, or toggling Enabled) recompiles
+    /// the pass set at the frame boundary; a stable set replays. Reflection-camera captures do not
+    /// run these effects (a probe wants no screen effect baked into it).
+    ///
+    /// An effect whose material carries per-frame parameters must use a per-viewport
+    /// MaterialInstance: the pass writes per-viewport state (the runtime-bound source handles) into
+    /// the instance's single ring slot each frame, so two viewports sharing one instance would
+    /// clobber each other.
+    struct PostProcessEffect
+    {
+        /// @brief The PostProcess-domain material run fullscreen; an empty or unloaded handle is a no-op.
+        AssetHandle<MaterialInstance> Material;
+        /// @brief Sort key: effects run in ascending Order (ties keep scene iteration order).
+        i32 Order = 0;
+        /// @brief Whether this effect runs; a disabled effect is dropped from the frame.
+        bool Enabled = true;
+    };
+
     /// @brief Level-scoped post/pipeline render knobs.
     ///
     /// Carried on a Level and seeded into the renderer the app drives — a reflected,
@@ -1693,6 +1720,12 @@ VE_FIELD(Opacity, .DisplayName = "Opacity", .Tooltip = "Fades emission and extin
 VE_FIELD(EmissionScale, .DisplayName = "Emission Scale", .Display = {.Min = 0.0})
 VE_FIELD(ExtinctionScale, .DisplayName = "Extinction Scale", .Display = {.Min = 0.0})
 VE_FIELD(Steps, .DisplayName = "Steps", .Tooltip = "Ray-march step count", .Display = {.Min = 1.0})
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::PostProcessEffect, 0xE760A6F6C3F08F48ULL)
+VE_FIELD(Material, .DisplayName = "Material")
+VE_FIELD(Order, .DisplayName = "Order", .Tooltip = "Effects run in ascending order")
+VE_FIELD(Enabled, .DisplayName = "Enabled")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::LevelRenderSettings, 0x28E4618C66455E21ULL)

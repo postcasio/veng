@@ -229,6 +229,11 @@ namespace Veng
         // registers Renderer::VolumeField nor serializes.
         registry.Register<VolumeField>();
 
+        // A scene-authored fullscreen post-process effect, resolved by the renderer per Execute. Its
+        // Material handle registers transitively; the effect runs over scene color + depth before
+        // bloom.
+        registry.Register<PostProcessEffect>();
+
         // A document mapped onto a world mesh, driven into an HDR target and glowing through the
         // scene's bloom. GuiSurfaceDomain and the AssetHandle<Gui::UIDocument> recipe leaf register
         // transitively through its fields.

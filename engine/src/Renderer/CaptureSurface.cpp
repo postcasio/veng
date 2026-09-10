@@ -124,6 +124,9 @@ namespace Veng::Renderer
             settings.PunctualShadows = shadows;
             settings.AO = false;
             settings.SSR = false;
+            // A probe wants no game screen effect baked into its faces, and dropping them also keeps
+            // the probe's six per-frame Executes off the main view's per-viewport MaterialInstance.
+            settings.PostProcessEffects = false;
             // A capture samples pre-tonemap HDR, so no post-tonemap AA reaches it; the temporal
             // resolve is dropped as another cost multiplied across the faces.
             settings.AntiAliasing = AntiAliasingMode::None;

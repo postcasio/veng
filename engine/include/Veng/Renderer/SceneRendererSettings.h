@@ -387,6 +387,16 @@ namespace Veng::Renderer
         /// on a frame with no pending pick request, so its amortized cost is near zero.
         bool Picking = false;
 
+        /// @brief Whether the renderer gathers and runs the scene's PostProcessEffect components (on by default).
+        ///
+        /// When set, each Execute resolves the scene's enabled PostProcessEffect components with a
+        /// loaded material and runs them fullscreen in the HDR tail before bloom (content-driven, the
+        /// lights model — no pass exists while no effect is authored). Cleared to drop them entirely:
+        /// a reflection-probe capture renders the same world with a lean battery and wants no screen
+        /// effect baked into it, and clearing this also removes any question of the probe's extra
+        /// Executes sharing a per-viewport MaterialInstance with the main view.
+        bool PostProcessEffects = true;
+
         /// @brief Whether the frame runs the temporal (jittered-history) AA resolve.
         ///
         /// The temporal path is the one several batteries gate on (jitter, the history-reset, the

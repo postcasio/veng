@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x0000000000002530",
+      "type": "Shader",
+      "source": "shaders/fullscreen.vert.shader.json"
+    },
+    {
+      "id": "0x0000000000002520",
+      "type": "Shader",
+      "source": "shaders/scale_effect.frag.shader.json"
+    },
+    {
+      "id": "0x0000000000002521",
+      "type": "Shader",
+      "source": "shaders/depth_band_effect.frag.shader.json"
+    },
+    {
+      "id": "0x0000000000002522",
+      "type": "Material",
+      "source": "materials/scale_effect.vmat.json"
+    },
+    {
+      "id": "0x0000000000002523",
+      "type": "Material",
+      "source": "materials/scale_effect_b.vmat.json"
+    },
+    {
+      "id": "0x0000000000002524",
+      "type": "Material",
+      "source": "materials/depth_band_effect.vmat.json"
+    }
+  ]
+}

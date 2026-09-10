@@ -1,0 +1,13 @@
+{
+  "defaultInstance": "0x0000000000895640",
+  "domain": "PostProcess",
+  "shaders": {
+    "vertex": "0x0000000000002530",
+    "fragment": "0x0000000000002520"
+  },
+  "fields": [
+    { "name": "SceneScaleUV", "type": "vec4", "value": [1.0, 1.0, 1.0, 1.0] },
+    { "name": "Scene", "type": "texture" },
+    { "name": "SceneSampler", "type": "sampler", "texture": "Scene" }
+  ]
+}
