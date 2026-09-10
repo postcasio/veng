@@ -30,6 +30,7 @@ namespace Veng
     namespace Renderer
     {
         class BakedSkyCube;
+        class ImageView;
     }
 
     /// @brief Human-readable label for an entity.
@@ -1089,14 +1090,38 @@ namespace Veng
         IBL,
     };
 
-    /// @brief The scene's one authored sky: a source, an intensity, and a lighting tier.
+    /// @brief An optional radiance cube-view the IBL lighting derives from, distinct from Source.
+    ///
+    /// A probe of the scene's own surroundings — a captured radiance cube — supplied as the
+    /// lighting input, so a scene can be *lit* by a local capture without that capture being *drawn*
+    /// as its background. When set, the renderer derives image-based lighting from this cube-view
+    /// while the displayed skybox keeps sampling the Sky's own Source. It holds shared ownership of
+    /// the GPU cube-view — a Ref, exactly as CubeSky::Cube holds a Ref<BakedSkyCube> — so the cube
+    /// survives even if the object that filled it is torn down; because the derive is one-shot
+    /// (convolved once into the resolver's own maps, then static), the Ref need only outlive that
+    /// single convolution. A null Cube (the default) leaves lighting derived from Source — the
+    /// pre-existing behaviour. It feeds the IBL tier only, and only where the Source is itself a
+    /// cube (the cube-derive path); a non-cube source keeps its own derive. Runtime-only: the Ref is
+    /// never reflected, cooked, or serialized (no VE_FIELD), so a lighting source is only ever set
+    /// at runtime.
+    struct SkyLightingSource
+    {
+        /// @brief The probe's radiance cube-view the IBL tier convolves; null derives from Source.
+        Ref<Renderer::ImageView> Cube;
+        /// @brief Edge length in texels of the cube-view's faces (the prefilter integration input).
+        u32 FaceSize = 0;
+    };
+
+    /// @brief The scene's one authored sky: a source, an intensity, a lighting tier, and an optional
+    ///        lighting source.
     ///
     /// One per scene, resolved by the renderer via TryGetFirst<Sky> each Execute — the lights
     /// model. Source selects the sky kind (environment map / atmosphere / material) and carries its
     /// parameters; an empty Source is no sky (the flat fallback). Intensity scales the background
-    /// and any ambient radiance the tier casts. Lighting requests how the sky lights the scene. If
-    /// several Sky components exist the first walked wins and a warning logs once. No transform is
-    /// read — the sky is scene-global.
+    /// and any ambient radiance the tier casts. Lighting requests how the sky lights the scene.
+    /// LightingSource optionally points the IBL tier at a probe cube distinct from Source (unset by
+    /// default, leaving lighting derived from Source). If several Sky components exist the first
+    /// walked wins and a warning logs once. No transform is read — the sky is scene-global.
     struct Sky
     {
         /// @brief The active sky source, or empty for no sky.
@@ -1105,6 +1130,9 @@ namespace Veng
         f32 Intensity = 1.0f;
         /// @brief How the sky lights the scene, beyond displaying it.
         SkyLighting Lighting = SkyLighting::None;
+        /// @brief An optional probe cube the IBL tier derives lighting from, distinct from the
+        ///        displayed Source; a null Cube (the default) derives lighting from Source.
+        SkyLightingSource LightingSource;
     };
 
     /// @brief Time-of-day sun drive: the author's opt-in to derive the sun from a clock time.

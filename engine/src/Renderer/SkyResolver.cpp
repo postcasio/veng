@@ -186,6 +186,14 @@ namespace Veng::Renderer
         m_ResolvedSkyLighting = resolvedLighting;
         m_ResolvedSkyBaked = baked;
         m_LastResolvedCube = m_ResolvedCube;
+
+        // The optional lighting source: a probe cube-view the IBL arm derives from instead of the
+        // displayed Source cube (the skybox always draws Source). Null (the default) leaves the
+        // cube-derive reading the Source cube — today's behaviour. It does not touch the topology:
+        // the tier is already IBL and the skybox binds Source, so pointing lighting at a probe
+        // recompiles nothing — only which cube the IBL convolution reads (in RecordPreBeginView).
+        m_LightingSourceCube = sky != nullptr ? sky->LightingSource.Cube : nullptr;
+        m_LightingSourceFaceSize = sky != nullptr ? sky->LightingSource.FaceSize : 0;
     }
 
     void SkyResolver::RecordPreBeginView(CommandBuffer& cmd, const SceneView& view,
@@ -315,26 +323,49 @@ namespace Veng::Renderer
                 BeginDeferredShReadback(cmd);
             }
 
-            // IBL convolves the cube into the split-sum maps when its content changes or on first
-            // entry to the tier with a real bake — a static sky pays it once.
-            if (m_ResolvedSkyLighting == SkyLighting::IBL)
+            // IBL convolves a cube into the split-sum maps. A lighting source overrides which cube:
+            // when one is set, the IBL arm reads the probe cube-view instead of the displayed Source
+            // cube — a one-shot derive (convolved once when first pointed at it, then static, since
+            // the probe is baked once by its driver and held), so neither the frame nor the Source
+            // cube's revision re-convolves it. Absent, the Source cube drives the derive as before
+            // (its content change or first tier entry with a real bake — a static sky pays it once).
+            // The displayed skybox samples the Source cube throughout; only the lighting input moves.
+            if (m_ResolvedSkyLighting == SkyLighting::IBL && m_LightingSourceCube != nullptr)
             {
-                if (m_ResolvedCube->IsBaked() && (cubeChanged || !m_SkyCubeConvolved))
+                if (m_LightingSourceCube.get() != m_LastDerivedLightingSource)
                 {
                     m_Ibl->EnsureInitialized(cmd);
-                    m_Ibl->GenerateFromCube(cmd, m_ResolvedCube->GetCubeView(),
-                                            m_ResolvedCube->GetFaceSize());
-                    m_SkyCubeConvolved = true;
+                    m_Ibl->GenerateFromCube(cmd, m_LightingSourceCube, m_LightingSourceFaceSize);
+                    m_LastDerivedLightingSource = m_LightingSourceCube.get();
+                    ++m_LightingSourceDeriveCount;
                 }
+                // The Source-cube derive is inert while a lighting source drives the arm; reset its
+                // gate so a return to Source re-convolves it.
+                m_SkyCubeConvolved = false;
             }
             else
             {
-                m_SkyCubeConvolved = false;
+                m_LastDerivedLightingSource = nullptr;
+                if (m_ResolvedSkyLighting == SkyLighting::IBL)
+                {
+                    if (m_ResolvedCube->IsBaked() && (cubeChanged || !m_SkyCubeConvolved))
+                    {
+                        m_Ibl->EnsureInitialized(cmd);
+                        m_Ibl->GenerateFromCube(cmd, m_ResolvedCube->GetCubeView(),
+                                                m_ResolvedCube->GetFaceSize());
+                        m_SkyCubeConvolved = true;
+                    }
+                }
+                else
+                {
+                    m_SkyCubeConvolved = false;
+                }
             }
         }
         else
         {
             m_SkyCubeConvolved = false;
+            m_LastDerivedLightingSource = nullptr;
         }
 
         // An environment sky on the SH tier lights the diffuse term from its radiance cube — the

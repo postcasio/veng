@@ -93,10 +93,14 @@ extern "C"
 /// world-anchored plane transform/size/resolution fields: a module instantiates GuiOverlay
 /// (Add<GuiOverlay>) with the engine's layout, so a stale module built against the shorter struct
 /// would size and lay out the component short of what the engine reads and writes.
+/// Version 20 grows the builtin Sky component with an optional runtime-only lighting source (a
+/// radiance cube-view the IBL tier derives from, distinct from the displayed source): a module
+/// instantiates Sky (Add<Sky>) with the engine's layout, so a stale module built against the
+/// shorter struct would size and lay out the component short of what the engine reads and writes.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 19u
+#define VENG_MODULE_ABI_VERSION 20u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

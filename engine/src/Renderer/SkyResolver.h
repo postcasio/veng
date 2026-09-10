@@ -24,6 +24,7 @@ namespace Veng::Renderer
     class AtmospherePrecompute;
     class BakedSkyCube;
     class DescriptorSet;
+    class ImageView;
 
     /// @brief Owns the sky-resolve state machine and the three sky radiance-cube helpers.
     ///
@@ -151,6 +152,17 @@ namespace Veng::Renderer
         /// pipeline at Rebuild, so a change to which cube is resolved trips NeedsRecompile.
         [[nodiscard]] const Ref<DescriptorSet>& GetSkyConsumerSet() const;
 
+        /// @brief How many times a lighting-source cube has been convolved into the IBL maps.
+        ///
+        /// Advances once per one-shot derive from a Sky::LightingSource — once when the resolver is
+        /// first pointed at a given probe cube, and not again while that cube stays the lighting
+        /// source. Exposed so a test can assert the derive is one-shot (the count does not move
+        /// across subsequent frames holding the same static cube) rather than per-frame.
+        [[nodiscard]] u64 GetLightingSourceDeriveCount() const
+        {
+            return m_LightingSourceDeriveCount;
+        }
+
     private:
         SkyResolver(Context& context, AssetManager& assets);
 
@@ -256,6 +268,29 @@ namespace Veng::Renderer
         /// over the bake cube; this flag keeps it once-per-change. Cleared when the resolved sky is
         /// not a baked source lit via IBL, so re-entering the tier re-convolves.
         bool m_SkyCubeConvolved = false;
+
+        /// @brief The Sky's optional lighting-source cube-view resolved this Execute; null for none.
+        ///
+        /// Filled each Resolve from Sky::LightingSource. When set (and the resolved tier is IBL and
+        /// the source is a cube), the IBL arm convolves this probe cube-view instead of the
+        /// displayed Source cube — the displayed skybox is untouched. Shared ownership so it
+        /// outlives the object that filled it; the derive is one-shot, so it need only survive that
+        /// single convolution.
+        Ref<ImageView> m_LightingSourceCube;
+
+        /// @brief The lighting-source cube-view's face edge length in texels (the prefilter input).
+        u32 m_LightingSourceFaceSize = 0;
+
+        /// @brief The lighting-source cube last convolved into the IBL maps; gates the one-shot derive.
+        ///
+        /// A raw identity handle (never dereferenced): the derive runs once when the resolved
+        /// lighting source differs from this, then holds — so a static probe cube pays one
+        /// convolution and no per-frame or per-sweep re-derive. Cleared to null whenever no lighting
+        /// source drives the IBL arm, so re-pointing at a probe re-derives.
+        const ImageView* m_LastDerivedLightingSource = nullptr;
+
+        /// @brief Count of one-shot lighting-source derives recorded. See GetLightingSourceDeriveCount.
+        u64 m_LightingSourceDeriveCount = 0;
 
         /// @brief The atmosphere params the baked atmosphere cube was last baked from; gates the re-bake.
         ///

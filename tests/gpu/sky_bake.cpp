@@ -57,7 +57,9 @@
 #include <Veng/Scene/Scene.h>
 
 #include "Renderer/EnvironmentIbl.h"
+#include "Renderer/SkyResolver.h"
 #include <Veng/Renderer/BakedSkyCube.h>
+#include <Veng/Renderer/GraphicsPipeline.h>
 
 using namespace Veng;
 using namespace Veng::Renderer;
@@ -849,6 +851,205 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // validation-clean and non-black — the tier path produces a plausible sky, not a zeroed frame.
     const vector<u8> bakedSh = fixture.Render(SkyMode::Baked, SkyLighting::SH);
     CHECK(MeanLuma(bakedSh, extent) > 0.0);
+}
+
+namespace
+{
+    constexpr u32 ProbeSourceFaceSize = 64;
+
+    // A six-layer RGBA16F cube filled with one flat radiance — the probe cube-view the lighting
+    // source points at. A constant radiance convolves to a constant diffuse irradiance equal to it,
+    // so the derived irradiance carries this colour, unmistakably distinct from the analytic Source.
+    Ref<Image> MakeFlatCubeImage(Context& context, vec3 color)
+    {
+        const Ref<Image> image =
+            Image::Create(context, {
+                                       .Name = "Probe Radiance Cube",
+                                       .Extent = {ProbeSourceFaceSize, ProbeSourceFaceSize, 1},
+                                       .Layers = 6,
+                                       .Format = Format::RGBA16Sfloat,
+                                       .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
+                                   });
+        vector<u16> texels(static_cast<usize>(ProbeSourceFaceSize) * ProbeSourceFaceSize * 6 * 4);
+        for (usize texel = 0; texel < texels.size() / 4; ++texel)
+        {
+            texels[texel * 4 + 0] = glm::packHalf1x16(color.r);
+            texels[texel * 4 + 1] = glm::packHalf1x16(color.g);
+            texels[texel * 4 + 2] = glm::packHalf1x16(color.b);
+            texels[texel * 4 + 3] = glm::packHalf1x16(1.0f);
+        }
+        image->UploadSync(
+            std::span(reinterpret_cast<const u8*>(texels.data()), texels.size() * sizeof(u16)));
+        return image;
+    }
+
+    Ref<ImageView> ProbeCubeView(Context& context, const Ref<Image>& image)
+    {
+        return ImageView::Create(context, {
+                                              .Name = "Probe Radiance Cube View",
+                                              .Image = image,
+                                              .ViewType = ImageViewType::Cube,
+                                              .ArrayLayers = 6,
+                                          });
+    }
+
+    // Downloads all six irradiance-cube layers into one tightly-packed RGBA16F buffer (layer-major).
+    vector<u8> DownloadIrradiance(Context& context, EnvironmentIbl& ibl)
+    {
+        const u32 faceSize = EnvironmentIbl::GetIrradianceFaceSize();
+        const usize faceBytes = static_cast<usize>(faceSize) * faceSize * 8;
+        const Ref<Image>& image = ibl.GetIrradianceImage();
+        const Ref<ImageView> view =
+            ImageView::Create(context, {
+                                           .Name = "Irradiance Readback View",
+                                           .Image = image,
+                                           .ViewType = ImageViewType::Cube,
+                                           .ArrayLayers = 6,
+                                       });
+        const Ref<Buffer> staging = Buffer::Create(context, {
+                                                                .Name = "Irradiance Readback",
+                                                                .Size = faceBytes * 6,
+                                                                .Usage = BufferUsage::TransferDst,
+                                                            });
+        context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                cmd.PrepareForAccess(view, AccessKind::TransferSrc);
+                const vk::BufferImageCopy region{
+                    .bufferOffset = 0,
+                    .bufferRowLength = 0,
+                    .bufferImageHeight = 0,
+                    .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                         .mipLevel = 0,
+                                         .baseArrayLayer = 0,
+                                         .layerCount = 6},
+                    .imageOffset = {.x = 0, .y = 0, .z = 0},
+                    .imageExtent = {.width = faceSize, .height = faceSize, .depth = 1},
+                };
+                GetVkCommandBuffer(cmd).copyImageToBuffer(GetVkImage(*image),
+                                                          vk::ImageLayout::eTransferSrcOptimal,
+                                                          GetVkBuffer(*staging), 1, &region);
+                cmd.PrepareForAccess(view, AccessKind::SampleGraphics);
+            });
+        return staging->Download();
+    }
+
+    vec3 IrradianceFaceCenter(const vector<u8>& bytes, u32 faceSize, u32 face)
+    {
+        const auto* halves = reinterpret_cast<const u16*>(bytes.data());
+        const u32 c = faceSize / 2;
+        const usize base = ((static_cast<usize>(face) * faceSize + c) * faceSize + c) * 4;
+        return vec3(glm::unpackHalf1x16(halves[base + 0]), glm::unpackHalf1x16(halves[base + 1]),
+                    glm::unpackHalf1x16(halves[base + 2]));
+    }
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "sky lighting source: the IBL tier derives from the probe cube while the skybox keeps sampling "
+    "the Source, in a one-shot derive")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const AssetHandle<MaterialInstance> material = CookAndLoadAnalyticSky(assets);
+
+    // A standalone IBL supplies the Source cube's consumer-set layout, and doubles as the reference
+    // convolver for the "unchanged when no lighting source" equivalence below.
+    const Unique<EnvironmentIbl> reference = EnvironmentIbl::Create(Context, assets);
+
+    // The Source: a CubeSky pointing at a real baked radiance cube (the analytic 0.5 + 0.5·dir sky),
+    // amortized to completion so it carries a revision — the skybox samples it and, absent a
+    // lighting source, the IBL arm derives from it.
+    constexpr u32 SourceFaceSize = 64;
+    const Ref<BakedSkyCube> sourceCube = BakedSkyCube::Create(Context, reference->GetSetLayout(),
+                                                              Format::RGBA16Sfloat, SourceFaceSize);
+    GeneratedTextureService& service = Context.GetGeneratedTextures();
+    service.SetCostBudget(GeneratedTextureService::UnlimitedCostBudget);
+    sourceCube->RequestBake(service, *material.Get());
+    for (u32 i = 0; i < 8 && sourceCube->IsBakePending(); ++i)
+    {
+        Context.BeginFrame();
+        Context.EndFrame();
+    }
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { sourceCube->RecordAmortized(cmd); });
+    REQUIRE(sourceCube->IsBaked());
+
+    // The probe: a flat green radiance cube, distinct from the Source in every dimension.
+    const vec3 probeColor(0.05f, 0.9f, 0.12f);
+    const Ref<Image> probeImage = MakeFlatCubeImage(Context, probeColor);
+    const Ref<ImageView> probeView = ProbeCubeView(Context, probeImage);
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    Sky& sky = scene->Add<Sky>(entity);
+    auto* source = static_cast<CubeSky*>(sky.Source.SetActive(TypeIdOf<CubeSky>()));
+    source->Cube = sourceCube;
+    sky.Lighting = SkyLighting::IBL;
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f), vec3(0.0f, 0.0f, -1.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SkyResolver> resolver = SkyResolver::Create(Context, assets);
+    Renderer::SceneView view{.World = *scene, .Camera = camera, .Delta = 0.0f};
+    const auto drive = [&]
+    {
+        resolver->Resolve(view);
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            { resolver->RecordPreBeginView(cmd, view, Ref<GraphicsPipeline>{}); });
+    };
+
+    const u32 irrFace = EnvironmentIbl::GetIrradianceFaceSize();
+
+    // No lighting source: the IBL arm derives from the Source cube (no lighting-source derive), and
+    // the skybox binds the Source cube's set.
+    drive();
+    CHECK(resolver->GetLightingSourceDeriveCount() == 0);
+    CHECK(resolver->GetSkyConsumerSet().get() == sourceCube->GetSet().get());
+    const vector<u8> irrFromSource = DownloadIrradiance(Context, resolver->GetIbl());
+
+    // Unchanged, bit-for-bit: the default derive is the same GenerateFromCube over the Source cube,
+    // so the resolver's irradiance equals the reference convolver's over the identical cube-view.
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            reference->EnsureInitialized(cmd);
+            reference->GenerateFromCube(cmd, sourceCube->GetCubeView(), sourceCube->GetFaceSize());
+        });
+    const vector<u8> irrReference = DownloadIrradiance(Context, *reference);
+    REQUIRE(irrFromSource.size() == irrReference.size());
+    CHECK(irrFromSource == irrReference);
+
+    // Point the lighting source at the green probe: the IBL arm now convolves the probe (exactly
+    // once), while the skybox still binds the Source cube — the decoupling in both directions.
+    sky.LightingSource.Cube = probeView;
+    sky.LightingSource.FaceSize = ProbeSourceFaceSize;
+    drive();
+    CHECK(resolver->GetLightingSourceDeriveCount() == 1);
+    CHECK(resolver->GetSkyConsumerSet().get() == sourceCube->GetSet().get());
+    const vector<u8> irrFromProbe = DownloadIrradiance(Context, resolver->GetIbl());
+
+    // A constant green cube convolves to a green-dominant diffuse irradiance in every face — the
+    // lighting now carries the probe's colour, not the Source's, and the two maps differ.
+    for (u32 face = 0; face < 6; ++face)
+    {
+        const vec3 c = IrradianceFaceCenter(irrFromProbe, irrFace, face);
+        CHECK(c.g > c.r);
+        CHECK(c.g > c.b);
+        CHECK(c.g > 0.0f);
+    }
+    CHECK(irrFromProbe != irrFromSource);
+
+    // One-shot: holding the same static probe across further frames records no further derive and
+    // leaves the irradiance maps exactly as the single convolution left them.
+    for (u32 i = 0; i < 3; ++i)
+    {
+        drive();
+    }
+    CHECK(resolver->GetLightingSourceDeriveCount() == 1);
+    const vector<u8> irrHeld = DownloadIrradiance(Context, resolver->GetIbl());
+    CHECK(irrHeld == irrFromProbe);
 }
 
 #endif
