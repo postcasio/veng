@@ -31,8 +31,9 @@ namespace Veng
     public:
         /// @brief Brings the tree current with scene, omitting one nominated entity.
         ///
-        /// Rebuilds (re-gather + BVH::Build) iff the scene's spatial version moved
-        /// since the last Sync, a mesh that was still loading has become resident, or
+        /// Rebuilds (re-gather + BVH::Build) iff @p scene is a different instance than
+        /// the current tree was gathered from, the scene's spatial version moved since
+        /// the last Sync, a mesh that was still loading has become resident, or
         /// @p exclude differs from the entity the current tree was gathered against.
         ///
         /// The excluded entity is dropped by the gather itself, so it is absent from
@@ -111,6 +112,13 @@ namespace Veng
         AABB m_SceneBounds = AABB::Empty();
         /// @brief World-space union of the shadow-casting candidates' bounds.
         AABB m_CasterBounds = AABB::Empty();
+        /// @brief The scene the current tree was gathered from; a different instance forces a rebuild.
+        ///
+        /// The spatial version is a per-scene counter, so a broadphase re-pointed at another scene
+        /// (a persistent renderer whose presented world was swapped) could be handed a coinciding
+        /// version and keep the previous scene's candidates — whose pointers name the wrong scene's
+        /// entities. Scene identity is its own rebuild trigger, like the view properties below.
+        const Scene* m_LastScene = nullptr;
         /// @brief != any real version on construction, so the first Sync rebuilds.
         u64 m_LastVersion = ~0ull;
         /// @brief The entity the current tree was gathered without; a change forces a rebuild.

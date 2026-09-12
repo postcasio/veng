@@ -12,11 +12,18 @@ namespace Veng
     {
         const u64 version = scene.GetSpatialVersion();
 
+        // The spatial version is a per-scene counter, so a broadphase re-pointed at a different
+        // scene (a persistent renderer whose presented world was swapped for another) can be handed
+        // a version that coincides with the one it cached against the previous scene — and would then
+        // keep serving the previous scene's candidates, whose Mesh/material/transform pointers name
+        // the wrong scene's entities. Scene identity is therefore its own rebuild trigger, like the
+        // view properties below: neither moves a spatial version.
+        //
         // The exclusion and the layer mask are properties of the caller's view, not of the scene, so
         // neither moves a spatial version — each has to force its own rebuild or the tree keeps the
         // previous caller's candidate set.
-        bool needRebuild = (version != m_LastVersion) || (exclude != m_LastExclude) ||
-                           (layerMask != m_LastLayerMask);
+        bool needRebuild = (&scene != m_LastScene) || (version != m_LastVersion) ||
+                           (exclude != m_LastExclude) || (layerMask != m_LastLayerMask);
 
         // A mesh finishing async load does not mutate the scene, so it does not bump
         // the spatial version. While candidates are still resolving residency, poll
@@ -46,6 +53,7 @@ namespace Veng
         if (needRebuild)
         {
             Rebuild(scene, exclude, layerMask);
+            m_LastScene = &scene;
             m_LastVersion = version;
             m_LastExclude = exclude;
             m_LastLayerMask = layerMask;
