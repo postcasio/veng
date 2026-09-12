@@ -596,3 +596,80 @@ TEST_CASE_FIXTURE(
 
     std::filesystem::remove(archive);
 }
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "gui hdr overlay: a hidden overlay draws nothing and attaches nothing, both placements")
+{
+    RegisterBuiltinTypes(Types);
+
+    constexpr AssetId UIDocumentId{0xA09AA8B60AEAA8BEULL};
+    const path packJson = path(GPU_COOKER_FIXTURE_DIR) / "ui_hud_pack.json";
+    const path archive = Veng::TestSupport::TempDir() / "veng_gui_hdr_overlay_hidden.vengpack";
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker.CookPack(packJson, archive).has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(archive).has_value());
+
+    const auto makeViewport = [&]
+    {
+        return Viewport::Create({
+            .Context = Context,
+            .Assets = assets,
+            .Region = {.Offset = {0, 0}, .Extent = Extent},
+            .ColorFormat = Format::RGBA16Sfloat,
+            .Role = ViewportRole::Presented,
+        });
+    };
+
+    // Baseline: an empty scene, no overlay.
+    const Unique<Scene> baseScene = Scene::Create(Types);
+    const Unique<Viewport> baseViewport = makeViewport();
+    baseViewport->SetViewState({.World = baseScene.get(), .Delta = 0.016f});
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { baseViewport->Render(cmd); });
+    const vector<u8> baseline = baseViewport->GetOutput()->GetImage()->Download();
+
+    // A SceneHdrPreBloom overlay with Visible = false builds nothing into the pre-bloom pass, so the
+    // rendered scene is byte-identical to the baseline — the overlay is suppressed, not merely faint.
+    const Unique<Scene> hdrScene = Scene::Create(Types);
+    const Entity hdrEntity = hdrScene->CreateEntity();
+    {
+        auto& overlay = hdrScene->Add<GuiOverlay>(hdrEntity);
+        overlay.Document = *assets.LoadSync<Gui::UIDocument>(UIDocumentId);
+        overlay.Placement = GuiOverlayPlacement::SceneHdrPreBloom;
+        overlay.Visible = false;
+    }
+    const Unique<Viewport> hdrViewport = makeViewport();
+    hdrViewport->SetViewState({.World = hdrScene.get(), .Delta = 0.016f});
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { hdrViewport->Render(cmd); });
+    CHECK(hdrViewport->GetOutput()->GetImage()->Download() == baseline);
+
+    // Restoring Visible re-presents the overlay with no reload — it now draws, so the output differs
+    // from the baseline.
+    hdrScene->Get<GuiOverlay>(hdrEntity).Visible = true;
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { hdrViewport->Render(cmd); });
+    CHECK(hdrViewport->GetOutput()->GetImage()->Download() != baseline);
+
+    // A PostTonemap overlay with Visible = false is skipped and detached, so nothing joins the layer
+    // stack; restoring the flag attaches it.
+    const Unique<Scene> ldrScene = Scene::Create(Types);
+    const Entity ldrEntity = ldrScene->CreateEntity();
+    {
+        auto& overlay = ldrScene->Add<GuiOverlay>(ldrEntity);
+        overlay.Document = *assets.LoadSync<Gui::UIDocument>(UIDocumentId);
+        overlay.Placement = GuiOverlayPlacement::PostTonemap;
+        overlay.Visible = false;
+    }
+    const Unique<Viewport> ldrViewport = makeViewport();
+    ldrViewport->SetViewState({.World = ldrScene.get(), .Delta = 0.016f});
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { ldrViewport->Render(cmd); });
+    CHECK(ldrViewport->GetAttachedDocuments().empty());
+
+    ldrScene->Get<GuiOverlay>(ldrEntity).Visible = true;
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { ldrViewport->Render(cmd); });
+    CHECK(ldrViewport->GetAttachedDocuments().size() == 1);
+
+    std::filesystem::remove(archive);
+}

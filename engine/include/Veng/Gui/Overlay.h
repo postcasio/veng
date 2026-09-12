@@ -102,6 +102,15 @@ namespace Veng
         /// document. A system may flip it at runtime; the next Drive reapplies the change.
         bool Interactive = false;
 
+        /// @brief Whether the overlay draws, or is suppressed without tearing its runtime down.
+        ///
+        /// True (the default) draws normally. False leaves the runtime host, its document, and every
+        /// binding intact but suppresses the draw: the claiming viewport skips this overlay's Drive
+        /// and detaches an already-attached layer-stack document, so restoring the flag re-attaches
+        /// and re-presents with no reload — the screen-space peer of MeshRenderer::Visible. A system
+        /// may flip it at runtime; the next frame's drive reflects the change.
+        bool Visible = true;
+
         /// @brief The seat whose viewport presents this overlay under multi-viewport presentation.
         ///
         /// A scene presented by more than one viewport (split-screen) resolves which viewport claims
@@ -297,6 +306,7 @@ VE_FIELD(Document, .DisplayName = "Document")
 VE_FIELD(Layer, .DisplayName = "Layer")
 VE_FIELD(Driver, .DisplayName = "Driver")
 VE_FIELD(Interactive, .DisplayName = "Interactive")
+VE_FIELD(Visible, .DisplayName = "Visible")
 VE_FIELD(TargetSeat, .DisplayName = "Target Seat")
 VE_FIELD(Placement, .DisplayName = "Placement")
 VE_FIELD(Material, .DisplayName = "Material")

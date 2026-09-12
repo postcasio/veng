@@ -641,6 +641,14 @@ namespace Veng::Renderer
             {
                 continue;
             }
+            // A hidden overlay is suppressed without releasing its runtime: detach the document from
+            // this viewport's layer stack (idempotent, and only what Drive attached) so it stops
+            // drawing, and skip the drive so restoring Visible re-attaches with no reload.
+            if (!overlay.Visible)
+            {
+                overlay.Detach(*this);
+                continue;
+            }
             if (ClaimsOverlay(world, entity, overlay))
             {
                 overlay.Drive(*this, m_Assets, world, entity, m_GuiDrivers, m_Audio);
@@ -664,6 +672,13 @@ namespace Veng::Renderer
         for (auto [entity, overlay] : world.View<GuiOverlay>())
         {
             if (overlay.Placement != GuiOverlayPlacement::SceneHdrPreBloom)
+            {
+                continue;
+            }
+            // A hidden overlay builds nothing into the pre-bloom pass, so it draws nothing; its
+            // runtime and bindings stand, so restoring Visible resumes with no reload. An HDR overlay
+            // never joins the layer stack, so there is nothing to detach.
+            if (!overlay.Visible)
             {
                 continue;
             }

@@ -801,7 +801,7 @@ The screen-space overlay is a reflected component too — the engine-driven scen
 has three members (scene/ECS material is [../Scene/CLAUDE.md](../Scene/CLAUDE.md)). A
 **`GuiOverlay`** (`Veng/Gui/Overlay.h`) is the screen-space sibling of `GuiSurface`: a reflected
 scene component `{ AssetHandle<Gui::UIDocument> Document; i32 Layer; GuiDriverId Driver; bool
-Interactive; Reference TargetSeat; }` the **Viewport** discovers the same way (`View<GuiOverlay>()`) and drives onto its
+Interactive; bool Visible; Reference TargetSeat; }` the **Viewport** discovers the same way (`View<GuiOverlay>()`) and drives onto its
 **screen-space layer stack** through a `Gui::DocumentHost` + `Gui::DocumentLayer` — the exact
 `AttachDocument` path a HUD reaches by hand, owned by the engine (lazy load → instantiate → attach
 at `Layer` → re-attach on recreation). It is **LDR, composited after tonemap, un-bloomed** — the
@@ -810,7 +810,10 @@ claims the overlays whose target seat is its own (the entity's own seat, or `Tar
 the sole/primary presenter), so split-screen per-player HUDs fall out and a single overlay never
 thrashes. The game owns only the binding — a reflected state component plus a small system that
 `SetContext`s a `Gui::BindingContext` (view-model + `onClick` handlers) and `Invalidate`s it — not
-the load/instantiate/attach. `Interactive` gates whether it takes input. **`Detach(viewport)` is the
+the load/instantiate/attach. `Interactive` gates whether it takes input; **`Visible` (default true)
+gates whether it draws** — cleared, the claiming viewport skips its drive and detaches an attached
+layer-stack document, so the runtime and bindings stand and restoring the flag re-presents with no
+reload (the screen-space peer of `MeshRenderer::Visible`). **`Detach(viewport)` is the
 exact inverse of `Drive`** — it releases the driven document from a viewport's layer stack while the
 runtime host survives for the next `Drive`, idempotent and touching only the document the engine
 attached. `~GuiOverlay` detaches on component destruction (the right lifetime when the *component*
