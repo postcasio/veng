@@ -55,8 +55,8 @@ namespace Veng
             return path(*appData);
         }
 #elif defined(__APPLE__)
-        /// @brief Resolves ~/Library/Application Support, the shared macOS base for data/config/cache.
-        Result<path> MacApplicationSupportBase()
+        /// @brief Resolves ~/Library, the macOS base every user directory sits under.
+        Result<path> MacLibraryBase()
         {
             const optional<string> home = GetEnv("HOME");
             if (!home.has_value())
@@ -64,7 +64,29 @@ namespace Veng
                 return std::unexpected(
                     string("could not resolve HOME: environment variable unset"));
             }
-            return path(*home) / "Library" / "Application Support";
+            return path(*home) / "Library";
+        }
+
+        /// @brief Resolves ~/Library/Application Support, the macOS base for data and config.
+        Result<path> MacApplicationSupportBase()
+        {
+            const Result<path> library = MacLibraryBase();
+            if (!library.has_value())
+            {
+                return std::unexpected(library.error());
+            }
+            return *library / "Application Support";
+        }
+
+        /// @brief Resolves ~/Library/Caches, the macOS base for expendable caches.
+        Result<path> MacCachesBase()
+        {
+            const Result<path> library = MacLibraryBase();
+            if (!library.has_value())
+            {
+                return std::unexpected(library.error());
+            }
+            return *library / "Caches";
         }
 #else
         /// @brief Resolves the Linux XDG base for @p xdgVar, falling back to ~/<fallback>.
@@ -124,7 +146,7 @@ namespace Veng
 #if defined(_WIN32)
         const Result<path> base = WindowsAppDataBase();
 #elif defined(__APPLE__)
-        const Result<path> base = MacApplicationSupportBase();
+        const Result<path> base = MacCachesBase();
 #else
         const Result<path> base = LinuxXdgBase("XDG_CACHE_HOME", ".cache");
 #endif

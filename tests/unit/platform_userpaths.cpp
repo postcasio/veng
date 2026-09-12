@@ -153,6 +153,12 @@ TEST_CASE(
     const Result<path> result = UserCacheDir("veng-user-paths-test");
     REQUIRE(result.has_value());
     CHECK(std::filesystem::is_directory(*result));
+#if defined(__APPLE__) && !defined(_WIN32)
+    // macOS caches live under ~/Library/Caches, not the Application Support base the data and
+    // config directories share.
+    CHECK(result->string().find("Library/Caches") != string::npos);
+    CHECK(result->string().find("Application Support") == string::npos);
+#endif
 }
 
 TEST_CASE("platform_userpaths: the application segment is appended to the resolved base")

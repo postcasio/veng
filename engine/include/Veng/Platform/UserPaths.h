@@ -33,10 +33,12 @@ namespace Veng
 
     /// @brief The per-OS writable base directory for an application's expendable caches.
     ///
-    /// Same locate-and-ensure contract as UserDataDir(). Linux additionally honors
-    /// `$XDG_CACHE_HOME` (falling back to `~/.cache/<application>`); macOS and Windows
-    /// resolve to the same base as UserDataDir(). Content under this directory is
-    /// expendable — a caller may not assume it survives across runs.
+    /// Same locate-and-ensure contract as UserDataDir(). macOS resolves to
+    /// `~/Library/Caches/<application>` (the platform's cache location, distinct from the
+    /// Application Support base UserDataDir()/UserConfigDir() use); Linux honors
+    /// `$XDG_CACHE_HOME` (falling back to `~/.cache/<application>`); Windows resolves to the
+    /// same `%APPDATA%` base as UserDataDir(). Content under this directory is expendable —
+    /// a caller may not assume it survives across runs.
     /// @param application  The single application segment appended to the platform base.
     /// @return The ready, existing directory, or an error describing why it could not
     /// be resolved or created.
