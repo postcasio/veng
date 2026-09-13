@@ -118,9 +118,9 @@ namespace Veng::Capture
 
             VoidResult AppendVideo(const PixelBufferHandle& handle, const i64 ptsTicks) override
             {
-                if (!WaitInputReady(m_VideoInput))
+                if (optional<string> busy = WaitInputReady(m_VideoInput))
                 {
-                    return std::unexpected(Describe(m_Writer.error));
+                    return std::unexpected(std::move(*busy));
                 }
 
                 const BOOL appended =
@@ -159,10 +159,11 @@ namespace Veng::Capture
             }
 
         private:
-            /// @brief Waits, bounded, for @p input to accept more data; false when the writer failed.
+            /// @brief Waits, bounded, for @p input to accept more data.
             /// @param input  The track input to wait on.
-            /// @return True when the input is ready.
-            bool WaitInputReady(AVAssetWriterInput* input) const;
+            /// @return Nullopt when the input is ready; otherwise why it is not — the writer's own
+            ///         error when it failed, or that the input stayed busy past the bound.
+            optional<string> WaitInputReady(AVAssetWriterInput* input) const;
 
             /// @brief Returns the texture wrapping @p surface, creating and caching it on first use.
             /// @param surface  The buffer's shared surface.
@@ -267,9 +268,13 @@ namespace Veng::Capture
                 {
                     return std::unexpected("The encoder refused the requested picture settings.");
                 }
-                // A real-time capture's frames arrive at wall cadence, which the writer paces itself
-                // against; a lockstep one hands them over as fast as it can and must not be paced.
-                videoInput.expectsMediaDataInRealTime = info.RealTime ? YES : NO;
+                // Always the real-time hint, in lockstep too. The non-real-time setting makes the
+                // writer interleave its tracks: an input reports not-ready until the other input has
+                // appended media at later timestamps, and expects the client to feed whichever it asks
+                // for. This recorder pushes sound every frame but a frame's picture only at its slot's
+                // retirement, several frames later, so an interleaving writer gates the sound input on
+                // pictures that do not exist yet and every append runs out its wait bound.
+                videoInput.expectsMediaDataInRealTime = YES;
                 m_VideoInput = [videoInput retain];
 
                 NSDictionary* sourceAttributes = @{
@@ -325,7 +330,7 @@ namespace Veng::Capture
                     {
                         return std::unexpected("The writer refused the sound track.");
                     }
-                    audioInput.expectsMediaDataInRealTime = info.RealTime ? YES : NO;
+                    audioInput.expectsMediaDataInRealTime = YES;
                     m_AudioInput = [audioInput retain];
                     [m_Writer addInput:audioInput];
 
@@ -363,23 +368,23 @@ namespace Veng::Capture
             return {};
         }
 
-        bool AppleVideoRecorderBackend::WaitInputReady(AVAssetWriterInput* input) const
+        optional<string> AppleVideoRecorderBackend::WaitInputReady(AVAssetWriterInput* input) const
         {
             const auto started = std::chrono::steady_clock::now();
             while (!input.isReadyForMoreMediaData)
             {
                 if (m_Writer.status != AVAssetWriterStatusWriting)
                 {
-                    return false;
+                    return Describe(m_Writer.error);
                 }
                 if (std::chrono::duration<f64>(std::chrono::steady_clock::now() - started).count() >=
                     InputReadyBoundSeconds)
                 {
-                    return false;
+                    return string("the encoder input stayed busy past the wait bound");
                 }
                 std::this_thread::sleep_for(std::chrono::microseconds(500));
             }
-            return true;
+            return std::nullopt;
         }
 
         id<MTLTexture> AppleVideoRecorderBackend::TextureFor(IOSurfaceRef surface)
@@ -487,9 +492,9 @@ namespace Veng::Capture
             {
                 return {};
             }
-            if (!WaitInputReady(m_AudioInput))
+            if (optional<string> busy = WaitInputReady(m_AudioInput))
             {
-                return std::unexpected(Describe(m_Writer.error));
+                return std::unexpected(std::move(*busy));
             }
 
             const size_t bytes = interleaved.size() * sizeof(f32);

@@ -54,7 +54,6 @@ namespace
                     .Codec = settings.Codec,
                     .BitsPerSecond = DeriveBitsPerSecond(settings, TestExtent),
                     .FrameRate = settings.FrameRate,
-                    .RealTime = !settings.Lockstep,
                     .Audio = settings.Audio,
                     .Channels = 2,
                     .PoolAllocationThreshold = FramesInFlight + 4,

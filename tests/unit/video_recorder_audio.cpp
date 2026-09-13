@@ -35,7 +35,6 @@ namespace
                     .File = "capture.mov",
                     .Extent = uvec2{640, 360},
                     .FrameRate = FrameRate,
-                    .RealTime = false,
                     .Audio = AudioTrack::Pcm,
                     .SampleRate = SampleRate,
                     .Channels = Channels,

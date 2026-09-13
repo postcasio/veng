@@ -95,7 +95,7 @@ mid-composite — so it records the debt and detaches at the next slot retiremen
 | Timestamp | the wall second the buffer was taken, rebased to the capture's origin | `k / FrameRate`, `k` the recorder's **own** acquire count |
 | File | variable frame rate | constant frame rate |
 | Audio | the tap's callback-side blocks, drained at the next pump | exactly `round(delta × rate)` samples per frame, sample-locked |
-| Writer | `expectsMediaDataInRealTime = YES` | `NO` |
+| Writer | `expectsMediaDataInRealTime = YES` | `YES` too — see the Objective-C++ notes below |
 
 `k` is the recorder's own count and not `Time::GetDrivenFrames()`: the clock's drive takes effect at
 the next frame boundary, so the driven frame count would stamp the capture's first two frames zero.
@@ -231,6 +231,14 @@ Two platform facts the backend is written around, both measured rather than assu
 - **The allocation threshold is an *auxiliary* attribute**, passed to
   `CVPixelBufferPoolCreatePixelBufferWithAuxAttributes`, not a pool attribute.
   `kCVReturnWouldExceedAllocationThreshold` is the back-pressure the never-drop wait rides.
+- **Both inputs carry `expectsMediaDataInRealTime = YES`, in lockstep too.** The flag is not a
+  pacing hint. With `NO` the writer *interleaves* its tracks: an input reports not-ready until the
+  other input has appended media at later timestamps, and it expects a pull-model client to feed
+  whichever input it asks for. This recorder pushes a frame's sound at the pump and that frame's
+  picture only at its slot's retirement, several frames later — so an interleaving writer gates the
+  sound input on pictures that do not exist yet, every append runs out its wait bound, and a
+  lockstep capture sits in those waits from its first frame. The GPU case pins the property by
+  appending sound blocks ahead of any picture and asserting they never wait.
 
 ## What the band proves and what only the live look can
 

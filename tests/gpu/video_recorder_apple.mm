@@ -46,6 +46,9 @@ namespace
     constexpr u32 AudioBlockFrames = 800;
     constexpr u32 SampleRate = 48000;
     constexpr u32 Channels = 2;
+    // Sound blocks appended before any picture exists. A writer interleaving its tracks would hold
+    // the sound input until the picture caught up, and each append would run out its wait bound.
+    constexpr u32 AudioBlocksAhead = 4;
 
     /// @brief Whether a hardware HEVC encoder can be created in this session.
     bool HasHardwareEncoder()
@@ -173,7 +176,6 @@ namespace
             .Codec = VideoCodec::Hevc,
             .BitsPerSecond = 4000000,
             .FrameRate = FrameRate,
-            .RealTime = false,
             .Audio = AudioTrack::Pcm,
             .SampleRate = SampleRate,
             .Channels = Channels,
@@ -184,6 +186,32 @@ namespace
             MESSAGE("the writer refused to open: " << opened.error());
             return false;
         }
+
+        vector<f32> tone(AudioBlockFrames * Channels, 0.0f);
+        for (u32 sample = 0; sample < AudioBlockFrames; ++sample)
+        {
+            const f32 value = 0.25f * std::sin(static_cast<f32>(sample) * 0.05f);
+            tone[(sample * Channels) + 0] = value;
+            tone[(sample * Channels) + 1] = value;
+        }
+
+        // The recorder appends a frame's sound before that frame's picture, by several frames: the
+        // sound input must accept those blocks without waiting on a picture. Measured as a whole
+        // and asserted once — an interleaving writer would cost the full bound per block.
+        const auto aheadStarted = std::chrono::steady_clock::now();
+        for (u32 block = 0; block < AudioBlocksAhead; ++block)
+        {
+            const VoidResult sound = backend->AppendAudio(
+                tone, AudioBlockFrames, static_cast<u64>(block) * AudioBlockFrames);
+            if (!sound)
+            {
+                MESSAGE("a sound block ahead of any picture would not encode: " << sound.error());
+                return false;
+            }
+        }
+        const f64 aheadSeconds =
+            std::chrono::duration<f64>(std::chrono::steady_clock::now() - aheadStarted).count();
+        CHECK(aheadSeconds < 0.5);
 
         map<void*, Ref<Image>> imports;
         map<void*, Ref<ImageView>> views;
@@ -232,15 +260,9 @@ namespace
                 return false;
             }
 
-            vector<f32> tone(AudioBlockFrames * Channels, 0.0f);
-            for (u32 sample = 0; sample < AudioBlockFrames; ++sample)
-            {
-                const f32 value = 0.25f * std::sin(static_cast<f32>(sample) * 0.05f);
-                tone[(sample * Channels) + 0] = value;
-                tone[(sample * Channels) + 1] = value;
-            }
             const VoidResult sound = backend->AppendAudio(
-                tone, AudioBlockFrames, static_cast<u64>(frame) * AudioBlockFrames);
+                tone, AudioBlockFrames,
+                static_cast<u64>(frame + AudioBlocksAhead) * AudioBlockFrames);
             if (!sound)
             {
                 MESSAGE("a sound block would not encode: " << sound.error());
@@ -348,7 +370,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(videoSeconds <= static_cast<f64>(FrameCount) / FrameRate + 0.001);
     CHECK(audioRate == doctest::Approx(SampleRate));
     CHECK(audioSeconds ==
-          doctest::Approx(static_cast<f64>(FrameCount * AudioBlockFrames) / SampleRate).epsilon(0.01));
+          doctest::Approx(static_cast<f64>((FrameCount + AudioBlocksAhead) * AudioBlockFrames) /
+                          SampleRate)
+              .epsilon(0.01));
 
     // The clear was linear and the target's store encodes it, so the stored byte is the sRGB value
     // — the property an eight-bit capture of a linear frame depends on.

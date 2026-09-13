@@ -152,7 +152,6 @@ namespace Veng::Capture
                     .Codec = resolved.Codec,
                     .BitsPerSecond = DeriveBitsPerSecond(resolved, extent),
                     .FrameRate = resolved.FrameRate,
-                    .RealTime = !resolved.Lockstep,
                     .Audio = resolved.Audio,
                     .SampleRate = m_Device.GetSampleRate(),
                     .Channels = m_Device.GetChannels(),

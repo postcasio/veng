@@ -79,8 +79,6 @@ namespace Veng::Capture
         u64 BitsPerSecond = 0;
         /// @brief The file's nominal frame rate.
         u32 FrameRate = 60;
-        /// @brief Whether frames arrive at wall cadence, which the writer paces itself against.
-        bool RealTime = true;
         /// @brief Whether and how a sound track is written.
         AudioTrack Audio = AudioTrack::None;
         /// @brief The sound track's sample rate in Hz.
