@@ -1645,6 +1645,14 @@ namespace Veng::Renderer
 
     void SceneRenderer::Configure(const SceneRendererSettings& settings)
     {
+        // A reconfigure that changes nothing costs nothing. Everything below recreates targets,
+        // re-registers bindless handles and recompiles the frame graph, so a caller re-applying
+        // the configuration it already runs under — a viewport rebound to a world authoring the
+        // same settings — must not pay for it, or present the frame the rebuild disturbs.
+        if (settings == m_Settings)
+        {
+            return;
+        }
         m_Settings = settings;
         ShadowSystem::ClampResolutions(m_Context, m_Settings);
         m_GpuCull->ResolveActiveCullMode(m_Settings);

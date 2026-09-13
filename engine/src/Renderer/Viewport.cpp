@@ -332,6 +332,12 @@ namespace Veng::Renderer
 
     void Viewport::Configure(const SceneRendererSettings& settings)
     {
+        // Unchanged settings leave the renderer, the allocation and the output handle exactly as
+        // they stand; the renderer's own Configure is a no-op for them too.
+        if (settings == m_Renderer->GetSettings())
+        {
+            return;
+        }
         // Switching the AA mode into or out of TAAU changes the allocation scale (native vs. the
         // render scale), so debounce a resize against the allocation the old mode implied.
         const uvec2 priorAlloc = GetAllocationExtent();
