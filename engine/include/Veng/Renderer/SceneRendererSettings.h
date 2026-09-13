@@ -424,9 +424,12 @@ namespace Veng::Renderer
 
         /// @brief Whether the frame runs the temporal (jittered-history) AA resolve.
         ///
-        /// The temporal path is the one several batteries gate on (jitter, the history-reset, the
-        /// post-resolve full-resolution chain), so it earns a named predicate rather than a bare enum
-        /// compare at each site. Both TAA and TAAU run it; they share the whole temporal machinery.
+        /// The temporal path is the one several batteries gate on (the jitter, the history-reset,
+        /// and which resolve occupies the anchor — the temporal one, or the spatial promotion that
+        /// stands in for it), so it earns a named predicate rather than a bare enum compare at each
+        /// site. It does **not** gate the post-resolve chain's resolution: that chain runs at the
+        /// full allocation in every mode. Both TAA and TAAU run it; they share the whole temporal
+        /// machinery.
         /// @return True for AntiAliasingMode::TAA and AntiAliasingMode::TAAU.
         [[nodiscard]] bool UsesTaa() const
         {

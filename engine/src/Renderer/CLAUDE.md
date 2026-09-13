@@ -50,7 +50,8 @@ single-owner** (nothing holds a `Ref` to one); `Create(const SceneRendererInfo&)
 The renderer is split along three conventions, and a new battery follows all of them:
 
 - **A pass lives in its own file under `Passes/`.** Every `ScenePass` — the g-buffer, deferred
-  lighting, translucent, picking, TAA, scene-color copy, the directional and punctual shadow
+  lighting, translucent, picking, TAA, the non-temporal scene upscale, scene-color copy, the
+  directional and punctual shadow
   passes, SSAO, the skybox, the sky/point-field/volume passes, the depth-of-field composite, the
   debug draw (and its companion
   billboard pick), and the debug blits — is a `.h/.cpp` pair in `src/Renderer/Passes/`. The
@@ -66,8 +67,8 @@ The renderer is split along three conventions, and a new battery follows all of 
 - **A battery's resources live on an owned internal subsystem.** Each cluster of images /
   pipelines / descriptor sets / bindless handles / per-frame work is a renderer-owned `Unique<>`
   object in `src/Renderer/` (forward-declared in `SceneRenderer.h`), on the `EnvironmentIbl`
-  precedent: `ShadowSystem`, `BloomPyramid`, `AutoExposureMeter`, `TaaResolve`, `SsrChain`,
-  `DofChain`,
+  precedent: `ShadowSystem`, `BloomPyramid`, `AutoExposureMeter`, `TaaResolve`,
+  `PostResolveUpscale`, `SsrChain`, `DofChain`,
   `RefractionGrab`, `GpuCullSystem`, `PickingSystem`, and `SkyResolver` (which itself owns the
   three sky radiance-cube helpers `EnvironmentIbl` / `AtmospherePrecompute` / `BakedSkyCube`).
   A subsystem owns its full vertical slice — its `Create`/recreate path, its `Declare*`
@@ -177,8 +178,8 @@ Its surface is a **lifetime split** keyed on how often each piece of state chang
   them into bindless, rebuild + re-`Compile()`. The extent is the *allocation* the targets live
   in; the per-frame `SceneView::RenderScale` renders into a top-left
   `round(allocExtent · RenderScale)` **sub-rect** of that allocation (`GetValidExtent()`), and the
-  terminal tonemap upscales the sub-rect to the full output — so a per-frame resolution change
-  costs no `Resize`, only a smaller rendered region. Sizing the allocation is the slow knob; the
+  resolve anchor promotes that sub-rect to the full allocation the tail runs at — so a per-frame
+  resolution change costs no `Resize`, only a smaller rendered region. Sizing the allocation is the slow knob; the
   sub-rect is the fast one (see the `Viewport` section's two-loop model).
 - `Configure(settings)` — recreate affected resources, rebuild + re-`Compile()` the topology.
 - `Execute(cmd, view)` — every frame: replay the graph against this frame's `SceneView`. **Never**
@@ -210,7 +211,8 @@ resolves under "Spatial anti-aliasing" further down. **Supersampling (SSAA) is n
 modes** — it is orthogonal, driven by the viewport's render/allocation scale (see "Adaptive
 resolution" and the `Viewport` section), and composes with `TAA` (not `TAAU`, which claims the render
 scale for its own input). `Settings::UsesTaa()` is the named predicate the jitter, the history-reset,
-and the post-resolve full-resolution chain key on (true for both temporal modes);
+and which resolve occupies the anchor key on (true for both temporal modes); the post-resolve chain
+runs at the full allocation in every mode and keys on nothing;
 `Settings::UsesTaaUpscaling()` is `TAAU` alone, read by the viewport to pin its allocation to native.
 
 #### TAA
@@ -255,18 +257,50 @@ it. The temporal resolve is consequently **no longer in the `drsSupported` exclu
 (`ResolveRenderScale`): `TAA` composes with dynamic resolution, and the same reconstruction is what
 `TAAU` uses to upscale. At render scale 1.0 every map is the identity and the frame is unchanged.
 
-**The sub-rect ends at the resolve; the HDR tail after it runs at the full allocation.** Because the
-resolve writes the full-extent HDR, the passes after it — the bloom pyramid, the point-field
-accumulation, the tonemap — read `SceneView::PostResolveExtent` (the full allocation under a temporal
-mode, else the sub-rect) rather than `RenderExtent`, and the tonemap's upscale becomes the identity.
-The point-field fragment still remaps its depth-fade sample into the sub-rect through the
-view-constants render scale, so it composes. **Depth of field is the one post-resolve scene-color
-effect that does not**: it composites after the temporal resolve, so with a temporal mode active it
-forces full resolution (the `!(TaaActive && DofComposited)` guard in `ResolveRenderScale`) rather than
-reworking its five-stage chain onto the post-resolve extent — `TAAU` with depth of field degrades to
-native `TAA`, no upscale. SSR, the GPU hi-Z occlusion test, and the Dual-Kawase bloom kernel keep
-their own exclusions for the same reason (not sub-rect-aware), so a temporal mode alongside one of
-them likewise runs at native.
+**The sub-rect ends at the resolve anchor, and it ends there in every configuration.** The resolve
+anchor's job is to hand the full allocation on: the temporal resolve does it as part of reprojecting
+history, and with no temporal resolve a **spatial promotion** does the same at the same point. So
+`SceneView::PostResolveExtent` is **always the allocation**, and every pass after the anchor — the
+bloom pyramid, the point-field accumulation, a pre-bloom GUI overlay, the auto-exposure meter, the
+tonemap — reads it rather than `RenderExtent`, with the tonemap's own upscale the identity. The
+point-field fragment still remaps its depth-fade sample into the sub-rect through the view-constants
+render scale, so it composes.
+
+**The promotion is a pass only when a frame is actually scaled.** The two spellings of a reduced
+render scale reach the renderer differently (`Viewport::GetAllocationScale`): a **static** scale
+*sizes* the allocation, so `GetViewRenderScale()` is 1.0 and the frame is already at its allocation;
+**dynamic resolution** sizes the allocation to `MaxScale` and makes the current scale a *sub-rect* of
+it. Only the second produces a scaled frame, so only it wires `SceneUpscaleScenePass` — one bilinear
+tap through the sub-rect map, the same filter the terminal tonemap applied when it carried this
+upscale, so the image is unchanged and the upscale is not performed twice. The wiring is scale-driven
+with the `HalfResTranslucency` shape: activated at the top of the `Execute` that first renders below
+the allocation (before the post-resolve extent is derived, so that frame runs the promoted graph),
+dropped after `PostResolveUpscaleIdleFrameLimit` Executes back at the allocation — deactivation
+hysteresis, because a controller hunting across its ceiling would otherwise recompile the graph on
+every crossing. `PostResolveUpscale` owns the vertical slice (the sub-rect scene target and its
+bindless slot, the upscale pipeline), and allocates nothing while unwired. **A viewport whose render
+scale is static therefore carries neither the target nor the pass** — the common configuration does
+not grow one — and `SceneRenderer::IsPostResolveUpscaleWired()` reports which case a frame was.
+
+**What dynamic resolution buys, and what it no longer buys.** It scales the cost of rendering *the
+scene* and nothing downstream of the anchor; the tail is paid in full either way. That is already
+what the temporal path did, and it is the intended trade — a resolution controller must not be
+buying frame time by softening the interface composited pre-bloom. The controller's loop is
+unaffected in shape: it still measures whole-frame GPU time and converges, with the scaled portion
+simply a smaller fraction of what it measures, so it settles at a lower scale for the same budget.
+
+**Depth of field is the one post-resolve scene-color effect that stays at the sub-rect**, and so it
+forces full resolution (the unconditional `!DofComposited()` guard in `ResolveRenderScale`): its five
+stages sit downstream of the anchor and key every one of them on `RenderExtent`, so a promoted scene
+color would be read through a sub-rect map. Reworking that chain onto the post-resolve extent is the
+alternative; the guard is the cheaper one. SSR, the GPU hi-Z occlusion test, and the Dual-Kawase
+bloom kernel keep their own exclusions for the same reason (not sub-rect-aware).
+
+**What must stay at the render sub-rect keeps its own map.** The g-buffer and depth are still
+rasterized at `RenderExtent`, so a tail pass reading them carries a second mapping beside the scene
+one: `PostProcessEffectScenePass` computes `DepthScaleUV` from `RenderExtent` while `SceneScaleUV`
+comes from `PostResolveExtent`, and the bloom bright-pass reads the **bloom mask** — written by the
+translucent pass, upstream of the anchor — through its own `MaskScaleUV` rather than the colour's.
 
 #### Temporal upscaling (TAAU)
 

@@ -51,6 +51,7 @@ namespace Veng::Renderer
     class BloomPyramid;
     class AutoExposureMeter;
     class TaaResolve;
+    class PostResolveUpscale;
     class AaResolve;
     class SsrChain;
     class DofChain;
@@ -146,6 +147,26 @@ namespace Veng::Renderer
         /// inset avoids bleeding past the valid edge). Equal to the allocated extent before the
         /// first Execute and whenever RenderScale is 1.0.
         [[nodiscard]] uvec2 GetValidExtent() const;
+
+        /// @brief Returns the extent the post-resolve HDR tail ran at in the last Execute.
+        ///
+        /// Always the allocation extent: the resolve anchor promotes the scene color there — a
+        /// temporal resolve reconstructs it while reprojecting history, and with none wired a
+        /// spatial upscale pass does the same — so bloom, the point fields, a pre-bloom overlay,
+        /// the metering and the tonemap never run at the reduced sub-rect. Equal to the allocated
+        /// extent before the first Execute.
+        /// @return The post-resolve extent (SceneView::PostResolveExtent).
+        [[nodiscard]] uvec2 GetPostResolveExtent() const;
+
+        /// @brief Whether the last Execute ran the non-temporal resolve-anchor promotion pass.
+        ///
+        /// True only while a frame renders below its allocation with no temporal resolve wired —
+        /// dynamic resolution below its ceiling. It is the cost dynamic resolution pays for a tail
+        /// that stays at full resolution, so a consumer tuning a resolution controller reads it to
+        /// tell a genuinely scaled frame from one sitting at the ceiling. A static render scale is
+        /// already the allocation, so it never wires the pass.
+        /// @return True when the promotion pass is wired.
+        [[nodiscard]] bool IsPostResolveUpscaleWired() const;
 
         /// @brief Returns the total resident per-submesh candidate count from the last Execute.
         ///
@@ -381,6 +402,23 @@ namespace Veng::Renderer
         /// @brief Rebuilds the pass set from Settings.Mode and recompiles the RenderGraph.
         void Rebuild();
 
+        /// @brief Resolves whether this frame wires the non-temporal resolve-anchor promotion.
+        ///
+        /// Compares the frame's rendered sub-rect against the allocation: a scaled frame with no
+        /// temporal resolve wires the promotion (allocating the sub-rect scene target and rebuilding
+        /// the pass set) so everything from the resolve anchor onward runs at the allocation; a frame
+        /// already at the allocation needs none and drops it after an idle window. Called at the top
+        /// of Execute, before the post-resolve extent is derived, so the frame that activates it is
+        /// the frame that runs it.
+        /// @param validExtent This frame's rendered sub-rect (FrameScale::ValidExtent).
+        void ResolvePostResolveUpscale(uvec2 validExtent);
+
+        /// @brief Clears the promotion's state and releases its target, without rebuilding.
+        ///
+        /// Resize and Configure rebuild anyway and re-decide from the next frame's own scale, so
+        /// they drop it through this rather than carrying a wired pass across a recompile.
+        void DropPostResolveUpscale();
+
         /// @brief Resolves the scene's PointField components into this Execute's live field set.
         ///
         /// Walks View<PointField> off @p view.World, applies each component's authored Lod to its
@@ -467,9 +505,9 @@ namespace Veng::Renderer
 
         /// @brief Resolves this Execute's dynamic-resolution sub-rect from the view's render scale.
         ///
-        /// A debug view, TAA, SSR, GPU hi-Z occlusion, or the Kawase bloom kernel each force full
-        /// resolution (they do not carry the sub-rect sampling), so the scale applies only on the
-        /// plain Final path.
+        /// A debug view, SSR, GPU hi-Z occlusion, a composited depth-of-field chain, or the Kawase
+        /// bloom kernel each force full resolution (they do not carry the sub-rect sampling), so the
+        /// scale applies only on the plain Final path.
         /// @param view  The frame's scene view (its RenderScale is the requested multiplier).
         /// @return The sub-rect extent and its UV mapping into the allocation.
         [[nodiscard]] FrameScale ResolveRenderScale(const SceneView& view) const;
@@ -520,6 +558,11 @@ namespace Veng::Renderer
         uvec2 m_Extent;
         /// @brief This frame's valid sub-rect extent (round(m_Extent * RenderScale)); GetValidExtent.
         uvec2 m_ValidExtent;
+        /// @brief The extent the last Execute handed the tail as SceneView::PostResolveExtent.
+        ///
+        /// Recorded from the value actually pushed rather than re-derived, so GetPostResolveExtent
+        /// reports what the tail passes read.
+        uvec2 m_PostResolveExtent;
         /// @brief Previous frame's sub-rect UV mapping (validExtent/allocExtent), for TAA history.
         vec2 m_PreviousRenderScaleUV{1.0f};
         /// @brief Previous frame's clamped max valid UV ((validExtent-0.5)/allocExtent), for TAA history.
@@ -786,6 +829,9 @@ namespace Veng::Renderer
         /// @brief The TAA resolve battery — resolve/copy pipelines, lit/history targets, reset gate.
         Unique<TaaResolve> m_Taa;
 
+        /// @brief The non-temporal resolve-anchor promotion — the sub-rect scene target + upscale.
+        Unique<PostResolveUpscale> m_Upscale;
+
         /// @brief The post-tonemap spatial AA battery (FXAA/CMAA2) — the LDR intermediate + pipeline.
         Unique<AaResolve> m_Aa;
 
@@ -966,6 +1012,8 @@ namespace Veng::Renderer
         ResourceId m_LitId;
         /// @brief Imported id for the persisted TAA history target.
         ResourceId m_TaaHistoryId;
+        /// @brief Imported id for the sub-rect scene target the non-temporal promotion reads.
+        ResourceId m_UpscaleSceneId;
         /// @brief Imported id for the velocity g-buffer channel (G3), written every frame.
         ResourceId m_VelocityId;
         /// @brief Imported id for the emissive g-buffer channel (G4), written every frame.
@@ -1154,6 +1202,25 @@ namespace Veng::Renderer
         /// HalfResTranslucentIdleFrameLimit, so a capture probe whose faces alternately see and
         /// miss the opted-in material does not recompile the graph every frame.
         u32 m_HalfResTranslucentIdleFrames = 0;
+
+        /// @brief True while a frame rendered below its allocation scale with no temporal resolve.
+        ///
+        /// Scale-driven, the half-res-translucency model: set the Execute whose resolved sub-rect is
+        /// smaller than the allocation, cleared once the frame has sat at the allocation for
+        /// PostResolveUpscaleIdleFrameLimit Executes; each edge allocates or drops the sub-rect scene
+        /// target and rebuilds the pass set. A viewport whose render scale is static never sets it,
+        /// so the common path carries neither the target nor the pass.
+        bool m_PostResolveUpscaleActive = false;
+        /// @brief Consecutive Executes that rendered at the full allocation while the promotion is wired.
+        ///
+        /// Deactivation hysteresis: a dynamic-resolution controller hunting across its ceiling would
+        /// otherwise recompile the graph on every crossing.
+        u32 m_PostResolveUpscaleIdleFrames = 0;
+        /// @brief Whether the last Rebuild actually wired the promotion pass.
+        ///
+        /// m_PostResolveUpscaleActive is the per-frame intent; this is what the compiled graph holds,
+        /// so the import bindings and the post-resolve extent read it rather than re-deriving.
+        bool m_UpscaleWired = false;
 
         /// @brief This Execute's active post-process effect materials, in run order.
         ///

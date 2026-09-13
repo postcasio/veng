@@ -59,6 +59,13 @@ namespace Veng::Renderer
             u32 MaskTexture;
             u32 MaskSampler;
             u32 MaskEnabled;
+            u32 Pad0;
+            // The mask's own sub-rect mapping. The mask is written by the translucent pass, which
+            // is upstream of the resolve anchor and so still rasterizes into the render sub-rect,
+            // while the colour this level reads is the promoted post-resolve scene — two inputs of
+            // one dispatch living in different regions of the same allocation.
+            vec2 MaskScaleUV;
+            vec2 MaskMaxUV;
         };
 
         // The bloom upsample push: the destination (finer) mip extent, the source sub-rect
@@ -451,6 +458,8 @@ namespace Veng::Renderer
                         ComputeMipSubRect(view->PostResolveExtent, allocExtent, level);
                     const MipSubRect src =
                         ComputeMipSubRect(view->PostResolveExtent, allocExtent, srcLevel);
+                    // The bloom mask stays at the rendered sub-rect (see MaskScaleUV).
+                    const MipSubRect mask = ComputeMipSubRect(view->RenderExtent, allocExtent, 0);
                     CommandBuffer& cmd = inner.Cmd();
                     cmd.BindPipeline(pipeline);
                     if (levelMask)
@@ -478,6 +487,9 @@ namespace Veng::Renderer
                         .MaskTexture = maskHandle.Index,
                         .MaskSampler = maskSampler.Index,
                         .MaskEnabled = levelMask ? 1u : 0u,
+                        .Pad0 = 0,
+                        .MaskScaleUV = mask.ScaleUV,
+                        .MaskMaxUV = mask.MaxUV,
                     });
                     cmd.Dispatch((dst.ValidExtent.x + 7) / 8, (dst.ValidExtent.y + 7) / 8, 1);
                 });

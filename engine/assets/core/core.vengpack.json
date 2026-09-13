@@ -222,6 +222,11 @@
       "source": "shaders/taa_history_copy.frag.shader.json"
     },
     {
+      "id": "0x1C0CB4545070CC5F",
+      "type": "Shader",
+      "source": "shaders/scene_upscale.frag.shader.json"
+    },
+    {
       "id": "0xBE7002B7B8E9BE5A",
       "type": "Shader",
       "source": "shaders/scene_color_copy.frag.shader.json"

@@ -139,11 +139,13 @@ namespace Veng::Renderer
         /// @brief Dynamic-resolution multiplier on the allocated extent for this frame.
         ///
         /// The renderer's targets are allocated at a high-water-mark extent; each Execute renders
-        /// into the top-left round(allocExtent * RenderScale) sub-rect of them and the result is
-        /// upscaled by the consumer. (0,1] renders below the allocation (dynamic resolution
-        /// scaling); a value that would exceed the current allocation grows it (a one-time
-        /// resize). 1.0 renders at full allocation. A debug view (Mode != Final) forces 1.0.
-        /// Clamped to a valid range by the renderer; the realized sub-rect is GetValidExtent().
+        /// the **scene** into the top-left round(allocExtent * RenderScale) sub-rect of them, and
+        /// the resolve anchor promotes that sub-rect back to the full allocation — so the scale
+        /// buys frame time on the scene and nothing downstream of the resolve. (0,1] renders below
+        /// the allocation (dynamic resolution scaling); a value that would exceed the current
+        /// allocation grows it (a one-time resize). 1.0 renders at full allocation, which costs no
+        /// promotion pass at all. A debug view (Mode != Final) forces 1.0. Clamped to a valid range
+        /// by the renderer; the realized sub-rect is GetValidExtent().
         f32 RenderScale = 1.0f;
 
         /// @brief This frame's render-target sub-rect extent; set by the renderer each Execute.
@@ -154,11 +156,14 @@ namespace Veng::Renderer
 
         /// @brief The extent the post-resolve HDR tail runs at; set by the renderer each Execute.
         ///
-        /// The scene renders into the RenderExtent sub-rect, but the temporal (TAA/TAAU) resolve
-        /// reconstructs the full allocation, so every pass after it — bloom, the point-field
-        /// accumulation, the tonemap — runs at the full extent rather than the sub-rect. Equal to
-        /// RenderExtent when no temporal resolve is active (the sub-rect carries through to the
-        /// terminal tonemap upscale), else the full allocation extent. A caller's value is overwritten.
+        /// **Always the full allocation extent.** The scene renders into the RenderExtent sub-rect,
+        /// and the resolve anchor hands the allocation on however the frame is configured — the
+        /// temporal (TAA/TAAU) resolve reconstructs it while reprojecting history, and with none
+        /// wired a spatial upscale pass resamples it there. So every pass after the anchor — bloom,
+        /// the point-field accumulation, a pre-bloom overlay, the metering, the tonemap — runs at
+        /// the allocation, and the terminal tonemap's own upscale is the identity. A tail pass that
+        /// additionally reads the g-buffer or depth still maps those through RenderExtent, which
+        /// stays the rendered sub-rect. A caller's value is overwritten.
         uvec2 PostResolveExtent = {};
 
         /// @brief Live light count this frame; set by the renderer on every Execute.

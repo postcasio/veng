@@ -277,8 +277,10 @@ namespace Veng::Renderer
             {
                 const auto* view = static_cast<const SceneView*>(inner.UserData());
                 VE_ASSERT(view != nullptr, "Auto exposure pass: null SceneView");
-                // Map pixel-center UVs into the HDR's valid sub-rect (identity at full res).
-                const MipSubRect r = ComputeMipSubRect(view->RenderExtent, allocExtent, 0);
+                // Map pixel-center UVs into the HDR's valid region (identity at full res). The
+                // meter reads the post-resolve scene color, so its region is the post-resolve
+                // extent — the sub-rect only where the scene color itself is still the sub-rect.
+                const MipSubRect r = ComputeMipSubRect(view->PostResolveExtent, allocExtent, 0);
                 const u32 frameIndex = m_Context.GetCurrentFrameInFlight();
                 CommandBuffer& cmd = inner.Cmd();
                 cmd.BindPipeline(pipeline);

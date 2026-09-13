@@ -5285,4 +5285,140 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// The resolve anchor hands the full allocation on whatever is wired there, so the post-resolve tail
+// — bloom, the point fields, a pre-bloom overlay, the metering, the tonemap — never runs at the
+// reduced sub-rect. The two properties worth holding are that the extent is the allocation in every
+// anti-aliasing mode at any render scale, and that a frame already at the allocation wires no
+// promotion pass at all: the common configuration must not grow one.
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "scene renderer: the post-resolve tail runs at the allocation at any render scale")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_post_resolve.vengpack");
+
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(material.has_value());
+
+    constexpr uvec2 extent{96, 72};
+
+    const Ref<Mesh> cube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *material), "Post Resolve Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
+
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Direction = vec3(0.0f, 0.0f, -1.0f),
+        .Color = vec3(1.0f),
+        .Intensity = DirectionalLux(1.0f),
+    };
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f),
+                          static_cast<f32>(extent.x) / static_cast<f32>(extent.y), 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    // Bloom on so the tail carries its real pass set (the pyramid is the widest post-resolve
+    // consumer of the extent); shadows and AO off so the case stays inside the unit budget.
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final,
+                     .Bloom = true,
+                     .AntiAliasing = AntiAliasingMode::None,
+                     .Shadows = false,
+                     .PunctualShadows = false,
+                     .AO = false},
+    });
+
+    auto Render = [&](const f32 renderScale)
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                           .Camera = camera,
+                                                           .Delta = 0.016f,
+                                                           .RenderScale = renderScale});
+            });
+    };
+
+    // The mean over the whole allocation. A tail left running at the sub-rect would leave most of
+    // the output at whatever the tonemap upscale put there rather than what the tail wrote, so the
+    // two frames' means are compared as an energy bound rather than per-texel.
+    auto OutputMean = [&]()
+    {
+        const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
+        REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+        f64 mean = 0.0;
+        for (u32 y = 0; y < extent.y; ++y)
+        {
+            for (u32 x = 0; x < extent.x; ++x)
+            {
+                const vec3 c = DecodeTexel(pixels, extent.x, x, y);
+                mean += static_cast<f64>(c.r + c.g + c.b);
+            }
+        }
+        return mean / (static_cast<f64>(extent.x) * extent.y);
+    };
+
+    // Full scale: the frame already renders the allocation, so nothing is promoted.
+    Render(1.0f);
+    CHECK(renderer->GetValidExtent() == extent);
+    CHECK(renderer->GetPostResolveExtent() == extent);
+    CHECK_FALSE(renderer->IsPostResolveUpscaleWired());
+    const f64 fullScaleMean = OutputMean();
+    CHECK(fullScaleMean > 0.0);
+
+    // Half scale with no temporal resolve: the scene rasterizes into the half sub-rect and the
+    // promotion carries the tail back up to the allocation.
+    Render(0.5f);
+    CHECK(renderer->GetValidExtent() == uvec2{extent.x / 2, extent.y / 2});
+    CHECK(renderer->GetPostResolveExtent() == extent);
+    CHECK(renderer->IsPostResolveUpscaleWired());
+    CHECK(renderer->GetOutput()->GetImage()->GetWidth() == extent.x);
+    CHECK(renderer->GetOutput()->GetImage()->GetHeight() == extent.y);
+    // A resample of the same scene carries the same energy; a tail that had rendered into the
+    // sub-rect and left the rest of the allocation unwritten would not.
+    const f64 halfScaleMean = OutputMean();
+    CHECK(halfScaleMean == doctest::Approx(fullScaleMean).epsilon(0.25));
+
+    // A reconfigure drops the promotion, so the next scaled frame has to wire it again.
+    SceneRendererSettings taa = renderer->GetSettings();
+    taa.AntiAliasing = AntiAliasingMode::TAA;
+    renderer->Configure(taa);
+
+    // The temporal resolve reconstructs the allocation itself, so the tail is there with no
+    // promotion pass behind it — at either scale.
+    Render(0.5f);
+    CHECK(renderer->GetPostResolveExtent() == extent);
+    CHECK_FALSE(renderer->IsPostResolveUpscaleWired());
+    Render(1.0f);
+    CHECK(renderer->GetPostResolveExtent() == extent);
+    CHECK_FALSE(renderer->IsPostResolveUpscaleWired());
+
+    // Back to a non-temporal mode: the spatial resolve reads the tonemapped LDR at the allocation,
+    // so the promotion is wired again under it.
+    SceneRendererSettings fxaa = renderer->GetSettings();
+    fxaa.AntiAliasing = AntiAliasingMode::FXAA;
+    renderer->Configure(fxaa);
+    Render(1.0f);
+    CHECK(renderer->GetPostResolveExtent() == extent);
+    CHECK_FALSE(renderer->IsPostResolveUpscaleWired());
+    Render(0.5f);
+    CHECK(renderer->GetPostResolveExtent() == extent);
+    CHECK(renderer->IsPostResolveUpscaleWired());
+
+    std::filesystem::remove(outArchive);
+}
+
 #endif // GPU_GBUFFER_FIXTURE_DIR

@@ -1,0 +1,4 @@
+{
+  "source": "scene_upscale.frag.slang",
+  "entry": "fsMain"
+}
