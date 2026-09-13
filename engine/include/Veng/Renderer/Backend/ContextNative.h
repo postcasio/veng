@@ -237,6 +237,12 @@ namespace Veng::Renderer
             vector<vk::PipelineLayout> PipelineLayouts;
             /// @brief Descriptor sets freed back to the descriptor pool.
             vector<vk::DescriptorSet> DescriptorSets;
+            /// @brief Teardown callbacks run after the bin's handles are destroyed.
+            ///
+            /// The release half of a resource whose backing memory is owned outside Vulkan — an
+            /// imported external texture — which must not run until the VkImage viewing it is gone
+            /// and the GPU is done with the frame that used it.
+            vector<function<void()>> Teardowns;
         };
 
         vector<RetireBin> RetireBins;
@@ -267,6 +273,14 @@ namespace Veng::Renderer
         void Retire(vk::Pipeline pipeline);
         void Retire(vk::PipelineLayout pipelineLayout);
         void Retire(vk::DescriptorSet descriptorSet);
+
+        /// @brief Defers a teardown callback into the current frame's retire bin.
+        ///
+        /// Run by the bin's drain after every handle in it has been destroyed, so a release that
+        /// must outlive the Vulkan objects viewing it — an imported external texture's — happens
+        /// last and only once the frame's fence has been waited. The drain holds RetireMutex while
+        /// it runs, so a teardown must not itself retire anything.
+        void Retire(function<void()> teardown);
 
         /// @brief Takes ownership of a raw allocation whose GPU lifetime is the transfer timeline.
         ///
@@ -330,6 +344,28 @@ namespace Veng::Renderer
         /// VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT; set in CreateDevice from the physical device's
         /// reported support.
         bool ExtendedStorageImageFormatsSupported = false;
+
+        /// @brief True when VK_EXT_metal_objects was advertised and enabled at device creation.
+        ///
+        /// Gates Context::IsExternalTextureImportSupported and the Metal-object export; appended
+        /// per-device in CreateDevice only when present, and never true off Apple.
+        bool MetalObjectsEnabled = false;
+
+        /// @brief The exported MTLDevice as an opaque handle, or null.
+        ///
+        /// Read out of the device once at Initialize when MetalObjectsEnabled; the export is
+        /// unowned (the Vulkan implementation keeps the reference), so nothing releases it.
+        void* MetalDevice = nullptr;
+
+        /// @brief Registered frame-retired callbacks, in registration order, with their handles.
+        ///
+        /// Fired by BeginFrame for the slot whose fence it just waited. Iterated over a copy so a
+        /// callback may register or release one.
+        vector<std::pair<u64, function<void(u32)>>> FrameRetiredCallbacks;
+
+        /// @brief Monotonic source of frame-retired callback handles; pre-incremented, so 0 is
+        /// never issued and names no registration.
+        u64 NextFrameRetiredHandle = 0;
 
         /// @brief True when VK_EXT_memory_budget was advertised and enabled at device creation.
         ///

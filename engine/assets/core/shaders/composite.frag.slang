@@ -1,7 +1,11 @@
-// Composite fragment stage: blends the ImGui overlay over the rendered scene and
-// applies the final display-transfer encoding for the swapchain's color space.
+// Composite fragment stage: blends the app's overlay over the rendered scene and
+// applies the final display-transfer encoding for the target's color space.
 // The scene and overlay images, plus the shared sampler, are addressed by bindless
 // handles pushed in the constant block; set 0 is the bindless registry.
+//
+// BlendOverlay 0 skips the overlay entirely — the overlay texture is not sampled and
+// the composite is the scene source alone, encoded. The pass binds no overlay in that
+// mode, so the sample must stay inside the branch.
 //
 // EncodeMode selects the transfer applied to the linear blended color:
 //   0 — passthrough. Correct for an sRGB-nonlinear swapchain (the _SRGB format
@@ -21,6 +25,7 @@ struct PushConstants
     uint ImGuiTexture;
     uint Sampler;
     uint EncodeMode;
+    uint BlendOverlay;
     float PaperWhiteNits;
     float PeakNits;
 };
@@ -51,10 +56,15 @@ float4 fsMain(VSOutput input) : SV_Target
 {
     float4 scene = g_Textures[NonUniformResourceIndex(g_PC.SceneTexture)].Sample(
         g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], input.v_UV);
-    float4 ui = g_Textures[NonUniformResourceIndex(g_PC.ImGuiTexture)].Sample(
-        g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], input.v_UV);
 
-    float3 color = lerp(scene.rgb, ui.rgb, ui.a);
+    float3 color = scene.rgb;
+
+    if (g_PC.BlendOverlay != 0)
+    {
+        float4 ui = g_Textures[NonUniformResourceIndex(g_PC.ImGuiTexture)].Sample(
+            g_Samplers[NonUniformResourceIndex(g_PC.Sampler)], input.v_UV);
+        color = lerp(scene.rgb, ui.rgb, ui.a);
+    }
 
     if (g_PC.EncodeMode == 1)
     {

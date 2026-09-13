@@ -126,8 +126,8 @@ TEST_CASE("FormatInfo: FormatName covers every declared enumerator, distinctly")
     // The property that matters is coverage: a format added to Types.h and left out of the switch
     // reports "Unknown", so a diagnostic silently stops naming it. Walking the declared range
     // catches that at the point the enumerator is added rather than the day someone reads a dump.
-    // RGBA16Unorm is the last declared value; the loop is the whole closed set.
-    constexpr auto Last = static_cast<u32>(Format::RGBA16Unorm);
+    // A2R10G10B10Unorm is the last declared value; the loop is the whole closed set.
+    constexpr auto Last = static_cast<u32>(Format::A2R10G10B10Unorm);
     std::set<string_view> names;
     for (u32 value = 0; value <= Last; ++value)
     {

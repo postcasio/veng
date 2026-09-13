@@ -59,6 +59,7 @@ namespace Veng::Renderer
         case Format::BGRA8Srgb:
         case Format::B10G11R11Ufloat:
         case Format::A2B10G10R10Unorm:
+        case Format::A2R10G10B10Unorm:
         case Format::RG16Sfloat:
         case Format::R32Sfloat:
         case Format::R32Uint:
@@ -231,6 +232,8 @@ namespace Veng::Renderer
             return "B10G11R11Ufloat";
         case Format::RGBA16Unorm:
             return "RGBA16Unorm";
+        case Format::A2R10G10B10Unorm:
+            return "A2R10G10B10Unorm";
         }
         return "Unknown";
     }

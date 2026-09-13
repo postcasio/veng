@@ -14,6 +14,16 @@
 
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 #define VULKAN_HPP_NO_CONSTRUCTORS
+
+// VK_EXT_metal_objects — the Metal device/queue export chained onto instance creation and the
+// MTLTexture import behind an external render target — lives behind the Metal platform guard.
+// Defined here, before vulkan.hpp is first parsed, because the guard widens the dynamic
+// dispatcher's member set: a tree where only some translation units define it would give
+// VULKAN_HPP_DEFAULT_DISPATCHER two layouts.
+#ifdef __APPLE__
+#define VK_USE_PLATFORM_METAL_EXT
+#endif
+
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_beta.h>
 #include <vulkan/vk_enum_string_helper.h>

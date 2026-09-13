@@ -53,6 +53,13 @@ namespace Veng::Renderer
         VmaAllocationInfo AllocationInfo{};
         VmaAllocation Allocation = nullptr;
 
+        /// @brief Released after this image's handles are destroyed, or empty.
+        ///
+        /// Carried by an imported image whose texels live in memory Vulkan does not own: the
+        /// callback drops the engine's reference to that memory, deferred through the retire bin
+        /// so it runs only once the GPU is done with the frame that last used the image.
+        function<void()> Teardown;
+
         /// @brief Per-subresource (layer × mip) layout/stage/access tracking —
         /// the state the render graph diffs against to derive barriers.
         ///

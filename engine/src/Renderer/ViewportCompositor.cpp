@@ -26,6 +26,8 @@ namespace Veng::Renderer
 
     ViewportCompositor::~ViewportCompositor()
     {
+        SetCaptureSink(nullptr);
+
         // Release the tail's GPU resources while the context is still live. The placement cache retains
         // a Ref to each Presented viewport's output view for change-detection; clearing it here — after
         // the managed viewports have already dropped, since they are declared after the compositor —
@@ -39,6 +41,9 @@ namespace Veng::Renderer
 
     void ViewportCompositor::InitializeTail(AssetManager& assets, ImGuiLayer& imgui)
     {
+        m_Assets = &assets;
+        m_ImGui = &imgui;
+
         m_Gather = GatherPass::Create({
             .Context = m_Context,
             .Assets = assets,
@@ -47,7 +52,7 @@ namespace Veng::Renderer
 
         m_Composite = SwapChainCompositePass::Create({
             .Context = m_Context,
-            .ImGui = imgui,
+            .ImGui = &imgui,
             .Assets = assets,
             .SceneSource = m_Gather->GetOutput(),
             .SwapChainFormat = m_Context.GetSwapChainFormat(),
@@ -82,6 +87,11 @@ namespace Veng::Renderer
                                                 m_Context.GetActiveDisplayColorSpace());
                 m_GatherGraph = compileGather();
                 m_CompositeGraph = compileComposite();
+
+                // The capture pass reads the same gather output and renders at the presented
+                // extent, so a resize invalidates it exactly as it does the presented composite.
+                // It is rebuilt lazily from the next target the sink hands over.
+                ReleaseCapturePass();
             });
 
         m_GatherGraph = compileGather();
@@ -208,6 +218,123 @@ namespace Veng::Renderer
         cmd.PrepareForAccess(m_Gather->GetOutput(), AccessKind::SampleGraphics);
 
         m_Composite->Execute(cmd, *m_CompositeGraph, m_Context.GetCurrentSwapChainImageView());
+
+        CompositeToSink(cmd);
+    }
+
+    void ViewportCompositor::SetCaptureSink(CaptureSink* sink)
+    {
+        if (sink == m_CaptureSink)
+        {
+            return;
+        }
+
+        if (m_CaptureRetiredHandle != 0)
+        {
+            m_Context.RemoveFrameRetiredCallback(m_CaptureRetiredHandle);
+            m_CaptureRetiredHandle = 0;
+        }
+
+        m_CaptureSink = sink;
+        ReleaseCapturePass();
+
+        if (m_CaptureSink != nullptr)
+        {
+            m_CaptureRetiredHandle = m_Context.AddFrameRetiredCallback(
+                [this](const u32 slot)
+                {
+                    if (m_CaptureSink != nullptr)
+                    {
+                        m_CaptureSink->OnSlotRetired(slot);
+                    }
+                });
+        }
+    }
+
+    void ViewportCompositor::CompositeToSink(CommandBuffer& cmd)
+    {
+        if (m_CaptureSink == nullptr)
+        {
+            return;
+        }
+
+        const uvec2 presentedExtent = m_Context.GetSwapChainExtent();
+        const optional<CaptureTarget> target =
+            m_CaptureSink->AcquireTarget(m_Context.GetCurrentFrameInFlight(), presentedExtent);
+        if (!target || !target->Image)
+        {
+            return;
+        }
+
+        const uvec3 targetExtent = target->Image->GetExtent();
+        if (targetExtent.x != presentedExtent.x || targetExtent.y != presentedExtent.y)
+        {
+            // Stretching the presented frame into a differently-sized target would be a silently
+            // wrong capture, so the frame is refused instead. The sink is handed the presented
+            // extent, so supplying another is a contract violation rather than a race.
+            VE_ASSERT(false,
+                      "CaptureSink returned a {}x{} target for a {}x{} presented frame; the "
+                      "capture composite writes no other extent.",
+                      targetExtent.x, targetExtent.y, presentedExtent.x, presentedExtent.y);
+            return;
+        }
+
+        if (!m_CaptureComposite || m_CaptureIncludesOverlay != target->IncludeOverlay)
+        {
+            BuildCapturePass(target->IncludeOverlay, target->Image->GetFormat(),
+                             target->ColorSpace);
+        }
+        else if (m_CaptureFormat != target->Image->GetFormat() ||
+                 m_CaptureColorSpace != target->ColorSpace)
+        {
+            m_CaptureFormat = target->Image->GetFormat();
+            m_CaptureColorSpace = target->ColorSpace;
+            m_CaptureComposite->SetSwapChainTarget(m_CaptureFormat, m_CaptureColorSpace);
+        }
+
+        Ref<ImageView>& view = m_CaptureViews[target->Image.get()];
+        if (!view)
+        {
+            view = ImageView::Create(m_Context, {
+                                                    .Name = "Capture Composite Target View",
+                                                    .Image = target->Image,
+                                                });
+        }
+
+        m_CaptureComposite->Execute(cmd, *m_CaptureGraph, view);
+    }
+
+    void ViewportCompositor::BuildCapturePass(const bool includeOverlay, const Format format,
+                                              const DisplayColorSpace colorSpace)
+    {
+        VE_ASSERT(m_Gather && m_Assets, "The capture composite needs the gather + composite tail");
+
+        m_CaptureGraph.reset();
+        m_CaptureComposite = SwapChainCompositePass::Create({
+            .Context = m_Context,
+            .ImGui = includeOverlay ? m_ImGui : nullptr,
+            .Assets = *m_Assets,
+            .SceneSource = m_Gather->GetOutput(),
+            .SwapChainFormat = format,
+            .ColorSpace = colorSpace,
+        });
+
+        RenderGraph graph(m_Context);
+        const ResourceId targetId = graph.Import("CaptureTarget");
+        m_CaptureGraph = m_CaptureComposite->Compile(graph, targetId);
+
+        m_CaptureIncludesOverlay = includeOverlay;
+        m_CaptureFormat = format;
+        m_CaptureColorSpace = colorSpace;
+        m_CaptureViews.clear();
+    }
+
+    void ViewportCompositor::ReleaseCapturePass()
+    {
+        m_CaptureGraph.reset();
+        m_CaptureComposite.reset();
+        m_CaptureViews.clear();
+        m_CaptureFormat = Format::Undefined;
     }
 
     ViewportRegion ViewportCompositor::ResolveLayout(const ViewportLayout& layout) const

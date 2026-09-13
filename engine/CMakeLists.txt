@@ -528,4 +528,13 @@ if (APPLE)
     # ("Objective-C was disabled in precompiled file"), so this TU compiles without it.
     set_source_files_properties(src/WindowCocoa.mm PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
     target_link_libraries(veng PRIVATE "-framework Cocoa")
+
+    # Importing an externally-owned MTLTexture as a VkImage is the one place the backend names
+    # Metal, so it lives in its own Objective-C++ TU beside the Cocoa one. Non-ARC (the default):
+    # the Vulkan implementation hands back unowned references, and the import retains and releases
+    # its texture by hand.
+    target_sources(veng PRIVATE src/Renderer/Backend/MetalInterop.mm)
+    set_source_files_properties(src/Renderer/Backend/MetalInterop.mm
+            PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    target_link_libraries(veng PRIVATE "-framework Metal")
 endif ()

@@ -265,7 +265,7 @@ namespace Veng::Renderer
                           .Usage = m_CaptureSupported
                                        ? (ImageUsage::ColorAttachment | ImageUsage::TransferSrc)
                                        : ImageUsage::ColorAttachment},
-                std::move(native))));
+                std::move(native), false)));
 
             // Swapchain images come from vkAcquireNextImageKHR, whose
             // image-available semaphore is waited at AcquireWaitStage on submit.

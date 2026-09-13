@@ -110,6 +110,11 @@ namespace Veng::Renderer
         ///        Context::IsFormatStorageImageSupported answers whether this device actually
         ///        carries it. Appended at the fixed ordinal 30 for cooked-blob integer stability.
         RGBA16Unorm,
+        /// @brief 10-bit RGB + 2-bit alpha, normalized, packed in 32 bits (ARGB order — the
+        ///        opposite channel order to A2B10G10R10Unorm). The order a ten-bit
+        ///        platform-encoder surface presents, so an image imported from one maps here.
+        ///        Appended at the fixed ordinal 31 for cooked-blob integer stability.
+        A2R10G10B10Unorm,
     };
 
     /// @brief Requested display output mode for the presentable swapchain.

@@ -173,6 +173,7 @@
 
 #include <Veng/Renderer/AsyncReadback.h>
 #include <Veng/Renderer/Buffer.h>
+#include <Veng/Renderer/CaptureSink.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/ComputePipeline.h>
 #include <Veng/Renderer/Context.h>

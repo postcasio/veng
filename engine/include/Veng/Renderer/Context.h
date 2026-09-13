@@ -491,9 +491,52 @@ namespace Veng::Renderer
 
         /// @brief Registers a callback fired after the swap chain is recreated (e.g. on resize).
         ///
-        /// The ImGui layer uses this to recreate its offscreen target.
+        /// The ImGui layer uses this to recreate its offscreen target. A no-op headless, where
+        /// there is no swap chain to invalidate.
         /// @param callback The function to call after swap chain recreation.
         void AddSwapChainInvalidationCallback(std::function<void()> callback);
+
+        /// @brief Handle identifying a registered frame-retired callback.
+        ///
+        /// Zero is never issued, so a default-constructed handle names no registration.
+        using FrameRetiredHandle = u64;
+
+        /// @brief Registers a callback fired when a frame-in-flight slot's fence has been waited.
+        ///
+        /// Called from BeginFrame for the slot about to be reused, immediately after its fence
+        /// wait and before anything records — so everything the frame that last used @p slot
+        /// submitted has completed on the GPU and whatever it wrote is readable. That is the same
+        /// point AsyncReadback delivers at, GetMaxFramesInFlight() frames after the work was
+        /// recorded. Callbacks fire in registration order, and a callback may add or remove
+        /// registrations (the change takes effect on the next frame).
+        /// @param callback  Invoked with the retiring slot index (0 .. GetMaxFramesInFlight()-1).
+        /// @return A handle for RemoveFrameRetiredCallback.
+        [[nodiscard]] FrameRetiredHandle
+        AddFrameRetiredCallback(std::function<void(u32 slot)> callback);
+
+        /// @brief Removes a frame-retired callback registered by AddFrameRetiredCallback.
+        ///
+        /// Silently ignores a handle that names no live registration, so releasing twice is safe.
+        /// @param handle  The handle returned by AddFrameRetiredCallback.
+        void RemoveFrameRetiredCallback(FrameRetiredHandle handle);
+
+        /// @brief Whether an external platform texture can be imported as an Image on this device.
+        ///
+        /// True on Apple when the Metal-object interop extension was advertised and enabled at
+        /// device creation; false everywhere else. The import needs only a device, so a headless
+        /// context supports it exactly as a windowed one does.
+        /// @see GetExternalDevice
+        [[nodiscard]] bool IsExternalTextureImportSupported() const;
+
+        /// @brief Returns the platform graphics device the backend is rendering on, as an opaque handle.
+        ///
+        /// On Apple this is the @c MTLDevice the Vulkan implementation exported at instance
+        /// creation; null elsewhere, and null when the interop extension was unavailable. A
+        /// consumer wrapping platform memory as a texture to import must create it on this exact
+        /// device — a texture from any other device cannot be imported.
+        /// @return The platform device handle, or null where there is none.
+        /// @see IsExternalTextureImportSupported
+        [[nodiscard]] void* GetExternalDevice() const;
 
         /// @brief Records commands via a callback on a one-shot command buffer and waits for completion.
         void ImmediateCommands(const std::function<void(CommandBuffer&)>& function) const;

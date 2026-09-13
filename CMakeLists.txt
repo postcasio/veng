@@ -1612,6 +1612,10 @@ if (VENG_BUILD_TESTS)
             tests/gpu/ring_buffered_material.cpp
             tests/gpu/timeline_semaphore.cpp
             tests/gpu/transfer_retire.cpp
+            # frame_retired.cpp pins the frame-slot retirement notification a consumer reading what
+            # a frame wrote depends on: one announcement per slot per cycle, in order, stopping when
+            # the handle is released — plus the headless no-op of a swap-chain invalidation.
+            tests/gpu/frame_retired.cpp
             tests/gpu/async_upload.cpp
             tests/gpu/async_mesh_build.cpp
             tests/gpu/dynamic_mesh.cpp
@@ -1845,6 +1849,16 @@ if (VENG_BUILD_TESTS)
     )
     # gui_golden.cpp loads its golden PNG through stb_image.
     target_include_directories(veng_test_gpu PRIVATE ${stb_SOURCE_DIR})
+
+    # Importing an externally-owned platform texture exists only on Apple, so its case is compiled
+    # only there — elsewhere the suite is unchanged rather than carrying a permanently-skipped test.
+    # Objective-C++, so it takes the same PCH opt-out the engine's own .mm sources do.
+    if (APPLE)
+        target_sources(veng_test_gpu PRIVATE tests/gpu/external_texture_import.mm)
+        set_source_files_properties(tests/gpu/external_texture_import.mm
+                PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+        target_link_libraries(veng_test_gpu PRIVATE "-framework Metal" "-framework IOSurface")
+    endif ()
 
     add_test(NAME veng_test_gpu COMMAND veng_test_gpu)
     set_tests_properties(veng_test_gpu PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)

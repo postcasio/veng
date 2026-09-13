@@ -21,16 +21,21 @@ namespace Veng::Renderer
         return *m_Native;
     }
 
-    /// @brief Constructs an Image wrapping an externally-owned Vulkan image (e.g. a swapchain image).
+    Ref<Image> Image::CreateImported(Context& context, const ImageInfo& info, Unique<Native> native)
+    {
+        return Ref<Image>(new Image(context, info, std::move(native), true));
+    }
+
+    /// @brief Constructs an Image wrapping an already-created Vulkan image.
     ///
-    /// The image is marked unmanaged: the destructor does not destroy the underlying VkImage.
     /// @param context  The owning render context.
     /// @param info     Image metadata (extent, format, usage, etc.).
     /// @param native   Backend native struct containing the pre-existing VkImage handle.
-    Image::Image(Context& context, const ImageInfo& info, Unique<Native> native)
+    /// @param managed  Whether the destructor retires the handle, its allocation and its teardown.
+    Image::Image(Context& context, const ImageInfo& info, Unique<Native> native, const bool managed)
         : m_Context(context), m_Name(info.Name), m_Extent(info.Extent), m_MipLevels(info.MipLevels),
           m_Layers(info.Layers), m_Format(info.Format), m_Type(info.Type), m_Usage(info.Usage),
-          m_Managed(false), m_Native(std::move(native))
+          m_Managed(managed), m_Native(std::move(native))
     {
         m_Native->InitStates(m_Layers, m_MipLevels);
 
@@ -96,6 +101,10 @@ namespace Veng::Renderer
         if (m_Managed)
         {
             m_Context.GetNative().Retire(m_Native->Image, m_Native->Allocation);
+            if (m_Native->Teardown)
+            {
+                m_Context.GetNative().Retire(std::move(m_Native->Teardown));
+            }
         }
     }
 

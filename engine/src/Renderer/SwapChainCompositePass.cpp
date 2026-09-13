@@ -2,6 +2,8 @@
 
 #include <Veng/Assert.h>
 
+#include <iterator>
+
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Shader.h>
 
@@ -33,6 +35,7 @@ namespace Veng::Renderer
             u32 ImGuiTexture;
             u32 Sampler;
             u32 EncodeMode;
+            u32 BlendOverlay;
             f32 PaperWhiteNits;
             f32 PeakNits;
         };
@@ -59,7 +62,7 @@ namespace Veng::Renderer
     struct SwapChainCompositePass::Impl
     {
         Renderer::Context& Context;
-        ImGuiLayer& ImGui;
+        ImGuiLayer* ImGui;
         AssetHandle<Shader> CompositeVS;
         AssetHandle<Shader> CompositeFS;
         Ref<PipelineLayout> Layout;
@@ -123,15 +126,17 @@ namespace Veng::Renderer
         m_Impl->SwapChainFormat = info.SwapChainFormat;
         RebuildPipeline(info.SwapChainFormat);
 
-        // View over the ImGui layer's rendered output, blended over the scene.
-        m_Impl->ImGuiView =
-            ImageView::Create(info.Context, {
-                                                .Name = "SwapChain Composite Layer View",
-                                                .Image = info.ImGui.GetOutputImage(),
-                                            });
-
         BindlessRegistry& bindless = info.Context.GetBindlessRegistry();
-        m_Impl->ImGuiHandle = bindless.Register(m_Impl->ImGuiView);
+        if (info.ImGui != nullptr)
+        {
+            // View over the ImGui layer's rendered output, blended over the scene.
+            m_Impl->ImGuiView =
+                ImageView::Create(info.Context, {
+                                                    .Name = "SwapChain Composite Layer View",
+                                                    .Image = info.ImGui->GetOutputImage(),
+                                                });
+            m_Impl->ImGuiHandle = bindless.Register(m_Impl->ImGuiView);
+        }
         m_Impl->SamplerHandle = bindless
                                     .AcquireSampler({
                                         .Name = "SwapChain Composite Sampler",
@@ -151,7 +156,10 @@ namespace Veng::Renderer
     {
         BindlessRegistry& bindless = m_Impl->Context.GetBindlessRegistry();
         bindless.Release(m_Impl->SceneHandle);
-        bindless.Release(m_Impl->ImGuiHandle);
+        if (m_Impl->ImGuiHandle.IsValid())
+        {
+            bindless.Release(m_Impl->ImGuiHandle);
+        }
     }
 
     void SwapChainCompositePass::RebuildPipeline(Format swapChainFormat)
@@ -200,13 +208,18 @@ namespace Veng::Renderer
 
     void SwapChainCompositePass::RefreshImGuiSource()
     {
+        if (m_Impl->ImGui == nullptr)
+        {
+            return;
+        }
+
         // The ImGui layer recreated its offscreen image (swapchain resize); re-view the live
         // image and re-register so the composite stops sampling the retired one. ImGuiHandle.Index
         // is read live per frame, so this takes effect on the next replay without a recompile.
         m_Impl->ImGuiView =
             ImageView::Create(m_Impl->Context, {
                                                    .Name = "SwapChain Composite Layer View",
-                                                   .Image = m_Impl->ImGui.GetOutputImage(),
+                                                   .Image = m_Impl->ImGui->GetOutputImage(),
                                                });
 
         BindlessRegistry& bindless = m_Impl->Context.GetBindlessRegistry();
@@ -220,38 +233,49 @@ namespace Veng::Renderer
     Unique<CompiledGraph> SwapChainCompositePass::Compile(RenderGraph& graph,
                                                           ResourceId swapChainTarget)
     {
+        const bool blendOverlay = m_Impl->ImGui != nullptr;
+
         m_Impl->SwapId = swapChainTarget;
         m_Impl->SceneId = graph.Import("SwapChainCompositeScene");
-        m_Impl->ImGuiId = graph.Import("SwapChainCompositeLayer");
+        m_Impl->ImGuiId = blendOverlay ? graph.Import("SwapChainCompositeLayer") : ResourceId{};
 
-        graph.AddPass("SwapChain Composite")
-            .Color({
-                .Resource = m_Impl->SwapId,
-                .Load = LoadOp::Clear,
-                .Store = StoreOp::Store,
-                .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
-            })
-            .Sample(m_Impl->SceneId)
-            .Sample(m_Impl->ImGuiId)
-            .Execute(
-                [this](PassContext& ctx)
-                {
-                    CommandBuffer& cmd = ctx.Cmd();
-                    const uvec2 extent = m_Impl->Context.GetSwapChainExtent();
-                    cmd.BindPipeline(m_Impl->Pipeline);
-                    cmd.SetViewport({0, 0}, extent);
-                    cmd.SetScissor({0, 0}, extent);
-                    m_Impl->Context.GetBindlessRegistry().Bind(cmd);
-                    cmd.PushConstants(CompositePushConstants{
-                        .SceneTexture = m_Impl->SceneHandle.Index,
-                        .ImGuiTexture = m_Impl->ImGuiHandle.Index,
-                        .Sampler = m_Impl->SamplerHandle.Index,
-                        .EncodeMode = m_Impl->EncodeMode,
-                        .PaperWhiteNits = m_Impl->PaperWhiteNits,
-                        .PeakNits = m_Impl->PeakNits,
-                    });
-                    cmd.DrawFullscreenTriangle();
+        RenderGraph::PassBuilder pass =
+            graph.AddPass("SwapChain Composite")
+                .Color({
+                    .Resource = m_Impl->SwapId,
+                    .Load = LoadOp::Clear,
+                    .Store = StoreOp::Store,
+                    .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+                })
+                .Sample(m_Impl->SceneId);
+        if (blendOverlay)
+        {
+            pass.Sample(m_Impl->ImGuiId);
+        }
+        pass.Execute(
+            [this, blendOverlay](PassContext& ctx)
+            {
+                CommandBuffer& cmd = ctx.Cmd();
+                const uvec2 extent = m_Impl->Context.GetSwapChainExtent();
+                cmd.BindPipeline(m_Impl->Pipeline);
+                cmd.SetViewport({0, 0}, extent);
+                cmd.SetScissor({0, 0}, extent);
+                m_Impl->Context.GetBindlessRegistry().Bind(cmd);
+                cmd.PushConstants(CompositePushConstants{
+                    .SceneTexture = m_Impl->SceneHandle.Index,
+                    // With no overlay the shader never samples this slot, but it is pushed as the
+                    // scene's index rather than an arbitrary one so the bindless array is indexed
+                    // in range whatever a driver does with the untaken branch.
+                    .ImGuiTexture =
+                        blendOverlay ? m_Impl->ImGuiHandle.Index : m_Impl->SceneHandle.Index,
+                    .Sampler = m_Impl->SamplerHandle.Index,
+                    .EncodeMode = m_Impl->EncodeMode,
+                    .BlendOverlay = blendOverlay ? 1u : 0u,
+                    .PaperWhiteNits = m_Impl->PaperWhiteNits,
+                    .PeakNits = m_Impl->PeakNits,
                 });
+                cmd.DrawFullscreenTriangle();
+            });
 
         return graph.Compile();
     }
@@ -264,6 +288,8 @@ namespace Veng::Renderer
             {.Id = m_Impl->SceneId, .View = m_Impl->SceneSource},
             {.Id = m_Impl->ImGuiId, .View = m_Impl->ImGuiView},
         };
-        graph.Execute(cmd, bindings);
+        const usize count =
+            m_Impl->ImGui != nullptr ? std::size(bindings) : std::size(bindings) - 1;
+        graph.Execute(cmd, {bindings, count});
     }
 }

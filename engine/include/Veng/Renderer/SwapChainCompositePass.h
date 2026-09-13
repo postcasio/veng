@@ -33,8 +33,12 @@ namespace Veng::Renderer
     {
         /// @brief Vulkan context for pipeline and resource creation.
         Context& Context;
-        /// @brief ImGui layer supplying the overlay output view.
-        ImGuiLayer& ImGui;
+        /// @brief ImGui layer supplying the overlay output view, or null for no overlay.
+        ///
+        /// Null builds an overlay-less pass: it registers no overlay texture, declares no read of
+        /// one, and the shader skips the blend — the composite is the scene source alone, encoded.
+        /// RefreshImGuiSource is then a no-op.
+        ImGuiLayer* ImGui = nullptr;
 
         /// @brief Asset manager for loading the composite fragment shader from the core pack.
         ///
@@ -96,6 +100,7 @@ namespace Veng::Renderer
         /// image (old size → squished, old content → frozen). Like SetSceneSource, the bindless
         /// index is read live per frame, so no recompile is needed. Call from the
         /// swapchain-invalidation callback, after the ImGui layer's own callback has recreated it.
+        /// A no-op on an overlay-less pass (SwapChainCompositePassInfo::ImGui was null).
         void RefreshImGuiSource();
 
         /// @brief Re-targets the composite at a re-negotiated swapchain format and color space.

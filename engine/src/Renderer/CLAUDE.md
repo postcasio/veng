@@ -1156,6 +1156,63 @@ one full-window blit per frame — which is why it is armed on demand rather tha
 nothing arms it unless a consumer asks (`veng::mcp`'s `render.screenshot_window` is the one that
 does).
 
+**A `CaptureSink` composites the frame a second time, into an image somebody else owns.** The mirror
+above copies the display's pixels; a consumer that wants the *frame* — at its own encoding, without
+the app's overlay, into memory a platform encoder reads — wants the composite run again rather than a
+copy of its result. `ViewportCompositor::SetCaptureSink(CaptureSink*)`
+(`Veng/Renderer/CaptureSink.h`) installs that consumer: each `Composite`, after the presented
+composite, the sink is asked for a `CaptureTarget` (`{ Ref<Image>, DisplayColorSpace,
+IncludeOverlay }`) for this frame's in-flight slot, and a supplied one is written by a **second
+`SwapChainCompositePass`** the compositor owns — same gather source, the target's format and colour
+space, the overlay bound only when the target asks for it. So the file's encoding is a setting rather
+than a consequence of the display, and the presented frame is untouched: the mirror and
+`render.screenshot_window` keep working during a capture.
+
+Four properties of the seam:
+
+- **The target is the sink's, and the sink is asked every frame.** Returning nullopt skips the
+  capture composite for that frame, which is how a sink idles. The compositor caches one `ImageView`
+  per target image, so a recycled pool of targets is viewed once each rather than per frame.
+- **Extent is a contract, not a resample.** The sink is handed the presented extent; a target of any
+  other extent is a fatal assert and the composite is skipped rather than stretched into.
+- **The pass is rebuilt only when its shape moves** — the overlay choice changing, or a swap-chain
+  invalidation (which re-sources the presented composite the same way). A format or colour-space
+  change is a `SetSwapChainTarget` on the existing pass.
+- **Readability rides the frame fence.** The capture composite is recorded into the frame's command
+  buffer, so its target is readable when that slot's fence has been waited —
+  `GetMaxFramesInFlight()` frames later, the contract `AsyncReadback` already rides. With a sink
+  installed the compositor registers `Context::AddFrameRetiredCallback` and forwards it as
+  `CaptureSink::OnSlotRetired`; the engine never waits a fence on the sink's behalf.
+
+**The composite into a sink cannot run in the test band.** Every context in the `gpu` tier is
+headless and the compositor's tail exists only windowed, so what the band proves is the import
+(`tests/gpu/external_texture_import.mm`) and the retirement contract
+(`tests/gpu/frame_retired.cpp`); that the second composite writes the right pixels is a live look.
+
+**An externally-owned platform texture can be the image a sink hands over.**
+`Renderer::Backend::ImportExternalTexture` (`Veng/Renderer/Backend/MetalInterop.h`) wraps one as a
+managed `Image` whose texels live in the external memory — the engine renders straight into it and
+never copies out. `Context::IsExternalTextureImportSupported()` answers whether the device has the
+capability (Apple, with the Metal-object extension enabled — headless included, since the import
+needs a device and not a swap chain) and `Context::GetExternalDevice()` hands back the platform
+device a consumer must create its texture on. Three things about it are load-bearing:
+
+- **The import reads the format and extent off the texture and takes neither from its caller.** The
+  implementation does not validate an import: a wrong format or extent is accepted and the channels
+  silently swap. The mapping is one closed table —
+  `BGRA8Unorm_sRGB → BGRA8Srgb`, `BGR10A2Unorm → A2R10G10B10Unorm`, `RGBA16Float → RGBA16Sfloat` —
+  and anything else is refused. Plain `BGRA8Unorm` is deliberately absent: a consumer wanting 8-bit
+  standard range wants the sRGB store.
+- **The imported image is managed, and its teardown is fence-deferred.** Unlike a swap chain image,
+  the `VkImage` here is one veng created, so it retires like any other; its `Native` carries a
+  teardown callback that drops the engine's reference to the platform texture, run by the retire bin
+  after the handles are destroyed. Dropping the last `Ref` mid-frame is safe.
+- **Validation reports "used with no memory bound" on every use of one, and only there is anything
+  bound.** The message is the extension's gap, not a defect: the import binds a throwaway device
+  allocation under `VE_ENABLE_VALIDATION_LAYERS` alone, which the layer accepts and which changes
+  nothing — the render still lands in the external memory, which the GPU case asserts with the
+  allocation bound. A shipped build pays neither the allocation nor the call.
+
 **Owning the region yields a window↔view mapping.** `WindowToViewport(windowPoint)` hit-tests a
 window point against the region and, on a hit, remaps it to normalized `[0,1]` across the region
 (nullopt outside); `ScreenToWorldRay(windowPoint)` composes that with the camera retained from the

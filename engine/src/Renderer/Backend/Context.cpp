@@ -145,6 +145,23 @@ namespace Veng::Renderer
             .ppEnabledExtensionNames = extensions.data(),
         };
 
+#ifdef __APPLE__
+        // The Metal device and command queue are exportable only when the request is chained onto
+        // *instance* creation: MoltenVK also accepts the structs on the device create info and
+        // returns the objects anyway, but validation correctly rejects that placement. Instance
+        // creation precedes any physical device, so there is no advertise-check to consult and the
+        // request is made unconditionally; it costs nothing and is inert where the extension later
+        // proves unavailable. The pair is spliced onto the head of whatever chain the branches
+        // below built, once they have built it.
+        vk::ExportMetalObjectCreateInfoEXT exportMetalQueue{
+            .exportObjectType = vk::ExportMetalObjectTypeFlagBitsEXT::eMetalCommandQueue,
+        };
+        const vk::ExportMetalObjectCreateInfoEXT exportMetalDevice{
+            .pNext = &exportMetalQueue,
+            .exportObjectType = vk::ExportMetalObjectTypeFlagBitsEXT::eMetalDevice,
+        };
+#endif
+
 #ifdef VE_ENABLE_VALIDATION_LAYERS
         Log::Info("Enabling validation layers");
         vk::DebugUtilsMessengerCreateInfoEXT debugCreateInfo{
@@ -176,6 +193,11 @@ namespace Veng::Renderer
         instanceCreateInfo.ppEnabledLayerNames = nullptr;
 #endif
 
+#ifdef __APPLE__
+        exportMetalQueue.pNext = instanceCreateInfo.pNext;
+        instanceCreateInfo.pNext = &exportMetalDevice;
+#endif
+
         instanceCreateInfo.flags = vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR;
 
         m_Native->Instance = createInstance(instanceCreateInfo).value;
@@ -201,6 +223,20 @@ namespace Veng::Renderer
         m_Native->Device = m_Native->CreateDevice();
 
         VULKAN_HPP_DEFAULT_DISPATCHER.init(m_Native->Device);
+
+#ifdef __APPLE__
+        if (m_Native->MetalObjectsEnabled)
+        {
+            // The export is a read-out of objects the implementation already owns, not a transfer
+            // of ownership, so nothing here retains or releases them.
+            vk::ExportMetalDeviceInfoEXT deviceInfo{};
+            vk::ExportMetalObjectsInfoEXT objectsInfo{.pNext = &deviceInfo};
+            m_Native->Device.exportMetalObjectsEXT(objectsInfo);
+            m_Native->MetalDevice = deviceInfo.mtlDevice;
+            Log::Info("Metal object interop enabled (MTLDevice {})",
+                      m_Native->MetalDevice ? "exported" : "unavailable");
+        }
+#endif
 
         m_Native->PipelineCachePath = info.PipelineCachePath;
 
@@ -777,6 +813,18 @@ namespace Veng::Renderer
         // EndFrame so they are protected by this frame's fence rather than the one just waited.
         m_Native->AdoptPendingRetires();
 
+        // The slot's fence has been waited, so everything the frame that last used it wrote is
+        // complete and readable. Announced before anything records, and over a copy so a callback
+        // may register or release one.
+        if (!m_Native->FrameRetiredCallbacks.empty())
+        {
+            const auto callbacks = m_Native->FrameRetiredCallbacks;
+            for (const auto& [handle, callback] : callbacks)
+            {
+                callback(m_Native->CurrentFrameInFlight);
+            }
+        }
+
         // Headless has no swapchain image to acquire.
         if (!IsHeadless())
         {
@@ -1122,7 +1170,41 @@ namespace Veng::Renderer
 
     void Context::AddSwapChainInvalidationCallback(std::function<void()> callback)
     {
+        // Headless has no swap chain, so nothing can invalidate one; registering is a no-op rather
+        // than a null dereference, matching IsSwapChainCaptureSupported's headless answer.
+        if (!m_Native->SwapChain)
+        {
+            return;
+        }
         m_Native->SwapChain->AddInvalidationCallback(std::move(callback));
+    }
+
+    Context::FrameRetiredHandle
+    Context::AddFrameRetiredCallback(std::function<void(u32 slot)> callback)
+    {
+        const u64 handle = ++m_Native->NextFrameRetiredHandle;
+        m_Native->FrameRetiredCallbacks.emplace_back(handle, std::move(callback));
+        return handle;
+    }
+
+    void Context::RemoveFrameRetiredCallback(const FrameRetiredHandle handle)
+    {
+        std::erase_if(m_Native->FrameRetiredCallbacks,
+                      [handle](const auto& entry) { return entry.first == handle; });
+    }
+
+    bool Context::IsExternalTextureImportSupported() const
+    {
+#ifdef __APPLE__
+        return m_Native->MetalObjectsEnabled;
+#else
+        return false;
+#endif
+    }
+
+    void* Context::GetExternalDevice() const
+    {
+        return m_Native->MetalDevice;
     }
 
     void Context::ImmediateCommands(const std::function<void(CommandBuffer&)>& function) const
@@ -1350,6 +1432,17 @@ namespace Veng::Renderer
                     deviceExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
                     MemoryBudgetSupported = true;
                 }
+#ifdef __APPLE__
+                // VK_EXT_metal_objects exports the Metal device/queue the implementation is
+                // running on and imports an externally-owned MTLTexture as a VkImage. Optional and
+                // per-device like the two above; it carries no feature struct to enable.
+                else if (std::strcmp(extension.extensionName,
+                                     VK_EXT_METAL_OBJECTS_EXTENSION_NAME) == 0)
+                {
+                    deviceExtensions.push_back(VK_EXT_METAL_OBJECTS_EXTENSION_NAME);
+                    MetalObjectsEnabled = true;
+                }
+#endif
             }
         }
 
@@ -1564,6 +1657,12 @@ namespace Veng::Renderer
         CurrentRetireBin().DescriptorSets.push_back(descriptorSet);
     }
 
+    void Context::Native::Retire(function<void()> teardown)
+    {
+        const std::scoped_lock lock(RetireMutex);
+        CurrentRetireBin().Teardowns.push_back(std::move(teardown));
+    }
+
     void Context::Native::RetireOnTransfer(vk::Buffer buffer, VmaAllocation allocation,
                                            u64 timelineValue)
     {
@@ -1633,6 +1732,11 @@ namespace Veng::Renderer
         {
             Device.destroyShaderModule(shaderModule);
         }
+        // Last: a teardown releases memory the destroyed handles above were viewing.
+        for (const auto& teardown : bin.Teardowns)
+        {
+            teardown();
+        }
 
         bin = {};
     }
@@ -1664,6 +1768,7 @@ namespace Veng::Renderer
         move(bin.Pipelines, PendingRetire.Pipelines);
         move(bin.PipelineLayouts, PendingRetire.PipelineLayouts);
         move(bin.DescriptorSets, PendingRetire.DescriptorSets);
+        move(bin.Teardowns, PendingRetire.Teardowns);
         FrameRecording = true;
     }
 

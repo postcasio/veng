@@ -1,6 +1,8 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Renderer/CaptureSink.h>
+#include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/GatherPass.h>
 #include <Veng/Renderer/ViewportRegion.h>
 
@@ -12,7 +14,6 @@ namespace Veng
 
 namespace Veng::Renderer
 {
-    class Context;
     class CommandBuffer;
     class Viewport;
     class SceneCapture;
@@ -100,6 +101,20 @@ namespace Veng::Renderer
         /// @param cmd  The command buffer to record into.
         void Composite(CommandBuffer& cmd);
 
+        /// @brief Installs the sink the frame is composited into a second time, or clears it.
+        ///
+        /// With a sink set, every Composite asks it for this frame's target and — when it supplies
+        /// one — runs a second SwapChainCompositePass into that image, in the target's colour space
+        /// and with or without the application's overlay. The presented composite is untouched, so
+        /// what the window shows and what the sink receives differ only in encoding and overlay.
+        ///
+        /// The compositor never owns the sink: a sink must outlive its installation. Setting a sink
+        /// registers a frame-retired callback on the context and forwards it to the sink; clearing
+        /// one removes that callback and releases the capture pass and its cached target views.
+        /// Passing the sink that is already installed is a no-op.
+        /// @param sink  The sink to composite into, or null to clear.
+        void SetCaptureSink(CaptureSink* sink);
+
         /// @brief Returns the render-order viewport drive-list.
         ///
         /// The registration-order list of every driven viewport; a consumer walks it to resolve the
@@ -163,10 +178,63 @@ namespace Veng::Renderer
         /// @brief Compiled composite graph, re-Compile()d on swapchain resize.
         Unique<CompiledGraph> m_CompositeGraph;
 
+        /// @brief Runs the capture composite into the sink's target for this frame, if it wants one.
+        ///
+        /// Asks the sink for a target, lazily builds or rebuilds the capture pass to match the
+        /// target's overlay choice, re-targets it on a format or colour-space change, and executes
+        /// it against a view of the target image. A target whose extent differs from the presented
+        /// extent is refused rather than stretched into.
+        /// @param cmd  The command buffer to record into.
+        void CompositeToSink(CommandBuffer& cmd);
+
+        /// @brief Builds the capture composite pass and its compiled graph for @p includeOverlay.
+        ///
+        /// Sourced from the same gather output the presented composite reads, so both composite the
+        /// identical assembled frame.
+        /// @param includeOverlay  Whether the pass blends the application's overlay.
+        /// @param format          Colour format of the targets it will render into.
+        /// @param colorSpace      Colour space the pass encodes for.
+        void BuildCapturePass(bool includeOverlay, Format format, DisplayColorSpace colorSpace);
+
+        /// @brief Releases the capture composite, its graph, and the cached target views.
+        void ReleaseCapturePass();
+
         /// @brief Last placement list pushed to the gather; rebinds only when it changes.
         ///
         /// Guards against per-frame bindless churn: the gather's slots are re-registered only on a
         /// frame where a Presented viewport's output view identity or region differs from this.
         vector<CompositePlacement> m_GatheredPlacements;
+
+        /// @brief The asset manager the tail's passes build through; null until InitializeTail.
+        AssetManager* m_Assets = nullptr;
+
+        /// @brief The ImGui overlay the tail composites over; null until InitializeTail.
+        ImGuiLayer* m_ImGui = nullptr;
+
+        /// @brief The installed capture sink, or null. Borrowed, never owned.
+        CaptureSink* m_CaptureSink = nullptr;
+
+        /// @brief Handle of the frame-retired callback forwarded to the sink; 0 when none.
+        Context::FrameRetiredHandle m_CaptureRetiredHandle = 0;
+
+        /// @brief The second composite writing the sink's targets; built on the first target taken.
+        Unique<SwapChainCompositePass> m_CaptureComposite;
+
+        /// @brief Compiled capture-composite graph, re-Compile()d whenever the pass is rebuilt.
+        Unique<CompiledGraph> m_CaptureGraph;
+
+        /// @brief Whether the built capture pass blends the overlay; rebuilt when the sink's
+        ///        choice changes.
+        bool m_CaptureIncludesOverlay = false;
+
+        /// @brief Target format the capture pass is currently targeted at.
+        Format m_CaptureFormat = Format::Undefined;
+
+        /// @brief Colour space the capture pass is currently encoding for.
+        DisplayColorSpace m_CaptureColorSpace = DisplayColorSpace::SrgbNonlinear;
+
+        /// @brief Views of the sink's target images, keyed by image, so a recycled target is viewed
+        ///        once rather than every frame it comes back around.
+        map<const Image*, Ref<ImageView>> m_CaptureViews;
     };
 }

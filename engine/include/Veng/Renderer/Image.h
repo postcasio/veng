@@ -162,17 +162,37 @@ namespace Veng::Renderer
 
         /// @brief Opaque backend handle; defined in Image.cpp.
         struct Native;
+
+        /// @brief Adopts an already-created Vulkan image the engine owns and must destroy.
+        ///
+        /// The managed sibling of the presentable-image path: the backend has created the VkImage
+        /// itself — importing external memory, where the create call takes a chained descriptor
+        /// Create() cannot express — so the image retires through the ordinary deferred-destruction
+        /// path, teardown callback included, rather than being left alone as a swapchain image is.
+        /// Backend-only: Native is an incomplete type to everything else.
+        /// @param context The owning context; the image must not outlive it.
+        /// @param info    Metadata describing the already-created image (extent, format, usage).
+        /// @param native  Backend native struct holding the created VkImage and any teardown.
+        /// @return A shared reference to the new image.
+        static Ref<Image> CreateImported(Context& context, const ImageInfo& info,
+                                         Unique<Native> native);
+
         /// @brief Returns the backend handle. Mutable ref from a const method by design — see Native.h.
         [[nodiscard]] Native& GetNative() const;
 
     private:
         Image(Context& context, const ImageInfo& info);
 
-        /// @brief Presentable (swapchain) image constructor.
+        /// @brief Adopting constructor: the Native already wraps an existing vk::Image.
         ///
-        /// The Native already wraps an externally-owned vk::Image; this constructor only
-        /// sets up the engine-side bookkeeping.
-        Image(Context& context, const ImageInfo& info, Unique<Native> native);
+        /// Sets up the engine-side bookkeeping only; @p managed decides whether the destructor
+        /// retires the handle (an imported image, whose VkImage veng created) or leaves it alone
+        /// (a presentable swapchain image, which the presentation engine owns).
+        /// @param context The owning context.
+        /// @param info    Metadata describing the existing image.
+        /// @param native  Backend native struct holding the existing VkImage.
+        /// @param managed Whether the destructor retires the handle and its allocation.
+        Image(Context& context, const ImageInfo& info, Unique<Native> native, bool managed);
 
         /// @brief The owning context; used for deferred destruction. A resource must not outlive its context.
         Context& m_Context;
