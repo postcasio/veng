@@ -61,6 +61,24 @@ namespace
     {
         return CookHeader(packJson, id, config, configFile).Format;
     }
+
+    // Cooks a pack expected to fail and returns the cook's error message.
+    string CookError(const path& packJson, const BuildConfiguration* config, const path& configFile)
+    {
+        std::random_device rng;
+        const path outArchive = Veng::TestSupport::TempDir() /
+                                fmt::format("veng_cooker_role_refusal_{:08x}.vengpack", rng());
+
+        Cooker cooker;
+        RegisterBuiltinImporters(cooker);
+
+        const VoidResult cookResult = cooker.CookPack(packJson, outArchive, {}, nullptr, nullptr,
+                                                      nullptr, config, configFile);
+        REQUIRE_FALSE(cookResult.has_value());
+
+        std::filesystem::remove(outArchive);
+        return cookResult.error();
+    }
 }
 
 TEST_CASE("Cooker: a role resolves to the zero-config ASTC default with no configuration")
@@ -204,4 +222,52 @@ TEST_CASE("Cooker: a Normal role under the ASTC default flags the NormalXY chann
                                                   AssetId{0x163E4F0689B83AECULL}, nullptr, {});
     CHECK(header.Format == static_cast<u32>(Renderer::Format::ASTC4x4Unorm));
     CHECK(header.ChannelLayout == static_cast<u32>(CookedChannelLayout::NormalXY));
+}
+
+TEST_CASE("Cooker: an HDR role over a float source resolves to the half-float family")
+{
+    const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
+    const Result<BuildConfiguration> config =
+        ParseBuildConfiguration(fixtureDir / "windows.buildcfg");
+    REQUIRE(config.has_value());
+
+    // The HDR role names the half-float family and the source's width picks its member: a
+    // four-channel EXR at that role takes the table's RGBA16Sfloat (ordinal 6) whole.
+    const CookedTextureHeader header =
+        CookHeader(fixtureDir / "texture_float_rgba_pack.json", AssetId{0x881592C1898B753CULL},
+                   &*config, fixtureDir / "windows.buildcfg");
+    CHECK(header.Format == static_cast<u32>(Renderer::Format::RGBA16Sfloat));
+    CHECK(header.MipCount == 4);
+    // HDR is a mip-cappable role, so a multi-level float texture carries the flag.
+    CHECK(header.MipCappable == 1);
+}
+
+TEST_CASE("Cooker: a float source at a block-compressed role is refused")
+{
+    const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
+    const Result<BuildConfiguration> config =
+        ParseBuildConfiguration(fixtureDir / "windows.buildcfg");
+    REQUIRE(config.has_value());
+
+    // Color resolves to BC7Srgb here, an eight-bit encoder; quantising a float source into it is
+    // exactly what the refusal exists to prevent, so the error names the role and the fix.
+    const string error = CookError(fixtureDir / "texture_float_color_role_pack.json", &*config,
+                                   fixtureDir / "windows.buildcfg");
+    CHECK(error.find("Color") != string::npos);
+    CHECK(error.find("\"role\": \"HDR\"") != string::npos);
+}
+
+TEST_CASE("Cooker: an 8-bit source at the HDR role is refused")
+{
+    const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
+    const Result<BuildConfiguration> config =
+        ParseBuildConfiguration(fixtureDir / "windows.buildcfg");
+    REQUIRE(config.has_value());
+
+    // The HDR role resolves to a format carrying more than eight bits a channel, which an LDR
+    // source cannot fill; the error names the source formats that can.
+    const string error = CookError(fixtureDir / "texture_ldr_hdr_role_pack.json", &*config,
+                                   fixtureDir / "windows.buildcfg");
+    CHECK(error.find("texture_ldr_hdr_role.tex.json") != string::npos);
+    CHECK(error.find("EXR") != string::npos);
 }

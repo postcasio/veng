@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x84F4E2BDF7356BFC",
+      "type": "Texture",
+      "source": "textures/texture_float_r.tex.json"
+    }
+  ]
+}

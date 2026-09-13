@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x8D109FCEB750C073",
+      "type": "Texture",
+      "source": "textures/texture_ldr_hdr_role.tex.json"
+    }
+  ]
+}

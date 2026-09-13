@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <mutex>
@@ -16,6 +18,7 @@
 #include <rgbcx.h>
 #include <stb_image.h>
 #include <stb_image_resize2.h>
+#include <tinyexr.h>
 
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Cook/JsonFile.h>
@@ -32,8 +35,9 @@ namespace Veng::Cook
         // The texture cook's compression codec, the encode-path selector. ASTC is the
         // Metal-blessed codec on the primary MoltenVK platform; BC7 targets the desktop/Windows
         // platform; BC5/BC4 are the channel-specialized block codecs for a Normal/Mask role on
-        // the BC target; None packs uncompressed RGBA8. The raw "compression": "ASTC"/"BC7"/"None"
-        // escape-hatch key pins one directly; otherwise the codec is derived from the resolved
+        // the BC target; None packs uncompressed RGBA8; Half packs uncompressed half-float texels
+        // from a float source. The raw "compression": "ASTC"/"BC7"/"None"/"RGBA16F" escape-hatch
+        // key pins one directly; otherwise the codec is derived from the resolved
         // CompressionFormat (role table or the hardcoded ASTC zero-config default). BC5/BC4 have no
         // raw escape-hatch spelling — they ride the role table only, since the role carries the
         // channel intent the raw codec name lacks.
@@ -44,6 +48,7 @@ namespace Veng::Cook
             BC5,
             BC4,
             ASTC,
+            Half,
         };
 
         optional<TextureCodec> ParseCodec(const string& name)
@@ -59,6 +64,10 @@ namespace Veng::Cook
             if (name == "ASTC")
             {
                 return TextureCodec::ASTC;
+            }
+            if (name == "RGBA16F")
+            {
+                return TextureCodec::Half;
             }
             return std::nullopt;
         }
@@ -76,11 +85,12 @@ namespace Veng::Cook
         };
 
         // Lowers a CompressionFormat (the closed codec-output set a role table holds) to the cook's
-        // codec + header Format ordinal + channel layout. RGBA16Sfloat has no LDR encode path in
-        // this importer, so a role resolving to it is an error here — an HDR source is an
-        // environment asset. @p role carries the channel intent the format alone cannot: an ASTC
-        // (RGBA) codec resolving from a Normal role stores X/Y and reconstructs Z, so it reports the
-        // NormalXY layout; BC5 is a native two-channel normal codec and always reports it.
+        // codec + header Format ordinal + channel layout, for an eight-bit source. RGBA16Sfloat
+        // carries more than eight bits a channel, so an eight-bit source resolving to it is an
+        // error here; a float source never reaches this function. @p role carries the channel
+        // intent the format alone cannot: an ASTC (RGBA) codec resolving from a Normal role stores
+        // X/Y and reconstructs Z, so it reports the NormalXY layout; BC5 is a native two-channel
+        // normal codec and always reports it.
         Result<ResolvedFormat> ResolveCompressionFormat(CompressionFormat format,
                                                         CompressionRole role)
         {
@@ -109,18 +119,38 @@ namespace Veng::Cook
                                       .ChannelLayout = astcLayout};
             case CompressionFormat::RGBA16Sfloat:
                 return std::unexpected(
-                    string("the HDR role resolves to RGBA16Sfloat, which an LDR texture cannot "
-                           "encode; author an HDR source as an environment asset"));
+                    string("an LDR source cannot fill an HDR role; author the source as EXR or "
+                           "16-bit PNG"));
             }
             return std::unexpected(string("unmapped CompressionFormat"));
         }
 
+        // The half-float header Format storing @p channels channels. The half-float family's
+        // member is picked by the source's width, so a one- or two-channel source stores only what
+        // it carries.
+        Renderer::Format HalfFormatFor(u32 channels)
+        {
+            switch (channels)
+            {
+            case 1:
+                return Renderer::Format::R16Sfloat;
+            case 2:
+                return Renderer::Format::RG16Sfloat;
+            default:
+                return Renderer::Format::RGBA16Sfloat;
+            }
+        }
+
         // The codec + format a raw "compression" codec name pins, keyed off the texture's sRGB
-        // flag for its sRGB-aware format pair. This is the escape-hatch path: it wins over the role.
-        ResolvedFormat RawCodecFormat(TextureCodec codec, bool srgb)
+        // flag for its sRGB-aware format pair and off @p channels for the half-float family. This
+        // is the escape-hatch path: it wins over the role.
+        ResolvedFormat RawCodecFormat(TextureCodec codec, bool srgb, u32 channels)
         {
             switch (codec)
             {
+            case TextureCodec::Half:
+                return ResolvedFormat{.Codec = TextureCodec::Half,
+                                      .Format = HalfFormatFor(channels)};
             case TextureCodec::ASTC:
                 return ResolvedFormat{.Codec = TextureCodec::ASTC,
                                       .Format = srgb ? Renderer::Format::ASTC4x4Srgb
@@ -420,6 +450,258 @@ namespace Veng::Cook
             return blocks;
         }
 
+        // The largest magnitude a half can represent; a float beyond it clamps here rather than
+        // packing an infinity the sampler would spread across a filtered neighbourhood.
+        constexpr f32 HalfMax = 65504.0f;
+
+        // Converts one f32 to a half's bit pattern, rounding to nearest with ties to even. A
+        // magnitude past the half range clamps to +/-HalfMax and a NaN packs as zero; either sets
+        // @p outOfRange so the caller can report the source once.
+        u16 PackHalf(f32 value, bool& outOfRange)
+        {
+            if (std::isnan(value))
+            {
+                outOfRange = true;
+                return 0;
+            }
+            if (value > HalfMax)
+            {
+                outOfRange = true;
+                value = HalfMax;
+            }
+            else if (value < -HalfMax)
+            {
+                outOfRange = true;
+                value = -HalfMax;
+            }
+
+            u32 bits = 0;
+            std::memcpy(&bits, &value, sizeof(bits));
+            const u32 sign = (bits >> 16) & 0x8000u;
+            const i32 exponent = static_cast<i32>((bits >> 23) & 0xFFu) - 127 + 15;
+            const u32 mantissa = bits & 0x007FFFFFu;
+
+            if (exponent <= 0)
+            {
+                // Subnormal half: restore the float's implicit leading one and shift the
+                // significand down to the fixed 2^-24 grid. Below that grid the value rounds to
+                // zero, and a shift that far would be undefined.
+                if (exponent < -10)
+                {
+                    return static_cast<u16>(sign);
+                }
+                const u32 significand = mantissa | 0x00800000u;
+                const u32 shift = static_cast<u32>(14 - exponent);
+                u32 result = significand >> shift;
+                const u32 remainder = significand & ((1u << shift) - 1u);
+                const u32 tie = 1u << (shift - 1);
+                if (remainder > tie || (remainder == tie && (result & 1u) != 0))
+                {
+                    result++;
+                }
+                return static_cast<u16>(sign | result);
+            }
+
+            // Normal half. The clamp above keeps the exponent at or below 30, so rounding up can
+            // reach 0x7BFF (HalfMax) but never the infinity encoding.
+            u32 result = (static_cast<u32>(exponent) << 10) | (mantissa >> 13);
+            const u32 remainder = mantissa & 0x1FFFu;
+            if (remainder > 0x1000u || (remainder == 0x1000u && (result & 1u) != 0))
+            {
+                result++;
+            }
+            return static_cast<u16>(sign | result);
+        }
+
+        // A decoded texture source. An eight-bit source fills Bytes with RGBA8 texels; a float
+        // source (OpenEXR, or a sixteen-bit PNG) fills Texels with RGBA f32 ones. Channels is what
+        // the file carries, narrowed to the 1 / 2 / 4 widths a cooked texture stores.
+        struct DecodedSource
+        {
+            vector<u8> Bytes;
+            vector<f32> Texels;
+            int Width = 0;
+            int Height = 0;
+            u32 Channels = 4;
+            bool Float = false;
+        };
+
+        // The channel count an OpenEXR file carries, narrowed to a cooked width. LoadEXR decodes a
+        // one-channel file (replicated across RGBA) or an RGB(A) file and refuses anything else,
+        // and reports no channel information of its own, so the header is parsed separately for it.
+        Result<u32> ExrChannelCount(const path& imagePath)
+        {
+            const string file = imagePath.string();
+
+            EXRVersion version{};
+            if (ParseEXRVersionFromFile(&version, file.c_str()) != TINYEXR_SUCCESS)
+            {
+                return std::unexpected(fmt::format("'{}' is not a valid OpenEXR file", file));
+            }
+
+            EXRHeader header;
+            InitEXRHeader(&header);
+            const char* exrError = nullptr;
+            if (ParseEXRHeaderFromFile(&header, &version, file.c_str(), &exrError) !=
+                TINYEXR_SUCCESS)
+            {
+                const string message =
+                    exrError != nullptr ? string(exrError) : string("unknown tinyexr error");
+                FreeEXRErrorMessage(exrError);
+                return std::unexpected(
+                    fmt::format("failed to parse the OpenEXR header of '{}': {}", file, message));
+            }
+
+            const int channels = header.num_channels;
+            FreeEXRHeader(&header);
+            return channels == 1 ? 1u : 4u;
+        }
+
+        // Decodes an OpenEXR image to RGBA f32; tinyexr allocates the buffer, freed here.
+        Result<DecodedSource> DecodeExr(const path& imagePath)
+        {
+            const Result<u32> channels = ExrChannelCount(imagePath);
+            if (!channels)
+            {
+                return std::unexpected(channels.error());
+            }
+
+            float* pixels = nullptr;
+            int width = 0;
+            int height = 0;
+            const char* exrError = nullptr;
+            if (LoadEXR(&pixels, &width, &height, imagePath.string().c_str(), &exrError) !=
+                TINYEXR_SUCCESS)
+            {
+                const string message =
+                    exrError != nullptr ? string(exrError) : string("unknown tinyexr error");
+                FreeEXRErrorMessage(exrError);
+                return std::unexpected(
+                    fmt::format("failed to load '{}': {}", imagePath.string(), message));
+            }
+
+            DecodedSource decoded{
+                .Width = width,
+                .Height = height,
+                .Channels = *channels,
+                .Float = true,
+            };
+            decoded.Texels.assign(pixels, pixels + static_cast<usize>(width) * height * 4);
+            std::free(pixels);
+            return decoded;
+        }
+
+        // Decodes a sixteen-bit image to RGBA f32, scaling each u16 by 1/65535. The source's own
+        // channels are expanded explicitly rather than through stb's four-channel request, so a
+        // two-channel file's second channel lands in G instead of being replicated as luminance.
+        Result<DecodedSource> DecodeSixteenBit(const path& imagePath)
+        {
+            int width = 0;
+            int height = 0;
+            int channels = 0;
+            stbi_us* pixels =
+                stbi_load_16(imagePath.string().c_str(), &width, &height, &channels, 0);
+            if (pixels == nullptr)
+            {
+                return std::unexpected(fmt::format("failed to load image '{}': {}",
+                                                   imagePath.string(), stbi_failure_reason()));
+            }
+
+            const usize texelCount = static_cast<usize>(width) * height;
+            DecodedSource decoded{
+                .Width = width,
+                .Height = height,
+                .Channels = channels <= 1 ? 1u : (channels == 2 ? 2u : 4u),
+                .Float = true,
+            };
+            decoded.Texels.assign(texelCount * 4, 0.0f);
+            constexpr f32 Inv16 = 1.0f / 65535.0f;
+            for (usize texel = 0; texel < texelCount; texel++)
+            {
+                f32* out = decoded.Texels.data() + texel * 4;
+                const stbi_us* in = pixels + texel * static_cast<usize>(channels);
+                for (int c = 0; c < channels && c < 4; c++)
+                {
+                    out[c] = static_cast<f32>(in[c]) * Inv16;
+                }
+                if (channels < 4)
+                {
+                    out[3] = 1.0f;
+                }
+            }
+            stbi_image_free(pixels);
+            return decoded;
+        }
+
+        // Lowercases an ASCII string, for a case-insensitive file-extension match.
+        string ToLowerAscii(string value)
+        {
+            std::ranges::transform(value, value.begin(), [](unsigned char c)
+                                   { return static_cast<char>(std::tolower(c)); });
+            return value;
+        }
+
+        // Decodes a texture source. An OpenEXR file, or any image stb reports as sixteen-bit,
+        // takes the float path; everything else decodes to RGBA8.
+        Result<DecodedSource> DecodeSource(const path& imagePath)
+        {
+            if (ToLowerAscii(imagePath.extension().string()) == ".exr")
+            {
+                return DecodeExr(imagePath);
+            }
+            if (stbi_is_16_bit(imagePath.string().c_str()) != 0)
+            {
+                return DecodeSixteenBit(imagePath);
+            }
+
+            int width = 0;
+            int height = 0;
+            int channels = 0;
+            stbi_uc* pixels = stbi_load(imagePath.string().c_str(), &width, &height, &channels, 4);
+            if (pixels == nullptr)
+            {
+                return std::unexpected(fmt::format("failed to load image '{}': {}",
+                                                   imagePath.string(), stbi_failure_reason()));
+            }
+
+            DecodedSource decoded{.Width = width, .Height = height};
+            decoded.Bytes.assign(pixels, pixels + static_cast<usize>(width) * height * 4);
+            stbi_image_free(pixels);
+            return decoded;
+        }
+
+        // Halves an RGBA f32 level with a 2x2 box filter. An odd edge clamps to the level's last
+        // column or row, so its outermost texels contribute rather than being dropped.
+        vector<f32> HalveFloatLevel(const vector<f32>& source, u32 width, u32 height, u32 outWidth,
+                                    u32 outHeight)
+        {
+            vector<f32> result(static_cast<usize>(outWidth) * outHeight * 4);
+            for (u32 y = 0; y < outHeight; y++)
+            {
+                const u32 y0 = std::min(y * 2, height - 1);
+                const u32 y1 = std::min(y * 2 + 1, height - 1);
+                for (u32 x = 0; x < outWidth; x++)
+                {
+                    const u32 x0 = std::min(x * 2, width - 1);
+                    const u32 x1 = std::min(x * 2 + 1, width - 1);
+                    const usize taps[4] = {
+                        (static_cast<usize>(y0) * width + x0) * 4,
+                        (static_cast<usize>(y0) * width + x1) * 4,
+                        (static_cast<usize>(y1) * width + x0) * 4,
+                        (static_cast<usize>(y1) * width + x1) * 4,
+                    };
+                    f32* out = result.data() + (static_cast<usize>(y) * outWidth + x) * 4;
+                    for (u32 c = 0; c < 4; c++)
+                    {
+                        out[c] = (source[taps[0] + c] + source[taps[1] + c] + source[taps[2] + c] +
+                                  source[taps[3] + c]) *
+                                 0.25f;
+                    }
+                }
+            }
+            return result;
+        }
+
         // Thin ordinal adapters over the shared authoring-name tables
         // (Renderer/TypeNames.h): CookedTextureHeader stores the enum ordinals as u32.
 
@@ -491,7 +773,7 @@ namespace Veng::Cook
         {
             return std::unexpected(
                 fmt::format("texture importer: '{}': invalid compression '{}' (expected "
-                            "'ASTC', 'BC7', or 'None')",
+                            "'ASTC', 'BC7', 'None', or 'RGBA16F')",
                             sourcePath.string(), texJson["compression"].get<string>()));
         }
 
@@ -510,30 +792,111 @@ namespace Veng::Cook
             role = *parsed;
         }
 
-        ResolvedFormat resolved{};
-        if (rawCodec)
+        // "channels" narrows a float source's stored width: a source wider than the data it
+        // carries stores only R, or R and G, and the rest is simply not written.
+        optional<u32> pinnedChannels;
+        if (texJson.contains("channels"))
         {
-            resolved = RawCodecFormat(*rawCodec, srgb);
-        }
-        else if (context.Config != nullptr)
-        {
-            const CompressionFormat roleFormat = context.Config->Formats.GetFormat(role);
-            const Result<ResolvedFormat> lowered = ResolveCompressionFormat(roleFormat, role);
-            if (!lowered)
+            const u32 value =
+                texJson["channels"].is_number_unsigned() ? texJson["channels"].get<u32>() : 0u;
+            if (value != 1 && value != 2 && value != 4)
             {
-                return std::unexpected(fmt::format("texture importer: '{}': {}",
-                                                   sourcePath.string(), lowered.error()));
+                return std::unexpected(
+                    fmt::format("texture importer: '{}': invalid channels '{}' (expected 1, 2, "
+                                "or 4)",
+                                sourcePath.string(), texJson["channels"].dump()));
             }
-            resolved = *lowered;
+            pinnedChannels = value;
+        }
+
+        const path imagePath = sourcePath.parent_path() / texJson["image"].get<string>();
+        context.RecordDependency(imagePath);
+
+        const Result<DecodedSource> decodedResult = DecodeSource(imagePath);
+        if (!decodedResult)
+        {
+            return std::unexpected(fmt::format("texture importer: '{}': {}", sourcePath.string(),
+                                               decodedResult.error()));
+        }
+        const DecodedSource& decoded = *decodedResult;
+
+        // A float source has no eight-bit fallback: it resolves to the half-float family, whose
+        // member the source's own width picks. Everything an eight-bit encoder could do to it
+        // would quantise the range it was authored to carry, so the alternatives are refused.
+        ResolvedFormat resolved{};
+        u32 storedChannels = 4;
+        if (decoded.Float)
+        {
+            if (srgb)
+            {
+                return std::unexpected(
+                    fmt::format("texture importer: '{}': \"srgb\": true on a float source; a "
+                                "float texture is linear",
+                                sourcePath.string()));
+            }
+            if (rawCodec && *rawCodec != TextureCodec::Half)
+            {
+                return std::unexpected(fmt::format(
+                    "texture importer: '{}': compression '{}' cannot encode a float source; "
+                    "declare \"compression\": \"RGBA16F\" or \"role\": \"HDR\"",
+                    sourcePath.string(), texJson["compression"].get<string>()));
+            }
+            if (!rawCodec && context.Config != nullptr)
+            {
+                const CompressionFormat roleFormat = context.Config->Formats.GetFormat(role);
+                if (roleFormat != CompressionFormat::RGBA16Sfloat)
+                {
+                    return std::unexpected(fmt::format(
+                        "texture importer: '{}': a float source at role '{}' resolves to {}, "
+                        "which cannot carry float data; declare \"role\": \"HDR\"",
+                        sourcePath.string(), ToString(role), ToString(roleFormat)));
+                }
+            }
+            storedChannels = pinnedChannels.value_or(decoded.Channels);
+            resolved = RawCodecFormat(TextureCodec::Half, srgb, storedChannels);
         }
         else
         {
-            // Zero-config default: the hardcoded ASTC codec, the Metal-blessed codec on the primary
-            // platform, preserved bit-for-bit for an un-migrated project.
-            resolved = RawCodecFormat(TextureCodec::ASTC, srgb);
-            // ASTC has no two-channel mode; a Normal role still stores X/Y and reconstructs Z.
-            resolved.ChannelLayout = role == CompressionRole::Normal ? CookedChannelLayout::NormalXY
-                                                                     : CookedChannelLayout::Direct;
+            if (pinnedChannels)
+            {
+                return std::unexpected(
+                    fmt::format("texture importer: '{}': \"channels\" narrows a float source; an "
+                                "8-bit source always stores RGBA",
+                                sourcePath.string()));
+            }
+            if (rawCodec == TextureCodec::Half)
+            {
+                return std::unexpected(
+                    fmt::format("texture importer: '{}': an LDR source cannot fill an HDR role; "
+                                "author the source as EXR or 16-bit PNG",
+                                sourcePath.string()));
+            }
+
+            if (rawCodec)
+            {
+                resolved = RawCodecFormat(*rawCodec, srgb, 4);
+            }
+            else if (context.Config != nullptr)
+            {
+                const CompressionFormat roleFormat = context.Config->Formats.GetFormat(role);
+                const Result<ResolvedFormat> lowered = ResolveCompressionFormat(roleFormat, role);
+                if (!lowered)
+                {
+                    return std::unexpected(fmt::format("texture importer: '{}': {}",
+                                                       sourcePath.string(), lowered.error()));
+                }
+                resolved = *lowered;
+            }
+            else
+            {
+                // Zero-config default: the hardcoded ASTC codec, the Metal-blessed codec on the
+                // primary platform, preserved bit-for-bit for an un-migrated project.
+                resolved = RawCodecFormat(TextureCodec::ASTC, srgb, 4);
+                // ASTC has no two-channel mode; a Normal role still stores X/Y and reconstructs Z.
+                resolved.ChannelLayout = role == CompressionRole::Normal
+                                             ? CookedChannelLayout::NormalXY
+                                             : CookedChannelLayout::Direct;
+            }
         }
 
         const TextureCodec codec = resolved.Codec;
@@ -546,19 +909,8 @@ namespace Veng::Cook
                                 resolved.Format == Renderer::Format::BC7Srgb ||
                                 resolved.Format == Renderer::Format::ASTC4x4Srgb;
 
-        const path imagePath = sourcePath.parent_path() / texJson["image"].get<string>();
-        context.RecordDependency(imagePath);
-
-        int width = 0;
-        int height = 0;
-        int channels = 0;
-        stbi_uc* pixels = stbi_load(imagePath.string().c_str(), &width, &height, &channels, 4);
-        if (!pixels)
-        {
-            return std::unexpected(
-                fmt::format("texture importer: '{}': failed to load image '{}': {}",
-                            sourcePath.string(), imagePath.string(), stbi_failure_reason()));
-        }
+        const int width = decoded.Width;
+        const int height = decoded.Height;
 
         // Optional downscale: when the larger edge exceeds "max_size", shrink the image
         // (aspect-preserving) before packing so high-resolution source art does not bloat
@@ -579,30 +931,56 @@ namespace Veng::Cook
             targetHeight = std::max(1, static_cast<int>(static_cast<f32>(height) * scale));
         }
 
-        const usize pixelBytes =
-            static_cast<usize>(targetWidth) * static_cast<usize>(targetHeight) * 4;
-        vector<u8> pixelData(pixelBytes);
+        const bool resizing = targetWidth != width || targetHeight != height;
+        const usize targetTexels =
+            static_cast<usize>(targetWidth) * static_cast<usize>(targetHeight);
 
-        if (targetWidth != width || targetHeight != height)
+        vector<u8> pixelData;
+        vector<f32> floatPixels;
+        if (decoded.Float)
         {
-            const stbir_pixel_layout layout = STBIR_RGBA;
-            const unsigned char* resized =
-                srgbEncode ? stbir_resize_uint8_srgb(pixels, width, height, 0, pixelData.data(),
-                                                     targetWidth, targetHeight, 0, layout)
-                           : stbir_resize_uint8_linear(pixels, width, height, 0, pixelData.data(),
-                                                       targetWidth, targetHeight, 0, layout);
-            if (resized == nullptr)
+            if (resizing)
             {
-                stbi_image_free(pixels);
-                return std::unexpected(fmt::format("texture importer: '{}': failed to resize '{}'",
-                                                   sourcePath.string(), imagePath.string()));
+                floatPixels.assign(targetTexels * 4, 0.0f);
+                if (stbir_resize_float_linear(decoded.Texels.data(), width, height, 0,
+                                              floatPixels.data(), targetWidth, targetHeight, 0,
+                                              STBIR_RGBA) == nullptr)
+                {
+                    return std::unexpected(
+                        fmt::format("texture importer: '{}': failed to resize '{}'",
+                                    sourcePath.string(), imagePath.string()));
+                }
+            }
+            else
+            {
+                floatPixels = decoded.Texels;
             }
         }
         else
         {
-            std::memcpy(pixelData.data(), pixels, pixelBytes);
+            pixelData.assign(targetTexels * 4, 0);
+            if (resizing)
+            {
+                const stbir_pixel_layout layout = STBIR_RGBA;
+                const unsigned char* resized =
+                    srgbEncode ? stbir_resize_uint8_srgb(decoded.Bytes.data(), width, height, 0,
+                                                         pixelData.data(), targetWidth,
+                                                         targetHeight, 0, layout)
+                               : stbir_resize_uint8_linear(decoded.Bytes.data(), width, height, 0,
+                                                           pixelData.data(), targetWidth,
+                                                           targetHeight, 0, layout);
+                if (resized == nullptr)
+                {
+                    return std::unexpected(
+                        fmt::format("texture importer: '{}': failed to resize '{}'",
+                                    sourcePath.string(), imagePath.string()));
+                }
+            }
+            else
+            {
+                std::memcpy(pixelData.data(), decoded.Bytes.data(), targetTexels * 4);
+            }
         }
-        stbi_image_free(pixels);
 
         const u32 baseWidth = static_cast<u32>(targetWidth);
         const u32 baseHeight = static_cast<u32>(targetHeight);
@@ -724,19 +1102,23 @@ namespace Veng::Cook
         }
 
         // The byte size of one mip level in the chosen codec: a BC4 4x4 block is 8 bytes; BC7,
-        // BC5, and ASTC are 16-byte 4x4 blocks; None is uncompressed RGBA8 (w*h*4). Mirrors the
-        // engine's BytesForLevel.
+        // BC5, and ASTC are 16-byte 4x4 blocks; Half is w*h*channels half-floats; None is
+        // uncompressed RGBA8 (w*h*4). Mirrors the engine's BytesForLevel.
         const usize codecBlockBytes = codec == TextureCodec::BC4 ? Bc4BlockBytes : BlockBytes;
         const bool blockCodec = codec == TextureCodec::BC7 || codec == TextureCodec::ASTC ||
                                 codec == TextureCodec::BC5 || codec == TextureCodec::BC4;
-        const auto levelBytes = [blockCodec, codecBlockBytes](u32 levelWidth,
-                                                              u32 levelHeight) -> usize
+        const auto levelBytes = [blockCodec, codecBlockBytes, codec,
+                                 storedChannels](u32 levelWidth, u32 levelHeight) -> usize
         {
             if (blockCodec)
             {
                 const u32 blocksWide = (levelWidth + BlockSize - 1) / BlockSize;
                 const u32 blocksHigh = (levelHeight + BlockSize - 1) / BlockSize;
                 return static_cast<usize>(blocksWide) * blocksHigh * codecBlockBytes;
+            }
+            if (codec == TextureCodec::Half)
+            {
+                return static_cast<usize>(levelWidth) * levelHeight * storedChannels * sizeof(u16);
             }
             return static_cast<usize>(levelWidth) * levelHeight * 4;
         };
@@ -815,6 +1197,49 @@ namespace Veng::Cook
         std::memcpy(blob.data(), &header, sizeof(header));
 
         usize writeOffset = sizeof(header);
+
+        // A float chain filters in f32 and converts each level to half afterwards, so no level is
+        // filtered from a quantised parent.
+        if (codec == TextureCodec::Half)
+        {
+            bool outOfRange = false;
+            vector<f32> level = std::move(floatPixels);
+            u32 levelWidth = baseWidth;
+            u32 levelHeight = baseHeight;
+            for (u32 index = 0; index < mipCount; index++)
+            {
+                if (index > 0)
+                {
+                    const u32 nextWidth = std::max(1u, levelWidth >> 1);
+                    const u32 nextHeight = std::max(1u, levelHeight >> 1);
+                    level = HalveFloatLevel(level, levelWidth, levelHeight, nextWidth, nextHeight);
+                    levelWidth = nextWidth;
+                    levelHeight = nextHeight;
+                }
+
+                auto* out = reinterpret_cast<u16*>(blob.data() + writeOffset);
+                const usize texels = static_cast<usize>(levelWidth) * levelHeight;
+                for (usize texel = 0; texel < texels; texel++)
+                {
+                    for (u32 channel = 0; channel < storedChannels; channel++)
+                    {
+                        out[texel * storedChannels + channel] =
+                            PackHalf(level[texel * 4 + channel], outOfRange);
+                    }
+                }
+                writeOffset += levelBytes(levelWidth, levelHeight);
+            }
+
+            if (outOfRange)
+            {
+                fmt::print(stderr,
+                           "texture importer: '{}': '{}' carries values outside the half range; "
+                           "they are clamped to +/-{}\n",
+                           sourcePath.string(), imagePath.string(), HalfMax);
+            }
+
+            return blob;
+        }
 
         // Level 0 packs from the decoded (possibly downscaled) base pixels directly.
         if (const VoidResult packed =

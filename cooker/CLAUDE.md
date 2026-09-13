@@ -252,6 +252,23 @@ at cook time:
   codec-dependent. The header's `Format` integer (hand-synced to the `Renderer::Format` ordinals)
   is what the loader bridges back. **The codec is chosen by a build configuration's role table,
   not the manifest** — a texture declares a `role`; see [build configurations](#build-configurations--role--format-resolution) below.
+- **A float source cooks to half-float texels instead.** An OpenEXR `"image"`, or any image stb
+  reports as sixteen-bit (a 16-bit PNG), decodes to RGBA `f32` — the EXR through tinyexr's
+  `LoadEXR`, the sixteen-bit one through `stbi_load_16` expanded from the source's **own** channels
+  (so a two-channel file's second channel lands in G rather than being replicated as luminance) and
+  scaled by `1/65535`. It packs to `RGBA16Sfloat`, `RG16Sfloat` or `R16Sfloat` by channel count: an
+  EXR carries 1 or 4 (`LoadEXR` reads a one-channel file or an RGB(A) one and refuses anything
+  else), a sixteen-bit image narrows 1 → R, 2 → RG, 3 or 4 → RGBA, and `"channels": 1 | 2 | 4`
+  narrows further still — a source wider than the data it carries stores only R, or R and G, and
+  the rest is not written. The **mip chain is filtered in `f32`** with a 2×2 box filter (an odd
+  edge clamps to the last column/row) and each level converts to half **afterwards**, so no level
+  is filtered from a quantised parent; `"generate_mips": false` and `"max_size"` behave as they do
+  for an eight-bit source, the downscale running on the float image. The `f32 → f16` conversion
+  rounds to nearest with ties to even; a magnitude past the half range clamps to ±65504 and the
+  cook names the file on stderr once, since an EXR carrying `inf` is an authoring defect rather
+  than a crash. **`"srgb": true` on a float source is a cook error** — a float texture is linear by
+  definition, and a silent ignore would hide the mistake — as is a float source whose role resolves
+  to a block-compressed or eight-bit format, and an eight-bit source at the `HDR` role.
 - **Textures** take an optional `"max_size"` that downscales the decoded image (aspect-
   preserving, sRGB- or linear-correct) before packing, so high-resolution scan art does not
   bloat the blob.
@@ -299,9 +316,22 @@ shared `ToString`/`Parse` tables, never ordinal. The runtime carries no JSON par
   `role` (the intent — Color / Normal / Mask / HDR / UI); the importer reads the config's
   `RoleToFormat` table for that role and lowers the resulting `CompressionFormat` to the
   cook's encode-path codec. The resolution chain is **raw `"compression"` (the escape
-  hatch) wins, else the config's role table, else the hardcoded ASTC zero-config default** —
-  so a pack with no configuration cooks exactly as it did before configurations existed. The
-  config's `CompressionLevel` drives the output archive's zstd.
+  hatch — `"ASTC"`, `"BC7"`, `"None"`, or `"RGBA16F"`) wins, else the config's role table, else
+  the hardcoded ASTC zero-config default** — so a pack with no configuration cooks exactly as it
+  did before configurations existed. The config's `CompressionLevel` drives the output archive's
+  zstd.
+- **`HDR` is the one role whose table entry names a family, not the literal cooked format.** Every
+  `*.buildcfg` maps it to `RGBA16Sfloat`, and that is read as *the half-float family*: the
+  **source's own width picks the member**, so a one-channel EXR at the `HDR` role cooks
+  `R16Sfloat` and a narrowed two-channel one cooks `RG16Sfloat`. Every other role's entry is the
+  format the cook writes.
+- **A float source never falls back to an eight-bit codec.** With no configuration it resolves to
+  the half-float family by channel count rather than to the zero-config ASTC default; under a
+  configuration whose role resolves to anything but `RGBA16Sfloat`, and under a raw
+  `"compression"` naming an eight-bit codec, the cook is a **located error** naming the role (or
+  the codec) and the `"role": "HDR"` fix. The converse is refused too: an eight-bit source at a
+  role resolving to `RGBA16Sfloat`, or pinned `"compression": "RGBA16F"`, is an error telling the
+  author to supply an EXR or 16-bit PNG.
 - **The configuration file is one central depfile input.** The cooker records the
   `--config` file in the depfile centrally (like the pack JSON), not as a per-importer
   edge: a config edit re-cooks the whole pack anyway, so a fine-grained per-asset edge would
@@ -461,7 +491,7 @@ through"**.
 
 | importer | class | why |
 |---|---|---|
-| Texture | **Parallel** | `stb_image`'s failure reason is `thread_local`; `stb_image_resize2`'s tables are read-only; the block encoders' process-global tables are now ordered (below) |
+| Texture | **Parallel** | `stb_image`'s failure reason is `thread_local`; `stb_image_resize2`'s tables are read-only; tinyexr's decode holds no process-global mutable state and spawns no threads (`TINYEXR_USE_THREAD` off); the block encoders' process-global tables are now ordered (below) |
 | Raw | **Parallel** | a file read into a fresh buffer, driving no library |
 | Mesh, Skeleton, Animation, CollisionShape | Serialized | assimp — per-call `Importer` instances are the documented pattern, but the `DefaultLogger` singleton and per-format loader state were not established |
 | Shader, Material, MaterialInstance | Serialized | Slang — `createGlobalSession` per call, reentrancy not established |

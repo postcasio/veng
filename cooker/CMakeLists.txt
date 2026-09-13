@@ -381,9 +381,9 @@ target_include_directories(veng_cook_objs PUBLIC
 
 # stb_image (texture decode) and xxHash (archive content hashing) — header-only
 # implementation details of src/Vendor/StbImage.cpp / TextureImporter.cpp and
-# src/Vendor/XxHash.cpp / Cooker.cpp & Verify.cpp respectively. tinyexr (HDR
-# environment decode) and the zlib it compresses through back the EnvironmentImporter
-# via src/Vendor/TinyExr.cpp.
+# src/Vendor/XxHash.cpp / Cooker.cpp & Verify.cpp respectively. tinyexr (OpenEXR
+# decode) and the zlib it compresses through back the EnvironmentImporter and the
+# TextureImporter's float path via src/Vendor/TinyExr.cpp.
 target_include_directories(veng_cook_objs PRIVATE
         ${stb_SOURCE_DIR}
         ${dr_libs_SOURCE_DIR}

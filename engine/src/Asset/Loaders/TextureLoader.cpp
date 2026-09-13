@@ -30,6 +30,12 @@ namespace Veng
                 return Renderer::Format::RGBA8Unorm;
             case 3:
                 return Renderer::Format::RGBA8Srgb;
+            case 5:
+                return Renderer::Format::R16Sfloat;
+            case 6:
+                return Renderer::Format::RGBA16Sfloat;
+            case 18:
+                return Renderer::Format::RG16Sfloat;
             case 21:
                 return Renderer::Format::BC7Unorm;
             case 22:

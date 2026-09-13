@@ -5,6 +5,7 @@
 # Binary assets — never subject to text normalization.
 *.png binary
 *.jpg binary
+*.exr binary
 *.ttf binary
 *.otf binary
 *.bin binary

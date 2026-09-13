@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x0D645C71831A93DD",
+      "type": "Texture",
+      "source": "textures/texture_float_rgba_rg.tex.json"
+    }
+  ]
+}

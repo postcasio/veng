@@ -4,10 +4,12 @@
 // end-to-end proof for the first full asset-type vertical slice.
 
 #include <array>
+#include <cstdlib>
 #include <filesystem>
 #include "support/TempPath.h"
 
 #include <doctest/doctest.h>
+#include <fmt/format.h>
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Cook/BuiltinImporters.h>
@@ -672,4 +674,142 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(handle.Get()->GetSamplerHandle().IsValid());
 
     std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "texture loader: the three half-float widths load and sample")
+{
+    // Sampled-image and linear-filter support for the half-float formats is a required Vulkan
+    // format feature, so these need no device gate — unlike the BC/ASTC cases above.
+    struct HalfCase
+    {
+        const char* Pack;
+        AssetId Id;
+        Format Expected;
+        uvec2 Extent;
+        u32 MipLevels;
+        // The channel the fixture holds constant, and the 8-bit value a correct sample of it
+        // lands on: the one texel a filtered, mip-selected fullscreen sample can be pinned to.
+        u32 Channel;
+        u8 Value;
+    };
+
+    const std::array<HalfCase, 3> cases = {
+        // The 8x4 RGBA fixture holds a constant 0.5 in G. A two-byte texel (R16Sfloat) and a
+        // four-byte one (RG16Sfloat) are the widths a latent RGBA8 row-pitch assumption would
+        // alias silently, which is why all three run.
+        HalfCase{.Pack = "texture_float_rgba_pack.json",
+                 .Id = AssetId{0x881592C1898B753CULL},
+                 .Expected = Format::RGBA16Sfloat,
+                 .Extent = {8, 4},
+                 .MipLevels = 4,
+                 .Channel = 1,
+                 .Value = 128},
+        HalfCase{.Pack = "texture_float_r_pack.json",
+                 .Id = AssetId{0x84F4E2BDF7356BFCULL},
+                 .Expected = Format::R16Sfloat,
+                 .Extent = {4, 4},
+                 .MipLevels = 3,
+                 .Channel = 0,
+                 .Value = 128},
+        HalfCase{.Pack = "texture_float_rg_pack.json",
+                 .Id = AssetId{0x4C3558CBA109B2D1ULL},
+                 .Expected = Format::RG16Sfloat,
+                 .Extent = {8, 4},
+                 .MipLevels = 4,
+                 .Channel = 0,
+                 .Value = 255},
+    };
+
+    const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
+
+    AssetManager shaderAssets(Context, Tasks, Types);
+    REQUIRE(shaderAssets.Mount(path(TEST_SHADER_PACK)).has_value());
+
+    const AssetResult<AssetHandle<Shader>> vertexAsset =
+        shaderAssets.LoadSync<Shader>(AssetId{0x1F42});
+    const AssetResult<AssetHandle<Shader>> fragmentAsset =
+        shaderAssets.LoadSync<Shader>(AssetId{0x1F44});
+    REQUIRE(vertexAsset.has_value());
+    REQUIRE(fragmentAsset.has_value());
+
+    Ref<PipelineLayout> layout;
+    auto pipeline = CreateSamplePipeline(Context, layout, vertexAsset->Get()->Module,
+                                         fragmentAsset->Get()->Module);
+
+    for (const HalfCase& half : cases)
+    {
+        const path outArchive =
+            Veng::TestSupport::TempDir() / fmt::format("veng_gpu_{}.vengpack", half.Pack);
+
+        Cook::Cooker cooker;
+        Cook::RegisterBuiltinImporters(cooker);
+        REQUIRE(cooker.CookPack(fixtureDir / half.Pack, outArchive).has_value());
+
+        AssetManager assets(Context, Tasks, Types);
+        REQUIRE(assets.Mount(outArchive).has_value());
+
+        const AssetResult<AssetHandle<Texture>> handle = assets.LoadSync<Texture>(half.Id);
+        REQUIRE(handle.has_value());
+        REQUIRE(handle->IsLoaded());
+
+        const Texture& texture = *handle->Get();
+        CHECK(texture.GetFormat() == half.Expected);
+        CHECK(texture.GetExtent() == half.Extent);
+        CHECK(texture.GetImage()->GetMipLevels() == half.MipLevels);
+        CHECK(texture.GetHandle().IsValid());
+
+        auto outputImage = Image::Create(
+            Context, {
+                         .Name = "Half Sample Output",
+                         .Extent = {Size, Size, 1},
+                         .Format = Format::RGBA8Unorm,
+                         .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                     });
+        auto outputView =
+            ImageView::Create(Context, {.Name = "Half Sample Output View", .Image = outputImage});
+
+        auto& bindless = Context.GetBindlessRegistry();
+
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                RenderGraph graph(Context);
+                const ResourceId outputId = graph.Import("Output");
+
+                graph.AddPass("Sample Half Texture")
+                    .Color({
+                        .Resource = outputId,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+                    })
+                    .Execute(
+                        [&](PassContext& ctx)
+                        {
+                            CommandBuffer& passCmd = ctx.Cmd();
+                            passCmd.BindPipeline(pipeline);
+                            passCmd.SetViewport({0, 0}, {Size, Size});
+                            passCmd.SetScissor({0, 0}, {Size, Size});
+                            bindless.Bind(passCmd);
+                            passCmd.PushConstants(SamplePushConstants{
+                                .TextureIndex = texture.GetHandle().Index,
+                                .SamplerIndex = texture.GetSamplerHandle().Index,
+                            });
+                            passCmd.DrawFullscreenTriangle();
+                        });
+
+                const RenderGraph::ImportBinding binding{.Id = outputId, .View = outputView};
+                graph.Compile()->Execute(cmd, {&binding, 1});
+            });
+
+        // The fixture's constant channel survives decode, upload and filtering to within a
+        // quantisation step of the eight-bit target; a mis-strided upload would not land near it.
+        const vector<u8> pixels = outputImage->Download();
+        REQUIRE(pixels.size() == static_cast<size_t>(Size) * Size * 4);
+        const int sampled = static_cast<int>(pixels[half.Channel]);
+        CHECK(std::abs(sampled - static_cast<int>(half.Value)) <= 4);
+
+        std::filesystem::remove(outArchive);
+    }
 }

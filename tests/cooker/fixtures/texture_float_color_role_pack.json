@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0xAC29546B5298ED0F",
+      "type": "Texture",
+      "source": "textures/texture_float_color_role.tex.json"
+    }
+  ]
+}
