@@ -471,6 +471,7 @@ namespace Veng::Mcp
             RegisterMutationTools(*server, mcpHost);
             RegisterInputTools(*server, mcpHost);
             RegisterProfileWriteTools(*server, mcpHost);
+            RegisterRenderCaptureWriteTools(*server, mcpHost);
         }
         return server;
     }

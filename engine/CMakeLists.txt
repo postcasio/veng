@@ -201,6 +201,7 @@ add_library(veng SHARED
         src/UI/DebugPanels.cpp
         src/UI/Inspector.cpp
         src/UI/RenderSettings.cpp
+        src/UI/VideoCapture.cpp
         src/Net/InputReplication.cpp
         src/Net/Replication.cpp
         src/Reflection/FieldDisplay.cpp

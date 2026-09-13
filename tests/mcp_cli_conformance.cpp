@@ -92,6 +92,12 @@ int main()
               "--list advertised render.stats");
         Check(list.Output.find("scene.stats") != std::string::npos,
               "--list advertised scene.stats");
+        // The read-only half of the capture family; its two write verbs ride AllowMutations, which
+        // this host leaves off (mcp_capture drives the gated pair).
+        Check(list.Output.find("render.capture_status") != std::string::npos,
+              "--list advertised render.capture_status");
+        Check(list.Output.find("render.capture_start") == std::string::npos,
+              "--list omitted render.capture_start on a read-only host");
     }
 
     // Step 3: render.stats round-trips its payload to stdout as parseable JSON carrying the cull

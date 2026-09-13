@@ -1063,6 +1063,7 @@ if (VENG_BUILD_TESTS)
             # alignment with the picture under a driven audio device.
             tests/unit/video_recorder_core.cpp
             tests/unit/video_recorder_audio.cpp
+            tests/unit/video_capture_panel_state.cpp
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
     # The committed trace-format fixtures live in the source tree; the
@@ -1371,6 +1372,23 @@ if (VENG_BUILD_TESTS)
 
     add_test(NAME mcp_profile COMMAND veng_test_mcp_profile)
     set_tests_properties(mcp_profile PROPERTIES LABELS mcp)
+
+    # The video-capture tools over a headless host that has no recorder at all — which is what a run
+    # with no swap chain is. It pins everything the tools promise short of an encoder: the write gate
+    # (all three under AllowMutations, only render.capture_status without it), the read-only verb
+    # answering rather than erroring where nothing can record and reporting every state field, both
+    # write verbs refusing with the stated reason, and the handler's own settings validation — a zero
+    # frame rate, an unknown codec, an unknown key (a directory among them) — as whole-call tool
+    # errors. Device-free, so it runs in the default band.
+    add_executable(veng_test_mcp_capture tests/mcp_capture.cpp)
+    target_link_libraries(veng_test_mcp_capture PRIVATE veng::mcp veng::veng
+            nlohmann_json::nlohmann_json)
+    target_compile_definitions(veng_test_mcp_capture PRIVATE JSON_NOEXCEPTION)
+    target_include_directories(veng_test_mcp_capture SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/mcp/src/Vendor)
+
+    add_test(NAME mcp_capture COMMAND veng_test_mcp_capture)
+    set_tests_properties(mcp_capture PROPERTIES LABELS mcp)
 
     # The client proof: stand an McpServer up in-process (a ping tool + an always-failing
     # err tool), pump it on a background thread, and drive McpClient against it — ListTools,

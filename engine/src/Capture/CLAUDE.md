@@ -151,6 +151,70 @@ component is taken, so a name carrying separators cannot escape. An empty name y
 `<app>-<yyyymmdd-hhmmss>`. This is the profiler's rule, for the profiler's reason: **no capture path is
 ever a tool argument.**
 
+## The panel is the engine's, the window is the host's
+
+`Veng::UI::VideoCapturePanel(VideoRecorder&, VideoCapturePanelState&)`
+(`Veng/UI/VideoCapture.h`) is the recorder's control surface, in the `DebugPanels.h` idiom: a free
+function drawing into whatever window the caller opened, with **no window of its own and no static
+state**. The host holds one `VideoCapturePanelState` — the edited `VideoCaptureSettings` plus the
+name field's buffer — so a debug shell and the editor each place the panel in their own menu and
+their own docking, and the engine owns no top-level window in a host's UI.
+
+Three layouts, chosen by the status the one per-frame `GetState()` reports (that read is also what
+advances a finished capture from `Finalizing` to `Off`):
+
+- **Idle** — the settings over a **Start** button: the encoding combo, a codec combo whose
+  impossible pairing is greyed with its reason in the row's own label (a disabled ImGui item never
+  registers as hovered, so a tooltip on one would not appear), the bits-per-pixel drag with the
+  megabit figure it derives beside it and an outright override, the lockstep checkbox with a frame
+  rate enabled only under it, the frame budget, the audio combo, **Include overlay** (off, its
+  tooltip saying the overlay is the application's own interface — the panel among it — while a
+  world's HUD is recorded either way), the name field, and the resolved capture directory. A
+  recorder that cannot record draws the reason where the button would be.
+- **Recording** — the same settings drawn disabled above the live figures (codec, encoding, extent,
+  frames against the budget, duration, file size, audio blocks) and the two warning rows that appear
+  only when non-zero (`FramesWaited`/`WaitedForEncoderMs` as the encoder falling behind, and
+  `AudioOverruns`) — over a **Stop** button, under which one disabled line states that closing the
+  window does not stop the capture and that the window is not in the recording unless Include
+  overlay was set.
+- **Finalizing** — "Writing file…" and neither button, while the writer commits.
+
+The last file's path is drawn in every state once one exists, and a non-empty `LastError` in the
+theme's warning colour. Two pure helpers carry everything the panel does that is not a draw call, so
+the unit band reaches them: `ResolveCaptureSettings(state)` folds the trimmed name buffer into the
+settings a Start receives, and `CaptureBitrateMbps(settings, extent)` is `DeriveBitsPerSecond`
+rounded to whole megabits — the recorder's own derivation, not a second one beside it.
+
+## The tools are the profiler's trio, gated the same way
+
+`veng::mcp` exposes the recorder through `McpHost::VideoRecorder`
+(`function<Capture::VideoRecorder*()>`, null when the host has none):
+
+| Tool | Gate | What it does |
+|---|---|---|
+| `render.capture_status` | always | Reports the state — `available`, `status` (`Off`/`Recording`/`Finalizing`), the resolved encoding, codec and bitrate, the extent, frames acquired and appended against the budget, duration, file size, the wait and overrun counters, the path, and `last_error`. |
+| `render.capture_start` | `AllowMutations` | Begins a capture from an all-optional settings object, returning the state; a refusal is a tool error carrying the reason. |
+| `render.capture_stop` | `AllowMutations` | Requests the stop and returns the state it leaves. |
+
+A capture writes a file and drives the application's frame clock, so the two write verbs ride the
+`AllowMutations` gate beside the profiler's capture verbs (`RegisterRenderCaptureWriteTools`, beside
+`RegisterProfileWriteTools`); the status read is registered whatever the server's write posture.
+
+Three properties of the surface follow from rules stated elsewhere and are worth naming here:
+
+- **There is no directory argument, and an unknown key is refused.** The name resolves under
+  `CaptureDirectory()` as above, so a key the schema does not name — `Directory` among them — is a
+  tool error rather than a silently ignored field.
+- **Validation is the handler's.** `McpServer` echoes a tool's `InputSchemaJson` into `tools/list`
+  and checks nothing against it, so a zero frame rate, an unknown enumerator, a quality deriving no
+  bitrate, and a codec that cannot carry the encoding are each refused by the handler.
+- **`capture_stop` returns as soon as the stop is *requested*.** Finalization is asynchronous, so a
+  caller that needs the file finished on disk polls `capture_status` until `status` is `Off`.
+
+A host that leaves the resolver null — or a headless or non-Apple one that supplies a recorder that
+cannot record — answers `capture_status` with `available` false and the reason stated, and refuses
+both write verbs with it.
+
 ## Objective-C++ conventions in this directory
 
 `VideoRecorderApple.mm` is **non-ARC** — the default for this tree's `.mm` sources, and what the
@@ -189,6 +253,13 @@ line is the whole of what the band can and cannot reach, so it is worth being ex
   no hardware encoder.
 - `tests/gpu/video_recorder_unavailable.cpp` — a headless recorder constructs without touching a swap
   chain, reports itself unavailable, and refuses to start with a reason.
+- `tests/unit/video_capture_panel_state.cpp` — the panel's two pure helpers: a typed name (trimmed,
+  and empty when blank) is the name a Start receives, and the megabit figure is `DeriveBitsPerSecond`
+  at every extent. Nothing is asserted about layout or draw.
+- `tests/mcp_capture.cpp` — the tools over a host with no recorder, which is what a headless run is:
+  the write gate both ways, `capture_status` answering with `available` false and every state field,
+  the start schema naming no directory, both write verbs refusing with the reason, and the handler's
+  settings validation as whole-call tool errors.
 
 **Only the live look can prove:**
 
@@ -199,5 +270,8 @@ line is the whole of what the band can and cannot reach, so it is worth being ex
   to the picture through a whole recording rather than a hundred and twenty synthetic pumps.
 - That `IncludeOverlay` does what it says, and that the recording's brightness and colour match what
   the window showed.
+- That the **panel drives a real capture** — its Start and Stop, its live figures moving, and the
+  settings it edits reaching the file — since the panel needs both a window and a recorder that can
+  record.
 
 A capture recorded from a window is therefore **load-bearing evidence, not decoration**.

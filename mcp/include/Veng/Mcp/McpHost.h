@@ -18,6 +18,11 @@ namespace Veng
         class Viewport;
     }
 
+    namespace Capture
+    {
+        class VideoRecorder;
+    }
+
     namespace Diagnostics
     {
         class Profiler;
@@ -192,6 +197,20 @@ namespace Veng::Mcp
         /// A build without VE_PROFILE still resolves a profiler shell whose capture verbs return a
         /// clear "disabled" error, which the tools surface as an error result.
         function<Diagnostics::Profiler*()> Profiler;
+
+        /// @brief Resolves the video recorder the capture tools drive, or null when the host has none.
+        ///
+        /// The render.capture_* tools reach the application's Capture::VideoRecorder through here.
+        /// A host that leaves it null (or returns null) makes render.capture_status report the
+        /// capture unavailable rather than dereferencing it, and makes the two write verbs refuse
+        /// with that reason — the same posture a null RenderContext gives the screenshot tool. The
+        /// two write verbs are registered only under AllowMutations (a capture writes a file and
+        /// drives the frame clock); render.capture_status is read-only and always registered.
+        ///
+        /// The closure runs on the render thread during Pump(), so it may freely touch the
+        /// recorder. A headless or non-Apple host may still supply one: it reports itself
+        /// unavailable and refuses to start with a reason.
+        function<Capture::VideoRecorder*()> VideoRecorder;
 
         /// @brief Resolves the audio engine the audio.list_voices tool inspects, or null.
         ///

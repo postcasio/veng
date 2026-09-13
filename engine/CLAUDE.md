@@ -126,6 +126,30 @@ bounded/best-effort, not a guaranteed thread per range. It is for occasional, CP
 (a one-shot bake, a bulk transform), not per-frame hot paths; steady per-frame work submits to the
 pool.
 
+**The frame clock has two modes, and one of them is what a recording rides.** `Frame` reads one
+clock — `Time::Update()` — and every consumer (the fixed-step simulation, the views, the audio pump,
+the engine-global shader clock) takes that delta. In **wall** mode it is the high-resolution wall
+clock. **`DriveFrameClock(FrameClockInfo)`** puts it in **driven** mode, where it returns a fixed
+`1/fps` however long the frame actually took: the world advances one step per frame at the nominal
+rate, the run-loop frame cap is skipped, every managed viewport's render scale is held at its
+ceiling (so frame-time pressure cannot soften the picture), and the audio device is driven — its
+hardware stopped, each pump mixing exactly the frame's samples. `Time::Now()` stays wall time
+throughout, so session timeouts, directory reaping and the net pumps keep their real cadence.
+`ReleaseFrameClock()` reverses all of it; both take effect at the top of the next frame, and
+`IsFrameClockDriven()` reports the applied state.
+
+**`GetVideoRecorder()`** is the one consumer that drives that mode for its own reason: the
+`Capture::VideoRecorder` records what the application presents to a video file through the
+platform's hardware encoder, and a **lockstep** capture is exactly the driven clock — every frame
+simulated, rendered and encoded before the next begins, so the file plays back at the full rate
+however slowly the machine rendered it, with the sound track sample-locked to the picture. The
+recorder exists in every build and on every platform; where the platform has no encoder behind a
+shareable surface, or the run is headless and presents no frame, `IsAvailable()` is false and
+`Start` refuses with a reason. A running capture is stopped and its file finalized before the
+engine's services tear down. See [src/Capture/CLAUDE.md](src/Capture/CLAUDE.md) — which also carries
+the engine-owned control panel (`Veng::UI::VideoCapturePanel`) and the `render.capture_*` tools a
+host reaches the recorder through.
+
 **`Application` is a composition root that delegates to collaborators.** It owns the services
 above and three collaborators it drives each frame:
 

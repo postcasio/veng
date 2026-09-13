@@ -1408,6 +1408,7 @@ private:
             .InjectInput = [this](Event& event) { GetInputRouter().PostInjectedEvent(event); },
             .RenderContext = [this] { return &GetRenderContext(); },
             .Profiler = [this] { return &GetProfiler(); },
+            .VideoRecorder = [this] { return &GetVideoRecorder(); },
             .Audio = [this] { return &GetAudioEngine(); },
         });
 

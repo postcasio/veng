@@ -33,6 +33,11 @@ editor framework for a debug slider.)
   and Array draw nothing there and return false: they expand into several rows and have no
   single-value rendering, so a caller wanting them opens a property table and uses
   `DrawFieldWidget`.
+- **The à-la-carte debug panels are free functions over a reference** (`Veng/UI/DebugPanels.h`:
+  `RendererStatsPanel`, `PerformancePanel`, `RenderSettingsEditor`; `Veng/UI/VideoCapture.h`:
+  `VideoCapturePanel`). None opens a window of its own or keeps static state — a caller wraps the
+  panel it wants in its own `UI::Window` and holds any persistent editing state itself — so a game's
+  debug shell and the editor place the same panel in their own menus and docking.
 - **Every editable widget returns `[[nodiscard]] bool`** ("changed"), keeping immediate-mode
   semantics.
 - **Text is preformatted `string_view`, not printf varargs** — a caller writes

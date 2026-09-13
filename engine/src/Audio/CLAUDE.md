@@ -140,6 +140,8 @@ finite **stream** voice fills its ring, drains through the null `Pump`, and reti
 is pure CPU, the null backend is also what makes the whole contract unit-testable without hardware —
 a test publishes a voice, calls `RenderBlock`, and reads the mixed buffer.
 
+## The driven device and the block tap
+
 **`AudioDevice::SetDriven` puts a *hardware* device on that same path.** A caller whose frame clock
 is not paced by real time (`Time::Drive`) stops the hardware — `ma_device_stop` is synchronous, so
 the callback thread is quiescent for the whole span and the main thread is the mixer's only caller,

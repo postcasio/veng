@@ -7,6 +7,7 @@
 #include <Veng/Mcp/McpTool.h>
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Capture/VideoRecorder.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/FormatInfo.h>
@@ -17,7 +18,10 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <charconv>
+#include <span>
 
 namespace Veng::Mcp
 {
@@ -39,6 +43,277 @@ namespace Veng::Mcp
         Renderer::Viewport* ResolveViewport(const McpHost& host, const string& name)
         {
             return host.Viewport ? host.Viewport(name) : nullptr;
+        }
+
+        /// @brief Resolves the video recorder through the host, or null when the seam is unset.
+        Capture::VideoRecorder* ResolveRecorder(const McpHost& host)
+        {
+            return host.VideoRecorder ? host.VideoRecorder() : nullptr;
+        }
+
+        /// @brief The reason a host with no reachable recorder gives every capture verb.
+        constexpr string_view RecorderUnavailable =
+            "video capture is unavailable: this host exposes no recorder";
+
+        /// @brief The capture status as the enumerator's own name, for a tool response.
+        const char* StatusName(const Capture::VideoCaptureStatus status)
+        {
+            switch (status)
+            {
+            case Capture::VideoCaptureStatus::Off:
+                return "Off";
+            case Capture::VideoCaptureStatus::Recording:
+                return "Recording";
+            case Capture::VideoCaptureStatus::Finalizing:
+                return "Finalizing";
+            }
+            return "Off";
+        }
+
+        /// @brief The resolved encoding as the enumerator's own name, for a tool response.
+        const char* EncodingName(const Capture::CaptureEncoding encoding)
+        {
+            switch (encoding)
+            {
+            case Capture::CaptureEncoding::Auto:
+                return "Auto";
+            case Capture::CaptureEncoding::Sdr:
+                return "Sdr";
+            case Capture::CaptureEncoding::Hdr10:
+                return "Hdr10";
+            }
+            return "Sdr";
+        }
+
+        /// @brief Serializes a capture state, plus whether this run can record at all.
+        Json CaptureStateJson(const Capture::VideoCaptureState& state, const bool available)
+        {
+            return Json{{"available", available},
+                        {"status", StatusName(state.Status)},
+                        {"lockstep", state.Lockstep},
+                        {"encoding", EncodingName(state.Encoding)},
+                        {"include_overlay", state.IncludeOverlay},
+                        {"codec", state.Codec},
+                        {"bitrate_mbps", state.BitrateMbps},
+                        {"extent", Json::array({state.Extent.x, state.Extent.y})},
+                        {"frames_acquired", state.FramesAcquired},
+                        {"frames_appended", state.FramesAppended},
+                        {"frame_budget", state.FrameBudget},
+                        {"duration_seconds", state.DurationSeconds},
+                        {"frames_waited", state.FramesWaited},
+                        {"waited_for_encoder_ms", state.WaitedForEncoderMs},
+                        {"audio_blocks", state.AudioBlocks},
+                        {"audio_overruns", state.AudioOverruns},
+                        {"bytes_written", state.BytesWritten},
+                        {"path", state.Path.string()},
+                        {"last_error", state.LastError}};
+        }
+
+        /// @brief Resolves one enumerator name out of @p names, case-insensitively.
+        /// @param text   The requested name.
+        /// @param names  The enumerator names, in enumerator order.
+        /// @return The enumerator's index, or nullopt when no name matches.
+        optional<usize> FindEnumerator(const string& text, std::span<const string_view> names)
+        {
+            for (usize index = 0; index < names.size(); ++index)
+            {
+                if (std::ranges::equal(text, names[index], [](const char a, const char b)
+                                       { return std::tolower(a) == std::tolower(b); }))
+                {
+                    return index;
+                }
+            }
+            return std::nullopt;
+        }
+
+        /// @brief The encoding arms a capture_start argument may name.
+        constexpr std::array<string_view, 3> EncodingNames{"Auto", "Sdr", "Hdr10"};
+        /// @brief The codec arms a capture_start argument may name.
+        constexpr std::array<string_view, 4> CodecNames{"Hevc", "H264", "ProRes422HQ",
+                                                        "ProRes4444"};
+        /// @brief The sound-track arms a capture_start argument may name.
+        constexpr std::array<string_view, 3> AudioNames{"None", "Pcm", "Aac"};
+        /// @brief Every key capture_start accepts; anything else is rejected as unknown.
+        constexpr std::array<string_view, 10> SettingKeys{
+            "encoding", "codec",           "bits_per_pixel", "bitrate_mbps", "lockstep",
+            "name",     "include_overlay", "frame_rate",     "frame_budget", "audio"};
+
+        /// @brief Parses and validates a capture_start argument object into settings.
+        ///
+        /// The server validates nothing against a tool's schema, so every rule lives here: an
+        /// unknown key (a directory among them — a capture is named, never pathed), an unknown
+        /// enumerator, a non-positive frame rate, a quality that derives no bitrate, and a codec
+        /// that cannot carry the requested encoding are each a tool error rather than a silently
+        /// ignored field.
+        /// @param args  The tools/call arguments object.
+        /// @return The settings, or the reason they were refused.
+        Result<Capture::VideoCaptureSettings> ParseCaptureSettings(const Json& args)
+        {
+            Capture::VideoCaptureSettings settings;
+            if (!args.is_object())
+            {
+                return settings;
+            }
+
+            for (const auto& [key, value] : args.items())
+            {
+                if (std::ranges::find(SettingKeys, key) == SettingKeys.end())
+                {
+                    return std::unexpected(fmt::format(
+                        "unknown setting '{}'; a capture is named, never pathed — the engine "
+                        "resolves 'name' under the capture directory",
+                        key));
+                }
+            }
+
+            const auto enumArg = [&args](const string& key, std::span<const string_view> names,
+                                         const string& choices) -> Result<optional<usize>>
+            {
+                if (!args.contains(key))
+                {
+                    return optional<usize>{};
+                }
+                const Json& value = args[key];
+                if (!value.is_string())
+                {
+                    return std::unexpected(
+                        fmt::format("'{}' names one of {} as a string", key, choices));
+                }
+                const optional<usize> index = FindEnumerator(value.get<string>(), names);
+                if (!index)
+                {
+                    return std::unexpected(fmt::format("unknown {} '{}'; one of {}", key,
+                                                       value.get<string>(), choices));
+                }
+                return index;
+            };
+
+            const auto intArg = [&args](const string& key, const i64 least) -> Result<optional<i64>>
+            {
+                if (!args.contains(key))
+                {
+                    return optional<i64>{};
+                }
+                const Json& value = args[key];
+                if (!value.is_number_integer())
+                {
+                    return std::unexpected(fmt::format("'{}' is an integer", key));
+                }
+                const i64 number = value.get<i64>();
+                if (number < least)
+                {
+                    return std::unexpected(fmt::format("'{}' must be at least {}", key, least));
+                }
+                return number;
+            };
+
+            const Result<optional<usize>> encoding =
+                enumArg("encoding", EncodingNames, "Auto, Sdr, Hdr10");
+            if (!encoding)
+            {
+                return std::unexpected(encoding.error());
+            }
+            if (*encoding)
+            {
+                settings.Encoding = static_cast<Capture::CaptureEncoding>(**encoding);
+            }
+
+            const Result<optional<usize>> codec =
+                enumArg("codec", CodecNames, "Hevc, H264, ProRes422HQ, ProRes4444");
+            if (!codec)
+            {
+                return std::unexpected(codec.error());
+            }
+            if (*codec)
+            {
+                settings.Codec = static_cast<Capture::VideoCodec>(**codec);
+            }
+
+            const Result<optional<usize>> audio = enumArg("audio", AudioNames, "None, Pcm, Aac");
+            if (!audio)
+            {
+                return std::unexpected(audio.error());
+            }
+            if (*audio)
+            {
+                settings.Audio = static_cast<Capture::AudioTrack>(**audio);
+            }
+
+            const Result<optional<i64>> bitrate = intArg("bitrate_mbps", 0);
+            if (!bitrate)
+            {
+                return std::unexpected(bitrate.error());
+            }
+            if (*bitrate)
+            {
+                settings.BitrateMbps = static_cast<u32>(**bitrate);
+            }
+
+            const Result<optional<i64>> frameRate = intArg("frame_rate", 1);
+            if (!frameRate)
+            {
+                return std::unexpected(frameRate.error());
+            }
+            if (*frameRate)
+            {
+                settings.FrameRate = static_cast<u32>(**frameRate);
+            }
+
+            const Result<optional<i64>> budget = intArg("frame_budget", 0);
+            if (!budget)
+            {
+                return std::unexpected(budget.error());
+            }
+            if (*budget)
+            {
+                settings.FrameBudget = static_cast<u64>(**budget);
+            }
+
+            if (args.contains("bits_per_pixel"))
+            {
+                if (!args["bits_per_pixel"].is_number())
+                {
+                    return std::unexpected(string("'bits_per_pixel' is a number"));
+                }
+                settings.BitsPerPixel = args["bits_per_pixel"].get<f32>();
+            }
+            if (args.contains("lockstep"))
+            {
+                if (!args["lockstep"].is_boolean())
+                {
+                    return std::unexpected(string("'lockstep' is a boolean"));
+                }
+                settings.Lockstep = args["lockstep"].get<bool>();
+            }
+            if (args.contains("include_overlay"))
+            {
+                if (!args["include_overlay"].is_boolean())
+                {
+                    return std::unexpected(string("'include_overlay' is a boolean"));
+                }
+                settings.IncludeOverlay = args["include_overlay"].get<bool>();
+            }
+            if (args.contains("name"))
+            {
+                if (!args["name"].is_string())
+                {
+                    return std::unexpected(string("'name' is a string"));
+                }
+                settings.Name = args["name"].get<string>();
+            }
+
+            if (settings.BitrateMbps == 0 && settings.BitsPerPixel <= 0.0f)
+            {
+                return std::unexpected(
+                    string("'bits_per_pixel' must be positive, or 'bitrate_mbps' must be given"));
+            }
+            if (!Capture::CodecSupportsEncoding(settings.Codec, settings.Encoding))
+            {
+                return std::unexpected(fmt::format("{} cannot encode {}",
+                                                   CodecNames[static_cast<usize>(settings.Codec)],
+                                                   EncodingName(settings.Encoding)));
+            }
+            return settings;
         }
 
         /// @brief Default page size for render.bindless_slots when the caller omits `limit`.
@@ -249,6 +524,35 @@ namespace Veng::Mcp
                                "render context"));
                 }
                 return CaptureSwapChainContentBlocks(*context);
+            };
+            server.RegisterTool(std::move(tool));
+        }
+
+        // render.capture_status — what the recorder is doing, and whether this run can record at
+        // all. Read-only, so it is registered whatever the server's write posture, and polling it
+        // is how a caller learns a stopped capture has finished committing its file.
+        {
+            McpTool tool;
+            tool.Name = "render.capture_status";
+            tool.Description =
+                "Reports the video recorder's state: 'available' (whether this build and run can "
+                "record at all), 'status' (Off/Recording/Finalizing), the resolved encoding, "
+                "codec and bitrate, the recorded extent, frames acquired and appended against the "
+                "frame budget, file duration and size, the encoder-wait and audio-loss counters, "
+                "the file's path, and the reason the last capture refused or ended early. "
+                "Read-only. Stop returns as soon as the stop is requested, so a caller that needs "
+                "the file finished polls this until 'status' is Off.";
+            tool.InputSchemaJson = R"({"type":"object","properties":{}})";
+            tool.Handler = [&host](string_view) -> Result<string>
+            {
+                Capture::VideoRecorder* const recorder = ResolveRecorder(host);
+                if (recorder == nullptr)
+                {
+                    Json out = CaptureStateJson(Capture::VideoCaptureState{}, false);
+                    out["reason"] = string(RecorderUnavailable);
+                    return out.dump();
+                }
+                return CaptureStateJson(recorder->GetState(), recorder->IsAvailable()).dump();
             };
             server.RegisterTool(std::move(tool));
         }
@@ -551,6 +855,90 @@ namespace Veng::Mcp
                     out["nextCursor"] = std::to_string(nextCursor);
                 }
                 return out.dump();
+            };
+            server.RegisterTool(std::move(tool));
+        }
+    }
+
+    void RegisterRenderCaptureWriteTools(McpServer& server, const McpHost& host)
+    {
+        // render.capture_start — begin recording the presented frame. Every setting is optional
+        // and defaults to the recorder's own; there is no directory argument, so a capture is
+        // named and the engine places it.
+        {
+            McpTool tool;
+            tool.Name = "render.capture_start";
+            tool.Description =
+                "Begins recording the presented frame to a video file through the platform's "
+                "hardware encoder. Every setting is optional: 'encoding' (Auto/Sdr/Hdr10, Auto "
+                "following the display), 'codec' (Hevc/H264/ProRes422HQ/ProRes4444), "
+                "'bits_per_pixel' (quality; the bitrate is extent x rate x this), "
+                "'bitrate_mbps' (an outright override; 0 derives), 'lockstep' (drive the frame "
+                "clock so the file plays back at the full rate however slowly the machine "
+                "renders, the audio sample-locked and silent meanwhile), 'frame_rate', "
+                "'frame_budget' (stop after this many frames; 0 records until stopped), 'audio' "
+                "(None/Pcm/Aac), 'include_overlay' (whether the application's own interface is "
+                "composited in; off by default), and 'name'. There is no directory argument — "
+                "the engine resolves the name under the capture directory. Returns the capture "
+                "state; a refusal is a tool error carrying the reason.";
+            tool.InputSchemaJson =
+                R"({"type":"object","properties":{)"
+                R"("encoding":{"type":"string","enum":["Auto","Sdr","Hdr10"]},)"
+                R"("codec":{"type":"string","enum":["Hevc","H264","ProRes422HQ","ProRes4444"]},)"
+                R"("bits_per_pixel":{"type":"number","exclusiveMinimum":0},)"
+                R"("bitrate_mbps":{"type":"integer","minimum":0},)"
+                R"("lockstep":{"type":"boolean"},)"
+                R"("frame_rate":{"type":"integer","minimum":1},)"
+                R"("frame_budget":{"type":"integer","minimum":0},)"
+                R"("audio":{"type":"string","enum":["None","Pcm","Aac"]},)"
+                R"("include_overlay":{"type":"boolean"},)"
+                R"("name":{"type":"string"}},"additionalProperties":false})";
+            tool.Handler = [&host](string_view argsJson) -> Result<string>
+            {
+                const Json args = Json::parse(argsJson, nullptr, false);
+                const Result<Capture::VideoCaptureSettings> settings = ParseCaptureSettings(args);
+                if (!settings)
+                {
+                    return std::unexpected(settings.error());
+                }
+
+                Capture::VideoRecorder* const recorder = ResolveRecorder(host);
+                if (recorder == nullptr)
+                {
+                    return std::unexpected(string(RecorderUnavailable));
+                }
+                if (!recorder->Start(settings.value()))
+                {
+                    const Capture::VideoCaptureState state = recorder->GetState();
+                    return std::unexpected(state.LastError.empty()
+                                               ? string("the capture was refused")
+                                               : state.LastError);
+                }
+                return CaptureStateJson(recorder->GetState(), recorder->IsAvailable()).dump();
+            };
+            server.RegisterTool(std::move(tool));
+        }
+
+        // render.capture_stop — request the stop and report the state it left. Finalization is
+        // asynchronous, so the file is complete once render.capture_status reports Off.
+        {
+            McpTool tool;
+            tool.Name = "render.capture_stop";
+            tool.Description =
+                "Ends the running video capture and returns the recorder's state as the stop "
+                "leaves it. The file is committed asynchronously, so the state may read "
+                "Finalizing; poll render.capture_status until 'status' is Off for a file that is "
+                "finished on disk. A no-op when nothing is recording.";
+            tool.InputSchemaJson = R"({"type":"object","properties":{}})";
+            tool.Handler = [&host](string_view) -> Result<string>
+            {
+                Capture::VideoRecorder* const recorder = ResolveRecorder(host);
+                if (recorder == nullptr)
+                {
+                    return std::unexpected(string(RecorderUnavailable));
+                }
+                recorder->Stop();
+                return CaptureStateJson(recorder->GetState(), recorder->IsAvailable()).dump();
             };
             server.RegisterTool(std::move(tool));
         }

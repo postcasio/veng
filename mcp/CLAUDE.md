@@ -345,6 +345,27 @@ family registers from the editor side.
   whole array rather than the page. Nothing is recorded per slot for this: the description is read
   back off the `Ref` the registry already keeps to stop a registered resource dangling, so a
   registration site is untouched and a caller pays only for the call.
+
+  **The `render.capture_*` trio records the presented frame to a video file**, through
+  `McpHost::VideoRecorder` (`Capture::VideoRecorder`, `engine/src/Capture/CLAUDE.md`).
+  **`render.capture_status`** is read-only and always registered: `available`, `status`
+  (`Off`/`Recording`/`Finalizing`), the resolved encoding/codec/bitrate, the extent, frames acquired
+  and appended against the frame budget, duration, file size, the encoder-wait and audio-loss
+  counters, the path and `last_error`. **`render.capture_start`** and **`render.capture_stop`**
+  register only under `AllowMutations` (`RegisterRenderCaptureWriteTools`, beside
+  `RegisterProfileWriteTools`) — a capture writes a file *and* drives the application's frame clock,
+  so it rides the same write gate the profiler's captures do. `capture_start` takes the settings as
+  an all-optional object (`encoding`, `codec`, `bits_per_pixel`, `bitrate_mbps`, `lockstep`,
+  `frame_rate`, `frame_budget`, `audio`, `include_overlay`, `name`) and **no directory** — the
+  engine resolves the name under the capture directory, so a `Directory` key is refused as unknown
+  rather than ignored. Settings validation is the **handler's**: the server echoes `InputSchemaJson`
+  into `tools/list` and checks nothing against it, so a zero frame rate, an unknown enumerator, or a
+  codec that cannot carry the encoding is a tool error from `Start`. `capture_stop` returns the
+  state as soon as the stop is *requested* — finalization is asynchronous, as `profile.stop`'s
+  writer drain is — so a caller that needs the file finished polls `capture_status` until `status`
+  is `Off`. A host leaving the resolver null, and a headless or non-Apple one that cannot record,
+  answer with the unavailability reason.
+
 - **`gui.*`** (`src/GuiTools.cpp`, read-only) — `gui.list_documents` names the documents the
   presented world holds (owning entity, surface or overlay, canvas size); `gui.inspect` dumps one
   document's **solved** element tree — id, classes, kind, visibility, painted text, and the layout
@@ -452,6 +473,7 @@ struct McpHost
     function<void(Event&)>                            InjectInput;   // optional synthetic-input sink
     function<Renderer::Context*()>                    RenderContext; // optional presented-frame capture source
     function<Diagnostics::Profiler*()>                Profiler;      // optional profiler source (profile.*)
+    function<Capture::VideoRecorder*()>               VideoRecorder; // optional recorder (render.capture_*)
     function<Audio::AudioEngine*()>                   Audio;         // optional audio engine (audio.list_voices)
 };
 ```
@@ -570,6 +592,12 @@ httplib stays PRIVATE and `veng-config` already carries `find_dependency(nlohman
   `Gui::Document`'s focused `TextInput` and edits its value, the batch shape-validation errors are
   whole-call, a rejected batch applies nothing, a read-only server omits the tool, and a null
   `InjectInput` host reports it unavailable.
+- **`mcp_capture`** — the `render.capture_*` tools over a headless host with no recorder (a run with
+  no swap chain presents no frame to record, so that is the honest shape): the write gate both ways,
+  `render.capture_status` answering rather than erroring with `available` false and every state
+  field present, `render.capture_start`'s advertised schema naming no directory, both write verbs
+  refusing with the stated reason, and the handler's settings validation — a zero frame rate, an
+  unknown codec, an unknown key — as whole-call tool errors.
 - **`mcp_client`** — the client transport smoke: stand a server up in-process, drive
   `McpClient::ListTools` + `CallTool ping` + both failure paths (protocol error, tool `isError`).
 - **`mcp_cli`** — `RunClientCli` in-process against an in-process server: the arg grammar,
