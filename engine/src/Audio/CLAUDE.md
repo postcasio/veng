@@ -151,6 +151,13 @@ which is what keeps the one thread rule intact — and each `Pump` then mixes ex
 mix short. Nothing is emitted for the span, and a `ma_device_start` that fails on release degrades to
 the null backend with a logged error, the same device-loss policy as everywhere else.
 
+**Every main-thread wait on the mixer treats a driven device as it treats the null one.** Both have
+no mixing thread to wait for, so a wait that spins until the callback thread consumes a generation
+waits for itself. `AudioEngine::StopVoice` is the one such wait: it mixes a scratch frame inline to
+advance the consumed serial when the device is null *or* driven (the scratch frame is not tapped, so
+a recording loses one sample per stopped voice). A new wait on the consumed serial follows the same
+rule, and the GPU tier pins it on real hardware.
+
 **The block tap is the seam a consumer takes the mix through.** `SetBlockTap` installs one sink that
 receives every mixed block on the main thread, in order: `Pump` hands it the block directly on a null
 or driven device, and a running hardware device's callback pushes each block into an `SpscRing` of

@@ -1664,11 +1664,15 @@ namespace Veng::Audio
             return bufferedPtr == nullptr ||
                    bufferedPtr->ReleasedByDecoder.load(std::memory_order_acquire);
         };
-        if (m_Device.IsNull())
+        if (m_Device.IsNull() || m_Device.IsDriven())
         {
-            // No real-time thread exists; drive the mixer here to advance the consumed serial past
-            // the removal (mixing one frame latches the just-published generator-free snapshot), then
-            // yield until the fill thread — which runs regardless of backend — acknowledges.
+            // No real-time thread exists — none at all on the null device, and a driven device's is
+            // stopped, so its mixer runs only inside Pump on this very thread. Every main-thread wait
+            // on the mixer must therefore treat a driven device as the null one, or it waits for
+            // itself. Drive the mixer here to advance the consumed serial past the removal (mixing one
+            // frame latches the just-published generator-free snapshot), then yield until the fill
+            // thread — which runs regardless of backend — acknowledges. The scratch frame is not
+            // delivered to the block tap: a recording loses one sample per stopped voice.
             std::array<f32, 8> scratch{};
             const u32 channels = std::min<u32>(m_Device.GetChannels(), 8);
             while (m_Device.GetConsumedSerial() < target || !released())

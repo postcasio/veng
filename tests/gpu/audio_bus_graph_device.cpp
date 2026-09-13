@@ -66,3 +66,36 @@ TEST_CASE("ConfigureBusGraph republishes cleanly under a device")
     device->Pump(1.0f / 60.0f);
     CHECK(engine.GetActiveVoiceCount() == 0);
 }
+
+TEST_CASE("StopVoice returns on a driven hardware device")
+{
+    const Unique<AudioDevice> device =
+        AudioDevice::Create(AudioDeviceInfo{.Backend = AudioBackend::Auto});
+    if (device->IsNull())
+    {
+        MESSAGE("skipped: no hardware audio device in this session");
+        return;
+    }
+    AudioEngine& engine = device->GetEngine();
+
+    // Driving the device stops its callback thread; the mixer then runs only inside Pump, on this
+    // thread. A stop that waited for the callback thread to consume the removal would wait forever.
+    device->SetDriven(true);
+    REQUIRE(device->IsDriven());
+
+    const std::vector<f32> samples(4800, 0.25f);
+    const Ref<AudioBuffer> clip = AudioBuffer::Create(samples, 1, device->GetSampleRate());
+    const VoiceHandle voice =
+        engine.AddVoice(clip, VoiceParams{.Bus = AudioBuses::Master(), .Gain = 1.0f, .Loop = true});
+    CHECK(voice.IsValid());
+    device->Pump(1.0f / 60.0f);
+
+    // The property is that this call returns at all; it did not before the driven device took the
+    // inline-mix path. The pump after it reaps the voice.
+    engine.StopVoice(voice);
+    device->Pump(1.0f / 60.0f);
+    CHECK(engine.GetActiveVoiceCount() == 0);
+
+    device->SetDriven(false);
+    CHECK_FALSE(device->IsDriven());
+}
