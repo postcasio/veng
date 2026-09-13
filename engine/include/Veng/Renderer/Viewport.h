@@ -422,31 +422,11 @@ namespace Veng::Renderer
 
         /// @brief Returns the attached documents in composite order, bottom layer → top.
         ///
-        /// The layer stack in draw order — index 0 the bottom-most, back() the top-most. The render
-        /// walks it in order. The span is valid until the next AttachDocument/DetachDocument.
-        /// Input routing reads GetInputDocuments instead, which is this stack plus the interactive
-        /// screen-space pre-bloom overlay documents that never join it.
+        /// The layer stack in draw order — index 0 the bottom-most, back() the top-most. An input
+        /// layer walks it top-most first (reverse) scoped to GetSeat(); the render walks it in order.
+        /// The span is valid until the next AttachDocument/DetachDocument.
         /// @return The ordered attached documents, empty when none are attached.
         [[nodiscard]] std::span<Gui::Document* const> GetAttachedDocuments() const;
-
-        /// @brief Returns every document that takes this viewport's input, in composite order.
-        ///
-        /// The honest routing order, bottom → top: the interactive screen-space SceneHdrPreBloom
-        /// overlay documents first, then the layer stack (GetAttachedDocuments). A pre-bloom overlay
-        /// composites into scene color *before* tonemap while the layer stack composites over the
-        /// finished image, so a layer-stack document is always visually above one and is offered
-        /// every event first — an input layer walks this span top-most first (reverse), scoped to
-        /// GetSeat(), exactly as it walks the layer stack.
-        ///
-        /// A world-anchored overlay is deliberately absent: its document space is a virtual plane
-        /// projected through the camera, so a screen-space pointer position names nothing in it —
-        /// world-anchored input goes through Gui::SurfaceInputConsumer's ray path instead.
-        ///
-        /// The overlay half is rebuilt from each Render's overlay drive, so it is empty before the
-        /// first render and for a viewport that stopped presenting; the layer-stack half tracks
-        /// attach/detach. The span is valid until the next Render or AttachDocument/DetachDocument.
-        /// @return The documents to route input into, empty when none take input.
-        [[nodiscard]] std::span<Gui::Document* const> GetInputDocuments() const;
 
         /// @brief Sets the seat a hosted document inherits as its input identity.
         ///
@@ -838,9 +818,6 @@ namespace Veng::Renderer
         /// @brief Rebuilds m_DocumentPointers from m_Documents after an attach or detach.
         void RebuildDocumentPointers();
 
-        /// @brief Recomposes m_InputDocuments from the pre-bloom overlay half and the layer stack.
-        void RebuildInputDocuments();
-
         /// @brief Drives every GuiSurface in the bound scene into its HDR target ahead of the render.
         ///
         /// Walks the bound ViewState World for GuiSurface components, drives each one's document into
@@ -946,20 +923,6 @@ namespace Veng::Renderer
         /// The span GetAttachedDocuments returns, kept parallel to m_Documents so the accessor hands
         /// out a contiguous Document* view without exposing the layer records.
         vector<Gui::Document*> m_DocumentPointers;
-
-        /// @brief Interactive screen-space pre-bloom overlay documents, rebuilt every Render.
-        ///
-        /// These documents are never attached to the layer stack, so nothing self-detaches one when
-        /// its overlay, entity, or world goes away. Render therefore clears this ahead of every early
-        /// return and DriveHdrOverlays refills it from the overlays it actually drove, which is what
-        /// drops a hidden, non-interactive, unclaimed, or departed overlay from the routing order.
-        vector<Gui::Document*> m_HdrInputDocuments;
-
-        /// @brief The span GetInputDocuments returns: m_HdrInputDocuments then m_DocumentPointers.
-        ///
-        /// Composite order, bottom → top — a pre-bloom overlay ranks below the whole layer stack
-        /// because it blends into scene color before tonemap, under everything composited after it.
-        vector<Gui::Document*> m_InputDocuments;
 
         /// @brief The seat a hosted document inherits as its input identity; Null reads every device.
         Entity m_Seat = Entity::Null;

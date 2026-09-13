@@ -38,14 +38,6 @@ namespace Veng::Renderer
     ///   renderer's bloom-mask target (additive) — so the overlay can bloom by a strength it names,
     ///   decoupled from its drawn luminance (the glow-split the fixed bloom bright-pass cannot express).
     ///
-    /// A composite material always reads the intermediate through a runtime-bound `Document` texture
-    /// handle, rasterized at the composite resolution so a `.Load()` by pixel coordinate is 1:1. A
-    /// material that additionally declares a `DocumentSampler` field gets the shared linear-clamp
-    /// fullscreen sampler bound into it each frame (the PostProcess `SceneSampler` convention), which
-    /// is what lets a composite resample the document — warp, offset, or magnify it — rather than
-    /// read it 1:1. The write is guarded on the field being declared, so a material without one is
-    /// untouched.
-    ///
     /// Material overlays share **one reused intermediate**, so each is a render-to-intermediate pass
     /// followed by its composite, declared in order — the graph serializes the reuse. The count of
     /// material overlays is a structural quantity: the renderer recompiles the pass set when it changes
@@ -94,9 +86,6 @@ namespace Veng::Renderer
         void Resize(uvec2 extent) override { m_Extent = extent; }
 
         /// @brief Contributes the direct-blend and material-composite passes into the graph.
-        ///
-        /// Also captures the shared fullscreen sampler from @p io, which a composite material
-        /// declaring a DocumentSampler field is bound each frame.
         void Declare(RenderGraph& graph, const PassIO& io) override;
 
     private:
@@ -121,11 +110,6 @@ namespace Veng::Renderer
         ResourceId m_DocTargetId;
         /// @brief The intermediate's bindless slot, written into each material's Document field each frame.
         TextureHandle m_DocTargetHandle;
-        /// @brief The shared linear-clamp fullscreen sampler, captured from the PassIO each Declare.
-        ///
-        /// Written into a composite material's DocumentSampler field where it declares one. The
-        /// SceneRenderer acquires the sampler once and outlives this pass, so the slot stays valid.
-        SamplerHandle m_SamplerHandle;
         /// @brief The renderer's bloom-mask target, or invalid when bloom is off (no mask attachment).
         ResourceId m_BloomMaskId;
         /// @brief The bloom-mask target's format.

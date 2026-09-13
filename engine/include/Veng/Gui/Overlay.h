@@ -100,13 +100,6 @@ namespace Veng
         /// False (the default) leaves the overlay display-only: it data-binds and draws but hit-tests
         /// nothing and takes no focus. True routes the claiming viewport's seat input into the
         /// document. A system may flip it at runtime; the next Drive reapplies the change.
-        ///
-        /// It means the same thing under either Placement for a ScreenSpace overlay: a
-        /// SceneHdrPreBloom overlay's document joins the viewport's input order
-        /// (Renderer::Viewport::GetInputDocuments) *below* the post-tonemap layer stack, matching the
-        /// order the two composite in. A WorldAnchored overlay takes no screen-space input at all —
-        /// its document space is a camera-projected plane, so a pointer position in logical screen
-        /// points names nothing in it; that input arrives through the surface ray path instead.
         bool Interactive = false;
 
         /// @brief Whether the overlay draws, or is suppressed without tearing its runtime down.
@@ -150,13 +143,9 @@ namespace Veng
         /// The material is a PostProcess-domain MaterialInstance whose fragment samples the rendered
         /// document through a runtime-bound `Document` texture handle (written by the composite each
         /// frame, the PostProcess `Scene`-handle convention) by integer pixel coordinate — the
-        /// document is rasterized at the composite resolution, so it reads 1:1. A material that also
-        /// declares a `DocumentSampler` field is bound the shared linear-clamp fullscreen sampler
-        /// each frame (the PostProcess `SceneSampler` convention), which is what a composite that
-        /// *resamples* the document — warping, offsetting, or magnifying it — reads through; a
-        /// material declaring no such field is untouched. A material declaring `"bloomMask": true`
-        /// additionally returns a float SV_Target1 amplitude. Ignored for a PostTonemap overlay,
-        /// which never reaches the pre-bloom composite.
+        /// document is rasterized at the composite resolution, so it reads 1:1. A material declaring
+        /// `"bloomMask": true` additionally returns a float SV_Target1 amplitude. Ignored for a
+        /// PostTonemap overlay, which never reaches the pre-bloom composite.
         AssetHandle<MaterialInstance> Material;
 
         /// @brief How this overlay maps into its target: flat screen-space (the default) or world-anchored.
@@ -268,10 +257,6 @@ namespace Veng
         /// and builds it into @p out. It never attaches the document to a viewport layer stack — the
         /// engine conveys @p out into the pre-bloom pass instead — so an HDR overlay leaves the
         /// post-tonemap composite untouched. A failed document load leaves @p out empty.
-        ///
-        /// Interactive is applied to the document here as Drive applies it to the layer — on a flag
-        /// change, and on a re-instantiate, since a fresh tree defaults to display-only — so a
-        /// screen-space HDR overlay takes input on the claiming viewport like any other document.
         /// @param viewport  The claiming viewport, read for the driver frame (seat, camera, region).
         /// @param assets    The asset manager the document recipe and its fonts load through.
         /// @param scene     The presented scene the overlay lives in, handed to the driver.

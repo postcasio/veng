@@ -821,20 +821,6 @@ goes); `Detach` covers the other case — a viewport stops presenting a world th
 rebind), where the engine detaches the departed scene's overlays without waiting on component
 teardown.
 
-**`Placement` decides where the overlay composites, and input follows it.** `PostTonemap` (the
-default) is the layer-stack path above; `SceneHdrPreBloom` blends the document into scene color at
-the pre-bloom tail anchor instead, so it is tonemapped and blooms with the scene — and its document
-therefore never joins the layer stack. `Interactive` still means the same thing on both: a
-**`ScreenSpace`** pre-bloom overlay's document joins **`Viewport::GetInputDocuments()`**, the
-routing order the `GuiConsumer` and `IsPointerOverDocument` walk — pre-bloom overlays first, then
-the layer stack, *composite order*, so a post-tonemap document is always visually above one and is
-offered every event first. That list's overlay half is rebuilt from each `Render`'s overlay drive
-(an HDR document is attached to nothing, so nothing self-detaches it), which is what drops a
-hidden, non-interactive, unclaimed, or departed overlay out of it. A **`WorldAnchored`** overlay is
-deliberately absent from it: its document space is a virtual plane projected through the camera, so
-a screen-space pointer position names nothing in it — that input arrives through the
-`SurfaceInputConsumer` ray path, as `GuiSurface`'s does.
-
 ### The driver — per-instance presentation binding
 
 The game owns only the data binding, and the **ergonomic path for it is a driver**, not a

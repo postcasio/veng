@@ -1,9 +1,5 @@
 #include "GuiHdrOverlayScenePass.h"
 
-#include <algorithm>
-#include <span>
-#include <string_view>
-
 #include <fmt/format.h>
 
 #include <Veng/Asset/Material.h>
@@ -198,20 +194,6 @@ namespace Veng::Renderer
         // the pushed selector reads a param block carrying the current handle.
         material.SetTextureHandle("Document", m_DocTargetHandle);
 
-        // The shared linear-clamp sampler goes in beside it, but only where the material declares
-        // one: reading the document 1:1 needs no sampler (a .Load() by pixel coordinate), so the
-        // field is what a composite that resamples — warping, offsetting, magnifying — opts in with.
-        const auto hasField = [&material](std::string_view name)
-        {
-            const std::span<const MaterialField> fields = material.GetFields();
-            return std::ranges::any_of(fields,
-                                       [name](const MaterialField& f) { return f.Name == name; });
-        };
-        if (hasField("DocumentSampler"))
-        {
-            material.SetSamplerHandle("DocumentSampler", m_SamplerHandle);
-        }
-
         const Ref<GraphicsPipeline>& pipeline = CompositePipeline(material);
         cmd.BindPipeline(pipeline);
         cmd.SetViewport({0, 0}, view.PostResolveExtent);
@@ -221,12 +203,8 @@ namespace Veng::Renderer
         cmd.DrawFullscreenTriangle();
     }
 
-    void GuiHdrOverlayScenePass::Declare(RenderGraph& graph, const PassIO& io)
+    void GuiHdrOverlayScenePass::Declare(RenderGraph& graph, const PassIO& /*io*/)
     {
-        // The shared fullscreen sampler a composite material declaring a DocumentSampler is bound;
-        // the renderer acquires it once and outlives this pass, so holding the slot is safe.
-        m_SamplerHandle = io.SamplerHandle;
-
         // The direct path: merge every overlay WITHOUT a composite material and blend it into the scene
         // color in place. A scene of only direct overlays is byte-identical to the pre-material pass.
         graph.AddPass("Gui HDR Overlay")

@@ -28,13 +28,6 @@ namespace Veng
         Unique<Gui::DocumentLayer> Layer;
         /// @brief The Interactive value last applied to the layer, to reapply only on a change.
         bool AppliedInteractive = false;
-        /// @brief The Interactive value last applied to the HDR path's document, to reapply on a change.
-        bool AppliedHdrInteractive = false;
-        /// @brief The document the HDR path last applied Interactive to; detects a re-instantiate.
-        ///
-        /// The layer-stack path reapplies the flag on a fresh attach; an HDR overlay never attaches,
-        /// so it compares document identity instead — a re-instantiated tree defaults to display-only.
-        Gui::Document* InteractiveDocument = nullptr;
         /// @brief The instantiated presentation driver, or null when the overlay is undriven.
         Unique<GuiDriver> Driver;
         /// @brief The document the driver was last OnInstantiate'd against; detects a re-instantiate.
@@ -230,16 +223,6 @@ namespace Veng
         if (document == nullptr)
         {
             return;
-        }
-
-        // Interactive means the same thing on both placements: a screen-space HDR overlay's document
-        // takes the claiming viewport's input, routed through Viewport::GetInputDocuments. Reapply on
-        // a flag change and on a re-instantiate, mirroring Drive's reapply-on-a-fresh-attach.
-        if (Interactive != runtime.AppliedHdrInteractive || document != runtime.InteractiveDocument)
-        {
-            document->SetInteractive(Interactive);
-            runtime.AppliedHdrInteractive = Interactive;
-            runtime.InteractiveDocument = document;
         }
 
         const GuiDriverFrame frame{

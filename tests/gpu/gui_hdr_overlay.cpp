@@ -15,9 +15,7 @@
 // placement routing: a SceneHdrPreBloom component composites into the scene HDR and never joins the
 // post-tonemap layer stack, while a PostTonemap component does.
 
-#include <algorithm>
 #include <filesystem>
-#include <span>
 
 #include <doctest/doctest.h>
 
@@ -30,15 +28,12 @@
 #include <Veng/Asset/Primitives.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
-#include <Veng/Gui/Document.h>
 #include <Veng/Gui/DrawList.h>
 #include <Veng/Gui/Overlay.h>
-#include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/LightPacking.h>
-#include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/Viewport.h>
 #include <Veng/Scene/BuiltinTypes.h>
@@ -535,101 +530,6 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
 TEST_CASE_FIXTURE(
     Veng::Test::GpuFixture,
-    "gui hdr overlay: a composite material declaring a sampler resamples the document")
-{
-    RegisterBuiltinTypes(Types);
-
-    // Take slot 0 of the bindless sampler array with a REPEAT sampler, before anything acquires the
-    // renderer's shared clamp sampler. A material field the engine never writes keeps its cooked
-    // zero, so this is what the composite would read if the DocumentSampler write went missing — and
-    // the wrap it would then show past the document's edge is what the last probe below rules out.
-    const SamplerHandle repeatSlot = Context.GetBindlessRegistry()
-                                         .AcquireSampler({.Name = "Overlay Resample Repeat Guard",
-                                                          .AddressModeU = AddressMode::Repeat,
-                                                          .AddressModeV = AddressMode::Repeat,
-                                                          .AddressModeW = AddressMode::Repeat})
-                                         .Handle;
-    REQUIRE(repeatSlot.Index == 0);
-
-    const path compositeDir = path(GPU_POSTPROCESS_FIXTURE_DIR);
-    const path archive = Veng::TestSupport::TempDir() / "veng_gui_hdr_overlay_resample.vengpack";
-    Cook::Cooker cooker;
-    Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker
-                .CookPack(compositeDir / "overlay_composite_pack.json", archive, {}, nullptr,
-                          nullptr, nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
-                .has_value());
-
-    AssetManager assets(Context, Tasks, Types);
-    REQUIRE(assets.Mount(archive).has_value());
-
-    // The resampling instance declares DocumentSampler and draws the document at half its rasterized
-    // size, which reads past the document's right and bottom edges.
-    constexpr AssetId ResampleInstance{0x9F194B42432E70B9ULL};
-    const AssetResult<AssetHandle<MaterialInstance>> resample =
-        assets.LoadSync<MaterialInstance>(ResampleInstance);
-    REQUIRE(resample.has_value());
-    MaterialInstance* const material = resample->Get();
-    REQUIRE(std::ranges::any_of(material->GetFields(), [](const MaterialField& field)
-                                { return field.Name == "DocumentSampler"; }));
-
-    const Unique<Scene> scene = Scene::Create(Types);
-    const CameraView camera = FrontCamera();
-
-    // An opaque quad over document points [20, 44). Halved it covers output [10, 22), so the probes
-    // below sit on opposite sides of the 1:1 read and the resampled one.
-    const Gui::DrawList list = OverlayQuad(vec2(20.0f), vec2(24.0f), vec4(0.2f, 0.35f, 0.9f, 1.0f));
-
-    const auto render = [&](const bool withMaterial)
-    {
-        const Unique<SceneRenderer> renderer = SceneRenderer::Create({
-            .Context = Context,
-            .Assets = assets,
-            .OutputFormat = Context.GetOutputFormat(),
-            .Extent = Extent,
-            .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
-        });
-        GuiHdrOverlayView view = ScreenSpaceView(list);
-        view.Material = withMaterial ? material : nullptr;
-        const GuiHdrOverlayView views[] = {view};
-        Context.ImmediateCommands(
-            [&](CommandBuffer& cmd)
-            {
-                renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
-                                                           .Camera = camera,
-                                                           .Delta = 0.0f,
-                                                           .HdrOverlays = views});
-            });
-        return renderer->GetOutput()->GetImage()->Download();
-    };
-
-    constexpr uvec2 InsideHalved{16, 16}; // inside [10, 22), outside the 1:1 quad
-    constexpr uvec2 InsideDirect{30, 30}; // inside the 1:1 quad, outside [10, 22)
-    constexpr uvec2 PastEdge{80, 80};     // where a wrapped second copy of the quad would land
-
-    const vector<u8> resampled = render(true);
-    const vector<u8> direct = render(false);
-
-    // The resampled composite put the document where a 1:1 read has nothing, and left the document's
-    // own footprint empty — it read the document at a coordinate it chose, which is the capability
-    // the sampler field buys.
-    CHECK(DecodeTexel(resampled, Extent.x, InsideHalved.x, InsideHalved.y).b > 0.1f);
-    CHECK(DecodeTexel(resampled, Extent.x, InsideDirect.x, InsideDirect.y).b < 0.02f);
-
-    // Past the document's edge the read clamps, so nothing repeats there. This is the probe that
-    // fails if the engine stops binding DocumentSampler: the field falls back to the repeat sampler
-    // parked in slot 0 above and a second copy of the quad appears here.
-    CHECK(DecodeTexel(resampled, Extent.x, PastEdge.x, PastEdge.y).b < 0.02f);
-
-    // The direct blend is the complement, so the probes are reading the overlay and not the scene.
-    CHECK(DecodeTexel(direct, Extent.x, InsideDirect.x, InsideDirect.y).b > 0.1f);
-    CHECK(DecodeTexel(direct, Extent.x, InsideHalved.x, InsideHalved.y).b < 0.02f);
-
-    std::filesystem::remove(archive);
-}
-
-TEST_CASE_FIXTURE(
-    Veng::Test::GpuFixture,
     "gui hdr overlay: placement routes per component — HDR overlay skips the layer stack")
 {
     RegisterBuiltinTypes(Types);
@@ -693,106 +593,6 @@ TEST_CASE_FIXTURE(
     ldrViewport->SetViewState({.World = ldrScene.get(), .Delta = 0.016f});
     Context.ImmediateCommands([&](CommandBuffer& cmd) { ldrViewport->Render(cmd); });
     CHECK(ldrViewport->GetAttachedDocuments().size() == 1);
-
-    std::filesystem::remove(archive);
-}
-
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "gui hdr overlay: an interactive screen-space overlay routes input, under the "
-                  "layer stack")
-{
-    RegisterBuiltinTypes(Types);
-
-    constexpr AssetId UIDocumentId{0xA09AA8B60AEAA8BEULL};
-    const path packJson = path(GPU_COOKER_FIXTURE_DIR) / "ui_hud_pack.json";
-    const path archive = Veng::TestSupport::TempDir() / "veng_gui_hdr_overlay_input.vengpack";
-    Cook::Cooker cooker;
-    Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, archive).has_value());
-
-    AssetManager assets(Context, Tasks, Types);
-    REQUIRE(assets.Mount(archive).has_value());
-
-    const Unique<Scene> scene = Scene::Create(Types);
-    const auto addOverlay = [&](GuiOverlayPlacement placement, GuiOverlayProjection projection,
-                                bool interactive) -> Entity
-    {
-        const Entity entity = scene->CreateEntity();
-        auto& overlay = scene->Add<GuiOverlay>(entity);
-        overlay.Document = *assets.LoadSync<Gui::UIDocument>(UIDocumentId);
-        overlay.Placement = placement;
-        overlay.Projection = projection;
-        overlay.Interactive = interactive;
-        return entity;
-    };
-
-    const Entity hdrInteractive =
-        addOverlay(GuiOverlayPlacement::SceneHdrPreBloom, GuiOverlayProjection::ScreenSpace, true);
-    addOverlay(GuiOverlayPlacement::SceneHdrPreBloom, GuiOverlayProjection::ScreenSpace, false);
-    addOverlay(GuiOverlayPlacement::SceneHdrPreBloom, GuiOverlayProjection::WorldAnchored, true);
-    const Entity postTonemap =
-        addOverlay(GuiOverlayPlacement::PostTonemap, GuiOverlayProjection::ScreenSpace, true);
-
-    const Unique<Viewport> viewport = Viewport::Create({
-        .Context = Context,
-        .Assets = assets,
-        .Region = {.Offset = {0, 0}, .Extent = Extent},
-        .ColorFormat = Format::RGBA16Sfloat,
-        .Role = ViewportRole::Presented,
-    });
-    viewport->SetViewState({.World = scene.get(), .Delta = 0.016f});
-    const auto render = [&]
-    { Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); }); };
-    render();
-
-    // Membership: only the interactive screen-space pre-bloom overlay joins, alongside the layer
-    // stack. The non-interactive one takes no input, and the world-anchored one is not addressable
-    // by a screen-space pointer at all.
-    Gui::Document* const hdrDocument = scene->Get<GuiOverlay>(hdrInteractive).GetDocument();
-    Gui::Document* const ldrDocument = scene->Get<GuiOverlay>(postTonemap).GetDocument();
-    REQUIRE(hdrDocument != nullptr);
-    REQUIRE(ldrDocument != nullptr);
-    CHECK(hdrDocument->IsInteractive());
-
-    std::span<Gui::Document* const> input = viewport->GetInputDocuments();
-    REQUIRE(input.size() == 2);
-
-    // Ordering: the pre-bloom overlay blends into scene color before tonemap and the layer stack
-    // composites over the finished image, so the layer-stack document ranks above it — last in
-    // composite order, and therefore first in the top-down walk an input layer makes.
-    CHECK(input.front() == hdrDocument);
-    CHECK(input.back() == ldrDocument);
-    CHECK(viewport->GetAttachedDocuments().size() == 1);
-    CHECK(viewport->GetAttachedDocuments().front() == ldrDocument);
-
-    // Clearing Interactive drops the overlay from the routing order on the next drive; the layer
-    // stack is untouched.
-    scene->Get<GuiOverlay>(hdrInteractive).Interactive = false;
-    render();
-    CHECK_FALSE(hdrDocument->IsInteractive());
-    input = viewport->GetInputDocuments();
-    REQUIRE(input.size() == 1);
-    CHECK(input.front() == ldrDocument);
-
-    // Restoring it re-enters, and hiding the overlay takes it back out — a hidden overlay draws
-    // nothing, so it owns no pointer either.
-    scene->Get<GuiOverlay>(hdrInteractive).Interactive = true;
-    render();
-    CHECK(viewport->GetInputDocuments().size() == 2);
-    scene->Get<GuiOverlay>(hdrInteractive).Visible = false;
-    render();
-    CHECK(viewport->GetInputDocuments().size() == 1);
-
-    // A viewport that stops presenting a world routes into none of its overlay documents, which is
-    // what keeps a pointer from reaching a document nothing detached.
-    scene->Get<GuiOverlay>(hdrInteractive).Visible = true;
-    render();
-    REQUIRE(viewport->GetInputDocuments().size() == 2);
-    viewport->SetViewState({.World = nullptr, .Delta = 0.016f});
-    render();
-    input = viewport->GetInputDocuments();
-    REQUIRE(input.size() == 1);
-    CHECK(input.front() == ldrDocument);
 
     std::filesystem::remove(archive);
 }
