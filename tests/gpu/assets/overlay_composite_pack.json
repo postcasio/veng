@@ -15,6 +15,16 @@
       "id": "0x00000000008A0003",
       "type": "Material",
       "source": "materials/overlay_composite.vmat.json"
+    },
+    {
+      "id": "0x1802BF330CDCAA50",
+      "type": "Shader",
+      "source": "shaders/overlay_resample.frag.shader.json"
+    },
+    {
+      "id": "0x7D103843872184B1",
+      "type": "Material",
+      "source": "materials/overlay_resample.vmat.json"
     }
   ]
 }

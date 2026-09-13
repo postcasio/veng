@@ -24,9 +24,11 @@ namespace Veng::Gui
     /// Registers as the **second** consumer in the router's registry, behind the dev/editor ImGui
     /// overlay: an event ImGui consumes never reaches it, and a pointer/key event ImGui passes is
     /// offered here. It converts the routed engine events into Gui pointer/key/text dispatch against
-    /// the documents attached to the viewports it tracks — walking each pointer's viewport's layer
-    /// stack **topmost-first**, skipping display-only documents, and stopping at the first document
-    /// that consumes the event (an unconsumed event falls through to a later consumer).
+    /// the documents the viewports it tracks route input into (Viewport::GetInputDocuments — the
+    /// layer stack plus the interactive screen-space pre-bloom overlay documents beneath it) —
+    /// walking each pointer's viewport's list **topmost-first**, skipping display-only documents, and
+    /// stopping at the first document that consumes the event (an unconsumed event falls through to a
+    /// later consumer).
     ///
     /// Documents are **display-only by default**: this consumer routes into a document only while it
     /// is interactive (Document::SetInteractive), which the game flips on while it holds the

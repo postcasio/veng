@@ -1,0 +1,13 @@
+{
+  "defaultInstance": "0x9F194B42432E70B9",
+  "domain": "PostProcess",
+  "shaders": {
+    "vertex": "0x00000000008A0001",
+    "fragment": "0x1802BF330CDCAA50"
+  },
+  "fields": [
+    { "name": "Scale", "type": "float", "value": 0.5 },
+    { "name": "Document", "type": "texture" },
+    { "name": "DocumentSampler", "type": "sampler", "texture": "Document" }
+  ]
+}

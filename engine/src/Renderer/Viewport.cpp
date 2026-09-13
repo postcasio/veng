@@ -146,11 +146,30 @@ namespace Veng::Renderer
         {
             m_DocumentPointers.push_back(attached.Document);
         }
+        RebuildInputDocuments();
+    }
+
+    void Viewport::RebuildInputDocuments()
+    {
+        m_InputDocuments.clear();
+        m_InputDocuments.reserve(m_HdrInputDocuments.size() + m_DocumentPointers.size());
+
+        // Pre-bloom overlays first: they blend into scene color before tonemap, so the whole
+        // post-tonemap layer stack composites over them and is offered every event first.
+        m_InputDocuments.insert(m_InputDocuments.end(), m_HdrInputDocuments.begin(),
+                                m_HdrInputDocuments.end());
+        m_InputDocuments.insert(m_InputDocuments.end(), m_DocumentPointers.begin(),
+                                m_DocumentPointers.end());
     }
 
     std::span<Gui::Document* const> Viewport::GetAttachedDocuments() const
     {
         return m_DocumentPointers;
+    }
+
+    std::span<Gui::Document* const> Viewport::GetInputDocuments() const
+    {
+        return m_InputDocuments;
     }
 
     void Viewport::RefreshOutputHandle()
@@ -423,6 +442,13 @@ namespace Veng::Renderer
 
     void Viewport::Render(CommandBuffer& cmd)
     {
+        // A pre-bloom overlay's document joins no layer stack, so nothing detaches it when its
+        // overlay, entity, or world goes away. Clearing the routing half here — ahead of every early
+        // return below — means the list holds only the documents this frame's DriveHdrOverlays
+        // actually drove, so a viewport that stops presenting routes into none of them.
+        m_HdrInputDocuments.clear();
+        RebuildInputDocuments();
+
         // A disabled viewport skips its whole render, keeping the prior output — the owner knows
         // it is fully occluded (a fullscreen screen presented over it) and pays nothing for it.
         if (!m_Enabled)
@@ -734,8 +760,10 @@ namespace Veng::Renderer
     void Viewport::DriveHdrOverlays()
     {
         m_HdrOverlayViews.clear();
+        m_HdrInputDocuments.clear();
         if (m_ViewState.World == nullptr)
         {
+            RebuildInputDocuments();
             return;
         }
 
@@ -789,6 +817,18 @@ namespace Veng::Renderer
                                                                           overlay.AnchorRotation)
                                              : mat4(1.0f);
 
+            // An interactive screen-space overlay takes this viewport's input, so its document joins
+            // the routing order below the layer stack. A world-anchored one never does: its document
+            // space is a virtual plane projected through the camera, where a screen-space pointer
+            // position names nothing — that input arrives through the surface ray path instead.
+            if (!worldAnchored && overlay.Interactive)
+            {
+                if (Gui::Document* const document = overlay.GetDocument(); document != nullptr)
+                {
+                    m_HdrInputDocuments.push_back(document);
+                }
+            }
+
             m_HdrOverlayViews.push_back(GuiHdrOverlayView{
                 .DrawList = &drawList,
                 // DriveHdr loaded the overlay's optional composite material; a resident one routes the
@@ -801,6 +841,8 @@ namespace Veng::Renderer
             });
             ++index;
         }
+
+        RebuildInputDocuments();
     }
 
     void Viewport::ServicePendingPick()
@@ -920,10 +962,12 @@ namespace Veng::Renderer
         const f32 scale = m_UiScale > 0.0f ? m_UiScale : 1.0f;
         const vec2 documentPoint = *normalized * vec2(m_Region.Extent) / scale;
 
-        // Top-first: the topmost layer owns the pointer, matching the routing order.
-        for (auto it = m_Documents.rbegin(); it != m_Documents.rend(); ++it)
+        // Top-first over the same list the input consumer routes through, so an interactive
+        // pre-bloom overlay owns the pointer it covers exactly as a layer-stack document does.
+        const std::span<Gui::Document* const> documents = m_InputDocuments;
+        for (auto it = documents.rbegin(); it != documents.rend(); ++it)
         {
-            Gui::Document* const document = it->Document;
+            Gui::Document* const document = *it;
             if (document != nullptr && document->IsInteractive() &&
                 document->HitTest(documentPoint) != nullptr)
             {
