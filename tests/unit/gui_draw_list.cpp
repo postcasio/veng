@@ -697,3 +697,48 @@ TEST_CASE("gui draw list: AppendProjected culls the whole source when a vertex i
     CHECK(dst.GetVertices().empty());
     CHECK(dst.GetRuns().empty());
 }
+
+TEST_CASE("gui draw list: AppendProjected's scissor spans all four corners of a keystoned clip")
+{
+    // One clipped quad: the run carries the clip rect the projection has to carry to screen.
+    DrawList src;
+    src.PushClip(UnitRect);
+    src.Quad(UnitRect, vec4(1.0f));
+    src.PopClip();
+    REQUIRE(src.GetRuns().size() == 1);
+    REQUIRE(src.GetRuns()[0].HasClip);
+
+    // A keystone: a plane pitched toward the eye, its lower edge nearer, so x spreads about a
+    // centre line by a scale that grows down the document. The rect sits left of that centre, so
+    // its top-right corner lands right of its bottom-right one — the corner a two-corner box misses.
+    constexpr f32 Centre = 200.0f;
+    const auto keystone = [](const vec2 point) -> optional<vec2>
+    {
+        const f32 scale = 1.0f + point.y * 0.01f;
+        return vec2(Centre + (point.x - Centre) * scale, point.y);
+    };
+
+    DrawList dst;
+    REQUIRE(dst.AppendProjected(src, keystone));
+    REQUIRE(dst.GetRuns().size() == 1);
+    const DrawRun& run = dst.GetRuns()[0];
+    REQUIRE(run.HasClip);
+
+    // The scissor contains every projected corner of the clip, so nothing drawn inside the box's own
+    // edges — a scrollbar against its right edge — is cut by the scissor.
+    const vec2 corners[] = {UnitRect.Min, vec2(UnitRect.Max().x, UnitRect.Min.y), UnitRect.Max(),
+                            vec2(UnitRect.Min.x, UnitRect.Max().y)};
+    for (const vec2& corner : corners)
+    {
+        const vec2 projected = *keystone(corner);
+        CHECK(projected.x >= run.Clip.Min.x - 1e-4f);
+        CHECK(projected.y >= run.Clip.Min.y - 1e-4f);
+        CHECK(projected.x <= run.Clip.Max().x + 1e-4f);
+        CHECK(projected.y <= run.Clip.Max().y + 1e-4f);
+    }
+    // And it is the tight box of those corners, not a widened one: the bottom edge is the wider one
+    // and the rect sits left of centre, so the bottom-left corner is leftmost and the top-right
+    // corner rightmost.
+    CHECK(run.Clip.Min.x == doctest::Approx(keystone(vec2(UnitRect.Min.x, UnitRect.Max().y))->x));
+    CHECK(run.Clip.Max().x == doctest::Approx(keystone(vec2(UnitRect.Max().x, UnitRect.Min.y))->x));
+}

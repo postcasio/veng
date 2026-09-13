@@ -1,6 +1,8 @@
 #include <Veng/Gui/DrawList.h>
 
+#include <array>
 #include <cmath>
+#include <limits>
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/Font.h>
@@ -591,20 +593,37 @@ namespace Veng::Gui
         m_Gradients.insert(m_Gradients.end(), src.m_Gradients.begin(), src.m_Gradients.end());
 
         // Offset each run's index range onto the concatenated stream and project its clip rect to a
-        // screen-space bounding scissor; a clip corner behind the eye drops the scissor to full
-        // surface rather than fabricating one.
+        // screen-space bounding scissor. All four corners go through the projection: a plane seen
+        // at an angle projects a rect to a keystone, and the box spanned by two opposite corners
+        // alone under-covers it, cutting whatever hugs the clipped edge — a scrollbar most of all.
+        // The scissor over-covers a keystone instead, which is the lesser fault. A clip corner
+        // behind the eye drops the scissor to full surface rather than fabricating one.
         for (const DrawRun& run : src.m_Runs)
         {
             DrawRun copy = run;
             copy.FirstIndex = run.FirstIndex + indexBase;
             if (run.HasClip)
             {
-                const optional<vec2> low = project(run.Clip.Min);
-                const optional<vec2> high = project(run.Clip.Max());
-                if (low.has_value() && high.has_value())
+                const vec2 clipMin = run.Clip.Min;
+                const vec2 clipMax = run.Clip.Max();
+                const std::array<vec2, 4> corners = {clipMin, vec2(clipMax.x, clipMin.y), clipMax,
+                                                     vec2(clipMin.x, clipMax.y)};
+                vec2 lo(std::numeric_limits<f32>::max());
+                vec2 hi(std::numeric_limits<f32>::lowest());
+                bool visible = true;
+                for (const vec2& corner : corners)
                 {
-                    const vec2 lo = glm::min(*low, *high);
-                    const vec2 hi = glm::max(*low, *high);
+                    const optional<vec2> point = project(corner);
+                    if (!point.has_value())
+                    {
+                        visible = false;
+                        break;
+                    }
+                    lo = glm::min(lo, *point);
+                    hi = glm::max(hi, *point);
+                }
+                if (visible)
+                {
                     copy.Clip = Rect{.Min = lo, .Size = hi - lo};
                 }
                 else
