@@ -85,6 +85,8 @@ add_library(veng SHARED
         src/Audio/Reverb.cpp
         src/Behavior/BehaviorSystem.cpp
         src/Behavior/BehaviorTree.cpp
+        src/Capture/RecorderCore.cpp
+        src/Capture/VideoRecorder.cpp
         src/Asset/AssetLoaderRegistry.cpp
         src/Asset/AssetManager.cpp
         src/Asset/DataTable.cpp
@@ -537,4 +539,15 @@ if (APPLE)
     set_source_files_properties(src/Renderer/Backend/MetalInterop.mm
             PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
     target_link_libraries(veng PRIVATE "-framework Metal")
+
+    # The video recorder's encoder backend: AVAssetWriter over VideoToolbox, writing the frames the
+    # renderer composited into the writer's own IOSurface-backed buffers. Non-ARC like the TUs above.
+    target_sources(veng PRIVATE src/Capture/VideoRecorderApple.mm)
+    set_source_files_properties(src/Capture/VideoRecorderApple.mm
+            PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    target_link_libraries(veng PRIVATE
+            "-framework AVFoundation" "-framework CoreMedia" "-framework CoreVideo"
+            "-framework VideoToolbox" "-framework IOSurface")
+else ()
+    target_sources(veng PRIVATE src/Capture/VideoRecorderStub.cpp)
 endif ()

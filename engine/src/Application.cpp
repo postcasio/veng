@@ -232,6 +232,19 @@ namespace Veng
             .RunSelfTest = std::getenv("VENG_AUDIO_SELFTEST") != nullptr,
         });
 
+        // The video recorder, over the services it records from: the compositor it installs itself
+        // on as a capture sink, the context whose frames it rides, and the device whose mix becomes
+        // the file's sound track. Constructed unconditionally — it reports itself unavailable where
+        // the platform or a headless run cannot record.
+        m_VideoRecorder = CreateUnique<Capture::VideoRecorder>(
+            m_RenderContext, m_Compositor, *m_AudioDevice,
+            Capture::VideoRecorderHost{
+                .DriveFrameClock = [this](const f32 delta)
+                { DriveFrameClock(FrameClockInfo{.Delta = delta}); },
+                .ReleaseFrameClock = [this] { ReleaseFrameClock(); },
+                .Name = m_Info.Name,
+            });
+
         // The sim-domain scheduler owning every open world. Given the live device services, so it can
         // spawn cooked-level worlds and drive their capture surfaces.
         m_WorldRunner = CreateUnique<WorldRunner>(WorldRunnerInfo{
@@ -2373,6 +2386,15 @@ namespace Veng
         // Run ends at its operations — work that must complete while the app is fully alive, in order.
         // The release that follows is the members' destruction, which reverse-declaration order
         // sequences (see the member declarations); Run does none of it.
+
+        // A running capture is ended, drained and committed while the compositor it is installed on,
+        // the context it waits idle, and the device it taps are all still alive. The wait for the
+        // file is unbounded on purpose: a bounded one would leave a truncated movie.
+        if (m_VideoRecorder)
+        {
+            m_VideoRecorder->Stop();
+            m_VideoRecorder->WaitForFinalize();
+        }
 
         // Quiesce: drain the GPU and the worker pool so no in-flight continuation lands a resource on
         // an app member after teardown begins.

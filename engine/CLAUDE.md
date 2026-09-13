@@ -50,6 +50,12 @@ Each major system's architecture lives in a `CLAUDE.md` inside its source direct
   handshake and lock-free retired-voice channel, the master reverb node, the single `MaxVoices`
   budget, and the null device (headless / device-loss). The callback thread is the one sanctioned
   exception to the single-thread rule, and touches no engine state.
+- **[src/Capture/CLAUDE.md](src/Capture/CLAUDE.md)** — `Veng/Capture/`, the video recorder:
+  `VideoRecorder` as the compositor's `CaptureSink`, taking a fresh encoder-owned buffer per frame and
+  appending it at the frame slot's retirement; the device-free `RecorderCore` (slot map, both
+  timestamp modes, the bounded never-drop wait, the drain that needs no future frame); the platform
+  backend seam and its Apple implementation over AVAssetWriter and VideoToolbox; the SDR/HDR10
+  encoding table; and what the headless band proves versus what only a windowed recording can.
 - **[src/Diagnostics/CLAUDE.md](src/Diagnostics/CLAUDE.md)** — `Veng/Diagnostics/`, the CPU
   instrumentation subsystem: the `VE_PROFILE_*` scope/counter/instant vocabulary, per-thread chunk
   rings and their release/acquire publication, RAII thread registration, virtual tracks and the

@@ -57,6 +57,8 @@
 #include <Veng/Behavior/BehaviorSystem.h>
 #include <Veng/Behavior/BehaviorTree.h>
 
+#include <Veng/Capture/VideoRecorder.h>
+
 #include <Veng/Diagnostics/FileTraceSink.h>
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Diagnostics/TraceSink.h>

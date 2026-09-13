@@ -33,6 +33,7 @@
 #include <Veng/Render/DisplayCapabilities.h>
 #include <Veng/Render/FrameRateLimiter.h>
 #include <Veng/Audio/AudioResolve.h>
+#include <Veng/Capture/VideoRecorder.h>
 #include <Veng/Render/GraphicsResolve.h>
 #include <Veng/Render/GraphicsSchema.h>
 #include <Veng/Render/GraphicsSettings.h>
@@ -750,6 +751,19 @@ namespace Veng
         /// resolution settings were pushed at it while held. Takes effect at the top of the next
         /// Frame.
         void ReleaseFrameClock();
+
+        /// @brief Returns the video recorder: recording the presented frame to a file.
+        ///
+        /// Always present, and unavailable (Capture::VideoRecorder::IsAvailable()) on a platform
+        /// without an encoder or on a headless run, where Start refuses with a reason. A running
+        /// capture is stopped and its file finalized before the engine's services are torn down.
+        /// @pre Run() has initialized the engine — the recorder exists only inside Run().
+        [[nodiscard]] Capture::VideoRecorder& GetVideoRecorder()
+        {
+            VE_ASSERT(m_VideoRecorder, "GetVideoRecorder before Run(): the video recorder exists "
+                                       "only once Run() has initialized the engine");
+            return *m_VideoRecorder;
+        }
 
         /// @brief Returns whether the frame clock is currently driven.
         ///
@@ -2012,6 +2026,13 @@ namespace Veng
         /// before any clip or generator a voice may reference is freed. Constructed in Initialize
         /// with a null backend when Headless, and pumped once per frame.
         Unique<Audio::AudioDevice> m_AudioDevice;
+
+        /// @brief The video recorder, recording the presented frame through the platform's encoder.
+        ///
+        /// Borrows the render context, the compositor and the audio device, so it is declared after
+        /// all three and destructs before them — a running capture is drained and its file committed
+        /// while the compositor it is installed on and the device it taps are still alive.
+        Unique<Capture::VideoRecorder> m_VideoRecorder;
 
         /// @brief The pimpl'd net hosts + input buffers; null unless a net launch mode is active.
         ///

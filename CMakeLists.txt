@@ -1058,6 +1058,11 @@ if (VENG_BUILD_TESTS)
             tests/unit/diagnostics_spine.cpp
             tests/unit/diagnostics_capture.cpp
             tests/unit/performance_panel.cpp
+            # The video recorder's device-free half against a recording fake encoder: the slot map,
+            # the two timestamp modes, the bounded never-drop wait, the drain, and the sound track's
+            # alignment with the picture under a driven audio device.
+            tests/unit/video_recorder_core.cpp
+            tests/unit/video_recorder_audio.cpp
     )
     target_link_libraries(veng_test_unit PRIVATE veng::veng doctest::doctest)
     # The committed trace-format fixtures live in the source tree; the
@@ -1636,6 +1641,10 @@ if (VENG_BUILD_TESTS)
             # drop, and teardown retiring ids against the live Context registry. It needs real
             # Viewports, so it rides the gpu band though it pins no pixels.
             tests/gpu/viewport_compositor.cpp
+            # video_recorder_unavailable.cpp pins what the recorder does where it cannot record: a
+            # headless run reports itself unavailable and refuses to start with a reason, and its
+            # construction touches no swap chain.
+            tests/gpu/video_recorder_unavailable.cpp
             tests/gpu/viewport_documents.cpp
             tests/gpu/splitscreen.cpp
             tests/gpu/hi_z_pyramid.cpp
@@ -1847,8 +1856,10 @@ if (VENG_BUILD_TESTS)
             # gui_golden.cpp reads its committed golden PNG from the source tree.
             GUI_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden"
     )
-    # gui_golden.cpp loads its golden PNG through stb_image.
-    target_include_directories(veng_test_gpu PRIVATE ${stb_SOURCE_DIR})
+    # gui_golden.cpp loads its golden PNG through stb_image. The video-recorder cases reach the
+    # engine-internal backend seam under src/, and tests/ carries the shared support headers.
+    target_include_directories(veng_test_gpu PRIVATE ${stb_SOURCE_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/engine/src ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
     # Importing an externally-owned platform texture exists only on Apple, so its case is compiled
     # only there — elsewhere the suite is unchanged rather than carrying a permanently-skipped test.
@@ -1858,6 +1869,15 @@ if (VENG_BUILD_TESTS)
         set_source_files_properties(tests/gpu/external_texture_import.mm
                 PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
         target_link_libraries(veng_test_gpu PRIVATE "-framework Metal" "-framework IOSurface")
+
+        # The one encoding case: a real capture written through the recorder's backend and read back
+        # out of the file. Takes the backend's own frameworks and PCH opt-out.
+        target_sources(veng_test_gpu PRIVATE tests/gpu/video_recorder_apple.mm)
+        set_source_files_properties(tests/gpu/video_recorder_apple.mm
+                PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+        target_link_libraries(veng_test_gpu PRIVATE
+                "-framework AVFoundation" "-framework CoreMedia" "-framework CoreVideo"
+                "-framework VideoToolbox")
     endif ()
 
     add_test(NAME veng_test_gpu COMMAND veng_test_gpu)
