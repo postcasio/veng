@@ -140,6 +140,24 @@ finite **stream** voice fills its ring, drains through the null `Pump`, and reti
 is pure CPU, the null backend is also what makes the whole contract unit-testable without hardware —
 a test publishes a voice, calls `RenderBlock`, and reads the mixed buffer.
 
+**`AudioDevice::SetDriven` puts a *hardware* device on that same path.** A caller whose frame clock
+is not paced by real time (`Time::Drive`) stops the hardware — `ma_device_stop` is synchronous, so
+the callback thread is quiescent for the whole span and the main thread is the mixer's only caller,
+which is what keeps the one thread rule intact — and each `Pump` then mixes exactly
+`delta × sampleRate` frames itself. The `kMaxPumpFrames` clamp applies only in wall mode: it bounds a
+*measured* delta (a stalled frame, a breakpoint), and clamping an exact driven delta would silently
+mix short. Nothing is emitted for the span, and a `ma_device_start` that fails on release degrades to
+the null backend with a logged error, the same device-loss policy as everywhere else.
+
+**The block tap is the seam a consumer takes the mix through.** `SetBlockTap` installs one sink that
+receives every mixed block on the main thread, in order: `Pump` hands it the block directly on a null
+or driven device, and a running hardware device's callback pushes each block into an `SpscRing` of
+fixed POD blocks (`AudioDevice::TapBlockFrames` frames × at most `MaxTapChannels`, since the backend
+reuses its output buffer the instant the callback returns) that `Pump` drains. A full ring drops the
+**newest** block and counts it in `GetTapOverruns()`, so the mixing thread never blocks and a
+consumer that must stay aligned substitutes silence for the loss. With no tap installed the mixing
+thread reads one atomic and does nothing else.
+
 ## The scene-facing AudioSystem
 
 `AudioSystem` (`Veng/Audio/AudioSystem.h`) is the scene→device producer, the audio peer of the

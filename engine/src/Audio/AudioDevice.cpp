@@ -206,8 +206,30 @@ namespace Veng::Audio
         /// @brief Generator source-render scratch (sized for the widest interleaved-stereo resample).
         vector<f32> GenScratch;
 
-        /// @brief The last null-device pump output, for headless inspection and tests.
+        /// @brief The last main-thread mix output (a null device's pump, or a driven one's).
         vector<f32> NullOutput;
+
+        /// @brief One mixed block in flight from the mixing thread to the main thread.
+        ///
+        /// A fixed POD payload because the backend reuses its output buffer the moment the callback
+        /// returns, and because the ring requires a trivially-copyable item.
+        struct TapBlock
+        {
+            /// @brief Sample frames carried in Samples; at most TapBlockFrames.
+            u32 Frames = 0;
+            /// @brief Interleaved samples, Frames * Channels of them used.
+            std::array<f32, static_cast<usize>(AudioDevice::TapBlockFrames) *
+                                AudioDevice::MaxTapChannels>
+                Samples{};
+        };
+        /// @brief The RT → main-thread mixed-block channel; over a second of audio at 48 kHz.
+        SpscRing<TapBlock, 64> TapBlocks;
+        /// @brief Whether a tap is installed, the one thing the mixing thread reads to decide.
+        std::atomic<bool> TapActive{false};
+        /// @brief Blocks the ring dropped because it was full, since the tap was installed.
+        std::atomic<u64> TapOverruns{0};
+        /// @brief The installed sink; touched only on the main thread.
+        AudioDevice::BlockTap Tap;
 
         u32 Channels = 2;
         u32 SampleRate = 48000;
@@ -289,8 +311,10 @@ namespace Veng::Audio
         {
             auto* self = static_cast<AudioDevice*>(device->pUserData);
             const u32 channels = self->GetChannels();
-            self->RenderBlock(
-                {static_cast<f32*>(output), static_cast<usize>(frameCount) * channels}, frameCount);
+            const std::span<f32> block{static_cast<f32*>(output),
+                                       static_cast<usize>(frameCount) * channels};
+            self->RenderBlock(block, frameCount);
+            self->PublishTapBlock(block, frameCount);
         }
 
         // Pulls one chunk of mono samples from a generator voice into native.VoiceScratch, applying
@@ -992,20 +1016,134 @@ namespace Veng::Audio
     {
         m_Engine->Publish();
 
-        if (IsNull())
+        // Drain first, so blocks the callback pushed before a SetDriven(true) reach the tap ahead of
+        // this pump's own block and the tap's ordering survives the mode change.
+        DrainTapRing();
+
+        if (IsNull() || IsDriven())
         {
             u32 frames =
                 static_cast<u32>(std::lround(deltaSeconds * static_cast<f32>(m_SampleRate)));
-            frames = std::min(frames, kMaxPumpFrames);
+            // The clamp bounds a *measured* delta — a stalled first frame or a breakpoint on the
+            // null device's virtual clock. A driven delta is exact, so clamping it would silently
+            // mix short for any driven rate below 1/kMaxPumpFrames of the sample rate.
+            if (!IsDriven())
+            {
+                frames = std::min(frames, kMaxPumpFrames);
+            }
             if (frames > 0)
             {
                 m_Native->NullOutput.assign(static_cast<usize>(frames) * m_Channels, 0.0f);
                 RenderBlock(m_Native->NullOutput, frames);
+                DeliverTapBlock(m_Native->NullOutput, frames);
             }
         }
 
         m_Engine->DrainRetired();
         m_Engine->CollectDeferred();
+    }
+
+    void AudioDevice::SetDriven(bool driven)
+    {
+        if (driven == m_Driven)
+        {
+            return;
+        }
+
+        if (driven)
+        {
+            // Stop before the flag flips: ma_device_stop returns only once the callback thread is
+            // quiescent, so no frame ever has both threads feeding the mixer.
+            if (m_Native->HasDevice)
+            {
+                ma_device_stop(&m_Native->Device);
+            }
+            m_Driven = true;
+            return;
+        }
+
+        m_Driven = false;
+        if (m_Native->HasDevice && ma_device_start(&m_Native->Device) != MA_SUCCESS)
+        {
+            // The output went away while the hardware was stopped. Degrade to the null backend —
+            // the mix keeps running on the main thread — rather than stay silently stopped.
+            ma_device_uninit(&m_Native->Device);
+            m_Native->HasDevice = false;
+            m_Backend = AudioBackend::Null;
+            Log::Error("Audio: the output device did not restart; degrading to the null backend");
+        }
+    }
+
+    void AudioDevice::SetBlockTap(BlockTap tap)
+    {
+        if (tap)
+        {
+            VE_ASSERT(m_Channels <= MaxTapChannels,
+                      "AudioDevice block tap supports at most {} channels (device has {})",
+                      MaxTapChannels, m_Channels);
+
+            // Anything the mixing thread already published belongs to the outgoing sink.
+            DrainTapRing();
+            m_Native->Tap = std::move(tap);
+            m_Native->TapOverruns.store(0, std::memory_order_relaxed);
+            m_Native->TapActive.store(true, std::memory_order_release);
+            return;
+        }
+
+        // Stop the mixing thread pushing, then deliver what it already published, so a stop loses no
+        // block. A block pushed in the window between the two is simply never delivered.
+        m_Native->TapActive.store(false, std::memory_order_release);
+        DrainTapRing();
+        m_Native->Tap = nullptr;
+    }
+
+    u64 AudioDevice::GetTapOverruns() const
+    {
+        return m_Native->TapOverruns.load(std::memory_order_relaxed);
+    }
+
+    void AudioDevice::PublishTapBlock(std::span<const f32> interleaved, u32 frames)
+    {
+        if (!m_Native->TapActive.load(std::memory_order_acquire))
+        {
+            return;
+        }
+
+        const u32 channels = m_Channels;
+        u32 done = 0;
+        while (done < frames)
+        {
+            const u32 chunk = std::min(frames - done, TapBlockFrames);
+
+            Native::TapBlock block;
+            block.Frames = chunk;
+            std::copy_n(interleaved.data() + static_cast<usize>(done) * channels,
+                        static_cast<usize>(chunk) * channels, block.Samples.data());
+
+            if (!m_Native->TapBlocks.Push(block))
+            {
+                // Full: the ring drops this newest block rather than blocking the mixing thread.
+                m_Native->TapOverruns.fetch_add(1, std::memory_order_relaxed);
+            }
+            done += chunk;
+        }
+    }
+
+    void AudioDevice::DeliverTapBlock(std::span<const f32> interleaved, u32 frames)
+    {
+        if (m_Native->Tap)
+        {
+            m_Native->Tap(interleaved.first(static_cast<usize>(frames) * m_Channels), frames);
+        }
+    }
+
+    void AudioDevice::DrainTapRing()
+    {
+        Native::TapBlock block;
+        while (m_Native->TapBlocks.Pop(block))
+        {
+            DeliverTapBlock(block.Samples, block.Frames);
+        }
     }
 
     void AudioDevice::RenderBlock(std::span<f32> output, u32 frames)

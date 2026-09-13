@@ -2156,6 +2156,56 @@ namespace Veng
         return m_AudioDevice->GetEngine();
     }
 
+    Audio::AudioDevice& Application::GetAudioDevice()
+    {
+        VE_ASSERT(m_AudioDevice, "GetAudioDevice before Run(): the audio device exists only once "
+                                 "Run() has initialized the engine");
+        return *m_AudioDevice;
+    }
+
+    void Application::DriveFrameClock(FrameClockInfo info)
+    {
+        VE_ASSERT(info.Delta > 0.0f, "DriveFrameClock Delta must be > 0 (got {})", info.Delta);
+
+        m_PendingFrameClock = info;
+    }
+
+    void Application::ReleaseFrameClock()
+    {
+        m_PendingFrameClock = optional<FrameClockInfo>{};
+    }
+
+    bool Application::IsFrameClockDriven() const
+    {
+        return Time::IsDriven();
+    }
+
+    void Application::ApplyPendingFrameClock()
+    {
+        if (!m_PendingFrameClock)
+        {
+            return;
+        }
+
+        const optional<FrameClockInfo> request = *m_PendingFrameClock;
+        m_PendingFrameClock.reset();
+
+        if (request)
+        {
+            Time::Drive(*request);
+        }
+        else
+        {
+            Time::Release();
+        }
+
+        m_ManagedViewports->SetRenderScaleHold(Time::IsDriven());
+        if (m_AudioDevice)
+        {
+            m_AudioDevice->SetDriven(Time::IsDriven());
+        }
+    }
+
     SystemContext Application::BuildSystemContext(const Scene& scene, const WorldInstanceId world,
                                                   const NetRole role, const PointerRouting& pointer,
                                                   const u64 tick, const f32 alpha,
@@ -2360,6 +2410,11 @@ namespace Veng
         // Catch a full-screen toggle the user drove through the window itself (the macOS green button)
         // and persist it, so the setting the next boot applies matches the window it left.
         SyncUserFullscreenChange();
+
+        // A frame-clock mode change is applied here, ahead of the sample below, so the clock, the
+        // viewports' render-scale hold and the audio device's mixing thread all move together on a
+        // frame boundary.
+        ApplyPendingFrameClock();
 
         const f32 delta = Time::Update();
 
@@ -2740,7 +2795,11 @@ namespace Veng
         BridgeGpuTimings();
 
         // Honor the run-loop frame cap (0 = uncapped), independent of present-mode vsync: a
-        // best-effort sleep to the next-frame deadline against a monotonic clock.
+        // best-effort sleep to the next-frame deadline against a monotonic clock. A driven frame
+        // clock skips it: the cap paces against real time, which is not what this frame is paced by,
+        // so it would only add real sleep to an already-slow frame. Nothing is re-armed on release —
+        // the limiter resets a deadline that has passed, so the first wall frame after sleeps zero.
+        if (!Time::IsDriven())
         {
             const f64 now =
                 std::chrono::duration<f64>(std::chrono::steady_clock::now().time_since_epoch())

@@ -352,6 +352,19 @@ namespace Veng
         /// @param alpha   The fixed-timestep interpolation fraction for the managed viewports.
         void PushViews(WorldRunner& runner, const Renderer::ViewState& knobs, f32 delta, f32 alpha);
 
+        /// @brief Holds or releases every managed viewport's render scale at its ceiling.
+        ///
+        /// The ceiling is the dynamic-resolution controller's MaxScale where the controller is
+        /// enabled, else the viewport's current static scale — so a hold pins the sharpest
+        /// resolution the viewport is allocated for rather than whatever scale frame-time pressure
+        /// had walked it down to. A viewport this set constructs while the hold is in effect is held
+        /// at construction, so a set rebuilt mid-hold stays pinned. See Viewport::HoldRenderScale.
+        /// @param held  True to hold every viewport at its ceiling, false to release.
+        void SetRenderScaleHold(bool held);
+
+        /// @brief Returns whether newly constructed viewports are held at their ceiling.
+        [[nodiscard]] bool IsRenderScaleHeld() const { return m_RenderScaleHeld; }
+
         /// @brief Clears the set, dropping every managed viewport and its router association.
         void Clear();
 
@@ -456,6 +469,12 @@ namespace Veng
 
         /// @brief A pending reconfigure, applied at the next ApplyPendingReconfigure; nullopt when none.
         optional<vector<ManagedViewportInfo>> m_PendingReconfigure;
+
+        /// @brief Whether every managed viewport's render scale is held at its ceiling.
+        ///
+        /// Retained rather than read back off the viewports because it also governs a viewport built
+        /// later: Build holds each one it constructs while this is set.
+        bool m_RenderScaleHeld = false;
 
         /// @brief One deferred world rebind: the viewport index and the world to re-point it at.
         struct PendingRebind

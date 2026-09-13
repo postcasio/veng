@@ -189,6 +189,14 @@ namespace Veng::Renderer
     {
         VE_ASSERT(scale > 0.0f, "Viewport RenderScale must be > 0 (got {})", scale);
 
+        // Held: the caller's scale becomes the post-release state and nothing moves now, so a
+        // settings apply landing mid-hold is honored at release rather than during.
+        if (m_RenderScaleHeld)
+        {
+            m_HeldRenderScale = scale;
+            return;
+        }
+
         if (scale == m_RenderScale)
         {
             return;
@@ -211,6 +219,12 @@ namespace Veng::Renderer
 
     void Viewport::SetDynamicResolution(const DynamicResolutionSettings& settings)
     {
+        if (m_RenderScaleHeld)
+        {
+            m_DeferredDynamicResolution = settings;
+            return;
+        }
+
         // The allocation is sized to the controller's MaxScale ceiling, so engaging it may move the
         // allocation extent and resize the renderer images. The current scale is clamped into the new
         // band so it never exceeds the allocation (a GetViewRenderScale > 1 would render outside).
@@ -222,6 +236,12 @@ namespace Veng::Renderer
 
     void Viewport::ClearDynamicResolution()
     {
+        if (m_RenderScaleHeld)
+        {
+            m_DeferredDynamicResolution = optional<DynamicResolutionSettings>{};
+            return;
+        }
+
         // The allocation scale flips from the controller's ceiling back to the (now static) current
         // scale, which may move the allocation extent and debounce a resize.
         const uvec2 priorAlloc = ScaledExtent();
@@ -232,6 +252,53 @@ namespace Veng::Renderer
     bool Viewport::IsDynamicResolutionEnabled() const
     {
         return m_DynamicResolution.has_value();
+    }
+
+    void Viewport::HoldRenderScale(f32 scale)
+    {
+        VE_ASSERT(scale > 0.0f, "Viewport HoldRenderScale requires a scale > 0 (got {})", scale);
+
+        // Re-holding only re-pins the scale: the post-release scale stays whatever it already is —
+        // the scale the first hold captured, or the last one pushed at the viewport since.
+        const f32 restore = m_RenderScaleHeld ? m_HeldRenderScale : m_RenderScale;
+        m_RenderScaleHeld = false;
+        SetRenderScale(m_DynamicResolution ? glm::clamp(scale, m_DynamicResolution->MinScale,
+                                                        m_DynamicResolution->MaxScale)
+                                           : scale);
+        m_HeldRenderScale = restore;
+        m_RenderScaleHeld = true;
+    }
+
+    void Viewport::ReleaseRenderScale()
+    {
+        if (!m_RenderScaleHeld)
+        {
+            return;
+        }
+
+        m_RenderScaleHeld = false;
+
+        // Settings first: engaging or dropping the controller clamps the current scale into its
+        // band, and the deferred scale below is what the owner actually asked to render at.
+        if (m_DeferredDynamicResolution)
+        {
+            if (*m_DeferredDynamicResolution)
+            {
+                SetDynamicResolution(**m_DeferredDynamicResolution);
+            }
+            else
+            {
+                ClearDynamicResolution();
+            }
+            m_DeferredDynamicResolution.reset();
+        }
+
+        SetRenderScale(m_HeldRenderScale);
+    }
+
+    bool Viewport::IsRenderScaleHeld() const
+    {
+        return m_RenderScaleHeld;
     }
 
     const optional<DynamicResolutionSettings>& Viewport::GetDynamicResolution() const
@@ -305,7 +372,9 @@ namespace Veng::Renderer
 
     void Viewport::UpdateDynamicResolution()
     {
-        if (!m_DynamicResolution || !m_Context.IsGpuTimingSupported())
+        // A hold pins the scale for its whole span, so the controller step is skipped rather than
+        // computed and discarded — its result must not become the post-release state either.
+        if (!m_DynamicResolution || m_RenderScaleHeld || !m_Context.IsGpuTimingSupported())
         {
             return;
         }

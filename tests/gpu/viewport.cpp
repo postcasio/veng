@@ -497,3 +497,78 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // A point outside the viewport's own region belongs to no document of this viewport.
     CHECK(!viewport->IsPointerOverDocument(ivec2(500, 500)));
 }
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "viewport: a render-scale hold pins the scale, defers what is pushed at it, and "
+                  "applies the deferral at release")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+
+    constexpr uvec2 region{64, 48};
+    const Unique<Viewport> viewport = Viewport::Create({
+        .Context = Context,
+        .Assets = assets,
+        .Region = {.Offset = {0, 0}, .Extent = region},
+        .Role = ViewportRole::Offscreen,
+    });
+
+    constexpr DynamicResolutionSettings controller{.MinScale = 0.25f, .MaxScale = 1.0f};
+    viewport->SetDynamicResolution(controller);
+
+    // The controller has walked the scale down under load; the allocation is sized to its ceiling,
+    // so the rendered sub-rect is the only thing that moved.
+    viewport->SetRenderScale(0.4f);
+    const uvec2 allocation = viewport->GetAllocationExtent();
+    CHECK_FALSE(viewport->IsRenderScaleHeld());
+
+    // Holding at the ceiling lifts the scale back to it without touching the allocation — the whole
+    // reason a hold is not ClearDynamicResolution.
+    viewport->HoldRenderScale(controller.MaxScale);
+    CHECK(viewport->IsRenderScaleHeld());
+    CHECK(viewport->GetRenderScale() == doctest::Approx(controller.MaxScale));
+    CHECK(viewport->GetAllocationExtent() == allocation);
+
+    // The controller's settings, its enabled flag and the read side a settings editor uses are all
+    // untouched by the hold.
+    CHECK(viewport->IsDynamicResolutionEnabled());
+    REQUIRE(viewport->GetDynamicResolution().has_value());
+    CHECK(viewport->GetDynamicResolution()->MaxScale == doctest::Approx(controller.MaxScale));
+
+    // A settings apply landing mid-hold changes nothing now: the scale stays pinned and the
+    // controller's live settings stay as they were.
+    viewport->SetRenderScale(0.5f);
+    constexpr DynamicResolutionSettings tighter{.MinScale = 0.5f, .MaxScale = 0.8f};
+    viewport->SetDynamicResolution(tighter);
+    CHECK(viewport->GetRenderScale() == doctest::Approx(controller.MaxScale));
+    CHECK(viewport->GetDynamicResolution()->MaxScale == doctest::Approx(controller.MaxScale));
+
+    // Release applies the deferred settings and then the deferred scale.
+    viewport->ReleaseRenderScale();
+    CHECK_FALSE(viewport->IsRenderScaleHeld());
+    CHECK(viewport->GetDynamicResolution()->MaxScale == doctest::Approx(tighter.MaxScale));
+    CHECK(viewport->GetRenderScale() == doctest::Approx(0.5f));
+
+    // With nothing pushed during the hold, release restores the scale the hold was taken at.
+    viewport->HoldRenderScale(tighter.MaxScale);
+    CHECK(viewport->GetRenderScale() == doctest::Approx(tighter.MaxScale));
+    viewport->ReleaseRenderScale();
+    CHECK(viewport->GetRenderScale() == doctest::Approx(0.5f));
+
+    // A hold takes the scale into the controller's band, so it can never exceed the allocation.
+    viewport->HoldRenderScale(4.0f);
+    CHECK(viewport->GetRenderScale() == doctest::Approx(tighter.MaxScale));
+    viewport->ReleaseRenderScale();
+
+    // A disable pushed during a hold is deferred like the rest, and applies at release.
+    viewport->HoldRenderScale(tighter.MaxScale);
+    viewport->ClearDynamicResolution();
+    CHECK(viewport->IsDynamicResolutionEnabled());
+    viewport->ReleaseRenderScale();
+    CHECK_FALSE(viewport->IsDynamicResolutionEnabled());
+    CHECK(viewport->GetRenderScale() == doctest::Approx(0.5f));
+
+    // Releasing an unheld viewport is a no-op.
+    viewport->ReleaseRenderScale();
+    CHECK(viewport->GetRenderScale() == doctest::Approx(0.5f));
+}

@@ -48,6 +48,18 @@ namespace Veng
         return firstViewer;
     }
 
+    namespace
+    {
+        // The sharpest scale the viewport is allocated for: the controller's ceiling where it owns
+        // the scale, else the static scale (which is its own ceiling).
+        f32 RenderScaleCeiling(const Renderer::Viewport& viewport)
+        {
+            const optional<Renderer::DynamicResolutionSettings>& settings =
+                viewport.GetDynamicResolution();
+            return settings ? settings->MaxScale : viewport.GetRenderScale();
+        }
+    }
+
     bool IsWorldPresentable(const WorldRunner& runner, const WorldInstanceId world)
     {
         const World* resolved = runner.ResolveWorld(world);
@@ -134,6 +146,13 @@ namespace Veng
             if (info.DynamicResolution)
             {
                 viewport->SetDynamicResolution(*info.DynamicResolution);
+            }
+
+            // A viewport built while the set is held joins the hold at construction, so a world
+            // transition rebuilding the set does not let the controller back in mid-hold.
+            if (m_RenderScaleHeld)
+            {
+                viewport->HoldRenderScale(RenderScaleCeiling(*viewport));
             }
 
             // Hand the viewport the driver catalog so a claimed, driver-authored GuiOverlay
@@ -578,6 +597,23 @@ namespace Veng
     {
         std::erase_if(m_Bound, [&viewport](const BoundViewport& bound)
                       { return bound.Viewport == &viewport; });
+    }
+
+    void ManagedViewportSet::SetRenderScaleHold(const bool held)
+    {
+        m_RenderScaleHeld = held;
+
+        for (const ManagedViewport& managed : m_Viewports)
+        {
+            if (held)
+            {
+                managed.Viewport->HoldRenderScale(RenderScaleCeiling(*managed.Viewport));
+            }
+            else
+            {
+                managed.Viewport->ReleaseRenderScale();
+            }
+        }
     }
 
     void ManagedViewportSet::Clear()

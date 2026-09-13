@@ -316,6 +316,34 @@ namespace Veng::Renderer
         /// @brief Returns whether automatic render-scale control is enabled.
         [[nodiscard]] bool IsDynamicResolutionEnabled() const;
 
+        /// @brief Pins the render scale and freezes the per-frame dynamic-resolution step.
+        ///
+        /// For an owner that needs a fixed render resolution for a span of frames whose cost it does
+        /// not want the controller reacting to. The scale is set to @p scale (clamped into
+        /// [MinScale, MaxScale] while the controller is enabled) and held there: the per-frame
+        /// ComputeDynamicResolutionScale step is skipped, and SetRenderScale, SetDynamicResolution
+        /// and ClearDynamicResolution record their arguments as the *post-release* state and change
+        /// nothing until ReleaseRenderScale(). The settings, the enabled flag and
+        /// GetDynamicResolution() therefore read unchanged for the whole hold, so a settings editor
+        /// sees no transient.
+        ///
+        /// This is not ClearDynamicResolution(): that reverts the allocation ceiling from MaxScale
+        /// to the static scale, which may move the allocation extent and debounce a resize, where a
+        /// hold at the controller's ceiling leaves the extent exactly where it was.
+        /// @param scale  The scale to hold; > 0.
+        /// @pre scale > 0 — asserted otherwise.
+        void HoldRenderScale(f32 scale);
+
+        /// @brief Releases a render-scale hold and resumes the per-frame dynamic-resolution step.
+        ///
+        /// Applies whatever was deferred during the hold — the last SetDynamicResolution /
+        /// ClearDynamicResolution, then the last SetRenderScale — and otherwise restores the scale
+        /// that was current when the hold was taken. A no-op when no hold is in effect.
+        void ReleaseRenderScale();
+
+        /// @brief Returns whether a render-scale hold is in effect (see HoldRenderScale).
+        [[nodiscard]] bool IsRenderScaleHeld() const;
+
         /// @brief Enables or disables this viewport's rendering.
         ///
         /// Disabled, Render is a whole no-op: the prior output stays resident and sampleable (the
@@ -702,6 +730,12 @@ namespace Veng::Renderer
         f32 m_MaxAllocationScale = 1.0f;
         /// @brief Automatic render-scale controller tuning; unset when control is disabled.
         optional<DynamicResolutionSettings> m_DynamicResolution;
+        /// @brief Whether the render scale is pinned and the controller step frozen.
+        bool m_RenderScaleHeld = false;
+        /// @brief The render scale to restore at release: the scale at the hold, or a deferred one.
+        f32 m_HeldRenderScale = 1.0f;
+        /// @brief A dynamic-resolution change deferred by a hold; the inner nullopt is a disable.
+        optional<optional<DynamicResolutionSettings>> m_DeferredDynamicResolution;
         /// @brief Whether the renderer's AA mode is TAAU (mirrored from the settings).
         ///
         /// TAAU pins the allocation to native and routes the render scale into the rendered sub-rect,

@@ -31,6 +31,7 @@
 #include <string_view>
 
 #include <Veng/Assert.h>
+#include <Veng/FrameClock.h>
 #include <Veng/Input.h>
 #include <Veng/InputRouter.h>
 #include <Veng/Log.h>
@@ -167,6 +168,14 @@ namespace
         volatile auto bad = static_cast<Format>(200);
         const vk::Format mapped = ToVk(static_cast<Format>(bad));
         (void)mapped;
+    }
+
+    void RunFrameClockNonPositiveDelta()
+    {
+        // A driven delta must be positive: a zero or negative step would stall or reverse every
+        // consumer of the frame delta.
+        FrameClock clock;
+        clock.Drive({.Delta = 0.0f});
     }
 
     void RunAssertMessage()
@@ -543,6 +552,10 @@ int main(int argc, char** argv)
     else if (name == "tovk_unmapped")
     {
         RunToVkUnmapped();
+    }
+    else if (name == "frame_clock_nonpositive_delta")
+    {
+        RunFrameClockNonPositiveDelta();
     }
     else if (name == "assert_message")
     {

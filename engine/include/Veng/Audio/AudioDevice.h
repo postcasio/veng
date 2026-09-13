@@ -66,6 +66,22 @@ namespace Veng::Audio
     class AudioDevice
     {
     public:
+        /// @brief Frames of one block the callback-side tap ring carries.
+        ///
+        /// A callback longer than this is published as several blocks; a shorter one fills a block
+        /// partially. The ring's payload is a fixed POD block because the backend reuses its output
+        /// buffer the moment the callback returns.
+        static constexpr u32 TapBlockFrames = 1024;
+
+        /// @brief Channels a tap block carries, the widest output the tap supports.
+        static constexpr u32 MaxTapChannels = 2;
+
+        /// @brief Receives one mixed block of interleaved samples on the main thread.
+        ///
+        /// @param interleaved  GetChannels() interleaved samples per frame; valid only for the call.
+        /// @param frames       Number of sample frames in @p interleaved.
+        using BlockTap = function<void(std::span<const f32> interleaved, u32 frames)>;
+
         /// @brief Creates a device from its descriptor; never fails (falls to the null backend).
         /// @param info The construction descriptor.
         /// @return A unique-ownership device.
@@ -98,8 +114,61 @@ namespace Veng::Audio
         /// Publishes the latest voice snapshot, advances the null device's virtual playback clock
         /// (a real device advances on its own callback thread), then reaps retired voices and frees
         /// reclaimed resources whose generation has passed.
-        /// @param deltaSeconds Wall time since the last pump.
+        /// While driven the pump also mixes, on the main thread, exactly the frames @p deltaSeconds
+        /// names — the hitch clamp that bounds a null device's virtual clock is lifted, since a
+        /// driven delta is exact rather than measured.
+        /// @param deltaSeconds Frame time since the last pump, as the caller's frame clock reports it.
         void Pump(f32 deltaSeconds);
+
+        /// @brief Stops the hardware and mixes on the main thread instead, or resumes the hardware.
+        ///
+        /// For a caller whose frame clock is driven rather than measured: a hardware device mixes on
+        /// its own callback thread at the hardware rate, so the mix would run ahead of a frame loop
+        /// that is no longer paced by real time. Driven, the device is stopped (synchronously — the
+        /// callback thread is quiescent before this returns, so the main thread is the mixer's only
+        /// caller and the one-thread rule holds) and each Pump mixes exactly its own frame's samples.
+        /// Nothing is emitted for the span. Voices, snapshots and reclamation are unaffected: the
+        /// mixer does not know which thread calls it.
+        ///
+        /// A null device has no hardware to stop, so this only records the mode; its Pump already
+        /// mixes on the main thread. If the output device cannot be restarted on release — it went
+        /// away during the driven span — the device degrades to the null backend and logs, the
+        /// subsystem's device-loss policy.
+        /// @param driven  True to stop the hardware and mix per pump, false to resume the hardware.
+        void SetDriven(bool driven);
+
+        /// @brief Returns whether the device is in driven mode (see SetDriven).
+        [[nodiscard]] bool IsDriven() const { return m_Driven; }
+
+        /// @brief Installs the per-block tap, or clears it with nullptr.
+        ///
+        /// Every mixed block reaches @p tap on the main thread, in order: directly from Pump while
+        /// driven or on a null device, and through a lock-free ring the mixing thread pushes into
+        /// when a hardware device is running. Replacing or clearing a tap first drains the ring into
+        /// the outgoing sink, so no block is lost at a swap or a stop; installing one also resets the
+        /// overrun count.
+        ///
+        /// Call from the main thread only. While no tap is set the mixing thread does no tap work
+        /// beyond reading one atomic.
+        /// @param tap  The sink, or nullptr to clear.
+        /// @pre GetChannels() <= MaxTapChannels — asserted when installing a tap.
+        void SetBlockTap(BlockTap tap);
+
+        /// @brief Returns how many mixed blocks the tap ring dropped because it was full.
+        ///
+        /// The ring drops the *newest* block when full — the mixing thread never blocks — so a
+        /// consumer that must stay aligned with the mix substitutes silence for the lost blocks.
+        /// Counted since the current tap was installed.
+        [[nodiscard]] u64 GetTapOverruns() const;
+
+        /// @brief Publishes one mixed block to the tap from the mixing thread.
+        ///
+        /// The backend callback's side of the tap: splits @p interleaved into TapBlockFrames-sized
+        /// blocks and pushes each into the ring Pump drains on the main thread. Lock-free and
+        /// allocation-free, and a whole no-op while no tap is set.
+        /// @param interleaved  GetChannels() interleaved samples per frame.
+        /// @param frames       Number of sample frames in @p interleaved.
+        void PublishTapBlock(std::span<const f32> interleaved, u32 frames);
 
         /// @brief Mixes one block from the latest published snapshot into an interleaved output.
         ///
@@ -140,5 +209,15 @@ namespace Veng::Audio
         u32 m_SampleRate = 48000;
         /// @brief Output channel count.
         u32 m_Channels = 2;
+        /// @brief Whether the hardware is stopped and each Pump mixes the frame's samples.
+        bool m_Driven = false;
+
+        /// @brief Delivers one mixed block to the installed tap, if any.
+        /// @param interleaved  GetChannels() interleaved samples per frame.
+        /// @param frames       Number of sample frames in @p interleaved.
+        void DeliverTapBlock(std::span<const f32> interleaved, u32 frames);
+
+        /// @brief Delivers every block the mixing thread pushed into the tap ring, in order.
+        void DrainTapRing();
     };
 }

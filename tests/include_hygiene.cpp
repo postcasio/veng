@@ -62,6 +62,7 @@
 #include <Veng/Diagnostics/TraceSink.h>
 
 #include <Veng/Event.h>
+#include <Veng/FrameClock.h>
 #include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
 #include <Veng/Input/RawInput.h>

@@ -871,7 +871,9 @@ if (VENG_BUILD_TESTS)
             tests/unit/audio_stereo.cpp
             tests/unit/audio_streaming.cpp
             tests/unit/audio_buffered.cpp
+            tests/unit/audio_device_driven.cpp
             tests/unit/pure_logic.cpp
+            tests/unit/frame_clock.cpp
             tests/unit/task_system.cpp
             tests/unit/parallel_for.cpp
             tests/unit/parallel_for_pool.cpp
@@ -1152,6 +1154,10 @@ if (VENG_BUILD_TESTS)
     add_test(NAME death.tovk_unmapped COMMAND veng_test_death tovk_unmapped)
     set_tests_properties(death.tovk_unmapped PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "ToVk\\(Format\\): unmapped format")
+
+    add_test(NAME death.frame_clock_nonpositive_delta COMMAND veng_test_death frame_clock_nonpositive_delta)
+    set_tests_properties(death.frame_clock_nonpositive_delta PROPERTIES LABELS "death;fast"
+            PASS_REGULAR_EXPRESSION "FrameClock Delta must be > 0")
 
     add_test(NAME death.assert_message COMMAND veng_test_death assert_message)
     set_tests_properties(death.assert_message PROPERTIES LABELS "death;fast"

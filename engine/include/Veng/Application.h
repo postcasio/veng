@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Assert.h>
+#include <Veng/FrameClock.h>
 #include <Veng/LaunchArguments.h>
 #include <Veng/Window.h>
 #include <Veng/Input.h>
@@ -716,6 +717,45 @@ namespace Veng
         /// sound; backed by a null device when there is no hardware.
         /// @pre Run() has initialized the engine — the audio device exists only inside Run().
         [[nodiscard]] Audio::AudioEngine& GetAudioEngine();
+
+        /// @brief Returns the audio device: the output backend and the real-time mixing path.
+        ///
+        /// The engine surface beneath GetAudioEngine(), for a caller that needs the device itself —
+        /// its driven mode and its block tap — rather than the mixer-facing API.
+        /// @pre Run() has initialized the engine — the audio device exists only inside Run().
+        [[nodiscard]] Audio::AudioDevice& GetAudioDevice();
+
+        /// @brief Drives the frame clock at a fixed delta from the next frame on.
+        ///
+        /// Every consumer of the frame delta — the simulation, the views, the audio pump — then
+        /// advances by FrameClockInfo::Delta per frame however long the frame actually took, so a
+        /// slow frame no longer shortens the world's step. Entering also skips the run-loop frame
+        /// cap, holds every managed viewport's render scale at its ceiling (Viewport::HoldRenderScale)
+        /// so frame-time pressure cannot soften the image, and puts the audio device in driven mode
+        /// (AudioDevice::SetDriven), where the hardware is stopped and each pump mixes exactly the
+        /// frame's samples. Time::Now() stays wall time throughout, so session timeouts, directory
+        /// reaping and the net pumps keep their real cadence.
+        ///
+        /// Takes effect at the top of the next Frame, so a request made mid-frame never leaves one
+        /// frame mixing two modes. Driving an already-driven clock re-bases it at the new delta.
+        /// @param info  The driven-mode descriptor.
+        /// @pre info.Delta > 0 — asserted otherwise.
+        void DriveFrameClock(FrameClockInfo info);
+
+        /// @brief Returns the frame clock to wall time from the next frame on.
+        ///
+        /// Reverses DriveFrameClock: the frame cap, the viewports' render-scale control and the
+        /// audio hardware all resume. The frame cap needs no re-arming — its deadline reset absorbs
+        /// the span it was skipped for — and each viewport applies whatever scale or dynamic-
+        /// resolution settings were pushed at it while held. Takes effect at the top of the next
+        /// Frame.
+        void ReleaseFrameClock();
+
+        /// @brief Returns whether the frame clock is currently driven.
+        ///
+        /// The applied state, not a pending request: a Drive or Release made this frame reads here
+        /// only from the next frame on.
+        [[nodiscard]] bool IsFrameClockDriven() const;
 
         /// @brief Returns the host-owned, process-wide registry of reflected types.
         ///
@@ -1458,6 +1498,13 @@ namespace Veng
         void Initialize();
         void Frame();
 
+        /// @brief Applies a requested frame-clock mode change at the top of a frame.
+        ///
+        /// Entering and leaving both move the frame clock, the managed viewports' render-scale hold
+        /// and the audio device's driven mode together, before the frame's delta is sampled, so no
+        /// frame runs with the three out of step.
+        void ApplyPendingFrameClock();
+
         /// @brief Samples the per-frame profiler counters (task pool, net telemetry) once per frame.
         void SampleFrameCounters();
 
@@ -2076,7 +2123,17 @@ namespace Veng
         optional<FullscreenMode> m_ObservedFullscreen;
 
         /// @brief The run-loop frame-rate cap; honored once per frame, independent of present-mode vsync.
+        ///
+        /// Skipped entirely while the frame clock is driven — sleeping to a real-time deadline in a
+        /// mode that is not paced by real time would only lengthen already-slow frames.
         FrameRateLimiter m_FrameLimiter;
+
+        /// @brief A frame-clock mode change awaiting the next frame boundary.
+        ///
+        /// Set present by DriveFrameClock (carrying the descriptor) or ReleaseFrameClock (carrying
+        /// nullopt), and consumed at the top of Frame so a request made mid-frame never splits one
+        /// frame across two modes.
+        optional<optional<FrameClockInfo>> m_PendingFrameClock;
 
         /// @brief This frame's interpolation fraction (GetSimAlpha), retained for the view pushes.
         f32 m_SimAlpha = 0.0f;
