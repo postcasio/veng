@@ -854,6 +854,14 @@ namespace Veng::Renderer
         /// @brief Layout for m_SkyboxPipeline: the IBL set (set 1) + the skybox push block.
         Ref<class PipelineLayout> m_SkyboxLayout;
 
+        /// @brief Fullscreen unclamped-HDR copy pipeline the post-process effect passes fall back to
+        /// when no effect material is bound, so a rebuild frame copies the scene color through rather
+        /// than presenting the effect target's black clear. Shared by every effect pass, writing
+        /// HdrFormat.
+        Ref<class GraphicsPipeline> m_PostProcessPassthroughPipeline;
+        /// @brief Layout for m_PostProcessPassthroughPipeline: set 0 (bindless) + the copy push block.
+        Ref<class PipelineLayout> m_PostProcessPassthroughLayout;
+
         /// @brief Fullscreen IBL-cube debug pipeline (a cube over the view ray), writing the output.
         Ref<class GraphicsPipeline> m_IblCubeDebugPipeline;
         /// @brief Layout for m_IblCubeDebugPipeline: the debug cube set (set 3) + its push block.

@@ -17,6 +17,18 @@ namespace Veng::Renderer
     class Context;
     class GraphicsPipeline;
 
+    /// @brief Push block for the no-material passthrough copy (matches taa_history_copy.frag).
+    ///
+    /// The shared unclamped-HDR copy the effect pass falls back to samples one bindless texture with
+    /// one bindless sampler; its two fields are exactly that shader's push constants.
+    struct PostProcessPassthroughPush
+    {
+        /// @brief Bindless slot of the scene-color source to copy through.
+        u32 SourceTexture;
+        /// @brief Bindless slot of the sampler.
+        u32 Sampler;
+    };
+
     /// @brief A game-authored fullscreen post-process effect run over scene color + depth before bloom.
     ///
     /// Models PostProcessScenePass (a fullscreen PostProcess-domain material, its source handles
@@ -38,12 +50,15 @@ namespace Veng::Renderer
     {
     public:
         /// @brief Constructs the pass; the pipeline builds on the first Declare with a bound material.
-        /// @param context      The render context for pipeline creation.
-        /// @param outputFormat Color format of the intermediate HDR target this pass writes.
-        /// @param extent       The post-resolve allocation this pass writes.
-        /// @param renderExtent The render allocation the depth mapping is derived against.
+        /// @param context             The render context for pipeline creation.
+        /// @param outputFormat        Color format of the intermediate HDR target this pass writes.
+        /// @param extent              The post-resolve allocation this pass writes.
+        /// @param renderExtent        The render allocation the depth mapping is derived against.
+        /// @param passthroughPipeline Shared unclamped-HDR copy pipeline used when no material is
+        ///                            bound (a rebuild frame), so the output is the source rather
+        ///                            than a black clear.
         PostProcessEffectScenePass(Context& context, Format outputFormat, uvec2 extent,
-                                   uvec2 renderExtent);
+                                   uvec2 renderExtent, Ref<GraphicsPipeline> passthroughPipeline);
 
         /// @brief Sets the effect material to run (or a null handle to disable the pass this frame).
         ///
@@ -87,6 +102,9 @@ namespace Veng::Renderer
         TextureHandle m_SourceHandle;
         /// @brief Imported output id this pass writes.
         ResourceId m_Output;
+
+        /// @brief Shared unclamped-HDR copy pipeline used as the no-material passthrough.
+        Ref<GraphicsPipeline> m_PassthroughPipeline;
 
         /// @brief The effect material instance driving this pass (set per frame).
         AssetHandle<MaterialInstance> m_Material;

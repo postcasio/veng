@@ -805,7 +805,8 @@ namespace Veng::Renderer
                 for (usize e = 0; e < m_PostProcessEffects.size(); ++e)
                 {
                     m_PostProcessEffectPasses.push_back(CreateUnique<PostProcessEffectScenePass>(
-                        m_Context, HdrFormat, tailExtent, renderExtent));
+                        m_Context, HdrFormat, tailExtent, renderExtent,
+                        m_PostProcessPassthroughPipeline));
                 }
             }
 

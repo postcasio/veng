@@ -15,6 +15,7 @@
 #include "GpuBlocks.h"
 #include "GpuCullSystem.h"
 #include "Passes/DeferredLightingScenePass.h"
+#include "Passes/PostProcessEffectScenePass.h"
 #include "SceneRendererIds.h"
 #include "ShadowSystem.h"
 #include "SkyResolver.h"
@@ -48,6 +49,10 @@ namespace Veng::Renderer
         constexpr AssetId DeferredLightingCascadesFragId{0x834ED7C05F336E01ULL};
         constexpr AssetId DeferredLightingIblFragId{0x9381DDECCDB22B4EULL};
         constexpr AssetId SkyboxFragId{0xFCA568CC3463618FULL};
+        // The shared unclamped-HDR copy fragment (also the TAA history copy): sample one bindless
+        // texture at the fullscreen UV and write it, no tonemap and no clamp. The post-process
+        // effect passes fall back to it when no material is bound.
+        constexpr AssetId HdrCopyFragId{0x07F31C1EC98A29BFULL};
         constexpr AssetId IblCubeDebugFragId{0xE9DE652D3C626F69ULL};
         constexpr AssetId AtmosphereSkyFragId{0x7DC6D927B2DF7858ULL};
         // The baked LTC lookup tables (matrix table then magnitude table, RGBA32F) for area lights.
@@ -197,6 +202,21 @@ namespace Veng::Renderer
                        });
         m_SkyboxPipeline =
             MakePipeline("SceneRenderer Skybox Pipeline", m_SkyboxLayout, skyboxFs, HdrFormat);
+
+        // Post-process effect passthrough: the shared unclamped-HDR copy a post-process effect pass
+        // falls back to when its material is not bound, so a Rebuild frame copies the scene color
+        // through rather than presenting the effect target's black clear. Set 0 (bindless) plus the
+        // two-slot copy push; writes HdrFormat like the effect targets it stands in for.
+        const AssetHandle<Veng::Shader> hdrCopyFs = LoadShader(HdrCopyFragId, "HDR copy fragment");
+        m_PostProcessPassthroughLayout = PipelineLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer PostProcess Passthrough Layout",
+                           .PushConstantRanges = {PushConstantRange::Of<PostProcessPassthroughPush>(
+                               ShaderStage::Fragment)},
+                       });
+        m_PostProcessPassthroughPipeline =
+            MakePipeline("SceneRenderer PostProcess Passthrough Pipeline",
+                         m_PostProcessPassthroughLayout, hdrCopyFs, HdrFormat);
 
         // IBL-cube debug: a fullscreen pass sampling a radiance cube along each view ray, for the
         // EnvironmentIbl / EnvironmentSource debug arms. It reads a dedicated cube set (set 3: cube

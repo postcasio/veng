@@ -16,10 +16,11 @@
 
 namespace Veng::Renderer
 {
-    PostProcessEffectScenePass::PostProcessEffectScenePass(Context& context, Format outputFormat,
-                                                           uvec2 extent, uvec2 renderExtent)
+    PostProcessEffectScenePass::PostProcessEffectScenePass(
+        Context& context, Format outputFormat, uvec2 extent, uvec2 renderExtent,
+        Ref<GraphicsPipeline> passthroughPipeline)
         : m_Context(context), m_OutputFormat(outputFormat), m_Extent(extent),
-          m_RenderExtent(renderExtent)
+          m_RenderExtent(renderExtent), m_PassthroughPipeline(std::move(passthroughPipeline))
     {
     }
 
@@ -67,7 +68,9 @@ namespace Veng::Renderer
     {
         // Contributed while the effect is in the active set; the material is bound per frame and may
         // arrive after the graph compiled, so the draw is gated in Execute, never the pass. The
-        // output is a fresh ping-pong target, so it clears rather than loads.
+        // output is a fresh ping-pong target, so it clears rather than loads — but when no material
+        // is bound (a Rebuild after the frame's material forward reconstructed this pass), the Execute
+        // copies the source through rather than leaving that black clear as the scene color.
         const ResourceId source = m_Source;
         const ResourceId depthId = io.GBufferDepth;
         const TextureHandle depthHandle = io.DepthHandle;
@@ -87,6 +90,23 @@ namespace Veng::Renderer
                 {
                     if (!m_Material.IsLoaded())
                     {
+                        // Copy the source through unchanged: the effect target's LoadOp::Clear left
+                        // it black, and it is this frame's scene-color source for the tail, so
+                        // returning here would blank the scene for the frame. The source fills the
+                        // post-resolve allocation, so a full-UV copy is the identity mapping.
+                        const ScenePassContext ctx = Wrap(inner);
+                        CommandBuffer& cmd = ctx.Cmd();
+                        const SceneView& view = ctx.View();
+                        const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+                        cmd.BindPipeline(m_PassthroughPipeline);
+                        cmd.SetViewport({0, 0}, view.PostResolveExtent);
+                        cmd.SetScissor({0, 0}, view.PostResolveExtent);
+                        registry.Bind(cmd);
+                        cmd.PushConstants(PostProcessPassthroughPush{
+                            .SourceTexture = m_SourceHandle.Index,
+                            .Sampler = samplerHandle.Index,
+                        });
+                        cmd.DrawFullscreenTriangle();
                         return;
                     }
                     // Build the output-format pipeline on first use and when the bound material
