@@ -113,6 +113,14 @@ namespace Veng::Renderer
         // the Bloom debug arm), so a refractive material behaves identically in both.
         topology.RefractionActive = topology.SceneComposited && settings.Refraction;
 
+        topology.TaaUpscalePromotes = ResolveTemporalUpscalePromotes(settings);
+
         return topology;
+    }
+
+    bool ResolveTemporalUpscalePromotes(const SceneRendererSettings& settings)
+    {
+        return settings.Mode == DebugView::Final && settings.UsesTaaUpscaling() && !settings.SSR &&
+               !settings.DepthOfField;
     }
 }

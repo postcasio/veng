@@ -88,11 +88,22 @@ namespace Veng::Renderer
 
         /// @brief Recreates the extent-sized output and recompiles the internal graph.
         ///
-        /// Invalidates the Ref a prior GetOutput() returned. A consumer caching a
-        /// bindless TextureHandle or ImGui texture from it must re-fetch and re-register
+        /// Sizes both allocations to @p extent, so the scene renders at the extent the tail runs at
+        /// and nothing is promoted. Invalidates the Ref a prior GetOutput() returned. A consumer
+        /// caching a bindless TextureHandle or ImGui texture from it must re-fetch and re-register
         /// after this call.
-        /// @param extent  New render extent in pixels.
+        /// @param extent  New post-resolve allocation in pixels.
         void Resize(uvec2 extent);
+
+        /// @brief Recreates both allocations at their own extents and recompiles the graph.
+        ///
+        /// @p extent sizes the output and the whole post-resolve tail; @p renderExtent sizes the
+        /// g-buffer, depth and every scene-side battery. A @p renderExtent below @p extent is a
+        /// render-scale reduction whose promotion pass carries the scene colour back up to the
+        /// tail's allocation; equal extents wire no promotion at all.
+        /// @param extent        New post-resolve allocation in pixels.
+        /// @param renderExtent  New render allocation in pixels.
+        void Resize(uvec2 extent, uvec2 renderExtent);
 
         /// @brief Recreates affected resources and recompiles the graph's topology.
         ///
@@ -132,39 +143,45 @@ namespace Veng::Renderer
 
         /// @brief Returns the sampleable view of the owned result.
         ///
-        /// The image is allocated at the high-water-mark extent; under dynamic resolution only
-        /// its top-left GetValidExtent() sub-rect holds this frame's rendered content. A consumer
-        /// upscales that sub-rect (see GetValidExtent). Invalidated by Resize and Configure;
-        /// re-fetch after those calls.
+        /// The image is the post-resolve allocation and the tail writes all of it at any render
+        /// scale, so a consumer samples it over the full [0,1] UV range. Invalidated by Resize and
+        /// Configure; re-fetch after those calls.
         [[nodiscard]] Ref<ImageView> GetOutput() const;
 
-        /// @brief Returns the valid sub-rect extent of the output from the last Execute.
+        /// @brief Returns the rendered sub-rect extent of the scene from the last Execute.
         ///
-        /// round(allocExtent * SceneView::RenderScale) from the last Execute, clamped to
-        /// [1, allocExtent]. The output image (GetOutput) is allocated at the full extent; only
-        /// the top-left GetValidExtent() texels are this frame's content, and a consumer sampling
-        /// it must remap its UVs into [0, GetValidExtent()/allocExtent] to upscale (a half-texel
-        /// inset avoids bleeding past the valid edge). Equal to the allocated extent before the
-        /// first Execute and whenever RenderScale is 1.0.
+        /// round(renderAllocExtent * SceneView::RenderScale) from the last Execute, clamped to
+        /// [1, renderAllocExtent]. It is the extent of the *scene* side — the g-buffer, depth and
+        /// the lit target — not of the output, which is always the post-resolve allocation. Equal
+        /// to the render allocation before the first Execute and whenever RenderScale is 1.0.
         [[nodiscard]] uvec2 GetValidExtent() const;
+
+        /// @brief Returns the render allocation the scene-side targets are sized to.
+        ///
+        /// round(post-resolve allocation * the owner's render scale), or the post-resolve
+        /// allocation itself in a debug view (whose passes read the g-buffer at full-screen UVs
+        /// while writing the output, so it renders the scene at the tail's allocation). Moved only
+        /// by Resize and Configure.
+        /// @return The render allocation extent.
+        [[nodiscard]] uvec2 GetRenderAllocationExtent() const;
 
         /// @brief Returns the extent the post-resolve HDR tail ran at in the last Execute.
         ///
-        /// Always the allocation extent: the resolve anchor promotes the scene color there — a
-        /// temporal resolve reconstructs it while reprojecting history, and with none wired a
-        /// spatial upscale pass does the same — so bloom, the point fields, a pre-bloom overlay,
-        /// the metering and the tonemap never run at the reduced sub-rect. Equal to the allocated
-        /// extent before the first Execute.
+        /// **Always the post-resolve allocation**, at any render scale in any anti-aliasing mode:
+        /// the promotion hands it on — a temporal-upscaling resolve reconstructs it while
+        /// reprojecting history, and otherwise a spatial upscale pass does the same — so bloom, a
+        /// pre-bloom overlay, the metering and the tonemap never run at the reduced scene
+        /// resolution. Equal to the allocated extent before the first Execute.
         /// @return The post-resolve extent (SceneView::PostResolveExtent).
         [[nodiscard]] uvec2 GetPostResolveExtent() const;
 
-        /// @brief Whether the last Execute ran the non-temporal resolve-anchor promotion pass.
+        /// @brief Whether the last Execute ran the spatial promotion pass.
         ///
-        /// True only while a frame renders below its allocation with no temporal resolve wired —
-        /// dynamic resolution below its ceiling. It is the cost dynamic resolution pays for a tail
-        /// that stays at full resolution, so a consumer tuning a resolution controller reads it to
-        /// tell a genuinely scaled frame from one sitting at the ceiling. A static render scale is
-        /// already the allocation, so it never wires the pass.
+        /// True while the finished HDR scene colour is not already the post-resolve allocation —
+        /// a reduced render allocation, a dynamic-resolution sub-rect, or both — and no
+        /// temporal-upscaling resolve reconstructed it. It is the one pass a reduced render scale
+        /// costs, so a consumer tuning a resolution controller reads it to tell a genuinely scaled
+        /// frame from one sitting at its ceiling.
         /// @return True when the promotion pass is wired.
         [[nodiscard]] bool IsPostResolveUpscaleWired() const;
 
@@ -402,22 +419,42 @@ namespace Veng::Renderer
         /// @brief Rebuilds the pass set from Settings.Mode and recompiles the RenderGraph.
         void Rebuild();
 
-        /// @brief Resolves whether this frame wires the non-temporal resolve-anchor promotion.
+        /// @brief Resolves the two allocations from the requested extents and the current settings.
         ///
-        /// Compares the frame's rendered sub-rect against the allocation: a scaled frame with no
-        /// temporal resolve wires the promotion (allocating the sub-rect scene target and rebuilding
-        /// the pass set) so everything from the resolve anchor onward runs at the allocation; a frame
-        /// already at the allocation needs none and drops it after an idle window. Called at the top
-        /// of Execute, before the post-resolve extent is derived, so the frame that activates it is
+        /// Applies the debug-view pin to the render allocation and decides whether the scene-colour
+        /// chain is allocated at the render or the post-resolve extent. Called before any target is
+        /// (re)created, so every Create* member reads settled extents.
+        void ResolveAllocationExtents();
+
+        /// @brief Re-sizes every extent-sized subsystem against the two settled allocations.
+        ///
+        /// Shared by construction, Resize and Configure: it re-decides the promotion first (its
+        /// target is the scene colour the tail's subsystems bind), then hands each subsystem the
+        /// side it belongs to — the render allocation for the scene-side batteries, the
+        /// post-resolve allocation for the tail's.
+        void RecreateExtentSubsystems();
+
+        /// @brief Updates whether this frame wires the spatial promotion, without rebuilding.
+        ///
+        /// Compares the finished scene colour against the post-resolve allocation: a scene colour
+        /// that is not already the whole allocation wires the promotion (allocating its
+        /// allocation-sized target) so everything from there on runs at the post-resolve extent,
+        /// and one that is needs none and drops it after an idle window. Called at the top of
+        /// Execute, before the post-resolve extent is derived, so the frame that activates it is
         /// the frame that runs it.
-        /// @param validExtent This frame's rendered sub-rect (FrameScale::ValidExtent).
-        void ResolvePostResolveUpscale(uvec2 validExtent);
+        /// @param sceneColorExtent This frame's valid scene-colour extent at the tail anchor.
+        /// @return True when the wiring changed and the caller must rebuild.
+        [[nodiscard]] bool UpdatePostResolveUpscale(uvec2 sceneColorExtent);
 
         /// @brief Clears the promotion's state and releases its target, without rebuilding.
-        ///
-        /// Resize and Configure rebuild anyway and re-decide from the next frame's own scale, so
-        /// they drop it through this rather than carrying a wired pass across a recompile.
         void DropPostResolveUpscale();
+
+        /// @brief The scene-colour id the post-resolve tail reads (the promotion's target, or the HDR).
+        [[nodiscard]] ResourceId PostSceneId() const;
+        /// @brief The bindless slot of the scene colour the post-resolve tail reads.
+        [[nodiscard]] TextureHandle PostSceneHandle() const;
+        /// @brief The concrete view of the scene colour the post-resolve tail reads.
+        [[nodiscard]] const Ref<ImageView>& PostSceneView() const;
 
         /// @brief Resolves the scene's PointField components into this Execute's live field set.
         ///
@@ -492,14 +529,14 @@ namespace Veng::Renderer
         void PrepareDraws(const SceneView& view, u32 viewConstantsIndex,
                           u32 halfResViewConstantsIndex, bool halfResViewReady);
 
-        /// @brief This frame's dynamic-resolution sub-rect and its UV mapping into the allocation.
+        /// @brief This frame's sub-rect of the render allocation and its UV mapping into it.
         struct FrameScale
         {
-            /// @brief round(m_Extent * scale), clamped to [1, m_Extent] — the rendered sub-rect.
+            /// @brief round(m_RenderAllocExtent * scale), clamped to [1, m_RenderAllocExtent].
             uvec2 ValidExtent;
-            /// @brief ValidExtent / m_Extent — the fraction of the allocation this frame fills.
+            /// @brief ValidExtent / m_RenderAllocExtent — the fraction of it this frame fills.
             vec2 RenderScaleUV;
-            /// @brief (ValidExtent - 0.5) / m_Extent — the half-texel-inset clamp for a bilinear tap.
+            /// @brief (ValidExtent - 0.5) / m_RenderAllocExtent — the bilinear-tap clamp.
             vec2 MaxValidUV;
         };
 
@@ -554,18 +591,33 @@ namespace Veng::Renderer
         AssetManager& m_Assets;
         /// @brief Pixel format of the owned output target.
         Format m_OutputFormat;
-        /// @brief Allocated render extent — the high-water-mark every target is sized to.
+        /// @brief The post-resolve allocation — the output and every tail target are sized to it.
         uvec2 m_Extent;
-        /// @brief This frame's valid sub-rect extent (round(m_Extent * RenderScale)); GetValidExtent.
+        /// @brief The render allocation the owner asked for, before the debug-view pin.
+        ///
+        /// Kept so a Configure that leaves a debug view restores the requested scene resolution
+        /// without the owner re-pushing it.
+        uvec2 m_RequestedRenderAllocExtent;
+        /// @brief The render allocation — the g-buffer, depth and every scene-side target's extent.
+        ///
+        /// m_RequestedRenderAllocExtent in the Final view; pinned to m_Extent in a debug view, whose
+        /// passes read the g-buffer at full-screen UVs while writing the output.
+        uvec2 m_RenderAllocExtent;
+        /// @brief The allocation of the HDR scene-colour chain between the temporal anchor and the tail.
+        ///
+        /// m_Extent when a temporal-upscaling resolve reconstructs it there (FrameTopology's
+        /// TaaUpscalePromotes), else m_RenderAllocExtent.
+        uvec2 m_SceneColorAllocExtent;
+        /// @brief This frame's rendered sub-rect (round(m_RenderAllocExtent * RenderScale)).
         uvec2 m_ValidExtent;
         /// @brief The extent the last Execute handed the tail as SceneView::PostResolveExtent.
         ///
         /// Recorded from the value actually pushed rather than re-derived, so GetPostResolveExtent
         /// reports what the tail passes read.
         uvec2 m_PostResolveExtent;
-        /// @brief Previous frame's sub-rect UV mapping (validExtent/allocExtent), for TAA history.
+        /// @brief Previous frame's sub-rect UV mapping (validExtent/renderAlloc), for TAA history.
         vec2 m_PreviousRenderScaleUV{1.0f};
-        /// @brief Previous frame's clamped max valid UV ((validExtent-0.5)/allocExtent), for TAA history.
+        /// @brief Previous frame's clamped max valid UV ((validExtent-0.5)/renderAlloc), for TAA history.
         vec2 m_PreviousMaxValidUV{1.0f};
         /// @brief Current topology and sizing knobs.
         SceneRendererSettings m_Settings;
@@ -866,6 +918,14 @@ namespace Veng::Renderer
         /// Null unless the chain is fully wired (the Final arm with Settings.DepthOfField); the
         /// CoC debug arm declares only the chain's first two compute stages, never this.
         Unique<ScenePass> m_DofCompositePass;
+
+        /// @brief The spatial promotion, held outside m_Passes and declared at the HDR tail anchor.
+        ///
+        /// It occupies the boundary between the scene side and the post-resolve tail — after the
+        /// depth-of-field composite has handed the finished HDR scene colour on, before the
+        /// post-process effect chain reads it — so it cannot ride the list. Null unless the scene
+        /// colour is not already the post-resolve allocation (m_PostResolveUpscaleActive).
+        Unique<ScenePass> m_ScenePromotionPass;
 
         /// @brief One post-process effect pass per active PostProcessEffect, held outside m_Passes.
         ///

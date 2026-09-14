@@ -128,11 +128,16 @@ namespace Veng::Renderer
     /// the viewport's MaxAllocationScale, and composes with any mode (SSAA under CMAA2, say).
     ///
     /// TAA and TAAU share the whole temporal machinery (jitter, history, resolve, history-copy) and
-    /// differ only in the render/output resolution relationship. TAA resolves at the allocation
-    /// resolution (the render scale is an allocation/supersampling scale). TAAU is temporal
-    /// upscaling: the viewport pins the allocation to native and routes the render scale — the static
-    /// slider or the per-frame dynamic-resolution scale — into the rendered sub-rect, so the resolve
-    /// reconstructs the native image from a cheaper, jittered low-resolution render.
+    /// the render scale means the same thing under both — it sizes the render allocation the scene
+    /// rasterizes into, which is separate from the post-resolve allocation the tail runs at in every
+    /// mode. What differs is **where the resolve's output lands**. TAA resolves at the render
+    /// allocation, so its history is render-allocation-sized and a spatial promotion carries the
+    /// result up to the post-resolve allocation: the reconstruction is temporal, the upscale
+    /// spatial. TAAU resolves at the post-resolve allocation, so its history is allocation-sized and
+    /// **the resolve is the promotion** — a jittered sub-native render accumulated straight into the
+    /// native image, with no second resample behind it. A TAAU frame that also wires SSR or a
+    /// composited depth-of-field chain resolves like TAA instead (those read render-resolution depth
+    /// beside the scene colour), degrading the reconstruction to spatial and keeping everything else.
     enum class AntiAliasingMode : u8
     {
         /// @brief No anti-aliasing resolve — the plain deferred output.

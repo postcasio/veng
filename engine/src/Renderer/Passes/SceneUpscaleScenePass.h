@@ -11,9 +11,9 @@ namespace Veng::Renderer
     class Context;
     class GraphicsPipeline;
 
-    // The scene-upscale push block, matching scene_upscale.frag: the sub-rect scene-color slot,
-    // the shared sampler, and this frame's sub-rect mapping (source and destination share one
-    // allocation extent, so one mapping serves both the sample and the clamp).
+    // The scene-upscale push block, matching scene_upscale.frag: the scene-color slot, the shared
+    // sampler, and this frame's mapping of the destination UV into the source's valid region (one
+    // mapping serves both the sample and the clamp).
     struct SceneUpscalePush
     {
         u32 SourceTexture;
@@ -24,13 +24,14 @@ namespace Veng::Renderer
         vec2 MaxUV;
     };
 
-    /// @brief Promotes the sub-rect scene color to the full allocation ahead of the HDR tail.
+    /// @brief Promotes the finished scene color to the post-resolve allocation ahead of the tail.
     ///
-    /// The non-temporal counterpart of the temporal resolve, sitting at the same anchor: the scene
-    /// rasterized into the frame's dynamic-resolution sub-rect, and this resamples it across the
-    /// allocation so bloom, the point fields, a pre-bloom overlay, the metering and the tonemap all
-    /// run at the allocation. Wired only for a frame actually rendering below its allocation scale,
-    /// so a full-scale frame pays no pass at all.
+    /// It sits on the boundary between the render side and the post-resolve tail: the scene chain
+    /// finished in the render allocation (or a dynamic-resolution sub-rect of it), and this
+    /// resamples it across the post-resolve allocation so the post-process effects, a pre-bloom
+    /// overlay, bloom, the metering and the tonemap all run there. Wired only when the scene color
+    /// is not already that allocation, so an unscaled frame — and any frame a temporal-upscaling
+    /// resolve already reconstructed — pays no pass at all.
     class SceneUpscaleScenePass final : public ScenePass
     {
     public:
@@ -39,19 +40,20 @@ namespace Veng::Renderer
         /// @param pipeline     The fullscreen upscale pipeline.
         /// @param sourceId     The sub-rect scene-color source id (declared sampled).
         /// @param outputId     The allocation-sized scene-color target this pass writes.
-        /// @param sourceHandle Bindless slot for the sub-rect source.
+        /// @param sourceHandle Bindless slot for the source.
         /// @param sampler      Shared linear clamp-to-edge sampler slot.
-        /// @param extent       The allocation extent; updated via Resize.
+        /// @param sourceExtent The allocation the source scene color lives in.
+        /// @param extent       The post-resolve allocation this pass writes; updated via Resize.
         SceneUpscaleScenePass(Context& context, Ref<GraphicsPipeline> pipeline, ResourceId sourceId,
                               ResourceId outputId, TextureHandle sourceHandle,
-                              SamplerHandle sampler, uvec2 extent)
+                              SamplerHandle sampler, uvec2 sourceExtent, uvec2 extent)
             : m_Context(context), m_Pipeline(std::move(pipeline)), m_SourceId(sourceId),
               m_OutputId(outputId), m_SourceHandle(sourceHandle), m_Sampler(sampler),
-              m_Extent(extent)
+              m_SourceExtent(sourceExtent), m_Extent(extent)
         {
         }
 
-        /// @brief Updates the allocation extent.
+        /// @brief Updates the post-resolve allocation extent.
         void Resize(uvec2 extent) override { m_Extent = extent; }
         /// @brief Contributes the upscale pass into the graph.
         void Declare(RenderGraph& graph, const PassIO& io) override;
@@ -61,15 +63,17 @@ namespace Veng::Renderer
         Context& m_Context;
         /// @brief The fullscreen upscale pipeline.
         Ref<GraphicsPipeline> m_Pipeline;
-        /// @brief The sub-rect scene-color source id.
+        /// @brief The scene-color source id.
         ResourceId m_SourceId;
-        /// @brief The allocation-sized scene-color target.
+        /// @brief The post-resolve-allocation scene-color target.
         ResourceId m_OutputId;
-        /// @brief Bindless slot for the sub-rect source.
+        /// @brief Bindless slot for the source.
         TextureHandle m_SourceHandle;
         /// @brief Shared sampler bindless slot.
         SamplerHandle m_Sampler;
-        /// @brief The allocation extent.
+        /// @brief The allocation the source scene color lives in.
+        uvec2 m_SourceExtent;
+        /// @brief The post-resolve allocation extent.
         uvec2 m_Extent;
     };
 }

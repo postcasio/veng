@@ -16,16 +16,17 @@ namespace Veng::Renderer
     class GraphicsPipeline;
     class PipelineLayout;
 
-    /// @brief Owns the sub-rect scene-color target and the pipeline that promotes it to the allocation.
+    /// @brief Owns the promoted scene-color target and the pipeline that writes it.
     ///
-    /// The non-temporal half of the resolve anchor. With no temporal resolve wired, the scene
-    /// chain rasterizes into this target's dynamic-resolution sub-rect and one fullscreen pass
-    /// upscales it into the allocation-sized scene color the HDR tail reads — so the tail runs at
-    /// the allocation in every configuration rather than only behind a temporal resolve.
+    /// The spatial half of the promotion. The scene chain finishes its HDR colour in the render
+    /// allocation (or a dynamic-resolution sub-rect of it), and one fullscreen pass resamples that
+    /// into this post-resolve-allocation target the HDR tail reads — so the tail runs at the
+    /// post-resolve allocation in every configuration rather than only behind a temporal-upscaling
+    /// resolve.
     ///
-    /// Nothing is allocated while the promotion is unwired, which is every frame a viewport renders
-    /// at its allocation scale: a render scale expressed statically is already the allocation, so
-    /// only a dynamic-resolution frame actually below its ceiling holds this memory.
+    /// Nothing is allocated while the promotion is unwired, which is every frame whose scene colour
+    /// already covers the post-resolve allocation: render scale 1, or a temporal-upscaling resolve
+    /// that reconstructed it itself.
     class PostResolveUpscale
     {
     public:
@@ -41,21 +42,21 @@ namespace Veng::Renderer
         PostResolveUpscale(const PostResolveUpscale&) = delete;
         PostResolveUpscale& operator=(const PostResolveUpscale&) = delete;
 
-        /// @brief Recreates the sub-rect scene target at @p extent, or releases it when unwired.
+        /// @brief Recreates the promoted scene target at @p extent, or releases it when unwired.
         ///
-        /// The target is allocation-sized (HdrFormat) like every other scene-color intermediate;
-        /// the frame's render scale selects the sub-rect of it the scene rasterizes into.
-        /// @param extent  The allocation extent the target is sized to.
+        /// The target is the post-resolve allocation (HdrFormat) like every other scene-color
+        /// intermediate on that side; the promotion pass writes all of it.
+        /// @param extent  The post-resolve allocation the target is sized to.
         /// @param enabled Whether the promotion is wired (the target is allocated only then).
         void Resize(uvec2 extent, bool enabled);
 
-        /// @brief The fullscreen upscale pipeline (sub-rect bilinear resample, writes HdrFormat).
+        /// @brief The fullscreen promotion pipeline (one bilinear resample, writes HdrFormat).
         [[nodiscard]] const Ref<GraphicsPipeline>& GetPipeline() const { return m_Pipeline; }
 
-        /// @brief The sub-rect scene-color target the scene chain writes; null while unwired.
+        /// @brief The promoted scene-color target the tail reads; null while unwired.
         [[nodiscard]] const Ref<ImageView>& GetSceneView() const { return m_SceneView; }
 
-        /// @brief Bindless slot for the sub-rect scene target; the upscale samples through it.
+        /// @brief Bindless slot for the promoted scene target; the tail samples through it.
         [[nodiscard]] TextureHandle GetSceneHandle() const { return m_SceneHandle; }
 
     private:

@@ -94,7 +94,7 @@ namespace Veng::Renderer
         bindless.Release(m_HistoryHandle);
     }
 
-    void TaaResolve::Resize(const uvec2 extent, const bool enabled)
+    void TaaResolve::Resize(const uvec2 litExtent, const uvec2 historyExtent, const bool enabled)
     {
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
 
@@ -111,7 +111,7 @@ namespace Veng::Renderer
         {
             m_LitImage = Image::Create(m_Context, {
                                                       .Name = "SceneRenderer Lit",
-                                                      .Extent = {extent.x, extent.y, 1},
+                                                      .Extent = {litExtent.x, litExtent.y, 1},
                                                       .Format = HdrFormat,
                                                       .Usage = HdrUsage,
                                                   });
@@ -119,12 +119,13 @@ namespace Veng::Renderer
                                           {.Name = "SceneRenderer Lit View", .Image = m_LitImage});
             m_LitHandle = bindless.Register(m_LitView);
 
-            m_HistoryImage = Image::Create(m_Context, {
-                                                          .Name = "SceneRenderer TAA History",
-                                                          .Extent = {extent.x, extent.y, 1},
-                                                          .Format = HdrFormat,
-                                                          .Usage = HdrUsage,
-                                                      });
+            m_HistoryImage =
+                Image::Create(m_Context, {
+                                             .Name = "SceneRenderer TAA History",
+                                             .Extent = {historyExtent.x, historyExtent.y, 1},
+                                             .Format = HdrFormat,
+                                             .Usage = HdrUsage,
+                                         });
             m_HistoryView = ImageView::Create(
                 m_Context, {.Name = "SceneRenderer TAA History View", .Image = m_HistoryImage});
             m_HistoryHandle = bindless.Register(m_HistoryView);

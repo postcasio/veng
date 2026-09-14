@@ -313,63 +313,69 @@ namespace Veng::Renderer
         bindless.Release(m_VelocityHandle);
         bindless.Release(m_EmissiveHandle);
 
-        m_AlbedoImage = Image::Create(m_Context, {
-                                                     .Name = "SceneRenderer GBuffer Albedo",
-                                                     .Extent = {m_Extent.x, m_Extent.y, 1},
-                                                     .Format = GBuffer::AlbedoFormat,
-                                                     .Usage = GBuffer::ColorUsage,
-                                                 });
+        m_AlbedoImage = Image::Create(
+            m_Context, {
+                           .Name = "SceneRenderer GBuffer Albedo",
+                           .Extent = {m_RenderAllocExtent.x, m_RenderAllocExtent.y, 1},
+                           .Format = GBuffer::AlbedoFormat,
+                           .Usage = GBuffer::ColorUsage,
+                       });
         m_AlbedoView = ImageView::Create(
             m_Context, {.Name = "SceneRenderer GBuffer Albedo View", .Image = m_AlbedoImage});
 
-        m_NormalImage = Image::Create(m_Context, {
-                                                     .Name = "SceneRenderer GBuffer Normal",
-                                                     .Extent = {m_Extent.x, m_Extent.y, 1},
-                                                     .Format = GBuffer::NormalFormat,
-                                                     .Usage = GBuffer::ColorUsage,
-                                                 });
+        m_NormalImage = Image::Create(
+            m_Context, {
+                           .Name = "SceneRenderer GBuffer Normal",
+                           .Extent = {m_RenderAllocExtent.x, m_RenderAllocExtent.y, 1},
+                           .Format = GBuffer::NormalFormat,
+                           .Usage = GBuffer::ColorUsage,
+                       });
         m_NormalView = ImageView::Create(
             m_Context, {.Name = "SceneRenderer GBuffer Normal View", .Image = m_NormalImage});
 
-        m_OrmImage = Image::Create(m_Context, {
-                                                  .Name = "SceneRenderer GBuffer ORM",
-                                                  .Extent = {m_Extent.x, m_Extent.y, 1},
-                                                  .Format = GBuffer::ORMFormat,
-                                                  .Usage = GBuffer::ColorUsage,
-                                              });
+        m_OrmImage = Image::Create(m_Context,
+                                   {
+                                       .Name = "SceneRenderer GBuffer ORM",
+                                       .Extent = {m_RenderAllocExtent.x, m_RenderAllocExtent.y, 1},
+                                       .Format = GBuffer::ORMFormat,
+                                       .Usage = GBuffer::ColorUsage,
+                                   });
         m_OrmView = ImageView::Create(
             m_Context, {.Name = "SceneRenderer GBuffer ORM View", .Image = m_OrmImage});
 
-        m_DepthImage = Image::Create(m_Context, {
-                                                    .Name = "SceneRenderer GBuffer Depth",
-                                                    .Extent = {m_Extent.x, m_Extent.y, 1},
-                                                    .Format = GBuffer::DepthFormat,
-                                                    .Usage = GBuffer::DepthUsage,
-                                                });
+        m_DepthImage = Image::Create(
+            m_Context, {
+                           .Name = "SceneRenderer GBuffer Depth",
+                           .Extent = {m_RenderAllocExtent.x, m_RenderAllocExtent.y, 1},
+                           .Format = GBuffer::DepthFormat,
+                           .Usage = GBuffer::DepthUsage,
+                       });
         m_DepthView = ImageView::Create(
             m_Context, {.Name = "SceneRenderer GBuffer Depth View", .Image = m_DepthImage});
 
         // G3 — the per-object screen-space motion vector. A g-buffer channel like the others:
         // the surface pass writes it as SV_Target3 every frame (the TAA resolve and the
         // MotionVectors debug blit read it), so it is always allocated, not TAA-gated.
-        m_VelocityImage = Image::Create(m_Context, {
-                                                       .Name = "SceneRenderer GBuffer Velocity",
-                                                       .Extent = {m_Extent.x, m_Extent.y, 1},
-                                                       .Format = GBuffer::VelocityFormat,
-                                                       .Usage = GBuffer::ColorUsage,
-                                                   });
+        m_VelocityImage = Image::Create(
+            m_Context, {
+                           .Name = "SceneRenderer GBuffer Velocity",
+                           .Extent = {m_RenderAllocExtent.x, m_RenderAllocExtent.y, 1},
+                           .Format = GBuffer::VelocityFormat,
+                           .Usage = GBuffer::ColorUsage,
+                       });
         m_VelocityView = ImageView::Create(
             m_Context, {.Name = "SceneRenderer GBuffer Velocity View", .Image = m_VelocityImage});
 
         // G4 — the HDR emissive channel. A g-buffer channel like the others: the surface pass
         // writes authored emission as SV_Target4 every frame, so it is always allocated, and the
         // lighting pass samples it to add emission into the outgoing radiance.
-        m_EmissiveImage = Image::Create(m_Context, {
-                                                       .Name = "SceneRenderer GBuffer Emissive",
-                                                       .Extent = {m_Extent.x, m_Extent.y, 1},
-                                                       .Format = GBuffer::EmissiveFormat,
-                                                       .Usage = GBuffer::ColorUsage,
-                                                   });
+        m_EmissiveImage = Image::Create(
+            m_Context, {
+                           .Name = "SceneRenderer GBuffer Emissive",
+                           .Extent = {m_RenderAllocExtent.x, m_RenderAllocExtent.y, 1},
+                           .Format = GBuffer::EmissiveFormat,
+                           .Usage = GBuffer::ColorUsage,
+                       });
         m_EmissiveView = ImageView::Create(
             m_Context, {.Name = "SceneRenderer GBuffer Emissive View", .Image = m_EmissiveImage});
 
@@ -394,7 +400,7 @@ namespace Veng::Renderer
 
         // The hi-Z pyramid's reduction sets bind the fresh depth view, so it is (re)built from the
         // g-buffer create/recreate tail.
-        m_GpuCull->ResizeHiZ(m_Extent, m_DepthView);
+        m_GpuCull->ResizeHiZ(m_RenderAllocExtent, m_DepthView);
     }
 
     void SceneRenderer::CreateCullResources()
@@ -475,34 +481,37 @@ namespace Veng::Renderer
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_HdrHandle);
 
-        m_HdrImage = Image::Create(m_Context, {
-                                                  .Name = "SceneRenderer HDR",
-                                                  .Extent = {m_Extent.x, m_Extent.y, 1},
-                                                  .Format = HdrFormat,
-                                                  .Usage = HdrUsage,
-                                              });
+        m_HdrImage = Image::Create(
+            m_Context, {
+                           .Name = "SceneRenderer HDR",
+                           .Extent = {m_SceneColorAllocExtent.x, m_SceneColorAllocExtent.y, 1},
+                           .Format = HdrFormat,
+                           .Usage = HdrUsage,
+                       });
         m_HdrView =
             ImageView::Create(m_Context, {.Name = "SceneRenderer HDR View", .Image = m_HdrImage});
 
         m_HdrHandle = bindless.Register(m_HdrView);
     }
 
-    // The bloom mask: a full-extent single-channel target the forward translucent pass clears and a
+    // The bloom mask: a render-allocation single-channel target the forward translucent pass clears and a
     // declaring material writes beside its color, sampled by the bloom pyramid's level-0 dispatch
     // through bindless. It is renderer-owned and imported like the g-buffer rather than a graph
     // transient, because the sweep reads it off the registry rather than off the bloom chain's own
-    // descriptor set.
+    // descriptor set. It is written scene-side, so the bloom sweep maps it through the render
+    // allocation rather than through the post-resolve one its own levels use.
     void SceneRenderer::CreateBloomMask()
     {
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_BloomMaskHandle);
 
-        m_BloomMaskImage = Image::Create(m_Context, {
-                                                        .Name = "SceneRenderer Bloom Mask",
-                                                        .Extent = {m_Extent.x, m_Extent.y, 1},
-                                                        .Format = BloomMaskFormat,
-                                                        .Usage = BloomMaskUsage,
-                                                    });
+        m_BloomMaskImage = Image::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Bloom Mask",
+                           .Extent = {m_RenderAllocExtent.x, m_RenderAllocExtent.y, 1},
+                           .Format = BloomMaskFormat,
+                           .Usage = BloomMaskUsage,
+                       });
         m_BloomMaskView = ImageView::Create(
             m_Context, {.Name = "SceneRenderer Bloom Mask View", .Image = m_BloomMaskImage});
 

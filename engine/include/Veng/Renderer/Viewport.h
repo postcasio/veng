@@ -170,22 +170,27 @@ namespace Veng::Renderer
         Format ColorFormat = Format::Undefined;
         /// @brief Initial topology and sizing knobs for the owned SceneRenderer.
         SceneRendererSettings Settings;
-        /// @brief Uniform render-resolution multiplier on the region extent.
+        /// @brief Uniform render-resolution multiplier on the region extent, for the **scene** only.
         ///
-        /// The SceneRenderer is sized to round(Region.Extent * upper-bound-scale) — the static
-        /// RenderScale here, or the dynamic-resolution MaxScale once SetDynamicResolution is called;
-        /// the placement region is unchanged, so the compositor scales the result to fill it. (0,1]
-        /// renders below the region and is upscaled; >1 supersamples. Uniform, so the render aspect
-        /// matches the region. Must be > 0.
+        /// The SceneRenderer's scene-side targets are sized to
+        /// round(Region.Extent * MaxAllocationScale * upper-bound-scale) — the static RenderScale
+        /// here, or the dynamic-resolution MaxScale once SetDynamicResolution is called. The
+        /// post-resolve tail (bloom, a pre-bloom overlay, the metering, the tonemap) and the output
+        /// keep the region's own (capped) extent whatever this is, so a reduced scale buys frame
+        /// time on the scene and never softens what is composited over it. (0,1] renders the scene
+        /// below the region and the promotion upscales it; >1 renders the scene supersampled and the
+        /// promotion averages it down (MaxAllocationScale is the lever that supersamples the tail
+        /// too). Uniform, so the render aspect matches the region. Must be > 0.
         f32 RenderScale = 1.0f;
-        /// @brief Caps the allocation extent to this fraction of the region's pixels.
+        /// @brief Caps both allocation extents to this fraction of the region's pixels.
         ///
-        /// A fixed ceiling on the allocation relative to the region's backing extent: the
-        /// SceneRenderer is allocated at round(Region.Extent * MaxAllocationScale * upper-bound-scale).
-        /// The default 1.0 allocates at the full region — on a 2× HiDPI display that is native
-        /// resolution at the backing pixels, not supersampling. A value < 1.0 is a deliberate lower
-        /// ceiling (a fixed perf budget). It is the outer of the two multiplicative scales — the cap,
-        /// then the per-frame sub-rect rendered inside it — so it bounds the allocation. Must be > 0.
+        /// A fixed ceiling relative to the region's backing extent, applied to the post-resolve
+        /// allocation (round(Region.Extent * MaxAllocationScale)) and, as the outer factor, to the
+        /// render allocation inside it (times the upper-bound render scale). The default 1.0
+        /// allocates at the full region — on a 2× HiDPI display that is native resolution at the
+        /// backing pixels, not supersampling. A value < 1.0 is a deliberate lower ceiling (a fixed
+        /// perf budget); a value > 1.0 is supersampling, and because it is the outer factor on both
+        /// it supersamples the tail with the scene. Must be > 0.
         f32 MaxAllocationScale = 1.0f;
         /// @brief Whether the engine compositor places this viewport into its region.
         ViewportRole Role = ViewportRole::Offscreen;
@@ -274,23 +279,35 @@ namespace Veng::Renderer
         /// @brief Returns the current render-resolution multiplier.
         [[nodiscard]] f32 GetRenderScale() const;
 
-        /// @brief Returns the fixed allocation scale the render target is sized at.
+        /// @brief Returns the fixed allocation scale the **scene** targets are sized at.
         ///
-        /// The fraction of the (capped) region the SceneRenderer is allocated to: the upper bound of
-        /// the render scale — MaxScale while dynamic resolution is on, else the static RenderScale.
-        /// The allocation never reacts to frame-time pressure; the per-frame sub-rect inside it does.
-        /// Reads with GetRenderScale() as "rendering at GetRenderScale() of an allocation that is this
-        /// of the region."
-        /// @return The allocation scale, > 0.
+        /// The fraction of the (capped) region the SceneRenderer allocates its scene side to: the
+        /// upper bound of the render scale — MaxScale while dynamic resolution is on, else the
+        /// static RenderScale. The allocation never reacts to frame-time pressure; the per-frame
+        /// sub-rect inside it does. Reads with GetRenderScale() as "rendering at GetRenderScale()
+        /// of a render allocation that is this of the region." The post-resolve tail is unaffected
+        /// by it — see GetPostResolveAllocationExtent.
+        /// @return The render allocation scale, > 0.
         [[nodiscard]] f32 GetAllocationScale() const;
 
-        /// @brief Returns the renderer's current allocation extent in pixels.
+        /// @brief Returns the renderer's current **render** allocation extent in pixels.
         ///
         /// round(GetRegion().Extent * MaxAllocationScale * GetAllocationScale()), clamped to ≥ {1,1}:
-        /// the size every render-graph target is allocated at. The rendered sub-rect is this times
-        /// GetRenderScale()/GetAllocationScale() (reported by SceneRenderer::GetValidExtent()).
-        /// @return The allocation extent.
+        /// the size the g-buffer, depth and every scene-side battery are allocated at. The rendered
+        /// sub-rect is this times GetRenderScale()/GetAllocationScale() (reported by
+        /// SceneRenderer::GetValidExtent()).
+        /// @return The render allocation extent.
         [[nodiscard]] uvec2 GetAllocationExtent() const;
+
+        /// @brief Returns the post-resolve allocation extent in pixels.
+        ///
+        /// round(GetRegion().Extent * MaxAllocationScale), clamped to ≥ {1,1}: the output texture's
+        /// size and the extent bloom, a pre-bloom overlay, the metering and the tonemap run at. The
+        /// render scale never enters it, so a reduced render scale shrinks the cost of rendering the
+        /// scene and nothing downstream of the promotion; supersampling rides MaxAllocationScale and
+        /// so raises this too, which is what makes SSAA supersample the tail with the scene.
+        /// @return The post-resolve allocation extent.
+        [[nodiscard]] uvec2 GetPostResolveAllocationExtent() const;
 
         /// @brief Enables automatic render-scale control from measured GPU frame time.
         ///
@@ -684,7 +701,7 @@ namespace Veng::Renderer
         /// @return round(m_Region.Extent * m_MaxAllocationScale * scale), never below {1,1}.
         [[nodiscard]] uvec2 ExtentForScale(f32 scale) const;
 
-        /// @brief The renderer's allocation extent at the current allocation scale, clamped to ≥ 1.
+        /// @brief The render allocation extent at the current allocation scale, clamped to ≥ 1.
         ///
         /// @return ExtentForScale(GetAllocationScale()).
         [[nodiscard]] uvec2 ScaledExtent() const;
@@ -697,12 +714,13 @@ namespace Veng::Renderer
         /// @return The sub-rect fraction in (0, 1].
         [[nodiscard]] f32 GetViewRenderScale() const;
 
-        /// @brief Debounces a SceneRenderer::Resize to the next Render when the allocation moved.
+        /// @brief Debounces a SceneRenderer::Resize to the next Render when either allocation moved.
         ///
-        /// Compares the allocation extent computed after a scale/bound change against the caller's
-        /// captured prior extent; on a real change (and a non-zero region) it sets m_PendingExtent.
-        /// @param priorAlloc  The allocation extent captured before the change.
-        void DebounceAllocationResize(uvec2 priorAlloc);
+        /// Compares both allocation extents computed after a scale/bound change against the caller's
+        /// captured prior pair; on a real change (and a non-zero region) it sets m_PendingExtent.
+        /// @param priorPostAlloc    The post-resolve allocation extent captured before the change.
+        /// @param priorRenderAlloc  The render allocation extent captured before the change.
+        void DebounceAllocationResize(uvec2 priorPostAlloc, uvec2 priorRenderAlloc);
 
         /// @brief Advances the render scale from measured GPU frame time when control is enabled.
         ///
@@ -736,13 +754,6 @@ namespace Veng::Renderer
         f32 m_HeldRenderScale = 1.0f;
         /// @brief A dynamic-resolution change deferred by a hold; the inner nullopt is a disable.
         optional<optional<DynamicResolutionSettings>> m_DeferredDynamicResolution;
-        /// @brief Whether the renderer's AA mode is TAAU (mirrored from the settings).
-        ///
-        /// TAAU pins the allocation to native and routes the render scale into the rendered sub-rect,
-        /// so the temporal resolve upscales to native. Mirrored here rather than read through the
-        /// renderer because the allocation extent is computed during construction, before the renderer
-        /// exists. Kept in step by the constructor and Configure.
-        bool m_TaaUpscaling = false;
         /// @brief Whether the engine compositor places this viewport.
         ViewportRole m_Role;
 
@@ -793,8 +804,10 @@ namespace Veng::Renderer
         /// @brief The single in-flight pick, or unset when none is pending.
         optional<PendingPick> m_PendingPick;
 
-        /// @brief Pending extent applied at the next Render; zero when none is pending.
+        /// @brief Pending post-resolve allocation applied at the next Render; zero when none pends.
         uvec2 m_PendingExtent = {};
+        /// @brief Pending render allocation applied with m_PendingExtent at the next Render.
+        uvec2 m_PendingRenderExtent = {};
 
         /// @brief Bindless slot naming the current output view; re-registered on resize/Configure.
         TextureHandle m_OutputHandle;

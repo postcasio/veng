@@ -558,7 +558,7 @@ namespace Veng::Renderer
         const mat4 viewProj = view.Camera.ViewProjection();
         const Frustum frustum = Frustum::FromViewProjection(viewProj);
         const u32 region = m_Context.GetCurrentFrameInFlight();
-        const uvec2 renderExtent = view.PostResolveExtent;
+        const uvec2 renderExtent = m_PreResolve ? view.RenderExtent : view.SceneColorExtent;
         // Pixels per world unit at depth w is |Proj[1][1]|*H/(2w) — the projection is
         // Y-flipped for Vulkan clip space, so the diagonal is negative.
         const f32 projScale =
@@ -924,7 +924,7 @@ namespace Veng::Renderer
         const SceneView& view = ctx.View();
         const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
         const u32 region = m_Context.GetCurrentFrameInFlight();
-        const uvec2 renderExtent = view.PostResolveExtent;
+        const uvec2 renderExtent = m_PreResolve ? view.RenderExtent : view.SceneColorExtent;
 
         for (const PointField* field : *m_Fields)
         {

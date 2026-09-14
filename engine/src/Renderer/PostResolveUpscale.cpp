@@ -80,13 +80,13 @@ namespace Veng::Renderer
         }
 
         m_SceneImage = Image::Create(m_Context, {
-                                                    .Name = "SceneRenderer Upscale Scene",
+                                                    .Name = "SceneRenderer Promoted Scene",
                                                     .Extent = {extent.x, extent.y, 1},
                                                     .Format = HdrFormat,
                                                     .Usage = HdrUsage,
                                                 });
         m_SceneView = ImageView::Create(
-            m_Context, {.Name = "SceneRenderer Upscale Scene View", .Image = m_SceneImage});
+            m_Context, {.Name = "SceneRenderer Promoted Scene View", .Image = m_SceneImage});
         m_SceneHandle = bindless.Register(m_SceneView);
     }
 }

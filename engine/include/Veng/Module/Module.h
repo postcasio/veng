@@ -97,10 +97,15 @@ extern "C"
 /// radiance cube-view the IBL tier derives from, distinct from the displayed source): a module
 /// instantiates Sky (Add<Sky>) with the engine's layout, so a stale module built against the
 /// shorter struct would size and lay out the component short of what the engine reads and writes.
+/// Version 21 splits the renderer's single allocation extent in two: SceneRendererInfo grows a
+/// RenderExtent (the scene's own allocation, separate from the tail's) and SceneView grows
+/// SceneColorExtent mid-struct. A module constructs a SceneRendererInfo to create a renderer and a
+/// SceneView to drive one, so a stale module would hand the engine a short info struct and read the
+/// per-frame extents at shifted offsets.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 20u
+#define VENG_MODULE_ABI_VERSION 21u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

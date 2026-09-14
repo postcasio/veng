@@ -5285,11 +5285,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
-// The resolve anchor hands the full allocation on whatever is wired there, so the post-resolve tail
-// — bloom, the point fields, a pre-bloom overlay, the metering, the tonemap — never runs at the
-// reduced sub-rect. The two properties worth holding are that the extent is the allocation in every
-// anti-aliasing mode at any render scale, and that a frame already at the allocation wires no
-// promotion pass at all: the common configuration must not grow one.
+// The promotion hands the post-resolve allocation on whatever is wired at it, so the tail — bloom,
+// the point fields, a pre-bloom overlay, the metering, the tonemap — never runs at the reduced scene
+// resolution. The two properties worth holding are that the extent is the post-resolve allocation in
+// every anti-aliasing mode at any render scale, and that a frame already there wires no promotion
+// pass at all: the common configuration must not grow one.
 TEST_CASE_FIXTURE(
     Veng::Test::GpuFixture,
     "scene renderer: the post-resolve tail runs at the allocation at any render scale")
@@ -5417,6 +5417,120 @@ TEST_CASE_FIXTURE(
     Render(0.5f);
     CHECK(renderer->GetPostResolveExtent() == extent);
     CHECK(renderer->IsPostResolveUpscaleWired());
+
+    std::filesystem::remove(outArchive);
+}
+
+// The companion property of the case above: the render scale shrinks the scene side and nothing
+// else. A reduced render allocation has to reach the g-buffer — that is the memory a render-scale
+// slider is bought with — while the output and every tail target stay at the post-resolve
+// allocation, in a temporal mode as much as a non-temporal one.
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "scene renderer: a reduced render allocation shrinks the scene side and leaves the tail native")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_extent_split.vengpack");
+
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(material.has_value());
+
+    constexpr uvec2 extent{96, 72};
+    constexpr uvec2 halfExtent{48, 36};
+
+    const Ref<Mesh> cube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *material), "Extent Split Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f),
+                          static_cast<f32>(extent.x) / static_cast<f32>(extent.y), 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .RenderExtent = halfExtent,
+        .Settings = {.Mode = DebugView::Final,
+                     .Bloom = true,
+                     .AntiAliasing = AntiAliasingMode::None,
+                     .Shadows = false,
+                     .PunctualShadows = false,
+                     .AO = false},
+    });
+
+    auto Render = [&]()
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.016f});
+            });
+    };
+
+    auto CheckSceneSide = [&](const uvec2 expected)
+    {
+        CHECK(renderer->GetRenderAllocationExtent() == expected);
+        CHECK(renderer->GetAlbedoView()->GetImage()->GetWidth() == expected.x);
+        CHECK(renderer->GetAlbedoView()->GetImage()->GetHeight() == expected.y);
+        CHECK(renderer->GetDepthView()->GetImage()->GetWidth() == expected.x);
+        CHECK(renderer->GetDepthView()->GetImage()->GetHeight() == expected.y);
+    };
+
+    auto CheckTailNative = [&]()
+    {
+        CHECK(renderer->GetPostResolveExtent() == extent);
+        CHECK(renderer->GetOutput()->GetImage()->GetWidth() == extent.x);
+        CHECK(renderer->GetOutput()->GetImage()->GetHeight() == extent.y);
+    };
+
+    // The scene side is the render allocation and the output is the post-resolve one, so the
+    // half-scale frame carries a quarter of the g-buffer and a full-resolution tail.
+    CheckSceneSide(halfExtent);
+    Render();
+    CHECK(renderer->GetValidExtent() == halfExtent);
+    CheckTailNative();
+    CHECK(renderer->IsPostResolveUpscaleWired());
+
+    // Equal extents: the two coincide and nothing is promoted — the common path pays no pass.
+    renderer->Resize(extent);
+    CheckSceneSide(extent);
+    Render();
+    CHECK(renderer->GetValidExtent() == extent);
+    CheckTailNative();
+    CHECK_FALSE(renderer->IsPostResolveUpscaleWired());
+
+    // A temporal resolve does not change either side of the split: it reconstructs the render
+    // allocation and the promotion still carries that to the tail.
+    renderer->Resize(extent, halfExtent);
+    SceneRendererSettings taa = renderer->GetSettings();
+    taa.AntiAliasing = AntiAliasingMode::TAA;
+    renderer->Configure(taa);
+    CheckSceneSide(halfExtent);
+    Render();
+    CheckTailNative();
+    CHECK(renderer->IsPostResolveUpscaleWired());
+
+    // Temporal upscaling reconstructs the post-resolve allocation itself, so the tail is native with
+    // no promotion behind it — and the scene side is still the reduced render allocation, which is
+    // the memory the mode is supposed to save.
+    SceneRendererSettings taau = renderer->GetSettings();
+    taau.AntiAliasing = AntiAliasingMode::TAAU;
+    renderer->Configure(taau);
+    CheckSceneSide(halfExtent);
+    Render();
+    CheckTailNative();
+    CHECK_FALSE(renderer->IsPostResolveUpscaleWired());
 
     std::filesystem::remove(outArchive);
 }

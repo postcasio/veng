@@ -174,13 +174,16 @@ Its surface is a **lifetime split** keyed on how often each piece of state chang
   pipelines), build + compile the graph. The six `Create*` members that do that allocating compile
   in **`SceneRendererResources.cpp`**, a second translation unit of the same class; `Resize` and
   `Configure` call back into them from `SceneRenderer.cpp` unchanged.
-- `Resize(extent)` — recreate the **allocation**-sized images via the retire path, re-register
-  them into bindless, rebuild + re-`Compile()`. The extent is the *allocation* the targets live
-  in; the per-frame `SceneView::RenderScale` renders into a top-left
-  `round(allocExtent · RenderScale)` **sub-rect** of that allocation (`GetValidExtent()`), and the
-  resolve anchor promotes that sub-rect to the full allocation the tail runs at — so a per-frame
-  resolution change costs no `Resize`, only a smaller rendered region. Sizing the allocation is the slow knob; the
-  sub-rect is the fast one (see the `Viewport` section's two-loop model).
+- `Resize(extent)` / `Resize(extent, renderExtent)` — recreate the allocation-sized images via
+  the retire path, re-register them into bindless, rebuild + re-`Compile()`. **There are two
+  allocations** (see "The two allocations" below): `extent` is the **post-resolve** allocation —
+  the output's size and what the whole HDR tail runs at — and `renderExtent` is the **render**
+  allocation the scene rasterizes into. The one-argument form sizes both to `extent`. The per-frame
+  `SceneView::RenderScale` then renders into a top-left `round(renderAllocExtent · RenderScale)`
+  **sub-rect** of the render allocation (`GetValidExtent()`), and the promotion carries the finished
+  scene colour up to the post-resolve allocation — so a per-frame resolution change costs no
+  `Resize`, only a smaller rendered region. Sizing an allocation is the slow knob; the sub-rect is
+  the fast one (see the `Viewport` section's two-loop model).
 - `Configure(settings)` — recreate affected resources, rebuild + re-`Compile()` the topology.
 - `Execute(cmd, view)` — every frame: replay the graph against this frame's `SceneView`. **Never**
   reallocates or recompiles.
@@ -208,12 +211,12 @@ battery is a `SceneRendererSettings` toggle driving the `Configure` recompile.
 `TAA`, `CMAA2`, or `TAAU` — resolved by `FrameTopology` into at most one wired resolve. `TAA` and
 `TAAU` are the HDR-space temporal resolve below; `FXAA` and `CMAA2` are the post-tonemap **spatial**
 resolves under "Spatial anti-aliasing" further down. **Supersampling (SSAA) is not one of these
-modes** — it is orthogonal, driven by the viewport's render/allocation scale (see "Adaptive
-resolution" and the `Viewport` section), and composes with `TAA` (not `TAAU`, which claims the render
-scale for its own input). `Settings::UsesTaa()` is the named predicate the jitter, the history-reset,
-and which resolve occupies the anchor key on (true for both temporal modes); the post-resolve chain
-runs at the full allocation in every mode and keys on nothing;
-`Settings::UsesTaaUpscaling()` is `TAAU` alone, read by the viewport to pin its allocation to native.
+modes** — it is orthogonal, driven by the viewport's `MaxAllocationScale` (see "Adaptive resolution"
+and the `Viewport` section), and composes with every mode. `Settings::UsesTaa()` is the named
+predicate the jitter, the history-reset, and which resolve occupies the temporal anchor key on (true
+for both temporal modes); the post-resolve tail runs at the post-resolve allocation in every mode and
+keys on nothing. `Settings::UsesTaaUpscaling()` is `TAAU` alone, read by
+`ResolveTemporalUpscalePromotes` to decide whether the temporal resolve is itself the promotion.
 
 #### TAA
 
@@ -246,77 +249,111 @@ a renderer-owned persisted image written and read within the renderer's own sing
 each frame, so it needs no cross-frame ring or semaphore.
 
 **The resolve is sub-rect-aware, which is what makes it compose with dynamic resolution and act as an
-upscaler.** The scene renders into the `round(allocExtent · RenderScale)` sub-rect like any
-dynamic-resolution frame, but the resolve **reconstructs the full allocation**: it maps the
-full-resolution output UV into the current frame's sub-rect through `ScaledSampleUV`
+upscaler.** The scene renders into the `round(renderAllocExtent · RenderScale)` sub-rect like any
+dynamic-resolution frame, but the resolve **reconstructs its whole output allocation**: it maps the
+output UV into the current frame's sub-rect through `ScaledSampleUV`
 (`RenderScaleUV.xy`/`MaxValidUV.xy`) for the current/depth/velocity reads, while the **history and
-output are the full allocation** (so the history read is the plain reprojected UV, and the velocity —
-full-frame motion — needs no remap against it). Both the resolve and history-copy passes therefore
-cover `m_Extent`, and the history is allocation-sized, so a per-frame render-scale change never resets
-it. The temporal resolve is consequently **no longer in the `drsSupported` exclusion**
-(`ResolveRenderScale`): `TAA` composes with dynamic resolution, and the same reconstruction is what
-`TAAU` uses to upscale. At render scale 1.0 every map is the identity and the frame is unchanged.
+output cover that allocation in full** (so the history read is the plain reprojected UV, and the
+velocity — full-frame motion — needs no remap against it). The history is allocation-sized, so a
+per-frame render-scale change never resets it. The temporal resolve is consequently **not in the
+`drsSupported` exclusion** (`ResolveRenderScale`): `TAA` composes with dynamic resolution, and the
+same reconstruction is what `TAAU` uses to upscale. At render scale 1.0 every map is the identity and
+the frame is unchanged.
 
-**The sub-rect ends at the resolve anchor, and it ends there in every configuration.** The resolve
-anchor's job is to hand the full allocation on: the temporal resolve does it as part of reprojecting
-history, and with no temporal resolve a **spatial promotion** does the same at the same point. So
-`SceneView::PostResolveExtent` is **always the allocation**, and every pass after the anchor — the
-bloom pyramid, the point-field accumulation, a pre-bloom GUI overlay, the auto-exposure meter, the
-tonemap — reads it rather than `RenderExtent`, with the tonemap's own upscale the identity. The
-point-field fragment still remaps its depth-fade sample into the sub-rect through the view-constants
-render scale, so it composes.
+### The two allocations
 
-**The promotion is a pass only when a frame is actually scaled.** The two spellings of a reduced
-render scale reach the renderer differently (`Viewport::GetAllocationScale`): a **static** scale
-*sizes* the allocation, so `GetViewRenderScale()` is 1.0 and the frame is already at its allocation;
-**dynamic resolution** sizes the allocation to `MaxScale` and makes the current scale a *sub-rect* of
-it. Only the second produces a scaled frame, so only it wires `SceneUpscaleScenePass` — one bilinear
-tap through the sub-rect map, the same filter the terminal tonemap applied when it carried this
-upscale, so the image is unchanged and the upscale is not performed twice. The wiring is scale-driven
-with the `HalfResTranslucency` shape: activated at the top of the `Execute` that first renders below
-the allocation (before the post-resolve extent is derived, so that frame runs the promoted graph),
-dropped after `PostResolveUpscaleIdleFrameLimit` Executes back at the allocation — deactivation
+**`SceneRenderer` holds two allocation extents, and every target belongs to exactly one.** A render
+scale is meant to reduce the cost of rendering *the scene* and nothing downstream of it, so the two
+costs are allocated separately:
+
+- The **render allocation** — `region · MaxAllocationScale · renderScale` — holds everything the
+  scene rasterizes and everything that reads the g-buffer: the five colour channels plus depth, the
+  hi-Z pyramid, SSAO, the lit target, the SSR chain, the depth-of-field chain, the refraction grab
+  and its mip chain, the half-resolution translucent layer, the bloom mask, the picking targets.
+  `SceneView::RenderExtent` is this frame's sub-rect of it and `GetRenderAllocationExtent()` reports
+  the allocation itself.
+- The **post-resolve allocation** — `region · MaxAllocationScale`, no render scale — holds the tail:
+  the promoted scene colour, the post-process effect ping-pong pair, the overlay-document
+  intermediate, the bloom pyramid and its result, the spatial-AA LDR intermediate and edge map, and
+  the output. `SceneView::PostResolveExtent` is **always** this, at any render scale in any AA mode.
+
+`MaxAllocationScale` is the outer factor on **both**, which is what keeps supersampling supersampling
+the tail with the scene. A debug view (`Mode != Final`) pins the render allocation to the
+post-resolve one: its passes read the g-buffer at full-screen UVs while writing the output, and it
+already forces the per-frame render scale to 1 for the same reason.
+
+Between the two sits the **HDR scene colour** — what the temporal resolve, the SSR composite, the
+HDR-placed point fields and the depth-of-field composite write. It is allocated in the render
+allocation, except under a promoting temporal-upscaling resolve (below), where it is the
+post-resolve one; `SceneView::SceneColorExtent` is its valid extent this frame.
+
+**The promotion is the bridge, and it is a pass only when the two differ.** `SceneUpscaleScenePass`
+reads the finished HDR scene colour and writes a post-resolve-allocation copy the tail reads —
+one bilinear tap through the scene colour's own map, the same filter the terminal tonemap applied
+when it carried this upscale, so the image is unchanged and the upscale is not performed twice. It
+is declared at the HDR tail anchor, **after** the depth-of-field composite and **before** the
+post-process effect chain, so every g-buffer-reading pass is upstream of it and the whole tail is
+downstream. It is wired only when the scene colour is not already the post-resolve allocation —
+a reduced render allocation, a dynamic-resolution sub-rect, or both. The wiring is scale-driven with
+the `HalfResTranslucency` shape: activated at the top of the `Execute` that first renders below the
+post-resolve allocation (before the post-resolve extent is derived, so that frame runs the promoted
+graph), dropped after `PostResolveUpscaleIdleFrameLimit` Executes back at it — deactivation
 hysteresis, because a controller hunting across its ceiling would otherwise recompile the graph on
-every crossing. `PostResolveUpscale` owns the vertical slice (the sub-rect scene target and its
-bindless slot, the upscale pipeline), and allocates nothing while unwired. **A viewport whose render
-scale is static therefore carries neither the target nor the pass** — the common configuration does
-not grow one — and `SceneRenderer::IsPostResolveUpscaleWired()` reports which case a frame was.
+every crossing. `PostResolveUpscale` owns the vertical slice (the allocation-sized promoted target
+and its bindless slot, the upscale pipeline), and allocates nothing while unwired, so **a viewport
+at render scale 1 carries neither the target nor the pass**. `SceneRenderer::IsPostResolveUpscaleWired()`
+reports which case a frame was.
 
-**What dynamic resolution buys, and what it no longer buys.** It scales the cost of rendering *the
-scene* and nothing downstream of the anchor; the tail is paid in full either way. That is already
-what the temporal path did, and it is the intended trade — a resolution controller must not be
-buying frame time by softening the interface composited pre-bloom. The controller's loop is
-unaffected in shape: it still measures whole-frame GPU time and converges, with the scaled portion
-simply a smaller fraction of what it measures, so it settles at a lower scale for the same budget.
+**What a reduced render scale buys, and what it does not.** It scales the cost of rendering *the
+scene* and nothing downstream of the promotion; the tail is paid in full either way. That is the
+intended trade — a resolution slider or controller must not be buying frame time by softening the
+interface composited pre-bloom. A dynamic-resolution controller's loop is unaffected in shape: it
+still measures whole-frame GPU time and converges, with the scaled portion simply a smaller fraction
+of what it measures, so it settles at a lower scale for the same budget.
 
-**Depth of field is the one post-resolve scene-color effect that stays at the sub-rect**, and so it
-forces full resolution (the unconditional `!DofComposited()` guard in `ResolveRenderScale`): its five
-stages sit downstream of the anchor and key every one of them on `RenderExtent`, so a promoted scene
-color would be read through a sub-rect map. Reworking that chain onto the post-resolve extent is the
-alternative; the guard is the cheaper one. SSR, the GPU hi-Z occlusion test, and the Dual-Kawase
-bloom kernel keep their own exclusions for the same reason (not sub-rect-aware).
+**The remaining `drsSupported` exclusions are about the sub-rect, not the allocation.** SSR, the GPU
+hi-Z occlusion test, and the Dual-Kawase bloom kernel are not sub-rect-aware and force the per-frame
+render scale to 1; they still render into a *reduced render allocation* perfectly well, so a static
+render-scale reduction reaches them. A composited depth-of-field chain joins them **only behind a
+temporal resolve**: that resolve reconstructs the whole render allocation, so the chain would be
+reading allocation-resolution scene colour through the sub-rect map its depth reads need. Without a
+temporal resolve its five stages and the scene colour are all the sub-rect and it composes.
 
-**What must stay at the render sub-rect keeps its own map.** The g-buffer and depth are still
-rasterized at `RenderExtent`, so a tail pass reading them carries a second mapping beside the scene
-one: `PostProcessEffectScenePass` computes `DepthScaleUV` from `RenderExtent` while `SceneScaleUV`
-comes from `PostResolveExtent`, and the bloom bright-pass reads the **bloom mask** — written by the
-translucent pass, upstream of the anchor — through its own `MaskScaleUV` rather than the colour's.
+**What must stay at the render sub-rect keeps its own map, and that asymmetry is now permanent.**
+A shader that samples the g-buffer maps a **logical** screen UV through the view constants'
+`RenderScaleUV`/`MaxValidUV` (`ScaledSampleUV`), whose denominator is the *render* allocation — so
+every such read is correct whatever resolution the pass itself runs at. The explicit maps beside it:
+`PostProcessEffectScenePass` derives `DepthScaleUV` against the render allocation while
+`SceneScaleUV` is the identity over the post-resolve one, and the bloom bright-pass reads the
+**bloom mask** — written by the translucent pass, upstream of the promotion — through its own
+`MaskScaleUV` against the render allocation rather than the pyramid's.
 
 #### Temporal upscaling (TAAU)
 
-**TAAU is the temporal resolve driving a native reconstruction from a sub-native render**
+**TAAU is the temporal resolve reconstructing the post-resolve allocation directly**
 (`AntiAliasingMode::TAAU`). It reuses the entire `TAA` path above — jitter, the lit target, the
-resolve, the history-copy — and differs only in **where the render scale is spent**: TAA leaves the
-render scale an allocation/supersampling scale (native at 1, SSAA above), while under TAAU the
-**viewport pins the allocation to native and routes the render scale into the rendered sub-rect**, so
-the resolve reconstructs the native image from a cheaper render. The whole difference lives in one
-`Viewport` method — `GetAllocationScale()` returns `1.0` under TAAU (the `MaxAllocationScale` factor
-still applies), so the existing `GetViewRenderScale() = min(RenderScale / allocScale, 1)` then feeds
-the render scale — **static slider or per-frame dynamic-resolution scale alike** — straight into the
-sub-rect. Switching into or out of TAAU changes the allocation, so `Viewport::Configure` debounces an
-allocation resize on the mode change. The reconstruction itself is entirely the renderer's
-sub-rect-aware resolve above, so the renderer draws no distinction between TAA and TAAU — it renders
-whatever sub-rect it is handed and reconstructs the allocation.
+resolve, the history-copy — and the difference between the two is now **only where the resolve's
+output lands**, because the two allocations exist for every mode:
+
+- **TAA** resolves at the **render** allocation. Its history is render-allocation-sized, it
+  reconstructs what the scene rendered, and the spatial promotion then carries that up to the
+  post-resolve allocation. The reconstruction is temporal; the upscale is spatial.
+- **TAAU** resolves at the **post-resolve** allocation. Its history is allocation-sized, the current/
+  depth/velocity reads map into the render sub-rect exactly as under TAA, and **the resolve is the
+  promotion** — `IsPostResolveUpscaleWired()` is false, and no second resample follows. The
+  reconstruction *is* the upscale, which is the whole point: a jittered sub-native render
+  accumulated into a native image beats a bilinear tap.
+
+So the render scale is spent the same way in both (it sizes the render allocation, or rides in the
+sub-rect under dynamic resolution) and the viewport no longer knows the mode at all — the branch that
+pinned its allocation to native under TAAU is gone, along with the `Configure` resize debounce it
+needed. `ResolveTemporalUpscalePromotes` (`FrameTopology.h`, a pure function of the settings) is what
+decides: it is TAAU **unless** the frame also wires SSR or a composited depth-of-field chain. Those
+two sit between the temporal anchor and the tail and read render-resolution depth beside the scene
+colour, so a resolve that promoted at the anchor would hand them allocation-resolution colour; such a
+frame resolves at the render allocation like TAA and takes the spatial promotion instead. That
+degrades the reconstruction from temporal to spatial and keeps every other property, where the same
+combination previously gave up scaling altogether.
 
 #### Spatial anti-aliasing — FXAA and CMAA2
 
@@ -348,17 +385,18 @@ memory and the smoke golden is unmoved.
 
 #### Supersampling (SSAA) is the render scale above 1
 
-SSAA is not an `AntiAliasingMode` — it is the viewport rendering **above** its region resolution and
-the gather/composite tail box-downsampling on the way back. `Viewport::SetRenderScale(scale)` with
-`scale > 1` (dynamic resolution off) grows the allocation to `round(region · scale)`, the whole
-pipeline renders at that larger extent, and `GatherPass`'s linear-filter blit averages it down into
-the region — a proper 2×2 box at exactly 2× (the standard SSAA factor), a bilinear approximation at
-other factors. `MaxAllocationScale` is the same lever expressed as an allocation ceiling that composes
-with dynamic resolution. It stacks with `None`/`FXAA`/`CMAA2`/`TAA`, and needs no renderer change —
-the resolution model already renders into an allocation the tail resamples (`tests/gpu/viewport.cpp`
-pins the supersample allocation). It does **not** stack with `TAAU`, which claims the render scale as
-its own sub-native input and pins the allocation to native (a supersample there is inert) — SSAA and
-temporal upscaling are opposite uses of the one render-scale lever, so a viewport picks one.
+SSAA is not an `AntiAliasingMode` — it is the viewport allocating **above** its region resolution and
+the gather/composite tail box-downsampling on the way back. **It rides `MaxAllocationScale`**, the
+outer factor on *both* allocations, so the scene and the whole post-resolve tail supersample together
+and `GatherPass`'s linear-filter blit averages the result down into the region — a proper 2×2 box at
+exactly 2× (the standard SSAA factor), a bilinear approximation at other factors. `tests/gpu/viewport.cpp`
+pins the supersample allocation. It stacks with every AA mode including `TAAU`, since the render scale
+is a separate lever from the ceiling: `MaxAllocationScale = 2` with `RenderScale = 0.5` supersamples
+the tail while the scene renders at the region's own resolution, and the temporal resolve reconstructs
+the 2× image from it. `Viewport::SetRenderScale(scale)` with `scale > 1` still grows the *render*
+allocation above the post-resolve one — the scene renders supersampled and the promotion's bilinear
+tap is the 2×2 box at exactly 2× — but it leaves the tail native, so `MaxAllocationScale` is the lever
+that supersamples a frame end to end.
 
 ### Shadows: directional cascades + the punctual atlas
 
@@ -1263,23 +1301,21 @@ decide which quadrant a click landed in) consume these primitives.
 `SetDynamicResolution(settings)` engages it; it runs inside `Render`, before the pending-resize
 apply. Each `Render` reads `Context::GetLastGpuFrameTimeMs()` and steps
 `ComputeDynamicResolutionScale` (`Veng/Renderer/DynamicResolution.h`) toward a GPU-frame-time
-budget, rendering into a `round(allocExtent · RenderScale)` sub-rect of the allocated targets that
-the terminal tonemap upscales. It is **free**: a sub-rect change moves no allocation, only the
+budget, rendering into a `round(renderAllocExtent · RenderScale)` sub-rect of the render allocation
+that the promotion carries back up. It is **free**: a sub-rect change moves no allocation, only the
 per-frame `SceneView::RenderScale` fraction — so it adapts **cost**, never the allocation
-footprint, and never hitches. `GetAllocationScale()` reports the fixed allocation scale
-(`MaxScale` while dynamic resolution is on, else the static `RenderScale`; but `1.0` under the `TAAU`
-AA mode, which pins the allocation to native and spends the render scale on the sub-rect instead — see
-"Temporal upscaling" in the anti-aliasing section). The allocation is
-sized **once** to the region's native extent (capped by `MaxAllocationScale`), and the expensive
-`SceneRenderer::Resize` — which retires every target, re-registers bindless, and recompiles the
-graph — fires only on a genuine region/window extent change or an explicit
-render-scale/`MaxScale` change, never from frame-time pressure.
+footprint, and never hitches. `GetAllocationScale()` reports the fixed **render** allocation scale
+(`MaxScale` while dynamic resolution is on, else the static `RenderScale`); it names the scene side
+alone, and `GetPostResolveAllocationExtent()` is the tail's, which no render scale touches. The
+allocations are sized **once**, and the expensive `SceneRenderer::Resize` — which retires every
+target, re-registers bindless, and recompiles the graph — fires only on a genuine region/window
+extent change or an explicit render-scale/`MaxScale` change, never from frame-time pressure.
 
-**`MaxAllocationScale` is a fixed ceiling on the allocation relative to the backing extent,
-defaulting to `1.0` (full native).** It caps the allocation to a fraction of the region's pixels
-and is the **outer** of two multiplicative scales — the allocation extent is
-`round(region · MaxAllocationScale · GetAllocationScale())` (`ExtentForScale`), then the sub-rect
-rides inside it as `GetViewRenderScale()`. A managed viewport tracks the full swapchain
+**`MaxAllocationScale` is a fixed ceiling relative to the backing extent, defaulting to `1.0` (full
+native), and it applies to both allocations.** The post-resolve allocation is
+`round(region · MaxAllocationScale)`; the render allocation puts `GetAllocationScale()` inside it as
+`round(region · MaxAllocationScale · GetAllocationScale())` (`ExtentForScale`), and the sub-rect then
+rides inside *that* as `GetViewRenderScale()`. A managed viewport tracks the full swapchain
 framebuffer extent — 2× the logical window on a HiDPI display — and the default `1.0` renders at
 those backing pixels: **native resolution on a HiDPI display, not supersampling**. A value below
 `1.0` is a deliberate lower ceiling for an app that wants a fixed perf budget; it is not the

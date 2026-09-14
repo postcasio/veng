@@ -174,7 +174,13 @@ namespace Veng::Renderer
 
     SceneRenderer::SceneRenderer(const SceneRendererInfo& info)
         : m_Context(info.Context), m_Assets(info.Assets), m_OutputFormat(info.OutputFormat),
-          m_Extent(info.Extent), m_ValidExtent(info.Extent), m_PostResolveExtent(info.Extent),
+          m_Extent(info.Extent),
+          m_RequestedRenderAllocExtent(info.RenderExtent.x == 0 || info.RenderExtent.y == 0
+                                           ? info.Extent
+                                           : info.RenderExtent),
+          m_RenderAllocExtent(m_RequestedRenderAllocExtent),
+          m_SceneColorAllocExtent(m_RequestedRenderAllocExtent),
+          m_ValidExtent(m_RequestedRenderAllocExtent), m_PostResolveExtent(info.Extent),
           m_Settings(info.Settings), m_Internal(CreateUnique<Internal>()),
           m_Topology(CreateUnique<FrameTopology>())
     {
@@ -213,28 +219,17 @@ namespace Veng::Renderer
         // set layout, so it is likewise constructed after the bloom subsystem.
         m_Dof = DofChain::Create(m_Context, m_Assets, m_Bloom->GetDownUpSetLayout(), HdrFormat);
 
+        ResolveAllocationExtents();
         CreateOutput();
         CreateGBuffer();
         CreateLtcResources();
         CreateCullResources();
         CreateHdr();
         CreateBloomMask();
-        m_Taa->Resize(m_Extent, m_Settings.UsesTaa());
-        m_Aa->Resize(m_Extent, m_Settings.Mode == DebugView::Final ? m_Settings.AntiAliasing
-                                                                   : AntiAliasingMode::None);
-        // The pyramid's level-0 source and composite sets bind the fresh HDR view.
-        m_Bloom->Resize(m_Extent, m_HdrView);
-        // The min-Z reduce sets bind the fresh depth view from the g-buffer above.
-        m_Ssr->Recreate(m_Settings, m_Extent, m_DepthView, m_GpuCull->GetHiZReduceSetLayout(),
-                        m_Bloom->GetDownUpSetLayout());
-        m_Dof->Recreate(m_Settings, m_Extent, m_HdrView, m_DepthView,
-                        m_Bloom->GetDownUpSetLayout());
-        m_Refraction->Recreate(m_Settings, m_Extent);
-        m_HalfResTranslucent->Recreate(m_HalfResTranslucentActive, m_Extent);
-        DropPostResolveUpscale();
-        // The metering set binds the HDR target, so the meter is created after CreateHdr.
-        m_AutoExposure = AutoExposureMeter::Create(m_Context, m_Assets, m_HdrView);
-        m_Picking->Recreate(m_Settings, m_Extent);
+        RecreateExtentSubsystems();
+        // The metering set binds the scene colour the tail reads, so the meter is created after the
+        // promotion's own target exists.
+        m_AutoExposure = AutoExposureMeter::Create(m_Context, m_Assets, PostSceneView());
         Rebuild();
     }
 
@@ -282,12 +277,21 @@ namespace Veng::Renderer
         *m_Topology = next;
         m_SkyResolver->SetSkylightActive(m_Topology->SkylightWanted);
 
-        // The resolve anchor promotes the scene color to the allocation, so everything downstream
-        // of it runs there. A temporal resolve does that as part of reconstructing history; with
-        // none wired the promotion is its own pass, and only a frame actually rendering below the
-        // allocation needs one — which is why this is a per-frame decision rebuilt at an edge
-        // rather than a topology field.
-        m_UpscaleWired = m_PostResolveUpscaleActive && !m_Topology->TaaActive;
+        // The three extents a pass is sized to, named once so each wiring line says which side of
+        // the promotion it belongs to: the scene rasterizes into the render allocation, the HDR
+        // scene colour between the temporal anchor and the promotion lives in its own allocation
+        // (the post-resolve one only when a temporal-upscaling resolve reconstructs it there), and
+        // everything downstream of the promotion runs at the post-resolve allocation.
+        const uvec2 renderExtent = m_RenderAllocExtent;
+        const uvec2 sceneColorExtent = m_SceneColorAllocExtent;
+        const uvec2 tailExtent = m_Extent;
+
+        // The promotion carries the finished scene colour up to the post-resolve allocation, so
+        // everything downstream of it runs there. Only a frame whose scene colour is not already
+        // that allocation needs one — a reduced render allocation, a dynamic-resolution sub-rect,
+        // or both, and never behind a temporal-upscaling resolve, which reconstructed it itself —
+        // which is why this is a per-frame decision rebuilt at an edge rather than a topology field.
+        m_UpscaleWired = m_PostResolveUpscaleActive;
 
         // The post-process effect chain is content-driven (the point-field model): active only while
         // the scene carries an enabled, loaded PostProcessEffect, the capture gate allows it, and the
@@ -346,10 +350,12 @@ namespace Veng::Renderer
         // The emissive target (G4) is always imported — the g-buffer pass writes it on every
         // frame as a fifth color attachment.
         const ResourceId emissiveId = graph.Import("SceneRenderer GBuffer Emissive");
+        // The promotion's destination: the post-resolve-allocation scene colour the tail reads.
+        // Imported only while the promotion is wired; otherwise the tail reads the HDR target.
         m_UpscaleSceneId = ResourceId{};
         if (m_UpscaleWired)
         {
-            m_UpscaleSceneId = graph.Import("SceneRenderer Upscale Scene");
+            m_UpscaleSceneId = graph.Import("SceneRenderer Promoted Scene");
         }
         m_LitId = litId;
         m_TaaHistoryId = taaHistoryId;
@@ -399,10 +405,9 @@ namespace Veng::Renderer
         // The id the HDR tail writes before the DoF composite hands the HDR target on.
         const ResourceId dofTargetId = m_Topology->DofComposited() ? m_DofSceneId : hdrId;
         const ResourceId sceneColorId = m_Topology->SsrActive ? m_SsrSceneId : dofTargetId;
-        // The scene chain writes whatever the resolve anchor reads: the lit target under a temporal
-        // resolve, the promotion's sub-rect target when that is wired, else the scene color directly.
-        const ResourceId lightingTargetId =
-            m_Topology->TaaActive ? litId : (m_UpscaleWired ? m_UpscaleSceneId : sceneColorId);
+        // The scene chain writes whatever the temporal anchor reads: the lit target under a
+        // temporal resolve, else the scene color directly.
+        const ResourceId lightingTargetId = m_Topology->TaaActive ? litId : sceneColorId;
 
         // The pre-bloom post-process effect chain ping-pongs between two HDR targets. The finished
         // scene color at the tail anchor (m_HdrId — whatever the tail's last writer, SSR / point
@@ -411,15 +416,15 @@ namespace Veng::Renderer
         // auto-exposure, the bloom-off tonemap). With no effect active it is m_HdrId unchanged.
         m_PpEffectIdA = ResourceId{};
         m_PpEffectIdB = ResourceId{};
-        ResourceId ppEffectFinalId = m_HdrId;
-        TextureHandle ppEffectFinalHandle = m_HdrHandle;
+        ResourceId ppEffectFinalId = PostSceneId();
+        TextureHandle ppEffectFinalHandle = PostSceneHandle();
         // The concrete view ppEffectFinalId resolves to this Rebuild — the raw HDR with no effect,
         // else the effect chain's final target. Bloom and the auto-exposure meter bind a fixed
         // source descriptor (not a graph-resolved view), so they are re-pointed at this view where
         // they are declared; without it they sample the raw HDR while their declared read barriers
         // the effect target, silently dropping the effect chain — and any pre-bloom overlay
         // composited into it — from their result.
-        Ref<ImageView> ppEffectFinalView = m_HdrView;
+        Ref<ImageView> ppEffectFinalView = PostSceneView();
         if (m_PostProcessEffectsActive)
         {
             const usize effectCount = m_PostProcessEffects.size();
@@ -492,9 +497,9 @@ namespace Veng::Renderer
         const TextureHandle dofTargetHandle =
             m_Topology->DofComposited() ? m_Dof->GetSceneHandle() : m_HdrHandle;
         const TextureHandle lightingTargetHandle =
-            m_Topology->TaaActive ? m_Taa->GetLitHandle()
-            : m_UpscaleWired      ? m_Upscale->GetSceneHandle()
-                             : (m_Topology->SsrActive ? m_Ssr->GetSceneHandle() : dofTargetHandle);
+            m_Topology->TaaActive
+                ? m_Taa->GetLitHandle()
+                : (m_Topology->SsrActive ? m_Ssr->GetSceneHandle() : dofTargetHandle);
 
         ResourceId shadowId{};
         if (m_Topology->ShadowActive)
@@ -541,6 +546,7 @@ namespace Veng::Renderer
         m_Passes.clear();
         m_PointFieldPass.reset();
         m_DofCompositePass.reset();
+        m_ScenePromotionPass.reset();
         m_PostProcessEffectPasses.clear();
         m_ScenePointFieldPass = nullptr;
         // The non-owning pass pointers die with m_Passes; the wiring below repopulates each one
@@ -587,8 +593,8 @@ namespace Veng::Renderer
         // graph-derived buffer barrier.
         const ResourceId indirectId = m_GpuCull->ImportIndirect(graph);
 
-        auto gbufferPass = CreateUnique<GBufferScenePass>(m_Context, m_Extent, &m_Internal->Plan,
-                                                          m_GpuCull->GetActiveCull(), indirectId);
+        auto gbufferPass = CreateUnique<GBufferScenePass>(
+            m_Context, renderExtent, &m_Internal->Plan, m_GpuCull->GetActiveCull(), indirectId);
         m_Passes.push_back(std::move(gbufferPass));
 
         // The entity-id picking pass: a depth-tested re-draw of the same survivors into the R32Uint
@@ -600,7 +606,7 @@ namespace Veng::Renderer
             const ResourceId pickingDepthId = graph.Import("SceneRenderer Picking Depth");
             m_Picking->SetGraphIds(entityIdId, pickingDepthId);
             m_Passes.push_back(CreateUnique<PickingScenePass>(
-                m_Context, m_Extent, &m_Internal->Plan, m_Picking->GetStaticPipelinePointer(),
+                m_Context, renderExtent, &m_Internal->Plan, m_Picking->GetStaticPipelinePointer(),
                 m_Picking->GetSkinnedPipelinePointer(), entityIdId, pickingDepthId));
 
             // The billboard id-write runs immediately after the mesh id pass — still in the
@@ -610,7 +616,7 @@ namespace Veng::Renderer
             // are untouched here; the DebugDrawScenePass still draws them after tonemap unchanged.
             m_Passes.push_back(CreateUnique<BillboardPickScenePass>(
                 m_Context, m_Assets, &m_DebugDraw, GBuffer::DepthFormat,
-                m_Context.GetMaxFramesInFlight(), m_Extent, entityIdId, pickingDepthId));
+                m_Context.GetMaxFramesInFlight(), renderExtent, entityIdId, pickingDepthId));
         }
         else
         {
@@ -620,8 +626,8 @@ namespace Veng::Renderer
         // Created before the tail switch so ssaoHandle is set when the Final arm reads it.
         if (m_Topology->SsaoActive)
         {
-            auto ssaoPass =
-                CreateUnique<SsaoScenePass>(m_Context, m_SsaoPipeline, m_SamplerHandle, m_Extent);
+            auto ssaoPass = CreateUnique<SsaoScenePass>(m_Context, m_SsaoPipeline, m_SamplerHandle,
+                                                        renderExtent);
             m_SsaoPass = ssaoPass.get();
             ssaoHandle = ssaoPass->GetAoHandle();
             m_Passes.push_back(std::move(ssaoPass));
@@ -633,7 +639,7 @@ namespace Veng::Renderer
         {
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, m_Topology->SsaoFold ? m_SsaoLightingPipeline : m_LightingPipeline,
-                m_Extent, m_Topology->SsaoFold, m_Shadows->GetSet(),
+                renderExtent, m_Topology->SsaoFold, m_Shadows->GetSet(),
                 m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
                 m_SkyResolver->GetIbl().GetSet(), m_SkyResolver->GetIbl().GetPrefilterMipCount(),
                 m_Topology->SkylightWanted, m_Topology->IblAllowed));
@@ -646,19 +652,19 @@ namespace Veng::Renderer
             {
                 m_Passes.push_back(CreateUnique<SkyboxScenePass>(
                     m_Context, m_SkyboxPipeline, skyboxSet, lightingTargetId, depthId,
-                    m_DepthHandle, m_SamplerHandle, m_Extent, m_Topology->BakedSkyWanted));
+                    m_DepthHandle, m_SamplerHandle, renderExtent, m_Topology->BakedSkyWanted));
             }
             if (m_Topology->AtmosphereWanted)
             {
                 m_Passes.push_back(CreateUnique<SkyScenePass>(
                     m_Context, m_SkyPipeline, m_SkyResolver->GetAtmosphere().GetSet(),
-                    lightingTargetId, depthId, m_DepthHandle, m_SamplerHandle, m_Extent));
+                    lightingTargetId, depthId, m_DepthHandle, m_SamplerHandle, renderExtent));
             }
             if (m_Topology->SkyMaterialWanted)
             {
                 auto skyMaterialPass = CreateUnique<SkyMaterialScenePass>(
                     m_Context, lightingTargetId, depthId, m_DepthHandle, m_SamplerHandle, HdrFormat,
-                    m_Extent);
+                    renderExtent);
                 m_SkyMaterialPass = skyMaterialPass.get();
                 m_Passes.push_back(std::move(skyMaterialPass));
             }
@@ -673,6 +679,9 @@ namespace Veng::Renderer
                     m_Context, m_Assets, &m_ScenePointFields, HdrFormat, m_SamplerHandle,
                     m_Context.GetMaxFramesInFlight());
                 scenePointFields->SetForceDirect(m_PointFieldForceDirect);
+                // This placement writes the lit target the scene rasterized, not the tail anchor's
+                // scene colour, so it sizes to the rendered sub-rect.
+                scenePointFields->SetPreResolve(true);
                 m_ScenePointFieldPass = scenePointFields.get();
                 m_Passes.push_back(std::move(scenePointFields));
             }
@@ -698,20 +707,20 @@ namespace Veng::Renderer
             {
                 m_Refraction->Declare(m_Passes, lightingTargetId, lightingTargetHandle, depthId,
                                       m_DepthHandle, m_RefractionSceneId, m_RefractionDepthId,
-                                      m_SamplerHandle, m_Extent, m_RefractionMipIds);
+                                      m_SamplerHandle, renderExtent, m_RefractionMipIds);
             }
             // The reduced-resolution layer draws and composites immediately ahead of the
             // full-resolution translucent pass, so its result lies under every full-res
             // translucent draw (a cockpit pane over an atmosphere shell).
             if (m_HalfResTranslucentActive)
             {
-                m_HalfResTranslucent->Declare(m_Passes, m_HalfResLayerId, m_HalfResDepthReducedId,
-                                              depthId, m_DepthHandle, lightingTargetId,
-                                              &m_Internal->HalfResTranslucentPlan,
-                                              m_RefractionSceneId, m_RefractionDepthId, m_Extent);
+                m_HalfResTranslucent->Declare(
+                    m_Passes, m_HalfResLayerId, m_HalfResDepthReducedId, depthId, m_DepthHandle,
+                    lightingTargetId, &m_Internal->HalfResTranslucentPlan, m_RefractionSceneId,
+                    m_RefractionDepthId, renderExtent);
             }
             m_Passes.push_back(CreateUnique<TranslucentScenePass>(
-                m_Context, m_Extent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
+                m_Context, renderExtent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
                 m_RefractionSceneId, m_RefractionDepthId, HdrFormat, m_BloomMaskId, BloomMaskFormat,
                 /*halfResolution=*/false));
 
@@ -725,20 +734,7 @@ namespace Veng::Renderer
                     m_Context, m_Taa->GetResolvePipeline(), m_Taa->GetCopyPipeline(), litId,
                     taaHistoryId, sceneColorId, depthId, velocityId, m_Taa->GetLitHandle(),
                     m_Taa->GetHistoryHandle(), m_VelocityHandle, m_Taa->GetHistoryResetPointer(),
-                    m_Extent));
-            }
-            // With no temporal resolve, the promotion takes that anchor: it resamples the sub-rect
-            // the scene rasterized into across the allocation and writes the same scene-color target
-            // the resolve would have. One bilinear tap through the sub-rect map — the filter the
-            // terminal tonemap applied when it carried this upscale, so the image is unchanged and
-            // the tonemap's own map (postResolveScaleUV) is now the identity rather than a second
-            // upscale. The two are mutually exclusive by construction: m_UpscaleWired is false
-            // whenever TaaActive is.
-            else if (m_UpscaleWired)
-            {
-                m_Passes.push_back(CreateUnique<SceneUpscaleScenePass>(
-                    m_Context, m_Upscale->GetPipeline(), m_UpscaleSceneId, sceneColorId,
-                    m_Upscale->GetSceneHandle(), m_SamplerHandle, m_Extent));
+                    sceneColorExtent));
             }
 
             // The point-field pass accumulates the scene's live fields into the final HDR color
@@ -762,7 +758,21 @@ namespace Veng::Renderer
                 m_DofCompositePass = CreateUnique<DofCompositeScenePass>(
                     m_Context, m_Dof->GetCompositePipeline(), m_DofNearFillId,
                     m_Dof->GetNearFillHandle(), m_DofFarFillId, m_Dof->GetFarFillHandle(), m_HdrId,
-                    m_Dof->GetSamplerHandle(), m_Dof->GetHalfExtent(), m_Extent);
+                    m_Dof->GetSamplerHandle(), m_Dof->GetHalfExtent(), sceneColorExtent);
+            }
+
+            // The promotion sits on the boundary: the scene colour the chain above finished is the
+            // render allocation's (or its sub-rect), and one bilinear tap resamples it across the
+            // post-resolve allocation every pass below reads. It is the same filter the terminal
+            // tonemap applied when it carried this upscale, so the image is unchanged and the
+            // tonemap's own map is the identity rather than a second upscale. A temporal-upscaling
+            // resolve already reconstructed the allocation, which is exactly when m_UpscaleWired is
+            // false.
+            if (m_UpscaleWired)
+            {
+                m_ScenePromotionPass = CreateUnique<SceneUpscaleScenePass>(
+                    m_Context, m_Upscale->GetPipeline(), m_HdrId, m_UpscaleSceneId, m_HdrHandle,
+                    m_SamplerHandle, sceneColorExtent, tailExtent);
             }
 
             // One post-process effect pass per active effect, held outside m_Passes and declared at
@@ -772,8 +782,8 @@ namespace Veng::Renderer
             {
                 for (usize e = 0; e < m_PostProcessEffects.size(); ++e)
                 {
-                    m_PostProcessEffectPasses.push_back(
-                        CreateUnique<PostProcessEffectScenePass>(m_Context, HdrFormat, m_Extent));
+                    m_PostProcessEffectPasses.push_back(CreateUnique<PostProcessEffectScenePass>(
+                        m_Context, HdrFormat, tailExtent, renderExtent));
                 }
             }
 
@@ -785,10 +795,10 @@ namespace Veng::Renderer
             {
                 if (m_GuiHdrOverlayPass == nullptr)
                 {
-                    m_GuiHdrOverlayPass = CreateUnique<GuiHdrOverlayScenePass>(m_Context, m_Assets,
-                                                                               HdrFormat, m_Extent);
+                    m_GuiHdrOverlayPass = CreateUnique<GuiHdrOverlayScenePass>(
+                        m_Context, m_Assets, HdrFormat, tailExtent);
                 }
-                m_GuiHdrOverlayPass->Resize(m_Extent);
+                m_GuiHdrOverlayPass->Resize(tailExtent);
                 m_GuiHdrOverlayPass->SetOutput(ppEffectFinalId);
                 // A material overlay renders to the intermediate, then composites through its material
                 // into the scene color and the bloom mask (present only under bloom). Each such overlay
@@ -829,7 +839,7 @@ namespace Veng::Renderer
                                                        .TextureField = "Hdr",
                                                        .SamplerField = "HdrSampler",
                                                    },
-                                                   tonemapOutputId, m_OutputFormat, m_Extent));
+                                                   tonemapOutputId, m_OutputFormat, tailExtent));
 
             // The spatial AA resolve reads the tonemapped LDR intermediate and writes the output. It
             // sits after the tonemap and before DebugDraw so gizmos composite over the resolved scene.
@@ -837,7 +847,7 @@ namespace Veng::Renderer
             {
                 m_Passes.push_back(CreateUnique<FxaaScenePass>(
                     m_Context, m_Aa->GetFxaaPipeline(), m_AaInputId, m_OutputId,
-                    m_Aa->GetInputHandle(), m_SamplerHandle, m_Extent));
+                    m_Aa->GetInputHandle(), m_SamplerHandle, tailExtent));
             }
             // CMAA2 is two passes: the edge detector writes the RG8 edge map (reusing the FXAA pass
             // shape with the edge pipeline), then the apply pass follows those edges and writes the
@@ -846,11 +856,11 @@ namespace Veng::Renderer
             {
                 m_Passes.push_back(CreateUnique<FxaaScenePass>(
                     m_Context, m_Aa->GetCmaa2EdgePipeline(), m_AaInputId, m_Cmaa2EdgeId,
-                    m_Aa->GetInputHandle(), m_SamplerHandle, m_Extent, "CMAA2 Edges"));
+                    m_Aa->GetInputHandle(), m_SamplerHandle, tailExtent, "CMAA2 Edges"));
                 m_Passes.push_back(CreateUnique<Cmaa2ApplyScenePass>(
                     m_Context, m_Aa->GetCmaa2ApplyPipeline(), m_AaInputId, m_Cmaa2EdgeId,
                     m_OutputId, m_Aa->GetInputHandle(), m_Aa->GetEdgeHandle(), m_SamplerHandle,
-                    m_Extent));
+                    tailExtent));
             }
 
             // Debug-draw composites the accumulator over the tonemapped LDR scene color, after
@@ -860,61 +870,63 @@ namespace Veng::Renderer
             {
                 m_Passes.push_back(CreateUnique<DebugDrawScenePass>(
                     m_Context, m_Assets, &m_DebugDraw, m_OutputFormat, m_SamplerHandle,
-                    m_Context.GetMaxFramesInFlight(), m_Extent));
+                    m_Context.GetMaxFramesInFlight(), tailExtent));
             }
 
             break;
         }
         case DebugView::Albedo:
             m_Passes.push_back(
-                CreateUnique<FullscreenBlitScenePass>(m_Context, m_DebugBlits->Albedo, m_Extent,
+                CreateUnique<FullscreenBlitScenePass>(m_Context, m_DebugBlits->Albedo, tailExtent,
                                                       FullscreenBlitScenePass::Source::Albedo));
             break;
         case DebugView::Normal:
             m_Passes.push_back(
-                CreateUnique<FullscreenBlitScenePass>(m_Context, m_DebugBlits->Normal, m_Extent,
+                CreateUnique<FullscreenBlitScenePass>(m_Context, m_DebugBlits->Normal, tailExtent,
                                                       FullscreenBlitScenePass::Source::Normal));
             break;
         case DebugView::Depth:
-            m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
-                m_Context, m_DebugBlits->Depth, m_Extent, FullscreenBlitScenePass::Source::Depth));
+            m_Passes.push_back(
+                CreateUnique<FullscreenBlitScenePass>(m_Context, m_DebugBlits->Depth, tailExtent,
+                                                      FullscreenBlitScenePass::Source::Depth));
             break;
         case DebugView::Occlusion:
             m_Passes.push_back(CreateUnique<OrmBlitScenePass>(m_Context, m_DebugBlits->Orm,
-                                                              m_Extent, /*channel=*/0));
+                                                              tailExtent, /*channel=*/0));
             break;
         case DebugView::Roughness:
             m_Passes.push_back(CreateUnique<OrmBlitScenePass>(m_Context, m_DebugBlits->Orm,
-                                                              m_Extent, /*channel=*/1));
+                                                              tailExtent, /*channel=*/1));
             break;
         case DebugView::Metallic:
             m_Passes.push_back(CreateUnique<OrmBlitScenePass>(m_Context, m_DebugBlits->Orm,
-                                                              m_Extent, /*channel=*/2));
+                                                              tailExtent, /*channel=*/2));
             break;
         case DebugView::AO:
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
-                m_Context, m_DebugBlits->Ao, m_Extent, FullscreenBlitScenePass::Source::Ao));
+                m_Context, m_DebugBlits->Ao, tailExtent, FullscreenBlitScenePass::Source::Ao));
             break;
         case DebugView::Shadows:
             // Reads the cascade atlas through the dedicated set (raw depth), not bindless.
             m_Passes.push_back(CreateUnique<ShadowBlitScenePass>(
-                m_Context, m_DebugBlits->Shadow, m_Extent, m_Shadows->GetBlitSet(),
+                m_Context, m_DebugBlits->Shadow, tailExtent, m_Shadows->GetBlitSet(),
                 ShadowBlitScenePass::Source::Directional));
             break;
         case DebugView::PunctualShadows:
             // Reads the punctual atlas through the dedicated set; binding 0 is
             // rewritten below after the pass set is chosen.
             m_Passes.push_back(CreateUnique<ShadowBlitScenePass>(
-                m_Context, m_DebugBlits->Shadow, m_Extent, m_Shadows->GetBlitSet(),
+                m_Context, m_DebugBlits->Shadow, tailExtent, m_Shadows->GetBlitSet(),
                 ShadowBlitScenePass::Source::Punctual));
             break;
         case DebugView::Cascades:
             // Tints fragments by cascade selection and writes the output directly (no tonemap tail).
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
-                m_Context, m_CascadeDebugPipeline, m_Extent, /*useSsao=*/false, m_Shadows->GetSet(),
-                m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
-                m_SkyResolver->GetIbl().GetSet(), m_SkyResolver->GetIbl().GetPrefilterMipCount(),
-                m_Topology->SkylightWanted, m_Topology->IblAllowed,
+                m_Context, m_CascadeDebugPipeline, renderExtent, /*useSsao=*/false,
+                m_Shadows->GetSet(), m_Shadows->GetConstantsRingStride(),
+                m_Shadows->GetPunctualRingStride(), m_SkyResolver->GetIbl().GetSet(),
+                m_SkyResolver->GetIbl().GetPrefilterMipCount(), m_Topology->SkylightWanted,
+                m_Topology->IblAllowed,
                 /*writeToOutput=*/true));
             break;
         case DebugView::Bloom:
@@ -927,7 +939,7 @@ namespace Veng::Renderer
             // accumulated bloom before composite.
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, m_Topology->SsaoFold ? m_SsaoLightingPipeline : m_LightingPipeline,
-                m_Extent, m_Topology->SsaoFold, m_Shadows->GetSet(),
+                renderExtent, m_Topology->SsaoFold, m_Shadows->GetSet(),
                 m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
                 m_SkyResolver->GetIbl().GetSet(), m_SkyResolver->GetIbl().GetPrefilterMipCount(),
                 m_Topology->SkylightWanted, m_Topology->IblAllowed));
@@ -935,19 +947,19 @@ namespace Veng::Renderer
             {
                 m_Passes.push_back(CreateUnique<SkyboxScenePass>(
                     m_Context, m_SkyboxPipeline, skyboxSet, lightingTargetId, depthId,
-                    m_DepthHandle, m_SamplerHandle, m_Extent, m_Topology->BakedSkyWanted));
+                    m_DepthHandle, m_SamplerHandle, renderExtent, m_Topology->BakedSkyWanted));
             }
             if (m_Topology->AtmosphereWanted)
             {
                 m_Passes.push_back(CreateUnique<SkyScenePass>(
                     m_Context, m_SkyPipeline, m_SkyResolver->GetAtmosphere().GetSet(),
-                    lightingTargetId, depthId, m_DepthHandle, m_SamplerHandle, m_Extent));
+                    lightingTargetId, depthId, m_DepthHandle, m_SamplerHandle, renderExtent));
             }
             if (m_Topology->SkyMaterialWanted)
             {
                 auto skyMaterialPass = CreateUnique<SkyMaterialScenePass>(
                     m_Context, lightingTargetId, depthId, m_DepthHandle, m_SamplerHandle, HdrFormat,
-                    m_Extent);
+                    renderExtent);
                 m_SkyMaterialPass = skyMaterialPass.get();
                 m_Passes.push_back(std::move(skyMaterialPass));
             }
@@ -957,42 +969,43 @@ namespace Veng::Renderer
             {
                 m_Refraction->Declare(m_Passes, lightingTargetId, lightingTargetHandle, depthId,
                                       m_DepthHandle, m_RefractionSceneId, m_RefractionDepthId,
-                                      m_SamplerHandle, m_Extent, m_RefractionMipIds);
+                                      m_SamplerHandle, renderExtent, m_RefractionMipIds);
             }
             // The reduced-resolution layer draws and composites immediately ahead of the
             // full-resolution translucent pass, so its result lies under every full-res
             // translucent draw (a cockpit pane over an atmosphere shell).
             if (m_HalfResTranslucentActive)
             {
-                m_HalfResTranslucent->Declare(m_Passes, m_HalfResLayerId, m_HalfResDepthReducedId,
-                                              depthId, m_DepthHandle, lightingTargetId,
-                                              &m_Internal->HalfResTranslucentPlan,
-                                              m_RefractionSceneId, m_RefractionDepthId, m_Extent);
+                m_HalfResTranslucent->Declare(
+                    m_Passes, m_HalfResLayerId, m_HalfResDepthReducedId, depthId, m_DepthHandle,
+                    lightingTargetId, &m_Internal->HalfResTranslucentPlan, m_RefractionSceneId,
+                    m_RefractionDepthId, renderExtent);
             }
             m_Passes.push_back(CreateUnique<TranslucentScenePass>(
-                m_Context, m_Extent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
+                m_Context, renderExtent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
                 m_RefractionSceneId, m_RefractionDepthId, HdrFormat, m_BloomMaskId, BloomMaskFormat,
                 /*halfResolution=*/false));
-            m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
-                m_Context, m_DebugBlits->Albedo, m_Extent, FullscreenBlitScenePass::Source::Bloom));
+            m_Passes.push_back(
+                CreateUnique<FullscreenBlitScenePass>(m_Context, m_DebugBlits->Albedo, tailExtent,
+                                                      FullscreenBlitScenePass::Source::Bloom));
             break;
         case DebugView::MotionVectors:
             // The g-buffer pass writes the velocity target (G3); this blit colorizes it as an
             // optical-flow field.
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
-                m_Context, m_DebugBlits->Motion, m_Extent,
+                m_Context, m_DebugBlits->Motion, tailExtent,
                 FullscreenBlitScenePass::Source::MotionVectors));
             break;
         case DebugView::Reflections:
             // Lighting writes the scene-color intermediate the force-wired SSR trace reflects
             // (DeclareSsr, before this blit); the blit shows the raw reflection target.
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
-                m_Context, m_LightingPipeline, m_Extent, /*useSsao=*/false, m_Shadows->GetSet(),
+                m_Context, m_LightingPipeline, renderExtent, /*useSsao=*/false, m_Shadows->GetSet(),
                 m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
                 m_SkyResolver->GetIbl().GetSet(), m_SkyResolver->GetIbl().GetPrefilterMipCount(),
                 m_Topology->SkylightWanted, m_Topology->IblAllowed));
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
-                m_Context, m_DebugBlits->Albedo, m_Extent,
+                m_Context, m_DebugBlits->Albedo, tailExtent,
                 FullscreenBlitScenePass::Source::Reflections));
             break;
         case DebugView::CoC:
@@ -1000,18 +1013,18 @@ namespace Veng::Renderer
             // Reflections arm force-wires it; the force-wired prefilter and tile dilation then
             // write the signed-radius target this blit shows as a near/far ramp.
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
-                m_Context, m_LightingPipeline, m_Extent, /*useSsao=*/false, m_Shadows->GetSet(),
+                m_Context, m_LightingPipeline, renderExtent, /*useSsao=*/false, m_Shadows->GetSet(),
                 m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
                 m_SkyResolver->GetIbl().GetSet(), m_SkyResolver->GetIbl().GetPrefilterMipCount(),
                 m_Topology->SkylightWanted, m_Topology->IblAllowed));
             m_Passes.push_back(
-                CreateUnique<CocBlitScenePass>(m_Context, m_DebugBlits->Coc, m_Extent));
+                CreateUnique<CocBlitScenePass>(m_Context, m_DebugBlits->Coc, tailExtent));
             break;
         case DebugView::Emissive:
             // The g-buffer pass writes the emissive channel (G4); this blit shows the authored
             // emissive contribution alone, the channel inspectable like every other g-buffer arm.
             m_Passes.push_back(
-                CreateUnique<FullscreenBlitScenePass>(m_Context, m_DebugBlits->Albedo, m_Extent,
+                CreateUnique<FullscreenBlitScenePass>(m_Context, m_DebugBlits->Albedo, tailExtent,
                                                       FullscreenBlitScenePass::Source::Emissive));
             break;
         case DebugView::EnvironmentIrradiance:
@@ -1021,7 +1034,7 @@ namespace Veng::Renderer
             // irradiance cube, or the raw source cube) along the view ray, fullscreen. The IBL derive
             // runs every Execute regardless of the arm, so the cube is current.
             auto pass = CreateUnique<IblCubeDebugScenePass>(m_Context, m_IblCubeDebugPipeline,
-                                                            m_IblCubeDebugSetLayout, m_Extent);
+                                                            m_IblCubeDebugSetLayout, tailExtent);
             m_IblCubeDebugPass = pass.get();
             m_Passes.push_back(std::move(pass));
             break;
@@ -1032,7 +1045,7 @@ namespace Veng::Renderer
             // tonemap tail). IblAllowed is force-extended for this arm in the topology, so the IBL
             // path is present whatever the sky tier is.
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
-                m_Context, m_IblContributionDebugPipeline, m_Extent, /*useSsao=*/false,
+                m_Context, m_IblContributionDebugPipeline, renderExtent, /*useSsao=*/false,
                 m_Shadows->GetSet(), m_Shadows->GetConstantsRingStride(),
                 m_Shadows->GetPunctualRingStride(), m_SkyResolver->GetIbl().GetSet(),
                 m_SkyResolver->GetIbl().GetPrefilterMipCount(), m_Topology->SkylightWanted,
@@ -1104,7 +1117,6 @@ namespace Veng::Renderer
         {
             const Unique<ScenePass>& pass = m_Passes[i];
             pass->Configure(m_Settings);
-            pass->Resize(m_Extent);
 
             if (i == tailAnchor)
             {
@@ -1140,14 +1152,20 @@ namespace Veng::Renderer
                     dofIo.HdrHandle = m_Dof->GetSceneHandle();
                     m_DofCompositePass->Declare(graph, dofIo);
                 }
+                // The promotion is the boundary pass: every pass below reads the post-resolve
+                // allocation and nothing above it does.
+                if (m_ScenePromotionPass != nullptr)
+                {
+                    m_ScenePromotionPass->Declare(graph, io);
+                }
                 // The named pre-bloom compose order: post-process effects, then the GUI-overlay slot
                 // (a later pass wires here — a scene-HDR overlay composites after the effects and
                 // before bloom), then bloom. The effects ping-pong between the two effect targets,
-                // the first reading the finished scene color (m_HdrId).
+                // the first reading the promoted scene color the pass above just wrote.
                 if (!m_PostProcessEffectPasses.empty())
                 {
-                    ResourceId effectSourceId = m_HdrId;
-                    TextureHandle effectSourceHandle = m_HdrHandle;
+                    ResourceId effectSourceId = PostSceneId();
+                    TextureHandle effectSourceHandle = PostSceneHandle();
                     for (usize e = 0; e < m_PostProcessEffectPasses.size(); ++e)
                     {
                         const bool evenIndex = (e % 2) == 0;
@@ -1601,7 +1619,7 @@ namespace Veng::Renderer
             if (!m_HalfResTranslucentActive)
             {
                 m_HalfResTranslucentActive = true;
-                m_HalfResTranslucent->Recreate(true, m_Extent);
+                m_HalfResTranslucent->Recreate(true, m_RenderAllocExtent);
                 Rebuild();
             }
         }
@@ -1610,7 +1628,7 @@ namespace Veng::Renderer
         {
             m_HalfResTranslucentActive = false;
             m_HalfResTranslucentIdleFrames = 0;
-            m_HalfResTranslucent->Recreate(false, m_Extent);
+            m_HalfResTranslucent->Recreate(false, m_RenderAllocExtent);
             Rebuild();
         }
 
@@ -1644,10 +1662,17 @@ namespace Veng::Renderer
 
     void SceneRenderer::Resize(const uvec2 extent)
     {
+        Resize(extent, extent);
+    }
+
+    void SceneRenderer::Resize(const uvec2 extent, const uvec2 renderExtent)
+    {
         m_Extent = extent;
-        // The new allocation is the full target until the next Execute scales it; the prior
+        m_RequestedRenderAllocExtent = renderExtent;
+        ResolveAllocationExtents();
+        // The scene renders the whole render allocation until the next Execute scales it; the prior
         // sub-rect mapping is moot (the TAA history resets on resize anyway).
-        m_ValidExtent = extent;
+        m_ValidExtent = m_RenderAllocExtent;
         m_PostResolveExtent = extent;
         m_PreviousRenderScaleUV = vec2(1.0f);
         m_PreviousMaxValidUV = vec2(1.0f);
@@ -1655,24 +1680,50 @@ namespace Veng::Renderer
         CreateGBuffer();
         CreateHdr();
         CreateBloomMask();
-        m_Taa->Resize(m_Extent, m_Settings.UsesTaa());
-        m_Aa->Resize(m_Extent, m_Settings.Mode == DebugView::Final ? m_Settings.AntiAliasing
-                                                                   : AntiAliasingMode::None);
-        m_Bloom->Resize(m_Extent, m_HdrView);
-        m_Ssr->Recreate(m_Settings, m_Extent, m_DepthView, m_GpuCull->GetHiZReduceSetLayout(),
-                        m_Bloom->GetDownUpSetLayout());
-        m_Dof->Recreate(m_Settings, m_Extent, m_HdrView, m_DepthView,
-                        m_Bloom->GetDownUpSetLayout());
-        m_Refraction->Recreate(m_Settings, m_Extent);
-        m_HalfResTranslucent->Recreate(m_HalfResTranslucentActive, m_Extent);
-        DropPostResolveUpscale();
-        // The HDR target moved; rebind the metering source and re-snap the adaptation so the
-        // resized frame is not mis-exposed off a stale ring value.
-        m_AutoExposure->RebindHdr(m_HdrView);
+        RecreateExtentSubsystems();
+        // The scene colour the tail reads moved; rebind the metering source and re-snap the
+        // adaptation so the resized frame is not mis-exposed off a stale ring value.
+        m_AutoExposure->RebindHdr(PostSceneView());
         m_AutoExposure->RequestReset();
         m_Shadows->Reconfigure(m_Settings);
-        m_Picking->Recreate(m_Settings, m_Extent);
         Rebuild();
+    }
+
+    void SceneRenderer::ResolveAllocationExtents()
+    {
+        // A debug view's passes read the g-buffer at full-screen UVs while writing the output, so it
+        // renders the scene at the tail's own allocation rather than a reduced one — the same reason
+        // it already forces the per-frame render scale to 1.
+        m_RenderAllocExtent = m_Settings.Mode == DebugView::Final
+                                  ? glm::max(m_RequestedRenderAllocExtent, uvec2(1))
+                                  : m_Extent;
+        m_SceneColorAllocExtent =
+            ResolveTemporalUpscalePromotes(m_Settings) ? m_Extent : m_RenderAllocExtent;
+    }
+
+    void SceneRenderer::RecreateExtentSubsystems()
+    {
+        // The promotion is decided before the tail's subsystems bind a scene-colour view, since its
+        // target is that view whenever it is wired. Dropping first re-decides from scratch rather
+        // than carrying a stale idle window across the recompile.
+        DropPostResolveUpscale();
+        (void)UpdatePostResolveUpscale(m_SceneColorAllocExtent);
+        // The lit target is scene-side; the history is the resolve's own output, which under
+        // temporal upscaling is the post-resolve allocation it reconstructs.
+        m_Taa->Resize(m_RenderAllocExtent, m_SceneColorAllocExtent, m_Settings.UsesTaa());
+        m_Aa->Resize(m_Extent, m_Settings.Mode == DebugView::Final ? m_Settings.AntiAliasing
+                                                                   : AntiAliasingMode::None);
+        // The pyramid runs at the post-resolve allocation; its bloom mask is written scene-side, so
+        // it carries the render allocation as that source's own extent.
+        m_Bloom->Resize(m_Extent, m_RenderAllocExtent, PostSceneView());
+        // The min-Z reduce sets bind the fresh depth view from the g-buffer.
+        m_Ssr->Recreate(m_Settings, m_RenderAllocExtent, m_DepthView,
+                        m_GpuCull->GetHiZReduceSetLayout(), m_Bloom->GetDownUpSetLayout());
+        m_Dof->Recreate(m_Settings, m_RenderAllocExtent, m_HdrView, m_DepthView,
+                        m_Bloom->GetDownUpSetLayout());
+        m_Refraction->Recreate(m_Settings, m_RenderAllocExtent);
+        m_HalfResTranslucent->Recreate(m_HalfResTranslucentActive, m_RenderAllocExtent);
+        m_Picking->Recreate(m_Settings, m_RenderAllocExtent);
     }
 
     u32 SceneRenderer::GetMaxShadowResolution() const
@@ -1698,20 +1749,27 @@ namespace Veng::Renderer
         m_Settings = settings;
         ShadowSystem::ClampResolutions(m_Context, m_Settings);
         m_GpuCull->ResolveActiveCullMode(m_Settings);
-        m_Taa->Resize(m_Extent, m_Settings.UsesTaa());
-        m_Aa->Resize(m_Extent, m_Settings.Mode == DebugView::Final ? m_Settings.AntiAliasing
-                                                                   : AntiAliasingMode::None);
+        const uvec2 priorRenderAlloc = m_RenderAllocExtent;
+        const uvec2 priorSceneColorAlloc = m_SceneColorAllocExtent;
+        ResolveAllocationExtents();
+        // The mode or the AA choice can move either allocation (a debug view pins the render side to
+        // the tail's extent; temporal upscaling moves the scene colour to it), so the targets sized
+        // to them are recreated before the subsystems rebind their views.
+        if (m_RenderAllocExtent != priorRenderAlloc)
+        {
+            m_ValidExtent = m_RenderAllocExtent;
+            CreateGBuffer();
+            CreateBloomMask();
+        }
+        if (m_SceneColorAllocExtent != priorSceneColorAlloc)
+        {
+            CreateHdr();
+        }
         // The bloom pyramid is extent-driven (unchanged here); only the kernel choice may change.
         m_Bloom->Reconfigure(m_Settings.Kernel);
-        m_Ssr->Recreate(m_Settings, m_Extent, m_DepthView, m_GpuCull->GetHiZReduceSetLayout(),
-                        m_Bloom->GetDownUpSetLayout());
-        m_Dof->Recreate(m_Settings, m_Extent, m_HdrView, m_DepthView,
-                        m_Bloom->GetDownUpSetLayout());
-        m_Refraction->Recreate(m_Settings, m_Extent);
-        m_HalfResTranslucent->Recreate(m_HalfResTranslucentActive, m_Extent);
-        DropPostResolveUpscale();
+        RecreateExtentSubsystems();
+        m_AutoExposure->RebindHdr(PostSceneView());
         m_Shadows->Reconfigure(m_Settings);
-        m_Picking->Recreate(m_Settings, m_Extent);
         Rebuild();
     }
 
@@ -1732,19 +1790,28 @@ namespace Veng::Renderer
         const vec2 renderScaleUV = scale.RenderScaleUV;
         const vec2 maxValidUV = scale.MaxValidUV;
 
-        // Wire (or unwire) the non-temporal promotion for this frame before anything derives the
-        // post-resolve extent from it, so the frame that first scales is the frame that promotes.
-        ResolvePostResolveUpscale(validExtent);
+        // The HDR scene colour between the temporal anchor and the tail: the whole scene-colour
+        // allocation once a temporal resolve has reconstructed it, else the rasterized sub-rect.
+        const uvec2 sceneColorExtent =
+            m_Topology->TaaActive ? m_SceneColorAllocExtent : validExtent;
 
-        // The resolve anchor always hands the allocation on: the temporal resolve reconstructs it
-        // from the sub-rect, and with none wired the promotion pass resamples it there. So the HDR
-        // tail — bloom, the point-field accumulation, a pre-bloom overlay, the metering, the tonemap
-        // — runs at the allocation in every configuration, with an identity sub-rect map. The
-        // g-buffer and depth stay at RenderExtent; a tail pass reading them keeps its own map.
-        VE_ASSERT(m_UpscaleWired || m_Topology->TaaActive || validExtent == m_Extent,
-                  "SceneRenderer: a {}x{} sub-rect of a {}x{} allocation reached the tail with no "
-                  "resolve-anchor promotion wired",
-                  validExtent.x, validExtent.y, m_Extent.x, m_Extent.y);
+        // Wire (or unwire) the promotion for this frame before anything derives the post-resolve
+        // extent from it, so the frame that first scales is the frame that promotes.
+        if (UpdatePostResolveUpscale(sceneColorExtent))
+        {
+            Rebuild();
+        }
+
+        // The promotion always hands the post-resolve allocation on: a temporal-upscaling resolve
+        // reconstructs it from the sub-rect, and otherwise the spatial pass resamples the finished
+        // scene colour there. So the tail — the post-process effects, a pre-bloom overlay, bloom,
+        // the metering, the tonemap — runs at the post-resolve allocation in every configuration,
+        // with an identity sub-rect map. The g-buffer and depth stay at RenderExtent; a tail pass
+        // reading them keeps its own map.
+        VE_ASSERT(m_UpscaleWired || sceneColorExtent == m_Extent,
+                  "SceneRenderer: a {}x{} scene colour reached the {}x{} tail with no promotion "
+                  "wired",
+                  sceneColorExtent.x, sceneColorExtent.y, m_Extent.x, m_Extent.y);
         const uvec2 postResolveExtent = m_Extent;
         m_PostResolveExtent = postResolveExtent;
         const vec2 postResolveScaleUV = vec2(1.0f);
@@ -1828,6 +1895,7 @@ namespace Veng::Renderer
         SceneView resolvedView = view;
         resolvedView.RenderExtent = validExtent;
         resolvedView.PostResolveExtent = postResolveExtent;
+        resolvedView.SceneColorExtent = sceneColorExtent;
         resolvedView.LightCount = packed.LightCount;
         for (u32 s = 0; s < cascadeSetCount; ++s)
         {
@@ -1906,7 +1974,7 @@ namespace Veng::Renderer
             // The frame clock is engine-global (Time), frame-locked so every view and material
             // reads one consistent value; the delta is this view's.
             .TimeParams = vec4(Time::GetFrameTime(), view.Delta, 0.0f, 0.0f),
-            .ExtentParams = vec4(vec2(validExtent), vec2(m_Extent)),
+            .ExtentParams = vec4(vec2(validExtent), vec2(m_RenderAllocExtent)),
             // The chain's own sampler rather than the shared g-buffer one: that carries the
             // default MaxLod of 1, which would pin every blurred sample to the top two levels with
             // nothing anywhere reporting it. At level 0 the two behave identically.
@@ -1937,7 +2005,7 @@ namespace Veng::Renderer
                 std::as_bytes(std::span(packed.AreaVertices.data(), packed.AreaVertexCount)));
             ViewConstantsBlock halfResConstants = viewConstants;
             halfResConstants.ExtentParams =
-                vec4(vec2(HalfResExtent(validExtent)), vec2(HalfResExtent(m_Extent)));
+                vec4(vec2(HalfResExtent(validExtent)), vec2(HalfResExtent(m_RenderAllocExtent)));
             registry.WriteViewConstants(std::as_bytes(std::span(&halfResConstants, 1)));
             halfResViewConstantsIndex = registry.GetCurrentViewConstantsIndex();
             halfResViewReady = true;
@@ -2040,7 +2108,7 @@ namespace Veng::Renderer
         // Service a pending pick: the picking subsystem transitions the EntityId target to
         // TransferSrc and copies the search window under the cursor into its readback buffer on the
         // graphics queue; the result becomes readable through PollPickId once this frame completes.
-        m_Picking->ServiceRequest(cmd, m_Extent, m_FrameIndex);
+        m_Picking->ServiceRequest(cmd, m_RenderAllocExtent, m_FrameIndex);
 
         // Commit this frame's hi-Z history state: the reduction declared in this graph wrote the
         // pyramid from this frame's depth, so it pairs with this frame's view-projection next time.
@@ -2051,10 +2119,12 @@ namespace Veng::Renderer
         RecordFrameHistory(viewProj, scale);
     }
 
-    void SceneRenderer::ResolvePostResolveUpscale(const uvec2 validExtent)
+    bool SceneRenderer::UpdatePostResolveUpscale(const uvec2 sceneColorExtent)
     {
-        // A temporal resolve already writes the allocation, so the promotion would be a second one.
-        const bool wanted = !m_Topology->TaaActive && validExtent != m_Extent;
+        // A scene colour that already covers the whole post-resolve allocation needs no promotion —
+        // which is every frame at render scale 1, and every frame a temporal-upscaling resolve
+        // reconstructed the allocation itself.
+        const bool wanted = sceneColorExtent != m_Extent;
         if (wanted)
         {
             m_PostResolveUpscaleIdleFrames = 0;
@@ -2062,16 +2132,17 @@ namespace Veng::Renderer
             {
                 m_PostResolveUpscaleActive = true;
                 m_Upscale->Resize(m_Extent, true);
-                Rebuild();
+                return true;
             }
-            return;
+            return false;
         }
         if (m_PostResolveUpscaleActive &&
             ++m_PostResolveUpscaleIdleFrames > PostResolveUpscaleIdleFrameLimit)
         {
             DropPostResolveUpscale();
-            Rebuild();
+            return true;
         }
+        return false;
     }
 
     void SceneRenderer::DropPostResolveUpscale()
@@ -2081,6 +2152,21 @@ namespace Veng::Renderer
         m_Upscale->Resize(m_Extent, false);
     }
 
+    ResourceId SceneRenderer::PostSceneId() const
+    {
+        return m_PostResolveUpscaleActive ? m_UpscaleSceneId : m_HdrId;
+    }
+
+    TextureHandle SceneRenderer::PostSceneHandle() const
+    {
+        return m_PostResolveUpscaleActive ? m_Upscale->GetSceneHandle() : m_HdrHandle;
+    }
+
+    const Ref<ImageView>& SceneRenderer::PostSceneView() const
+    {
+        return m_PostResolveUpscaleActive ? m_Upscale->GetSceneView() : m_HdrView;
+    }
+
     SceneRenderer::FrameScale SceneRenderer::ResolveRenderScale(const SceneView& view) const
     {
         // Scale applies only on the Final path with the sub-rect-aware battery set. The temporal
@@ -2088,24 +2174,24 @@ namespace Veng::Renderer
         // sub-rect, which is what makes TAAU an upscaler — so it does not force full resolution.
         // The exclusions do not carry the sub-rect sampling and each forces full resolution
         // (correct, just no scaling): the GPU hi-Z occlusion test, the SSR trace, and the Dual-Kawase
-        // bloom kernel. Depth of field joins them: its five stages sit downstream of the resolve
-        // anchor and key every one of them on RenderExtent, so a promoted (allocation-sized) scene
-        // color would be read through a sub-rect map. That is why the exclusion is unconditional
-        // rather than paired with a temporal resolve — the anchor now promotes either way.
+        // bloom kernel. A composited depth-of-field chain joins them only behind a temporal resolve:
+        // that resolve reconstructs the whole render allocation, so the chain would read
+        // allocation-resolution scene colour through the sub-rect map its depth reads need.
         const bool drsSupported =
             m_Settings.Mode == DebugView::Final && !m_Settings.SSR &&
             !(m_GpuCull->GetActiveCull() == SceneRendererSettings::CullMode::GPU &&
               m_Settings.Occlusion) &&
             !(m_Settings.Bloom && m_Settings.Kernel == BloomKernel::Kawase) &&
-            !m_Topology->DofComposited();
+            !(m_Topology->DofComposited() && m_Topology->TaaActive);
         const f32 renderScale = drsSupported ? view.RenderScale : 1.0f;
         const uvec2 validExtent =
-            glm::clamp(uvec2(glm::round(vec2(m_Extent) * renderScale)), uvec2(1), m_Extent);
+            glm::clamp(uvec2(glm::round(vec2(m_RenderAllocExtent) * renderScale)), uvec2(1),
+                       m_RenderAllocExtent);
         // Half-texel inset so a bilinear tap at the valid edge never reads past it.
         return {
             .ValidExtent = validExtent,
-            .RenderScaleUV = vec2(validExtent) / vec2(m_Extent),
-            .MaxValidUV = (vec2(validExtent) - 0.5f) / vec2(m_Extent),
+            .RenderScaleUV = vec2(validExtent) / vec2(m_RenderAllocExtent),
+            .MaxValidUV = (vec2(validExtent) - 0.5f) / vec2(m_RenderAllocExtent),
         };
     }
 
@@ -2369,6 +2455,11 @@ namespace Veng::Renderer
     uvec2 SceneRenderer::GetPostResolveExtent() const
     {
         return m_PostResolveExtent;
+    }
+
+    uvec2 SceneRenderer::GetRenderAllocationExtent() const
+    {
+        return m_RenderAllocExtent;
     }
 
     bool SceneRenderer::IsPostResolveUpscaleWired() const

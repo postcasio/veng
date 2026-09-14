@@ -50,15 +50,12 @@ namespace Veng::Renderer
                                        ? info.Context.GetOutputFormat()
                                        : info.ColorFormat;
 
-        // Mirror the AA mode's upscaling bit before the allocation is sized (ScaledExtent reads it
-        // through GetAllocationScale, and the renderer does not exist yet).
-        m_TaaUpscaling = info.Settings.UsesTaaUpscaling();
-
         m_Renderer = SceneRenderer::Create({
             .Context = info.Context,
             .Assets = info.Assets,
             .OutputFormat = colorFormat,
-            .Extent = ScaledExtent(),
+            .Extent = GetPostResolveAllocationExtent(),
+            .RenderExtent = ScaledExtent(),
             .Settings = info.Settings,
         });
 
@@ -176,7 +173,8 @@ namespace Veng::Renderer
         if (region.Extent.x != 0 && region.Extent.y != 0 && region.Extent != m_Region.Extent)
         {
             m_Region.Extent = region.Extent;
-            m_PendingExtent = ScaledExtent();
+            m_PendingExtent = GetPostResolveAllocationExtent();
+            m_PendingRenderExtent = ScaledExtent();
         }
     }
 
@@ -207,9 +205,10 @@ namespace Veng::Renderer
         // scale move never changes the allocation — it only adjusts the per-frame sub-rect fraction
         // pushed through the SceneView. With DRS off the static scale *is* the upper bound, so a
         // change moves the allocation and debounces a resize.
-        const uvec2 priorAlloc = ScaledExtent();
+        const uvec2 priorPostAlloc = GetPostResolveAllocationExtent();
+        const uvec2 priorRenderAlloc = ScaledExtent();
         m_RenderScale = scale;
-        DebounceAllocationResize(priorAlloc);
+        DebounceAllocationResize(priorPostAlloc, priorRenderAlloc);
     }
 
     f32 Viewport::GetRenderScale() const
@@ -228,10 +227,11 @@ namespace Veng::Renderer
         // The allocation is sized to the controller's MaxScale ceiling, so engaging it may move the
         // allocation extent and resize the renderer images. The current scale is clamped into the new
         // band so it never exceeds the allocation (a GetViewRenderScale > 1 would render outside).
-        const uvec2 priorAlloc = ScaledExtent();
+        const uvec2 priorPostAlloc = GetPostResolveAllocationExtent();
+        const uvec2 priorRenderAlloc = ScaledExtent();
         m_DynamicResolution = settings;
         m_RenderScale = glm::clamp(m_RenderScale, settings.MinScale, settings.MaxScale);
-        DebounceAllocationResize(priorAlloc);
+        DebounceAllocationResize(priorPostAlloc, priorRenderAlloc);
     }
 
     void Viewport::ClearDynamicResolution()
@@ -244,9 +244,10 @@ namespace Veng::Renderer
 
         // The allocation scale flips from the controller's ceiling back to the (now static) current
         // scale, which may move the allocation extent and debounce a resize.
-        const uvec2 priorAlloc = ScaledExtent();
+        const uvec2 priorPostAlloc = GetPostResolveAllocationExtent();
+        const uvec2 priorRenderAlloc = ScaledExtent();
         m_DynamicResolution.reset();
-        DebounceAllocationResize(priorAlloc);
+        DebounceAllocationResize(priorPostAlloc, priorRenderAlloc);
     }
 
     bool Viewport::IsDynamicResolutionEnabled() const
@@ -313,18 +314,13 @@ namespace Veng::Renderer
 
     f32 Viewport::GetAllocationScale() const
     {
-        // TAAU pins the allocation to native (the MaxAllocationScale factor still applies) and routes
-        // the render scale into the sub-rect through GetViewRenderScale, so the temporal resolve
-        // reconstructs the native image from a cheaper render — whether the render scale is the static
-        // slider or the per-frame dynamic-resolution scale.
-        if (m_TaaUpscaling)
-        {
-            return 1.0f;
-        }
-        // Otherwise the allocation is sized to the upper bound of the render scale: MaxScale when the
+        // The render allocation is sized to the upper bound of the render scale: MaxScale when the
         // controller owns the scale, else the static scale (its own ceiling). Sizing to the ceiling
         // lets a current-scale move render into a sub-rect without a resize, and lets a sub-1 ceiling
-        // actually shrink the images rather than allocating full-region.
+        // actually shrink the scene-side images rather than allocating full-region. It is the scene
+        // side alone — the post-resolve tail is allocated at the region's own (capped) extent, so a
+        // temporal-upscaling resolve and a spatial promotion alike reconstruct it from whatever
+        // sub-native render this scale produced.
         return m_DynamicResolution ? m_DynamicResolution->MaxScale : m_RenderScale;
     }
 
@@ -333,11 +329,17 @@ namespace Veng::Renderer
         return ScaledExtent();
     }
 
+    uvec2 Viewport::GetPostResolveAllocationExtent() const
+    {
+        return ExtentForScale(1.0f);
+    }
+
     uvec2 Viewport::ExtentForScale(f32 scale) const
     {
-        // MaxAllocationScale is the outermost factor: it caps the region before the upper-bound
-        // allocation scale. At the default 1.0 the allocation is the full region (native resolution
-        // on a HiDPI backing extent); a lower ceiling bounds it below that.
+        // MaxAllocationScale is the outermost factor and applies to both allocations: it caps the
+        // region before the render scale narrows the scene side. At the default 1.0 the post-resolve
+        // allocation is the full region (native resolution on a HiDPI backing extent); a lower
+        // ceiling bounds both below that, and a value above 1 supersamples both.
         const vec2 allocated = glm::round(vec2(m_Region.Extent) * m_MaxAllocationScale * scale);
         return glm::max(uvec2(allocated), uvec2(1));
     }
@@ -349,13 +351,15 @@ namespace Veng::Renderer
 
     f32 Viewport::GetViewRenderScale() const
     {
-        // The current scale as a fraction of the allocation scale (the ceiling the target is sized
-        // to): at the ceiling the fraction is 1 (renders the full target), below it a sub-rect. The
-        // clamp guards the window between a MaxScale drop and the next controller update.
+        // The current scale as a fraction of the render allocation scale (the ceiling the scene
+        // targets are sized to): at the ceiling the fraction is 1 (renders the whole render
+        // allocation), below it a sub-rect of it. The clamp guards the window between a MaxScale
+        // drop and the next controller update.
         return glm::min(m_RenderScale / GetAllocationScale(), 1.0f);
     }
 
-    void Viewport::DebounceAllocationResize(uvec2 priorAlloc)
+    void Viewport::DebounceAllocationResize(const uvec2 priorPostAlloc,
+                                            const uvec2 priorRenderAlloc)
     {
         // A zero-extent region (a collapsed or first-frame panel) never drives a resize.
         if (m_Region.Extent.x == 0 || m_Region.Extent.y == 0)
@@ -363,10 +367,12 @@ namespace Veng::Renderer
             return;
         }
 
-        const uvec2 newAlloc = ScaledExtent();
-        if (newAlloc != priorAlloc)
+        const uvec2 newPostAlloc = GetPostResolveAllocationExtent();
+        const uvec2 newRenderAlloc = ScaledExtent();
+        if (newPostAlloc != priorPostAlloc || newRenderAlloc != priorRenderAlloc)
         {
-            m_PendingExtent = newAlloc;
+            m_PendingExtent = newPostAlloc;
+            m_PendingRenderExtent = newRenderAlloc;
         }
     }
 
@@ -407,12 +413,7 @@ namespace Veng::Renderer
         {
             return;
         }
-        // Switching the AA mode into or out of TAAU changes the allocation scale (native vs. the
-        // render scale), so debounce a resize against the allocation the old mode implied.
-        const uvec2 priorAlloc = GetAllocationExtent();
-        m_TaaUpscaling = settings.UsesTaaUpscaling();
         m_Renderer->Configure(settings);
-        DebounceAllocationResize(priorAlloc);
         RefreshOutputHandle();
     }
 
@@ -449,8 +450,9 @@ namespace Veng::Renderer
 
         if (m_PendingExtent.x != 0 && m_PendingExtent.y != 0)
         {
-            m_Renderer->Resize(m_PendingExtent);
+            m_Renderer->Resize(m_PendingExtent, m_PendingRenderExtent);
             m_PendingExtent = {};
+            m_PendingRenderExtent = {};
             RefreshOutputHandle();
         }
 
@@ -471,8 +473,8 @@ namespace Veng::Renderer
             .Camera = m_ViewState.Camera,
             .Delta = m_ViewState.Delta,
             .Alpha = m_ViewState.Alpha,
-            // The sub-rect fraction of the allocation to render this frame; the terminal tonemap
-            // upscales it to the full (allocation-sized) output, so GetOutput stays full-resolution.
+            // The sub-rect fraction of the render allocation to render this frame; the promotion
+            // carries it up to the post-resolve allocation, so GetOutput stays full-resolution.
             .RenderScale = GetViewRenderScale(),
             .Exposure = m_ViewState.Exposure,
             .Tonemapper = m_ViewState.Tonemapper,

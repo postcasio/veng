@@ -246,7 +246,8 @@ namespace Veng::Renderer
         bindless.Release(m_Mip0Handle);
     }
 
-    void BloomPyramid::Resize(const uvec2 extent, const Ref<ImageView>& hdrView)
+    void BloomPyramid::Resize(const uvec2 extent, const uvec2 maskExtent,
+                              const Ref<ImageView>& hdrView)
     {
         // Bloom operates in linear HDR space before tonemap, sampling bilinearly: the wide
         // COD/tent taps land between texels, so the pyramid's HdrFormat must advertise linear
@@ -255,6 +256,7 @@ namespace Veng::Renderer
                   "BloomPyramid: bloom needs SampledImageFilterLinear on the HDR format");
 
         m_Extent = extent;
+        m_MaskExtent = maskExtent;
 
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_ResultHandle);
@@ -410,6 +412,7 @@ namespace Veng::Renderer
     {
         const u32 mipCount = static_cast<u32>(m_Mips.size());
         const uvec2 allocExtent = m_Extent;
+        const uvec2 maskAllocExtent = m_MaskExtent;
 
         // The mask is folded in only when the renderer supplied a live target and both slots
         // resolved; without it level 0 is the luminance bright-pass alone.
@@ -449,8 +452,8 @@ namespace Veng::Renderer
             const u32 srcLevel = level == 0 ? 0u : level - 1;
             const AutoExposureMeter* meter = &autoExposure;
             builder.Execute(
-                [pipeline, set, level, srcLevel, allocExtent, brightPass, meter, levelMask,
-                 maskHandle, maskSampler, context](PassContext& inner)
+                [pipeline, set, level, srcLevel, allocExtent, maskAllocExtent, brightPass, meter,
+                 levelMask, maskHandle, maskSampler, context](PassContext& inner)
                 {
                     const auto* view = static_cast<const SceneView*>(inner.UserData());
                     VE_ASSERT(view != nullptr, "Bloom down pass: null SceneView");
@@ -459,7 +462,8 @@ namespace Veng::Renderer
                     const MipSubRect src =
                         ComputeMipSubRect(view->PostResolveExtent, allocExtent, srcLevel);
                     // The bloom mask stays at the rendered sub-rect (see MaskScaleUV).
-                    const MipSubRect mask = ComputeMipSubRect(view->RenderExtent, allocExtent, 0);
+                    const MipSubRect mask =
+                        ComputeMipSubRect(view->RenderExtent, maskAllocExtent, 0);
                     CommandBuffer& cmd = inner.Cmd();
                     cmd.BindPipeline(pipeline);
                     if (levelMask)

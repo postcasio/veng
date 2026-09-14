@@ -151,6 +151,16 @@ namespace Veng::Renderer
         /// @param force True to draw every field direct; false to restore automatic selection.
         void SetForceDirect(bool force) { m_ForceDirect = force; }
 
+        /// @brief Selects which target extent the pass sizes its viewport and point scale to.
+        ///
+        /// The two placements write different targets: a SceneColor-placed pass accumulates into
+        /// the lit target the scene rasterized, so it runs at SceneView::RenderExtent, while an
+        /// HdrTail-placed pass accumulates into the scene colour at the tail anchor, so it runs at
+        /// SceneView::SceneColorExtent. They coincide unless the frame renders below its
+        /// post-resolve allocation.
+        /// @param preResolve True for a SceneColor-placed pass (the rasterized sub-rect).
+        void SetPreResolve(bool preResolve) { m_PreResolve = preResolve; }
+
     private:
         /// @brief Per-field GPU state and hysteresis latch, cached across frames per drawn field.
         ///
@@ -347,6 +357,9 @@ namespace Veng::Renderer
         bool m_ComputeSupported = false;
         /// @brief Test/A-B hook forcing every field onto the direct path.
         bool m_ForceDirect = false;
+
+        /// @brief Whether this pass writes the rasterized scene target rather than the tail anchor's.
+        bool m_PreResolve = false;
 
         /// @brief Shared quad index buffer both draw paths index their point/splat quads through.
         ///

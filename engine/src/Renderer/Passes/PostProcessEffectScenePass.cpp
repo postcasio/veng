@@ -17,8 +17,9 @@
 namespace Veng::Renderer
 {
     PostProcessEffectScenePass::PostProcessEffectScenePass(Context& context, Format outputFormat,
-                                                           uvec2 extent)
-        : m_Context(context), m_OutputFormat(outputFormat), m_Extent(extent)
+                                                           uvec2 extent, uvec2 renderExtent)
+        : m_Context(context), m_OutputFormat(outputFormat), m_Extent(extent),
+          m_RenderExtent(renderExtent)
     {
     }
 
@@ -102,15 +103,16 @@ namespace Veng::Renderer
                     MaterialInstance& material = *m_Material.Get();
                     const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
-                    // The finished scene color lives in the post-resolve region of the allocation
-                    // (the full allocation after a temporal resolve, else the render sub-rect); the
-                    // g-buffer depth lives in the render sub-rect. Both maps are the identity at
-                    // render scale 1.0.
+                    // The finished scene color fills the post-resolve allocation the promotion
+                    // handed on; the g-buffer depth is the rendered sub-rect of the render
+                    // allocation. Both maps are the identity at render scale 1.0.
                     const vec2 alloc = vec2(m_Extent);
+                    const vec2 renderAlloc = vec2(m_RenderExtent);
                     const vec2 post = vec2(view.PostResolveExtent);
                     const vec2 render = vec2(view.RenderExtent);
                     const vec4 sceneScaleUv = vec4(post / alloc, (post - 0.5f) / alloc);
-                    const vec4 depthScaleUv = vec4(render / alloc, (render - 0.5f) / alloc);
+                    const vec4 depthScaleUv =
+                        vec4(render / renderAlloc, (render - 0.5f) / renderAlloc);
 
                     // Write the runtime-bound inputs into the material's fields where it declares
                     // them, so an effect that ignores depth (or the scale maps) need not declare

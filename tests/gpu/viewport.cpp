@@ -146,8 +146,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
 TEST_CASE_FIXTURE(
     Veng::Test::GpuFixture,
-    "viewport: with dynamic resolution off the static render scale sizes the allocation; a change "
-    "resizes; a supersample grows it")
+    "viewport: with dynamic resolution off the static render scale sizes the render allocation "
+    "while the output stays the region; a change resizes; a supersample grows it")
 {
     RegisterBuiltinTypes(Types);
 
@@ -158,8 +158,9 @@ TEST_CASE_FIXTURE(
     const Unique<Scene> scene = Scene::Create(Types);
     const Ref<Mesh> cube = PopulateCubeScene(Context, assets, *scene);
 
-    // Dynamic resolution off: the static scale is the allocation ceiling, so a half-scale sizes the
-    // target to region/2 directly — not a full-region allocation rendered into a sub-rect.
+    // Dynamic resolution off: the static scale is the render allocation's ceiling, so a half-scale
+    // sizes the scene targets to region/2 directly — not a full-region render allocation rendered
+    // into a sub-rect. The post-resolve allocation, and so the output, is unmoved by it.
     const Unique<Viewport> viewport = Viewport::Create({
         .Context = Context,
         .Assets = assets,
@@ -169,16 +170,22 @@ TEST_CASE_FIXTURE(
     });
     CHECK(viewport->GetRegion().Extent == region);
     CHECK(viewport->GetRenderScale() == doctest::Approx(0.5f));
-    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x / 2);
-    CHECK(viewport->GetOutput()->GetImage()->GetHeight() == region.y / 2);
+    CHECK(viewport->GetAllocationExtent() == uvec2{region.x / 2, region.y / 2});
+    CHECK(viewport->GetPostResolveAllocationExtent() == region);
+    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x);
+    CHECK(viewport->GetOutput()->GetImage()->GetHeight() == region.y);
 
     viewport->SetViewState({.World = scene.get(), .Camera = FrontCamera(region), .Delta = 0.0f});
     Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
-    // The allocation is rendered fully (the static scale is the ceiling, so the fraction is 1).
+    // The render allocation is rendered fully (the static scale is its ceiling, so the fraction is
+    // 1), and the tail still ran at the region — the promotion is what carries it there.
     CHECK(viewport->GetRenderer().GetValidExtent() == uvec2{32, 24});
+    CHECK(viewport->GetRenderer().GetPostResolveExtent() == region);
+    CHECK(viewport->GetRenderer().IsPostResolveUpscaleWired());
 
-    // Changing the static scale moves the allocation ceiling: a real resize (generation bumps, a
-    // fresh output Ref) — the deliberate cost of not over-allocating a scale that never grows.
+    // Changing the static scale moves the render allocation ceiling: a real resize (generation
+    // bumps, a fresh output Ref) — the deliberate cost of not over-allocating a scale that never
+    // grows.
     const Ref<ImageView> beforeScale = viewport->GetOutput();
     const u64 generationBefore = viewport->GetOutputGeneration();
     viewport->SetRenderScale(1.0f);
@@ -187,18 +194,23 @@ TEST_CASE_FIXTURE(
     CHECK(viewport->GetOutput().get() != beforeScale.get());
     CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x);
     CHECK(viewport->GetRenderer().GetValidExtent() == region);
+    // The two allocations coincide at scale 1, so no promotion pass is wired at all.
+    CHECK(viewport->GetAllocationExtent() == viewport->GetPostResolveAllocationExtent());
+    CHECK_FALSE(viewport->GetRenderer().IsPostResolveUpscaleWired());
 
-    // A supersample (scale > 1) grows the allocation, rendered fully (valid == allocation).
+    // A supersample (scale > 1) grows the render allocation, rendered fully (valid == allocation);
+    // the tail keeps the region, so the promotion averages the supersampled scene down into it.
     viewport->SetRenderScale(2.0f);
     Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
-    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x * 2);
-    CHECK(viewport->GetOutput()->GetImage()->GetHeight() == region.y * 2);
+    CHECK(viewport->GetAllocationExtent() == uvec2{region.x * 2, region.y * 2});
+    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x);
+    CHECK(viewport->GetOutput()->GetImage()->GetHeight() == region.y);
     CHECK(viewport->GetRenderer().GetValidExtent() == uvec2{region.x * 2, region.y * 2});
 }
 
 TEST_CASE_FIXTURE(
     Veng::Test::GpuFixture,
-    "viewport: TAAU pins the allocation to native and routes the render scale into the sub-rect")
+    "viewport: TAAU renders the scene at the render allocation and its resolve is the promotion")
 {
     RegisterBuiltinTypes(Types);
 
@@ -209,9 +221,9 @@ TEST_CASE_FIXTURE(
     const Unique<Scene> scene = Scene::Create(Types);
     const Ref<Mesh> cube = PopulateCubeScene(Context, assets, *scene);
 
-    // TAAU: unlike the plain static scale above (which sizes the allocation to the scale), the
-    // allocation stays native and the render scale drives the rendered sub-rect, so the temporal
-    // resolve reconstructs the full native image from a cheaper render.
+    // TAAU spends the render scale exactly as every other mode does — it sizes the render
+    // allocation — and differs only in reconstructing the post-resolve allocation itself, so no
+    // spatial promotion follows it.
     SceneRendererSettings settings;
     settings.AntiAliasing = AntiAliasingMode::TAAU;
     const Unique<Viewport> viewport = Viewport::Create({
@@ -222,27 +234,28 @@ TEST_CASE_FIXTURE(
         .RenderScale = 0.5f,
         .Role = ViewportRole::Offscreen,
     });
-    // The allocation (and the output) is the full native region despite the 0.5 render scale.
-    CHECK(viewport->GetAllocationScale() == doctest::Approx(1.0f));
+    // The render allocation follows the 0.5 scale; the output is the full native region.
+    CHECK(viewport->GetAllocationScale() == doctest::Approx(0.5f));
+    CHECK(viewport->GetAllocationExtent() == uvec2{region.x / 2, region.y / 2});
     CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x);
     CHECK(viewport->GetOutput()->GetImage()->GetHeight() == region.y);
 
     viewport->SetViewState({.World = scene.get(), .Camera = FrontCamera(region), .Delta = 0.0f});
     Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
-    // The scene rendered into a half sub-rect of the native allocation; the resolve reconstructs the
-    // full native output.
+    // The scene rendered at half resolution and the temporal resolve reconstructed the native
+    // image — so the tail is native with no spatial promotion behind it.
     CHECK(viewport->GetRenderer().GetValidExtent() == uvec2{32, 24});
+    CHECK(viewport->GetRenderer().GetPostResolveExtent() == region);
+    CHECK_FALSE(viewport->GetRenderer().IsPostResolveUpscaleWired());
 
-    // Changing the render scale under TAAU moves only the sub-rect — no allocation resize, the
-    // dynamic-resolution win carried into the upscaler.
-    const Ref<ImageView> beforeScale = viewport->GetOutput();
-    const u64 generationBefore = viewport->GetOutputGeneration();
+    // A static render-scale change moves the render allocation (the same resize any other mode
+    // pays); the output is untouched, because no render scale reaches the post-resolve allocation.
     viewport->SetRenderScale(0.75f);
     Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
-    CHECK(viewport->GetOutputGeneration() == generationBefore);
-    CHECK(viewport->GetOutput().get() == beforeScale.get());
     CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x);
     CHECK(viewport->GetRenderer().GetValidExtent() == uvec2{48, 36});
+    CHECK(viewport->GetRenderer().GetPostResolveExtent() == region);
+    CHECK_FALSE(viewport->GetRenderer().IsPostResolveUpscaleWired());
 }
 
 TEST_CASE_FIXTURE(
@@ -291,8 +304,8 @@ TEST_CASE_FIXTURE(
 
 TEST_CASE_FIXTURE(
     Veng::Test::GpuFixture,
-    "viewport: dynamic resolution sizes the allocation to MaxScale; the current scale sub-rects it "
-    "without resizing; a MaxScale change resizes")
+    "viewport: dynamic resolution sizes the render allocation to MaxScale; the current scale "
+    "sub-rects it without resizing; a MaxScale change resizes")
 {
     RegisterBuiltinTypes(Types);
 
@@ -313,19 +326,23 @@ TEST_CASE_FIXTURE(
     Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
     CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x);
 
-    // Enabling dynamic resolution with a sub-1 MaxScale shrinks the allocation to region * MaxScale:
-    // a real resize, and the current scale is clamped down into [MinScale, MaxScale]. (No frame loop,
-    // so GetLastGpuFrameTimeMs stays 0 and the controller holds the scale each Render.)
+    // Enabling dynamic resolution with a sub-1 MaxScale shrinks the render allocation to
+    // region * MaxScale: a real resize, and the current scale is clamped down into
+    // [MinScale, MaxScale]. (No frame loop, so GetLastGpuFrameTimeMs stays 0 and the controller
+    // holds the scale each Render.)
     const u64 generationBefore = viewport->GetOutputGeneration();
     viewport->SetDynamicResolution({.MinScale = 0.5f, .MaxScale = 0.75f});
     CHECK(viewport->IsDynamicResolutionEnabled());
     CHECK(viewport->GetRenderScale() == doctest::Approx(0.75f));
     Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
     CHECK(viewport->GetOutputGeneration() > generationBefore);
-    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == 48);
-    CHECK(viewport->GetOutput()->GetImage()->GetHeight() == 36);
-    // At the ceiling the allocation renders fully.
+    CHECK(viewport->GetAllocationExtent() == uvec2{48, 36});
+    // The output — the post-resolve allocation — never moves with the controller's ceiling.
+    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x);
+    CHECK(viewport->GetOutput()->GetImage()->GetHeight() == region.y);
+    // At the ceiling the render allocation renders fully.
     CHECK(viewport->GetRenderer().GetValidExtent() == uvec2{48, 36});
+    CHECK(viewport->GetRenderer().GetPostResolveExtent() == region);
 
     // A current-scale move below MaxScale rides the per-frame sub-rect: no resize, stable output Ref
     // — the no-hitch dynamic-resolution win.
@@ -335,27 +352,27 @@ TEST_CASE_FIXTURE(
     Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
     CHECK(viewport->GetOutputGeneration() == generationSubRect);
     CHECK(viewport->GetOutput().get() == beforeSubRect.get());
-    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == 48);
-    // round(allocation {48,36} * (0.5 / 0.75)).
+    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x);
+    // round(render allocation {48,36} * (0.5 / 0.75)).
     CHECK(viewport->GetRenderer().GetValidExtent() == uvec2{32, 24});
 
-    // Raising MaxScale resizes the allocation back up (the point of the option).
+    // Raising MaxScale resizes the render allocation back up (the point of the option).
     const u64 generationMax = viewport->GetOutputGeneration();
     viewport->SetDynamicResolution({.MinScale = 0.5f, .MaxScale = 1.0f});
     Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
     CHECK(viewport->GetOutputGeneration() > generationMax);
-    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x);
-    CHECK(viewport->GetOutput()->GetImage()->GetHeight() == region.y);
+    CHECK(viewport->GetAllocationExtent() == region);
 
-    // Clearing reverts the allocation ceiling to the held static scale (0.5), resizing down.
+    // Clearing reverts the render allocation ceiling to the held static scale (0.5), resizing down.
     CHECK(viewport->GetRenderScale() == doctest::Approx(0.5f));
     const u64 generationClear = viewport->GetOutputGeneration();
     viewport->ClearDynamicResolution();
     CHECK_FALSE(viewport->IsDynamicResolutionEnabled());
     Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
     CHECK(viewport->GetOutputGeneration() > generationClear);
-    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x / 2);
-    CHECK(viewport->GetOutput()->GetImage()->GetHeight() == region.y / 2);
+    CHECK(viewport->GetAllocationExtent() == uvec2{region.x / 2, region.y / 2});
+    CHECK(viewport->GetOutput()->GetImage()->GetWidth() == region.x);
+    CHECK(viewport->GetOutput()->GetImage()->GetHeight() == region.y);
     CHECK(viewport->GetRenderer().GetValidExtent() == uvec2{32, 24});
 }
 

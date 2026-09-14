@@ -41,15 +41,21 @@ namespace Veng::Renderer
         TaaResolve(const TaaResolve&) = delete;
         TaaResolve& operator=(const TaaResolve&) = delete;
 
-        /// @brief Recreates the lit + history targets at @p extent, or releases them when TAA is off.
+        /// @brief Recreates the lit + history targets, or releases them when TAA is off.
         ///
-        /// Both are HdrFormat at the full allocation extent, registered into bindless when
-        /// @p enabled; otherwise the targets are dropped so the memory is not held for an unused
-        /// path. Recreating (or releasing) invalidates the persisted history, so this sets the
-        /// reset gate — the next resolve ignores history until a frame repopulates it.
-        /// @param extent  The allocation extent both targets are sized to.
-        /// @param enabled Whether TAA is active (the targets are allocated only then).
-        void Resize(uvec2 extent, bool enabled);
+        /// The two extents are the resolve's input and output sides: the lit target is what the
+        /// lighting pass rasterizes into and so lives in the render allocation, while the history
+        /// is the resolve's own output and so lives in the scene-colour allocation — the same as
+        /// the render allocation for a plain temporal resolve, and the post-resolve allocation
+        /// under temporal upscaling, where the resolve reconstructs it. Both are HdrFormat,
+        /// registered into bindless when @p enabled; otherwise the targets are dropped so the
+        /// memory is not held for an unused path. Recreating (or releasing) invalidates the
+        /// persisted history, so this sets the reset gate — the next resolve ignores history until
+        /// a frame repopulates it.
+        /// @param litExtent     The render allocation the lit target is sized to.
+        /// @param historyExtent The scene-colour allocation the history is sized to.
+        /// @param enabled       Whether TAA is active (the targets are allocated only then).
+        void Resize(uvec2 litExtent, uvec2 historyExtent, bool enabled);
 
         /// @brief Forces the next resolve to ignore history (used after a recreate or a reset).
         void InvalidateHistory() { m_HistoryReset = true; }

@@ -70,6 +70,12 @@ namespace Veng::Renderer
         bool AutoExposureActive = false;
         /// @brief The TAA resolve and history copy are wired, routing lighting into a lit target.
         bool TaaActive = false;
+        /// @brief The temporal resolve reconstructs the post-resolve allocation, promoting there.
+        ///
+        /// Set for a temporal-upscaling frame whose chain admits it (see
+        /// ResolveTemporalUpscalePromotes); the scene-colour chain from the resolve onward is then
+        /// allocation-resolution and no spatial promotion follows it.
+        bool TaaUpscalePromotes = false;
         /// @brief The FXAA post-tonemap resolve is wired (reads the tonemapped LDR).
         bool FxaaActive = false;
         /// @brief The CMAA2 post-tonemap compute resolve is wired (reads the tonemapped LDR).
@@ -139,4 +145,19 @@ namespace Veng::Renderer
     /// @return The decided topology.
     [[nodiscard]] FrameTopology ResolveFrameTopology(const SceneRendererSettings& settings,
                                                      const SkyTopologyInput& sky);
+
+    /// @brief Whether a temporal resolve reconstructs the post-resolve allocation directly.
+    ///
+    /// Temporal upscaling promotes at the temporal anchor, so every pass between that anchor and
+    /// the HDR tail sees allocation-resolution scene colour beside render-resolution depth. The SSR
+    /// composite and a composited depth-of-field chain sit there and read both through one extent,
+    /// so a frame wiring either resolves at the render allocation instead and the spatial promotion
+    /// carries the tail up — a spatial reconstruction rather than a temporal one, with the render
+    /// scale still buying exactly what it buys in every other mode.
+    ///
+    /// A function of the settings alone (no sky input), so the renderer can size its scene-colour
+    /// allocation from it before the frame topology is resolved.
+    /// @param settings The topology and sizing knobs the frame renders under.
+    /// @return True when the temporal resolve is the promotion.
+    [[nodiscard]] bool ResolveTemporalUpscalePromotes(const SceneRendererSettings& settings);
 }

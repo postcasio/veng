@@ -86,8 +86,15 @@ namespace Veng::Renderer
         AssetManager& Assets;
         /// @brief Pixel format of the owned output target.
         Format OutputFormat = Format::Undefined;
-        /// @brief Initial render extent.
+        /// @brief Initial post-resolve allocation — the output extent and the extent the tail runs at.
         uvec2 Extent = {};
+        /// @brief Initial render allocation — the extent the scene rasterizes into.
+        ///
+        /// Zero (the default) allocates the scene side at Extent, so a consumer that does not scale
+        /// its render separately gets one allocation and no promotion pass. A smaller value is a
+        /// render-scale reduction: the g-buffer, depth and every scene-side battery shrink with it
+        /// while the tail stays at Extent.
+        uvec2 RenderExtent = {};
         /// @brief Initial topology and sizing knobs.
         SceneRendererSettings Settings;
     };
@@ -136,35 +143,47 @@ namespace Veng::Renderer
         /// history) renders the current pose, byte-identical to the un-interpolated path.
         f32 Alpha = 0.0f;
 
-        /// @brief Dynamic-resolution multiplier on the allocated extent for this frame.
+        /// @brief Dynamic-resolution multiplier on the **render** allocation for this frame.
         ///
-        /// The renderer's targets are allocated at a high-water-mark extent; each Execute renders
-        /// the **scene** into the top-left round(allocExtent * RenderScale) sub-rect of them, and
-        /// the resolve anchor promotes that sub-rect back to the full allocation — so the scale
-        /// buys frame time on the scene and nothing downstream of the resolve. (0,1] renders below
-        /// the allocation (dynamic resolution scaling); a value that would exceed the current
-        /// allocation grows it (a one-time resize). 1.0 renders at full allocation, which costs no
-        /// promotion pass at all. A debug view (Mode != Final) forces 1.0. Clamped to a valid range
-        /// by the renderer; the realized sub-rect is GetValidExtent().
+        /// The renderer holds two allocations: the render allocation the scene rasterizes into and
+        /// the post-resolve allocation the HDR tail runs at (see PostResolveExtent). Each Execute
+        /// renders the scene into the top-left round(renderAllocExtent * RenderScale) sub-rect of
+        /// the render allocation, and the promotion carries that sub-rect up to the post-resolve
+        /// allocation — so the scale buys frame time on the scene and nothing downstream of it.
+        /// (0,1] renders below the render allocation (dynamic resolution scaling); a value that
+        /// would exceed it is clamped. 1.0 renders the whole render allocation. A debug view
+        /// (Mode != Final) forces 1.0. The realized sub-rect is GetValidExtent().
         f32 RenderScale = 1.0f;
 
-        /// @brief This frame's render-target sub-rect extent; set by the renderer each Execute.
+        /// @brief This frame's rendered sub-rect extent; set by the renderer each Execute.
         ///
-        /// round(allocExtent * RenderScale), clamped to [1, allocExtent]. Every scene pass sizes its
-        /// viewport/scissor and compute dispatch to it; a caller's value is overwritten.
+        /// round(renderAllocExtent * RenderScale), clamped to [1, renderAllocExtent]. The g-buffer,
+        /// depth, SSAO, the lit target and every other scene-side pass size their viewport/scissor
+        /// and compute dispatch to it; a caller's value is overwritten.
         uvec2 RenderExtent = {};
 
         /// @brief The extent the post-resolve HDR tail runs at; set by the renderer each Execute.
         ///
-        /// **Always the full allocation extent.** The scene renders into the RenderExtent sub-rect,
-        /// and the resolve anchor hands the allocation on however the frame is configured — the
-        /// temporal (TAA/TAAU) resolve reconstructs it while reprojecting history, and with none
-        /// wired a spatial upscale pass resamples it there. So every pass after the anchor — bloom,
-        /// the point-field accumulation, a pre-bloom overlay, the metering, the tonemap — runs at
-        /// the allocation, and the terminal tonemap's own upscale is the identity. A tail pass that
-        /// additionally reads the g-buffer or depth still maps those through RenderExtent, which
-        /// stays the rendered sub-rect. A caller's value is overwritten.
+        /// **Always the post-resolve allocation** (the viewport region times its MaxAllocationScale),
+        /// whatever the render scale and whatever the anti-aliasing mode. The scene renders into the
+        /// RenderExtent sub-rect of the separate, render-scaled render allocation, and the promotion
+        /// hands the post-resolve allocation on — a temporal-upscaling resolve reconstructs it while
+        /// reprojecting history, and otherwise a spatial upscale pass resamples it there. So bloom,
+        /// the metering, a pre-bloom overlay and the tonemap never run below native however far the
+        /// render scale drops, and the terminal tonemap's own upscale is the identity. A tail pass
+        /// that additionally reads the g-buffer or depth maps those through RenderExtent. A caller's
+        /// value is overwritten.
         uvec2 PostResolveExtent = {};
+
+        /// @brief The valid extent of the HDR scene colour at the tail anchor; set each Execute.
+        ///
+        /// The band between the temporal resolve and the promotion — the SSR composite, the
+        /// HDR-placed point fields, the depth-of-field composite — writes the scene colour, and
+        /// which extent that is depends on where the promotion sits. With a temporal-upscaling
+        /// resolve it is PostResolveExtent (that resolve already reconstructed the allocation);
+        /// with a plain temporal resolve it is the full render allocation the resolve reconstructs;
+        /// with none it is RenderExtent, the rasterized sub-rect. A caller's value is overwritten.
+        uvec2 SceneColorExtent = {};
 
         /// @brief Live light count this frame; set by the renderer on every Execute.
         ///

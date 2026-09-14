@@ -29,19 +29,21 @@ namespace Veng::Renderer
     ///
     /// Each frame the pass writes, into the material's fields when it declares them: the current
     /// scene-color source ("Scene"/"SceneSampler"), the g-buffer depth ("Depth"/"DepthSampler"), and
-    /// the two sub-rect mappings the fragment samples through — "SceneScaleUV" (the finished scene
-    /// color lives in the post-resolve region of the allocation) and "DepthScaleUV" (the g-buffer
-    /// depth lives in the render sub-rect). It renders over the post-resolve extent (what bloom and
-    /// the tonemap treat as the scene-color region), so its output is a drop-in scene-color source
-    /// for the downstream pre-bloom consumers.
+    /// the two mappings the fragment samples through — "SceneScaleUV" (the finished scene color
+    /// fills the post-resolve allocation, so this is the identity) and "DepthScaleUV" (the g-buffer
+    /// depth lives in the rendered sub-rect of the separate, render-scaled render allocation). The
+    /// pass renders over the post-resolve extent, so its output is a drop-in scene-color source for
+    /// the downstream pre-bloom consumers.
     class PostProcessEffectScenePass final : public ScenePass
     {
     public:
         /// @brief Constructs the pass; the pipeline builds on the first Declare with a bound material.
         /// @param context      The render context for pipeline creation.
         /// @param outputFormat Color format of the intermediate HDR target this pass writes.
-        /// @param extent       The allocation extent (the sub-rect mappings are derived against it).
-        PostProcessEffectScenePass(Context& context, Format outputFormat, uvec2 extent);
+        /// @param extent       The post-resolve allocation this pass writes.
+        /// @param renderExtent The render allocation the depth mapping is derived against.
+        PostProcessEffectScenePass(Context& context, Format outputFormat, uvec2 extent,
+                                   uvec2 renderExtent);
 
         /// @brief Sets the effect material to run (or a null handle to disable the pass this frame).
         ///
@@ -60,7 +62,7 @@ namespace Veng::Renderer
         /// @param output        Imported output id this pass writes.
         void SetWiring(ResourceId source, TextureHandle sourceHandle, ResourceId output);
 
-        /// @brief Updates the cached allocation extent.
+        /// @brief Updates the cached post-resolve allocation extent.
         void Resize(uvec2 extent) override { m_Extent = extent; }
 
         /// @brief Contributes the fullscreen effect pass into the graph.
@@ -74,8 +76,10 @@ namespace Veng::Renderer
         Context& m_Context;
         /// @brief Output color format the pipeline is built against.
         Format m_OutputFormat;
-        /// @brief The allocation extent the sub-rect mappings are derived against.
+        /// @brief The post-resolve allocation the scene mapping is derived against.
         uvec2 m_Extent;
+        /// @brief The render allocation the depth mapping is derived against.
+        uvec2 m_RenderExtent;
 
         /// @brief Imported scene-color source id this pass samples.
         ResourceId m_Source;

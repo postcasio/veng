@@ -23,13 +23,13 @@ namespace Veng::Renderer
                     const SceneView& view = Wrap(inner).View();
                     CommandBuffer& cmd = inner.Cmd();
                     cmd.BindPipeline(m_Pipeline);
-                    // The destination is the allocation: this pass is what makes the tail's
-                    // PostResolveExtent the allocation rather than the rendered sub-rect.
+                    // The destination is the post-resolve allocation: this pass is what makes
+                    // the tail's PostResolveExtent that rather than the scene's own resolution.
                     cmd.SetViewport({0, 0}, m_Extent);
                     cmd.SetScissor({0, 0}, m_Extent);
                     m_Context.GetBindlessRegistry().Bind(cmd);
-                    const vec2 alloc = vec2(m_Extent);
-                    const vec2 valid = vec2(view.RenderExtent);
+                    const vec2 alloc = vec2(m_SourceExtent);
+                    const vec2 valid = vec2(view.SceneColorExtent);
                     cmd.PushConstants(SceneUpscalePush{
                         .SourceTexture = m_SourceHandle.Index,
                         .Sampler = m_Sampler.Index,
