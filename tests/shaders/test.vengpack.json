@@ -75,6 +75,11 @@
       "id": "0x0000000000001F4F",
       "type": "Shader",
       "source": "area_shadow_size.comp.shader.json"
+    },
+    {
+      "id": "0x0000000000001F50",
+      "type": "Shader",
+      "source": "ltc_sphere.comp.shader.json"
     }
   ]
 }

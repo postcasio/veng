@@ -29,6 +29,7 @@
 #include "Veng/sh.slang"
 #include "Veng/surface_flags.slang"
 #include "Veng/light_flags.slang"
+#include "Veng/ltc.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
@@ -174,55 +175,13 @@ float3 EvaluateLight(float3 N, float3 V, float3 L, float3 radiance,
 
 // ---- Area lights: Linearly Transformed Cosines (Heitz et al.) ----
 //
-// An area light's GGX response is the analytic integral of a clamped-cosine distribution
-// warped by a per-(roughness, view-angle) matrix read from the LTC LUTs. The polygon integral
-// sums per-edge vector terms (IntegrateEdgeVec) into the polygon's vector form factor, then
-// resolves the horizon through the proportional-sphere approximation (LtcClippedFormFactor):
-// the raw edge sum is exact only for a polygon fully above the transformed horizon, and a
-// straddling polygon's below-horizon part subtracts — clamping that sum cuts to zero while
-// the true integral is still positive, drawing a hard boundary across a lit surface.
+// The geometry-agnostic core — the edge integrator, the horizon-clipped form factor, and the
+// Sphere integrator — lives in Veng/ltc.slang, shared with the LTC test shader. This file supplies
+// the pieces that name the pass's bindings: the LUT matrix sample and the Rect/Polygon vertex
+// integrator.
 static const float LtcLutSize = 64.0;
 static const float LtcLutScale = (LtcLutSize - 1.0) / LtcLutSize;
 static const float LtcLutBias = 0.5 / LtcLutSize;
-// A Sphere light is integrated as a shading-point-facing disk of this many edges.
-static const uint SphereSegments = 16;
-
-float3 LtcIntegrateEdgeVec(float3 v1, float3 v2)
-{
-    float x = dot(v1, v2);
-    float y = abs(x);
-    float a = 0.8543985 + (0.4965155 + 0.0145206 * y) * y;
-    float b = 3.4175940 + (4.1616724 + y) * y;
-    float v = a / b;
-    float theta_sintheta = (x > 0.0) ? v : 0.5 * rsqrt(max(1.0 - x * x, 1e-7)) - v;
-    return cross(v1, v2) * theta_sintheta;
-}
-
-// Horizon-clipped form factor of a spherical cap whose unclipped vector form factor has
-// length len and axis cosine z (the analytic sphere irradiance with horizon of Snyder, as
-// formulated in Lagarde & de Rousiers, "Moving Frostbite to PBR"). The integrators treat the
-// transformed polygon as the proportional cap — exact for the facing disk, and the standard
-// clipless approximation for a warped Rect/Polygon.
-float LtcClippedFormFactor(float z, float len)
-{
-    float sinSigmaSqr = min(len, 0.9999);
-    float cosTheta = clamp(z, -0.9999, 0.9999);
-    float e;
-    if (cosTheta * cosTheta > sinSigmaSqr)
-    {
-        // Cap fully above (or below) the horizon: the unclipped product survives the clamp.
-        e = Pi * sinSigmaSqr * max(cosTheta, 0.0);
-    }
-    else
-    {
-        float sinTheta = sqrt(1.0 - cosTheta * cosTheta);
-        float x = sqrt(1.0 / sinSigmaSqr - 1.0);
-        float y = -x * (cosTheta / sinTheta);
-        float sinThetaSqrtY = sinTheta * sqrt(1.0 - y * y);
-        e = (cosTheta * acos(y) - x * sinThetaSqrtY) * sinSigmaSqr + atan(sinThetaSqrtY / x);
-    }
-    return max(e, 0.0) / Pi;
-}
 
 // Sample the LTC LUTs by (roughness, sqrt(1 - N·V)) and reconstruct the inverse transform.
 // t2 returns the BRDF magnitude (x) and Fresnel weight (y) the specular tint is split across.
@@ -286,43 +245,6 @@ float LtcPolygon(float3 N, float3 V, float3 P, float3x3 Minv, uint base, uint co
     return LtcClippedFormFactor(z, len);
 }
 
-// The LTC integral of a Sphere light, approximated as a disk of SphereSegments edges centered
-// at the light and facing the shading point — correct at any angular size, and cheap.
-float LtcSphere(float3 N, float3 V, float3 P, float3x3 Minv, float3 center, float radius)
-{
-    float3 T1 = normalize(V - N * dot(V, N));
-    float3 T2 = cross(N, T1);
-    float3x3 M = mul(Minv, float3x3(T1, T2, N));
-
-    float3 toCenter = center - P;
-    float dist = length(toCenter);
-    float3 dir = dist > 1e-4 ? toCenter / dist : float3(0.0, 0.0, 1.0);
-    float3 up = abs(dir.y) < 0.99 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0);
-    float3 tt = normalize(cross(up, dir));
-    // Wound so the disk's front face points back toward the shading point.
-    float3 bb = cross(tt, dir);
-
-    float3 prev = normalize(mul(M, (center + radius * tt) - P));
-    float3 vsum = float3(0.0);
-    for (uint i = 1; i <= SphereSegments; ++i)
-    {
-        float ang = (2.0 * Pi) * float(i) / float(SphereSegments);
-        float3 vert = center + radius * (cos(ang) * tt + sin(ang) * bb);
-        float3 cur = normalize(mul(M, vert - P));
-        vsum += LtcIntegrateEdgeVec(prev, cur);
-        prev = cur;
-    }
-
-    float len = length(vsum);
-    if (len < 1e-6)
-    {
-        return 0.0;
-    }
-    // The facing disk always fronts the shading point, so there is no behind case; the
-    // front-lit axis cosine is the negated z (see LtcPolygon).
-    return LtcClippedFormFactor(-vsum.z / len, len);
-}
-
 // The full area-light contribution (diffuse + tinted specular), before range attenuation and
 // shadowing. Metals drop the diffuse arm; the specular arm is split across the Fresnel weights.
 float3 EvaluateAreaLight(GpuLight light, float3 N, float3 V, float3 P, float3 albedo,
@@ -361,7 +283,10 @@ float3 EvaluateAreaLight(GpuLight light, float3 N, float3 V, float3 P, float3 al
     float3 diffuse = albedo * (1.0 - metallic) * diffSum;
     float3 specular = specSum * specScale;
     float3 radiance = light.ColorIntensity.rgb * light.ColorIntensity.a;
-    return radiance * (diffuse + specular) * (1.0 / (2.0 * Pi));
+    // diffSum/specSum are the normalized clamped-cosine form factor in [0, 1] (LtcClippedFormFactor),
+    // so the reflected radiance is the emitter radiance times the BRDF terms directly — in the
+    // point-light limit this matches EvaluateLight's diffuse albedo/Pi * radiance * nDotL.
+    return radiance * (diffuse + specular);
 }
 
 // Area-light visibility through the punctual shadow atlas with PCSS softening. An area light is

@@ -1586,6 +1586,8 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/material_buffer.frag.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/material_param.frag.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/storage_image_range.comp.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/area_shadow_size.comp.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/ltc_sphere.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/invert.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/fullscreen.vert.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sample.frag.shader.json
@@ -1599,7 +1601,9 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/bindless_buffer.frag.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/material_buffer.frag.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/material_param.frag.shader.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/storage_image_range.comp.shader.json)
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/storage_image_range.comp.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/area_shadow_size.comp.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/ltc_sphere.comp.shader.json)
 
     add_executable(veng_test_compute_dispatch tests/compute_dispatch.cpp)
     target_link_libraries(veng_test_compute_dispatch PRIVATE veng::veng veng_test_support)
@@ -1681,6 +1685,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/level_loader.cpp
             tests/gpu/sh_consistency.cpp
             tests/gpu/area_shadow_size.cpp
+            tests/gpu/ltc_sphere.cpp
             tests/gpu/environment_ibl.cpp
             tests/gpu/generated_texture.cpp
             tests/gpu/fluid_sim.cpp
