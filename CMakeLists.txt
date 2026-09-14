@@ -1008,6 +1008,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/dof_tile.cpp
             tests/unit/gui_draw_list.cpp
             tests/unit/gui_overlay_projection.cpp
+            tests/unit/gui_scissor.cpp
             tests/unit/gui_fill_geometry.cpp
             tests/unit/gui_layout.cpp
             tests/unit/gui_style_states.cpp

@@ -1,7 +1,6 @@
 #include "GuiScenePass.h"
 
 #include <algorithm>
-#include <cmath>
 #include <cstring>
 
 #include <fmt/format.h>
@@ -24,6 +23,8 @@
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
+
+#include "../GuiScissor.h"
 
 namespace Veng::Renderer
 {
@@ -363,15 +364,19 @@ namespace Veng::Renderer
 
                 // The run's clip is already an absolute rectangle in logical points; the scissor
                 // scales it onto the physical target (the vertex stage scales positions, but a
-                // scissor is raw pixels). Unclipped runs scissor the whole surface.
+                // scissor is raw pixels) and intersects it with the attachment, which is both what
+                // the clip means and the only form the scissor VUIDs accept. A clip entirely off
+                // the target covers nothing, so the run draws nothing. Unclipped runs scissor the
+                // whole surface.
                 if (run.HasClip)
                 {
-                    const vec2 clipMin = run.Clip.Min * UiScale;
-                    const vec2 clipSize = run.Clip.Size * UiScale;
-                    const ivec2 offset{static_cast<i32>(clipMin.x), static_cast<i32>(clipMin.y)};
-                    const uvec2 clipExtent{static_cast<u32>(std::ceil(clipSize.x)),
-                                           static_cast<u32>(std::ceil(clipSize.y))};
-                    passCmd.SetScissor(offset, clipExtent);
+                    const optional<GuiScissor> scissor =
+                        ResolveGuiScissor(run.Clip, UiScale, extent);
+                    if (!scissor.has_value())
+                    {
+                        continue;
+                    }
+                    passCmd.SetScissor(scissor->Offset, scissor->Extent);
                 }
                 else
                 {

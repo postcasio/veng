@@ -597,7 +597,9 @@ namespace Veng::Gui
         // at an angle projects a rect to a keystone, and the box spanned by two opposite corners
         // alone under-covers it, cutting whatever hugs the clipped edge — a scrollbar most of all.
         // The scissor over-covers a keystone instead, which is the lesser fault. A clip corner
-        // behind the eye drops the scissor to full surface rather than fabricating one.
+        // behind the eye drops the scissor to full surface rather than fabricating one. The box may
+        // legitimately reach past the target's edges; the recording sink intersects it with the
+        // attachment (ResolveGuiScissor), since the extent is known there and not here.
         for (const DrawRun& run : src.m_Runs)
         {
             DrawRun copy = run;
