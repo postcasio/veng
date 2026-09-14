@@ -78,8 +78,8 @@ namespace Veng::Renderer
     ///
     /// std430-compatible, matching the shader's GpuLight byte-for-byte: six vec4s. The
     /// first four are the punctual-light fields; the last two carry the area-light
-    /// shape (sphere radius, polygon vertex range into the area-vertex buffer, the
-    /// area-shadow slot, and the precomputed world-space area normal).
+    /// shape (emitter radius, polygon vertex range into the area-vertex buffer, the
+    /// area-shadow slot, the precomputed world-space area normal, and the shadow source radius).
     struct PackedLight
     {
         /// @brief xyz world position, w range.
@@ -90,9 +90,20 @@ namespace Veng::Renderer
         vec4 ColorIntensity;
         /// @brief x cos(inner), y cos(outer), z punctual shadow slot (-1 unshadowed), w LightFlags.
         vec4 Cone;
-        /// @brief x sphere radius, y polygon vertex base, z polygon vertex count, w area-shadow slot (-1 none).
+        /// @brief x emitter radius, y polygon vertex base, z polygon vertex count, w area-shadow slot (-1 none).
+        ///
+        /// x is the lighting radius: a Sphere's emitter radius for the LTC integral, or a
+        /// Point/Spot's source radius clamping the shading distance. It is a physical size and is
+        /// never capped — see AreaNormal's w, which is the shadow-sizing lane.
         vec4 Area;
-        /// @brief xyz world-space area normal (Rect/Polygon local +Z), w pad.
+        /// @brief xyz world-space area normal (Rect/Polygon local +Z), w shadow source radius.
+        ///
+        /// w is the world radius the PCSS estimator sizes its penumbra from — an area light's
+        /// emitter or bounding radius, zero for a punctual light, which carries no soft shadow.
+        /// It is authored the same size as Area's x but serves a different role: the lighting
+        /// path integrates exactly at any size, while the shadow estimator is an approximation
+        /// with a bounded domain, so the lighting pass caps this lane's *angular* size per
+        /// fragment. Keep the two lanes separate; the cap must never reach Area's x.
         vec4 AreaNormal;
     };
 

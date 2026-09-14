@@ -366,7 +366,9 @@ float3 EvaluateAreaLight(GpuLight light, float3 N, float3 V, float3 P, float3 al
 
 // Area-light visibility through the punctual shadow atlas with PCSS softening. An area light is
 // shadowed as a spot-style caster (its slot rides Cone.z, -1 = unshadowed); the penumbra widens
-// with the light's world size (AreaNormal.w), so a large light casts a soft shadow.
+// with how large the shadow source (AreaNormal.w) subtends from this fragment, so a large light
+// casts a soft shadow. AreaNormal.w is the shadow source radius, not the LTC emitter radius in
+// Area.x — the two are the same authored size but only the shadow one is capped.
 float AreaShadowVisibility(GpuLight light, float3 worldPos, float3 N)
 {
     int slot = int(light.Cone.z);
@@ -376,7 +378,7 @@ float AreaShadowVisibility(GpuLight light, float3 worldPos, float3 N)
     }
     float3 toLight = light.PositionRange.xyz - worldPos;
     float3 L = normalize(toLight);
-    return AreaShadowSample(slot, worldPos, N, L, light.AreaNormal.w);
+    return AreaShadowSample(slot, worldPos, N, L, light.AreaNormal.w, length(toLight));
 }
 
 [shader("fragment")]

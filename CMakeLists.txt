@@ -1679,6 +1679,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/prefab_spawn.cpp
             tests/gpu/level_loader.cpp
             tests/gpu/sh_consistency.cpp
+            tests/gpu/area_shadow_size.cpp
             tests/gpu/environment_ibl.cpp
             tests/gpu/generated_texture.cpp
             tests/gpu/fluid_sim.cpp

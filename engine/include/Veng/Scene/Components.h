@@ -426,6 +426,14 @@ namespace Veng
         /// transform, so a parented, scaled light keeps a consistent size. Zero — the default —
         /// is an unsized emitter: a punctual Point/Spot reproducing the pure inverse-square, or a
         /// degenerate Sphere.
+        ///
+        /// **A Sphere's radius drives two things, and only one of them is capped.** It sizes the
+        /// LTC area-lighting integral, which is exact at any radius and uses the authored size
+        /// unaltered; and it sizes the soft shadow, whose PCSS estimator is an approximation
+        /// valid only while the source subtends a modest angle. The lighting pass therefore caps
+        /// the *shadow* source's angular radius, leaving brightness and falloff untouched. A
+        /// Sphere far larger than its distance to a receiver is lit correctly and casts a shadow
+        /// softer than physics would give, rather than one the estimator cannot compute.
         f32 Radius{0.0f};
         /// @brief Whether a Rect or Polygon area light emits from both faces.
         bool TwoSided{false};

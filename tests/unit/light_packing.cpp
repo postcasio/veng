@@ -686,3 +686,35 @@ TEST_CASE("PackSceneLights: a non-casting area light is not selected to drive th
     // sampling a cascade fit to some other light's direction.
     CHECK_FALSE(IsAreaCascadeShadowed(packed.Lights[0]));
 }
+
+TEST_CASE("PackSceneLights: a Sphere's lighting radius and its shadow source radius are two lanes")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+
+    // Area.x feeds the LTC area-lighting integral, which is exact at any emitter size; AreaNormal.w
+    // feeds the PCSS shadow estimator, which is an approximation the lighting pass caps by angular
+    // size per fragment. The pack writes the authored world radius into both, uncapped: a cap here
+    // would have no distance to be angular against, and would silently dim and harden the light it
+    // was meant to leave alone. A source far larger than anything it could shadow is the case that
+    // would tempt one.
+    for (const f32 radius : {0.25f, 50.0f, 1.0e6f})
+    {
+        const Unique<Scene> scene = Scene::Create(types);
+        AddLight(*scene, Light{.Type = LightType::Sphere, .Range = 10.0f, .Radius = radius});
+        const PackedSceneLights packed = PackSceneLights(*scene, true, 1024);
+        REQUIRE(packed.LightCount == 1);
+        CHECK(packed.Lights[0].Area.x == doctest::Approx(radius));
+        CHECK(packed.Lights[0].AreaNormal.w == doctest::Approx(radius));
+    }
+
+    // A punctual light's Radius is a shading-distance clamp, not an emitter, so it sizes no
+    // penumbra: the shadow lane stays zero and that light's PCSS widths are the narrowest there
+    // are, whatever the authored radius.
+    const Unique<Scene> spot = Scene::Create(types);
+    AddLight(*spot, Light{.Type = LightType::Spot, .Range = 10.0f, .Radius = 2.0f});
+    const PackedSceneLights spotPacked = PackSceneLights(*spot, true, 1024);
+    REQUIRE(spotPacked.LightCount == 1);
+    CHECK(spotPacked.Lights[0].Area.x == doctest::Approx(2.0f));
+    CHECK(spotPacked.Lights[0].AreaNormal.w == 0.0f);
+}

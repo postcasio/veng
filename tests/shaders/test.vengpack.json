@@ -70,6 +70,11 @@
       "id": "0x0000000000001F4E",
       "type": "Shader",
       "source": "storage_image_range.comp.shader.json"
+    },
+    {
+      "id": "0x0000000000001F4F",
+      "type": "Shader",
+      "source": "area_shadow_size.comp.shader.json"
     }
   ]
 }

@@ -362,13 +362,21 @@ namespace Veng::Renderer
             // slot stays -1 here; the shading path is independent of the shadow arm.
             vec4 area{0.0f, 0.0f, 0.0f, -1.0f};
             vec3 areaNormal{0.0f};
-            // The light's world-space size, driving the PCSS penumbra width in the lighting pass.
+            // The source radius the PCSS estimator sizes its penumbra from, packed separately from
+            // the lighting radius in Area.x because the two carry different obligations: Area.x
+            // feeds the LTC integral, which is exact at any size, while this one feeds an
+            // approximation with a bounded domain. It is packed at full world size and capped by
+            // its *angular* size per fragment in the lighting pass (Veng/area_shadow.slang), which
+            // is the only place the receiver→light distance a world radius means nothing without
+            // is known. Never cap it here, and never fold the two lanes back together.
             f32 shadowRadius = 0.0f;
             const f32 flags = static_cast<f32>(PackLightFlags(light, candidate));
 
             if (light.Type == LightType::Sphere)
             {
-                // Uniform-scale the authored radius by the transform's basis length.
+                // Uniform-scale the authored radius by the transform's basis length. The same
+                // world size serves both lanes: uncapped for the LTC integral, capped by angular
+                // size in the shader for the shadow.
                 const f32 scale = glm::length(vec3(world4[0]));
                 area.x = light.Radius * scale;
                 shadowRadius = area.x;
@@ -425,7 +433,8 @@ namespace Veng::Renderer
                     const f32 nLen = glm::length(n);
                     areaNormal = nLen > 1e-6f ? n / nLen : vec3(0.0f, 0.0f, 1.0f);
 
-                    // The light's bounding radius (farthest vertex from center) sizes the penumbra.
+                    // The light's bounding radius (farthest vertex from center) is the shadow
+                    // source size; the LTC integral uses the vertices themselves, not this.
                     for (u32 v = 0; v < count; ++v)
                     {
                         shadowRadius =

@@ -11,6 +11,8 @@
 // A set is one near-parallel light's cascades, fit to that light's direction. The atlas
 // carries MaxCascadeSets of them, stacked as row bands, so a scene lit by two comparable
 // distant sources shadows from both; a light's set index rides its GpuLight flags word.
+#include "Veng/area_shadow.slang"
+
 static const uint MaxCascades = 4;
 static const uint MaxCascadeSets = 2;
 
@@ -300,11 +302,12 @@ float2 AreaDiskOffset(float2 disk, float2 rot, float radiusTexels, float2 texel)
 // PCSS area-light shadow visibility over the punctual atlas. An area light is rendered as a
 // spot-style caster (record type 2, face 0) in slot `slot`; this samples that tile with
 // percentage-closer soft shadows — a blocker search sets an average occluder depth, the penumbra
-// width grows with the light's angular size (lightRadius over the fitted far distance) and the
-// receiver→blocker gap, and a variable-radius Poisson filter produces the soft edge. Returns full
-// visibility outside the tile or with no occluder, so a large light casts a broad, soft shadow and
-// a small one a crisp one.
-float AreaShadowSample(int slot, float3 worldPos, float3 N, float3 L, float lightRadius)
+// width grows with the source's angular size (lightRadius over lightDistance, capped by
+// Veng/area_shadow.slang) and the receiver→blocker gap, and a variable-radius Poisson filter
+// produces the soft edge. Returns full visibility outside the tile or with no occluder, so a large
+// light casts a broad, soft shadow and a small one a crisp one.
+float AreaShadowSample(int slot, float3 worldPos, float3 N, float3 L, float lightRadius,
+                       float lightDistance)
 {
     PunctualShadowRecord record = g_Punctual.Records[slot];
     if (record.Params.x < 0.5)
@@ -358,15 +361,14 @@ float AreaShadowSample(int slot, float3 worldPos, float3 N, float3 L, float ligh
     float angle = hash * 6.2831853;
     float2 rot = float2(cos(angle), sin(angle));
 
-    // The light's angular size (world radius over the fitted far distance) sets how wide the search
-    // and penumbra grow — the larger the light subtends, the softer the shadow.
-    float range = max(record.Params.z, 1e-3);
-    float sizeFactor = saturate(lightRadius / range);
+    // How wide the search and penumbra grow — the larger the source subtends from this receiver,
+    // the softer the shadow, up to the cap the estimator stays valid inside.
+    float sizeFactor = AreaShadowSourceSizeFactor(lightRadius, lightDistance);
 
     // Blocker search: average the depth of Poisson taps nearer the light than the receiver.
     // Reverse-Z: nearer the light is the larger depth, so a blocker has d > refDepth.
     const int BlockerTaps = 12;
-    float searchTexels = 1.5 + sizeFactor * 24.0;
+    float searchTexels = AreaShadowSearchTexels(sizeFactor);
     float blockerSum = 0.0;
     float blockerCount = 0.0;
     [unroll]
@@ -391,7 +393,7 @@ float AreaShadowSample(int slot, float3 worldPos, float3 N, float3 L, float ligh
     // PCSS penumbra: proportional to the receiver→blocker gap and the light's size, in texels.
     // Reverse-Z: the blocker sits nearer the light (larger depth), so the gap is avgBlocker − refDepth.
     float penumbra = (avgBlocker - refDepth) / max(avgBlocker, 1e-4);
-    float filterTexels = clamp(1.0 + penumbra * sizeFactor * 64.0, 1.0, 24.0);
+    float filterTexels = AreaShadowFilterTexels(penumbra, sizeFactor);
 
     // Variable-radius PCF over the full rotated Poisson disk through the hardware comparison sampler.
     const int PcfTaps = 16;
