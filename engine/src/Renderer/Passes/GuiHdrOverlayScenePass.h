@@ -73,7 +73,7 @@ namespace Veng::Renderer
         /// only when bloom is active; when invalid, the composite pipelines drop the mask attachment.
         /// @param docTarget        The renderer-owned intermediate HDR target the document renders to.
         /// @param docTargetHandle  The intermediate's bindless slot, written into each material's Document field.
-        /// @param bloomMask        The renderer's bloom-mask target, or invalid when bloom is off.
+        /// @param bloomMask        The tail-side bloom-mask target, or invalid when bloom is off.
         /// @param bloomMaskFormat  The bloom-mask target's format.
         void SetComposite(ResourceId docTarget, TextureHandle docTargetHandle, ResourceId bloomMask,
                           Format bloomMaskFormat);
@@ -110,7 +110,11 @@ namespace Veng::Renderer
         ResourceId m_DocTargetId;
         /// @brief The intermediate's bindless slot, written into each material's Document field each frame.
         TextureHandle m_DocTargetHandle;
-        /// @brief The renderer's bloom-mask target, or invalid when bloom is off (no mask attachment).
+        /// @brief The post-resolve-allocation bloom-mask target, or invalid when bloom is off.
+        ///
+        /// Always the mask on this pass's own side of the promotion — the promoted target while the
+        /// scene rasterizes below the post-resolve allocation, the renderer's own otherwise — so the
+        /// composite's two attachments are the same size.
         ResourceId m_BloomMaskId;
         /// @brief The bloom-mask target's format.
         Format m_BloomMaskFormat = Format::Undefined;

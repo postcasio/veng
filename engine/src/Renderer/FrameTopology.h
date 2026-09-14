@@ -160,4 +160,13 @@ namespace Veng::Renderer
     /// @param settings The topology and sizing knobs the frame renders under.
     /// @return True when the temporal resolve is the promotion.
     [[nodiscard]] bool ResolveTemporalUpscalePromotes(const SceneRendererSettings& settings);
+
+    /// @brief Whether the frame wires the bloom pyramid sweep (and so the bloom mask beside it).
+    ///
+    /// A function of the settings alone, so the renderer can decide whether the mask needs its own
+    /// allocation before the frame topology is resolved — the same reason
+    /// ResolveTemporalUpscalePromotes stands apart from the resolve.
+    /// @param settings The topology and sizing knobs the frame renders under.
+    /// @return True for the Final arm with bloom on, and for the Bloom debug arm.
+    [[nodiscard]] bool ResolveBloomActive(const SceneRendererSettings& settings);
 }

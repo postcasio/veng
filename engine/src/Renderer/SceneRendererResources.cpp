@@ -494,12 +494,12 @@ namespace Veng::Renderer
         m_HdrHandle = bindless.Register(m_HdrView);
     }
 
-    // The bloom mask: a render-allocation single-channel target the forward translucent pass clears and a
-    // declaring material writes beside its color, sampled by the bloom pyramid's level-0 dispatch
-    // through bindless. It is renderer-owned and imported like the g-buffer rather than a graph
-    // transient, because the sweep reads it off the registry rather than off the bloom chain's own
-    // descriptor set. It is written scene-side, so the bloom sweep maps it through the render
-    // allocation rather than through the post-resolve one its own levels use.
+    // The bloom mask: a render-allocation single-channel target the forward translucent pass clears
+    // and a declaring material writes beside its color, sampled by the bloom pyramid's level-0
+    // dispatch through bindless. It is renderer-owned and imported like the g-buffer rather than a
+    // graph transient, because the sweep reads it off the registry rather than off the bloom chain's
+    // own descriptor set. This is the scene side of the mask; the promotion carries it up to the
+    // post-resolve allocation the tail composites and blooms at (PostResolveUpscale::ResizeMask).
     void SceneRenderer::CreateBloomMask()
     {
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();

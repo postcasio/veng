@@ -437,6 +437,103 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "gui hdr overlay: a composite material
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui hdr overlay: a masking composite blooms at a reduced render scale")
+{
+    RegisterBuiltinTypes(Types);
+
+    // The same glow-split composite material the full-scale case uses, driven with the scene
+    // rasterizing into HALF the post-resolve allocation. The overlay composite and the bloom sweep
+    // run at the post-resolve allocation while the translucent pass writes the mask on the scene
+    // side, so the mask has to cross the promotion boundary with the scene colour — under a
+    // temporal-upscaling resolve as much as under a spatial one, since there the temporal resolve
+    // promotes the colour and nothing else.
+    const path compositeDir = path(GPU_POSTPROCESS_FIXTURE_DIR);
+    const path archive = Veng::TestSupport::TempDir() / "veng_gui_hdr_overlay_scaled.vengpack";
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker
+                .CookPack(compositeDir / "overlay_composite_pack.json", archive, {}, nullptr,
+                          nullptr, nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+                .has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(archive).has_value());
+
+    constexpr AssetId CompositeInstance{0x00000000008A0010ULL};
+    const AssetResult<AssetHandle<MaterialInstance>> composite =
+        assets.LoadSync<MaterialInstance>(CompositeInstance);
+    REQUIRE(composite.has_value());
+    MaterialInstance* const material = composite->Get();
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const CameraView camera = FrontCamera();
+
+    // The same dim, saturated quad: its luminance is far below the bloom threshold, so only the
+    // mask amplitude can make it glow.
+    const Gui::DrawList list = OverlayQuad(vec2(40.0f), vec2(48.0f), vec4(0.2f, 0.35f, 0.9f, 1.0f));
+
+    constexpr uvec2 HaloPix{64, 92}; // in the black margin below the quad's [40,88) bottom edge
+
+    const auto render =
+        [&](const AntiAliasingMode aa, const bool withMaterial, const bool withOverlay)
+    {
+        const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+            .Context = Context,
+            .Assets = assets,
+            .OutputFormat = Context.GetOutputFormat(),
+            .Extent = Extent,
+            // Half the post-resolve allocation: the scene side and the tail are two allocations.
+            .RenderExtent = Extent / 2u,
+            .Settings = {.Mode = DebugView::Final,
+                         .Bloom = true,
+                         .AntiAliasing = aa,
+                         .Shadows = false,
+                         .AO = false},
+        });
+        GuiHdrOverlayView view = ScreenSpaceView(list);
+        view.Material = withMaterial ? material : nullptr;
+        const GuiHdrOverlayView views[] = {view};
+        const std::span<const GuiHdrOverlayView> conveyed =
+            withOverlay ? std::span<const GuiHdrOverlayView>(views)
+                        : std::span<const GuiHdrOverlayView>();
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                           .Camera = camera,
+                                                           .Delta = 0.0f,
+                                                           .BloomThreshold = 1.0f,
+                                                           .HdrOverlays = conveyed});
+            });
+        CHECK(renderer->GetPostResolveExtent() == Extent);
+        return DecodeTexel(renderer->GetOutput()->GetImage()->Download(), Extent.x, HaloPix.x,
+                           HaloPix.y);
+    };
+
+    // Both a non-temporal mode (the spatial promotion carries the colour) and the temporal
+    // upscaler (the resolve IS the colour's promotion, so a mask promotion tied to the spatial
+    // pass would not run at all).
+    for (const AntiAliasingMode aa : {AntiAliasingMode::None, AntiAliasingMode::TAAU})
+    {
+        CAPTURE(static_cast<int>(aa));
+
+        const f32 baselineHalo = render(aa, false, false).r;
+        const f32 directHalo = render(aa, false, true).r;
+        const vec3 maskedHalo = render(aa, true, true);
+
+        // Nothing seeds the margin when no masking overlay is conveyed: the region of the scene
+        // side outside the rendered sub-rect carries no amplitude into the promoted mask.
+        CHECK(baselineHalo == doctest::Approx(0.0f).epsilon(0.01f));
+        CHECK(directHalo == doctest::Approx(baselineHalo).epsilon(0.01f));
+        // The mask survived the boundary: the masked overlay blooms into the margin, the same
+        // element without the mask does not.
+        CHECK(maskedHalo.r > directHalo + 0.02f);
+    }
+
+    std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "gui hdr overlay: two material overlays in one frame both "
                   "composite — neither overwrites the other's geometry")
 {

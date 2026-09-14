@@ -434,25 +434,44 @@ namespace Veng::Renderer
         /// post-resolve allocation for the tail's.
         void RecreateExtentSubsystems();
 
-        /// @brief Updates whether this frame wires the spatial promotion, without rebuilding.
+        /// @brief Updates whether this frame wires either half of the spatial promotion, without rebuilding.
         ///
-        /// Compares the finished scene colour against the post-resolve allocation: a scene colour
-        /// that is not already the whole allocation wires the promotion (allocating its
-        /// allocation-sized target) so everything from there on runs at the post-resolve extent,
-        /// and one that is needs none and drops it after an idle window. Called at the top of
-        /// Execute, before the post-resolve extent is derived, so the frame that activates it is
-        /// the frame that runs it.
+        /// Each half is compared against the post-resolve allocation on its own terms: the scene
+        /// colour by the extent it finished at, the bloom mask by the sub-rect the scene rasterized
+        /// into. A source that is not already the whole allocation wires its promotion (allocating
+        /// the allocation-sized target) so everything from there on runs at the post-resolve extent,
+        /// and one that is needs none and drops it after an idle window. The two are separate
+        /// because a temporal-upscaling resolve promotes the colour by reconstructing it and leaves
+        /// the mask where the translucent pass wrote it. Called at the top of Execute, before the
+        /// post-resolve extent is derived, so the frame that activates one is the frame that runs it.
         /// @param sceneColorExtent This frame's valid scene-colour extent at the tail anchor.
-        /// @return True when the wiring changed and the caller must rebuild.
-        [[nodiscard]] bool UpdatePostResolveUpscale(uvec2 sceneColorExtent);
+        /// @param renderExtent     This frame's rasterized sub-rect of the render allocation.
+        /// @return True when either wiring changed and the caller must rebuild.
+        [[nodiscard]] bool UpdatePostResolveUpscale(uvec2 sceneColorExtent, uvec2 renderExtent);
 
-        /// @brief Clears the promotion's state and releases its target, without rebuilding.
+        /// @brief Advances one promotion's activation latch against what this frame wants.
+        ///
+        /// Activates the Execute a promotion is first wanted and drops it only after
+        /// PostResolveUpscaleIdleFrameLimit consecutive Executes without — the deactivation
+        /// hysteresis that keeps a dynamic-resolution controller hunting across its ceiling from
+        /// recompiling the graph on every crossing.
+        /// @param wanted     Whether this frame needs the promotion.
+        /// @param active     The latch's state, updated in place.
+        /// @param idleFrames The latch's consecutive-unwanted counter, updated in place.
+        /// @return True when the latch flipped.
+        [[nodiscard]] static bool UpdatePromotionLatch(bool wanted, bool& active, u32& idleFrames);
+
+        /// @brief Clears both promotions' state and releases their targets, without rebuilding.
         void DropPostResolveUpscale();
 
         /// @brief The scene-colour id the post-resolve tail reads (the promotion's target, or the HDR).
         [[nodiscard]] ResourceId PostSceneId() const;
         /// @brief The bindless slot of the scene colour the post-resolve tail reads.
         [[nodiscard]] TextureHandle PostSceneHandle() const;
+        /// @brief The bloom-mask id the post-resolve tail writes and bloom reads (promoted, or the scene-side target).
+        [[nodiscard]] ResourceId PostMaskId() const;
+        /// @brief The bindless slot of the bloom mask the post-resolve tail reads.
+        [[nodiscard]] TextureHandle PostMaskHandle() const;
         /// @brief The concrete view of the scene colour the post-resolve tail reads.
         [[nodiscard]] const Ref<ImageView>& PostSceneView() const;
 
@@ -927,6 +946,16 @@ namespace Veng::Renderer
         /// colour is not already the post-resolve allocation (m_PostResolveUpscaleActive).
         Unique<ScenePass> m_ScenePromotionPass;
 
+        /// @brief The bloom mask's promotion, held outside m_Passes and declared beside the colour's.
+        ///
+        /// The mask is the scene colour's companion channel: the translucent pass rasterizes it into
+        /// the render allocation and the pre-bloom overlay composite adds to it at the post-resolve
+        /// one, so it crosses the boundary at the same point. It is its own pass rather than a
+        /// second attachment on the colour's because a temporal-upscaling resolve wires no colour
+        /// promotion at all while still leaving the mask behind. Null unless bloom is on and the
+        /// rasterized sub-rect is smaller than the post-resolve allocation.
+        Unique<ScenePass> m_BloomMaskPromotionPass;
+
         /// @brief One post-process effect pass per active PostProcessEffect, held outside m_Passes.
         ///
         /// Declared at the pre-bloom tail anchor (after the DoF composite, before the GUI-overlay
@@ -1082,11 +1111,16 @@ namespace Veng::Renderer
         MipChainId m_BloomChainId;
         /// @brief Imported id for the bloom composite result.
         ResourceId m_BloomResultId;
-        /// @brief Imported id for the bloom-mask target the translucent pass writes and the down-sweep reads.
+        /// @brief Imported id for the scene-side bloom-mask target the translucent pass writes.
         ///
         /// Invalid when bloom is off, which is what takes the mask attachment off the translucent
         /// pass: nothing would read it.
         ResourceId m_BloomMaskId;
+        /// @brief Imported id for the post-resolve-allocation bloom mask the tail writes and reads.
+        ///
+        /// Valid only while the mask promotion is wired; the tail reads m_BloomMaskId directly when
+        /// the rasterized sub-rect already covers the post-resolve allocation.
+        ResourceId m_BloomMaskPromotedId;
         /// @brief Imported buffer id for the auto-exposure histogram buffer.
         ResourceId m_AutoExposureId;
         /// @brief Imported id for the directional shadow atlas.
@@ -1281,6 +1315,18 @@ namespace Veng::Renderer
         /// m_PostResolveUpscaleActive is the per-frame intent; this is what the compiled graph holds,
         /// so the import bindings and the post-resolve extent read it rather than re-deriving.
         bool m_UpscaleWired = false;
+
+        /// @brief True while the rasterized sub-rect is smaller than the post-resolve allocation.
+        ///
+        /// The bloom mask's own half of the promotion, latched exactly like the colour's but on a
+        /// separate condition: a temporal-upscaling resolve reconstructs the colour and does nothing
+        /// for the mask, so the mask still has to be carried across the boundary on a frame whose
+        /// colour promotion is unwired.
+        bool m_BloomMaskPromotionActive = false;
+        /// @brief Consecutive Executes that rasterized the full allocation while the mask promotion is wired.
+        u32 m_BloomMaskPromotionIdleFrames = 0;
+        /// @brief Whether the last Rebuild actually wired the mask promotion pass.
+        bool m_BloomMaskPromotionWired = false;
 
         /// @brief This Execute's active post-process effect materials, in run order.
         ///

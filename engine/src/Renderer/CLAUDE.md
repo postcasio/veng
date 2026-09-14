@@ -269,13 +269,14 @@ costs are allocated separately:
 - The **render allocation** — `region · MaxAllocationScale · renderScale` — holds everything the
   scene rasterizes and everything that reads the g-buffer: the five colour channels plus depth, the
   hi-Z pyramid, SSAO, the lit target, the SSR chain, the depth-of-field chain, the refraction grab
-  and its mip chain, the half-resolution translucent layer, the bloom mask, the picking targets.
+  and its mip chain, the half-resolution translucent layer, the bloom mask the translucent pass
+  writes, the picking targets.
   `SceneView::RenderExtent` is this frame's sub-rect of it and `GetRenderAllocationExtent()` reports
   the allocation itself.
 - The **post-resolve allocation** — `region · MaxAllocationScale`, no render scale — holds the tail:
-  the promoted scene colour, the post-process effect ping-pong pair, the overlay-document
-  intermediate, the bloom pyramid and its result, the spatial-AA LDR intermediate and edge map, and
-  the output. `SceneView::PostResolveExtent` is **always** this, at any render scale in any AA mode.
+  the promoted scene colour, the promoted bloom mask, the post-process effect ping-pong pair, the
+  overlay-document intermediate, the bloom pyramid and its result, the spatial-AA LDR intermediate
+  and edge map, and the output. `SceneView::PostResolveExtent` is **always** this, at any render scale in any AA mode.
 
 `MaxAllocationScale` is the outer factor on **both**, which is what keeps supersampling supersampling
 the tail with the scene. A debug view (`Mode != Final`) pins the render allocation to the
@@ -299,10 +300,29 @@ the `HalfResTranslucency` shape: activated at the top of the `Execute` that firs
 post-resolve allocation (before the post-resolve extent is derived, so that frame runs the promoted
 graph), dropped after `PostResolveUpscaleIdleFrameLimit` Executes back at it — deactivation
 hysteresis, because a controller hunting across its ceiling would otherwise recompile the graph on
-every crossing. `PostResolveUpscale` owns the vertical slice (the allocation-sized promoted target
-and its bindless slot, the upscale pipeline), and allocates nothing while unwired, so **a viewport
-at render scale 1 carries neither the target nor the pass**. `SceneRenderer::IsPostResolveUpscaleWired()`
-reports which case a frame was.
+every crossing. `PostResolveUpscale` owns the vertical slice (the allocation-sized promoted targets
+and their bindless slots, the upscale pipelines), and allocates nothing while unwired, so **a
+viewport at render scale 1 carries neither target and neither pass**.
+`SceneRenderer::IsPostResolveUpscaleWired()` reports which case a frame was.
+
+**The bloom mask is the scene colour's companion channel and crosses the same boundary — as its own
+step.** It has a writer on each side: the translucent pass rasterizes it into the render allocation
+beside the lit colour, and a `SceneHdrPreBloom` overlay whose composite material declares
+`"bloomMask": true` adds an amplitude to it at the post-resolve allocation. So a second
+`SceneUpscaleScenePass` (`PromotionSource::BloomMask`, the same shader against a
+`BloomMaskFormat` pipeline) resamples the rasterized sub-rect across a promoted, post-resolve-sized
+mask, declared immediately after the colour's promotion; the overlay composite then loads *that* and
+bloom reads it with an identity map, exactly like the scene colour beside it.
+
+**Its latch is separate from the colour's, and that is why it is not a second attachment on the
+colour's pass.** The colour promotion asks whether the *finished scene colour* covers the
+post-resolve allocation; the mask asks whether the *rasterized sub-rect* does — and nothing
+reconstructs the mask, so under TAAU, where the temporal resolve is the colour's promotion and no
+spatial pass is wired at all, the mask still has to be carried. Folding it into
+`SceneUpscaleScenePass`'s existing instance would tie it to a pass that does not exist on exactly
+the frames it is needed. Both latches share `PostResolveUpscaleIdleFrameLimit` and
+`UpdatePromotionLatch`; the mask's additionally requires a wired bloom sweep, since with no sweep
+there is no mask.
 
 **What a reduced render scale buys, and what it does not.** It scales the cost of rendering *the
 scene* and nothing downstream of the promotion; the tail is paid in full either way. That is the
@@ -324,9 +344,9 @@ A shader that samples the g-buffer maps a **logical** screen UV through the view
 `RenderScaleUV`/`MaxValidUV` (`ScaledSampleUV`), whose denominator is the *render* allocation — so
 every such read is correct whatever resolution the pass itself runs at. The explicit maps beside it:
 `PostProcessEffectScenePass` derives `DepthScaleUV` against the render allocation while
-`SceneScaleUV` is the identity over the post-resolve one, and the bloom bright-pass reads the
-**bloom mask** — written by the translucent pass, upstream of the promotion — through its own
-`MaskScaleUV` against the render allocation rather than the pyramid's.
+`SceneScaleUV` is the identity over the post-resolve one. The bloom bright-pass is **not** one of
+these: its mask input is promoted to the pyramid's own allocation, so it reads the mask through the
+same `SourceScaleUV`/`SourceMaxUV` as the colour.
 
 #### Temporal upscaling (TAAU)
 
@@ -340,7 +360,8 @@ output lands**, because the two allocations exist for every mode:
   post-resolve allocation. The reconstruction is temporal; the upscale is spatial.
 - **TAAU** resolves at the **post-resolve** allocation. Its history is allocation-sized, the current/
   depth/velocity reads map into the render sub-rect exactly as under TAA, and **the resolve is the
-  promotion** — `IsPostResolveUpscaleWired()` is false, and no second resample follows. The
+  promotion** — `IsPostResolveUpscaleWired()` is false, and no second resample of the colour
+  follows. The bloom mask still takes its own promotion (above): nothing reconstructs it. The
   reconstruction *is* the upscale, which is the whole point: a jittered sub-native render
   accumulated into a native image beats a bilinear tap.
 

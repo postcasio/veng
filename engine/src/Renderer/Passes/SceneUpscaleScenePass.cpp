@@ -9,7 +9,9 @@ namespace Veng::Renderer
 {
     void SceneUpscaleScenePass::Declare(RenderGraph& graph, const PassIO& /*io*/)
     {
-        graph.AddPass("Scene Upscale")
+        graph
+            .AddPass(m_Source == PromotionSource::BloomMask ? "Bloom Mask Upscale"
+                                                            : "Scene Upscale")
             .Color({
                 // Every destination texel is written, so the load is discarded rather than cleared.
                 .Resource = m_OutputId,
@@ -29,7 +31,9 @@ namespace Veng::Renderer
                     cmd.SetScissor({0, 0}, m_Extent);
                     m_Context.GetBindlessRegistry().Bind(cmd);
                     const vec2 alloc = vec2(m_SourceExtent);
-                    const vec2 valid = vec2(view.SceneColorExtent);
+                    const vec2 valid =
+                        vec2(m_Source == PromotionSource::BloomMask ? view.RenderExtent
+                                                                    : view.SceneColorExtent);
                     cmd.PushConstants(SceneUpscalePush{
                         .SourceTexture = m_SourceHandle.Index,
                         .Sampler = m_Sampler.Index,

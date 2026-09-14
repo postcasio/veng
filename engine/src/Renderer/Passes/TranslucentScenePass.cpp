@@ -45,9 +45,11 @@ namespace Veng::Renderer
         }
         if (m_MaskId.IsValid())
         {
-            // This pass is the mask's only writer, so it clears the target at begin rather than
-            // costing the frame a separate clear: a pixel no declaring material covers reads 0
-            // and leaves the bloom bright-pass to decide the glow there on its own.
+            // This pass is the only writer of the scene-side mask, so it clears the target at begin
+            // rather than costing the frame a separate clear: a pixel no declaring material covers
+            // reads 0 and leaves the bloom bright-pass to decide the glow there on its own. The
+            // clear covers the whole render allocation, so the area outside this frame's rendered
+            // sub-rect carries no amplitude into the promotion.
             builder.Color({
                 .Resource = m_MaskId,
                 .Load = LoadOp::Clear,

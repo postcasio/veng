@@ -8,8 +8,7 @@ namespace Veng::Renderer
         FrameTopology topology;
 
         topology.DebugBloom = settings.Mode == DebugView::Bloom;
-        topology.BloomActive =
-            (settings.Mode == DebugView::Final && settings.Bloom) || topology.DebugBloom;
+        topology.BloomActive = ResolveBloomActive(settings);
 
         // Auto-exposure meters the lit HDR in the Final path only (a debug arm has no tonemap tail
         // to drive).
@@ -122,5 +121,11 @@ namespace Veng::Renderer
     {
         return settings.Mode == DebugView::Final && settings.UsesTaaUpscaling() && !settings.SSR &&
                !settings.DepthOfField;
+    }
+
+    bool ResolveBloomActive(const SceneRendererSettings& settings)
+    {
+        return (settings.Mode == DebugView::Final && settings.Bloom) ||
+               settings.Mode == DebugView::Bloom;
     }
 }

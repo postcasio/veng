@@ -43,8 +43,6 @@ struct PushConstants
     uint   MaskSampler;    // bindless slot of the sampler the mask is read through
     uint   MaskEnabled;    // 1 = fold the mask in, 0 = the two slots above are unset
     uint   Pad0;
-    float2 MaskScaleUV;    // mask renderExtent/allocExtent (the mask's own sub-rect)
-    float2 MaskMaxUV;      // mask (renderExtent-0.5)/allocExtent (bilinear-tap clamp)
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
@@ -70,12 +68,12 @@ float3 SampleSource(float2 uv)
     return g_Source.SampleLevel(g_Sampler, physical, 0.0).rgb;
 }
 
-// The bloom mask through its OWN sub-rect mapping, not the colour's: the mask is written by the
-// translucent pass, upstream of the resolve anchor, so it stays at the rendered sub-rect while the
-// colour this level reads has already been promoted to the allocation.
+// The bloom mask reaches this dispatch in the same allocation as the colour beside it — promoted
+// from the rendered sub-rect alongside the scene colour when the scene rasterized less than it — so
+// the colour's sub-rect mapping serves it too.
 float SampleMask(float2 uv)
 {
-    float2 physical = min(uv * g_PC.MaskScaleUV, g_PC.MaskMaxUV);
+    float2 physical = min(uv * g_PC.SourceScaleUV, g_PC.SourceMaxUV);
     return g_Textures[g_PC.MaskTexture]
         .SampleLevel(g_Samplers[g_PC.MaskSampler], physical, 0.0)
         .r;

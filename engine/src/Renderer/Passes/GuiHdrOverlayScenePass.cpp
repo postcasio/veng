@@ -289,8 +289,9 @@ namespace Veng::Renderer
             });
             if (m_BloomMaskId.IsValid())
             {
-                // The translucent pass cleared the mask; the composite loads it and adds its amplitude,
-                // so a masking overlay glows alongside any translucent's contribution.
+                // The promotion (or, unpromoted, the translucent pass's clear) has filled every
+                // texel of the mask; the composite loads it and adds its amplitude, so a masking
+                // overlay glows alongside any translucent's contribution.
                 composite.Color({
                     .Resource = m_BloomMaskId,
                     .Load = LoadOp::Load,

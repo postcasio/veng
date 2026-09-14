@@ -60,12 +60,9 @@ namespace Veng::Renderer
         /// descriptor sets; the level-0 down set and the composite set bind @p hdrView, so this
         /// runs after the HDR target is recreated. The result view registers into bindless for the
         /// tonemap sample.
-        /// @param extent     The post-resolve allocation the pyramid is sized to.
-        /// @param maskExtent  The render allocation the bloom mask is sized to; the bright pass maps
-        ///                    the mask through it rather than through the pyramid's own allocation,
-        ///                    since the mask is written scene-side.
-        /// @param hdrView     The live scene-colour target the level-0 source and composite sets bind.
-        void Resize(uvec2 extent, uvec2 maskExtent, const Ref<ImageView>& hdrView);
+        /// @param extent  The post-resolve allocation the pyramid is sized to.
+        /// @param hdrView The live scene-colour target the level-0 source and composite sets bind.
+        void Resize(uvec2 extent, const Ref<ImageView>& hdrView);
 
         /// @brief Re-applies the down/up filter kernel choice (Cod or Kawase).
         /// @param kernel The kernel selected this frame; read by Declare at record time.
@@ -90,7 +87,10 @@ namespace Veng::Renderer
         ///
         /// Level 0 additionally takes the larger of its luminance bright-pass and the bloom mask,
         /// the screen-space target a forward material writes to name the glow it wants apart from
-        /// how bright it is. An invalid mask id or slot leaves level 0 on the bright-pass alone.
+        /// how bright it is. The mask reaches the tail at the pyramid's own allocation — promoted
+        /// alongside the scene colour when the scene rasterized less than it — so it is read through
+        /// the same sub-rect mapping as the colour beside it. An invalid mask id or slot leaves
+        /// level 0 on the bright-pass alone.
         /// @param graph        The renderer's internal graph being rebuilt.
         /// @param hdrId        The HDR target import (level-0 source and composite input).
         /// @param chainId      The per-mip pyramid import the down/up sweep reads and writes.
@@ -133,8 +133,6 @@ namespace Veng::Renderer
         BloomKernel m_Kernel;
         /// @brief The post-resolve allocation the pyramid is sized to (set by Resize).
         uvec2 m_Extent{1};
-        /// @brief The render allocation the bloom mask lives in (set by Resize).
-        uvec2 m_MaskExtent{1};
 
         /// @brief Cod bloom downsample pipeline (bright-pass + Karis on mip 0, 13-tap below).
         Ref<ComputePipeline> m_DownPipeline;

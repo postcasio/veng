@@ -292,6 +292,10 @@ namespace Veng::Renderer
         // or both, and never behind a temporal-upscaling resolve, which reconstructed it itself —
         // which is why this is a per-frame decision rebuilt at an edge rather than a topology field.
         m_UpscaleWired = m_PostResolveUpscaleActive;
+        // The mask's own half of the promotion, on its own condition (see UpdatePostResolveUpscale).
+        // Gated on the sweep as well as the latch, so the pass can never be wired against the
+        // invalid mask id a bloom-off topology leaves behind.
+        m_BloomMaskPromotionWired = m_BloomMaskPromotionActive && m_Topology->BloomActive;
 
         // The post-process effect chain is content-driven (the point-field model): active only while
         // the scene carries an enabled, loaded PostProcessEffect, the capture gate allows it, and the
@@ -531,6 +535,12 @@ namespace Veng::Renderer
             m_BloomMaskId = ResourceId{};
         }
 
+        m_BloomMaskPromotedId = ResourceId{};
+        if (m_BloomMaskPromotionWired)
+        {
+            m_BloomMaskPromotedId = graph.Import("SceneRenderer Promoted Bloom Mask");
+        }
+
         m_AutoExposureId = ResourceId{};
         if (m_Topology->AutoExposureActive)
         {
@@ -547,6 +557,7 @@ namespace Veng::Renderer
         m_PointFieldPass.reset();
         m_DofCompositePass.reset();
         m_ScenePromotionPass.reset();
+        m_BloomMaskPromotionPass.reset();
         m_PostProcessEffectPasses.clear();
         m_ScenePointFieldPass = nullptr;
         // The non-owning pass pointers die with m_Passes; the wiring below repopulates each one
@@ -772,7 +783,18 @@ namespace Veng::Renderer
             {
                 m_ScenePromotionPass = CreateUnique<SceneUpscaleScenePass>(
                     m_Context, m_Upscale->GetPipeline(), m_HdrId, m_UpscaleSceneId, m_HdrHandle,
-                    m_SamplerHandle, sceneColorExtent, tailExtent);
+                    m_SamplerHandle, sceneColorExtent, tailExtent, PromotionSource::SceneColor);
+            }
+
+            // The mask crosses the same boundary as its own step rather than as a second attachment
+            // on the pass above: a temporal-upscaling resolve is the colour's promotion, so that
+            // pass does not exist on exactly the frames the mask still has to be carried.
+            if (m_BloomMaskPromotionWired)
+            {
+                m_BloomMaskPromotionPass = CreateUnique<SceneUpscaleScenePass>(
+                    m_Context, m_Upscale->GetMaskPipeline(), m_BloomMaskId, m_BloomMaskPromotedId,
+                    m_BloomMaskHandle, m_SamplerHandle, renderExtent, tailExtent,
+                    PromotionSource::BloomMask);
             }
 
             // One post-process effect pass per active effect, held outside m_Passes and declared at
@@ -804,7 +826,7 @@ namespace Veng::Renderer
                 // into the scene color and the bloom mask (present only under bloom). Each such overlay
                 // gets a declared pass pair.
                 m_GuiHdrOverlayPass->SetComposite(m_HdrOverlayDocId, m_HdrOverlayDocHandle,
-                                                  m_BloomMaskId, BloomMaskFormat);
+                                                  PostMaskId(), BloomMaskFormat);
                 m_GuiHdrOverlayPass->SetCompositeCount(m_HdrOverlayCompositeCount);
             }
 
@@ -1158,6 +1180,10 @@ namespace Veng::Renderer
                 {
                     m_ScenePromotionPass->Declare(graph, io);
                 }
+                if (m_BloomMaskPromotionPass != nullptr)
+                {
+                    m_BloomMaskPromotionPass->Declare(graph, io);
+                }
                 // The named pre-bloom compose order: post-process effects, then the GUI-overlay slot
                 // (a later pass wires here — a scene-HDR overlay composites after the effects and
                 // before bloom), then bloom. The effects ping-pong between the two effect targets,
@@ -1191,7 +1217,7 @@ namespace Veng::Renderer
                     // output (with any pre-bloom overlay) rather than the raw HDR they were built on.
                     m_Bloom->SetSourceView(ppEffectFinalView);
                     m_Bloom->Declare(graph, ppEffectFinalId, m_BloomChainId, m_BloomResultId,
-                                     *m_AutoExposure, m_BloomMaskId, m_BloomMaskHandle,
+                                     *m_AutoExposure, PostMaskId(), PostMaskHandle(),
                                      m_SamplerHandle);
                 }
                 if (m_Topology->AutoExposureActive)
@@ -1707,15 +1733,15 @@ namespace Veng::Renderer
         // target is that view whenever it is wired. Dropping first re-decides from scratch rather
         // than carrying a stale idle window across the recompile.
         DropPostResolveUpscale();
-        (void)UpdatePostResolveUpscale(m_SceneColorAllocExtent);
+        (void)UpdatePostResolveUpscale(m_SceneColorAllocExtent, m_RenderAllocExtent);
         // The lit target is scene-side; the history is the resolve's own output, which under
         // temporal upscaling is the post-resolve allocation it reconstructs.
         m_Taa->Resize(m_RenderAllocExtent, m_SceneColorAllocExtent, m_Settings.UsesTaa());
         m_Aa->Resize(m_Extent, m_Settings.Mode == DebugView::Final ? m_Settings.AntiAliasing
                                                                    : AntiAliasingMode::None);
-        // The pyramid runs at the post-resolve allocation; its bloom mask is written scene-side, so
-        // it carries the render allocation as that source's own extent.
-        m_Bloom->Resize(m_Extent, m_RenderAllocExtent, PostSceneView());
+        // The pyramid and the mask it reads both run at the post-resolve allocation — the mask
+        // because the promotion carries it there.
+        m_Bloom->Resize(m_Extent, PostSceneView());
         // The min-Z reduce sets bind the fresh depth view from the g-buffer.
         m_Ssr->Recreate(m_Settings, m_RenderAllocExtent, m_DepthView,
                         m_GpuCull->GetHiZReduceSetLayout(), m_Bloom->GetDownUpSetLayout());
@@ -1797,7 +1823,7 @@ namespace Veng::Renderer
 
         // Wire (or unwire) the promotion for this frame before anything derives the post-resolve
         // extent from it, so the frame that first scales is the frame that promotes.
-        if (UpdatePostResolveUpscale(sceneColorExtent))
+        if (UpdatePostResolveUpscale(sceneColorExtent, validExtent))
         {
             Rebuild();
         }
@@ -2119,30 +2145,54 @@ namespace Veng::Renderer
         RecordFrameHistory(viewProj, scale);
     }
 
-    bool SceneRenderer::UpdatePostResolveUpscale(const uvec2 sceneColorExtent)
+    bool SceneRenderer::UpdatePromotionLatch(const bool wanted, bool& active, u32& idleFrames)
+    {
+        if (wanted)
+        {
+            idleFrames = 0;
+            if (active)
+            {
+                return false;
+            }
+            active = true;
+            return true;
+        }
+        if (active && ++idleFrames > PostResolveUpscaleIdleFrameLimit)
+        {
+            active = false;
+            idleFrames = 0;
+            return true;
+        }
+        return false;
+    }
+
+    bool SceneRenderer::UpdatePostResolveUpscale(const uvec2 sceneColorExtent,
+                                                 const uvec2 renderExtent)
     {
         // A scene colour that already covers the whole post-resolve allocation needs no promotion —
         // which is every frame at render scale 1, and every frame a temporal-upscaling resolve
         // reconstructed the allocation itself.
-        const bool wanted = sceneColorExtent != m_Extent;
-        if (wanted)
+        bool changed =
+            UpdatePromotionLatch(sceneColorExtent != m_Extent, m_PostResolveUpscaleActive,
+                                 m_PostResolveUpscaleIdleFrames);
+        if (changed)
         {
-            m_PostResolveUpscaleIdleFrames = 0;
-            if (!m_PostResolveUpscaleActive)
-            {
-                m_PostResolveUpscaleActive = true;
-                m_Upscale->Resize(m_Extent, true);
-                return true;
-            }
-            return false;
+            m_Upscale->Resize(m_Extent, m_PostResolveUpscaleActive);
         }
-        if (m_PostResolveUpscaleActive &&
-            ++m_PostResolveUpscaleIdleFrames > PostResolveUpscaleIdleFrameLimit)
+
+        // The mask asks a different question, and it is the rasterized sub-rect rather than the
+        // finished colour: nothing reconstructs the mask, so it needs carrying whenever the
+        // translucent pass wrote less than the allocation the tail composites and blooms at. That
+        // is true on exactly the temporal-upscaling frames the colour promotion sits out. With no
+        // bloom sweep there is no mask at all, so the target is not allocated either.
+        const bool maskWanted = ResolveBloomActive(m_Settings) && renderExtent != m_Extent;
+        if (UpdatePromotionLatch(maskWanted, m_BloomMaskPromotionActive,
+                                 m_BloomMaskPromotionIdleFrames))
         {
-            DropPostResolveUpscale();
-            return true;
+            m_Upscale->ResizeMask(m_Extent, m_BloomMaskPromotionActive);
+            changed = true;
         }
-        return false;
+        return changed;
     }
 
     void SceneRenderer::DropPostResolveUpscale()
@@ -2150,6 +2200,9 @@ namespace Veng::Renderer
         m_PostResolveUpscaleActive = false;
         m_PostResolveUpscaleIdleFrames = 0;
         m_Upscale->Resize(m_Extent, false);
+        m_BloomMaskPromotionActive = false;
+        m_BloomMaskPromotionIdleFrames = 0;
+        m_Upscale->ResizeMask(m_Extent, false);
     }
 
     ResourceId SceneRenderer::PostSceneId() const
@@ -2160,6 +2213,16 @@ namespace Veng::Renderer
     TextureHandle SceneRenderer::PostSceneHandle() const
     {
         return m_PostResolveUpscaleActive ? m_Upscale->GetSceneHandle() : m_HdrHandle;
+    }
+
+    ResourceId SceneRenderer::PostMaskId() const
+    {
+        return m_BloomMaskPromotionWired ? m_BloomMaskPromotedId : m_BloomMaskId;
+    }
+
+    TextureHandle SceneRenderer::PostMaskHandle() const
+    {
+        return m_BloomMaskPromotionWired ? m_Upscale->GetMaskHandle() : m_BloomMaskHandle;
     }
 
     const Ref<ImageView>& SceneRenderer::PostSceneView() const
@@ -2292,6 +2355,12 @@ namespace Veng::Renderer
         if (m_UpscaleWired)
         {
             bindings.push_back({m_UpscaleSceneId, m_Upscale->GetSceneView()});
+        }
+        // The promoted mask: the mask promotion writes it, a pre-bloom overlay composite adds to it,
+        // and the bright pass reads it.
+        if (m_BloomMaskPromotionWired)
+        {
+            bindings.push_back({m_BloomMaskPromotedId, m_Upscale->GetMaskView()});
         }
         // The spatial AA intermediate: the tonemap writes it and the resolve reads it, so it is
         // bound whenever FXAA or CMAA2 declared it.

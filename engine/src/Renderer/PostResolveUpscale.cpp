@@ -59,11 +59,26 @@ namespace Veng::Renderer
                                    {.Stage = ShaderStage::Fragment, .Module = fs.Get()->Module},
                                },
                        });
+        // The same shader pair: the fragment emits a float4 whose red channel is the resampled
+        // source, which is the whole of a single-channel mask attachment.
+        m_MaskPipeline = GraphicsPipeline::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Bloom Mask Upscale Pipeline",
+                           .ColorAttachments = {{.Format = BloomMaskFormat}},
+                           .PipelineLayout = m_Layout,
+                           .ShaderStages =
+                               {
+                                   {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},
+                                   {.Stage = ShaderStage::Fragment, .Module = fs.Get()->Module},
+                               },
+                       });
     }
 
     PostResolveUpscale::~PostResolveUpscale()
     {
-        m_Context.GetBindlessRegistry().Release(m_SceneHandle);
+        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
+        bindless.Release(m_SceneHandle);
+        bindless.Release(m_MaskHandle);
     }
 
     void PostResolveUpscale::Resize(const uvec2 extent, const bool enabled)
@@ -88,5 +103,29 @@ namespace Veng::Renderer
         m_SceneView = ImageView::Create(
             m_Context, {.Name = "SceneRenderer Promoted Scene View", .Image = m_SceneImage});
         m_SceneHandle = bindless.Register(m_SceneView);
+    }
+
+    void PostResolveUpscale::ResizeMask(const uvec2 extent, const bool enabled)
+    {
+        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
+        bindless.Release(m_MaskHandle);
+        m_MaskHandle = {};
+
+        if (!enabled)
+        {
+            m_MaskImage.reset();
+            m_MaskView.reset();
+            return;
+        }
+
+        m_MaskImage = Image::Create(m_Context, {
+                                                   .Name = "SceneRenderer Promoted Bloom Mask",
+                                                   .Extent = {extent.x, extent.y, 1},
+                                                   .Format = BloomMaskFormat,
+                                                   .Usage = BloomMaskUsage,
+                                               });
+        m_MaskView = ImageView::Create(
+            m_Context, {.Name = "SceneRenderer Promoted Bloom Mask View", .Image = m_MaskImage});
+        m_MaskHandle = bindless.Register(m_MaskView);
     }
 }

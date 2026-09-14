@@ -1,8 +1,10 @@
-// Spatial scene-color upscale: reads the dynamic-resolution sub-rect the scene rasterized into
-// and writes the full allocation, so every pass from here on runs at the allocation rather than
-// at the sub-rect. It occupies the slot the temporal resolve occupies when one is active — that
-// resolve reconstructs the allocation as a side effect of reprojecting history, this does the
-// same job for a frame with no history to reproject.
+// Spatial promotion: reads the dynamic-resolution sub-rect the scene rasterized into and writes
+// the full allocation, so every pass from here on runs at the allocation rather than at the
+// sub-rect. One pipeline per destination format promotes the HDR scene colour and the
+// single-channel bloom mask beside it — a single-channel attachment consumes only the red channel.
+// It occupies the slot the temporal resolve occupies when one is active — that resolve
+// reconstructs the allocation as a side effect of reprojecting history, this does the same job for
+// a frame with no history to reproject.
 //
 // One bilinear tap through the sub-rect mapping, which is exactly what the terminal tonemap did
 // when it carried this upscale: the same filter on the same linear HDR values in the same order,
