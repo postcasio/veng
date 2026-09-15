@@ -21,6 +21,11 @@ namespace Veng::Audio
     class AudioEngine;
 }
 
+namespace Veng::Localization
+{
+    class Localization;
+}
+
 namespace Veng::Renderer
 {
     class DebugDraw;
@@ -134,6 +139,13 @@ namespace Veng
         /// device when there is no hardware, so every call is a no-op that still tracks the request
         /// and no audio-triggering system needs a null-guard.
         Audio::AudioEngine& Audio;
+        /// @brief The localization service a system resolves user-facing text through.
+        ///
+        /// A scene-agnostic Application service, always present: the engine binds it to the service
+        /// Application always owns (a real, index-backed one, or the inert null-object that resolves
+        /// every key to itself), so a tick-time caller producing text — a notice, a status line —
+        /// localizes without an Application back-reference and needs no null-guard.
+        Localization::Localization& Localization;
         /// @brief This frame's free-pointer owner + region-local position; default-empty when unrouted.
         ///
         /// The InputMappingSystem reads it to build each seat's region-gated pointer view. Its

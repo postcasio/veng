@@ -146,7 +146,9 @@ TEST_CASE_FIXTURE(LevelFixture,
     const SystemContext context{.Assets = *Assets,
                                 .Input = *reinterpret_cast<Input*>(inputBytes),
                                 .Tasks = Tasks,
-                                .Audio = *reinterpret_cast<Audio::AudioEngine*>(inputBytes)};
+                                .Audio = *reinterpret_cast<Audio::AudioEngine*>(inputBytes),
+                                .Localization =
+                                    *reinterpret_cast<Localization::Localization*>(inputBytes)};
     instance.World->TickSimulation(0.016f, context);
     CHECK(g_RanA == 0);
     CHECK(g_RanB == 1);

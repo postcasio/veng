@@ -72,7 +72,8 @@ namespace Veng
             return SystemContext{.Assets = app.GetAssetManager(),
                                  .Input = app.GetInput(),
                                  .Tasks = app.GetTaskSystem(),
-                                 .Audio = app.GetAudioEngine()};
+                                 .Audio = app.GetAudioEngine(),
+                                 .Localization = app.GetLocalization()};
         }
     }
 

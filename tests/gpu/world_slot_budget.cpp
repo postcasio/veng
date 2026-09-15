@@ -193,7 +193,8 @@ namespace
                     return SystemContext{.Assets = GetAssetManager(),
                                          .Input = GetInput(),
                                          .Tasks = GetTaskSystem(),
-                                         .Audio = GetAudioEngine()};
+                                         .Audio = GetAudioEngine(),
+                                         .Localization = GetLocalization()};
                 },
             });
         }

@@ -98,6 +98,18 @@ namespace Veng
         /// beneath it — adopted at boot via AudioEngine::ConfigureBusGraph. Loaded by id by the
         /// audio subsystem, never referenced from a component (no handle-field leaf).
         inline constexpr AssetTypeId AudioBusGraph{0xA2B3C42CB19E1E25ULL};
+        /// @brief One locale's message catalog: a sorted key→message table (see CookedLocaleCatalogHeader).
+        ///
+        /// A single locale's translated strings, keyed by a stable dotted key, with per-message
+        /// plural variants and the locale's number separators. Loaded by id by the localization
+        /// service, never referenced from a component (no handle-field leaf).
+        inline constexpr AssetTypeId LocaleCatalog{0x7F015D14F5FC281CULL};
+        /// @brief One project's locale index: the available locales and their catalogs (see CookedLocaleIndexHeader).
+        ///
+        /// Names every locale the project ships — its endonym, its LocaleCatalog id, and its
+        /// fallback — plus the source locale. Boot-loaded by id by the localization service, never
+        /// referenced from a component (no handle-field leaf).
+        inline constexpr AssetTypeId LocaleIndex{0x3563062346011D01ULL};
     }
 
     /// @brief The reflection TypeIds of the AssetHandle\<T\> leaves that reference a builtin type.
@@ -255,7 +267,7 @@ namespace Veng
         std::unique_ptr<Impl> m_Impl;
     };
 
-    /// @brief Pre-fills a registry with the twenty-two asset types the engine defines.
+    /// @brief Pre-fills a registry with the twenty-four asset types the engine defines.
     ///
     /// Every host calls this on the registry it owns before any other registration, so a
     /// manifest naming a builtin resolves without the consumer re-declaring it.

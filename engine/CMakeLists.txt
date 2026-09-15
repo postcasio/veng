@@ -112,6 +112,8 @@ add_library(veng SHARED
         src/Asset/Loaders/TableSchemaLoader.cpp
         src/Asset/Loaders/EnvironmentLoader.cpp
         src/Asset/Loaders/FontLoader.cpp
+        src/Asset/Loaders/LocaleCatalogLoader.cpp
+        src/Asset/Loaders/LocaleIndexLoader.cpp
         src/Asset/Loaders/InputMapLoader.cpp
         src/Asset/Loaders/StyleSheetLoader.cpp
         src/Asset/Loaders/UIDocumentLoader.cpp
@@ -137,6 +139,9 @@ add_library(veng SHARED
         src/InputRouter.cpp
         src/LevelOverlay.cpp
         src/LaunchArguments.cpp
+        src/Localization/LocaleCatalog.cpp
+        src/Localization/LocaleIndex.cpp
+        src/Localization/Localization.cpp
         src/Localization/Message.cpp
         src/Log.cpp
         src/ManagedViewports.cpp

@@ -102,10 +102,15 @@ extern "C"
 /// SceneColorExtent mid-struct. A module constructs a SceneRendererInfo to create a renderer and a
 /// SceneView to drive one, so a stale module would hand the engine a short info struct and read the
 /// per-frame extents at shifted offsets.
+/// Version 22 adds the localization service to the module surface: ApplicationInfo grows a
+/// LocaleIndex asset id and SystemContext grows a Localization& service (bound to the engine's
+/// always-owned service). A module constructs the ApplicationInfo it hands back and reads the
+/// SystemContext each tick, so a stale module would lay out the info struct short of what the engine
+/// reads and read the per-tick fields after Localization at shifted offsets.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 21u
+#define VENG_MODULE_ABI_VERSION 22u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

@@ -5,6 +5,7 @@
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Result.h>
+#include <Veng/Localization/Localization.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SimClock.h>
 
@@ -242,6 +243,9 @@ namespace VengEditor
         Veng::AssetManager& m_Assets;
         Veng::Input& m_Input;
         Veng::Audio::AudioEngine& m_Audio;
+        // The editor sets no locale index, so the play simulation resolves keys through this inert
+        // null-object localization service — the same referent GetLocalization() would return.
+        Veng::Localization::Localization m_Localization;
         Veng::InputRouter& m_Router;
         Veng::SystemRegistry& m_Systems;
 

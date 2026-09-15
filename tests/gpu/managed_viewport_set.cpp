@@ -91,6 +91,7 @@ namespace
                                          .Input = GetInput(),
                                          .Tasks = GetTaskSystem(),
                                          .Audio = GetAudioEngine(),
+                                         .Localization = GetLocalization(),
                                          .Role = GetNetRole()};
                 },
             });

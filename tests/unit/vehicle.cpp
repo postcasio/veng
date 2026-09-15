@@ -58,6 +58,7 @@ namespace
                 .Input = HeadlessInput,
                 .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
                 .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
+                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
             };
         }
     };

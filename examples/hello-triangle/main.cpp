@@ -201,6 +201,10 @@ constexpr AssetId GameplayInputMapId{0xE65128F84910FBB9ULL};
 // `--accent` / `--tick-idle` tokens) is referenced from the document markup and resolved by the engine.
 constexpr AssetId HudDocumentId{0xB51B7421AFE8CD18ULL};
 
+// The project's locale index, named on ApplicationInfo::LocaleIndex so the engine builds the
+// localization service at boot. It carries the sample's one `en` catalog.
+constexpr AssetId LocaleIndexId{0xC54C6BECF5E8ECF6ULL};
+
 // The cooked UI blip a code-triggered PlayOneShot fires through SystemContext::Audio (sample mode).
 constexpr AssetId UiBlipClipId{0xC8B2D38BFEF02557ULL};
 
@@ -917,6 +921,14 @@ protected:
                 }
             }
 
+            // The localization service is live by OnWorldLoaded: resolve a plain HUD label and a
+            // count-driven plural through it — the maximal exemplar of the string system in the
+            // shipping launcher. The `en` catalog resolves these to their authored English, so no
+            // rendered text moves; plan-later work moves the HUD's own labels onto loc keys.
+            const Localization::Localization& localization = GetLocalization();
+            Log::Info("hello-triangle: {} — {}", localization.Get("hud.status"),
+                      localization.Format("hud.jumps_left", {}, 3));
+
             SetupHud(scene);
 
             // Offline windowed: open a second, independently-simulated world through the runner and
@@ -1002,6 +1014,7 @@ protected:
                                      .Input = GetInput(),
                                      .Tasks = GetTaskSystem(),
                                      .Audio = GetAudioEngine(),
+                                     .Localization = GetLocalization(),
                                      .Role = GetNetRole()};
             },
         });
@@ -1698,6 +1711,7 @@ private:
                                      .Input = GetInput(),
                                      .Tasks = GetTaskSystem(),
                                      .Audio = GetAudioEngine(),
+                                     .Localization = GetLocalization(),
                                      .Role = NetRole::Server};
             },
         });
@@ -2032,6 +2046,10 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
                     // managed world is joined by the engine's default WorldKey over the multiplexed
                     // transport — one joined world, one JoinId — so this exercises the common path.
                     .Net = GameNetInfo{},
+                    // The project's locale index: the engine loads it at boot and builds the
+                    // localization service on the chosen language (source `en` by default), so text
+                    // resolves through GetLocalization() / SystemContext::Localization on frame one.
+                    .LocaleIndex = LocaleIndexId,
                 },
                 types, systems));
         });

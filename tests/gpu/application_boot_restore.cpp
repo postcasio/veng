@@ -96,7 +96,8 @@ namespace
                     return SystemContext{.Assets = GetAssetManager(),
                                          .Input = GetInput(),
                                          .Tasks = GetTaskSystem(),
-                                         .Audio = GetAudioEngine()};
+                                         .Audio = GetAudioEngine(),
+                                         .Localization = GetLocalization()};
                 },
             });
             m_Probe.WorldOfKey.insert_or_assign(key, world);

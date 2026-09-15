@@ -161,7 +161,8 @@ namespace VengEditor
         m_Simulation->Start(*m_PlayScene, SystemContext{.Assets = m_Assets,
                                                         .Input = m_Input,
                                                         .Tasks = m_Assets.GetTaskSystem(),
-                                                        .Audio = m_Audio});
+                                                        .Audio = m_Audio,
+                                                        .Localization = m_Localization});
 
         // The running game owns input: capture the cursor in the viewport until the release
         // chord (or window-focus loss) pops it.
@@ -180,7 +181,8 @@ namespace VengEditor
             m_Simulation->Stop(*m_PlayScene, SystemContext{.Assets = m_Assets,
                                                            .Input = m_Input,
                                                            .Tasks = m_Assets.GetTaskSystem(),
-                                                           .Audio = m_Audio});
+                                                           .Audio = m_Audio,
+                                                           .Localization = m_Localization});
         }
 
         ReleaseFromPlay();
@@ -244,6 +246,7 @@ namespace VengEditor
                                      .Input = m_Input,
                                      .Tasks = m_Assets.GetTaskSystem(),
                                      .Audio = m_Audio,
+                                     .Localization = m_Localization,
                                      .Tick = tick,
                                      .Alpha = alpha};
             };

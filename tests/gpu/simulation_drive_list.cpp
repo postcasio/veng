@@ -132,7 +132,8 @@ namespace
                     return SystemContext{.Assets = GetAssetManager(),
                                          .Input = GetInput(),
                                          .Tasks = GetTaskSystem(),
-                                         .Audio = GetAudioEngine()};
+                                         .Audio = GetAudioEngine(),
+                                         .Localization = GetLocalization()};
                 },
             });
             SimIds.push_back(id);
@@ -211,7 +212,8 @@ TEST_CASE("Opening a world ticks it, closing it stops, and an unopened scene nev
         unopened->StartSimulation(SystemContext{.Assets = a.GetAssetManager(),
                                                 .Input = a.GetInput(),
                                                 .Tasks = a.GetTaskSystem(),
-                                                .Audio = a.GetAudioEngine()});
+                                                .Audio = a.GetAudioEngine(),
+                                                .Localization = a.GetLocalization()});
     };
 
     int atClose = 0;

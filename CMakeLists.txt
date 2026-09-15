@@ -904,6 +904,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/asset_manager.cpp
             tests/unit/data_table.cpp
             tests/unit/localization_message.cpp
+            tests/unit/localization_service.cpp
             tests/unit/graphics_schema.cpp
             tests/unit/graphics_settings.cpp
             tests/unit/settings_store.cpp
@@ -2028,6 +2029,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/prefab_save_roundtrip.cpp
             tests/cooker/level_cook.cpp
             tests/cooker/input_map_cook.cpp
+            tests/cooker/localization_cook.cpp
             tests/cooker/graphics_schema_cook.cpp
             tests/cooker/table_cook.cpp
             tests/cooker/asset_handle_leaf_deps.cpp

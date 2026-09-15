@@ -1,0 +1,14 @@
+{
+  "locale": "en",
+  "fallback": "en",
+  "pluralRule": "en",
+  "decimal": ".",
+  "grouping": ",",
+  "messages": {
+    "hud.status": "Systems nominal",
+    "hud.jumps_left": {
+      "one": "{#} jump left",
+      "other": "{#} jumps left"
+    }
+  }
+}

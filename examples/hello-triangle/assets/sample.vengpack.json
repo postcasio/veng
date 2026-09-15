@@ -2,6 +2,16 @@
   "version": 1,
   "assets": [
     {
+      "id": "0x57295F7EAC522F29",
+      "type": "LocaleCatalog",
+      "source": "locale/en.loc.json"
+    },
+    {
+      "id": "0xC54C6BECF5E8ECF6",
+      "type": "LocaleIndex",
+      "source": "locale/locale.locindex.json"
+    },
+    {
       "id": "0x00000000000003E9",
       "type": "Texture",
       "source": "textures/brick_basecolor.tex.json"

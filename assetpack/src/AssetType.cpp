@@ -249,5 +249,18 @@ namespace Veng
                            .Name = "AudioBusGraph",
                            .DisplayName = "AudioBusGraph",
                            .Glyph = "ABG"});
+        // No handle-field leaf: a catalog is loaded by id by the localization service (walking the
+        // index's fallback chain), never referenced from a component — the same posture as
+        // AudioBusGraph.
+        registry.Register({.Id = AssetTypes::LocaleCatalog,
+                           .Name = "LocaleCatalog",
+                           .DisplayName = "LocaleCatalog",
+                           .Glyph = "LOC"});
+        // No handle-field leaf: the index is boot-loaded by id and names its catalogs by id, never
+        // referenced from a component.
+        registry.Register({.Id = AssetTypes::LocaleIndex,
+                           .Name = "LocaleIndex",
+                           .DisplayName = "LocaleIndex",
+                           .Glyph = "LIX"});
     }
 }

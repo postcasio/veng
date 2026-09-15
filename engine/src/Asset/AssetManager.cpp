@@ -16,6 +16,8 @@
 #include "Loaders/FontLoader.h"
 #include "Loaders/InputMapLoader.h"
 #include "Loaders/LevelLoader.h"
+#include "Loaders/LocaleCatalogLoader.h"
+#include "Loaders/LocaleIndexLoader.h"
 #include "Loaders/MaterialInstanceLoader.h"
 #include "Loaders/MaterialLoader.h"
 #include "Loaders/MeshLoader.h"
@@ -71,6 +73,8 @@ namespace Veng
         RegisterLoader(CreateUnique<AnimationLoader>());
         RegisterLoader(CreateUnique<EnvironmentLoader>());
         RegisterLoader(CreateUnique<FontLoader>());
+        RegisterLoader(CreateUnique<LocaleCatalogLoader>());
+        RegisterLoader(CreateUnique<LocaleIndexLoader>());
         RegisterLoader(CreateUnique<InputMapLoader>());
         RegisterLoader(CreateUnique<StyleSheetLoader>());
         RegisterLoader(CreateUnique<UIDocumentLoader>());

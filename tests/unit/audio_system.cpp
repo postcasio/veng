@@ -44,6 +44,7 @@ namespace
                 .Input = *reinterpret_cast<Input*>(InputBytes),
                 .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
                 .Audio = engine,
+                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
             };
         }
     };

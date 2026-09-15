@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string_view>
+
 #include <Veng/Asset/Types.h>
 
 // Per-type cooked-blob header layouts. Each header is
@@ -1524,4 +1526,159 @@ namespace Veng
         /// @brief Byte size of the reflection record following this header.
         u32 RecordBytes = 0;
     };
+
+    /// @brief Maximum byte length (including nul terminator) for a locale id in a cooked blob.
+    ///
+    /// A locale id and a plural-rule selector are short BCP-47-ish tags ("en", "pt-BR"), so they
+    /// sit inline in a fixed field rather than in the string pool; a longer tag is truncated at
+    /// LocaleIdCapacity - 1 bytes.
+    inline constexpr usize LocaleIdCapacity = 32;
+
+    /// @brief Number of plural categories a cooked catalog entry carries a variant slot for.
+    ///
+    /// The width of CookedLocaleEntry::Variants. Defined here rather than reached from the engine's
+    /// Localization::PluralCategoryCount so assetpack keeps no engine dependency; the catalog loader
+    /// static_asserts the two agree, the cycle-avoidance rule at the top of this file.
+    inline constexpr usize CookedLocalePluralCategoryCount = 6;
+
+    /// @brief A byte range into a cooked locale blob's string pool.
+    ///
+    /// Offset is a byte offset into the pool; Length is the byte length of the UTF-8 string there.
+    /// A zero-length span is the empty string; presence is carried separately (a catalog entry's
+    /// PresentMask), so an absent variant is distinguished from a present empty one.
+    struct CookedLocaleStringSpan
+    {
+        /// @brief Byte offset of the string within the blob's string pool.
+        u32 Offset = 0;
+        /// @brief Byte length of the string; 0 for the empty string.
+        u32 Length = 0;
+    };
+
+    /// @brief Magic tag opening a cooked locale-catalog blob; the loader rejects a mismatch.
+    inline constexpr u32 CookedLocaleCatalogMagic = 0x564C4341u; // 'VLCA'
+
+    /// @brief The current locale-catalog-format version.
+    ///
+    /// Bumped on any CookedLocaleCatalogHeader/CookedLocaleEntry layout change; the loader rejects
+    /// a blob whose Magic or Version does not match. The header is read by a fixed-offset memcpy, so
+    /// a field added without a version bump is misread as garbage rather than tolerated.
+    inline constexpr u32 CookedLocaleCatalogVersion = 1u;
+
+    /// @brief One message entry in a cooked locale catalog: its key hash and its variant spans.
+    ///
+    /// Entries are sorted ascending by KeyHash (ties broken by the key bytes), so a lookup is a
+    /// binary search over the hashes with a key-string compare disambiguating a hash collision. A
+    /// non-pluralized message (IsPlural 0) carries its sole template in the PluralCategory::Other
+    /// slot and sets only that PresentMask bit; a pluralized message (IsPlural 1) carries one span
+    /// per category it defines, PresentMask naming which. Every span addresses the blob's pool.
+    struct CookedLocaleEntry
+    {
+        /// @brief Stable hash of the key (HashLocaleKey), the sort/search key.
+        u64 KeyHash = 0;
+        /// @brief The key text, so a hash collision is resolved by an exact compare.
+        CookedLocaleStringSpan Key;
+        /// @brief 0 = a single template in the Other slot; 1 = a plural-variant set.
+        u32 IsPlural = 0;
+        /// @brief Bit i set ⇒ Variants[i] carries a string (bit index = PluralCategory ordinal).
+        u32 PresentMask = 0;
+        /// @brief Per-category variant spans, indexed by PluralCategory ordinal.
+        CookedLocaleStringSpan Variants[CookedLocalePluralCategoryCount];
+    };
+
+    /// @brief Cooked header for a locale-catalog asset.
+    ///
+    /// A locale catalog is one locale's translated strings plus its locale metadata. The blob is,
+    /// in order:
+    ///   CookedLocaleCatalogHeader
+    ///   CookedLocaleEntry[EntryCount]   — sorted ascending by KeyHash, then by key bytes
+    ///   string pool (StringPoolBytes)   — every key and message variant, UTF-8, indexed by span
+    ///
+    /// LocaleId names the catalog's locale, FallbackId the locale consulted when a key is absent
+    /// (itself for a terminal/source locale), and PluralRule the plural-rule selector the service
+    /// resolves through Localization::PluralRuleFor. Decimal/Grouping are the locale's number
+    /// separators (char32_t codepoints; Grouping 0 disables grouping).
+    struct CookedLocaleCatalogHeader
+    {
+        /// @brief Must equal CookedLocaleCatalogMagic; the loader rejects a mismatch.
+        u32 Magic = 0;
+        /// @brief Must equal CookedLocaleCatalogVersion; the loader rejects a mismatch.
+        u32 Version = 0;
+        /// @brief Nul-terminated locale id, at most LocaleIdCapacity - 1 bytes.
+        char LocaleId[LocaleIdCapacity] = {};
+        /// @brief Nul-terminated fallback locale id; equals LocaleId for a terminal locale.
+        char FallbackId[LocaleIdCapacity] = {};
+        /// @brief Nul-terminated CLDR plural-rule selector (a locale id such as "fr"/"pl").
+        char PluralRule[LocaleIdCapacity] = {};
+        /// @brief Decimal separator codepoint (char32_t; e.g. U'.' or U',').
+        u32 Decimal = 0;
+        /// @brief Grouping separator codepoint (char32_t; 0 disables grouping).
+        u32 Grouping = 0;
+        /// @brief Number of CookedLocaleEntry entries following this header.
+        u32 EntryCount = 0;
+        /// @brief Byte size of the trailing string pool.
+        u32 StringPoolBytes = 0;
+    };
+
+    /// @brief Magic tag opening a cooked locale-index blob; the loader rejects a mismatch.
+    inline constexpr u32 CookedLocaleIndexMagic = 0x564C4958u; // 'VLIX'
+
+    /// @brief The current locale-index-format version.
+    ///
+    /// Bumped on any CookedLocaleIndexHeader/CookedLocaleIndexEntry layout change; the loader
+    /// rejects a blob whose Magic or Version does not match.
+    inline constexpr u32 CookedLocaleIndexVersion = 1u;
+
+    /// @brief One locale in a cooked locale index: its ids, its catalog, and its endonym.
+    struct CookedLocaleIndexEntry
+    {
+        /// @brief Nul-terminated locale id, at most LocaleIdCapacity - 1 bytes.
+        char LocaleId[LocaleIdCapacity] = {};
+        /// @brief Nul-terminated fallback locale id; equals LocaleId for a terminal locale.
+        char FallbackId[LocaleIdCapacity] = {};
+        /// @brief AssetId of this locale's LocaleCatalog.
+        u64 CatalogId = 0;
+        /// @brief The locale's endonym (the display name in its own language), in the pool.
+        CookedLocaleStringSpan DisplayName;
+    };
+
+    /// @brief Cooked header for a locale-index asset.
+    ///
+    /// A locale index is one project's map of available locales. The blob is, in order:
+    ///   CookedLocaleIndexHeader
+    ///   CookedLocaleIndexEntry[LocaleCount]   — in authored order
+    ///   string pool (StringPoolBytes)         — every endonym, UTF-8, indexed by span
+    ///
+    /// SourceLocaleId names the locale keys are authored in (the terminus of every fallback chain).
+    struct CookedLocaleIndexHeader
+    {
+        /// @brief Must equal CookedLocaleIndexMagic; the loader rejects a mismatch.
+        u32 Magic = 0;
+        /// @brief Must equal CookedLocaleIndexVersion; the loader rejects a mismatch.
+        u32 Version = 0;
+        /// @brief Nul-terminated source locale id, at most LocaleIdCapacity - 1 bytes.
+        char SourceLocaleId[LocaleIdCapacity] = {};
+        /// @brief Number of CookedLocaleIndexEntry entries following this header.
+        u32 LocaleCount = 0;
+        /// @brief Byte size of the trailing string pool.
+        u32 StringPoolBytes = 0;
+    };
+
+    /// @brief The stable 64-bit hash a cooked locale catalog sorts and searches keys by.
+    ///
+    /// FNV-1a over the key's UTF-8 bytes. Shared by the cooker (which sorts entries by it) and the
+    /// runtime loader/lookup (which binary-searches it), so the order the cook writes is the order
+    /// the runtime searches; a hash collision is resolved by an exact key compare, so the hash need
+    /// only order well, not be perfect.
+    /// @param key  The message key.
+    /// @return The key's FNV-1a hash.
+    [[nodiscard]] inline u64 HashLocaleKey(std::string_view key)
+    {
+        u64 hash = 14695981039346656037ULL;
+        for (const char c : key)
+        {
+            hash ^= static_cast<u8>(c);
+            hash *= 1099511628211ULL;
+        }
+        return hash;
+    }
 }

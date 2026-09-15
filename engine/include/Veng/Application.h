@@ -34,6 +34,7 @@
 #include <Veng/Render/FrameRateLimiter.h>
 #include <Veng/Audio/AudioResolve.h>
 #include <Veng/Capture/VideoRecorder.h>
+#include <Veng/Localization/Localization.h>
 #include <Veng/Render/GraphicsResolve.h>
 #include <Veng/Render/GraphicsSchema.h>
 #include <Veng/Render/GraphicsSettings.h>
@@ -600,6 +601,17 @@ namespace Veng
         /// constructed and GetAudioSettings() is null, so an engine/headless consumer that wants none
         /// pays nothing. An instance of the same SettingsSchema asset type the graphics schema uses.
         optional<AssetId> AudioSettingsSchema = std::nullopt;
+
+        /// @brief The game's locale index asset; nullopt leaves an inert null-object localization service.
+        ///
+        /// The engine cannot name a game asset, so a game declares its LocaleIndex here by id.
+        /// Application resolves it at boot, builds the per-machine language SettingsStore (config
+        /// locale.json), reads the chosen language (defaulting to the index's source locale), and
+        /// constructs the localization service on it before the world bootstrap — so the main menu is
+        /// localized on frame one. Unset leaves Application owning an inert null-object service that
+        /// resolves every key to itself (GetLocalization() is still non-null), so a non-localized or
+        /// headless consumer is unchanged.
+        optional<AssetId> LocaleIndex = std::nullopt;
     };
 
     /// @brief The destination of an Application::Travel: the key, arrival payload, and presentation choice.
@@ -821,6 +833,22 @@ namespace Veng
         [[nodiscard]] SettingsStore<SettingsChoices>* GetAudioSettings()
         {
             return m_AudioSettings.get();
+        }
+
+        /// @brief Returns the localization service — always non-null.
+        ///
+        /// A real, index-backed service when ApplicationInfo::LocaleIndex is set, else the inert
+        /// null-object that resolves every key to itself. Consumers resolve user-facing text through
+        /// it; SystemContext::Localization binds to the same service. The chosen language is read
+        /// from the per-machine locale.json at boot.
+        /// @pre Run() has initialized the engine — the service exists only inside Run().
+        /// @return The localization service.
+        [[nodiscard]] Localization::Localization& GetLocalization() const
+        {
+            VE_ASSERT(m_Localization,
+                      "GetLocalization before Run(): the localization service exists only once "
+                      "Run() has initialized the engine");
+            return *m_Localization;
         }
 
         /// @brief Resolves the current audio settings and applies the resulting bus gains to the mixer.
@@ -1954,6 +1982,17 @@ namespace Veng
         /// @brief The per-machine audio-settings store; null when no audio schema was named. Borrows
         ///        the schema handle above and the type registry, so it destructs before them.
         Unique<SettingsStore<SettingsChoices>> m_AudioSettings;
+
+        /// @brief Keeps the locale index resident for the localization service to read at boot; empty
+        ///        when ApplicationInfo::LocaleIndex is unset.
+        AssetHandle<Localization::LocaleIndex> m_LocaleIndexHandle;
+
+        /// @brief The per-machine language store (locale.json); null when no locale index was named.
+        Unique<SettingsStore<SettingsChoices>> m_LanguageSettings;
+
+        /// @brief The always-owned localization service: index-backed when a LocaleIndex is named,
+        ///        else the inert null-object. Borrows the AssetManager, so it destructs before it.
+        Unique<Localization::Localization> m_Localization;
 
         /// @brief The ImGui integration; borrows m_RenderContext, so declared after it — its backend,
         ///        descriptor pool, and offscreen target release while the device is still alive.

@@ -201,13 +201,15 @@ namespace
 
         const Unique<Audio::AudioDevice> audio = Audio::AudioDevice::Create(
             Audio::AudioDeviceInfo{.Backend = Audio::AudioBackend::Null});
+        Localization::Localization localization;
 
         InputMappingSystem mapping;
         mapping.OnUpdate(scene, 0.016f,
                          SystemContext{.Assets = assets,
                                        .Input = input,
                                        .Tasks = assets.GetTaskSystem(),
-                                       .Audio = audio->GetEngine()});
+                                       .Audio = audio->GetEngine(),
+                                       .Localization = localization});
 
         const InputSeat seat = ResolveInputSeat(&scene);
         return scene.Get<PlayerInput>(seat.Viewer).GetValue(Move).y;

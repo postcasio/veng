@@ -1,0 +1,12 @@
+{
+  "source": "en",
+  "coverage": "warn",
+  "locales": [
+    {
+      "id": "en",
+      "displayName": "English",
+      "catalog": "0x57295F7EAC522F29",
+      "fallback": "en"
+    }
+  ]
+}

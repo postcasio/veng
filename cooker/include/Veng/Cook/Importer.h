@@ -57,6 +57,12 @@ namespace Veng::Cook
         /// through this configuration's role table. Null means no project settings: the
         /// importer falls back to its hardcoded ASTC default, the zero-config behavior.
         const BuildConfiguration* Config = nullptr;
+        /// @brief The project's source-locale catalog AssetId, or the invalid id when there is none.
+        ///
+        /// A cooker-internal field (not a module-ABI concern): the cook knows it from the resolved
+        /// LocaleIndex, so a key-validating importer can resolve a loc key against the source catalog
+        /// through CookContext::Resolve. Invalid (0) for a cook that carries no locale index.
+        AssetId SourceCatalog{};
         /// @brief Engine core shader directory added to every Slang session's search path.
         ///
         /// Lets a consumer `.slang` resolve `#include "Veng/surface.slang"` against the engine

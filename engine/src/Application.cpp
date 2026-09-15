@@ -366,6 +366,11 @@ namespace Veng
             project = MountProjectPacks();
         }
 
+        // Application always owns a localization service: construct the inert null-object now so
+        // GetLocalization() is non-null through OnInitialize and any early-exit teardown. The
+        // index-backed service (when a LocaleIndex is named) replaces it after OnInitialize, below.
+        m_Localization = CreateUnique<Localization::Localization>();
+
         OnInitialize();
 
         // A subclass that hit a fatal startup failure calls RequestExit(status) from OnInitialize;
@@ -474,6 +479,55 @@ namespace Veng
             ApplyAudioSettings();
         }
 
+        // The localization service: resolve the game's locale index (if it named one, now that its
+        // packs are mounted), read the chosen language from the per-machine locale.json (defaulting
+        // to the index's source locale), and construct the index-backed service on it — replacing
+        // the null-object built before OnInitialize. Built here, before the world bootstrap, so the
+        // main menu is localized on frame one. An index that fails to load leaves the null-object.
+        if (m_Info.LocaleIndex)
+        {
+            const AssetResult<AssetHandle<Localization::LocaleIndex>> loaded =
+                m_AssetManager->LoadSync<Localization::LocaleIndex>(*m_Info.LocaleIndex);
+            if (loaded)
+            {
+                m_LocaleIndexHandle = *loaded;
+                const Localization::LocaleIndex* index = m_LocaleIndexHandle.Get();
+
+                path configPath;
+                if (const Result<path> configDir = UserConfigDir(m_Info.Name))
+                {
+                    configPath = *configDir / "locale.json";
+                }
+                else
+                {
+                    Log::Warn(
+                        "localization: no writable configuration directory ({}); the language "
+                        "choice will not persist",
+                        configDir.error());
+                }
+
+                // A neutral language store keyed by "language" (no schema — the index is the source
+                // of truth for which locales exist), mirroring the audio store's shape. An empty
+                // chosen option (first run) resolves to the index's source locale.
+                m_LanguageSettings = CreateUnique<SettingsStore<SettingsChoices>>(
+                    SettingsStoreInfo{.Schema = nullptr,
+                                      .Types = &m_TypeRegistry,
+                                      .ConfigPath = std::move(configPath)});
+                static_cast<void>(m_LanguageSettings->Load());
+                const string chosen = m_LanguageSettings->GetChosenOption("language");
+
+                m_Localization = CreateUnique<Localization::Localization>(
+                    *m_AssetManager, *index,
+                    chosen.empty() ? index->GetSourceLocale() : std::string_view(chosen));
+            }
+            else
+            {
+                Log::Warn("localization: locale index {} did not load ({}); every key will resolve "
+                          "to itself",
+                          m_Info.LocaleIndex->Value, loaded.error().Detail);
+            }
+        }
+
         // The engine-managed game world bootstraps after OnInitialize, so a subclass has already
         // set up its ImGui surface and read the managed viewport.
         if (project)
@@ -577,6 +631,7 @@ namespace Veng
                                      .Input = *m_Input,
                                      .Tasks = *m_TaskSystem,
                                      .Audio = m_AudioDevice->GetEngine(),
+                                     .Localization = GetLocalization(),
                                      .Role = NetRole::Server};
             },
         });
@@ -1813,6 +1868,7 @@ namespace Veng
                              .Input = *m_Input,
                              .Tasks = *m_TaskSystem,
                              .Audio = m_AudioDevice->GetEngine(),
+                             .Localization = GetLocalization(),
                              .Role = RoleForWorld(world)};
     }
 
@@ -2230,6 +2286,7 @@ namespace Veng
             .Input = *m_Input,
             .Tasks = *m_TaskSystem,
             .Audio = m_AudioDevice->GetEngine(),
+            .Localization = GetLocalization(),
             .Pointer = pointer,
             .Tick = tick,
             .Alpha = alpha,
