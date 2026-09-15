@@ -137,6 +137,7 @@ add_library(veng SHARED
         src/InputRouter.cpp
         src/LevelOverlay.cpp
         src/LaunchArguments.cpp
+        src/Localization/Message.cpp
         src/Log.cpp
         src/ManagedViewports.cpp
         src/Math/AABB.cpp

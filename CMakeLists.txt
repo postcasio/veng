@@ -903,6 +903,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/launch_arguments.cpp
             tests/unit/asset_manager.cpp
             tests/unit/data_table.cpp
+            tests/unit/localization_message.cpp
             tests/unit/graphics_schema.cpp
             tests/unit/graphics_settings.cpp
             tests/unit/settings_store.cpp
