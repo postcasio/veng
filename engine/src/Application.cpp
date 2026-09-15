@@ -6,6 +6,7 @@
 #include <Veng/Audio/AudioEngine.h>
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Gui/GuiConsumer.h>
+#include <Veng/Gui/GuiTranslator.h>
 #include <Veng/Log.h>
 #include <Veng/Platform/CrashReport.h>
 #include <Veng/Platform/UserPaths.h>
@@ -62,6 +63,37 @@
 
 namespace Veng
 {
+    namespace
+    {
+        /// @brief A GuiTranslator over the Application's owned localization service.
+        ///
+        /// Reads GetLocalization() live on each call rather than caching a service reference, so it
+        /// tracks the boot-time swap of the inert null-object for the index-backed service. A key the
+        /// active locale (and its fallback chain) does not define resolves to itself through the
+        /// service, so the Gui contract's "render the key" fallback holds with no branch here.
+        class LocalizationGuiTranslator final : public Gui::GuiTranslator
+        {
+        public:
+            /// @brief Constructs the adapter over the owning application.
+            explicit LocalizationGuiTranslator(const Application& app) : m_App(&app) {}
+
+            /// @brief Resolves a key to its active-locale message through the localization service.
+            [[nodiscard]] std::string_view Translate(std::string_view key) const override
+            {
+                return m_App->GetLocalization().Get(key);
+            }
+
+            /// @brief Returns the service generation, bumped on every SetLocale.
+            [[nodiscard]] u32 Generation() const override
+            {
+                return m_App->GetLocalization().Generation();
+            }
+
+        private:
+            const Application* m_App;
+        };
+    }
+
     /// @brief The mounted net hosts and the input buffers threaded around the world drive.
     ///
     /// One of the two arms is live per net launch mode: Server (the ServerHost + a per-connection input
@@ -314,11 +346,17 @@ namespace Veng
                                                        m_Compositor.GetViewports());
         m_InputRouter->RegisterConsumer(*m_GuiConsumer);
 
+        // The translator engine-managed overlay documents localize their loc-keys through. It reads
+        // the localization service live, so it is constructed now (the service itself is built later,
+        // before the first frame) and installed on every managed viewport.
+        m_GuiTranslator = CreateUnique<LocalizationGuiTranslator>(*this);
+
         // The managed-viewport policy collaborator, over the compositor + router. Presentation-only:
         // it owns the Presented viewports the engine drives and pulls their cameras from the runner.
         m_ManagedViewports = CreateUnique<ManagedViewportSet>(
             m_RenderContext, *m_AssetManager, m_Compositor, *m_InputRouter, m_GuiDriverRegistry,
-            m_AudioDevice != nullptr ? &m_AudioDevice->GetEngine() : nullptr);
+            m_AudioDevice != nullptr ? &m_AudioDevice->GetEngine() : nullptr,
+            m_GuiTranslator.get());
 
         // The opt-in managed viewport set: Presented viewports owned and driven by the engine so a
         // game pushes only a ViewState (or names a World/Viewer). Built before OnInitialize so a

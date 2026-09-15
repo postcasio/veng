@@ -24,6 +24,11 @@ namespace Veng::Audio
     class AudioEngine;
 }
 
+namespace Veng::Gui
+{
+    class GuiTranslator;
+}
+
 namespace Veng::Renderer
 {
     class Context;
@@ -134,10 +139,12 @@ namespace Veng
         /// @param router      The input router viewport↔seat associations are made through; must outlive the set.
         /// @param drivers     The host-owned GuiDriver catalog set on each built viewport, or nullptr (undriven).
         /// @param audio       The audio engine set on each built viewport for its drivers, or nullptr (silent).
+        /// @param translator  The host's translator set on each built viewport so overlay loc-keys localize, or nullptr.
         ManagedViewportSet(Renderer::Context& context, AssetManager& assets,
                            Renderer::ViewportCompositor& compositor, InputRouter& router,
                            GuiDriverRegistry* drivers = nullptr,
-                           Audio::AudioEngine* audio = nullptr);
+                           Audio::AudioEngine* audio = nullptr,
+                           const Gui::GuiTranslator* translator = nullptr);
 
         /// @brief Clears the set, self-unregistering each viewport and its router association.
         ~ManagedViewportSet();
@@ -460,6 +467,8 @@ namespace Veng
         GuiDriverRegistry* m_GuiDrivers = nullptr;
         /// @brief The audio engine set on each built viewport for its drivers; null hands silence.
         Audio::AudioEngine* m_Audio = nullptr;
+        /// @brief The translator set on each built viewport so overlay loc-keys localize; null renders keys.
+        const Gui::GuiTranslator* m_GuiTranslator = nullptr;
 
         /// @brief The managed viewports in order; index 0 is the primary.
         vector<ManagedViewport> m_Viewports;

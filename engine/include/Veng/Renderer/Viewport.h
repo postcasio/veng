@@ -33,6 +33,7 @@ namespace Veng::Gui
 {
     class Document;
     class DrawList;
+    class GuiTranslator;
 }
 
 namespace Veng::Renderer
@@ -473,6 +474,18 @@ namespace Veng::Renderer
         /// (an editor preview, a driver-free test). Never consulted by the render path itself.
         /// @param audio  The device-wide audio engine, or nullptr for silent drivers.
         void SetAudioEngine(Audio::AudioEngine* audio) { m_Audio = audio; }
+
+        /// @brief Sets the translator engine-driven GuiOverlay documents resolve their loc-keys through.
+        ///
+        /// Borrowed and host-owned, threaded like the driver catalog: the engine sets it on each
+        /// managed viewport so a claimed overlay's markup and LocKey-bound leaves localize with no
+        /// game code. Null — the default — leaves overlay loc-keys rendering as their keys (an editor
+        /// preview, a driver-free test). A hand-attached document takes its translator directly.
+        /// @param translator  The host's translator, or nullptr to render loc-keys as keys.
+        void SetGuiTranslator(const Gui::GuiTranslator* translator)
+        {
+            m_GuiTranslator = translator;
+        }
 
         /// @brief Sets the scale attached Gui documents lay out and draw at.
         ///
@@ -942,6 +955,9 @@ namespace Veng::Renderer
 
         /// @brief The driver catalog a claimed driven GuiOverlay resolves against; null drives none.
         GuiDriverRegistry* m_GuiDrivers = nullptr;
+
+        /// @brief The translator engine-driven overlay documents resolve loc-keys through, or null.
+        const Gui::GuiTranslator* m_GuiTranslator = nullptr;
 
         /// @brief The audio engine handed to a claimed driver's frame; null hands a silent frame.
         Audio::AudioEngine* m_Audio = nullptr;

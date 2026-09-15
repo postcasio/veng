@@ -7,6 +7,7 @@
 #include <Veng/Audio/AudioComponents.h>
 #include <Veng/Gui/Overlay.h>
 #include <Veng/Gui/Surface.h>
+#include <Veng/Localization/LocKey.h>
 #include <Veng/Net/Session.h>
 #include <Veng/Physics/CharacterController.h>
 #include <Veng/Physics/Components.h>
@@ -267,6 +268,8 @@ namespace Veng
         registry.Register<quat>();
         registry.Register<mat4>();
         registry.Register<string>();
+        // A message key that presents as its active-locale translation through the Gui binding path.
+        registry.Register<Localization::LocKey>();
         registry.Register<Entity>();
 
         registry.Register<AssetHandle<Texture>>();

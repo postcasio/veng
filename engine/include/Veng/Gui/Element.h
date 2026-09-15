@@ -392,7 +392,18 @@ namespace Veng::Gui
         vector<string> Classes;
 
         /// @brief The Text element's string content; unused by other kinds.
+        ///
+        /// For a loc-keyed element (@ref LocKey non-empty) this holds the *presented* translation in
+        /// the active locale, resolved from the key through the document's translator; the authored
+        /// key is retained in @ref LocKey so a hit-test, inspect, and re-resolve still see it.
         string Text;
+
+        /// @brief The authored localization key, or empty when the element's text is a literal.
+        ///
+        /// A non-empty key marks the element loc-keyed: its @ref Text is a translation the document
+        /// re-resolves through its translator, and the key is the element's stable identity across a
+        /// language change — the retention model `text-transform` uses for its authored value.
+        string LocKey;
 
         /// @brief An Image element's resident source texture; empty leaves the element un-textured.
         ///

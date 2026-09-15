@@ -50,7 +50,14 @@ namespace Veng::Gui
         /// @brief The element's class tags, in source order.
         vector<string> Classes;
         /// @brief The Text element's content, or empty.
+        ///
+        /// When @ref IsLocKey is set this is the authored **message key**, not a display string; the
+        /// instantiate resolves it through the document's translator into the live Element::Text.
         string Text;
+        /// @brief Whether @ref Text is a localization key rather than a literal display string.
+        ///
+        /// Set by the `<Text loc="…">` markup form; a plain `<Text>Literal</Text>` leaves it false.
+        bool IsLocKey = false;
         /// @brief The element's `{binding}` expressions.
         vector<UIBindingRecipe> Bindings;
         /// @brief The element's named event handlers.

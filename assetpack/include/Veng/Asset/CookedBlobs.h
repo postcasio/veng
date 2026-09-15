@@ -1201,7 +1201,8 @@ namespace Veng
     /// change, and on any renumbering of the StyleProperty enumerators the inline-property table
     /// stores by ordinal; the loader rejects a blob whose Version != this. v3 renumbered them for
     /// the per-axis overflow properties. v4 added the component-boundary fields to CookedUIElement.
-    inline constexpr u32 CookedUIDocumentVersion = 4u;
+    /// v5 added the IsLocKey discriminator to CookedUIElement (a text node's Text is a message key).
+    inline constexpr u32 CookedUIDocumentVersion = 5u;
 
     /// @brief Cooked header for a UI-document asset.
     ///
@@ -1307,6 +1308,11 @@ namespace Veng
         u64 ComponentSource = 0;
         /// @brief A Component boundary's scoped driver id; 0 (unbound) leaves it as pure shared markup.
         u64 ComponentDriver = 0;
+        /// @brief Whether the Text span is a localization key rather than a literal display string.
+        ///
+        /// Set by the `<Text loc="…">` markup form: the runtime resolves the key through the
+        /// document's translator into the presented text. 0 leaves the Text a literal.
+        u32 IsLocKey = 0;
     };
 
     /// @brief One binding on a cooked UI element: the target property name and its expression.

@@ -159,6 +159,7 @@ namespace Veng
                 Gui::UIElementRecipe recipe;
                 recipe.Kind = static_cast<Gui::ElementKind>(ce.Kind);
                 recipe.ChildCount = ce.ChildCount;
+                recipe.IsLocKey = ce.IsLocKey != 0;
                 recipe.Src = AssetId{ce.Src};
                 recipe.Tint = {ce.Tint[0], ce.Tint[1], ce.Tint[2], ce.Tint[3]};
                 recipe.Uv = Gui::Rect{.Min = {ce.Uv[0], ce.Uv[1]}, .Size = {ce.Uv[2], ce.Uv[3]}};

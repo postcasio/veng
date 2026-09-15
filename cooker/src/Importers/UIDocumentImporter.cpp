@@ -1,9 +1,13 @@
 #include "UIDocumentImporter.h"
 
+#include "LocaleSource.h"
 #include "StyleParse.h"
+
+#include <unordered_set>
 
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
+#include <Veng/Cook/JsonFile.h>
 
 #include <algorithm>
 #include <array>
@@ -138,6 +142,9 @@ namespace Veng::Cook
             // The referenced StyleSheet ids, seeded from the host root and grown (deduplicated) by
             // each spliced fragment's own `stylesheets`, so a fragment's styles fold into the host.
             vector<u64> StyleSheetIds;
+            // Every `loc` key the document references, validated against the source-locale catalog
+            // once the whole tree is cooked (a dangling key is a cook error).
+            vector<string> LocKeys;
         };
 
         // Appends a stylesheet id to the document's set, skipping a duplicate so a fragment
@@ -698,6 +705,11 @@ namespace Veng::Cook
             CookedUIElement element{};
             element.Kind = static_cast<u32>(*kind);
 
+            // A `loc="key"` attribute makes the element's text a localization key rather than a
+            // literal; the runtime resolves it through the document's translator. Collected here and
+            // applied after the attribute loop, since it replaces the body-text extraction.
+            optional<string> locKey;
+
             element.FirstClass = static_cast<u32>(build.Classes.size());
             element.FirstBinding = static_cast<u32>(build.Bindings.size());
             element.FirstHandler = static_cast<u32>(build.Handlers.size());
@@ -723,6 +735,16 @@ namespace Veng::Cook
                 }
                 const string value = *substituted;
 
+                if (name == "loc")
+                {
+                    if (value.empty())
+                    {
+                        return std::unexpected(
+                            fmt::format("{}: 'loc' names an empty message key", located));
+                    }
+                    locKey = value;
+                    continue;
+                }
                 if (name == "id")
                 {
                     element.Id = build.Strings.Add(value);
@@ -837,8 +859,31 @@ namespace Veng::Cook
                                                    located, name));
             }
 
+            // A loc-keyed element carries the message key as its text and is marked so the runtime
+            // resolves it through the translator; its body text (if any) is not a display literal, so
+            // authoring both is a mistake rather than a silent override.
+            if (locKey)
+            {
+                for (const pugi::xml_node& child : node.children())
+                {
+                    const bool hasBody =
+                        (child.type() == pugi::node_pcdata || child.type() == pugi::node_cdata) &&
+                        std::string_view(child.value()).find_first_not_of(" \t\r\n") !=
+                            std::string_view::npos;
+                    if (hasBody)
+                    {
+                        return std::unexpected(fmt::format(
+                            "{}: a 'loc' element carries body text; a localized element's text is "
+                            "its key, not a literal",
+                            located));
+                    }
+                }
+                element.Text = build.Strings.Add(*locKey);
+                element.IsLocKey = 1;
+                build.LocKeys.push_back(*locKey);
+            }
             // A Text element's content is its direct text (child text nodes concatenated, trimmed).
-            if (*kind == Gui::ElementKind::Text)
+            else if (*kind == Gui::ElementKind::Text)
             {
                 string text;
                 for (const pugi::xml_node& child : node.children())
@@ -964,6 +1009,76 @@ namespace Veng::Cook
             build.Elements[selfIndex].ChildCount = childCount;
             return childCount + 1;
         }
+
+        // Hard-errors on any `loc` key the document references that the project's source-locale
+        // catalog does not define — the same "declared-vs-available is a cook error" discipline the
+        // shader importer enforces, so a mistyped or missing key fails the cook rather than shipping
+        // a document that renders the raw key. The source catalog is reached through the cook-driver-
+        // supplied CookContext::SourceCatalog (CookContext::Resolve maps only by id and cannot say
+        // which id is the source). A document with no `loc` keys needs no catalog and is inert here.
+        VoidResult ValidateLocKeys(const vector<string>& locKeys, const CookContext& context,
+                                   const string& file)
+        {
+            if (locKeys.empty())
+            {
+                return {};
+            }
+            if (!context.SourceCatalog.IsValid())
+            {
+                return std::unexpected(fmt::format(
+                    "ui document importer: '{}': references loc key '{}' but the project declares "
+                    "no "
+                    "source-locale catalog (no LocaleIndex), so no key can be validated",
+                    file, locKeys.front()));
+            }
+
+            const optional<ResolvedSource> resolved = context.Resolve(context.SourceCatalog);
+            if (!resolved)
+            {
+                return std::unexpected(fmt::format("ui document importer: '{}': the source-locale "
+                                                   "catalog {} is named by the locale "
+                                                   "index but no asset provides it",
+                                                   file, FormatAssetId(context.SourceCatalog)));
+            }
+            if (resolved->Type != AssetTypes::LocaleCatalog)
+            {
+                return std::unexpected(fmt::format("ui document importer: '{}': the source-locale "
+                                                   "catalog {} is not a LocaleCatalog",
+                                                   file, FormatAssetId(context.SourceCatalog)));
+            }
+            context.RecordDependency(resolved->AbsolutePath);
+
+            const Result<json> docResult =
+                ReadJsonFile(resolved->AbsolutePath, "ui document importer");
+            if (!docResult)
+            {
+                return std::unexpected(docResult.error());
+            }
+            const Result<ParsedLocaleCatalog> parsed =
+                ParseLocaleCatalogSource(*docResult, resolved->AbsolutePath.string());
+            if (!parsed)
+            {
+                return std::unexpected(parsed.error());
+            }
+
+            std::unordered_set<std::string_view> available;
+            available.reserve(parsed->Messages.size());
+            for (const ParsedLocaleMessage& message : parsed->Messages)
+            {
+                available.insert(message.Key);
+            }
+            for (const string& key : locKeys)
+            {
+                if (!available.contains(key))
+                {
+                    return std::unexpected(fmt::format(
+                        "ui document importer: '{}': loc key '{}' is not in the source-locale "
+                        "catalog '{}'",
+                        file, key, resolved->AbsolutePath.string()));
+                }
+            }
+            return {};
+        }
     }
 
     Result<vector<u8>> UIDocumentImporter::Cook(const CookContext& context, const json& entry) const
@@ -1029,6 +1144,12 @@ namespace Veng::Cook
         if (!rootResult)
         {
             return std::unexpected(rootResult.error());
+        }
+
+        // Every `loc` key the document referenced must exist in the project's source-locale catalog.
+        if (const VoidResult validated = ValidateLocKeys(build.LocKeys, context, file); !validated)
+        {
+            return std::unexpected(validated.error());
         }
 
         CookedUIDocumentHeader header{};

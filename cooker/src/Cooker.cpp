@@ -22,12 +22,54 @@
 #include <Veng/Project/CompressionFormat.h>
 #include <Veng/Project/CompressionRole.h>
 
+#include "Importers/LocaleSource.h"
 #include "Importers/MaterialInstanceImporter.h"
 
 namespace Veng::Cook
 {
     namespace
     {
+        // Resolves the project's source-locale catalog id from the LocaleIndex among the packs being
+        // cooked, so a key-validating importer (the UI document importer's dangling-key gate) can
+        // resolve a loc key against it. Scans for the first LocaleIndex entry across the packs,
+        // parses its source, and returns the source locale's catalog id. Returns the invalid id when
+        // no locale index is present (a project that ships no localization) or when the index source
+        // cannot be parsed — the index's own importer reports a malformed index precisely, so this
+        // stays silent rather than masking that diagnostic. It is a cook-time-only lookup, run once
+        // per pack, not a module-boundary concern.
+        AssetId ResolveSourceCatalog(std::span<const AssetPack* const> packs)
+        {
+            for (const AssetPack* const pack : packs)
+            {
+                for (const AssetPackEntry& entry : pack->Entries)
+                {
+                    if (entry.Type != AssetTypes::LocaleIndex || entry.Source.empty())
+                    {
+                        continue;
+                    }
+                    const Result<json> doc = ReadJsonFile(pack->Dir / entry.Source, "locale index");
+                    if (!doc)
+                    {
+                        return AssetId{};
+                    }
+                    const Result<ParsedLocaleIndex> index =
+                        ParseLocaleIndexSource(*doc, (pack->Dir / entry.Source).string());
+                    if (!index)
+                    {
+                        return AssetId{};
+                    }
+                    for (const ParsedLocaleIndexLocale& locale : index->Locales)
+                    {
+                        if (locale.Id == index->Source)
+                        {
+                            return locale.Catalog;
+                        }
+                    }
+                    return AssetId{};
+                }
+            }
+            return AssetId{};
+        }
         // Normalizes a recorded dependency to a stable absolute form so the same
         // file reached two ways (a relative source vs. a resolved reference)
         // de-duplicates to one depfile entry. weakly_canonical tolerates a path
@@ -629,6 +671,18 @@ namespace Veng::Cook
         };
         const path packDir = packJson.parent_path();
 
+        // The project's source-locale catalog, resolved once from the LocaleIndex among the main and
+        // reference packs and threaded to every entry's cook so a key-validating importer can reach
+        // it. Invalid when the project ships no localization.
+        vector<const AssetPack*> catalogScan;
+        catalogScan.reserve(refPacks.size() + 1);
+        catalogScan.push_back(&mainPack);
+        for (const AssetPack& ref : refPacks)
+        {
+            catalogScan.push_back(&ref);
+        }
+        const AssetId sourceCatalog = ResolveSourceCatalog(catalogScan);
+
         // The configuration drives the archive compression level; the zero-config cook uses the
         // default. This is the one place the level field is consumed.
         const int level = config != nullptr ? config->CompressionLevel : ZstdLevel;
@@ -873,6 +927,7 @@ namespace Veng::Cook
                 .Types = types,
                 .Systems = systems,
                 .Config = config,
+                .SourceCatalog = sourceCatalog,
                 .ShaderIncludeDir = shaderIncludeDir,
                 .RecordDependency = entryRecord,
                 .ThreadBudget = threadBudget,
@@ -1111,6 +1166,17 @@ namespace Veng::Cook
             return std::nullopt;
         };
 
+        // The source-locale catalog, resolved from a LocaleIndex among the reference packs (the
+        // single source being cooked carries no manifest of its own), so a single-source cook of a UI
+        // document validates its loc keys exactly as a full pack cook does.
+        vector<const AssetPack*> catalogScan;
+        catalogScan.reserve(refPacks.size());
+        for (const AssetPack& ref : refPacks)
+        {
+            catalogScan.push_back(&ref);
+        }
+        const AssetId sourceCatalog = ResolveSourceCatalog(catalogScan);
+
         // CookSource writes no files, so RecordDependency is a no-op. The configuration, when
         // supplied, drives role→format resolution exactly as a file-based cook does; a null
         // configuration uses the zero-config defaults.
@@ -1121,6 +1187,7 @@ namespace Veng::Cook
             .Types = types,
             .Systems = systems,
             .Config = config,
+            .SourceCatalog = sourceCatalog,
             .ShaderIncludeDir = shaderIncludeDir,
             .RecordDependency = [](const path&) {},
         };

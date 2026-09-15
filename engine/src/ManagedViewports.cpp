@@ -90,9 +90,10 @@ namespace Veng
     ManagedViewportSet::ManagedViewportSet(Renderer::Context& context, AssetManager& assets,
                                            Renderer::ViewportCompositor& compositor,
                                            InputRouter& router, GuiDriverRegistry* const drivers,
-                                           Audio::AudioEngine* const audio)
+                                           Audio::AudioEngine* const audio,
+                                           const Gui::GuiTranslator* const translator)
         : m_Context(context), m_Assets(assets), m_Compositor(compositor), m_Router(router),
-          m_GuiDrivers(drivers), m_Audio(audio)
+          m_GuiDrivers(drivers), m_Audio(audio), m_GuiTranslator(translator)
     {
     }
 
@@ -160,6 +161,8 @@ namespace Veng
             viewport->SetGuiDriverRegistry(m_GuiDrivers);
             // And the audio engine its drivers fire sound through; null hands them a silent frame.
             viewport->SetAudioEngine(m_Audio);
+            // And the translator its overlay documents localize markup loc-keys through; null renders keys.
+            viewport->SetGuiTranslator(m_GuiTranslator);
 
             m_Compositor.RegisterViewport(*viewport);
 

@@ -13,6 +13,7 @@
 #include <Veng/Gui/Placement.h>
 #include <Veng/Gui/StyleSheet.h>
 #include <Veng/Gui/UIDocument.h>
+#include <Veng/Localization/LocKey.h>
 #include <Veng/Log.h>
 #include <Veng/Reflection/EnumName.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -639,6 +640,13 @@ namespace Veng::Gui
             element.Id = recipe.Id;
             element.Classes = recipe.Classes;
             element.Text = recipe.Text;
+            // A loc-keyed element's recipe text is the message key: retain it as the element's stable
+            // identity and leave the key standing in Text until a translator resolves it (so a
+            // translator-less host renders the key, never a blank).
+            if (recipe.IsLocKey)
+            {
+                element.LocKey = recipe.Text;
+            }
             element.ComponentDriver = recipe.ComponentDriver;
 
             for (const UIBindingRecipe& binding : recipe.Bindings)
@@ -715,8 +723,20 @@ namespace Veng::Gui
         // a name string), so the read matches the exact backing type. A field class with no scalar
         // text form (Struct/Variant/Array/Matrix/Reference/AssetHandle) yields nullopt, so a binding
         // onto one is a no-op rather than a garbage write.
-        optional<string> FormatLeaf(const void* fieldPtr, const TypeInfo& info)
+        //
+        // A LocKey leaf carries a translation key rather than a display string: it resolves through
+        // the document's translator into the active-locale string (the key itself when none is
+        // installed). It is matched by its exact leaf TypeId, ahead of the class switch, so the
+        // stored key never prints raw through the generic String path.
+        optional<string> FormatLeaf(const void* fieldPtr, const TypeInfo& info,
+                                    const GuiTranslator* translator)
         {
+            if (info.Id == TypeIdOf<Localization::LocKey>())
+            {
+                const std::string_view key =
+                    static_cast<const Localization::LocKey*>(fieldPtr)->Key;
+                return translator != nullptr ? string{translator->Translate(key)} : string{key};
+            }
             switch (info.Class)
             {
             case FieldClass::Scalar:
@@ -773,7 +793,7 @@ namespace Veng::Gui
         // intermediate segment is not a struct, or the leaf has no text form. Every segment but the
         // last must be a Struct-class field; the final segment is a formattable leaf.
         optional<string> ResolvePath(const TypeRegistry& registry, void* base, TypeId type,
-                                     string_view path)
+                                     string_view path, const GuiTranslator* translator)
         {
             void* cursor = base;
             TypeId cursorType = type;
@@ -812,7 +832,7 @@ namespace Veng::Gui
                     {
                         return std::nullopt;
                     }
-                    return FormatLeaf(fieldPtr, registry.Info(field->Type));
+                    return FormatLeaf(fieldPtr, registry.Info(field->Type), translator);
                 }
 
                 // A non-terminal segment must be a struct to descend into.
@@ -4230,7 +4250,8 @@ namespace Veng::Gui
                 continue;
             }
 
-            const optional<string> resolved = ResolvePath(registry, data, dataType, expression);
+            const optional<string> resolved =
+                ResolvePath(registry, data, dataType, expression, m_Translator);
             if (!resolved)
             {
                 continue;
@@ -4284,13 +4305,57 @@ namespace Veng::Gui
         }
     }
 
+    void Document::SetTranslator(const GuiTranslator* translator)
+    {
+        if (translator == m_Translator)
+        {
+            return;
+        }
+        m_Translator = translator;
+        // Markup loc-keys resolve now, so a display-only document that never calls UpdateBindings
+        // still shows translated chrome the moment its translator is installed.
+        ResolveLocKeys();
+        // A LocKey-typed bound leaf resolves through the binding path, not here, so leave the recorded
+        // generation one behind the translator's: the next UpdateBindings then sees a move and
+        // re-reads every binding against the new translator. A null translator has no generation to
+        // trip on, so its bound leaves re-resolve on the next ordinary binding move instead.
+        m_TranslatorGeneration = translator != nullptr ? translator->Generation() - 1u : 0u;
+    }
+
+    void Document::ResolveLocKeys()
+    {
+        for (const Unique<Element>& element : m_Elements)
+        {
+            if (element->LocKey.empty())
+            {
+                continue;
+            }
+            const std::string_view resolved = m_Translator != nullptr
+                                                  ? m_Translator->Translate(element->LocKey)
+                                                  : element->LocKey;
+            // SetText re-measures and dirties layout only on a real change, so a settled loc-key
+            // costs nothing here.
+            SetText(*element, resolved);
+        }
+    }
+
     void Document::UpdateBindings()
     {
+        // A language change moves the translator generation without touching any bound object, so a
+        // loc-keyed markup element and a LocKey-typed bound leaf must both re-resolve on the move.
+        const bool translatorMoved =
+            m_Translator != nullptr && m_Translator->Generation() != m_TranslatorGeneration;
+        if (translatorMoved)
+        {
+            m_TranslatorGeneration = m_Translator->Generation();
+            ResolveLocKeys();
+        }
+
         // A version watermark per context — the root and each component scope — so a component's
         // re-read costs only its own dirtied fields and a static context costs no reflection walk.
         const bool rootMoved = m_Context != nullptr && m_Context->GetData() != nullptr &&
                                m_Registry != nullptr && m_Context->GetVersion() != m_BoundVersion;
-        bool anyMoved = rootMoved;
+        bool anyMoved = rootMoved || translatorMoved;
         for (ScopedContext& sc : m_ScopedContexts)
         {
             sc.Moved = sc.Context != nullptr && sc.Context->GetData() != nullptr &&
@@ -4326,7 +4391,9 @@ namespace Veng::Gui
         // Resolve every non-List-item element's bindings against its effective context, but only when
         // that context moved — a component whose view-model is unchanged is not re-walked because the
         // root context (or a sibling component's) moved. A List item's own bindings resolve against
-        // its array element inside SyncList, so they are skipped here.
+        // its array element inside SyncList, so they are skipped here. A translator move re-resolves
+        // every element regardless of context version, so a LocKey-typed bound leaf re-translates on
+        // a language change even though no view-model field changed.
         for (const Unique<Element>& element : m_Elements)
         {
             if (element->Bindings.empty() || IsListItem(*element))
@@ -4334,7 +4401,7 @@ namespace Veng::Gui
                 continue;
             }
             const ScopedContext* const sc = FindScopedContext(*element);
-            if (sc != nullptr ? sc->Moved : rootMoved)
+            if (translatorMoved || (sc != nullptr ? sc->Moved : rootMoved))
             {
                 ResolveElementBindings(*element);
             }
@@ -4710,7 +4777,8 @@ namespace Veng::Gui
                 return std::nullopt;
             }
             void* const itemPtr = field->Field->ArrayElement(field->Ptr, index);
-            return ResolvePath(*base.Registry, itemPtr, field->Field->ElementType, *labelExpr);
+            return ResolvePath(*base.Registry, itemPtr, field->Field->ElementType, *labelExpr,
+                               m_Translator);
         }
         // Inline: the option's label is the template item's own text.
         if (tmpl == m_ListTemplates.end() || index >= tmpl->second.Roots.size())
@@ -4775,8 +4843,8 @@ namespace Veng::Gui
                 value != dropdown.Bindings.end() && base.Data != nullptr &&
                 base.Registry != nullptr)
             {
-                if (const optional<string> resolved =
-                        ResolvePath(*base.Registry, base.Data, base.Type, value->second))
+                if (const optional<string> resolved = ResolvePath(
+                        *base.Registry, base.Data, base.Type, value->second, m_Translator))
                 {
                     f32 index = dropdown.Widget.Value;
                     static_cast<void>(std::from_chars(resolved->data(),
@@ -5002,7 +5070,7 @@ namespace Veng::Gui
                 continue;
             }
             const optional<string> resolved =
-                ResolvePath(*m_Registry, itemBase, itemType, expression);
+                ResolvePath(*m_Registry, itemBase, itemType, expression, m_Translator);
             if (!resolved)
             {
                 continue;
@@ -5039,7 +5107,7 @@ namespace Veng::Gui
                     return;
                 }
                 if (const optional<string> resolved =
-                        ResolvePath(*m_Registry, itemBase, itemType, it->second))
+                        ResolvePath(*m_Registry, itemBase, itemType, it->second, m_Translator))
                 {
                     f32 value = target;
                     if (std::from_chars(resolved->data(), resolved->data() + resolved->size(),

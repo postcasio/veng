@@ -20,6 +20,7 @@ namespace Veng
         class DocumentHost;
         class BindingContext;
         class DrawList;
+        class GuiTranslator;
     }
 
     namespace Renderer
@@ -246,8 +247,10 @@ namespace Veng
         /// @param owner     The entity carrying this overlay, handed to the driver as its instance.
         /// @param drivers   The driver catalog the Driver id resolves against, or nullptr (undriven).
         /// @param audio     The audio engine handed to the driver's frame, or nullptr (silent).
+        /// @param translator The translator the document's loc-keys resolve through, or nullptr (keys render).
         void Drive(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene, Entity owner,
-                   GuiDriverRegistry* drivers, Audio::AudioEngine* audio = nullptr) const;
+                   GuiDriverRegistry* drivers, Audio::AudioEngine* audio = nullptr,
+                   const Gui::GuiTranslator* translator = nullptr) const;
 
         /// @brief Drives the overlay's document and builds its geometry into a draw list, off the layer stack.
         ///
@@ -266,9 +269,11 @@ namespace Veng
         /// @param docExtent The logical-point extent to lay the document out at.
         /// @param delta     Frame delta seconds advanced into the document's animation clock.
         /// @param out       The draw list the built geometry is appended into (cleared first).
+        /// @param translator The translator the document's loc-keys resolve through, or nullptr (keys render).
         void DriveHdr(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene,
                       Entity owner, GuiDriverRegistry* drivers, Audio::AudioEngine* audio,
-                      vec2 docExtent, f32 delta, Gui::DrawList& out) const;
+                      vec2 docExtent, f32 delta, Gui::DrawList& out,
+                      const Gui::GuiTranslator* translator = nullptr) const;
 
         /// @brief Detaches the presented document from a viewport's layer stack — the inverse of Drive.
         ///

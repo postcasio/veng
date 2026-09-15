@@ -5,6 +5,7 @@
 // "coverage": "complete" index whose translated locale drops a source key. The importers reference
 // only engine builtins, so the cook runs with a builtin-only registry and no module load.
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -20,6 +21,7 @@
 #include <Veng/Asset/HexId.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
+#include <Veng/Gui/UIDocument.h>
 #include <Veng/Localization/LocaleCatalog.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/Context.h>
@@ -248,4 +250,82 @@ TEST_CASE("Locale cook: coverage 'complete' rejects a locale missing a source ke
                                                    {IndexId, "LocaleIndex", "warn.locindex.json"}});
     REQUIRE_MESSAGE(lenient.has_value(), ErrOf(lenient));
     std::filesystem::remove(*lenient);
+}
+
+namespace
+{
+    // Writes a raw markup file (the JSON WriteSource cannot carry XML).
+    path WriteMarkup(const path& dir, const string& name, const string& xml)
+    {
+        const path file = dir / name;
+        std::ofstream(file) << xml;
+        return file;
+    }
+
+    // A one-locale index whose source `en` names the given catalog — the source-locale catalog the
+    // UI-document dangling-key gate resolves against.
+    json SourceIndex(AssetId catalog)
+    {
+        return json{{"source", "en"},
+                    {"coverage", "warn"},
+                    {"locales",
+                     {{{"id", "en"},
+                       {"displayName", "English"},
+                       {"catalog", FormatHexId(catalog.Value)},
+                       {"fallback", "en"}}}}};
+    }
+
+    constexpr AssetId GoodDocId{0x10CC1E00000000A1ULL};
+    constexpr AssetId BadDocId{0x10CC1E00000000A2ULL};
+}
+
+TEST_CASE("Locale cook: a UI document's loc key cooks against the source catalog")
+{
+    const path dir = Veng::TestSupport::TempDir();
+    WriteSource(dir, "src.loc.json", EnCatalog());
+    WriteSource(dir, "src.locindex.json", SourceIndex(EnCatalogId));
+    WriteMarkup(dir, "good.vui.xml", "<Panel><Text loc=\"greeting\"/></Panel>");
+
+    // The cook driver resolves CookContext::SourceCatalog from the LocaleIndex in the pack, so the
+    // UI document's `loc` key is validated against the `en` catalog and the cook succeeds.
+    const Result<path> archive = CookEntries(dir, {{EnCatalogId, "LocaleCatalog", "src.loc.json"},
+                                                   {IndexId, "LocaleIndex", "src.locindex.json"},
+                                                   {GoodDocId, "UIDocument", "good.vui.xml"}});
+    REQUIRE_MESSAGE(archive.has_value(), ErrOf(archive));
+
+    Renderer::Context context;
+    TaskSystem tasks;
+    TypeRegistry types;
+    AssetManager manager(context, tasks, types);
+    REQUIRE(manager.Mount(*archive).has_value());
+
+    const AssetResult<AssetHandle<Gui::UIDocument>> loaded =
+        manager.LoadSync<Gui::UIDocument>(GoodDocId);
+    REQUIRE(loaded.has_value());
+
+    // The cooked recipe carries the key as a loc-keyed text node — the runtime resolves it later.
+    const vector<Gui::UIElementRecipe>& elements = (*loaded).Get()->GetElements();
+    const auto locKeyed =
+        std::ranges::find_if(elements, [](const Gui::UIElementRecipe& e) { return e.IsLocKey; });
+    REQUIRE(locKeyed != elements.end());
+    CHECK(locKeyed->Text == "greeting");
+    CHECK(locKeyed->Kind == Gui::ElementKind::Text);
+
+    std::filesystem::remove(*archive);
+}
+
+TEST_CASE("Locale cook: a dangling loc key fails the cook, naming the key and the catalog")
+{
+    const path dir = Veng::TestSupport::TempDir();
+    WriteSource(dir, "src.loc.json", EnCatalog());
+    WriteSource(dir, "src.locindex.json", SourceIndex(EnCatalogId));
+    WriteMarkup(dir, "bad.vui.xml", "<Panel><Text loc=\"menu.absent\"/></Panel>");
+
+    const Result<path> archive = CookEntries(dir, {{EnCatalogId, "LocaleCatalog", "src.loc.json"},
+                                                   {IndexId, "LocaleIndex", "src.locindex.json"},
+                                                   {BadDocId, "UIDocument", "bad.vui.xml"}});
+    REQUIRE_FALSE(archive.has_value());
+    // The error names the offending key and the catalog it resolved against — a self-diagnosing miss.
+    CHECK(archive.error().find("menu.absent") != string::npos);
+    CHECK(archive.error().find("source-locale catalog") != string::npos);
 }

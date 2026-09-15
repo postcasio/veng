@@ -58,6 +58,10 @@ namespace Veng
     class ClientHost;
     class GuiDriverRegistry;
     struct CookedProject;
+    namespace Gui
+    {
+        class GuiTranslator;
+    }
     namespace Net
     {
         class Client;
@@ -1993,6 +1997,12 @@ namespace Veng
         /// @brief The always-owned localization service: index-backed when a LocaleIndex is named,
         ///        else the inert null-object. Borrows the AssetManager, so it destructs before it.
         Unique<Localization::Localization> m_Localization;
+
+        /// @brief The GuiTranslator adapter over m_Localization, installed on every managed viewport.
+        ///
+        /// Reads GetLocalization() live so it tracks the service across the null-object → index-backed
+        /// swap at boot. Held as the Gui interface so Application.h names no adapter type.
+        Unique<Gui::GuiTranslator> m_GuiTranslator;
 
         /// @brief The ImGui integration; borrows m_RenderContext, so declared after it — its backend,
         ///        descriptor pool, and offscreen target release while the device is still alive.

@@ -4,6 +4,7 @@
 #include <Veng/Gui/BindingContext.h>
 #include <Veng/Gui/DrawList.h>
 #include <Veng/Gui/Element.h>
+#include <Veng/Gui/GuiTranslator.h>
 #include <Veng/Gui/InputEvent.h>
 #include <Veng/Gui/Style.h>
 #include <Veng/Gui/StyleSheet.h>
@@ -506,6 +507,22 @@ namespace Veng::Gui
         /// @param frame    The ambient per-frame services; rebased per boundary (its Document is this).
         void DriveComponents(GuiDriverRegistry* drivers, const GuiDriverFrame& frame);
 
+        /// @brief Installs the translator loc-keyed text and LocKey-typed bound leaves resolve through.
+        ///
+        /// A loc-keyed markup element and a `{obj.field}` binding onto a LocKey leaf resolve their
+        /// active-locale string through this borrowed translator, exactly as asset declarations
+        /// resolve through the borrowed AssetManager. Installing one (or replacing the installed one)
+        /// re-resolves every loc-keyed markup element immediately and re-measures where the text
+        /// changed, so a display-only document that never calls UpdateBindings still shows translated
+        /// chrome; LocKey-typed bound leaves re-resolve on the next UpdateBindings. A null translator
+        /// resolves every loc-key to itself (the key is rendered, never a blank). The translator is
+        /// borrowed and must outlive the document (or be cleared first).
+        /// @param translator  The translator to resolve loc-keys through, or nullptr to render keys.
+        void SetTranslator(const GuiTranslator* translator);
+
+        /// @brief Returns the installed translator, or nullptr when none is set.
+        [[nodiscard]] const GuiTranslator* GetTranslator() const { return m_Translator; }
+
         /// @brief Re-resolves every `{path}` binding whose context changed and writes the elements.
         ///
         /// Compares the bound context's version against the one last resolved; on a move it walks
@@ -993,6 +1010,14 @@ namespace Veng::Gui
         /// @brief Resolves and writes one element's bindings against its effective context.
         void ResolveElementBindings(Element& element);
 
+        /// @brief Re-resolves every loc-keyed element's presented text through the current translator.
+        ///
+        /// Walks the tree and, for each element carrying a LocKey, sets its Text to the translator's
+        /// resolution of that key (the key itself when no translator is installed), re-measuring
+        /// through SetText where the text changed. Idempotent, so a per-frame call costs nothing once
+        /// the translation is settled.
+        void ResolveLocKeys();
+
         /// @brief Finds the repeated item slot an element is nested in, if any.
         ///
         /// Walks the ancestor chain (crossing a parentless popup root to its anchor, as
@@ -1319,6 +1344,12 @@ namespace Veng::Gui
 
         /// @brief The context version the last binding resolve read; a move re-reads bindings.
         u64 m_BoundVersion = 0;
+
+        /// @brief The translator loc-keys resolve through, or null (a loc-key resolves to itself).
+        const GuiTranslator* m_Translator = nullptr;
+
+        /// @brief The translator generation the last loc-key resolve read; a move re-resolves.
+        u32 m_TranslatorGeneration = 0;
 
         /// @brief The contexts scoped to component boundaries, each keyed by its boundary handle.
         vector<ScopedContext> m_ScopedContexts;

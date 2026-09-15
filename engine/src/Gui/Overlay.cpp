@@ -117,7 +117,8 @@ namespace Veng
 
     void GuiOverlay::Drive(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene,
                            const Entity owner, GuiDriverRegistry* const drivers,
-                           Audio::AudioEngine* const audio) const
+                           Audio::AudioEngine* const audio,
+                           const Gui::GuiTranslator* const translator) const
     {
         EnsureHost(assets);
         GuiOverlayRuntime& runtime = *Runtime;
@@ -136,6 +137,10 @@ namespace Veng
         {
             return;
         }
+
+        // Auto-wire the host's translator so engine-managed markup is localized without game code; a
+        // no-op once installed, and re-applied for free after a document re-instantiate.
+        document->SetTranslator(translator);
 
         // The ambient frame every driver on this document reads; a component driver gets it rebased
         // onto its boundary, so both the overlay's own driver and its components share one View/seat.
@@ -190,7 +195,8 @@ namespace Veng
     void GuiOverlay::DriveHdr(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene,
                               const Entity owner, GuiDriverRegistry* const drivers,
                               Audio::AudioEngine* const audio, const vec2 docExtent,
-                              const f32 delta, Gui::DrawList& out) const
+                              const f32 delta, Gui::DrawList& out,
+                              const Gui::GuiTranslator* const translator) const
     {
         out.Clear();
         EnsureHost(assets);
@@ -224,6 +230,9 @@ namespace Veng
         {
             return;
         }
+
+        // Auto-wire the host's translator, as Drive does — see there.
+        document->SetTranslator(translator);
 
         const GuiDriverFrame frame{
             .Document = *document,

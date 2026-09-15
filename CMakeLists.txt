@@ -1013,6 +1013,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_scissor.cpp
             tests/unit/gui_fill_geometry.cpp
             tests/unit/gui_layout.cpp
+            tests/unit/gui_localization.cpp
             tests/unit/gui_style_states.cpp
             tests/unit/gui_input.cpp
             tests/unit/gui_surface_input.cpp
