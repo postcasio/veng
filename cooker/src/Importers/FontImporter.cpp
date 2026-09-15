@@ -1,6 +1,7 @@
 #include "FontImporter.h"
 #include <Veng/Asset/Path.h>
 
+#include <array>
 #include <cstring>
 #include <map>
 #include <vector>
@@ -25,8 +26,31 @@ namespace Veng::Cook
         // The edge-coloring angle threshold msdfgen recommends for MSDF corner classification.
         constexpr f64 EdgeColoringAngle = 3.0;
 
+        // The largest atlas edge the cook accepts. A charset must pack into a single atlas page,
+        // and the importer has no page-management path — an over-large charset (a CJK-scale set)
+        // fails the cook here rather than producing an atlas past the runtime's max texture size.
+        // 8192 is comfortably one page for every Latin-script preset and well under the 16384
+        // maxImageDimension2D typical hardware exposes.
+        constexpr int MaxAtlasDimension = 8192;
+
+        // The curated General-Punctuation marks real UI text uses that live outside Latin-1: the
+        // "latin-extended" preset carries them so a translated string renders proper typographic
+        // punctuation rather than the tofu box. Not the whole block — each glyph is atlas area.
+        constexpr std::array<u32, 9> GeneralPunctuation = {
+            0x2010, // hyphen
+            0x2011, // non-breaking hyphen
+            0x2013, // en dash
+            0x2014, // em dash
+            0x2018, // left single quote
+            0x2019, // right single quote
+            0x201C, // left double quote
+            0x201D, // right double quote
+            0x2026, // horizontal ellipsis
+        };
+
         // Builds the set of codepoints to cook: a named preset ("ascii" = printable ASCII,
-        // "latin1" = printable Latin-1) plus any explicit codepoints in the "codepoints" array. The
+        // "latin1" = printable Latin-1, "latin-extended" = Latin-1 + Latin Extended-A + curated
+        // typographic punctuation) plus any explicit codepoints in the "codepoints" array. The
         // space (0x20) is always included so a shaped run can advance across whitespace.
         Result<msdf_atlas::Charset> BuildCharset(const json& fontJson, const string& sourceLabel)
         {
@@ -38,20 +62,41 @@ namespace Veng::Cook
                 preset = fontJson["charset"].get<string>();
             }
 
-            if (preset == "ascii")
+            const auto addAscii = [&charset]()
             {
                 for (u32 cp = 0x20; cp <= 0x7E; cp++)
                 {
                     charset.add(cp);
                 }
+            };
+            const auto addLatin1Supplement = [&charset]()
+            {
+                for (u32 cp = 0xA0; cp <= 0xFF; cp++)
+                {
+                    charset.add(cp);
+                }
+            };
+
+            if (preset == "ascii")
+            {
+                addAscii();
             }
             else if (preset == "latin1")
             {
-                for (u32 cp = 0x20; cp <= 0x7E; cp++)
+                addAscii();
+                addLatin1Supplement();
+            }
+            else if (preset == "latin-extended")
+            {
+                addAscii();
+                addLatin1Supplement();
+                // Latin Extended-A: the Central/Eastern-European and Turkish letters (ą ć ę ł, č ř
+                // š ž, ő ű, ğ ı İ ş, …).
+                for (u32 cp = 0x100; cp <= 0x17F; cp++)
                 {
                     charset.add(cp);
                 }
-                for (u32 cp = 0xA0; cp <= 0xFF; cp++)
+                for (const u32 cp : GeneralPunctuation)
                 {
                     charset.add(cp);
                 }
@@ -59,8 +104,8 @@ namespace Veng::Cook
             else
             {
                 return std::unexpected(
-                    fmt::format("font importer: '{}': invalid charset '{}' (expected 'ascii' or "
-                                "'latin1')",
+                    fmt::format("font importer: '{}': invalid charset '{}' (expected 'ascii', "
+                                "'latin1', or 'latin-extended')",
                                 sourceLabel, preset));
             }
 
@@ -226,6 +271,24 @@ namespace Veng::Cook
         msdf_atlas::FontGeometry fontGeometry(&glyphStorage);
         const int loaded = fontGeometry.loadCharset(font, 1.0, *charset);
 
+        // Every font's own glyph 0 is its `.notdef` — the tofu box the shaper draws for a codepoint
+        // the atlas lacks. Cooking it under a reserved sentinel makes a coverage gap visible rather
+        // than silently dropped. It loads through the same FontGeometry as the charset (a glyphset
+        // whose one element is glyph index 0), so it inherits the identical em-normalized geometry
+        // scale — loading it at a raw scale would oversize its atlas box a thousandfold. Its
+        // getCodepoint() stays 0; the cook re-labels it under the sentinel below.
+        const usize notdefStorageIndex = glyphStorage.size();
+        msdf_atlas::Charset notdefSet;
+        notdefSet.add(0);
+        if (fontGeometry.loadGlyphset(font, 1.0, notdefSet, true, false) <= 0)
+        {
+            msdfgen::destroyFont(font);
+            msdfgen::deinitializeFreetype(freetype);
+            return std::unexpected(
+                fmt::format("font importer: '{}': font '{}' carries no glyph 0 (.notdef)",
+                            sourcePath.string(), fontPath.string()));
+        }
+
         msdfgen::destroyFont(font);
         msdfgen::deinitializeFreetype(freetype);
 
@@ -262,6 +325,13 @@ namespace Veng::Cook
         {
             return std::unexpected(fmt::format("font importer: '{}': packed atlas has zero size",
                                                sourcePath.string()));
+        }
+        if (atlasWidth > MaxAtlasDimension || atlasHeight > MaxAtlasDimension)
+        {
+            return std::unexpected(fmt::format(
+                "font importer: '{}': charset packs to a {}x{} atlas, past the {}px single-page "
+                "limit — reduce the charset or the glyph size",
+                sourcePath.string(), atlasWidth, atlasHeight, MaxAtlasDimension));
         }
 
         // Render the three-channel MSDF into a float bitmap, then quantize each channel to 8-bit
@@ -300,14 +370,27 @@ namespace Veng::Cook
 
         vector<CookedGlyph> cookedGlyphs;
         cookedGlyphs.reserve(glyphStorage.size());
-        for (const msdf_atlas::GlyphGeometry& glyph : glyphStorage)
+        for (usize gi = 0; gi < glyphStorage.size(); gi++)
         {
-            const u32 codepoint = glyph.getCodepoint();
-            if (codepoint == 0)
+            const msdf_atlas::GlyphGeometry& glyph = glyphStorage[gi];
+            const bool isNotdef = gi == notdefStorageIndex;
+            // The .notdef rides under a reserved sentinel; every other glyph keeps its codepoint,
+            // and a stray codepoint-0 glyph (none from a charset load) is dropped.
+            u32 codepoint = glyph.getCodepoint();
+            if (isNotdef)
+            {
+                codepoint = CookedFontNotdefCodepoint;
+            }
+            else if (codepoint == 0)
             {
                 continue;
             }
-            indexToCodepoint[glyph.getIndex()] = codepoint;
+            // The kerning table keys on glyph index; the .notdef is never a kern partner, so it is
+            // left out of the index→codepoint map (its index 0 would alias no real pair anyway).
+            if (!isNotdef)
+            {
+                indexToCodepoint[glyph.getIndex()] = codepoint;
+            }
 
             double planeLeft = 0.0;
             double planeBottom = 0.0;

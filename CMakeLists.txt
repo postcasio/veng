@@ -1883,6 +1883,9 @@ if (VENG_BUILD_TESTS)
             VENG_CORE_PACK_JSON="${VENG_CORE_PACK_JSON}"
             # gui_golden.cpp reads its committed golden PNG from the source tree.
             GUI_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/golden"
+            # font_loader.cpp cooks a latin-extended pack from the default font to exercise the
+            # .notdef fallback and the wide charset through the runtime Font.
+            VENG_DEFAULT_FONT_TTF="${VENG_DEFAULT_FONT_TTF}"
     )
     # gui_golden.cpp loads its golden PNG through stb_image. The video-recorder cases reach the
     # engine-internal backend seam under src/, and tests/ carries the shared support headers.
@@ -2010,6 +2013,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/cook_timing.cpp
             tests/cooker/texture_cook.cpp
             tests/cooker/font_variations.cpp
+            tests/cooker/font_charset.cpp
             tests/cooker/compression_resolution.cpp
             tests/cooker/mesh_cook.cpp
             tests/cooker/socket_cook.cpp

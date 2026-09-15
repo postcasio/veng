@@ -1,6 +1,6 @@
 {
   "font": "Roboto.ttf",
-  "charset": "ascii",
+  "charset": "latin-extended",
   "glyphSize": 40,
   "pixelRange": 4
 }

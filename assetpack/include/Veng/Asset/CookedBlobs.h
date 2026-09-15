@@ -907,8 +907,16 @@ namespace Veng
     /// @brief The current font-format version.
     ///
     /// Bumped on any CookedFontHeader/CookedGlyph/CookedKernPair layout change; the loader
-    /// rejects a blob whose Version != this.
-    inline constexpr u32 CookedFontVersion = 1u;
+    /// rejects a blob whose Version != this. v2 added the always-present `.notdef` glyph entry,
+    /// carried under CookedFontNotdefCodepoint.
+    inline constexpr u32 CookedFontVersion = 2u;
+
+    /// @brief Reserved sentinel codepoint carrying a cooked font's `.notdef` (missing-glyph) entry.
+    ///
+    /// Every cooked font carries one glyph under this codepoint: the tofu box drawn in place of a
+    /// codepoint the atlas lacks, so a coverage gap is visible rather than silently dropped. The
+    /// value is outside the Unicode range (max U+10FFFF), so it never collides with a real glyph.
+    inline constexpr u32 CookedFontNotdefCodepoint = 0xFFFFFFFFu;
 
     /// @brief Cooked header for a font asset.
     ///
@@ -922,7 +930,7 @@ namespace Veng
     ///
     /// The blob is, in order:
     ///   CookedFontHeader
-    ///   CookedGlyph[GlyphCount]
+    ///   CookedGlyph[GlyphCount]  (one entry is the .notdef box, under CookedFontNotdefCodepoint)
     ///   CookedKernPair[KerningCount]
     ///   atlas texels (AtlasWidth * AtlasHeight * 4 bytes, RGBA8, row-major top-to-bottom)
     struct CookedFontHeader

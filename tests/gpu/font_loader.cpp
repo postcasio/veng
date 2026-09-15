@@ -6,6 +6,8 @@
 
 #include <array>
 #include <filesystem>
+#include <fstream>
+#include <string>
 #include "support/TempPath.h"
 
 #include <doctest/doctest.h>
@@ -28,6 +30,33 @@ namespace
 
     // The fixture pack's Font AssetId (tests/cooker/fixtures/font_pack.json).
     constexpr AssetId FontId{0xFB6782CABF076640ULL};
+
+    // The AssetId of the in-process latin-extended pack the .notdef cases cook.
+    constexpr AssetId ExtendedFontId{0xF0A9ULL};
+
+    // Cooks a one-font pack from the default font at the given charset into a fresh temp dir, and
+    // returns the archive path. The .notdef cases need the default font because it carries a real
+    // tofu box at glyph 0 and full Latin Extended-A coverage.
+    path CookDefaultFontPack(const char* caseName, const char* charset)
+    {
+        const path dir = Veng::TestSupport::TempDir() / (std::string("veng_gpu_font_") + caseName);
+        std::filesystem::remove_all(dir);
+        std::filesystem::create_directories(dir);
+
+        const path ttf = path(VENG_DEFAULT_FONT_TTF);
+        std::ofstream(dir / "ext.font.json", std::ios::binary | std::ios::trunc)
+            << "{\n  \"font\": \"" << ttf.generic_string() << "\",\n  \"charset\": \"" << charset
+            << "\",\n  \"glyphSize\": 24,\n  \"pixelRange\": 4\n}\n";
+        std::ofstream(dir / "pack.json", std::ios::binary | std::ios::trunc)
+            << R"({"version": 1, "assets": [
+                    {"id": "0xF0A9", "type": "Font", "source": "ext.font.json"}]})";
+
+        const path out = dir / "ext.vengpack";
+        Cook::Cooker cooker;
+        Cook::RegisterBuiltinImporters(cooker);
+        REQUIRE(cooker.CookPack(dir / "pack.json", out).has_value());
+        return out;
+    }
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
@@ -125,6 +154,76 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "font loader: ShapeRun applies advance
     REQUIRE(multi.Lines.size() == 2);
     CHECK(multi.Lines[1].Baseline > multi.Lines[0].Baseline);
     CHECK(multi.Size.y > multi.Lines[0].Baseline);
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "font loader: a missing codepoint returns null but shapes as .notdef")
+{
+    const path outArchive = CookDefaultFontPack("notdef", "latin-extended");
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<Font>> handle = assets.LoadSync<Font>(ExtendedFontId);
+    REQUIRE(handle.has_value());
+    const Font& font = *handle->Get();
+
+    // The .notdef is a real box with a real advance — the whole point is that a gap is visible.
+    const FontGlyph& notdef = font.GetNotdefGlyph();
+    CHECK(notdef.Advance > 0.0f);
+    CHECK(notdef.PlaneMax.x > notdef.PlaneMin.x);
+    CHECK(notdef.PlaneMax.y > notdef.PlaneMin.y);
+
+    // A CJK codepoint is outside every Latin preset, so GetGlyph keeps its null-on-absent contract.
+    constexpr u32 absent = 0x4E00; // 一 CJK UNIFIED IDEOGRAPH
+    CHECK(font.GetGlyph(absent) == nullptr);
+    // A present codepoint still resolves.
+    CHECK(font.GetGlyph('A') != nullptr);
+
+    constexpr f32 pixelSize = 64.0f;
+
+    // ShapeRun draws the absent codepoint as one visible box advanced by the .notdef advance,
+    // rather than dropping it — a single glyph laid across the notdef's advance width.
+    const std::array<u32, 1> missing = {absent};
+    const ShapeResult shaped = font.ShapeRun(missing, pixelSize, std::nullopt);
+    REQUIRE(shaped.Lines.size() == 1);
+    REQUIRE(shaped.Glyphs.size() == 1);
+    CHECK(shaped.Lines[0].Width == doctest::Approx(notdef.Advance * pixelSize).epsilon(0.001f));
+
+    // A present codepoint shapes to the same width whether or not a missing one preceded it: the
+    // notdef contributes its own advance and nothing spurious to the run.
+    const std::array<u32, 1> present = {'A'};
+    const ShapeResult a = font.ShapeRun(present, pixelSize, std::nullopt);
+    REQUIRE(a.Glyphs.size() == 1);
+    const std::array<u32, 2> pair = {absent, 'A'};
+    const ShapeResult both = font.ShapeRun(pair, pixelSize, std::nullopt);
+    REQUIRE(both.Glyphs.size() == 2);
+    CHECK(both.Lines[0].Width ==
+          doctest::Approx(notdef.Advance * pixelSize + a.Lines[0].Width).epsilon(0.001f));
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "font loader: the latin-extended charset resolves Extended-A glyphs")
+{
+    const path outArchive = CookDefaultFontPack("extended", "latin-extended");
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<Font>> handle = assets.LoadSync<Font>(ExtendedFontId);
+    REQUIRE(handle.has_value());
+    const Font& font = *handle->Get();
+
+    // A Latin Extended-A letter and a curly quote resolve to real quads, where an ascii-only atlas
+    // would have shaped them as .notdef.
+    const FontGlyph* lStroke = font.GetGlyph(0x142); // ł
+    REQUIRE(lStroke != nullptr);
+    CHECK(lStroke->Advance > 0.0f);
+    CHECK(font.GetGlyph(0x2019) != nullptr); // ’
 
     std::filesystem::remove(outArchive);
 }

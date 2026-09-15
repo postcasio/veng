@@ -68,7 +68,7 @@ namespace Veng
 
         const u8* cursor = cooked.data() + sizeof(header);
 
-        Ref<Font> font(new Font());
+        const Ref<Font> font(new Font());
         font->m_Name = fmt::format("Font {}", id.Value);
         font->m_AtlasExtent = {header.AtlasWidth, header.AtlasHeight};
         font->m_DistanceRange = header.DistanceRange;
@@ -98,6 +98,14 @@ namespace Veng
             glyph.UvMin = {cooked_glyph.AtlasLeft * invWidth, cooked_glyph.AtlasTop * invHeight};
             glyph.UvMax = {(cooked_glyph.AtlasLeft + cooked_glyph.AtlasWidth) * invWidth,
                            (cooked_glyph.AtlasTop + cooked_glyph.AtlasHeight) * invHeight};
+            // The reserved .notdef entry becomes the tofu box; it is not a real codepoint, so it
+            // stays out of the glyph map (GetGlyph on the sentinel is an absent lookup like any
+            // other), and ShapeRun reaches it through GetNotdefGlyph().
+            if (cooked_glyph.Codepoint == CookedFontNotdefCodepoint)
+            {
+                font->m_Notdef = glyph;
+                continue;
+            }
             font->m_Glyphs.emplace(cooked_glyph.Codepoint, glyph);
         }
 

@@ -127,6 +127,13 @@ namespace Veng
         /// @return The glyph's metrics, or nullptr if the codepoint is not in the cooked charset.
         [[nodiscard]] const FontGlyph* GetGlyph(u32 codepoint) const;
 
+        /// @brief Returns the `.notdef` glyph — the tofu box drawn for a codepoint the atlas lacks.
+        ///
+        /// Every cooked font carries one, so this is always a real box with a non-zero advance.
+        /// ShapeRun substitutes it for a missing codepoint, keeping a coverage gap visible and the
+        /// layout honest rather than silently dropping the character.
+        [[nodiscard]] const FontGlyph& GetNotdefGlyph() const { return m_Notdef; }
+
         /// @brief Returns the kerning adjustment between an ordered codepoint pair, in em units.
         ///
         /// The extra advance added to `left`'s advance when `right` immediately follows it (usually
@@ -172,6 +179,8 @@ namespace Veng
 
         /// @brief Codepoint → glyph metrics.
         map<u32, FontGlyph> m_Glyphs;
+        /// @brief The `.notdef` tofu box, drawn in place of a codepoint the atlas lacks.
+        FontGlyph m_Notdef;
         /// @brief Ordered (left, right) codepoint pair → kerning adjustment in em units.
         map<std::pair<u32, u32>, f32> m_Kerning;
 

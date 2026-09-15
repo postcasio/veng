@@ -145,12 +145,12 @@ namespace Veng
                 continue;
             }
 
+            // A codepoint the atlas lacks draws the .notdef box with its real advance, so a coverage
+            // gap is visible rather than silently vanished and the layout stays honest.
             const FontGlyph* glyph = GetGlyph(codepoint);
             if (glyph == nullptr)
             {
-                // An uncooked codepoint contributes nothing — skip it without breaking kerning
-                // across the gap is intentional: the missing glyph has no advance to apply.
-                continue;
+                glyph = &GetNotdefGlyph();
             }
 
             if (havePrevious)
