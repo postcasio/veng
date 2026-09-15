@@ -1793,8 +1793,13 @@ namespace Veng::Renderer
             for (const auto& [semaphore, value] : m_Native->PendingFrameTransferWaits)
             {
                 waitSemaphores.push_back(semaphore);
-                // Sample an async-uploaded resource at the fragment-shader stage.
-                waitStages.emplace_back(vk::PipelineStageFlagBits::eFragmentShader);
+                // Block the whole graphics submit on the transfer copy. The first
+                // graphics use is not the sample but the acquire pipeline barrier
+                // drained at BeginFrame, whose TransferDst -> ShaderReadOnly layout
+                // transition is a write scoped at eTransfer; a wait at the later
+                // eFragmentShader would leave that transition free to run — and
+                // read the image's still-Undefined layout — before the copy lands.
+                waitStages.emplace_back(vk::PipelineStageFlagBits::eAllCommands);
                 waitValues.push_back(value);
             }
             m_Native->PendingFrameTransferWaits.clear();

@@ -9,8 +9,20 @@
 // correct, race-free result — and gives the validation gate coverage of the
 // async path.
 //
-// A regression guard alongside it checks the blocking Image::UploadSync path is
-// unchanged.
+// A second case samples a two-mip async upload through set-0 bindless with no
+// RenderGraph .Sample edge, so the acquire comes solely from
+// EnqueueBindlessAcquire at BeginFrame (the Texture::Finalize path) rather than
+// from the graph. It proves that path produces correct pixels. It does NOT
+// reproduce the transfer-wait synchronization hazard that motivated it: the
+// tier is headless and single-queue (MoltenVK collapses transfer onto graphics),
+// and synchronization validation credits same-queue submission order between the
+// worker's transfer submit and the frame submit — so the hazard is invisible to
+// this band regardless of the frame transfer-wait's stage (verified: it stays
+// silent even with the wait removed entirely). The hazard is a windowed,
+// continuously-submitting property; the fix is spec-reasoned, not band-proven.
+//
+// A regression guard alongside them checks the blocking Image::UploadSync path
+// is unchanged.
 
 #include <array>
 #include <vector>
@@ -197,6 +209,140 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // Drain the worker before the fixture tears the Context down: a live worker
     // must not outlive the device.
+    tasks.WaitForAll();
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "async upload: a bindless-acquired texture is sampled with no graph .Sample edge")
+{
+    // The path the .Sample case above does NOT reach: a texture uploaded on a
+    // worker and sampled purely through set-0 bindless, with no RenderGraph
+    // .Sample edge. The render graph is then blind to the image, so the only
+    // TransferDst -> ShaderReadOnly acquire is the one EnqueueBindlessAcquire
+    // records at BeginFrame — the Texture::Finalize path. Two mips, to match a
+    // precooked mip-chain upload's multi-region copy. This checks the path
+    // yields the uploaded pixels; the header comment explains why it cannot
+    // catch the transfer-wait synchronization hazard headless.
+    constexpr std::array<u8, 4> expected = {0, 0, 255, 255};
+
+    TaskSystem tasks{TaskSystemInfo{.WorkerCount = 2}};
+    Context.InitializeTransferPools(tasks);
+
+    auto sourceImage =
+        Image::Create(Context, {
+                                   .Name = "Bindless Async Source",
+                                   .Extent = {Size, Size, 1},
+                                   .MipLevels = 2,
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
+                               });
+    auto sourceView =
+        ImageView::Create(Context, {.Name = "Bindless Async Source View", .Image = sourceImage});
+
+    auto outputImage =
+        Image::Create(Context, {
+                                   .Name = "Bindless Async Output",
+                                   .Extent = {Size, Size, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                               });
+    auto outputView =
+        ImageView::Create(Context, {.Name = "Bindless Async Output View", .Image = outputImage});
+
+    auto sampler = Sampler::Create(Context, {
+                                                .Name = "Bindless Async Sampler",
+                                                .AddressModeU = AddressMode::ClampToEdge,
+                                                .AddressModeV = AddressMode::ClampToEdge,
+                                                .AddressModeW = AddressMode::ClampToEdge,
+                                            });
+
+    // A precooked two-mip chain, both levels the same solid color, tightly packed
+    // largest-first: mip 0 is Size*Size texels, mip 1 is (Size/2)*(Size/2).
+    constexpr u32 Mip1Size = Size / 2;
+    constexpr size_t Mip0Bytes = static_cast<size_t>(Size) * Size * 4;
+    constexpr size_t Mip1Bytes = static_cast<size_t>(Mip1Size) * Mip1Size * 4;
+    std::vector<u8> texels(Mip0Bytes + Mip1Bytes);
+    for (size_t byte = 0; byte < texels.size(); byte += 4)
+    {
+        texels[byte + 0] = expected[0];
+        texels[byte + 1] = expected[1];
+        texels[byte + 2] = expected[2];
+        texels[byte + 3] = expected[3];
+    }
+    const std::array<BufferImageCopyRegion, 2> regions = {
+        BufferImageCopyRegion{.BufferOffset = 0, .MipLevel = 0, .Extent = {Size, Size, 1}},
+        BufferImageCopyRegion{
+            .BufferOffset = Mip0Bytes, .MipLevel = 1, .Extent = {Mip1Size, Mip1Size, 1}},
+    };
+
+    Task<void> upload = sourceImage->Upload(tasks, texels, regions);
+    const Result<std::monostate> uploadResult = upload.Get();
+    REQUIRE(uploadResult.has_value());
+
+    auto& bindless = Context.GetBindlessRegistry();
+    const TextureHandle textureHandle = bindless.Register(sourceView);
+    const SamplerHandle samplerHandle = bindless.Register(sampler);
+    REQUIRE(textureHandle.IsValid());
+    REQUIRE(samplerHandle.IsValid());
+
+    // The render graph never sees the source image, so nothing derives its
+    // acquire — EnqueueBindlessAcquire is the only thing that transitions it,
+    // exactly as Texture::Finalize does for a bindless-sampled asset texture.
+    Context.EnqueueBindlessAcquire(sourceView);
+
+    AssetManager assets(Context, Tasks, Types);
+    const VoidResult mountResult = assets.Mount(path(TEST_SHADER_PACK));
+    REQUIRE(mountResult.has_value());
+
+    const AssetResult<AssetHandle<Shader>> vertexAsset = assets.LoadSync<Shader>(AssetId{0x1F42});
+    const AssetResult<AssetHandle<Shader>> fragmentAsset = assets.LoadSync<Shader>(AssetId{0x1F44});
+    REQUIRE(vertexAsset.has_value());
+    REQUIRE(fragmentAsset.has_value());
+
+    Ref<PipelineLayout> layout;
+    auto pipeline = CreateSamplePipeline(Context, layout, vertexAsset->Get()->Module,
+                                         fragmentAsset->Get()->Module);
+
+    CommandBuffer& cmd = Context.BeginFrame();
+
+    RenderGraph graph(Context);
+    const ResourceId outputId = graph.Import("Output");
+    graph.AddPass("Sample Bindless-Acquired Texture")
+        .Color({
+            .Resource = outputId,
+            .Load = LoadOp::Clear,
+            .Store = StoreOp::Store,
+            .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+        })
+        .Execute(
+            [&](PassContext& ctx)
+            {
+                CommandBuffer& passCmd = ctx.Cmd();
+                passCmd.BindPipeline(pipeline);
+                passCmd.SetViewport({0, 0}, {Size, Size});
+                passCmd.SetScissor({0, 0}, {Size, Size});
+                bindless.Bind(passCmd);
+                passCmd.PushConstants(SamplePushConstants{
+                    .TextureIndex = textureHandle.Index,
+                    .SamplerIndex = samplerHandle.Index,
+                });
+                passCmd.DrawFullscreenTriangle();
+            });
+    const RenderGraph::ImportBinding bindings[] = {
+        {.Id = outputId, .View = outputView},
+    };
+    graph.Compile()->Execute(cmd, bindings);
+
+    Context.EndFrame();
+    Context.WaitIdle();
+
+    const vector<u8> pixels = outputImage->Download();
+    REQUIRE(pixels.size() == static_cast<size_t>(Size) * Size * 4);
+    CHECK(Test::PixelsMatch(pixels, expected));
+
+    bindless.Release(textureHandle);
+    bindless.Release(samplerHandle);
+
     tasks.WaitForAll();
 }
 
