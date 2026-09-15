@@ -855,6 +855,19 @@ namespace Veng
             return *m_Localization;
         }
 
+        /// @brief Returns the per-machine language-settings store, or null when no locale index is set.
+        ///
+        /// Constructed at boot beside the localization service and persisted as locale.json under the
+        /// per-user config directory; it carries the chosen "language" option the boot path reads to
+        /// pick the active locale. A language selector writes the chosen locale id into it and saves,
+        /// so the choice survives a restart; null when ApplicationInfo::LocaleIndex names no index.
+        /// @pre Run() has initialized the engine — the store exists only inside Run().
+        /// @return The language store, or nullptr when no locale index was named.
+        [[nodiscard]] SettingsStore<SettingsChoices>* GetLanguageSettings()
+        {
+            return m_LanguageSettings.get();
+        }
+
         /// @brief Resolves the current audio settings and applies the resulting bus gains to the mixer.
         ///
         /// Closes the loop between the chosen values and the mixer: it pre-fills the resolve output
