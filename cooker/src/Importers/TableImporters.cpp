@@ -1,11 +1,13 @@
 #include "TableImporters.h"
 
+#include "LocaleSource.h"
 #include "TableSchemaSource.h"
 
 #include <algorithm>
 #include <cstring>
 #include <limits>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <fmt/format.h>
 
@@ -15,6 +17,7 @@
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Cook/JsonFile.h>
+#include <Veng/Localization/LocKey.h>
 #include <Veng/Reflection/JsonSerialize.h>
 #include <Veng/Reflection/Serialize.h>
 
@@ -93,6 +96,74 @@ namespace Veng::Cook
                 return {};
             };
             return hooks;
+        }
+
+        // Hard-errors on any LocKey cell value the project's source-locale catalog does not define
+        // — the same "declared-vs-available is a cook error" gate the UI-document importer applies
+        // to markup `loc` keys, lifted to table data a call-site walk never sees. The source catalog
+        // is reached through the cook-driver-supplied CookContext::SourceCatalog (Resolve maps only
+        // by id and cannot say which id is the source). A table with no LocKey cells is inert here.
+        VoidResult ValidateTableLocKeys(const vector<string>& locKeys, const CookContext& context,
+                                        const path& file)
+        {
+            if (locKeys.empty())
+            {
+                return {};
+            }
+            if (!context.SourceCatalog.IsValid())
+            {
+                return std::unexpected(LocatedTable(
+                    file, fmt::format("cell holds loc key '{}' but the project declares no "
+                                      "source-locale catalog (no LocaleIndex), so no key can be "
+                                      "validated",
+                                      locKeys.front())));
+            }
+
+            const optional<ResolvedSource> resolved = context.Resolve(context.SourceCatalog);
+            if (!resolved)
+            {
+                return std::unexpected(LocatedTable(
+                    file,
+                    fmt::format("the source-locale catalog {} is named by the locale index but "
+                                "no asset provides it",
+                                FormatAssetId(context.SourceCatalog))));
+            }
+            if (resolved->Type != AssetTypes::LocaleCatalog)
+            {
+                return std::unexpected(LocatedTable(
+                    file, fmt::format("the source-locale catalog {} is not a LocaleCatalog",
+                                      FormatAssetId(context.SourceCatalog))));
+            }
+            context.RecordDependency(resolved->AbsolutePath);
+
+            const Result<json> docResult = ReadJsonFile(resolved->AbsolutePath, "data table");
+            if (!docResult)
+            {
+                return std::unexpected(docResult.error());
+            }
+            const Result<ParsedLocaleCatalog> parsed =
+                ParseLocaleCatalogSource(*docResult, resolved->AbsolutePath.string());
+            if (!parsed)
+            {
+                return std::unexpected(parsed.error());
+            }
+
+            std::unordered_set<std::string_view> available;
+            available.reserve(parsed->Messages.size());
+            for (const ParsedLocaleMessage& message : parsed->Messages)
+            {
+                available.insert(message.Key);
+            }
+            for (const string& key : locKeys)
+            {
+                if (!available.contains(key))
+                {
+                    return std::unexpected(LocatedTable(
+                        file, fmt::format("loc key '{}' is not in the source-locale catalog '{}'",
+                                          key, resolved->AbsolutePath.string())));
+                }
+            }
+            return {};
         }
 
         // Reads a decoded integer key cell out of its reflected storage, widened to the i64 the
@@ -234,6 +305,9 @@ namespace Veng::Cook
         vector<u8> keyHeap;
         std::unordered_map<string, CookedTableStringSpan> internedKeys;
 
+        // Every LocKey cell's key, validated against the source catalog once the rows are bound.
+        vector<string> locKeys;
+
         u32 rowIndex = 0;
         for (const json& rowJson : doc["rows"])
         {
@@ -313,6 +387,14 @@ namespace Veng::Cook
                     }
                 }
 
+                // A LocKey cell carries a translation key, not a display string; collect it for the
+                // source-catalog check below so a mistyped key fails the cook rather than showing the
+                // raw key at runtime.
+                if (column.Type == TypeIdOf<Localization::LocKey>())
+                {
+                    locKeys.push_back(static_cast<const Localization::LocKey*>(cell.Get())->Key);
+                }
+
                 WriteFieldValue(rows, cell.Get(), field, types);
             }
 
@@ -337,6 +419,12 @@ namespace Veng::Cook
             return std::unexpected(LocatedTable(
                 sourcePath, fmt::format("encoded {} bytes for {} fixed-stride rows of {} bytes",
                                         rows.size(), rowIndex, schema.RowStride)));
+        }
+
+        if (const VoidResult validated = ValidateTableLocKeys(locKeys, context, sourcePath);
+            !validated)
+        {
+            return std::unexpected(validated.error());
         }
 
         // --- 3. Sort the key index and reject duplicates ---
