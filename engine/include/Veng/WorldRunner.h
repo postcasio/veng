@@ -213,6 +213,11 @@ namespace Veng
         /// scene), builds its simulation, runs @p info.OnLoaded with the spawned scene, and starts the
         /// simulation when @p info.StartSimulation. Runtime open is first-class. Returns only the
         /// handle, never a viewport or a Scene&.
+        ///
+        /// An open issued from inside Tick — a system opening a world from its own update — is
+        /// immediate: the load hook and the start run nested in the opening world's tick, so the
+        /// caller holds a valid handle and a live scene the moment this returns. The new world takes
+        /// its first tick next frame, since the walk runs over the world count it captured at entry.
         /// @param info  How to spawn and start the world.
         /// @return The opened world's handle.
         [[nodiscard]] WorldInstanceId OpenWorld(const WorldOpenInfo& info);
@@ -231,6 +236,14 @@ namespace Veng
         SetStopContextFactory(function<optional<SystemContext>(WorldInstanceId, Scene&)> factory);
 
         /// @brief Closes a world, stopping its simulation and dropping it; the id then resolves to nothing.
+        ///
+        /// Outside Tick the close is immediate. Issued from inside Tick — a system closing its own or
+        /// another world from its update — it is deferred instead: the world is queued, takes no
+        /// further Sim or View phase this frame, and is stopped (OnStop with the stop context, exactly
+        /// as an immediate close) and dropped once the walk finishes, in the order the closes were
+        /// issued. A queued world still resolves until it drains, so the caller's scene reference
+        /// stays live for the rest of its own call. Closing one world twice within a tick closes it
+        /// once, and a close issued from a system's OnStop during the drain drains in its turn.
         /// @param world  The world to close; an unminted or already-closed id is a no-op.
         void CloseWorld(WorldInstanceId world);
 
@@ -271,9 +284,19 @@ namespace Veng
         /// its net slew) into its clock, runs the accumulated fixed Sim steps then one View pass,
         /// driving the caller's per-step hooks. A paused or unstarted world resets its accumulator so
         /// resuming chases no backlog.
+        ///
+        /// A system may open and close worlds from its own update: an open lands at once and first
+        /// ticks next frame, a close is deferred to the end of the walk (see OpenWorld and
+        /// CloseWorld). Not reentrant — a tick may not be driven from inside a tick.
         /// @param info  The frame delta, view-phase gate, and per-world tick hooks.
         /// @return What the tick observed across all worlds (for the input edge latch).
         WorldTickResult Tick(const WorldTickInfo& info);
+
+        /// @brief Returns whether the runner is inside Tick — its world walk, or the close drain after it.
+        ///
+        /// What decides whether a CloseWorld is deferred or immediate, exposed for a caller that must
+        /// know which of the two it is about to get.
+        [[nodiscard]] bool IsTicking() const { return m_Ticking; }
 
         /// @brief Sets a world's explicit pause toggle, composing with any held PauseScopes.
         /// @param world   The world to pause or resume.
@@ -336,6 +359,17 @@ namespace Veng
         /// @brief Mints the next never-reused world id from the instance counter.
         [[nodiscard]] WorldInstanceId MintId();
 
+        /// @brief Stops a world's started simulation and erases it, here and now.
+        /// @param world  The world to close; an unminted or already-closed id is a no-op.
+        void CloseWorldNow(WorldInstanceId world);
+
+        /// @brief Closes every world a deferred close queued, in issue order, until the queue empties.
+        void DrainPendingCloses();
+
+        /// @brief Whether a world is queued for a deferred close, and so takes no further phase.
+        /// @param world  The world to test.
+        [[nodiscard]] bool IsCloseQueued(WorldInstanceId world) const;
+
         /// @brief Re-arms every already-materialized capture in a world whose captures are suppressed.
         ///
         /// A capture frozen while its world is unpresented holds the scene as it was when the world went
@@ -365,6 +399,12 @@ namespace Veng
 
         /// @brief Builds a started world's stop context at CloseWorld; unset leaves OnStop unrun.
         function<optional<SystemContext>(WorldInstanceId, Scene&)> m_StopContextFactory;
+
+        /// @brief Worlds a close issued inside Tick queued, in issue order; drained after the walk.
+        vector<WorldInstanceId> m_PendingCloses;
+
+        /// @brief True from Tick's entry until its close drain finishes; what makes a close deferred.
+        bool m_Ticking = false;
 
         /// @brief The instance counter minting world ids; never reused, so a stale id resolves to nothing.
         u64 m_NextId = 1;

@@ -301,6 +301,18 @@ path. `World` unset leaves the app to load and drive its own scene (the editor, 
 full control), and the runner is device-free when given no asset manager or context (it drives
 empty-scene worlds without a GPU).
 
+**A system may open and close worlds from its own tick.** `WorldRunner::Tick` walks the worlds it
+holds, so a system deciding mid-update that a world must go — reaping a finished match, reloading a
+level, tearing down the session it came from — calls `CloseWorld` directly rather than publishing a
+marker for the application to drive back through. A close issued while `IsTicking()` is **deferred**:
+the world is queued, takes no further Sim or View phase that frame, and is stopped (`OnStop`) and
+dropped once the walk finishes, in issue order — it still resolves until then, so the caller's scene
+reference stays live for the rest of its call, and closing one world twice within a tick closes it
+once. An `OpenWorld` is **immediate** — the load hook and the start run nested, so the caller holds a
+live world when it returns — but the new world first ticks the next frame. Neither is legal from the
+viewport's *render* walk, where a `GuiDriver` runs and `IsTicking()` is false: a driver wanting a
+world opened or closed stamps a request component a system acts on from its tick.
+
 The world drive is an accumulator: each world's Sim phase steps at its own fixed `SimTickRate`
 (`GameWorldInfo`, default 60 Hz) with a monotonic tick, its View phase runs once per frame, and the
 render gather blends transforms between the last two ticks — see

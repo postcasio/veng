@@ -126,6 +126,42 @@ namespace Veng
 
     void WorldRunner::CloseWorld(const WorldInstanceId world)
     {
+        // Inside a tick the walk owns m_Worlds, so the close is queued rather than erasing under it.
+        // Queuing rather than refusing is what lets a world-managing system act on its own decision
+        // — reap a finished match, reload a level, tear down the session it came from — at the point
+        // it makes it, instead of publishing a marker for the application to drive back through.
+        // The world is skipped for the rest of the walk (closest to the immediate close it replaces,
+        // and what keeps a closing hook's capture from going stale) and stopped at the drain.
+        if (m_Ticking)
+        {
+            if (ResolveWorld(world) != nullptr && !IsCloseQueued(world))
+            {
+                m_PendingCloses.push_back(world);
+            }
+            return;
+        }
+        CloseWorldNow(world);
+    }
+
+    bool WorldRunner::IsCloseQueued(const WorldInstanceId world) const
+    {
+        return std::ranges::find(m_PendingCloses, world) != m_PendingCloses.end();
+    }
+
+    void WorldRunner::DrainPendingCloses()
+    {
+        // By index over a queue that may grow as it drains: a system's OnStop may itself close a
+        // world, which appends here and is honoured in turn. Each id is re-resolved by CloseWorldNow
+        // rather than held as an iterator or an index into m_Worlds, both of which the erases move.
+        for (usize i = 0; i < m_PendingCloses.size(); ++i)
+        {
+            CloseWorldNow(m_PendingCloses[i]);
+        }
+        m_PendingCloses.clear();
+    }
+
+    void WorldRunner::CloseWorldNow(const WorldInstanceId world)
+    {
         const auto it = std::ranges::find_if(m_Worlds, [world](const Unique<World>& w)
                                              { return w->Id == world; });
         if (it == m_Worlds.end())
@@ -153,7 +189,10 @@ namespace Veng
             }
         }
 
-        m_Worlds.erase(it);
+        // Erase by id rather than through the iterator found above: a system's OnStop may close a
+        // world itself, and an immediate close of another world moves this one's slot out from under
+        // a held iterator (one issued inside a tick is queued instead, and cannot).
+        std::erase_if(m_Worlds, [world](const Unique<World>& w) { return w->Id == world; });
     }
 
     const World* WorldRunner::ResolveWorld(const WorldInstanceId world) const
@@ -207,9 +246,25 @@ namespace Veng
     {
         VE_PROFILE_SCOPE("WorldRunner/Tick");
 
+        VE_ASSERT(!m_Ticking, "WorldRunner::Tick is not reentrant");
+        m_Ticking = true;
+
         WorldTickResult result;
-        for (const Unique<World>& world : m_Worlds)
+        // By index over the count captured at entry, holding the heap World rather than a reference
+        // into the vector: a world opened from inside a system's update appends to m_Worlds, which
+        // can reallocate and move every Unique slot — the World it points at does not move. The
+        // fixed count leaves the appended world's first tick to the next frame.
+        const usize count = m_Worlds.size();
+        for (usize i = 0; i < count; ++i)
         {
+            World* const world = m_Worlds[i].get();
+            if (IsCloseQueued(world->Id))
+            {
+                // Closed earlier in this walk: it takes no phase at all this frame, and its clock is
+                // left alone — it is about to be stopped and dropped at the drain.
+                continue;
+            }
+
             Scene& scene = world->GetScene();
             const SceneSimulation* sim = scene.GetSimulation();
             const bool active =
@@ -253,10 +308,15 @@ namespace Veng
                     {
                         info.AfterSimStep(world->Id, scene, tick);
                     }
+                    if (IsCloseQueued(world->Id))
+                    {
+                        // A system closed this world from the step it just ran: no further step.
+                        break;
+                    }
                 }
             }
 
-            if (info.RunViewPhase)
+            if (info.RunViewPhase && !IsCloseQueued(world->Id))
             {
                 const string viewLabel = "World " + std::to_string(world->Id.Value) + " View";
                 VE_PROFILE_SCOPE_DYNAMIC(viewLabel);
@@ -265,6 +325,12 @@ namespace Veng
                     info.BuildContext(world->Id, scene, world->Clock.GetTick(), step.Alpha, false));
             }
         }
+
+        // The drain is itself part of the tick: IsTicking stays true through it, so a close issued
+        // from a system's OnStop queues behind the one being drained rather than erasing mid-drain,
+        // and a world opened from an OnStop simply first ticks next frame.
+        DrainPendingCloses();
+        m_Ticking = false;
         return result;
     }
 

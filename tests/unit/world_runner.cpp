@@ -49,14 +49,114 @@ namespace
     // A probe recording how many times its OnStop (end-play) ran per scene, so a close path that
     // must run OnStop exactly once — never zero, never twice — is checkable by handle. Reads only
     // the scene, never the forwarded context.
+    //
+    // Cascade scripts the one case where end-play itself closes a world: set to a live handle, the
+    // first OnStop to run closes it and clears the script, so the deferred drain is asked to honour
+    // a close issued from inside itself. Unset in every other case.
     struct StopProbe final : SceneSystem
     {
         static inline std::map<const Scene*, int> Stops;
+        static inline WorldRunner* Runner = nullptr;
+        static inline WorldInstanceId Cascade;
 
-        static void Reset() { Stops.clear(); }
+        static void Reset()
+        {
+            Stops.clear();
+            Runner = nullptr;
+            Cascade = WorldInstanceId{};
+        }
 
         void OnUpdate(Scene&, f32, const SystemContext&) override {}
-        void OnStop(Scene& scene, const SystemContext&) override { ++Stops[&scene]; }
+        void OnStop(Scene& scene, const SystemContext&) override
+        {
+            ++Stops[&scene];
+            if (Runner != nullptr && Cascade.IsValid())
+            {
+                const WorldInstanceId target = Cascade;
+                Cascade = WorldInstanceId{};
+                Runner->CloseWorld(target);
+            }
+        }
+    };
+
+    // A Sim-phase probe that drives the runner from inside its own update — the reentrancy the
+    // deferral exists for. Target scripts which world each scene's update closes (its own, or a
+    // peer) and Calls how many times it asks; the probe records what it saw while it ran, so the
+    // during-the-tick half of the contract is checkable and not only the after-the-tick half.
+    struct CloseProbe final : SceneSystem
+    {
+        static inline WorldRunner* Runner = nullptr;
+        static inline std::map<const Scene*, WorldInstanceId> Target;
+        static inline int Calls = 1;
+        static inline std::map<const Scene*, int> Updates;
+        static inline std::map<const Scene*, bool> ResolvedAfterClose;
+        static inline std::map<const Scene*, bool> TickingSeen;
+
+        static void Reset()
+        {
+            Runner = nullptr;
+            Target.clear();
+            Calls = 1;
+            Updates.clear();
+            ResolvedAfterClose.clear();
+            TickingSeen.clear();
+        }
+
+        void OnUpdate(Scene& scene, f32, const SystemContext&) override
+        {
+            ++Updates[&scene];
+            TickingSeen[&scene] = Runner != nullptr && Runner->IsTicking();
+            const auto it = Target.find(&scene);
+            if (it == Target.end() || Runner == nullptr)
+            {
+                return;
+            }
+            for (int call = 0; call < Calls; ++call)
+            {
+                Runner->CloseWorld(it->second);
+            }
+            ResolvedAfterClose[&scene] = Runner->ResolveWorld(it->second) != nullptr;
+        }
+    };
+
+    // A View-phase probe counting its scene's View passes, so "the closed world took no further
+    // phase this frame" is a checked claim rather than an inference from the Sim count.
+    struct ViewProbe final : SceneSystem
+    {
+        static inline std::map<const Scene*, int> Views;
+
+        static void Reset() { Views.clear(); }
+
+        [[nodiscard]] Phase GetPhase() const override { return Phase::View; }
+        void OnUpdate(Scene& scene, f32, const SystemContext&) override { ++Views[&scene]; }
+    };
+
+    // A Sim-phase probe that opens a world from inside its own update, once, recording whether the
+    // fresh handle resolved to a live world before it returned.
+    struct OpenProbe final : SceneSystem
+    {
+        static inline WorldRunner* Runner = nullptr;
+        static inline function<WorldOpenInfo()> Open;
+        static inline WorldInstanceId Opened;
+        static inline bool ResolvedInside = false;
+
+        static void Reset()
+        {
+            Runner = nullptr;
+            Open = {};
+            Opened = WorldInstanceId{};
+            ResolvedInside = false;
+        }
+
+        void OnUpdate(Scene&, f32, const SystemContext&) override
+        {
+            if (Runner == nullptr || !Open || Opened.IsValid())
+            {
+                return;
+            }
+            Opened = Runner->OpenWorld(Open());
+            ResolvedInside = Runner->ResolveWorld(Opened) != nullptr;
+        }
     };
 }
 
@@ -81,6 +181,27 @@ namespace Veng
     {
         static constexpr SystemId Id = 0x0071D000000000A3ULL;
         static string Name() { return "StopProbe"; }
+    };
+
+    template <>
+    struct VengSystem<CloseProbe>
+    {
+        static constexpr SystemId Id = 0xB762E0308C63F17CULL;
+        static string Name() { return "CloseProbe"; }
+    };
+
+    template <>
+    struct VengSystem<ViewProbe>
+    {
+        static constexpr SystemId Id = 0x334CD7ACCB0FDBC7ULL;
+        static string Name() { return "ViewProbe"; }
+    };
+
+    template <>
+    struct VengSystem<OpenProbe>
+    {
+        static constexpr SystemId Id = 0x27AEAA4E6CCF4A71ULL;
+        static string Name() { return "OpenProbe"; }
     };
 }
 
@@ -138,6 +259,18 @@ namespace
     {
         return [&storage](WorldInstanceId, Scene&) -> optional<SystemContext>
         { return storage.Make(); };
+    }
+
+    // A WorldOpenInfo for an empty-scene world running exactly the named systems, started with the
+    // fake context — how the reentrancy cases script one world's system set against another's.
+    WorldOpenInfo WorldOf(ContextStorage& storage, vector<SystemId> systems)
+    {
+        return WorldOpenInfo{
+            .SimTickRate = 60,
+            .StartSimulation = true,
+            .Systems = std::move(systems),
+            .MakeStartContext = [&storage] { return storage.Make(); },
+        };
     }
 
     // A tick info that runs one Sim step per call (delta == the 60 Hz fixed step) and forwards the
@@ -486,4 +619,245 @@ TEST_CASE("A held PauseScope composes with the explicit toggle without clobberin
 
     scope = WorldPauseScope{}; // drop the scope by move-assigning an inert one
     CHECK_FALSE(runner.IsWorldPaused(a));
+}
+
+TEST_CASE("A system closing its own world from its update stops it after the walk, not during")
+{
+    CloseProbe::Reset();
+    ViewProbe::Reset();
+    StopProbe::Reset();
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<CloseProbe>();
+    systems.Register<ViewProbe>();
+    systems.Register<StopProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+
+    ContextStorage storage;
+    runner.SetStopContextFactory(StopFactory(storage));
+    CloseProbe::Runner = &runner;
+
+    const WorldInstanceId a = runner.OpenWorld(WorldOf(
+        storage, {SystemIdOf<CloseProbe>(), SystemIdOf<ViewProbe>(), SystemIdOf<StopProbe>()}));
+    const Scene* scene = &runner.ResolveWorld(a)->GetScene();
+    CloseProbe::Target[scene] = a;
+
+    runner.Tick(OneStep(storage));
+
+    // The update ran to completion, saw the runner ticking, and still resolved its own world after
+    // asking for the close: the scene a system is standing in stays live for the rest of its call.
+    CHECK(CloseProbe::Updates[scene] == 1);
+    CHECK(CloseProbe::TickingSeen[scene]);
+    CHECK(CloseProbe::ResolvedAfterClose[scene]);
+
+    // A queued world takes no further phase this frame — the View pass was skipped.
+    CHECK(ViewProbe::Views.find(scene) == ViewProbe::Views.end());
+
+    // End-play ran exactly once, at the drain, and the world is gone by the time Tick returns.
+    CHECK(StopProbe::Stops[scene] == 1);
+    CHECK(runner.ResolveWorld(a) == nullptr);
+    CHECK_FALSE(runner.IsTicking());
+}
+
+TEST_CASE("A world closed from an earlier world's update takes no phase at all that frame")
+{
+    CloseProbe::Reset();
+    ViewProbe::Reset();
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<CloseProbe>();
+    systems.Register<ViewProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+
+    ContextStorage storage;
+    CloseProbe::Runner = &runner;
+
+    // The closer is opened first, so its victim sits later in the walk and is reached after the
+    // close is issued — the ordering where an immediate erase would have moved the walk's footing.
+    const WorldInstanceId closer = runner.OpenWorld(WorldOf(storage, {SystemIdOf<CloseProbe>()}));
+    const WorldInstanceId victim =
+        runner.OpenWorld(WorldOf(storage, {SystemIdOf<CloseProbe>(), SystemIdOf<ViewProbe>()}));
+    const Scene* closerScene = &runner.ResolveWorld(closer)->GetScene();
+    const Scene* victimScene = &runner.ResolveWorld(victim)->GetScene();
+    CloseProbe::Target[closerScene] = victim;
+
+    runner.Tick(OneStep(storage));
+
+    // The closer ticked normally; the victim ran neither a Sim step nor a View pass and its clock
+    // never advanced, then went away with the walk.
+    CHECK(CloseProbe::Updates[closerScene] == 1);
+    CHECK(CloseProbe::Updates.find(victimScene) == CloseProbe::Updates.end());
+    CHECK(ViewProbe::Views.find(victimScene) == ViewProbe::Views.end());
+    CHECK(runner.ResolveWorld(victim) == nullptr);
+    REQUIRE(runner.ResolveWorld(closer) != nullptr);
+    CHECK(runner.ResolveWorld(closer)->Clock.GetTick() == 1);
+}
+
+TEST_CASE("A world opened from inside a tick is live at once and first ticks the next frame")
+{
+    OpenProbe::Reset();
+    TickProbe::Reset();
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<OpenProbe>();
+    systems.Register<TickProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+
+    ContextStorage storage;
+    OpenProbe::Runner = &runner;
+    OpenProbe::Open = [&storage] { return WorldOf(storage, {SystemIdOf<TickProbe>()}); };
+
+    const WorldInstanceId opener =
+        runner.OpenWorld(WorldOf(storage, {SystemIdOf<OpenProbe>(), SystemIdOf<TickProbe>()}));
+    const Scene* openerScene = &runner.ResolveWorld(opener)->GetScene();
+
+    runner.Tick(OneStep(storage));
+
+    // The open landed at once: the system held a valid handle resolving to a live world before its
+    // update returned.
+    REQUIRE(OpenProbe::Opened.IsValid());
+    CHECK(OpenProbe::ResolvedInside);
+    REQUIRE(runner.ResolveWorld(OpenProbe::Opened) != nullptr);
+    const Scene* openedScene = &runner.ResolveWorld(OpenProbe::Opened)->GetScene();
+
+    // But it is not ticked by the walk that opened it — the walk runs over the count it captured.
+    CHECK(TickProbe::Updates.find(openedScene) == TickProbe::Updates.end());
+    CHECK(runner.ResolveWorld(OpenProbe::Opened)->Clock.GetTick() == 0);
+
+    runner.Tick(OneStep(storage));
+
+    // The next frame is its first: one step to the opener's two.
+    CHECK(TickProbe::Updates[openedScene] == 1);
+    CHECK(TickProbe::Updates[openerScene] == 2);
+}
+
+TEST_CASE("An open that reallocates the world vector leaves the opening world's tick intact")
+{
+    OpenProbe::Reset();
+    TickProbe::Reset();
+    ViewProbe::Reset();
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<OpenProbe>();
+    systems.Register<TickProbe>();
+    systems.Register<ViewProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+
+    ContextStorage storage;
+    OpenProbe::Runner = &runner;
+    OpenProbe::Open = [&storage] { return WorldOf(storage, {SystemIdOf<TickProbe>()}); };
+
+    const WorldInstanceId opener = runner.OpenWorld(WorldOf(
+        storage, {SystemIdOf<OpenProbe>(), SystemIdOf<TickProbe>(), SystemIdOf<ViewProbe>()}));
+    const Scene* openerScene = &runner.ResolveWorld(opener)->GetScene();
+
+    // Fill the world vector to exactly its capacity, so the open issued from inside the tick is
+    // certain to reallocate and move every slot — the case a reference into the vector would not
+    // survive, while the heap World the walk holds does.
+    while (runner.GetWorlds().size() < runner.GetWorlds().capacity())
+    {
+        (void)runner.OpenWorld(EmptyWorld(storage));
+    }
+    const Unique<World>* const slotsBefore = runner.GetWorlds().data();
+
+    runner.Tick(OneStep(storage));
+
+    CHECK(runner.GetWorlds().data() != slotsBefore);
+
+    // The opening world finished its own tick across the reallocation: its Sim step ran, its View
+    // pass ran, and its clock — read from the World after the append — advanced.
+    CHECK(TickProbe::Updates[openerScene] == 1);
+    CHECK(ViewProbe::Views[openerScene] == 1);
+    REQUIRE(runner.ResolveWorld(opener) != nullptr);
+    CHECK(runner.ResolveWorld(opener)->Clock.GetTick() == 1);
+}
+
+TEST_CASE("Two closes of one world within a tick close it once")
+{
+    CloseProbe::Reset();
+    StopProbe::Reset();
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<CloseProbe>();
+    systems.Register<StopProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+
+    ContextStorage storage;
+    runner.SetStopContextFactory(StopFactory(storage));
+    CloseProbe::Runner = &runner;
+    CloseProbe::Calls = 2;
+
+    const WorldInstanceId a =
+        runner.OpenWorld(WorldOf(storage, {SystemIdOf<CloseProbe>(), SystemIdOf<StopProbe>()}));
+    const Scene* scene = &runner.ResolveWorld(a)->GetScene();
+    CloseProbe::Target[scene] = a;
+
+    runner.Tick(OneStep(storage));
+
+    // The second ask is absorbed: end-play ran once, not twice.
+    CHECK(StopProbe::Stops[scene] == 1);
+    CHECK(runner.ResolveWorld(a) == nullptr);
+}
+
+TEST_CASE("A close issued from a system's OnStop is drained in its turn")
+{
+    CloseProbe::Reset();
+    StopProbe::Reset();
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<CloseProbe>();
+    systems.Register<StopProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+
+    ContextStorage storage;
+    runner.SetStopContextFactory(StopFactory(storage));
+    CloseProbe::Runner = &runner;
+    StopProbe::Runner = &runner;
+
+    const WorldInstanceId first =
+        runner.OpenWorld(WorldOf(storage, {SystemIdOf<CloseProbe>(), SystemIdOf<StopProbe>()}));
+    const WorldInstanceId cascaded = runner.OpenWorld(WorldOf(storage, {SystemIdOf<StopProbe>()}));
+    const Scene* firstScene = &runner.ResolveWorld(first)->GetScene();
+    const Scene* cascadedScene = &runner.ResolveWorld(cascaded)->GetScene();
+
+    // The first world closes itself from its update; its end-play, running at the drain, closes the
+    // second — a close issued from inside the drain, which the drain must still honour.
+    CloseProbe::Target[firstScene] = first;
+    StopProbe::Cascade = cascaded;
+
+    runner.Tick(OneStep(storage));
+
+    CHECK(StopProbe::Stops[firstScene] == 1);
+    CHECK(StopProbe::Stops[cascadedScene] == 1);
+    CHECK(runner.ResolveWorld(first) == nullptr);
+    CHECK(runner.ResolveWorld(cascaded) == nullptr);
+    CHECK_FALSE(runner.IsTicking());
+}
+
+TEST_CASE("A close issued outside a tick applies before the call returns")
+{
+    StopProbe::Reset();
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<StopProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+
+    ContextStorage storage;
+    runner.SetStopContextFactory(StopFactory(storage));
+    const WorldInstanceId a = runner.OpenWorld(WorldOf(storage, {SystemIdOf<StopProbe>()}));
+    const Scene* scene = &runner.ResolveWorld(a)->GetScene();
+
+    // Nothing is ticking, so the deferral does not apply: the world is stopped and gone at the call
+    // rather than at some later drain.
+    CHECK_FALSE(runner.IsTicking());
+    runner.CloseWorld(a);
+    CHECK(StopProbe::Stops[scene] == 1);
+    CHECK(runner.ResolveWorld(a) == nullptr);
 }
