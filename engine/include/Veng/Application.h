@@ -71,6 +71,11 @@ namespace Veng
         class AudioDevice;
         class AudioEngine;
     }
+    namespace Text
+    {
+        class GlyphSource;
+        class GlyphAtlas;
+    }
 
     /// @brief Returns the directory containing the running executable.
     ///
@@ -729,6 +734,16 @@ namespace Veng
             VE_ASSERT(m_AssetManager, "GetAssetManager before Run(): the asset manager exists only "
                                       "once Run() has initialized the engine");
             return *m_AssetManager;
+        }
+
+        /// @brief Returns the shared dynamic glyph atlas every font resolves glyphs into.
+        ///
+        /// @pre Run() has initialized the engine — the atlas exists only inside Run().
+        [[nodiscard]] Text::GlyphAtlas& GetGlyphAtlas()
+        {
+            VE_ASSERT(m_GlyphAtlas, "GetGlyphAtlas before Run(): the glyph atlas exists only once "
+                                    "Run() has initialized the engine");
+            return *m_GlyphAtlas;
         }
 
         /// @brief Returns the mixer-facing audio engine.
@@ -2039,6 +2054,15 @@ namespace Veng
         /// @brief Owns every cached asset; borrows m_RenderContext, so declared after it and destructs
         ///        first, retiring each asset's GPU resources while the context is still live.
         Unique<AssetManager> m_AssetManager;
+
+        /// @brief The runtime glyph rasterizer the shared atlas draws from; declared before the atlas
+        ///        (which borrows it) and after m_RenderContext, so it outlives the atlas and both
+        ///        tear down before the context.
+        Unique<Text::GlyphSource> m_GlyphSource;
+
+        /// @brief The one dynamic glyph atlas, shared by every font; borrows m_RenderContext and
+        ///        m_GlyphSource, so it destructs before either.
+        Unique<Text::GlyphAtlas> m_GlyphAtlas;
 
         /// @brief Keeps the graphics-quality schema resident for the settings store to borrow; empty
         ///        when ApplicationInfo::GraphicsSchema is unset. Declared before m_GraphicsSettings so

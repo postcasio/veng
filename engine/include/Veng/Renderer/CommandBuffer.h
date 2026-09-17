@@ -83,18 +83,22 @@ namespace Veng::Renderer
         vector<u32> DynamicOffsets;
     };
 
-    /// @brief One buffer-to-image copy region targeting a single mip level.
+    /// @brief One buffer↔image copy region targeting a rectangle of a single mip level.
     ///
-    /// The source pixels for the level begin at BufferOffset in the staging buffer and are tightly
-    /// packed (no row padding); Extent is the level's texel dimensions. Used to upload a precooked
-    /// mip chain from one staging buffer in a single CopyBufferToImage.
+    /// The buffer-side pixels for the region begin at BufferOffset and are tightly packed (no row
+    /// padding, rows the region's width); Extent is the region's texel dimensions and ImageOffset
+    /// its top-left texel on the image side. The default ImageOffset covers a whole mip level, so a
+    /// precooked mip chain uploads (or reads back) from one staging buffer in a single command; a
+    /// non-zero ImageOffset targets a sub-rectangle, as a dynamic atlas packing a tile does.
     struct BufferImageCopyRegion
     {
-        /// @brief Byte offset of this level's pixels within the staging buffer.
+        /// @brief Byte offset of this region's pixels within the buffer.
         u64 BufferOffset = 0;
-        /// @brief Destination mip level.
+        /// @brief Destination (or source) mip level.
         u32 MipLevel = 0;
-        /// @brief This level's texel dimensions (width, height, depth).
+        /// @brief The region's top-left texel on the image side (x, y, z).
+        uvec3 ImageOffset = {0, 0, 0};
+        /// @brief The region's texel dimensions (width, height, depth).
         uvec3 Extent = {1, 1, 1};
     };
 

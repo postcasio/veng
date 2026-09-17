@@ -1077,6 +1077,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_layout.cpp
             tests/unit/gui_localization.cpp
             tests/unit/glyph_source.cpp
+            tests/unit/glyph_packer.cpp
             tests/unit/gui_style_states.cpp
             tests/unit/gui_input.cpp
             tests/unit/gui_surface_input.cpp
@@ -1855,6 +1856,10 @@ if (VENG_BUILD_TESTS)
             # font_loader.cpp cooks the font fixture pack in-process (msdf-atlas-gen),
             # LoadSyncs the Font, and asserts the atlas + metrics + ShapeRun contract.
             tests/gpu/font_loader.cpp
+            # glyph_atlas.cpp loads the kerning fixture face through GlyphSource, ensures glyphs into
+            # a GlyphAtlas, records the uploads into a frame, and reads a page back to prove the
+            # rasterize+pack+upload, the hit path, LRU eviction, and the over-cap not-resident result.
+            tests/gpu/glyph_atlas.cpp
             # gui_golden.cpp cooks the font fixture pack, builds a hand-authored DrawList,
             # renders it through GuiScenePass over a solid scene output, and fuzzy-compares
             # the composite to the committed golden PNG (the Gui image floor). It loads the

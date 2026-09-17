@@ -98,6 +98,8 @@ add_library(veng SHARED
         src/Asset/Environment.cpp
         src/Asset/Font.cpp
         src/Text/GlyphSource.cpp
+        src/Text/GlyphPacker.cpp
+        src/Text/GlyphAtlas.cpp
         src/Asset/InputMappingContext.cpp
         src/Asset/Prefab.cpp
         src/Asset/Primitives.cpp

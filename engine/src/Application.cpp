@@ -10,6 +10,8 @@
 #include <Veng/Log.h>
 #include <Veng/Platform/CrashReport.h>
 #include <Veng/Platform/UserPaths.h>
+#include <Veng/Text/GlyphAtlas.h>
+#include <Veng/Text/GlyphSource.h>
 #include <Veng/Time.h>
 #include <Veng/UI/Query.h>
 
@@ -255,6 +257,11 @@ namespace Veng
         m_AssetManager = CreateUnique<AssetManager>(
             m_RenderContext, *m_TaskSystem, m_TypeRegistry,
             AssetManagerInfo{.AssetTypes = m_Info.AssetTypes, .Loaders = m_Info.AssetLoaders});
+
+        // The runtime rasterizer and the one shared glyph atlas every font draws into. Both hold the
+        // context, so they tear down before it; the atlas allocates no page until a glyph is ensured.
+        m_GlyphSource = CreateUnique<Text::GlyphSource>();
+        m_GlyphAtlas = CreateUnique<Text::GlyphAtlas>(m_RenderContext, *m_GlyphSource);
 
         // The audio subsystem. A headless run (CI, a dedicated server, the cooker) takes the null
         // backend; a windowed run tries the hardware device and falls to null when none initializes.

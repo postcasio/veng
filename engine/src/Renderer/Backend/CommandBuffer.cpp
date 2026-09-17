@@ -347,7 +347,9 @@ namespace Veng::Renderer
                                                          .mipLevel = region.MipLevel,
                                                          .baseArrayLayer = 0,
                                                          .layerCount = layerCount},
-                                    .imageOffset = {.x = 0, .y = 0, .z = 0},
+                                    .imageOffset = {.x = static_cast<i32>(region.ImageOffset.x),
+                                                    .y = static_cast<i32>(region.ImageOffset.y),
+                                                    .z = static_cast<i32>(region.ImageOffset.z)},
                                     .imageExtent = {.width = region.Extent.x,
                                                     .height = region.Extent.y,
                                                     .depth = region.Extent.z}});
@@ -396,7 +398,9 @@ namespace Veng::Renderer
                                                          .mipLevel = region.MipLevel,
                                                          .baseArrayLayer = 0,
                                                          .layerCount = layerCount},
-                                    .imageOffset = {.x = 0, .y = 0, .z = 0},
+                                    .imageOffset = {.x = static_cast<i32>(region.ImageOffset.x),
+                                                    .y = static_cast<i32>(region.ImageOffset.y),
+                                                    .z = static_cast<i32>(region.ImageOffset.z)},
                                     .imageExtent = {.width = region.Extent.x,
                                                     .height = region.Extent.y,
                                                     .depth = region.Extent.z}});
