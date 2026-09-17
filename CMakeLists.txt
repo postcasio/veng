@@ -1842,6 +1842,11 @@ if (VENG_BUILD_TESTS)
             # and a component routes by placement (HDR skips the layer stack). Needs both the cooker
             # HUD fixture and the post-effect pack fixture dirs.
             tests/gpu/gui_hdr_overlay.cpp
+            # gui_overlay_input.cpp routes real mouse events through the InputRouter and the real
+            # GuiConsumer into overlay documents: the window -> document mapping at a non-zero region
+            # offset and a UI scale of 2, a display-only or hidden pre-bloom overlay being
+            # unreachable, and a post-tonemap document taking precedence over a pre-bloom one.
+            tests/gpu/gui_overlay_input.cpp
             tests/gpu/mesh_loader.cpp
             tests/gpu/shader_loader.cpp
             tests/gpu/material_loader.cpp

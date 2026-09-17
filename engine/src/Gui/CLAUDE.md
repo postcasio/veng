@@ -407,6 +407,18 @@ association, restored in inverse order on destruction) and flipping `SetInteract
 input consumer then routes that seat's devices into the document. The takeover every game screen
 otherwise hand-rolls is one engine seam.
 
+**What input walks is not the layer stack.** A viewport keeps an **input attachment list**
+(`Viewport::GetInputDocuments`) — composite order, bottom → top: the screen-space pre-bloom overlay
+documents it drove this frame, then the whole layer stack over them — and the consumer walks that in
+reverse. So `Interactive` means the same thing at either `GuiOverlayPlacement`: a document blended
+into the scene HDR (which joins no layer stack, and would otherwise be unreachable however it is
+flagged) takes input on the same terms as one drawn after tonemap, and a post-tonemap veil standing
+over a glowing menu is offered the event first and absorbs it while it stands. The pre-bloom half is
+rebuilt every `Render` and cleared on a scene change; a `WorldAnchored` overlay stays out of it — a
+screen point carries no meaning on a projected plane, and a document on a world surface is
+`GuiSurface`'s job. `Viewport::IsPointerOverDocument` — how gameplay declines a pointer the UI is
+using — answers off the same list, so it cannot disagree with who gets the event.
+
 **A focused text field claims the editing keys before focus navigation sees them.** Backspace,
 Delete, the arrows and Home/End produce no character, so they reach a field only as key presses:
 the consumer maps each to a `TextEditAction` and offers it to `Document::DispatchTextEdit` first.

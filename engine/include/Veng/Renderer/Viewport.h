@@ -446,6 +446,23 @@ namespace Veng::Renderer
         /// @return The ordered attached documents, empty when none are attached.
         [[nodiscard]] std::span<Gui::Document* const> GetAttachedDocuments() const;
 
+        /// @brief Returns the documents input may route into, in the order the eye sees them.
+        ///
+        /// What the *compositor* draws and what an *input layer* walks are separate lists, because a
+        /// document composited into the scene HDR before bloom never joins the layer stack and would
+        /// otherwise be unreachable however it is flagged. This list is the union in composite order,
+        /// bottom → top: the screen-space pre-bloom overlay documents this viewport drove this frame
+        /// first, then the whole layer stack over them. An input layer walks it in reverse, so a
+        /// post-tonemap document standing over a pre-bloom one is offered an event first.
+        ///
+        /// The pre-bloom half holds only what is routable — visible, claimed by this viewport,
+        /// Interactive, and ScreenSpace, since a world-anchored document is reached through a camera
+        /// ray rather than a screen point — and is rebuilt every Render and cleared when the bound
+        /// scene changes. The layer-stack half is the stack as attached; a display-only document on
+        /// it is skipped by the input layer's own Document::IsInteractive() test.
+        /// @return The routable documents in composite order, empty when there are none.
+        [[nodiscard]] std::span<Gui::Document* const> GetInputDocuments() const;
+
         /// @brief Sets the seat a hosted document inherits as its input identity.
         ///
         /// A document attached to this viewport inherits this seat (its Viewer entity); an input
@@ -575,10 +592,11 @@ namespace Veng::Renderer
         ///         lies outside the region (or the region has a zero extent).
         [[nodiscard]] optional<vec2> WindowToViewport(ivec2 windowPoint) const;
 
-        /// @brief Returns whether a window point lands on an interactive attached document's element.
+        /// @brief Returns whether a window point lands on an interactive presented document's element.
         ///
         /// Maps the point through WindowToViewport and the UI scale into document space, then
-        /// hit-tests each attached **interactive** document top-first. A display-only document is
+        /// hit-tests each routable (GetInputDocuments) **interactive** document top-first — the same
+        /// list and order the input layer routes through. A display-only document is
         /// skipped (it takes no input, so it does not own the pointer), as is an element styled
         /// `pointer-events: none` — the hit-test already passes through those.
         ///
@@ -844,6 +862,12 @@ namespace Veng::Renderer
         /// @brief Rebuilds m_DocumentPointers from m_Documents after an attach or detach.
         void RebuildDocumentPointers();
 
+        /// @brief Rebuilds m_InputDocuments from the pre-bloom routables and the layer stack.
+        ///
+        /// Called whenever either half moves — a document attach or detach, and the per-frame
+        /// pre-bloom drive — so the list an input layer walks is never a frame behind the stack.
+        void RebuildInputDocuments();
+
         /// @brief Drives every GuiSurface in the bound scene into its HDR target ahead of the render.
         ///
         /// Walks the bound ViewState World for GuiSurface components, drives each one's document into
@@ -949,6 +973,15 @@ namespace Veng::Renderer
         /// The span GetAttachedDocuments returns, kept parallel to m_Documents so the accessor hands
         /// out a contiguous Document* view without exposing the layer records.
         vector<Gui::Document*> m_DocumentPointers;
+
+        /// @brief This frame's routable pre-bloom overlay documents, in drive order.
+        ///
+        /// Rebuilt every DriveHdrOverlays and cleared on a scene change: a pre-bloom document is not
+        /// attached to the stack, so nothing else would drop it when its overlay's scene goes away.
+        vector<Gui::Document*> m_HdrInputDocuments;
+
+        /// @brief The span GetInputDocuments returns: m_HdrInputDocuments then m_DocumentPointers.
+        vector<Gui::Document*> m_InputDocuments;
 
         /// @brief The seat a hosted document inherits as its input identity; Null reads every device.
         Entity m_Seat = Entity::Null;

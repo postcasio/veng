@@ -143,11 +143,29 @@ namespace Veng::Renderer
         {
             m_DocumentPointers.push_back(attached.Document);
         }
+        RebuildInputDocuments();
+    }
+
+    void Viewport::RebuildInputDocuments()
+    {
+        // Composite order, bottom → top: the pre-bloom documents are blended into the scene before
+        // tonemap, so every layer-stack document stands over all of them.
+        m_InputDocuments.clear();
+        m_InputDocuments.reserve(m_HdrInputDocuments.size() + m_DocumentPointers.size());
+        m_InputDocuments.insert(m_InputDocuments.end(), m_HdrInputDocuments.begin(),
+                                m_HdrInputDocuments.end());
+        m_InputDocuments.insert(m_InputDocuments.end(), m_DocumentPointers.begin(),
+                                m_DocumentPointers.end());
     }
 
     std::span<Gui::Document* const> Viewport::GetAttachedDocuments() const
     {
         return m_DocumentPointers;
+    }
+
+    std::span<Gui::Document* const> Viewport::GetInputDocuments() const
+    {
+        return m_InputDocuments;
     }
 
     void Viewport::RefreshOutputHandle()
@@ -399,6 +417,12 @@ namespace Veng::Renderer
         if (state.World != m_ViewState.World)
         {
             ++m_SceneEpoch;
+
+            // A pre-bloom overlay's document is off the layer stack, so nothing detaches it when the
+            // scene it lives in is closed or swapped out: drop the departed scene's routables here
+            // rather than route a pointer into a document whose owner may already be gone.
+            m_HdrInputDocuments.clear();
+            RebuildInputDocuments();
         }
         m_ViewState = state;
         m_HasViewState = true;
@@ -737,8 +761,10 @@ namespace Veng::Renderer
     void Viewport::DriveHdrOverlays()
     {
         m_HdrOverlayViews.clear();
+        m_HdrInputDocuments.clear();
         if (m_ViewState.World == nullptr)
         {
+            RebuildInputDocuments();
             return;
         }
 
@@ -803,7 +829,20 @@ namespace Veng::Renderer
                 .WorldAnchored = worldAnchored,
             });
             ++index;
+
+            // Routing a screen point into a world-anchored document would land on meaningless
+            // coordinates — it is reached through a camera ray, which this seam does not carry — so
+            // only the flat placement joins the list an input layer walks.
+            if (overlay.Interactive && !worldAnchored)
+            {
+                if (Gui::Document* const document = overlay.GetDocument(); document != nullptr)
+                {
+                    m_HdrInputDocuments.push_back(document);
+                }
+            }
         }
+
+        RebuildInputDocuments();
     }
 
     void Viewport::ServicePendingPick()
@@ -923,10 +962,11 @@ namespace Veng::Renderer
         const f32 scale = m_UiScale > 0.0f ? m_UiScale : 1.0f;
         const vec2 documentPoint = *normalized * vec2(m_Region.Extent) / scale;
 
-        // Top-first: the topmost layer owns the pointer, matching the routing order.
-        for (auto it = m_Documents.rbegin(); it != m_Documents.rend(); ++it)
+        // Top-first over the same list the input layer routes through, so the answer agrees with who
+        // actually gets the event — a pre-bloom menu owns the pointer as much as a post-tonemap one.
+        for (auto it = m_InputDocuments.rbegin(); it != m_InputDocuments.rend(); ++it)
         {
-            Gui::Document* const document = it->Document;
+            Gui::Document* const document = *it;
             if (document != nullptr && document->IsInteractive() &&
                 document->HitTest(documentPoint) != nullptr)
             {

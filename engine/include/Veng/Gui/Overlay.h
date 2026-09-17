@@ -101,6 +101,12 @@ namespace Veng
         /// False (the default) leaves the overlay display-only: it data-binds and draws but hit-tests
         /// nothing and takes no focus. True routes the claiming viewport's seat input into the
         /// document. A system may flip it at runtime; the next Drive reapplies the change.
+        ///
+        /// It applies to **either Placement** of a ScreenSpace overlay: a pre-bloom overlay joins the
+        /// claiming viewport's input list (Viewport::GetInputDocuments) exactly as a post-tonemap one
+        /// joins its layer stack, and a post-tonemap document standing over a pre-bloom one is offered
+        /// an event first. A **WorldAnchored** overlay takes no input — a screen point carries no
+        /// meaning on a projected plane, and a document on a world surface is GuiSurface's job.
         bool Interactive = false;
 
         /// @brief Whether the overlay draws, or is suppressed without tearing its runtime down.

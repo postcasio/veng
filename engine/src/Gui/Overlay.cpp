@@ -234,6 +234,16 @@ namespace Veng
         // Auto-wire the host's translator, as Drive does — see there.
         document->SetTranslator(translator);
 
+        // Interactive says this overlay takes input whatever it composites into, so the flag reaches
+        // the document here the way the layer applies it on the stack. The comparand is the live
+        // document rather than the last applied value: there is no attach to reapply the flag on, and
+        // a re-instantiated tree comes back display-only.
+        if (document->IsInteractive() != Interactive)
+        {
+            document->SetInteractive(Interactive);
+            runtime.AppliedInteractive = Interactive;
+        }
+
         const GuiDriverFrame frame{
             .Document = *document,
             .Root = &document->Root(),

@@ -129,7 +129,7 @@ namespace Veng::Gui
     {
         const EventType type = event.GetEventType();
 
-        // Pointer events route to the viewport under the pointer, into its interactive documents
+        // Pointer events route to the viewport under the pointer, into its routable documents
         // top-first; the first document that consumes stops the fall-through. The drive list is
         // walked in reverse because registration order is composite order — when regions overlap
         // (a fullscreen game screen registered over the primary viewport), the last-registered
@@ -171,8 +171,7 @@ namespace Veng::Gui
                 {
                     const vec2 turn = static_cast<const MouseScrolledEvent&>(event).GetOffset();
                     const vec2 delta = vec2(turn.x, -turn.y) * WheelNotchPoints;
-                    const std::span<Gui::Document* const> scrolled =
-                        viewport->GetAttachedDocuments();
+                    const std::span<Gui::Document* const> scrolled = viewport->GetInputDocuments();
                     for (auto it = scrolled.rbegin(); it != scrolled.rend(); ++it)
                     {
                         Gui::Document* document = *it;
@@ -205,7 +204,7 @@ namespace Veng::Gui
                     pointer.Modifiers = ToInputModifiers(released.GetMods());
                 }
 
-                const std::span<Gui::Document* const> documents = viewport->GetAttachedDocuments();
+                const std::span<Gui::Document* const> documents = viewport->GetInputDocuments();
                 for (auto it = documents.rbegin(); it != documents.rend(); ++it)
                 {
                     Gui::Document* document = *it;
@@ -248,8 +247,7 @@ namespace Veng::Gui
             {
                 for (Renderer::Viewport* viewport : m_Viewports)
                 {
-                    const std::span<Gui::Document* const> documents =
-                        viewport->GetAttachedDocuments();
+                    const std::span<Gui::Document* const> documents = viewport->GetInputDocuments();
                     for (auto it = documents.rbegin(); it != documents.rend(); ++it)
                     {
                         Gui::Document* document = *it;
@@ -278,7 +276,7 @@ namespace Veng::Gui
             }
             for (Renderer::Viewport* viewport : m_Viewports)
             {
-                const std::span<Gui::Document* const> documents = viewport->GetAttachedDocuments();
+                const std::span<Gui::Document* const> documents = viewport->GetInputDocuments();
                 for (auto it = documents.rbegin(); it != documents.rend(); ++it)
                 {
                     Gui::Document* document = *it;
@@ -296,7 +294,7 @@ namespace Veng::Gui
             const auto& typed = static_cast<const KeyTypedEvent&>(event);
             for (Renderer::Viewport* viewport : m_Viewports)
             {
-                const std::span<Gui::Document* const> documents = viewport->GetAttachedDocuments();
+                const std::span<Gui::Document* const> documents = viewport->GetInputDocuments();
                 for (auto it = documents.rbegin(); it != documents.rend(); ++it)
                 {
                     Gui::Document* document = *it;
