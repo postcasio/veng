@@ -14,7 +14,9 @@
 //   (b) a display-only or hidden pre-bloom overlay is unreachable;
 //   (c) precedence both ways: a post-tonemap document standing over a pre-bloom one is offered the
 //       event first and absorbs it, and passes it down when it hits nothing;
-//   (d) Interactive reaches a pre-bloom overlay's document, and flipping it off releases it.
+//   (d) Interactive reaches a pre-bloom overlay's document, and flipping it off releases it;
+//   (e) the cursor rule's scope: a viewport reports a drawn cursor only while a routable document
+//       declares one, so a display-only or hidden overlay stops counting.
 
 #include <doctest/doctest.h>
 
@@ -268,4 +270,50 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     route.PressAt(OnTarget);
     CHECK(ldr.Presses == 1);
     CHECK(hdr.Presses == 1);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui overlay input: a viewport draws a cursor only while a routable document "
+                  "declares one")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+
+    PointerRoute route(Context, assets);
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    // Pre-bloom, so the answer is proven off the routable list rather than the layer stack.
+    GuiOverlay& overlay = AddOverlay(*scene, entity, GuiOverlayPlacement::SceneHdrPreBloom, true);
+
+    route.View->SetViewState({.World = scene.get(), .Delta = 0.016f});
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { route.View->Render(cmd); });
+    ClickTarget target;
+    target.Install(overlay);
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { route.View->Render(cmd); });
+
+    // An interactive overlay declaring nothing leaves the OS cursor's owner alone.
+    CHECK_FALSE(target.Doc->IsDrawingCursor());
+    CHECK_FALSE(route.View->IsDrawingCursor());
+
+    // The reflected field reaches the document on the next drive, and the viewport reports it.
+    overlay.DrawsCursor = true;
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { route.View->Render(cmd); });
+    CHECK(target.Doc->IsDrawingCursor());
+    CHECK(route.View->IsDrawingCursor());
+
+    // Display-only: the document keeps its declaration, and the viewport stops reporting it — a
+    // document nothing can point at draws no pointer to collide with.
+    overlay.Interactive = false;
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { route.View->Render(cmd); });
+    CHECK(target.Doc->IsDrawingCursor());
+    CHECK_FALSE(route.View->IsDrawingCursor());
+
+    overlay.Interactive = true;
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { route.View->Render(cmd); });
+    CHECK(route.View->IsDrawingCursor());
+
+    // Hidden: not driven, so it leaves the routable list entirely.
+    overlay.Visible = false;
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { route.View->Render(cmd); });
+    CHECK_FALSE(route.View->IsDrawingCursor());
 }

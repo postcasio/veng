@@ -109,6 +109,17 @@ namespace Veng
         /// meaning on a projected plane, and a document on a world surface is GuiSurface's job.
         bool Interactive = false;
 
+        /// @brief Whether the document draws its own pointer, so the OS cursor hides over it.
+        ///
+        /// False (the default) leaves the OS cursor alone: the consumer owns it, and the engine never
+        /// writes its visibility. True declares that this overlay's document renders a pointer of its
+        /// own (from Gui::Document::GetPointerPosition), so the engine hides the OS cursor while the
+        /// overlay is presented — nothing draws two pointers on purpose — and restores it on the frame
+        /// the last such overlay goes away. The rule applies while the overlay is claimed, Visible and
+        /// Interactive, and yields to the immediate-mode layer whenever that wants the mouse (its
+        /// widgets draw no pointer of their own). A system may flip it at runtime.
+        bool DrawsCursor = false;
+
         /// @brief Whether the overlay draws, or is suppressed without tearing its runtime down.
         ///
         /// True (the default) draws normally. False leaves the runtime host, its document, and every
@@ -321,6 +332,7 @@ VE_FIELD(Document, .DisplayName = "Document")
 VE_FIELD(Layer, .DisplayName = "Layer")
 VE_FIELD(Driver, .DisplayName = "Driver")
 VE_FIELD(Interactive, .DisplayName = "Interactive")
+VE_FIELD(DrawsCursor, .DisplayName = "Draws Cursor")
 VE_FIELD(Visible, .DisplayName = "Visible")
 VE_FIELD(TargetSeat, .DisplayName = "Target Seat")
 VE_FIELD(Placement, .DisplayName = "Placement")

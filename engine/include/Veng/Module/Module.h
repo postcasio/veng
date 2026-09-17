@@ -112,10 +112,14 @@ extern "C"
 /// localization borrow. Both structs are host-constructed and handed to a module-registered driver,
 /// and the driver's vtable is what a module subclasses, so a stale module would override a slot
 /// whose signature no longer matches and read the frame short of what the engine fills.
+/// Version 24 adds two Application virtuals — OnWorldPresented and OnWorldPresentAbandoned — beside
+/// OnWorldArrival, and a DrawsCursor field to GuiOverlay. A module subclasses Application, so a
+/// stale module's vtable is short of the slots the host dispatches through, and it lays out the
+/// component the host reflects and spawns short of the field the host reads.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 23u
+#define VENG_MODULE_ABI_VERSION 24u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

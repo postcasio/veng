@@ -224,6 +224,33 @@ either **once the attempts are spent** or immediately if its **destination vanis
 strand the viewport on the old world. `ManagedViewportSet` carries the same surface (`GetViewportWorld` /
 `GetPendingViewportWorld` / `RebindWorldWhenReady` / `GetAbandonedPresentWorld`).
 
+**Both outcomes of a rebind are delivered, not polled.** The engine knows the exact frame a viewport
+starts presenting a world and the exact frame a present-on-ready request gives up, so it says so
+rather than leaving a consumer to compare the queries above against a remembered value every frame.
+**`OnWorldPresented(index, world, seat)`** fires once per completed rebind — deferred or
+present-on-ready — at the same frame-safe point the rebind applied on, *after* the seat association,
+the cursor seat and the unbound-seat resolution have settled, carrying the seat the viewport ended up
+adopting (`Entity::Null` when the destination seats none). It is where a consumer gives a presented
+seat its input posture, by stamping one `FocusRequest`; focus policy stays the consumer's and the
+engine writes none. **`OnWorldPresentAbandoned(index, destination)`** fires once when a
+present-on-ready request is abandoned, so a transition aborts on the frame it failed; the
+`GetAbandonedManagedPresentWorld` record stands afterwards for a reader that arrives late. Both run
+beside `OnWorldArrival` and after it, so arrival state is applied before the presentation moment is
+reported.
+
+**The OS cursor hides where a presented document already draws one.** `GuiOverlay::DrawsCursor` (a
+reflected field, default false) declares that an overlay's document renders a pointer of its own;
+nothing draws two pointers on purpose, so the engine hides the OS cursor while such an overlay is
+presented and restores it on the frame the last one goes away. The rule is scoped to the **viewport
+drive-list** the `GuiConsumer` walks — not the managed set — so an overlay world presented through a
+viewport a consumer registered itself counts, and it reads each viewport's routable document list
+(`Renderer::Viewport::IsDrawingCursor` over `GetInputDocuments`), which means an overlay that goes
+display-only or hidden stops counting the same frame it stops taking input. Ownership is explicit:
+the engine writes cursor visibility only from the first frame it sees such an overlay, and an
+application that authors the flag nowhere is never written to — so a consumer managing the cursor
+itself simply does not author it. The immediate-mode layer keeps the cursor whenever it wants the
+mouse, its widgets drawing no pointer of their own.
+
 **The engine's readiness is necessary, and a consumer may say it is not sufficient.**
 **`SetWorldPresentReadyGate(gate)`** (`ManagedViewportSet::SetPresentReadyGate`) installs a
 `WorldPresentReadyGate` — a `bool(const World&)` predicate the present-on-ready path consults *after*
@@ -435,7 +462,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 23** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 24** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the
@@ -467,7 +494,12 @@ and calls `Run()`.
   ABI surface *by registration* — game modes are systems + components, the system catalog rides a
   per-system trait the way a component's `TypeId` does, and a `Level` is an asset — but the struct
   the host passes into a system each tick is itself boundary-crossing, and growing it bumps the ABI
-  exactly as growing `AssetEditorContext` does.
+  exactly as growing `AssetEditorContext` does. **Version 24** is the first bump `Application`
+  itself drove: `OnWorldPresented` and `OnWorldPresentAbandoned` are new virtuals declared beside
+  `OnWorldArrival`, and a module subclasses `Application`, so a module built against ABI 23 carries
+  a vtable short of the slots the host dispatches through — the same class of hazard as a short
+  struct, on the class a module derives from rather than one it is handed. It also adds
+  `GuiOverlay::DrawsCursor`, a field on a component the host reflects and a module's prefabs spawn.
 - **`veng_add_game(<name> SOURCES … [ASSET_PACK …] [MCP])`** is the build entry: it emits
   `lib<name>` + `<name>-launcher` from one declaration, compiling the launcher exe from
   **`launcher_main.cpp`** — an **installed SDK artifact** whose path is `VENG_LAUNCHER_MAIN`,

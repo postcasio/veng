@@ -168,6 +168,16 @@ namespace Veng::Renderer
         return m_InputDocuments;
     }
 
+    bool Viewport::IsDrawingCursor() const
+    {
+        return std::ranges::any_of(m_InputDocuments,
+                                   [](const Gui::Document* const document)
+                                   {
+                                       return document != nullptr && document->IsInteractive() &&
+                                              document->IsDrawingCursor();
+                                   });
+    }
+
     void Viewport::RefreshOutputHandle()
     {
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();

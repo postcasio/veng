@@ -54,6 +54,34 @@ namespace Veng
     /// @return True once the consumer considers @p world ready to become visible.
     using WorldPresentReadyGate = function<bool(const World& world)>;
 
+    /// @brief One managed viewport's completed rebind: the index, the world it now presents, its seat.
+    ///
+    /// Recorded at the frame's rebind apply point and drained once
+    /// (ManagedViewportSet::DrainPresentedViewports), so a consumer acts on the moment a viewport
+    /// started presenting a world rather than comparing bindings every frame.
+    struct PresentedViewport
+    {
+        /// @brief The managed viewport index the rebind applied to (0 the primary).
+        usize Index = 0;
+        /// @brief The world the viewport presents after the rebind.
+        WorldInstanceId World;
+        /// @brief The seat adopted for the viewport, or Entity::Null when the destination seats none.
+        Entity Seat = Entity::Null;
+    };
+
+    /// @brief One abandoned present-on-ready rebind: the index it targeted and the world it never presented.
+    ///
+    /// Recorded at the same apply point as PresentedViewport and drained once
+    /// (ManagedViewportSet::DrainAbandonedPresents). The standing record the getters read
+    /// (GetAbandonedPresentWorld) is separate and outlives the drain.
+    struct AbandonedPresent
+    {
+        /// @brief The managed viewport index whose present-on-ready request was abandoned.
+        usize Index = 0;
+        /// @brief The destination world the request never presented — timed out or vanished mid-wait.
+        WorldInstanceId World;
+    };
+
     /// @brief Configuration for one engine-owned managed viewport, naming its world and seat.
     ///
     /// An element of ApplicationInfo::ManagedViewports (or the singular ApplicationInfo::ManagedViewport)
@@ -210,12 +238,33 @@ namespace Veng
         /// retrying a timed-out wait up to PresentReadyAttempts, or abandoning it (surfaced
         /// through GetAbandonedPresentWorld) once the attempts are spent or its destination
         /// vanishes mid-wait. The runner resolves the departed and destination worlds; @p delta
-        /// advances each pending present-on-ready request's wait clock.
+        /// advances each pending present-on-ready request's wait clock. Every rebind that completed
+        /// and every one that was abandoned is queued for the frame's drain
+        /// (DrainPresentedViewports / DrainAbandonedPresents).
         /// @param runner  The runner the departed/destination worlds resolve through.
         /// @param delta   The wall-clock frame delta in seconds, accruing toward the ready timeout.
         /// @param knobs   The per-frame view knobs the managed viewports render with, re-seeded by a
         ///                rebind whose destination authors LevelRenderSettings.
         void ApplyPendingReconfigure(WorldRunner& runner, f32 delta, Renderer::ViewState& knobs);
+
+        /// @brief Moves the rebinds that completed in the last apply into @p out, clearing the queue.
+        ///
+        /// The delivery half of the rebind: a completed rebind is a moment the set knows exactly, so
+        /// a consumer that must react to it (adopting the seat's focus mode, retiring a loading
+        /// screen) is handed it once instead of comparing GetViewportWorld against a remembered value
+        /// every frame. Each entry's Seat is the viewport's seat after the unbound-seat resolution, so
+        /// it is the final adoption for the frame rather than the rebind's intermediate answer.
+        /// Clears @p out first and reuses its capacity, so a caller keeps one buffer across frames.
+        /// @param out  The buffer the completed rebinds are moved into; cleared on entry.
+        void DrainPresentedViewports(vector<PresentedViewport>& out);
+
+        /// @brief Moves the present-on-ready rebinds abandoned in the last apply into @p out, clearing the queue.
+        ///
+        /// The delivery half of the abandonment GetAbandonedPresentWorld records: the record stands
+        /// until a later rebind supersedes it (a late reader still wants it), while this reports the
+        /// single frame it happened on. Clears @p out first and reuses its capacity.
+        /// @param out  The buffer the abandonments are moved into; cleared on entry.
+        void DrainAbandonedPresents(vector<AbandonedPresent>& out);
 
         /// @brief Returns the world a managed viewport currently presents (its applied binding).
         ///
@@ -533,18 +582,20 @@ namespace Veng
         /// @brief The consumer readiness predicate composed onto every present-on-ready wait; may be empty.
         WorldPresentReadyGate m_PresentReadyGate;
 
-        /// @brief One abandoned present-on-ready destination: the index it targeted and its world.
-        struct AbandonedPresent
-        {
-            /// @brief The managed viewport index whose present-on-ready request was abandoned.
-            usize Index = 0;
-            /// @brief The destination world the request never presented — timed out or vanished mid-wait.
-            WorldInstanceId World;
-        };
-
         /// @brief Present-on-ready destinations abandoned on timeout or destination-close, cleared when
         ///        the index is superseded.
         vector<AbandonedPresent> m_AbandonedPresents;
+
+        /// @brief Rebinds completed in the last apply, awaiting their drain.
+        ///
+        /// Queued rather than reported from inside the apply's own loops: a consumer reacting to a
+        /// completed rebind commonly records another one, which would mutate the very lists being
+        /// walked. The drain runs once the pass has settled, and the seats are stamped after the
+        /// unbound-seat resolution.
+        vector<PresentedViewport> m_PresentedEvents;
+
+        /// @brief Abandonments recorded in the last apply, awaiting their drain.
+        vector<AbandonedPresent> m_AbandonedEvents;
 
         /// @brief Seconds a present-on-ready rebind waits for readiness before a retry or abandon.
         static constexpr f32 PresentReadyTimeoutSeconds = 15.0f;

@@ -144,6 +144,10 @@ namespace Veng
         // no-op once installed, and re-applied for free after a document re-instantiate.
         document->SetTranslator(translator);
 
+        // Restamped every drive rather than on a change: a re-instantiated tree comes back declaring
+        // no cursor, and the store is cheaper than the comparison that would avoid it.
+        document->SetDrawsCursor(DrawsCursor);
+
         // A host that wired no service hands the driver the inert null-object, so the frame's
         // reference always has a referent and a driver formats text with no null-guard.
         const Localization::Localization& strings =
@@ -245,6 +249,9 @@ namespace Veng
 
         // Auto-wire the host's translator, as Drive does — see there.
         document->SetTranslator(translator);
+
+        // Restamped every drive, as Drive does — see there.
+        document->SetDrawsCursor(DrawsCursor);
 
         // Interactive says this overlay takes input whatever it composites into, so the flag reaches
         // the document here the way the layer applies it on the stack. The comparand is the live

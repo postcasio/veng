@@ -11,6 +11,7 @@
 #include <Veng/Platform/CrashReport.h>
 #include <Veng/Platform/UserPaths.h>
 #include <Veng/Time.h>
+#include <Veng/UI/Query.h>
 
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/MaterialInstance.h>
@@ -1538,6 +1539,42 @@ namespace Veng
         }
     }
 
+    void Application::FirePresentationHooks()
+    {
+        m_ManagedViewports->DrainAbandonedPresents(m_AbandonedPresents);
+        for (const AbandonedPresent& abandoned : m_AbandonedPresents)
+        {
+            OnWorldPresentAbandoned(abandoned.Index, abandoned.World);
+        }
+
+        m_ManagedViewports->DrainPresentedViewports(m_PresentedViewports);
+        for (const PresentedViewport& presented : m_PresentedViewports)
+        {
+            OnWorldPresented(presented.Index, presented.World, presented.Seat);
+        }
+    }
+
+    void Application::ApplyCursorRule()
+    {
+        // The drive-list, not the managed set: an overlay world presented through a viewport a
+        // consumer registered itself counts exactly as a managed one does.
+        const bool drawsCursor = std::ranges::any_of(
+            m_Compositor.GetViewports(), [](const Renderer::Viewport* const viewport)
+            { return viewport != nullptr && viewport->IsDrawingCursor(); });
+
+        // Nothing draws a cursor and the engine never claimed the OS one: leave it to the consumer.
+        if (!drawsCursor && !m_CursorOwned)
+        {
+            return;
+        }
+
+        m_CursorOwned = drawsCursor;
+
+        // The immediate-mode layer's widgets draw no pointer of their own, so it keeps the OS cursor
+        // whenever it wants the mouse — over a debug panel standing on top of the document.
+        m_Input->SetCursorVisible(!drawsCursor || UI::WantCaptureMouse());
+    }
+
     void Application::ReapDirectory()
     {
         // While hosting, the ServerHost's Pump reaps the shared directory (and drops its per-world
@@ -2568,6 +2605,11 @@ namespace Veng
             // ahead of anything it does this frame.
             FireWorldArrivals();
 
+            // Then the presentation moments the apply produced: what a viewport now presents and what
+            // it gave up on. After the arrivals, so a consumer sees a destination's arrival state
+            // applied before it is told the viewport is presenting it.
+            FirePresentationHooks();
+
             // Translate the managed viewports' world bindings into directory presence pins at the
             // rebind apply point (one-directional: presentation drives lifetime, never the reverse),
             // then reap the directory standalone (a host owns the reap when hosting). A presented
@@ -2733,6 +2775,10 @@ namespace Veng
             VE_PROFILE_SCOPE("Frame/ImGui");
             m_ImGuiLayer->BeginFrame();
         }
+
+        // Once the immediate-mode layer's mouse claim is this frame's: hide the OS cursor where a
+        // presented document is already drawing one.
+        ApplyCursorRule();
 
         // A dedicated server (headless with a live host) runs the accumulator + net pump with no
         // View/render tail: the View systems are client-local presentation a headless process has no

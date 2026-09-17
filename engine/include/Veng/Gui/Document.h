@@ -642,6 +642,21 @@ namespace Veng::Gui
         /// @param interactive  True to route input into the document, false for display-only.
         void SetInteractive(bool interactive);
 
+        /// @brief Returns whether the document renders a pointer of its own.
+        ///
+        /// Set by whatever presents the document (a GuiOverlay forwards its DrawsCursor field). It
+        /// asserts nothing about the tree's content — it is the declaration a host reads to decide
+        /// that the OS cursor would be a second pointer over this document and should hide.
+        [[nodiscard]] bool IsDrawingCursor() const { return m_DrawsCursor; }
+
+        /// @brief Declares that the document renders a pointer of its own.
+        ///
+        /// Read together with IsInteractive by the host's cursor rule: an interactive document that
+        /// draws its own pointer hides the OS cursor over the viewport presenting it. Purely
+        /// declarative — it changes nothing about how the document lays out, draws, or routes input.
+        /// @param drawsCursor  True when the document draws a pointer, false when it draws none.
+        void SetDrawsCursor(bool drawsCursor) { m_DrawsCursor = drawsCursor; }
+
         /// @brief Returns the viewport this document is attached to, or nullptr when detached.
         ///
         /// A document attaches to at most one viewport at a time (Viewport::AttachDocument). The
@@ -1454,6 +1469,9 @@ namespace Veng::Gui
 
         /// @brief Whether the document routes input (hit-tests, takes focus) or is display-only.
         bool m_Interactive = false;
+
+        /// @brief Whether the document renders a pointer of its own, so the OS cursor hides over it.
+        bool m_DrawsCursor = false;
 
         /// @brief The codepoint DispatchText exposes while an onText handler runs; zero otherwise.
         u32 m_PendingCodepoint = 0;

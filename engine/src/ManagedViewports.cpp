@@ -237,6 +237,7 @@ namespace Veng
                           "destination closed before it became ready; keeping the current world.",
                           it->Index, it->World.Value);
                 m_AbandonedPresents.push_back({.Index = it->Index, .World = it->World});
+                m_AbandonedEvents.push_back({.Index = it->Index, .World = it->World});
                 it = m_PendingReadyRebinds.erase(it);
                 continue;
             }
@@ -268,6 +269,7 @@ namespace Veng
                           it->Index, it->World.Value, PresentReadyAttempts,
                           PresentReadyTimeoutSeconds);
                 m_AbandonedPresents.push_back({.Index = it->Index, .World = it->World});
+                m_AbandonedEvents.push_back({.Index = it->Index, .World = it->World});
                 it = m_PendingReadyRebinds.erase(it);
                 continue;
             }
@@ -279,6 +281,26 @@ namespace Veng
         // the request drain, so a seat resolved here is the one a focus request stamped at simulation
         // start reconciles against on this very frame rather than a frame later.
         ResolveUnboundSeats(runner);
+
+        // Stamp each completed rebind's seat only now: a rebind that resolved none leaves its
+        // viewport for the pass above, which may seat it on this very frame, and what a consumer
+        // wants is the seat the frame ends with.
+        for (PresentedViewport& presented : m_PresentedEvents)
+        {
+            presented.Seat = GetViewportViewer(presented.Index);
+        }
+    }
+
+    void ManagedViewportSet::DrainPresentedViewports(vector<PresentedViewport>& out)
+    {
+        out.clear();
+        out.swap(m_PresentedEvents);
+    }
+
+    void ManagedViewportSet::DrainAbandonedPresents(vector<AbandonedPresent>& out)
+    {
+        out.clear();
+        out.swap(m_AbandonedEvents);
     }
 
     void ManagedViewportSet::SetViewportWorld(usize index, WorldInstanceId world)
@@ -388,6 +410,9 @@ namespace Veng
             CollectPresentingSeats(world, seats);
             ReconcileLocalControl(destination->GetScene(), seats);
         }
+
+        // The seat is filled in once the whole pass has run (see ApplyPendingReconfigure).
+        m_PresentedEvents.push_back({.Index = index, .World = world});
     }
 
     void ManagedViewportSet::AdoptViewportSeat(ManagedViewport& managed, const Entity seat)

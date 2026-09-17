@@ -9,6 +9,8 @@
 //    (four viewports, quadrant regions, all presenting the one world's scene);
 //  - a viewport whose bound world is closed at runtime renders a cleared target (its presented scene
 //    goes null, inert) with no dangling read or crash;
+//  - a completed rebind and an abandoned present-on-ready each reach their Application hook once,
+//    the first carrying the seat the viewport ended the frame bound to;
 //  - tearing down a set with viewports still registered self-unregisters each from the compositor
 //    and retires its id against the live Context registry (the teardown-order invariant).
 //
@@ -104,7 +106,58 @@ namespace
             return {.World = world, .Seat = seat, .Scene = &scene};
         }
 
+        // A world that reaches presentability but seats no Viewer, so a rebind onto it resolves no
+        // seat and the unbound-seat pass finds none either.
+        WorldInstanceId OpenReadySeatlessWorld()
+        {
+            return GetWorldRunner().OpenWorld(WorldOpenInfo{
+                .SimTickRate = 60,
+                .StartSimulation = true,
+                .Systems = vector<SystemId>{},
+                .MakeStartContext =
+                    [this]
+                {
+                    return SystemContext{.Assets = GetAssetManager(),
+                                         .Input = GetInput(),
+                                         .Tasks = GetTaskSystem(),
+                                         .Audio = GetAudioEngine(),
+                                         .Localization = GetLocalization(),
+                                         .Role = GetNetRole()};
+                },
+            });
+        }
+
+        // One OnWorldPresented call, plus the seat the set reported for that viewport at the moment
+        // the hook ran — the evidence that the association is in place before the consumer is told.
+        struct PresentedCall
+        {
+            usize Index = 0;
+            WorldInstanceId World;
+            Entity Seat = Entity::Null;
+            Entity BoundSeatAtCall = Entity::Null;
+            WorldInstanceId BindingAtCall;
+        };
+
+        vector<PresentedCall> Presented;
+        vector<std::pair<usize, WorldInstanceId>> Abandoned;
+
     protected:
+        void OnWorldPresented(usize index, WorldInstanceId world, Entity seat) override
+        {
+            Presented.push_back({
+                .Index = index,
+                .World = world,
+                .Seat = seat,
+                .BoundSeatAtCall = GetManagedViewports().GetViewportViewer(index),
+                .BindingAtCall = GetManagedViewportWorld(index),
+            });
+        }
+
+        void OnWorldPresentAbandoned(usize index, WorldInstanceId destination) override
+        {
+            Abandoned.emplace_back(index, destination);
+        }
+
         void OnInitialize() override
         {
             if (InitFn)
@@ -489,6 +542,116 @@ TEST_CASE("A present-on-ready rebind superseded is not abandoned, but one whose 
     };
 
     app.Frames = 7;
+    app.Run({});
+}
+
+TEST_CASE("A completed rebind is reported once, with the seat the viewport ended up adopting")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    MvApp app(HeadlessInfo({ManagedViewportInfo{}}), types, systems);
+
+    MvApp::WorldSeat base{};
+    MvApp::WorldSeat seated{};
+    WorldInstanceId seatless;
+
+    app.InitFn = [&](MvApp& app)
+    {
+        base = app.OpenReadyCameraWorld(vec3(0.0f, 0.0f, 5.0f));
+        seated = app.OpenReadyCameraWorld(vec3(20.0f, 3.0f, 5.0f));
+        seatless = app.OpenReadySeatlessWorld();
+        // The bootstrap setter, not a rebind: it completes nothing and reports nothing.
+        app.GetManagedViewports().SetViewportWorld(0, base.World);
+    };
+
+    app.StepFn = [&](MvApp& app, int frame)
+    {
+        if (frame == 0)
+        {
+            CHECK(app.Presented.empty());
+            app.RebindManagedViewportWhenReady(0, seated.World);
+        }
+        else if (frame == 3)
+        {
+            // The present-on-ready rebind landed, and was reported exactly once — with the seat it
+            // adopted, which the set was already bound to when the hook ran.
+            REQUIRE(app.Presented.size() == 1);
+            CHECK(app.Presented[0].Index == 0);
+            CHECK(app.Presented[0].World == seated.World);
+            CHECK(app.Presented[0].Seat == seated.Seat);
+            CHECK(app.Presented[0].BoundSeatAtCall == seated.Seat);
+            CHECK(app.Presented[0].BindingAtCall == seated.World);
+            CHECK(app.Abandoned.empty());
+
+            // A destination seating no Viewer resolves none, and the unbound-seat pass finds none
+            // either — so the reported seat is null rather than the departed world's stale handle.
+            app.RebindManagedViewport(0, seatless);
+        }
+        else if (frame == 5)
+        {
+            REQUIRE(app.Presented.size() == 2);
+            CHECK(app.Presented[1].World == seatless);
+            CHECK(app.Presented[1].Seat == Entity::Null);
+            CHECK(app.Presented[1].BoundSeatAtCall == Entity::Null);
+        }
+    };
+
+    app.Frames = 7;
+    app.Run({});
+}
+
+TEST_CASE("An abandoned present-on-ready is reported once, and a later rebind does not repeat it")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    MvApp app(HeadlessInfo({ManagedViewportInfo{}}), types, systems);
+
+    MvApp::WorldSeat base{};
+    MvApp::WorldSeat neverReady{};
+
+    app.InitFn = [&](MvApp& app)
+    {
+        base = app.OpenReadyCameraWorld(vec3(0.0f, 0.0f, 5.0f));
+        // A world whose simulation never starts never reaches presentability.
+        neverReady = app.OpenCameraWorld(vec3(20.0f, 3.0f, 5.0f));
+        app.GetManagedViewports().SetViewportWorld(0, base.World);
+        app.RebindManagedViewportWhenReady(0, neverReady.World);
+    };
+
+    app.StepFn = [&](MvApp& app, int frame)
+    {
+        if (frame == 0)
+        {
+            CHECK(app.Abandoned.empty());
+            app.GetWorldRunner().CloseWorld(neverReady.World);
+        }
+        else if (frame == 2)
+        {
+            // The destination vanished mid-wait: reported exactly once, naming the destination it
+            // never presented, while the standing record says the same.
+            REQUIRE(app.Abandoned.size() == 1);
+            CHECK(app.Abandoned[0].first == 0);
+            CHECK(app.Abandoned[0].second == neverReady.World);
+            CHECK(app.GetAbandonedManagedPresentWorld(0) == neverReady.World);
+
+            // A later rebind of the same index supersedes the record; it does not re-report the
+            // abandonment, and its own completion is a presented moment, not an abandoned one.
+            app.RebindManagedViewport(0, base.World);
+        }
+        else if (frame == 4)
+        {
+            CHECK(app.Abandoned.size() == 1);
+            CHECK(app.GetAbandonedManagedPresentWorld(0) == WorldInstanceId{});
+            REQUIRE(app.Presented.size() == 1);
+            CHECK(app.Presented[0].World == base.World);
+        }
+    };
+
+    app.Frames = 6;
     app.Run({});
 }
 

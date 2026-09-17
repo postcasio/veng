@@ -1,5 +1,6 @@
 // GuiOverlay-component reflection cases: the component mixes registered authored fields (Document,
-// Layer, Interactive, TargetSeat) with a runtime-only unregistered Unique<GuiOverlayRuntime>. These
+// Layer, Interactive, DrawsCursor, TargetSeat) with a runtime-only unregistered
+// Unique<GuiOverlayRuntime>. These
 // pin the reflected shape — the runtime carries no VE_FIELD, so reflection, the cooker/serializer,
 // and the inspector never see it, while the authored fields round-trip authored → load → re-serialize
 // (the on-disk cook/load surface). Pure CPU — no Context, no Vulkan symbol touched (the runtime stays
@@ -66,6 +67,7 @@ TEST_CASE("GuiOverlay reflects its authored fields but not the runtime record")
     CHECK(HasField(info, "Layer"));
     CHECK(HasField(info, "Driver"));
     CHECK(HasField(info, "Interactive"));
+    CHECK(HasField(info, "DrawsCursor"));
     CHECK(HasField(info, "TargetSeat"));
     CHECK_FALSE(HasField(info, "Runtime"));
 }
@@ -84,6 +86,7 @@ TEST_CASE("GuiOverlay authored fields round-trip through the reflection serializ
         {"Layer", 3},
         {"Driver", "0xE9906144475EB699"},
         {"Interactive", true},
+        {"DrawsCursor", true},
         {"TargetSeat", 5u},
     };
 
@@ -95,6 +98,7 @@ TEST_CASE("GuiOverlay authored fields round-trip through the reflection serializ
     // The GuiDriverId leaf authors as a hex-id string, exactly like a minted id.
     CHECK(static_cast<u64>(overlay.Driver) == 0xE9906144475EB699ULL);
     CHECK(overlay.Interactive);
+    CHECK(overlay.DrawsCursor);
     CHECK(overlay.TargetSeat.Index == 5u);
 
     // Re-serializing yields the same authored record — the on-disk field identity is stable.
@@ -103,6 +107,7 @@ TEST_CASE("GuiOverlay authored fields round-trip through the reflection serializ
     CHECK(out["Layer"] == 3);
     CHECK(out["Driver"] == "0xE9906144475EB699");
     CHECK(out["Interactive"] == true);
+    CHECK(out["DrawsCursor"] == true);
     CHECK(out["TargetSeat"] == 5u);
 }
 
@@ -115,6 +120,7 @@ TEST_CASE("GuiOverlay defaults are the single-viewport display-only HUD")
     CHECK(overlay.Layer == 0);
     CHECK(overlay.Driver == GuiDriverId::Null); // undriven by default
     CHECK_FALSE(overlay.Interactive);
+    CHECK_FALSE(overlay.DrawsCursor);
     CHECK(overlay.TargetSeat.IsNull());
     CHECK(overlay.GetHost() == nullptr);
     CHECK(overlay.GetDocument() == nullptr);

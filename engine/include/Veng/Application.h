@@ -1450,6 +1450,33 @@ namespace Veng
         {
         }
 
+        /// @brief Called once when a managed viewport starts presenting a world, after its seat is adopted.
+        ///
+        /// Fires per completed rebind — deferred or present-on-ready — at the frame-safe point the
+        /// rebind applied on, after the viewport's seat association, the cursor seat and the
+        /// unbound-seat resolution have all settled. It is the moment the polling alternative
+        /// reconstructs ("has the viewport reached this world, and is its seat bound yet"), which is
+        /// why the seat rather than only the world is carried: a consumer that gives a presented seat
+        /// its input posture — releasing gameplay focus for a cursor-driven world, capturing it for a
+        /// flight one — stamps its one FocusRequest here. Focus policy stays the consumer's; the
+        /// engine writes none. Default is a no-op.
+        /// @param index  The managed viewport index that completed its rebind (0 the primary).
+        /// @param world  The world the viewport now presents.
+        /// @param seat   The seat adopted for the viewport, or Entity::Null when none resolved.
+        virtual void OnWorldPresented(usize index, WorldInstanceId world, Entity seat) {}
+
+        /// @brief Called once when a present-on-ready rebind gives up on its destination.
+        ///
+        /// The delivered form of GetAbandonedManagedPresentWorld: a present-on-ready request that
+        /// stayed unready across its retries, or whose destination vanished mid-wait, is abandoned and
+        /// the viewport keeps its current world. Fires on the frame it happens, so a consumer aborts a
+        /// transition — retiring a loading screen, returning a front end to idle — instead of comparing
+        /// the record against a remembered value every frame. The record itself stands until a later
+        /// rebind of the index supersedes it, for a reader that arrives late. Default is a no-op.
+        /// @param index        The managed viewport index whose request was abandoned (0 the primary).
+        /// @param destination  The world the request never presented.
+        virtual void OnWorldPresentAbandoned(usize index, WorldInstanceId destination) {}
+
         /// @brief Composes the player's chosen graphics quality with a scene's authored look.
         ///
         /// The resolve seam ApplyGraphicsSettings invokes once per apply: given the user's chosen
@@ -1672,6 +1699,24 @@ namespace Veng
         /// even heading there was superseded or abandoned (drop it silently), and one still in flight
         /// is left for a later frame.
         void FireWorldArrivals();
+
+        /// @brief Drains the frame's completed and abandoned rebinds into their consumer hooks.
+        ///
+        /// Run once per frame beside FireWorldArrivals, after the managed set's apply pass has
+        /// settled: each completed rebind reaches OnWorldPresented with the seat it ended on, each
+        /// abandonment reaches OnWorldPresentAbandoned. The drain empties the set's queues first, so a
+        /// hook that records a further rebind is recording against a clean queue.
+        void FirePresentationHooks();
+
+        /// @brief Hides the OS cursor while a presented document draws its own, and restores it after.
+        ///
+        /// Run at the pre-tick input point, once the immediate-mode layer has begun its frame so its
+        /// mouse claim is this frame's. Ownership is explicit and one-way: the engine writes cursor
+        /// visibility from the first frame a drive-list viewport reports
+        /// Renderer::Viewport::IsDrawingCursor, and releases it — back to visible — on the frame the
+        /// last such viewport stops. An application that never presents one is never written to, so a
+        /// consumer managing the cursor itself simply authors no GuiOverlay::DrawsCursor.
+        void ApplyCursorRule();
 
         /// @brief Drives the directory's idle reap when no host owns it (the standalone path).
         ///
@@ -2187,6 +2232,19 @@ namespace Veng
 
         /// @brief Presenting travels whose rebind has not yet landed; drained in FireWorldArrivals.
         vector<PendingArrival> m_PendingArrivals;
+
+        /// @brief Scratch for the frame's completed rebinds, reused across frames.
+        vector<PresentedViewport> m_PresentedViewports;
+
+        /// @brief Scratch for the frame's abandoned present-on-ready rebinds, reused across frames.
+        vector<AbandonedPresent> m_AbandonedPresents;
+
+        /// @brief Whether the engine currently owns the OS cursor's visibility for a drawn-cursor document.
+        ///
+        /// Retained because the release is an edge: without it the rule could not tell "no document
+        /// draws a cursor, and none ever did" (leave the consumer's cursor alone) from "the last one
+        /// just went away" (restore visibility).
+        bool m_CursorOwned = false;
 
         /// @brief Scratch for one world's presenting seats, reused across the marker sweep's worlds.
         vector<Entity> m_PresentingSeats;

@@ -468,6 +468,15 @@ namespace Veng::Renderer
         /// @return The routable documents in composite order, empty when there are none.
         [[nodiscard]] std::span<Gui::Document* const> GetInputDocuments() const;
 
+        /// @brief Returns whether a routable document on this viewport renders a pointer of its own.
+        ///
+        /// True when some document in GetInputDocuments() is both interactive and declares
+        /// Document::IsDrawingCursor() — so the viewport is already showing a pointer and an OS cursor
+        /// over it would be a second one. The host's cursor rule is this answer over its whole
+        /// drive-list; the viewport is the scope because the list it reads is per-viewport.
+        /// @return True when at least one routable document on this viewport draws a cursor.
+        [[nodiscard]] bool IsDrawingCursor() const;
+
         /// @brief Sets the seat a hosted document inherits as its input identity.
         ///
         /// A document attached to this viewport inherits this seat (its Viewer entity); an input
