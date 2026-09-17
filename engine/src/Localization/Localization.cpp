@@ -169,4 +169,12 @@ namespace Veng::Localization
         BuildChain(m_ActiveLocale);
         ++m_Generation;
     }
+
+    const Localization& NullService()
+    {
+        // Const, so no caller can move it off the null-object's every-key-resolves-to-itself
+        // behaviour; its construction touches no asset manager and no locale index.
+        static const Localization s_Null;
+        return s_Null;
+    }
 }

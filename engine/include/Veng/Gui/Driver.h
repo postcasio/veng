@@ -21,6 +21,11 @@ namespace Veng
         struct Element;
     }
 
+    namespace Localization
+    {
+        class Localization;
+    }
+
     /// @brief Stable identity of a registered GuiDriver, authored exactly like a SystemId/ActionId.
     ///
     /// A GuiDriver subclass declares one through VE_GUI_DRIVER; GuiDriverRegistry keys its catalog on
@@ -89,6 +94,44 @@ namespace Veng
         /// viewport was handed no engine — an editor preview, a driver-free test — so a driver that
         /// plays sound treats null as silence, never as an error.
         Audio::AudioEngine* Audio = nullptr;
+        /// @brief The localization service a driver composes user-facing text through.
+        ///
+        /// The string peer of SystemContext::Localization, reaching the driver from the presenting
+        /// viewport (Viewport::SetLocalization, which the engine sets on each managed viewport).
+        /// Never null: a viewport handed no service hands the driver the inert null-object
+        /// (Localization::NullService), which resolves every key to itself — so a driver formats
+        /// text with no null-guard, and an unwired host shows keys rather than blanks. Read per
+        /// frame rather than cached from instantiation: Localization::SetLocale bumps a generation
+        /// counter a driver compares to know when to recompose on a live language change.
+        const Localization::Localization& Localization;
+    };
+
+    /// @brief What a GuiDriver is handed once per (re)instantiate — the one-time half of the frame.
+    ///
+    /// Borrowed for the duration of the OnInstantiate call. It carries the tree the driver resolves
+    /// its elements against, the scene and seat it answers to, and the host services that are stable
+    /// for the run — so a driver binding a localized view-model needs no back-channel component to
+    /// reach the application. Everything that moves per frame (timing, the resolved view, the
+    /// claiming viewport's audio engine) lives on GuiDriverFrame instead.
+    struct GuiDriverContext
+    {
+        /// @brief The freshly instantiated live document this driver drives.
+        Gui::Document& Document;
+        /// @brief The subtree root the driver drives: the document root, or a component boundary.
+        ///
+        /// A whole-document driver (a GuiOverlay/GuiSurface) is handed the document's root; a driver
+        /// scoped to an embedded component boundary is handed that boundary, so it resolves and
+        /// binds within its own subtree.
+        Gui::Element& Root;
+        /// @brief The presented scene the driven component lives in; mutable within the driver boundary.
+        Scene& Scene;
+        /// @brief The claiming viewport's bound seat, or Entity::Null when unbound (see GuiDriverFrame::Seat).
+        Entity Seat = Entity::Null;
+        /// @brief The localization service, never null — the inert null-object stands in.
+        ///
+        /// The same service GuiDriverFrame::Localization carries; a driver composing a string once,
+        /// at bind time, reads it here rather than waiting for its first frame.
+        const Localization::Localization& Localization;
     };
 
     /// @brief A named, per-instance presentation binding the engine drives from component data.
@@ -109,6 +152,13 @@ namespace Veng
     /// the same frame's render sees what it stamped. Neither may add or remove the component it is
     /// driven from, which would disturb the walk it is being driven inside.
     ///
+    /// **What a driver may reach is what it is handed.** GuiDriverContext (once, at instantiate) and
+    /// GuiDriverFrame (every drive) carry the engine-owned services a driver is entitled to — the
+    /// asset manager it loads through, the localization service it composes text through, the audio
+    /// engine it fires sound through — alongside the document, the subtree root, the scene and the
+    /// seat. A driver that needs a host service the engine does not hand it is a gap in these two
+    /// structs, never a reason for a consumer to smuggle one in through a scene component.
+    ///
     /// The boundary is concrete and checkable: a driver reads scene state, stamps request/command
     /// components, and beyond those may write only a component tagged VE_VIEW_OUTPUT — derived,
     /// view-owned state gameplay may read but no simulation or wire owns. A driver never writes a
@@ -127,23 +177,14 @@ namespace Veng
         /// (exactly like GuiOverlay::SetOnInstantiate), so cached element pointers stay valid. The
         /// default does nothing.
         ///
-        /// @p root is the subtree this driver drives: the document root for a whole-document driver,
-        /// or the embedded component boundary for a driver scoped to one. A whole-document driver
-        /// binds its view-model with `document.BindContext(context)`; a component driver scopes the
-        /// bind to its subtree with `document.BindContext(document.GetHandle(root), context)`, so its
+        /// `context.Root` is the subtree this driver drives: the document root for a whole-document
+        /// driver, or the embedded component boundary for a driver scoped to one. A whole-document
+        /// driver binds its view-model with `context.Document.BindContext(model)`; a component driver
+        /// scopes the bind to its subtree with
+        /// `context.Document.BindContext(context.Document.GetHandle(context.Root), model)`, so its
         /// `{obj.field}` bindings and named handlers resolve against its own context.
-        /// @param document  The freshly instantiated live document.
-        /// @param root      The subtree root the driver drives (document root, or a component boundary).
-        /// @param scene     The presented scene the driven component lives in.
-        /// @param seat      The claiming viewport's seat, or Entity::Null when unbound.
-        virtual void OnInstantiate(Gui::Document& document, Gui::Element& root, Scene& scene,
-                                   Entity seat)
-        {
-            (void)document;
-            (void)root;
-            (void)scene;
-            (void)seat;
-        }
+        /// @param context  The document, subtree root, scene, seat, and host services (see GuiDriverContext).
+        virtual void OnInstantiate(const GuiDriverContext& context) { (void)context; }
 
         /// @brief Once per frame while the document is attached, after the scene's View phase.
         ///

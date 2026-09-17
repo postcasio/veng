@@ -36,6 +36,11 @@ namespace Veng::Gui
     class GuiTranslator;
 }
 
+namespace Veng::Localization
+{
+    class Localization;
+}
+
 namespace Veng::Renderer
 {
     class Context;
@@ -502,6 +507,20 @@ namespace Veng::Renderer
         void SetGuiTranslator(const Gui::GuiTranslator* translator)
         {
             m_GuiTranslator = translator;
+        }
+
+        /// @brief Sets the localization service a claimed driver composes text through.
+        ///
+        /// The service half of the translator: the translator resolves the *markup's* loc-keys,
+        /// while this is what a driver formats a runtime-composed string with
+        /// (GuiDriverContext::Localization, GuiDriverFrame::Localization). Borrowed and host-owned,
+        /// threaded like the driver catalog: the engine sets it on each managed viewport. Null — the
+        /// default — hands every driver the inert null-object, which resolves each key to itself, so
+        /// an editor preview or a driver-free test shows keys rather than needing a service.
+        /// @param localization  The host's localization service, or nullptr for the null-object.
+        void SetLocalization(const Localization::Localization* localization)
+        {
+            m_Localization = localization;
         }
 
         /// @brief Sets the scale attached Gui documents lay out and draw at.
@@ -994,6 +1013,9 @@ namespace Veng::Renderer
 
         /// @brief The audio engine handed to a claimed driver's frame; null hands a silent frame.
         Audio::AudioEngine* m_Audio = nullptr;
+
+        /// @brief The localization service handed to a claimed driver; null hands the null-object.
+        const Localization::Localization* m_Localization = nullptr;
 
         /// @brief The UI overlay pass, created lazily on the first document attach; null until then.
         ///

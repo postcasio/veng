@@ -847,11 +847,21 @@ addition **bumped `VENG_MODULE_ABI_VERSION` 5 → 6**). A `GuiOverlay` names one
 `Driver` field (`GuiDriverId::Null` = undriven, the status quo). The component's `Drive` instantiates
 the named driver on the first drive, owns it in the runtime (destroyed with it), re-runs
 `OnInstantiate` whenever the document (re)instantiates — exactly like `SetOnInstantiate` — and calls
-`OnUpdate` each drive with a `GuiDriverFrame { Document, Scene, Owner, Seat, Delta, Alpha, View,
-Assets, Audio }` carrying the claiming viewport's real view, the asset manager the document loads
-through, and the audio engine a driver fires sound through (`Audio` is the peer of
+`OnUpdate` each drive with a `GuiDriverFrame { Document, Root, Scene, Owner, Seat, Delta, Alpha,
+View, Assets, Audio, Localization }` carrying the claiming viewport's real view, the asset manager
+the document loads through, the audio engine a driver fires sound through (`Audio` is the peer of
 `SystemContext::Audio`, set per viewport by `Viewport::SetAudioEngine` — the engine sets it on each
-managed viewport, and null hands a driver a silent frame). `Owner` is the entity the driven component sits on, so a
+managed viewport, and null hands a driver a silent frame), and the localization service it composes
+runtime strings through (`Localization` is the peer of `SystemContext::Localization`, set per
+viewport by `Viewport::SetLocalization`; it is a **reference, never null** — a viewport handed no
+service hands the driver `Localization::NullService()`, which resolves every key to itself).
+`OnInstantiate` takes the one-time half of the same thing, a
+**`GuiDriverContext { Document, Root, Scene, Seat, Localization }`** — so the two hooks together are
+the whole of what a driver may reach, and a driver needing a host service the engine does not hand
+it is a gap in these two structs rather than a reason to smuggle one in through a scene component.
+The frame's `Localization` is read **per frame** rather than cached at instantiate:
+`Localization::SetLocale` bumps a generation counter a driver compares to recompose on a live
+language change. `Owner` is the entity the driven component sits on, so a
 driver reads its own authored configuration and its siblings (its config component, its
 `MeshRenderer`, its `Transform`) rather than searching the scene for itself; `Alpha` is the render
 gather's own interpolation fraction, so a driver placing a marker against a moving body reads the

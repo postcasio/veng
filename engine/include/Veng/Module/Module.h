@@ -107,10 +107,15 @@ extern "C"
 /// always-owned service). A module constructs the ApplicationInfo it hands back and reads the
 /// SystemContext each tick, so a stale module would lay out the info struct short of what the engine
 /// reads and read the per-tick fields after Localization at shifted offsets.
+/// Version 23 changes the GuiDriver instantiation seam: OnInstantiate takes a single
+/// GuiDriverContext in place of its four parameters and GuiDriverFrame grows a trailing
+/// localization borrow. Both structs are host-constructed and handed to a module-registered driver,
+/// and the driver's vtable is what a module subclasses, so a stale module would override a slot
+/// whose signature no longer matches and read the frame short of what the engine fills.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 22u
+#define VENG_MODULE_ABI_VERSION 23u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

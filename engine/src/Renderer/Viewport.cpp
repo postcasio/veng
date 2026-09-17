@@ -652,6 +652,7 @@ namespace Veng::Renderer
                                            .Region = m_Region,
                                            .UiScale = m_UiScale},
                     .Audio = m_Audio,
+                    .Localization = m_Localization,
                 };
             }
 
@@ -753,7 +754,7 @@ namespace Veng::Renderer
             if (ClaimsOverlay(world, entity, overlay))
             {
                 overlay.Drive(*this, m_Assets, world, entity, m_GuiDrivers, m_Audio,
-                              m_GuiTranslator);
+                              m_GuiTranslator, m_Localization);
             }
         }
     }
@@ -806,7 +807,7 @@ namespace Veng::Renderer
                 worldAnchored ? vec2(overlay.SurfaceResolution) : vec2(m_Region.Extent) / m_UiScale;
 
             overlay.DriveHdr(*this, m_Assets, world, entity, m_GuiDrivers, m_Audio, docExtent,
-                             m_ViewState.Delta, drawList, m_GuiTranslator);
+                             m_ViewState.Delta, drawList, m_GuiTranslator, m_Localization);
 
             // The plane's anchor is composed onto the carrying entity's world transform, so an
             // overlay authored on a moving entity rides it — its anchor is entity-local, an offset

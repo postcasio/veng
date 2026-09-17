@@ -70,6 +70,8 @@ namespace Veng
         SystemViewInfo View;
         /// @brief The audio engine handed to the driver's frame, or null for a silent driver.
         Audio::AudioEngine* Audio = nullptr;
+        /// @brief The localization service handed to the driver, or null for the inert null-object.
+        const Localization::Localization* Localization = nullptr;
     };
 
     /// @brief Runtime GPU state a GuiSurface materializes lazily; defined in Surface.cpp.

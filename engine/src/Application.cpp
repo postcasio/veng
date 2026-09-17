@@ -542,6 +542,11 @@ namespace Veng
             }
         }
 
+        // The service is settled now and never replaced again, so hand it to the managed viewports
+        // here rather than at their construction, which ran before the packs it reads were mounted.
+        // From here every driver a managed viewport instantiates is handed the live service.
+        m_ManagedViewports->SetLocalization(m_Localization.get());
+
         OnInitialize();
 
         // A subclass that hit a fatal startup failure calls RequestExit(status) from OnInitialize;

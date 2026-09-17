@@ -10,6 +10,7 @@
 #include <Veng/Gui/DocumentLayer.h>
 #include <Veng/Gui/Driver.h>
 #include <Veng/Gui/DriverRegistry.h>
+#include <Veng/Localization/Localization.h>
 #include <Veng/Log.h>
 #include <Veng/Renderer/Viewport.h>
 
@@ -118,7 +119,8 @@ namespace Veng
     void GuiOverlay::Drive(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene,
                            const Entity owner, GuiDriverRegistry* const drivers,
                            Audio::AudioEngine* const audio,
-                           const Gui::GuiTranslator* const translator) const
+                           const Gui::GuiTranslator* const translator,
+                           const Localization::Localization* const localization) const
     {
         EnsureHost(assets);
         GuiOverlayRuntime& runtime = *Runtime;
@@ -142,6 +144,11 @@ namespace Veng
         // no-op once installed, and re-applied for free after a document re-instantiate.
         document->SetTranslator(translator);
 
+        // A host that wired no service hands the driver the inert null-object, so the frame's
+        // reference always has a referent and a driver formats text with no null-guard.
+        const Localization::Localization& strings =
+            localization != nullptr ? *localization : Localization::NullService();
+
         // The ambient frame every driver on this document reads; a component driver gets it rebased
         // onto its boundary, so both the overlay's own driver and its components share one View/seat.
         const GuiDriverFrame frame{
@@ -157,6 +164,7 @@ namespace Veng
                                    .UiScale = viewport.GetUiScale()},
             .Assets = assets,
             .Audio = audio,
+            .Localization = strings,
         };
 
         // Instantiate the named driver once, when a registry is available and the id resolves; an
@@ -180,8 +188,11 @@ namespace Veng
             // A whole-document driver drives the document root.
             if (document != runtime.DriverDocument)
             {
-                runtime.Driver->OnInstantiate(*document, document->Root(), scene,
-                                              viewport.GetSeat());
+                runtime.Driver->OnInstantiate(GuiDriverContext{.Document = *document,
+                                                               .Root = document->Root(),
+                                                               .Scene = scene,
+                                                               .Seat = viewport.GetSeat(),
+                                                               .Localization = strings});
                 runtime.DriverDocument = document;
             }
             runtime.Driver->OnUpdate(frame);
@@ -196,7 +207,8 @@ namespace Veng
                               const Entity owner, GuiDriverRegistry* const drivers,
                               Audio::AudioEngine* const audio, const vec2 docExtent,
                               const f32 delta, Gui::DrawList& out,
-                              const Gui::GuiTranslator* const translator) const
+                              const Gui::GuiTranslator* const translator,
+                              const Localization::Localization* const localization) const
     {
         out.Clear();
         EnsureHost(assets);
@@ -244,6 +256,10 @@ namespace Veng
             runtime.AppliedInteractive = Interactive;
         }
 
+        // The null-object stands in for an unwired host, as Drive does — see there.
+        const Localization::Localization& strings =
+            localization != nullptr ? *localization : Localization::NullService();
+
         const GuiDriverFrame frame{
             .Document = *document,
             .Root = &document->Root(),
@@ -257,6 +273,7 @@ namespace Veng
                                    .UiScale = viewport.GetUiScale()},
             .Assets = assets,
             .Audio = audio,
+            .Localization = strings,
         };
 
         // Instantiate and run the named driver, mirroring Drive: an unresolved id logs once and
@@ -277,8 +294,11 @@ namespace Veng
         {
             if (document != runtime.DriverDocument)
             {
-                runtime.Driver->OnInstantiate(*document, document->Root(), scene,
-                                              viewport.GetSeat());
+                runtime.Driver->OnInstantiate(GuiDriverContext{.Document = *document,
+                                                               .Root = document->Root(),
+                                                               .Scene = scene,
+                                                               .Seat = viewport.GetSeat(),
+                                                               .Localization = strings});
                 runtime.DriverDocument = document;
             }
             runtime.Driver->OnUpdate(frame);

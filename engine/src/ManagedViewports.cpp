@@ -102,6 +102,15 @@ namespace Veng
         Clear();
     }
 
+    void ManagedViewportSet::SetLocalization(const Localization::Localization* const localization)
+    {
+        m_Localization = localization;
+        for (ManagedViewport& managed : m_Viewports)
+        {
+            managed.Viewport->SetLocalization(localization);
+        }
+    }
+
     Renderer::Viewport* ManagedViewportSet::Get(usize index) const
     {
         return index < m_Viewports.size() ? m_Viewports[index].Viewport.get() : nullptr;
@@ -163,6 +172,8 @@ namespace Veng
             viewport->SetAudioEngine(m_Audio);
             // And the translator its overlay documents localize markup loc-keys through; null renders keys.
             viewport->SetGuiTranslator(m_GuiTranslator);
+            // And the service its drivers compose runtime strings through; null hands the null-object.
+            viewport->SetLocalization(m_Localization);
 
             m_Compositor.RegisterViewport(*viewport);
 

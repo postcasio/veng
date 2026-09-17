@@ -9,6 +9,7 @@
 #include <Veng/Gui/Driver.h>
 #include <Veng/Gui/DriverRegistry.h>
 #include <Veng/Gui/UIDocument.h>
+#include <Veng/Localization/Localization.h>
 #include <Veng/Log.h>
 #include <Veng/Renderer/Context.h>
 
@@ -215,6 +216,11 @@ namespace Veng
             return;
         }
 
+        // A drive handed no service resolves against the inert null-object, so the frame's
+        // reference always has a referent and a driver formats text with no null-guard.
+        const Localization::Localization& strings =
+            services.Localization != nullptr ? *services.Localization : Localization::NullService();
+
         // The ambient frame the surface's driver and its components read; each component gets it
         // rebased onto its boundary.
         const GuiDriverFrame frame{
@@ -228,6 +234,7 @@ namespace Veng
             .View = services.View,
             .Assets = assets,
             .Audio = services.Audio,
+            .Localization = strings,
         };
 
         if (Driver != GuiDriverId::Null && services.Drivers != nullptr)
@@ -251,8 +258,11 @@ namespace Veng
                 // driver drives the document root.
                 if (document != runtime.DriverDocument)
                 {
-                    runtime.Driver->OnInstantiate(*document, document->Root(), *services.World,
-                                                  services.Seat);
+                    runtime.Driver->OnInstantiate(GuiDriverContext{.Document = *document,
+                                                                   .Root = document->Root(),
+                                                                   .Scene = *services.World,
+                                                                   .Seat = services.Seat,
+                                                                   .Localization = strings});
                     runtime.DriverDocument = document;
                 }
                 runtime.Driver->OnUpdate(frame);

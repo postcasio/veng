@@ -37,6 +37,7 @@
 #include <Veng/Gui/RenderTarget.h>
 #include <Veng/Gui/Style.h>
 #include <Veng/Gui/Surface.h>
+#include <Veng/Localization/Localization.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
@@ -199,6 +200,8 @@ namespace
         uvec2 RegionExtent{0};
         const AssetManager* Assets = nullptr;
         const Audio::AudioEngine* Audio = nullptr;
+        const Localization::Localization* InstantiateStrings = nullptr;
+        const Localization::Localization* UpdateStrings = nullptr;
     };
 
     DriverTrace g_Trace;
@@ -207,9 +210,10 @@ namespace
     // ran *before* the document's dirty-gated record rather than after it.
     struct PanelDriver final : GuiDriver
     {
-        void OnInstantiate(Gui::Document&, Gui::Element&, Scene&, Entity) override
+        void OnInstantiate(const GuiDriverContext& context) override
         {
             ++g_Trace.Instantiates;
+            g_Trace.InstantiateStrings = &context.Localization;
         }
 
         void OnUpdate(const GuiDriverFrame& frame) override
@@ -220,6 +224,7 @@ namespace
             g_Trace.RegionExtent = frame.View.Region.Extent;
             g_Trace.Assets = &frame.Assets;
             g_Trace.Audio = frame.Audio;
+            g_Trace.UpdateStrings = &frame.Localization;
 
             Gui::Element& root = frame.Document.Root();
             REQUIRE(root.Children.size() == 1);
@@ -437,6 +442,10 @@ TEST_CASE_FIXTURE(
     const Unique<Viewport> viewport = MakeViewport(Context, assets);
     viewport->SetGuiDriverRegistry(&drivers);
     viewport->SetAudioEngine(&audio->GetEngine());
+    // The localization service rides the viewport the same way; a default-constructed one is a
+    // distinct object from the engine's shared fallback, so identity proves which one arrived.
+    const Localization::Localization strings;
+    viewport->SetLocalization(&strings);
     const auto RenderFrame = [&](const f32 alpha)
     {
         viewport->SetViewState(
@@ -457,6 +466,9 @@ TEST_CASE_FIXTURE(
     // And the services a driver loads and sounds through: the viewport's asset manager and engine.
     CHECK(g_Trace.Assets == &assets);
     CHECK(g_Trace.Audio == &audio->GetEngine());
+    // The service the viewport was handed reaches both hooks, not only the per-frame one.
+    CHECK(g_Trace.InstantiateStrings == &strings);
+    CHECK(g_Trace.UpdateStrings == &strings);
 
     // The driver runs ahead of the document's record, so its style write is in the target the scene
     // samples: the child is red on both channels the fixture's cyan document never writes.

@@ -119,4 +119,14 @@ namespace Veng::Localization
         /// @brief Whether a format error has already been logged (the log-once gate).
         mutable bool m_FormatErrorLogged = false;
     };
+
+    /// @brief The shared inert service a consumer handed none resolves against.
+    ///
+    /// A default-constructed Localization with static storage: every key resolves to itself, so a
+    /// seam that must hand its consumer a service *reference* — a GuiDriverContext, a
+    /// GuiDriverFrame — always has a referent, and a host that wired none (an editor preview, a
+    /// device-free test) degrades to visible keys rather than a null check at every call site.
+    /// Immutable in practice: nothing may SetLocale on it, because it is const.
+    /// @return The process-wide inert service.
+    [[nodiscard]] const Localization& NullService();
 }

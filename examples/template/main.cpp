@@ -92,17 +92,17 @@ VE_VIEW_OUTPUT(::OverlayControl);
 class TemplateOverlayDriver final : public GuiDriver
 {
 public:
-    void OnInstantiate(Gui::Document& document, Gui::Element&, Scene& scene, Entity) override
+    void OnInstantiate(const GuiDriverContext& context) override
     {
         // Seed the model from the populate-hook snapshot, then bind it plus the dismiss handler to
         // the freshly instantiated document (re-run on any re-instantiate, so the binding survives).
-        if (const OverlaySnapshot* snapshot = scene.TryGetFirst<OverlaySnapshot>())
+        if (const OverlaySnapshot* snapshot = context.Scene.TryGetFirst<OverlaySnapshot>())
         {
             m_Model = *snapshot;
         }
         m_Context.SetData(m_Model);
         m_Context.SetHandler("Dismiss", [this](Gui::Element&) { m_DismissRequested = true; });
-        document.BindContext(&m_Context);
+        context.Document.BindContext(&m_Context);
     }
 
     void OnUpdate(const GuiDriverFrame& frame) override
@@ -143,12 +143,12 @@ VE_REFLECT_END();
 class EmblemDriver final : public GuiDriver
 {
 public:
-    void OnInstantiate(Gui::Document& document, Gui::Element& root, Scene&, Entity) override
+    void OnInstantiate(const GuiDriverContext& context) override
     {
         // Bind the component's own view-model scoped to its boundary's subtree; the emblem's
         // `{Beats}` resolves against this rather than the host HUD's context.
         m_Context.SetData(m_Model);
-        document.BindContext(document.GetHandle(root), &m_Context);
+        context.Document.BindContext(context.Document.GetHandle(context.Root), &m_Context);
     }
 
     void OnUpdate(const GuiDriverFrame& frame) override

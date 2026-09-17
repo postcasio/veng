@@ -237,4 +237,9 @@ TEST_CASE("Localization: the null-object resolves every key to itself")
     // SetLocale is a no-op on the null-object (no index to switch within).
     null.SetLocale("fr");
     CHECK(null.Generation() == 0);
+
+    // The shared instance a seam handing out a service *reference* falls back to behaves the same,
+    // so a consumer wired no service reads keys rather than needing a null check.
+    CHECK(Localization::NullService().Get("menu.play") == "menu.play");
+    CHECK(Localization::NullService().AvailableLocales().empty());
 }

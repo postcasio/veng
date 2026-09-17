@@ -149,11 +149,14 @@ path is a driver**: a named, registered, **per-instance** presentation binding t
 instantiates *with the document* and destroys *with it*. A `GuiOverlay` names one in a reflected
 `Driver` field, and the game writes no find-and-bind system at all.
 
-A `GuiDriver` (`Veng/Gui/Driver.h`) has two hooks — `OnInstantiate` (resolve elements and bind
-the driver's own `Gui::BindingContext`, re-run on any re-instantiate) and `OnUpdate` (once per
-frame while attached, handed a `GuiDriverFrame { Document, Scene, Owner, Seat, Delta, Alpha, View }`
-with the claiming viewport's real view, the entity the driven component sits on, and the render
-gather's interpolation fraction). The template's `TemplateOverlayDriver` in
+A `GuiDriver` (`Veng/Gui/Driver.h`) has two hooks — `OnInstantiate` (handed a
+`GuiDriverContext { Document, Root, Scene, Seat, Localization }`: resolve elements and bind the
+driver's own `Gui::BindingContext`, re-run on any re-instantiate) and `OnUpdate` (once per frame
+while attached, handed a `GuiDriverFrame { Document, Root, Scene, Owner, Seat, Delta, Alpha, View,
+Assets, Audio, Localization }` with the claiming viewport's real view, the entity the driven
+component sits on, and the render gather's interpolation fraction). Both carry the engine-owned
+services a driver may reach, so a driver needs no back-channel to find the application. The
+template's `TemplateOverlayDriver` in
 [`main.cpp`](../../examples/template/main.cpp) is the live reference — it seeds its model from the
 populate-hook snapshot, binds the dismiss handler, and publishes the button press to a drained
 channel:
@@ -162,12 +165,12 @@ channel:
 class TemplateOverlayDriver final : public GuiDriver
 {
 public:
-    void OnInstantiate(Gui::Document& document, Scene& scene, Entity) override
+    void OnInstantiate(const GuiDriverContext& context) override
     {
-        if (const OverlaySnapshot* snapshot = scene.TryGetFirst<OverlaySnapshot>()) { m_Model = *snapshot; }
+        if (const OverlaySnapshot* snapshot = context.Scene.TryGetFirst<OverlaySnapshot>()) { m_Model = *snapshot; }
         m_Context.SetData(m_Model);
         m_Context.SetHandler("Dismiss", [this](Gui::Element&) { m_DismissRequested = true; });
-        document.BindContext(&m_Context);          // the document supplies its own registry
+        context.Document.BindContext(&m_Context);  // the document supplies its own registry
     }
     void OnUpdate(const GuiDriverFrame& frame) override { /* publish state into a drained channel */ }
     // ... per-instance view-model in members ...

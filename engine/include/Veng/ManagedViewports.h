@@ -29,6 +29,11 @@ namespace Veng::Gui
     class GuiTranslator;
 }
 
+namespace Veng::Localization
+{
+    class Localization;
+}
+
 namespace Veng::Renderer
 {
     class Context;
@@ -148,6 +153,16 @@ namespace Veng
 
         /// @brief Clears the set, self-unregistering each viewport and its router association.
         ~ManagedViewportSet();
+
+        /// @brief Sets the localization service every managed viewport hands its drivers.
+        ///
+        /// Handed over rather than taken at construction because the host's service is decided
+        /// later in startup than the set is built — the index-backed service replaces the inert
+        /// null-object once the packs that carry the locale catalogs are mounted. Applied to the
+        /// viewports already built and to every viewport a later Build creates; null leaves each
+        /// driver reading the null-object (keys resolve to themselves).
+        /// @param localization  The host's localization service, or nullptr for the null-object.
+        void SetLocalization(const Localization::Localization* localization);
 
         ManagedViewportSet(const ManagedViewportSet&) = delete;
         ManagedViewportSet& operator=(const ManagedViewportSet&) = delete;
@@ -469,6 +484,8 @@ namespace Veng
         Audio::AudioEngine* m_Audio = nullptr;
         /// @brief The translator set on each built viewport so overlay loc-keys localize; null renders keys.
         const Gui::GuiTranslator* m_GuiTranslator = nullptr;
+        /// @brief The localization service set on each built viewport for its drivers; null hands the null-object.
+        const Localization::Localization* m_Localization = nullptr;
 
         /// @brief The managed viewports in order; index 0 is the primary.
         vector<ManagedViewport> m_Viewports;

@@ -4186,7 +4186,14 @@ namespace Veng::Gui
 
             if (!driver.Instantiated)
             {
-                driver.Instance->OnInstantiate(*this, *boundary, frame.Scene, frame.Seat);
+                // The ambient frame already carries the host services this boundary's driver reads,
+                // so the context is that frame narrowed to the boundary it drives.
+                driver.Instance->OnInstantiate(
+                    GuiDriverContext{.Document = *this,
+                                     .Root = *boundary,
+                                     .Scene = frame.Scene,
+                                     .Seat = frame.Seat,
+                                     .Localization = frame.Localization});
                 driver.Instantiated = true;
             }
 

@@ -254,9 +254,11 @@ namespace Veng
         /// @param drivers   The driver catalog the Driver id resolves against, or nullptr (undriven).
         /// @param audio     The audio engine handed to the driver's frame, or nullptr (silent).
         /// @param translator The translator the document's loc-keys resolve through, or nullptr (keys render).
+        /// @param localization The service handed to the driver, or nullptr for the inert null-object.
         void Drive(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene, Entity owner,
                    GuiDriverRegistry* drivers, Audio::AudioEngine* audio = nullptr,
-                   const Gui::GuiTranslator* translator = nullptr) const;
+                   const Gui::GuiTranslator* translator = nullptr,
+                   const Localization::Localization* localization = nullptr) const;
 
         /// @brief Drives the overlay's document and builds its geometry into a draw list, off the layer stack.
         ///
@@ -276,10 +278,12 @@ namespace Veng
         /// @param delta     Frame delta seconds advanced into the document's animation clock.
         /// @param out       The draw list the built geometry is appended into (cleared first).
         /// @param translator The translator the document's loc-keys resolve through, or nullptr (keys render).
+        /// @param localization The service handed to the driver, or nullptr for the inert null-object.
         void DriveHdr(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene,
                       Entity owner, GuiDriverRegistry* drivers, Audio::AudioEngine* audio,
                       vec2 docExtent, f32 delta, Gui::DrawList& out,
-                      const Gui::GuiTranslator* translator = nullptr) const;
+                      const Gui::GuiTranslator* translator = nullptr,
+                      const Localization::Localization* localization = nullptr) const;
 
         /// @brief Detaches the presented document from a viewport's layer stack — the inverse of Drive.
         ///
