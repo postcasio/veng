@@ -109,6 +109,12 @@ namespace Veng
         {
             managed.Viewport->SetLocalization(localization);
         }
+        // A store swap (a new service pointer, not just a locale generation bump) must reach the
+        // bound viewports too, since RegisterBoundViewport captured the pointer that was current then.
+        for (const BoundViewport& bound : m_Bound)
+        {
+            bound.Viewport->SetLocalization(localization);
+        }
     }
 
     Renderer::Viewport* ManagedViewportSet::Get(usize index) const
@@ -628,6 +634,16 @@ namespace Veng
                                                    WorldInstanceId world, Entity viewer,
                                                    const Renderer::ViewState& knobs)
     {
+        // A bound viewport is created by its caller (a LevelOverlay), not by this set, so it has none
+        // of the engine services a set-created viewport is handed in ReconfigureManagedViewports.
+        // Wire the same four the set owns, so an engine-driven GuiOverlay/GuiSurface presented here
+        // instantiates its driver and localizes its markup exactly as one on a managed viewport does;
+        // without them the overlay renders raw loc-keys, plays no sound, and never drives its driver.
+        viewport.SetGuiDriverRegistry(m_GuiDrivers);
+        viewport.SetAudioEngine(m_Audio);
+        viewport.SetGuiTranslator(m_GuiTranslator);
+        viewport.SetLocalization(m_Localization);
+
         m_Bound.push_back(
             {.Viewport = &viewport, .World = world, .Viewer = viewer, .Knobs = knobs});
     }
