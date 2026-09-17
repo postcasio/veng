@@ -2948,6 +2948,15 @@ namespace Veng
             .IsPresented = [this](const WorldInstanceId world) { return IsWorldPresented(world); },
         });
 
+        // Advance the shared glyph atlas's frame epoch before any text is shaped this frame: glyphs
+        // ensured this frame pin against eviction, and glyphs untouched since a prior frame become
+        // reclaimable. Every text draw ensures its glyphs during the render phase below, so this is
+        // the one point ahead of all of them.
+        if (m_GlyphAtlas)
+        {
+            m_GlyphAtlas->BeginFrame();
+        }
+
         // The engine render phase, uniform for every app and not overridable. The compositor
         // renders every registered capture first (so a material sampling a capture's output reads
         // this frame's result), then every registered viewport in registration order — each into

@@ -6,6 +6,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/Font.h>
+#include <Veng/Text/GlyphAtlas.h>
 
 namespace Veng::Gui
 {
@@ -474,27 +475,42 @@ namespace Veng::Gui
             return;
         }
 
-        const ShapeResult shaped = font.ShapeRun(codepoints, pixelSize, maxWidth);
+        const ShapeResult shaped =
+            font.ShapeRun(codepoints, pixelSize, maxWidth, TextShapeMode::Draw);
         if (shaped.Glyphs.empty())
         {
             return;
         }
 
-        const Renderer::TextureHandle atlas = font.GetAtlasHandle();
-        const Renderer::SamplerHandle sampler = font.GetAtlasSamplerHandle();
-        VE_ASSERT(atlas.IsValid(), "DrawList text requires a font with a finalized atlas handle");
-        VE_ASSERT(sampler.IsValid(),
-                  "DrawList text requires a font with a finalized atlas sampler handle");
-
-        EnsureRun(GuiPipeline::Msdf, atlas.Index);
-
-        // The text path carries no shape SDF: the fragment reconstructs coverage from the atlas.
-        // Params pack the distance range (atlas texels) and the atlas texture/sampler slots.
-        const vec4 params{font.GetDistanceRange(), 0.0f, static_cast<f32>(atlas.Index),
-                          static_cast<f32>(sampler.Index)};
+        // The glyphs were ensured resident in the shared dynamic atlas by ShapeRun; the atlas owns
+        // the one shared sampler and the single distance-range constant both field types encode. A
+        // font loaded without the shared glyph systems (a headless manager) has no atlas, so its
+        // text draws nothing.
+        const Text::GlyphAtlas* const atlas = font.GetGlyphAtlas();
+        if (atlas == nullptr)
+        {
+            return;
+        }
+        const f32 distanceRange = atlas->GetDistanceRange();
+        const Renderer::SamplerHandle sampler = atlas->GetSamplerHandle();
 
         for (const ShapedGlyph& glyph : shaped.Glyphs)
         {
+            // A glyph not resident this frame (the atlas over capacity) carries an invalid page and
+            // no quad; its advance already sized the run, so skipping it leaves the layout intact.
+            if (!glyph.Page.IsValid())
+            {
+                continue;
+            }
+
+            // The page handle and field type ride the existing params vec4 — no vertex-format change.
+            // params.z is the per-glyph atlas page, so a run spanning pages splits on the page change
+            // (EnsureRun keys on the texture index); params.y selects the fragment's field-type
+            // coverage branch (0 median-of-rgb Msdf, 1 red Sdf).
+            EnsureRun(GuiPipeline::Msdf, glyph.Page.Index);
+            const vec4 params{distanceRange, static_cast<f32>(static_cast<u32>(glyph.FieldType)),
+                              static_cast<f32>(glyph.Page.Index), static_cast<f32>(sampler.Index)};
+
             const vec2 min = pen + glyph.Min;
             const vec2 max = pen + glyph.Max;
             const std::array<vec2, 4> corners = {min, vec2(max.x, min.y), max, vec2(min.x, max.y)};

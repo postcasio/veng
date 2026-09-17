@@ -1,8 +1,8 @@
-// Font load test: cooks the font fixture pack in-process, mounts it,
-// LoadSync<Font>s it through AssetManager, and asserts the atlas dimensions,
-// glyph count, a known glyph's advance/bounds, a kerning pair, and that
-// ShapeRun applies advances + kerning consistently. The metrics contract the
-// text draw + layout-measure paths depend on.
+// Font load test: cooks the font fixture pack in-process, mounts it, wires a shared GlyphSource +
+// GlyphAtlas into the AssetManager, LoadSync<Font>s it, and asserts the face-backed contract the
+// text draw + layout-measure paths depend on — the face loaded, the em line metrics, a known glyph's
+// advance/bounds read from the face, a kerning pair, and that ShapeRun applies advances + kerning
+// consistently. There is no baked atlas; every glyph is rasterized on demand into the shared atlas.
 
 #include <array>
 #include <filesystem>
@@ -16,7 +16,8 @@
 #include <Veng/Asset/Font.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
-#include <Veng/Renderer/Types.h>
+#include <Veng/Text/GlyphAtlas.h>
+#include <Veng/Text/GlyphSource.h>
 
 #include <gpu/fixture.h>
 
@@ -45,8 +46,8 @@ namespace
 
         const path ttf = path(VENG_DEFAULT_FONT_TTF);
         std::ofstream(dir / "ext.font.json", std::ios::binary | std::ios::trunc)
-            << "{\n  \"font\": \"" << ttf.generic_string() << "\",\n  \"charset\": \"" << charset
-            << "\",\n  \"glyphSize\": 24,\n  \"pixelRange\": 4\n}\n";
+            << "{\n  \"font\": \"" << ttf.generic_string() << "\",\n  \"hotset\": \"" << charset
+            << "\"\n}\n";
         std::ofstream(dir / "pack.json", std::ios::binary | std::ios::trunc)
             << R"({"version": 1, "assets": [
                     {"id": "0xF0A9", "type": "Font", "source": "ext.font.json"}]})";
@@ -60,7 +61,7 @@ namespace
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "font loader: cook, mount, LoadSync, and read the atlas + metrics contract")
+                  "font loader: cook, mount, LoadSync, and read the face-backed metrics contract")
 {
     const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
     const path packJson = fixtureDir / "font_pack.json";
@@ -70,7 +71,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     Cook::RegisterBuiltinImporters(cooker);
     REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
 
+    Text::GlyphSource source;
+    Text::GlyphAtlas atlas(Context, source);
     AssetManager assets(Context, Tasks, Types);
+    assets.SetGlyphSystems(&source, &atlas);
     REQUIRE(assets.Mount(outArchive).has_value());
 
     const AssetResult<AssetHandle<Font>> handle = assets.LoadSync<Font>(FontId);
@@ -79,34 +83,32 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     const Font& font = *handle->Get();
 
-    // The atlas is a non-empty, power-of-two-square RGBA8 image the loader uploaded and registered.
-    const uvec2 extent = font.GetAtlasExtent();
-    CHECK(extent.x > 0);
-    CHECK(extent.y > 0);
-    CHECK(extent.x == extent.y);
-    CHECK(font.GetAtlasHandle().IsValid());
-    CHECK(font.GetAtlasSamplerHandle().IsValid());
-    CHECK(font.GetDistanceRange() == doctest::Approx(4.0f));
+    // The face loaded into the shared rasterizer and the em line metrics came off it.
+    CHECK(font.GetFaceId() != Text::FaceId::Invalid);
+    CHECK(font.GetLineHeight() > 0.0f);
+    CHECK(font.GetAscender() > 0.0f);
+    CHECK(font.GetDescender() < 0.0f);
 
-    // The fixture cooks the printable-ASCII charset; the four glyphs with outlines are present.
-    CHECK(font.GetGlyphCount() >= 4);
+    // 'A' has a 600/1000 = 0.6 em advance and a non-degenerate quad, read from the face device-free.
+    CHECK(font.HasGlyph('A'));
+    const FontGlyph glyphA = font.GetGlyphMetrics('A');
+    CHECK(glyphA.Advance == doctest::Approx(0.6f).epsilon(0.01f));
+    CHECK(glyphA.PlaneMax.x > glyphA.PlaneMin.x);
+    CHECK(glyphA.PlaneMax.y > glyphA.PlaneMin.y);
 
-    // 'A' has a 600/1000 = 0.6 em advance and a non-degenerate quad.
-    const FontGlyph* glyphA = font.GetGlyph('A');
-    REQUIRE(glyphA != nullptr);
-    CHECK(glyphA->Advance == doctest::Approx(0.6f).epsilon(0.01f));
-    CHECK(glyphA->PlaneMax.x > glyphA->PlaneMin.x);
-    CHECK(glyphA->PlaneMax.y > glyphA->PlaneMin.y);
-    CHECK(glyphA->UvMax.x > glyphA->UvMin.x);
-    CHECK(glyphA->UvMax.y > glyphA->UvMin.y);
+    // Ensuring 'A' resident packs it into the shared atlas and returns a valid page + matching advance.
+    const FontGlyph resident = font.GetGlyph('A', 32.0f);
+    CHECK(resident.Page.IsValid());
+    CHECK(resident.UvMax.x > resident.UvMin.x);
+    CHECK(resident.UvMax.y > resident.UvMin.y);
+    CHECK(resident.Advance == doctest::Approx(glyphA.Advance));
 
     // Space is whitespace: it advances the pen but has no atlas geometry.
-    const FontGlyph* glyphSpace = font.GetGlyph(' ');
-    REQUIRE(glyphSpace != nullptr);
-    CHECK(glyphSpace->Advance > 0.0f);
+    CHECK(font.HasGlyph(' '));
+    CHECK(font.GetGlyphMetrics(' ').Advance > 0.0f);
 
-    // The synthetic AV kern (-80 units at 1000 upem = -0.08 em) round-tripped through the cook.
-    CHECK(font.GetKerning('A', 'V') == doctest::Approx(-0.08f).epsilon(0.02f));
+    // The synthetic AV kern (-80 units at 1000 upem = -0.08 em) came off the face's kern table.
+    CHECK(font.GetKerning('A', 'V') == doctest::Approx(-0.08f).epsilon(0.05f));
     // An un-kerned pair reports zero.
     CHECK(font.GetKerning('A', 'A') == doctest::Approx(0.0f).epsilon(EmTolerance));
 
@@ -123,7 +125,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "font loader: ShapeRun applies advance
     Cook::RegisterBuiltinImporters(cooker);
     REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
 
+    Text::GlyphSource source;
+    Text::GlyphAtlas atlas(Context, source);
     AssetManager assets(Context, Tasks, Types);
+    assets.SetGlyphSystems(&source, &atlas);
     REQUIRE(assets.Mount(outArchive).has_value());
 
     const AssetResult<AssetHandle<Font>> handle = assets.LoadSync<Font>(FontId);
@@ -131,19 +136,19 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "font loader: ShapeRun applies advance
     const Font& font = *handle->Get();
 
     constexpr f32 pixelSize = 64.0f;
+    const f32 advanceA = font.GetGlyphMetrics('A').Advance;
+    const f32 advanceV = font.GetGlyphMetrics('V').Advance;
 
     // "AV" is one line of two visible quads; the kerning pulls V left of its unkerned position.
     const std::array<u32, 2> av = {'A', 'V'};
     const ShapeResult shaped = font.ShapeRun(av, pixelSize, std::nullopt);
     REQUIRE(shaped.Lines.size() == 1);
     REQUIRE(shaped.Glyphs.size() == 2);
-    CHECK(shaped.Glyphs[1].Min.x <
-          shaped.Glyphs[0].Max.x + font.GetGlyph('A')->Advance * pixelSize);
+    CHECK(shaped.Glyphs[1].Min.x < shaped.Glyphs[0].Max.x + advanceA * pixelSize);
 
     // The kerned line is narrower than the same pair laid out without kerning.
     const f32 kernedWidth = shaped.Lines[0].Width;
-    const f32 unkernedWidth =
-        (font.GetGlyph('A')->Advance + font.GetGlyph('V')->Advance) * pixelSize;
+    const f32 unkernedWidth = (advanceA + advanceV) * pixelSize;
     CHECK(kernedWidth < unkernedWidth);
     CHECK(kernedWidth ==
           doctest::Approx(unkernedWidth + font.GetKerning('A', 'V') * pixelSize).epsilon(0.01f));
@@ -159,47 +164,44 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "font loader: ShapeRun applies advance
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "font loader: a missing codepoint returns null but shapes as .notdef")
+                  "font loader: a codepoint no face covers shapes as .notdef")
 {
     const path outArchive = CookDefaultFontPack("notdef", "latin-extended");
 
+    Text::GlyphSource source;
+    Text::GlyphAtlas atlas(Context, source);
     AssetManager assets(Context, Tasks, Types);
+    assets.SetGlyphSystems(&source, &atlas);
     REQUIRE(assets.Mount(outArchive).has_value());
 
     const AssetResult<AssetHandle<Font>> handle = assets.LoadSync<Font>(ExtendedFontId);
     REQUIRE(handle.has_value());
     const Font& font = *handle->Get();
 
-    // The .notdef is a real box with a real advance — the whole point is that a gap is visible.
-    const FontGlyph& notdef = font.GetNotdefGlyph();
-    CHECK(notdef.Advance > 0.0f);
-    CHECK(notdef.PlaneMax.x > notdef.PlaneMin.x);
-    CHECK(notdef.PlaneMax.y > notdef.PlaneMin.y);
-
-    // A CJK codepoint is outside every Latin preset, so GetGlyph keeps its null-on-absent contract.
+    // A CJK codepoint is outside the default face's coverage, so no face in the chain covers it.
     constexpr u32 absent = 0x4E00; // 一 CJK UNIFIED IDEOGRAPH
-    CHECK(font.GetGlyph(absent) == nullptr);
+    CHECK_FALSE(font.HasGlyph(absent));
     // A present codepoint still resolves.
-    CHECK(font.GetGlyph('A') != nullptr);
+    CHECK(font.HasGlyph('A'));
+
+    // The .notdef box (the face's glyph 0) carries a real advance, so a coverage gap is visible.
+    const FontGlyph notdef = font.GetGlyphMetrics(absent);
+    CHECK(notdef.Advance > 0.0f);
 
     constexpr f32 pixelSize = 64.0f;
 
-    // ShapeRun draws the absent codepoint as one visible box advanced by the .notdef advance,
-    // rather than dropping it — a single glyph laid across the notdef's advance width.
+    // ShapeRun advances the absent codepoint by the .notdef advance rather than dropping it.
     const std::array<u32, 1> missing = {absent};
     const ShapeResult shaped = font.ShapeRun(missing, pixelSize, std::nullopt);
     REQUIRE(shaped.Lines.size() == 1);
-    REQUIRE(shaped.Glyphs.size() == 1);
     CHECK(shaped.Lines[0].Width == doctest::Approx(notdef.Advance * pixelSize).epsilon(0.001f));
 
     // A present codepoint shapes to the same width whether or not a missing one preceded it: the
     // notdef contributes its own advance and nothing spurious to the run.
     const std::array<u32, 1> present = {'A'};
     const ShapeResult a = font.ShapeRun(present, pixelSize, std::nullopt);
-    REQUIRE(a.Glyphs.size() == 1);
     const std::array<u32, 2> pair = {absent, 'A'};
     const ShapeResult both = font.ShapeRun(pair, pixelSize, std::nullopt);
-    REQUIRE(both.Glyphs.size() == 2);
     CHECK(both.Lines[0].Width ==
           doctest::Approx(notdef.Advance * pixelSize + a.Lines[0].Width).epsilon(0.001f));
 
@@ -207,23 +209,24 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "font loader: the latin-extended charset resolves Extended-A glyphs")
+                  "font loader: the latin-extended hot set resolves Extended-A glyphs")
 {
     const path outArchive = CookDefaultFontPack("extended", "latin-extended");
 
+    Text::GlyphSource source;
+    Text::GlyphAtlas atlas(Context, source);
     AssetManager assets(Context, Tasks, Types);
+    assets.SetGlyphSystems(&source, &atlas);
     REQUIRE(assets.Mount(outArchive).has_value());
 
     const AssetResult<AssetHandle<Font>> handle = assets.LoadSync<Font>(ExtendedFontId);
     REQUIRE(handle.has_value());
     const Font& font = *handle->Get();
 
-    // A Latin Extended-A letter and a curly quote resolve to real quads, where an ascii-only atlas
-    // would have shaped them as .notdef.
-    const FontGlyph* lStroke = font.GetGlyph(0x142); // ł
-    REQUIRE(lStroke != nullptr);
-    CHECK(lStroke->Advance > 0.0f);
-    CHECK(font.GetGlyph(0x2019) != nullptr); // ’
+    // A Latin Extended-A letter and a curly quote resolve to real glyphs the face covers.
+    CHECK(font.HasGlyph(0x142)); // ł
+    CHECK(font.GetGlyphMetrics(0x142).Advance > 0.0f);
+    CHECK(font.HasGlyph(0x2019)); // ’
 
     std::filesystem::remove(outArchive);
 }

@@ -23,6 +23,7 @@
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
+#include <Veng/Text/GlyphAtlas.h>
 
 #include "../GuiScissor.h"
 
@@ -83,6 +84,10 @@ namespace Veng::Renderer
     struct GuiScenePass::Impl
     {
         Renderer::Context& Context;
+        // The asset manager the pass loads its shaders through, and the seam it reaches the shared
+        // glyph atlas by: a sink that draws text records the atlas's pending glyph uploads onto its
+        // command buffer before it samples the pages.
+        AssetManager& Assets;
         uvec2 Extent;
         // The draw-list-points → UI-image-pixels magnification (see SetUiScale); positions
         // scale through the vertex-stage clip transform, clip rects through the scissor.
@@ -178,8 +183,22 @@ namespace Veng::Renderer
         uvec2 SinkExtent{0};
 
         explicit Impl(const GuiScenePassInfo& info)
-            : Context(info.Context), Extent(info.Extent), OutputFormat(info.OutputFormat)
+            : Context(info.Context), Assets(info.Assets), Extent(info.Extent),
+              OutputFormat(info.OutputFormat)
         {
+        }
+
+        // Records the shared glyph atlas's staged glyph uploads onto @p cmd before a text-drawing
+        // sink samples the atlas pages. The staging happened when the draw list was built (each
+        // glyph ensured resident on the CPU); this flushes the copies + page transitions onto the
+        // frame's graphics queue ahead of the sampling draw. A no-op when no glyph systems are wired
+        // or nothing was staged. Must be called outside any active rendering scope.
+        void FlushGlyphUploads(CommandBuffer& cmd)
+        {
+            if (Text::GlyphAtlas* const atlas = Assets.GetGlyphAtlas(); atlas != nullptr)
+            {
+                atlas->RecordUploads(cmd);
+            }
         }
 
         // Builds the composite images + two-pass composite graph on first use. The overlay HDR sink
@@ -712,6 +731,11 @@ namespace Veng::Renderer
     void GuiScenePass::Render(CommandBuffer& cmd, const Ref<ImageView>& sceneOutput)
     {
         Impl& impl = *m_Impl;
+
+        // Upload any glyphs the draw list ensured this frame before the graph samples the atlas
+        // pages; recorded outside any rendering scope, ahead of the composite graph's own passes.
+        impl.FlushGlyphUploads(cmd);
+
         impl.EnsureCompositeResources();
         BindlessRegistry& bindless = impl.Context.GetBindlessRegistry();
 
@@ -744,6 +768,10 @@ namespace Veng::Renderer
         VE_ASSERT(target.GetFormat() == impl.OutputFormat,
                   "GuiScenePass::RenderToTarget: target format must match the pass OutputFormat");
 
+        // Upload the draw list's ensured glyphs before the sink graph samples the atlas pages,
+        // recorded ahead of its rendering scope.
+        impl.FlushGlyphUploads(cmd);
+
         impl.SinkExtent = target.GetExtent();
         if (!impl.SinkGraph)
         {
@@ -762,7 +790,10 @@ namespace Veng::Renderer
     void GuiScenePass::RecordInto(CommandBuffer& cmd, uvec2 extent)
     {
         // The caller's render pass owns the rendering scope and the (loaded) target; only replay the
-        // cached runs into it, so the UI blends premultiplied-over whatever the target holds.
+        // cached runs into it, so the UI blends premultiplied-over whatever the target holds. The
+        // glyph-atlas upload cannot ride this sink — an image copy is illegal inside a rendering
+        // scope — so the caller flushes the atlas before it opens the scope (Viewport::Render does,
+        // before the scene render that composites the HDR overlays).
         m_Impl->RecordRuns(cmd, extent);
     }
 

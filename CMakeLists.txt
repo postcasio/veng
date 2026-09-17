@@ -1853,9 +1853,18 @@ if (VENG_BUILD_TESTS)
     # the cooker library and the cooker fixtures' directory.
     target_sources(veng_test_gpu PRIVATE
             tests/gpu/texture_loader.cpp
-            # font_loader.cpp cooks the font fixture pack in-process (msdf-atlas-gen),
-            # LoadSyncs the Font, and asserts the atlas + metrics + ShapeRun contract.
+            # font_loader.cpp cooks the font fixture pack in-process, wires a shared GlyphSource +
+            # GlyphAtlas, LoadSyncs the Font, and asserts the face-backed metrics + ShapeRun contract.
             tests/gpu/font_loader.cpp
+            # shape_run.cpp wires the shared glyph systems, loads a real face, and pins ShapeRun's
+            # layout properties: a metrics-measured run and an ensure-resident drawn run break and
+            # size identically, a space-less CJK run wraps at an ideograph boundary, a Latin run
+            # wraps only at spaces, and kerning applies within a face but not across a fallback pair.
+            tests/gpu/shape_run.cpp
+            # gui_text_fields.cpp renders one run mixing an MSDF-font glyph and an SDF-font glyph plus
+            # a fallback-face glyph through GuiScenePass and reads the pages back, proving the
+            # per-glyph field-type branch and that the SDF glyph anti-aliases from the shared range.
+            tests/gpu/gui_text_fields.cpp
             # glyph_atlas.cpp loads the kerning fixture face through GlyphSource, ensures glyphs into
             # a GlyphAtlas, records the uploads into a frame, and reads a page back to prove the
             # rasterize+pack+upload, the hit path, LRU eviction, and the over-cap not-resident result.

@@ -9,6 +9,8 @@
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/Sampler.h>
+#include <Veng/Renderer/Types.h>
 
 #include <algorithm>
 #include <cmath>
@@ -36,6 +38,20 @@ namespace Veng::Text
     {
         VE_ASSERT(m_Info.PageSize > 0, "GlyphAtlas: page size must be positive");
         VE_ASSERT(m_Info.MsdfPixelSize > 0, "GlyphAtlas: MSDF pixel size must be positive");
+
+        // One shared clamp-to-edge linear sampler for every page's distance field; acquired from the
+        // registry cache, so it is never released (a shared slot the registry owns for its lifetime).
+        m_SamplerHandle = m_Context.GetBindlessRegistry()
+                              .AcquireSampler({
+                                  .Name = "GlyphAtlas Sampler",
+                                  .MagFilter = Filter::Linear,
+                                  .MinFilter = Filter::Linear,
+                                  .MipmapMode = MipmapMode::Linear,
+                                  .AddressModeU = AddressMode::ClampToEdge,
+                                  .AddressModeV = AddressMode::ClampToEdge,
+                                  .AddressModeW = AddressMode::ClampToEdge,
+                              })
+                              .Handle;
     }
 
     GlyphAtlas::~GlyphAtlas()

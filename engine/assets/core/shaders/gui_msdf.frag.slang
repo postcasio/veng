@@ -1,11 +1,13 @@
-// GUI MSDF text fragment path: reconstructs a crisp glyph edge from a multi-channel
-// signed-distance-field atlas. The coverage is the median of the sampled RGB
-// distances, remapped to a screen-pixel range so the anti-aliasing holds at any
-// draw size. The distance range baked into the atlas (in atlas texels) rides the
-// params, scaled by the atlas-texels-per-screen-pixel rate from the UV derivatives;
-// the atlas texture and sampler are bindless set-0 slots in the params. Output is
-// premultiplied linear RGBA so the pass blends the text "over" the scene in linear
-// space, tinted by the run's vertex color.
+// GUI text fragment path: reconstructs a crisp glyph edge from a signed-distance-field
+// atlas page. A glyph carries its field type per quad in params.y — an Msdf (0)
+// rendition reconstructs coverage from the median of its three channels, an Sdf (1)
+// rendition from its single red channel — and both share one distance-range convention,
+// so the remap to a screen-pixel range is identical whichever field a glyph carries.
+// The distance range (in atlas texels) rides params.x, scaled by the
+// atlas-texels-per-screen-pixel rate from the UV derivatives; the atlas page texture is
+// the bindless slot in params.z and the sampler in params.w. Output is premultiplied
+// linear RGBA so the pass blends the text "over" the scene in linear space, tinted by
+// the run's vertex color.
 
 struct VSOutput
 {
@@ -29,14 +31,18 @@ float Median(float a, float b, float c)
 float4 fsMain(VSOutput input) : SV_Target
 {
     float distanceRange = input.v_Params.x; // px range baked into the SDF, in atlas texels
+    int fieldType = int(input.v_Params.y);  // 0 = Msdf (median of rgb), 1 = Sdf (r)
     int textureIndex = int(input.v_Params.z);
     int samplerIndex = int(input.v_Params.w);
 
     Texture2D atlas = g_Textures[NonUniformResourceIndex(textureIndex)];
     SamplerState atlasSampler = g_Samplers[NonUniformResourceIndex(samplerIndex)];
 
-    float3 msd = atlas.Sample(atlasSampler, input.v_Uv).rgb;
-    float sd = Median(msd.r, msd.g, msd.b);
+    // An Msdf glyph reconstructs the signed distance from the median of its three channels; an Sdf
+    // glyph carries a single-channel field in red. Both encode the same distance range, so the
+    // coverage math below divides by one range constant regardless of which branch produced sd.
+    float4 sample = atlas.Sample(atlasSampler, input.v_Uv);
+    float sd = fieldType == 1 ? sample.r : Median(sample.r, sample.g, sample.b);
 
     // Convert the [0,1] distance sample to a signed screen-pixel distance: the atlas
     // stores 0.5 on the edge, distanceRange atlas texels across the transition. The

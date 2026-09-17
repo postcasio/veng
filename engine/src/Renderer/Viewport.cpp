@@ -1,6 +1,7 @@
 #include <Veng/Renderer/Viewport.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/DrawList.h>
@@ -16,6 +17,7 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Transforms.h>
+#include <Veng/Text/GlyphAtlas.h>
 
 #include "GuiOverlayProjection.h"
 #include "Passes/GuiScenePass.h"
@@ -539,6 +541,14 @@ namespace Veng::Renderer
         // Drive any GuiSurface panels in the scene into their HDR targets before the scene render,
         // so a translucent/emissive panel material samples a shader-readable target the same frame.
         RenderSurfaces(cmd);
+
+        // Upload any glyphs the HDR overlays ensured this frame before the scene render samples the
+        // atlas pages — the pre-bloom overlay pass records inside the scene's rendering scope, where
+        // an image copy is illegal, so the flush rides here ahead of it. Outside any scope.
+        if (Text::GlyphAtlas* const atlas = m_Assets.GetGlyphAtlas(); atlas != nullptr)
+        {
+            atlas->RecordUploads(cmd);
+        }
 
         m_Renderer->Execute(cmd, view);
 

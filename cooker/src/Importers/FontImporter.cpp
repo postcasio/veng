@@ -19,22 +19,6 @@ namespace Veng::Cook
 {
     namespace
     {
-        // The MSDF em size (glyph height in atlas pixels) and pixel distance range the cook
-        // defaults to when the source JSON omits them. 48px glyphs with a 4px range is the common
-        // legible-at-small-sizes MSDF baseline.
-        constexpr u32 DefaultGlyphSize = 48;
-        constexpr f64 DefaultPixelRange = 4.0;
-
-        // The edge-coloring angle threshold msdfgen recommends for MSDF corner classification.
-        constexpr f64 EdgeColoringAngle = 3.0;
-
-        // The largest atlas edge the cook accepts. A charset must pack into a single atlas page,
-        // and the importer has no page-management path — an over-large charset (a CJK-scale set)
-        // fails the cook here rather than producing an atlas past the runtime's max texture size.
-        // 8192 is comfortably one page for every Latin-script preset and well under the 16384
-        // maxImageDimension2D typical hardware exposes.
-        constexpr int MaxAtlasDimension = 8192;
-
         // The curated General-Punctuation marks real UI text uses that live outside Latin-1: the
         // "latin-extended" preset carries them so a translated string renders proper typographic
         // punctuation rather than the tofu box. Not the whole block — each glyph is atlas area.
@@ -325,23 +309,6 @@ namespace Veng::Cook
             }
         }
 
-        u32 glyphSize = DefaultGlyphSize;
-        if (fontJson.contains("glyphSize") && fontJson["glyphSize"].is_number_unsigned())
-        {
-            glyphSize = fontJson["glyphSize"].get<u32>();
-        }
-        if (glyphSize == 0)
-        {
-            return std::unexpected(fmt::format("font importer: '{}': 'glyphSize' must be non-zero",
-                                               sourcePath.string()));
-        }
-
-        f64 pixelRange = DefaultPixelRange;
-        if (fontJson.contains("pixelRange") && fontJson["pixelRange"].is_number())
-        {
-            pixelRange = fontJson["pixelRange"].get<f64>();
-        }
-
         const Result<msdf_atlas::Charset> charset = BuildCharset(fontJson, sourcePath.string());
         if (!charset)
         {
@@ -377,30 +344,15 @@ namespace Veng::Cook
             return std::unexpected(*failure);
         }
 
-        // fontScale 1.0 normalizes every glyph geometry, advance, and kerning value to em units
-        // (the em becomes 1.0), so the cooked metrics scale to pixels by a single runtime multiply.
-        // Kerning comes from the font's legacy `kern` table (a GPOS-only font cooks none).
+        // fontScale 1.0 normalizes every glyph geometry and advance to em units (the em becomes
+        // 1.0), so the cooked line metrics scale to pixels by a single runtime multiply. Loading the
+        // charset is what populates the font's global metrics; the outlines themselves are not baked
+        // — the runtime rasterizes every glyph on demand from the embedded face bytes — but the load
+        // still confirms the hot-set codepoints resolve to real glyphs.
         std::vector<msdf_atlas::GlyphGeometry> glyphStorage;
         msdf_atlas::FontGeometry fontGeometry(&glyphStorage);
         const int loaded = fontGeometry.loadCharset(font, 1.0, *charset);
-
-        // Every font's own glyph 0 is its `.notdef` — the tofu box the shaper draws for a codepoint
-        // the atlas lacks. Cooking it under a reserved sentinel makes a coverage gap visible rather
-        // than silently dropped. It loads through the same FontGeometry as the charset (a glyphset
-        // whose one element is glyph index 0), so it inherits the identical em-normalized geometry
-        // scale — loading it at a raw scale would oversize its atlas box a thousandfold. Its
-        // getCodepoint() stays 0; the cook re-labels it under the sentinel below.
-        const usize notdefStorageIndex = glyphStorage.size();
-        msdf_atlas::Charset notdefSet;
-        notdefSet.add(0);
-        if (fontGeometry.loadGlyphset(font, 1.0, notdefSet, true, false) <= 0)
-        {
-            msdfgen::destroyFont(font);
-            msdfgen::deinitializeFreetype(freetype);
-            return std::unexpected(
-                fmt::format("font importer: '{}': font '{}' carries no glyph 0 (.notdef)",
-                            sourcePath.string(), fontPath.string()));
-        }
+        const msdfgen::FontMetrics metrics = fontGeometry.getMetrics();
 
         msdfgen::destroyFont(font);
         msdfgen::deinitializeFreetype(freetype);
@@ -411,178 +363,21 @@ namespace Veng::Cook
                                                sourcePath.string(), fontPath.string()));
         }
 
-        // Edge-color each glyph's shape so the three MSDF channels encode the corner geometry.
-        for (msdf_atlas::GlyphGeometry& glyph : glyphStorage)
-        {
-            glyph.edgeColoring(&msdfgen::edgeColoringSimple, EdgeColoringAngle, 0);
-        }
-
-        // Pack the glyphs into a square, power-of-two atlas at the requested em size, with the
-        // pixel distance range baked in. The packer solves the tightest layout at that fixed scale.
-        msdf_atlas::TightAtlasPacker packer;
-        packer.setDimensionsConstraint(msdf_atlas::DimensionsConstraint::POWER_OF_TWO_SQUARE);
-        packer.setScale(static_cast<f64>(glyphSize));
-        packer.setPixelRange(msdfgen::Range(pixelRange));
-        packer.setMiterLimit(1.0);
-        packer.setSpacing(1);
-        if (packer.pack(glyphStorage.data(), static_cast<int>(glyphStorage.size())) != 0)
-        {
-            return std::unexpected(fmt::format("font importer: '{}': failed to pack glyph atlas",
-                                               sourcePath.string()));
-        }
-
-        int atlasWidth = 0;
-        int atlasHeight = 0;
-        packer.getDimensions(atlasWidth, atlasHeight);
-        if (atlasWidth <= 0 || atlasHeight <= 0)
-        {
-            return std::unexpected(fmt::format("font importer: '{}': packed atlas has zero size",
-                                               sourcePath.string()));
-        }
-        if (atlasWidth > MaxAtlasDimension || atlasHeight > MaxAtlasDimension)
-        {
-            return std::unexpected(fmt::format(
-                "font importer: '{}': charset packs to a {}x{} atlas, past the {}px single-page "
-                "limit — reduce the charset or the glyph size",
-                sourcePath.string(), atlasWidth, atlasHeight, MaxAtlasDimension));
-        }
-
-        // Render the three-channel MSDF into a float bitmap, then quantize each channel to 8-bit
-        // (the atlas is stored uncompressed RGBA8; alpha is opaque). The generator runs the
-        // packed layout the packer computed.
-        msdf_atlas::ImmediateAtlasGenerator<float, 3, msdf_atlas::msdfGenerator,
-                                            msdf_atlas::BitmapAtlasStorage<float, 3>>
-            generator(atlasWidth, atlasHeight);
-        generator.setAttributes(msdf_atlas::GeneratorAttributes{});
-        generator.setThreadCount(1);
-        generator.generate(glyphStorage.data(), static_cast<int>(glyphStorage.size()));
-
-        const msdfgen::BitmapConstRef<float, 3> bitmap = generator.atlasStorage();
-
-        const usize atlasTexels = static_cast<usize>(atlasWidth) * atlasHeight;
-        vector<u8> atlasPixels(atlasTexels * 4, 255);
-        for (int y = 0; y < atlasHeight; y++)
-        {
-            for (int x = 0; x < atlasWidth; x++)
-            {
-                const float* src = bitmap(x, y);
-                // The float bitmap is bottom-up (msdfgen's origin); store top-down to match the
-                // atlas rects the cook records (top-left origin) and the runtime's row-major upload.
-                const usize dst = (static_cast<usize>(atlasHeight - 1 - y) * atlasWidth + x) * 4;
-                for (int c = 0; c < 3; c++)
-                {
-                    const float clamped = src[c] < 0.0f ? 0.0f : (src[c] > 1.0f ? 1.0f : src[c]);
-                    atlasPixels[dst + c] = static_cast<u8>(clamped * 255.0f + 0.5f);
-                }
-            }
-        }
-
-        // Map each cooked glyph's msdfgen glyph index back to its codepoint so the kerning table
-        // (keyed by index) can be re-expressed in codepoints — the runtime shapes by codepoint.
-        std::map<int, u32> indexToCodepoint;
-
-        vector<CookedGlyph> cookedGlyphs;
-        cookedGlyphs.reserve(glyphStorage.size());
-        for (usize gi = 0; gi < glyphStorage.size(); gi++)
-        {
-            const msdf_atlas::GlyphGeometry& glyph = glyphStorage[gi];
-            const bool isNotdef = gi == notdefStorageIndex;
-            // The .notdef rides under a reserved sentinel; every other glyph keeps its codepoint,
-            // and a stray codepoint-0 glyph (none from a charset load) is dropped.
-            u32 codepoint = glyph.getCodepoint();
-            if (isNotdef)
-            {
-                codepoint = CookedFontNotdefCodepoint;
-            }
-            else if (codepoint == 0)
-            {
-                continue;
-            }
-            // The kerning table keys on glyph index; the .notdef is never a kern partner, so it is
-            // left out of the index→codepoint map (its index 0 would alias no real pair anyway).
-            if (!isNotdef)
-            {
-                indexToCodepoint[glyph.getIndex()] = codepoint;
-            }
-
-            double planeLeft = 0.0;
-            double planeBottom = 0.0;
-            double planeRight = 0.0;
-            double planeTop = 0.0;
-            glyph.getQuadPlaneBounds(planeLeft, planeBottom, planeRight, planeTop);
-
-            double atlasLeft = 0.0;
-            double atlasBottom = 0.0;
-            double atlasRight = 0.0;
-            double atlasTop = 0.0;
-            glyph.getQuadAtlasBounds(atlasLeft, atlasBottom, atlasRight, atlasTop);
-
-            CookedGlyph cooked{};
-            cooked.Codepoint = codepoint;
-            cooked.Advance = static_cast<f32>(glyph.getAdvance());
-            cooked.PlaneLeft = static_cast<f32>(planeLeft);
-            cooked.PlaneBottom = static_cast<f32>(planeBottom);
-            cooked.PlaneWidth = static_cast<f32>(planeRight - planeLeft);
-            cooked.PlaneHeight = static_cast<f32>(planeTop - planeBottom);
-            // msdfgen atlas bounds are bottom-up; convert to the top-down atlas rect the runtime
-            // reads (top-left origin), so AtlasTop is the rect's top edge in the stored image.
-            cooked.AtlasLeft = static_cast<f32>(atlasLeft);
-            cooked.AtlasTop = static_cast<f32>(static_cast<double>(atlasHeight) - atlasTop);
-            cooked.AtlasWidth = static_cast<f32>(atlasRight - atlasLeft);
-            cooked.AtlasHeight = static_cast<f32>(atlasTop - atlasBottom);
-            cookedGlyphs.push_back(cooked);
-        }
-
-        vector<CookedKernPair> cookedKerning;
-        for (const auto& [pair, advance] : fontGeometry.getKerning())
-        {
-            const auto leftIt = indexToCodepoint.find(pair.first);
-            const auto rightIt = indexToCodepoint.find(pair.second);
-            if (leftIt == indexToCodepoint.end() || rightIt == indexToCodepoint.end())
-            {
-                continue;
-            }
-            cookedKerning.push_back(CookedKernPair{
-                .Left = leftIt->second,
-                .Right = rightIt->second,
-                .Advance = static_cast<f32>(advance),
-            });
-        }
-
-        const msdfgen::FontMetrics& metrics = fontGeometry.getMetrics();
-
         CookedFontHeader header{};
         header.Version = CookedFontVersion;
-        header.AtlasWidth = static_cast<u32>(atlasWidth);
-        header.AtlasHeight = static_cast<u32>(atlasHeight);
-        header.AtlasFormat = 2u; // RGBA8Unorm (Renderer::Format ordinal)
-        header.DistanceRange = static_cast<f32>(pixelRange);
         header.EmSize = static_cast<f32>(metrics.emSize);
         header.LineHeight = static_cast<f32>(metrics.lineHeight);
         header.Ascender = static_cast<f32>(metrics.ascenderY);
         header.Descender = static_cast<f32>(metrics.descenderY);
-        header.GlyphCount = static_cast<u32>(cookedGlyphs.size());
-        header.KerningCount = static_cast<u32>(cookedKerning.size());
         header.FieldType = fieldType;
         header.FaceBytes = static_cast<u32>(faceBytes.size());
         header.HotsetCount = static_cast<u32>(hotsetCodepoints.size());
         header.FallbackCount = static_cast<u32>(fallbackIds.size());
 
         vector<u8> blob;
-        blob.reserve(sizeof(header) + cookedGlyphs.size() * sizeof(CookedGlyph) +
-                     cookedKerning.size() * sizeof(CookedKernPair) + atlasPixels.size() +
-                     faceBytes.size() + hotsetCodepoints.size() * sizeof(u32) +
+        blob.reserve(sizeof(header) + faceBytes.size() + hotsetCodepoints.size() * sizeof(u32) +
                      fallbackIds.size() * sizeof(u64));
         AppendBytes(blob, &header, sizeof(header));
-        if (!cookedGlyphs.empty())
-        {
-            AppendBytes(blob, cookedGlyphs.data(), cookedGlyphs.size() * sizeof(CookedGlyph));
-        }
-        if (!cookedKerning.empty())
-        {
-            AppendBytes(blob, cookedKerning.data(), cookedKerning.size() * sizeof(CookedKernPair));
-        }
-        AppendBytes(blob, atlasPixels.data(), atlasPixels.size());
         AppendBytes(blob, faceBytes.data(), faceBytes.size());
         if (!hotsetCodepoints.empty())
         {

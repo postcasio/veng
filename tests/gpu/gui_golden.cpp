@@ -39,6 +39,8 @@
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Types.h>
+#include <Veng/Text/GlyphAtlas.h>
+#include <Veng/Text/GlyphSource.h>
 
 #include <Renderer/Passes/GuiScenePass.h>
 
@@ -229,7 +231,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     Cook::RegisterBuiltinImporters(cooker);
     REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
 
+    // Text needs the shared glyph systems wired: the face loads into the GlyphSource and
+    // its glyphs rasterize on demand into the GlyphAtlas the pass records uploads from.
+    Text::GlyphSource glyphSource;
+    Text::GlyphAtlas glyphAtlas(Context, glyphSource);
     AssetManager assets(Context, Tasks, Types);
+    assets.SetGlyphSystems(&glyphSource, &glyphAtlas);
     REQUIRE(assets.Mount(outArchive).has_value());
 
     const AssetResult<AssetHandle<Font>> fontHandle = assets.LoadSync<Font>(FontId);
@@ -286,7 +293,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     Cook::RegisterBuiltinImporters(cooker);
     REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
 
+    // Text needs the shared glyph systems wired: the face loads into the GlyphSource and
+    // its glyphs rasterize on demand into the GlyphAtlas the pass records uploads from.
+    Text::GlyphSource glyphSource;
+    Text::GlyphAtlas glyphAtlas(Context, glyphSource);
     AssetManager assets(Context, Tasks, Types);
+    assets.SetGlyphSystems(&glyphSource, &glyphAtlas);
     REQUIRE(assets.Mount(outArchive).has_value());
 
     const AssetResult<AssetHandle<Font>> fontHandle = assets.LoadSync<Font>(FontId);
@@ -352,7 +364,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     Cook::RegisterBuiltinImporters(cooker);
     REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
 
+    // Text needs the shared glyph systems wired: the face loads into the GlyphSource and
+    // its glyphs rasterize on demand into the GlyphAtlas the pass records uploads from.
+    Text::GlyphSource glyphSource;
+    Text::GlyphAtlas glyphAtlas(Context, glyphSource);
     AssetManager assets(Context, Tasks, Types);
+    assets.SetGlyphSystems(&glyphSource, &glyphAtlas);
     REQUIRE(assets.Mount(outArchive).has_value());
 
     const AssetResult<AssetHandle<Font>> fontHandle = assets.LoadSync<Font>(FontId);
@@ -440,7 +457,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     Cook::RegisterBuiltinImporters(cooker);
     REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
 
+    // Text needs the shared glyph systems wired: the face loads into the GlyphSource and
+    // its glyphs rasterize on demand into the GlyphAtlas the pass records uploads from.
+    Text::GlyphSource glyphSource;
+    Text::GlyphAtlas glyphAtlas(Context, glyphSource);
     AssetManager assets(Context, Tasks, Types);
+    assets.SetGlyphSystems(&glyphSource, &glyphAtlas);
     REQUIRE(assets.Mount(outArchive).has_value());
 
     const AssetResult<AssetHandle<Font>> fontHandle = assets.LoadSync<Font>(FontId);
@@ -1118,7 +1140,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     Cook::RegisterBuiltinImporters(cooker);
     REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
 
+    // Text needs the shared glyph systems wired: the face loads into the GlyphSource and
+    // its glyphs rasterize on demand into the GlyphAtlas the pass records uploads from.
+    Text::GlyphSource glyphSource;
+    Text::GlyphAtlas glyphAtlas(Context, glyphSource);
     AssetManager assets(Context, Tasks, Types);
+    assets.SetGlyphSystems(&glyphSource, &glyphAtlas);
     REQUIRE(assets.Mount(outArchive).has_value());
 
     const AssetResult<AssetHandle<Gui::UIDocument>> recipe =

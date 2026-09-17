@@ -137,7 +137,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // The base resolves it through the chain and ensures it resident in the shared atlas.
     CHECK(base.HasGlyph(crossFace));
-    const FontGlyph glyph = base.EnsureGlyph(crossFace, 32.0f);
+    const FontGlyph glyph = base.GetGlyph(crossFace, 32.0f);
     CHECK(glyph.Page.IsValid());
     CHECK(glyph.Advance > 0.0f);
 
@@ -167,8 +167,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "font fallback: a codepoint no face co
     constexpr u32 cjk = 0x4E00; // 一
     CHECK_FALSE(base.HasGlyph(cjk));
 
-    // EnsureGlyph still returns — the primary face's .notdef box, at this font's field type.
-    const FontGlyph glyph = base.EnsureGlyph(cjk, 32.0f);
+    // GetGlyph still returns — the primary face's .notdef box, at this font's field type.
+    const FontGlyph glyph = base.GetGlyph(cjk, 32.0f);
     CHECK(glyph.FieldType == GlyphFieldType::Msdf);
 }
 
@@ -212,8 +212,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(msdfHandle.has_value());
     REQUIRE(sdfHandle.has_value());
 
-    const FontGlyph msdfGlyph = msdfHandle->Get()->EnsureGlyph('A', 32.0f);
-    const FontGlyph sdfGlyph = sdfHandle->Get()->EnsureGlyph('A', 32.0f);
+    const FontGlyph msdfGlyph = msdfHandle->Get()->GetGlyph('A', 32.0f);
+    const FontGlyph sdfGlyph = sdfHandle->Get()->GetGlyph('A', 32.0f);
 
     CHECK(msdfGlyph.FieldType == GlyphFieldType::Msdf);
     CHECK(sdfGlyph.FieldType == GlyphFieldType::Sdf);

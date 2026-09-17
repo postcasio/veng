@@ -3,18 +3,36 @@
 #include <algorithm>
 #include <cstddef>
 
-#include <Veng/Asset/Texture.h>
 #include <Veng/Text/GlyphAtlas.h>
 
 namespace Veng
 {
-    Font::~Font() = default;
-
-    const FontGlyph* Font::GetGlyph(u32 codepoint) const
+    namespace
     {
-        const auto it = m_Glyphs.find(codepoint);
-        return it != m_Glyphs.end() ? &it->second : nullptr;
+        // Whether a codepoint is an ideographic CJK codepoint a line may break between. The minimal
+        // inter-ideograph break covers the ranges a Chinese/Japanese UI run is written in — CJK
+        // symbols and punctuation, Hiragana, Katakana, the CJK Unified Ideographs (and Extension A
+        // and Compatibility). It is deliberately not UAX #14: no dictionary, no prohibited-start/end
+        // (kinsoku) rules, no Thai/Lao — just enough that a space-less run wraps within its box.
+        bool IsCjkCodepoint(u32 cp)
+        {
+            return (cp >= 0x3000 && cp <= 0x303F) || // CJK Symbols and Punctuation
+                   (cp >= 0x3040 && cp <= 0x309F) || // Hiragana
+                   (cp >= 0x30A0 && cp <= 0x30FF) || // Katakana
+                   (cp >= 0x3400 && cp <= 0x4DBF) || // CJK Unified Ideographs Extension A
+                   (cp >= 0x4E00 && cp <= 0x9FFF) || // CJK Unified Ideographs
+                   (cp >= 0xF900 && cp <= 0xFAFF);   // CJK Compatibility Ideographs
+        }
+
+        // A line break is permitted between two adjacent ideographic codepoints; this is the whole of
+        // the minimal CJK break, in addition to the ordinary break after a space.
+        bool IsCjkBreakable(u32 prev, u32 next)
+        {
+            return IsCjkCodepoint(prev) && IsCjkCodepoint(next);
+        }
     }
+
+    Font::~Font() = default;
 
     Font::ResolvedGlyph Font::Resolve(u32 codepoint) const
     {
@@ -71,7 +89,7 @@ namespace Veng
         return out;
     }
 
-    FontGlyph Font::EnsureGlyph(u32 codepoint, f32 pixelSize) const
+    FontGlyph Font::GetGlyph(u32 codepoint, f32 pixelSize) const
     {
         FontGlyph out;
         if (m_GlyphSource == nullptr || m_GlyphAtlas == nullptr ||
@@ -80,37 +98,49 @@ namespace Veng
             return out;
         }
         const ResolvedGlyph resolved = Resolve(codepoint);
+        out.FieldType = resolved.FieldType;
+
         const Text::GlyphKey key =
             m_GlyphAtlas->KeyFor(resolved.Face, resolved.GlyphIndex, pixelSize, resolved.FieldType);
         const Text::GlyphSlot slot = m_GlyphAtlas->Ensure(key);
-        out.Advance = slot.Advance;
-        out.PlaneMin = slot.PlaneMin;
-        out.PlaneMax = slot.PlaneMax;
-        out.UvMin = slot.UvMin;
-        out.UvMax = slot.UvMax;
-        out.Page = slot.Page;
-        out.FieldType = slot.FieldType;
+        if (slot.Resident)
+        {
+            out.Advance = slot.Advance;
+            out.PlaneMin = slot.PlaneMin;
+            out.PlaneMax = slot.PlaneMax;
+            out.UvMin = slot.UvMin;
+            out.UvMax = slot.UvMax;
+            out.Page = slot.Page;
+            out.FieldType = slot.FieldType;
+            return out;
+        }
+
+        // Over the atlas capacity this frame: the pixels lag, but the layout must not. Keep the
+        // device-free advance so the run breaks and sizes identically; the invalid page leaves the
+        // draw with no quad for this glyph rather than spinning on a slot that will not land.
+        out.Advance = m_GlyphSource->GetGlyphMetrics(resolved.Face, resolved.GlyphIndex).Advance;
         return out;
     }
 
     f32 Font::GetKerning(u32 left, u32 right) const
     {
-        const auto it = m_Kerning.find({left, right});
-        return it != m_Kerning.end() ? it->second : 0.0f;
-    }
-
-    Renderer::TextureHandle Font::GetAtlasHandle() const
-    {
-        return m_Atlas->GetHandle();
-    }
-
-    Renderer::SamplerHandle Font::GetAtlasSamplerHandle() const
-    {
-        return m_Atlas->GetSamplerHandle();
+        if (m_GlyphSource == nullptr || m_FaceId == Text::FaceId::Invalid)
+        {
+            return 0.0f;
+        }
+        const ResolvedGlyph l = Resolve(left);
+        const ResolvedGlyph r = Resolve(right);
+        // Kerning is a property of one face's own glyph pair; an uncovered codepoint or a pair split
+        // across two faces (this face and a fallback's) carries none.
+        if (!l.Covered || !r.Covered || l.Face != r.Face)
+        {
+            return 0.0f;
+        }
+        return m_GlyphSource->GetKerning(l.Face, l.GlyphIndex, r.GlyphIndex);
     }
 
     ShapeResult Font::ShapeRun(std::span<const u32> codepoints, f32 pixelSize,
-                               optional<f32> maxWidth) const
+                               optional<f32> maxWidth, TextShapeMode mode) const
     {
         ShapeResult result;
 
@@ -157,6 +187,8 @@ namespace Veng
                               baseline - glyph.PlaneMin.y * pixelSize};
                 shaped.UvMin = glyph.UvMin;
                 shaped.UvMax = glyph.UvMax;
+                shaped.Page = glyph.Page;
+                shaped.FieldType = glyph.FieldType;
                 result.Glyphs.push_back(shaped);
             }
 
@@ -177,27 +209,35 @@ namespace Veng
             }
         };
 
-        // Moves the trailing word (glyphs after the last space on the current line) to a fresh line,
-        // re-flowing the pen — the word-wrap break. Returns false when the line has no earlier space
-        // to break at (a single word wider than the constraint hard-breaks in the caller instead).
-        const auto wrapTrailingWord = [&]() -> bool
+        // Moves the trailing run (glyphs after the latest break opportunity on the current line) to a
+        // fresh line, re-flowing the pen. A break opportunity is after a space, or between two
+        // adjacent CJK codepoints (the minimal inter-ideograph break). Returns false when the line
+        // carries no earlier break to fall back on (a single unbreakable word wider than the
+        // constraint hard-breaks in the caller instead).
+        const auto wrapTrailingRun = [&]() -> bool
         {
-            usize wordStart = lineGlyphs.size();
-            while (wordStart > 0 && lineGlyphs[wordStart - 1].Codepoint != ' ')
+            usize breakAt = 0;
+            for (usize i = lineGlyphs.size(); i >= 2; i--)
             {
-                wordStart--;
+                const u32 prev = lineGlyphs[i - 2].Codepoint;
+                const u32 next = lineGlyphs[i - 1].Codepoint;
+                if (prev == ' ' || IsCjkBreakable(prev, next))
+                {
+                    breakAt = i - 1;
+                    break;
+                }
             }
-            if (wordStart == 0)
+            if (breakAt == 0)
             {
                 return false;
             }
 
-            vector<PendingGlyph> carried(
-                lineGlyphs.begin() + static_cast<std::ptrdiff_t>(wordStart), lineGlyphs.end());
-            lineGlyphs.resize(wordStart);
+            vector<PendingGlyph> carried(lineGlyphs.begin() + static_cast<std::ptrdiff_t>(breakAt),
+                                         lineGlyphs.end());
+            lineGlyphs.resize(breakAt);
             commitLine(true);
 
-            // Re-lay the carried word from the new pen origin, re-applying kerning within it.
+            // Re-lay the carried run from the new pen origin, re-applying kerning within it.
             for (usize i = 0; i < carried.size(); i++)
             {
                 PendingGlyph next = carried[i];
@@ -223,30 +263,29 @@ namespace Veng
                 continue;
             }
 
-            // A codepoint the atlas lacks draws the .notdef box with its real advance, so a coverage
-            // gap is visible rather than silently vanished and the layout stays honest.
-            const FontGlyph* glyph = GetGlyph(codepoint);
-            if (glyph == nullptr)
-            {
-                glyph = &GetNotdefGlyph();
-            }
+            // A covered codepoint resolves through the fallback chain; an uncovered one lands on the
+            // resolved face's .notdef box (glyph 0), so a coverage gap stays visible and the layout
+            // honest rather than the character silently vanishing.
+            const FontGlyph glyph = mode == TextShapeMode::Draw ? GetGlyph(codepoint, pixelSize)
+                                                                : GetGlyphMetrics(codepoint);
 
             if (havePrevious)
             {
                 penX += GetKerning(previous, codepoint) * pixelSize;
             }
 
-            PendingGlyph pending{.Codepoint = codepoint, .PenX = penX, .Metrics = *glyph};
-            penX += glyph->Advance * pixelSize;
+            PendingGlyph pending{.Codepoint = codepoint, .PenX = penX, .Metrics = glyph};
+            penX += glyph.Advance * pixelSize;
             lineGlyphs.push_back(pending);
             previous = codepoint;
             havePrevious = true;
 
             if (maxWidth && penX > *maxWidth && lineGlyphs.size() > 1)
             {
-                // The line overflowed: wrap the trailing word, or hard-break before this glyph when
-                // the word itself is wider than the constraint.
-                if (!wrapTrailingWord())
+                // The line overflowed: wrap at the latest break opportunity, or hard-break before
+                // this glyph when the line offers no earlier break (one unbreakable run wider than
+                // the constraint).
+                if (!wrapTrailingRun())
                 {
                     lineGlyphs.pop_back();
                     commitLine(true);

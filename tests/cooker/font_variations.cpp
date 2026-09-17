@@ -1,10 +1,15 @@
-// Font cook: the `variations` block, which is what makes a variable font usable.
+// Font cook: the `variations` block validation.
 //
-// A variable font carries a design space rather than one weight, and the cook bakes one instance
-// into an atlas — so the block is the only way to ask for anything but the face's default, and
-// asking wrongly has to fail loudly rather than quietly produce the default. The fixture is the
-// engine's own default UI font, which is variable (Weight 100–900, Width 75–100), so the test needs
-// no font of its own; the static kerning fixture beside it supplies the not-a-variable-font case.
+// A variable font carries a design space rather than one weight, and asking for an axis it does not
+// carry has to fail loudly rather than quietly produce the default. The cook validates the block
+// against the face's own axes. The fixture is the engine's own default UI font, which is variable
+// (Weight 100–900, Width 75–100), so the test needs no font of its own; the static kerning fixture
+// beside it supplies the not-a-variable-font case.
+//
+// The runtime now rasterizes every glyph from the embedded default-instance face bytes, so a
+// declared instance no longer reaches the drawn glyphs; applying the variation coordinates at
+// runtime (in GlyphSource) is a deferred follow-up. What this file pins is the validation, which
+// still runs at cook time.
 
 #include <cstring>
 #include <fstream>
@@ -35,8 +40,8 @@ namespace
     path WritePack(const path& dir, const path& ttf, const std::string& variations)
     {
         std::string font = "{\n  \"font\": \"" + ttf.generic_string() +
-                           "\",\n  \"charset\": \"ascii\",\n  \"glyphSize\": 24,\n  "
-                           "\"pixelRange\": 4";
+                           "\",\n  \"charset\": "
+                           "\"ascii\"";
         if (!variations.empty())
         {
             font += ",\n  \"variations\": " + variations;
@@ -51,35 +56,6 @@ namespace
         return packJson;
     }
 
-    // The advance of one cooked glyph, in em units — the metric a weight change has to move.
-    optional<f32> AdvanceOf(const path& archive, const u32 codepoint)
-    {
-        const Result<ArchiveReader> reader = ArchiveReader::Open(archive);
-        if (!reader.has_value())
-        {
-            return std::nullopt;
-        }
-        const optional<ArchiveEntry> entry = reader->Find(AssetId{0xF0A7});
-        if (!entry.has_value() || entry->Blob.size() < sizeof(CookedFontHeader))
-        {
-            return std::nullopt;
-        }
-
-        CookedFontHeader header{};
-        std::memcpy(&header, entry->Blob.data(), sizeof(header));
-        const u8* glyphs = entry->Blob.data() + sizeof(header);
-        for (u32 i = 0; i < header.GlyphCount; ++i)
-        {
-            CookedGlyph glyph{};
-            std::memcpy(&glyph, glyphs + i * sizeof(CookedGlyph), sizeof(glyph));
-            if (glyph.Codepoint == codepoint)
-            {
-                return glyph.Advance;
-            }
-        }
-        return std::nullopt;
-    }
-
     // A fresh temp directory per case, so two cooks in one test never share an output path.
     path CaseDir(const char* name)
     {
@@ -90,7 +66,7 @@ namespace
     }
 }
 
-TEST_CASE("Cooker: a variations block cooks a different instance of the same variable font")
+TEST_CASE("Cooker: a valid variations block on a variable font cooks a well-formed blob")
 {
     const path ttf = path(VENG_DEFAULT_FONT_TTF);
     REQUIRE(std::filesystem::exists(ttf));
@@ -98,24 +74,23 @@ TEST_CASE("Cooker: a variations block cooks a different instance of the same var
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    const path lightDir = CaseDir("light");
-    const path lightPack = WritePack(lightDir, ttf, R"({"Weight": 100})");
-    const path lightOut = lightDir / "light.vengpack";
-    REQUIRE(cooker.CookPack(lightPack, lightOut).has_value());
+    // A recognized axis at a valid coordinate passes validation and cooks a current-version blob
+    // with the embedded face bytes. (The declared instance no longer reaches the drawn glyphs — the
+    // runtime rasterizes the embedded default instance — so there is no baked metric to compare; the
+    // property here is that a well-formed variations block validates and cooks.)
+    const path dir = CaseDir("heavy");
+    const path out = dir / "heavy.vengpack";
+    REQUIRE(cooker.CookPack(WritePack(dir, ttf, R"({"Weight": 900})"), out).has_value());
 
-    const path heavyDir = CaseDir("heavy");
-    const path heavyPack = WritePack(heavyDir, ttf, R"({"Weight": 900})");
-    const path heavyOut = heavyDir / "heavy.vengpack";
-    REQUIRE(cooker.CookPack(heavyPack, heavyOut).has_value());
-
-    // 'M' is the widest letter in the charset and the one a weight axis moves most: a heavier
-    // instance sets more ink and a wider advance. That the two differ at all is the whole claim —
-    // without the block both cooks would be the face's default and identical.
-    const optional<f32> light = AdvanceOf(lightOut, 'M');
-    const optional<f32> heavy = AdvanceOf(heavyOut, 'M');
-    REQUIRE(light.has_value());
-    REQUIRE(heavy.has_value());
-    CHECK(*heavy > *light);
+    const Result<ArchiveReader> reader = ArchiveReader::Open(out);
+    REQUIRE(reader.has_value());
+    const optional<ArchiveEntry> entry = reader->Find(AssetId{0xF0A7});
+    REQUIRE(entry.has_value());
+    REQUIRE(entry->Blob.size() >= sizeof(CookedFontHeader));
+    CookedFontHeader header{};
+    std::memcpy(&header, entry->Blob.data(), sizeof(header));
+    CHECK(header.Version == CookedFontVersion);
+    CHECK(header.FaceBytes > 0u);
 }
 
 TEST_CASE("Cooker: an axis the font does not carry fails the cook and names the ones it does")

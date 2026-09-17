@@ -1,8 +1,9 @@
-// Font cook: the face-backed blob. A cooked font embeds the face outline bytes, a default field
-// type, the hot-set codepoints, and the fallback-font id chain after the atlas texels — everything
-// the runtime needs to rasterize any covered codepoint on demand and resolve a missing one through
-// another shipped face. The version bump means a blob cooked before these fields is rejected at
-// load rather than misread; that reject is exercised in the GPU tier where a live loader exists.
+// Font cook: the face-backed blob. A cooked font is the em line metrics, a default field type, the
+// face outline bytes, the hot-set codepoints, and the fallback-font id chain — everything the
+// runtime needs to rasterize any covered codepoint on demand and resolve a missing one through
+// another shipped face. There is no baked atlas or glyph table. The version bump means a blob cooked
+// before this layout is rejected at load rather than misread; that reject is exercised in the GPU
+// tier where a live loader exists.
 
 #include <cstring>
 #include <fstream>
@@ -63,13 +64,11 @@ namespace
         return header;
     }
 
-    // The byte offset of the fallback id array within a font blob, from the header's section counts.
+    // The byte offset of the fallback id array within a font blob: header, then the face bytes, then
+    // the hot-set codepoints.
     usize FallbackOffset(const CookedFontHeader& header)
     {
-        return sizeof(header) + static_cast<usize>(header.GlyphCount) * sizeof(CookedGlyph) +
-               static_cast<usize>(header.KerningCount) * sizeof(CookedKernPair) +
-               static_cast<usize>(header.AtlasWidth) * header.AtlasHeight * 4 +
-               static_cast<usize>(header.FaceBytes) +
+        return sizeof(header) + static_cast<usize>(header.FaceBytes) +
                static_cast<usize>(header.HotsetCount) * sizeof(u32);
     }
 }

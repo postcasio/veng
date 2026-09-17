@@ -1,10 +1,10 @@
-// Font cook: the charset presets and the always-present `.notdef` glyph.
+// Font cook: the charset presets, which name the hot set the runtime pre-rasterizes at load.
 //
-// A translated string renders only the glyphs the atlas carries, so the "latin-extended" preset is
-// a correctness gate on Latin-script European languages — its accented letters and typographic
-// punctuation live outside Latin-1. And a codepoint the atlas lacks must be *seen*, not dropped, so
-// every cooked atlas carries a `.notdef` tofu box under a reserved sentinel. The fixture is the
-// engine's own default UI font (Roboto), which covers Latin Extended-A and the curated punctuation.
+// A preset selects the codepoints warmed into the shared atlas at load, so the "latin-extended"
+// preset is a correctness gate on Latin-script European languages — its accented letters and
+// typographic punctuation live outside Latin-1. The fixture is the engine's own default UI font
+// (Roboto), which covers Latin Extended-A and the curated punctuation. There is no baked atlas or
+// glyph table any more; a preset's reach is checked through the cooked hot-set codepoints.
 
 #include <array>
 #include <cstring>
@@ -38,8 +38,7 @@ namespace
     path WritePack(const path& dir, const path& ttf, const std::string& charset)
     {
         const std::string font = "{\n  \"font\": \"" + ttf.generic_string() +
-                                 "\",\n  \"charset\": \"" + charset +
-                                 "\",\n  \"glyphSize\": 24,\n  \"pixelRange\": 4\n}\n";
+                                 "\",\n  \"charset\": \"" + charset + "\"\n}\n";
         WriteFile(dir / "instance.font.json", font);
 
         const path packJson = dir / "font_charset_pack.json";
@@ -49,33 +48,38 @@ namespace
         return packJson;
     }
 
-    // One cooked glyph, decoded from the archive, or nullopt if the codepoint is not cooked.
-    optional<CookedGlyph> GlyphOf(const path& archive, const u32 codepoint)
+    // Whether a codepoint is in the cooked font's hot set — the u32 array following the face bytes.
+    bool HotsetContains(const path& archive, const u32 codepoint)
     {
         const Result<ArchiveReader> reader = ArchiveReader::Open(archive);
         if (!reader.has_value())
         {
-            return std::nullopt;
+            return false;
         }
         const optional<ArchiveEntry> entry = reader->Find(CharsetFontId);
         if (!entry.has_value() || entry->Blob.size() < sizeof(CookedFontHeader))
         {
-            return std::nullopt;
+            return false;
         }
 
         CookedFontHeader header{};
         std::memcpy(&header, entry->Blob.data(), sizeof(header));
-        const u8* glyphs = entry->Blob.data() + sizeof(header);
-        for (u32 i = 0; i < header.GlyphCount; ++i)
+        const usize hotsetOffset = sizeof(header) + static_cast<usize>(header.FaceBytes);
+        if (entry->Blob.size() <
+            hotsetOffset + static_cast<usize>(header.HotsetCount) * sizeof(u32))
         {
-            CookedGlyph glyph{};
-            std::memcpy(&glyph, glyphs + i * sizeof(CookedGlyph), sizeof(glyph));
-            if (glyph.Codepoint == codepoint)
+            return false;
+        }
+        for (u32 i = 0; i < header.HotsetCount; ++i)
+        {
+            u32 cp = 0;
+            std::memcpy(&cp, entry->Blob.data() + hotsetOffset + i * sizeof(u32), sizeof(u32));
+            if (cp == codepoint)
             {
-                return glyph;
+                return true;
             }
         }
-        return std::nullopt;
+        return false;
     }
 
     path CaseDir(const char* name)
@@ -87,7 +91,7 @@ namespace
     }
 }
 
-TEST_CASE("Cooker: the latin-extended preset carries Extended-A letters and curly punctuation")
+TEST_CASE("Cooker: the latin-extended preset warms Extended-A letters and curly punctuation")
 {
     const path ttf = path(VENG_DEFAULT_FONT_TTF);
     REQUIRE(std::filesystem::exists(ttf));
@@ -101,7 +105,7 @@ TEST_CASE("Cooker: the latin-extended preset carries Extended-A letters and curl
     REQUIRE(cooker.CookPack(pack, out).has_value());
 
     // A stratified handful across Latin Extended-A (Polish/Czech/Hungarian/Turkish) and the curated
-    // General-Punctuation set — each must be a cooked glyph with real atlas geometry, not tofu.
+    // General-Punctuation set — each must be in the cooked hot set the runtime warms at load.
     const std::array<u32, 8> covered = {
         0x142,  // ł  LATIN SMALL LETTER L WITH STROKE
         0x159,  // ř  LATIN SMALL LETTER R WITH CARON
@@ -114,39 +118,34 @@ TEST_CASE("Cooker: the latin-extended preset carries Extended-A letters and curl
     };
     for (const u32 cp : covered)
     {
-        const optional<CookedGlyph> glyph = GlyphOf(out, cp);
-        REQUIRE_MESSAGE(glyph.has_value(), "missing cooked glyph U+" << cp);
-        CHECK(glyph->AtlasWidth > 0.0f);
-        CHECK(glyph->AtlasHeight > 0.0f);
+        CHECK_MESSAGE(HotsetContains(out, cp), "missing hot-set codepoint U+" << cp);
     }
 
     // Latin-1 accented letters the base languages need are still there under the wider preset.
-    CHECK(GlyphOf(out, 0xE9).has_value()); // é
+    CHECK(HotsetContains(out, 0xE9)); // é
     // A plain-ASCII letter is unaffected.
-    CHECK(GlyphOf(out, 'A').has_value());
+    CHECK(HotsetContains(out, 'A'));
 }
 
-TEST_CASE("Cooker: every cooked font carries a .notdef under the reserved sentinel")
+TEST_CASE("Cooker: a preset selects the hot set it names, narrow or wide")
 {
     const path ttf = path(VENG_DEFAULT_FONT_TTF);
     Cooker cooker;
     RegisterBuiltinImporters(cooker);
 
-    // Both the narrow (ascii) and wide (latin-extended) presets emit the tofu box.
-    for (const char* preset : {"ascii", "latin-extended"})
-    {
-        const path dir = CaseDir(preset);
-        const path pack = WritePack(dir, ttf, preset);
-        const path out = dir / "out.vengpack";
-        REQUIRE(cooker.CookPack(pack, out).has_value());
+    // The narrow (ascii) preset warms ASCII and nothing beyond Latin-1; the wide (latin-extended)
+    // preset adds the Extended-A letters. A codepoint is in the hot set iff its preset names it.
+    const path asciiDir = CaseDir("ascii");
+    const path asciiOut = asciiDir / "ascii.vengpack";
+    REQUIRE(cooker.CookPack(WritePack(asciiDir, ttf, "ascii"), asciiOut).has_value());
+    CHECK(HotsetContains(asciiOut, 'A'));
+    CHECK_FALSE(HotsetContains(asciiOut, 0x142)); // ł is outside ASCII
 
-        const optional<CookedGlyph> notdef = GlyphOf(out, CookedFontNotdefCodepoint);
-        REQUIRE(notdef.has_value());
-        // The tofu is a visible box with a real advance — the whole point is that a gap draws.
-        CHECK(notdef->Advance > 0.0f);
-        CHECK(notdef->AtlasWidth > 0.0f);
-        CHECK(notdef->AtlasHeight > 0.0f);
-    }
+    const path extDir = CaseDir("wide");
+    const path extOut = extDir / "wide.vengpack";
+    REQUIRE(cooker.CookPack(WritePack(extDir, ttf, "latin-extended"), extOut).has_value());
+    CHECK(HotsetContains(extOut, 'A'));
+    CHECK(HotsetContains(extOut, 0x142)); // ł is in Latin Extended-A
 }
 
 TEST_CASE("Cooker: an unknown charset preset is an error naming the valid ones")

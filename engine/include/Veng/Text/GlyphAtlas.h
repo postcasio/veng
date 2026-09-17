@@ -178,6 +178,23 @@ namespace Veng::Text
         /// @brief Returns the number of pages currently allocated across all field types.
         [[nodiscard]] u32 GetPageCount() const;
 
+        /// @brief Returns the shared bindless sampler every page is sampled through.
+        ///
+        /// A clamp-to-edge linear sampler suited to the padded distance fields, acquired once from
+        /// the shared registry cache and held for the atlas's lifetime. The text draw path packs
+        /// its index into the per-glyph draw params.
+        [[nodiscard]] Renderer::SamplerHandle GetSamplerHandle() const { return m_SamplerHandle; }
+
+        /// @brief Returns the signed-distance range, in atlas texels, both field types encode.
+        ///
+        /// The single shader constant the text coverage math divides screen-space distance by
+        /// (scaled by the draw size). One value serves Msdf and Sdf alike, since both rasterize
+        /// over this same range.
+        [[nodiscard]] f32 GetDistanceRange() const
+        {
+            return static_cast<f32>(m_Info.DistanceRangePx);
+        }
+
         /// @brief Returns a page's bindless handle, for a draw that samples it.
         /// @param page A page index in [0, GetPageCount()).
         [[nodiscard]] Renderer::TextureHandle GetPageHandle(u32 page) const;
@@ -231,6 +248,8 @@ namespace Veng::Text
         Unique<GlyphPacker> m_Packer;
         /// @brief The GPU pages, indexed by the packer's page id.
         vector<Page> m_Pages;
+        /// @brief The shared clamp-to-edge linear sampler every page is sampled through.
+        Renderer::SamplerHandle m_SamplerHandle;
         /// @brief Glyphs staged since the last RecordUploads.
         vector<Pending> m_Pending;
         /// @brief The current frame epoch.
