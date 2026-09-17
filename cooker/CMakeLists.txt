@@ -128,62 +128,12 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(dr_libs)
 
-# FreeType — font-outline loader for the FontImporter's MSDF generation, cooker-only (never linked
-# into libveng, which uploads the cooked atlas and decodes nothing). msdfgen finds it through the
-# Freetype::Freetype target, so it is fetched here before msdf-atlas-gen below and its target
-# aliased into the name msdfgen's find_package expects. Trim it to the core outline loader: no
-# HarfBuzz, Brotli, PNG, zlib, or bzip2 subsystems, none of which the outline path needs. Built
-# EXCLUDE_FROM_ALL so only the parts the cooker links compile.
-set(FT_DISABLE_HARFBUZZ ON CACHE INTERNAL "")
-set(FT_DISABLE_BROTLI ON CACHE INTERNAL "")
-set(FT_DISABLE_PNG ON CACHE INTERNAL "")
-set(FT_DISABLE_ZLIB ON CACHE INTERNAL "")
-set(FT_DISABLE_BZIP2 ON CACHE INTERNAL "")
-FetchContent_Declare(
-        freetype
-        GIT_REPOSITORY https://github.com/freetype/freetype.git
-        GIT_TAG VER-2-13-3
-        GIT_SHALLOW TRUE
-        EXCLUDE_FROM_ALL
-)
-FetchContent_MakeAvailable(freetype)
-if (NOT TARGET Freetype::Freetype)
-    add_library(Freetype::Freetype ALIAS freetype)
-endif ()
-
-# msdf-atlas-gen / msdfgen — the multi-channel signed-distance-field glyph atlas + geometry
-# generator behind the FontImporter, cooker-only (never linked into libveng, which decodes nothing
-# from the cooked atlas). Only the msdfgen submodule is needed; the artery-font export is disabled,
-# so its submodule is not fetched. Skia (a full renderer), vcpkg, PNG/SVG I/O, and the standalone
-# executables are all disabled — the cook drives the library API directly and stores its own RGBA8
-# atlas. The library uses the Freetype::Freetype target aliased above; it links no system package.
-#
-# On MSVC both libraries default to the static CRT (/MT[d]); veng and every other dependency use
-# the dynamic CRT (/MD[d]), so their own DYNAMIC_RUNTIME opt-in is turned on to keep the runtime
-# uniform — otherwise linking the cooker fails with LNK2038 RuntimeLibrary mismatches.
-set(MSDFGEN_DYNAMIC_RUNTIME ON CACHE INTERNAL "")
-set(MSDF_ATLAS_DYNAMIC_RUNTIME ON CACHE INTERNAL "")
-set(MSDF_ATLAS_USE_VCPKG OFF CACHE INTERNAL "")
-set(MSDF_ATLAS_USE_SKIA OFF CACHE INTERNAL "")
-set(MSDF_ATLAS_BUILD_STANDALONE OFF CACHE INTERNAL "")
-set(MSDF_ATLAS_NO_ARTERY_FONT ON CACHE INTERNAL "")
-set(MSDF_ATLAS_INSTALL OFF CACHE INTERNAL "")
-set(MSDFGEN_DISABLE_PNG ON CACHE INTERNAL "")
-set(MSDFGEN_DISABLE_SVG ON CACHE INTERNAL "")
-set(MSDFGEN_USE_SKIA OFF CACHE INTERNAL "")
-set(MSDFGEN_USE_VCPKG OFF CACHE INTERNAL "")
-set(MSDFGEN_BUILD_STANDALONE OFF CACHE INTERNAL "")
-set(MSDFGEN_INSTALL OFF CACHE INTERNAL "")
-FetchContent_Declare(
-        msdf_atlas_gen
-        GIT_REPOSITORY https://github.com/Chlumsky/msdf-atlas-gen.git
-        GIT_TAG v1.3
-        GIT_SHALLOW TRUE
-        GIT_SUBMODULES msdfgen
-        GIT_SUBMODULES_RECURSE TRUE
-        EXCLUDE_FROM_ALL
-)
-FetchContent_MakeAvailable(msdf_atlas_gen)
+# FreeType and msdf-atlas-gen / msdfgen are declared in the root CMakeLists.txt (shared scope), not
+# here: the FontImporter's offline MSDF bake and libveng's runtime glyph rasterizer both link the one
+# pinned FreeType + msdfgen, so the FetchContent must be visible to both add_subdirectory(engine) and
+# this cooker directory. The Freetype::Freetype / msdf-atlas-gen::msdf-atlas-gen / msdfgen::* targets
+# it creates are referenced below. Only the cooker links msdf-atlas-gen (the atlas packer); libveng
+# links msdfgen-core/ext + FreeType alone.
 
 # The debug-optimize flag for the codec hot loops. MSVC's /O2 is rejected alongside the Debug
 # runtime checks (/RTC1) the default Debug flags carry, so the flag is emitted only for compilers

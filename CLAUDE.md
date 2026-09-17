@@ -571,6 +571,16 @@ imnodes, zstd) — no system install needed beyond Vulkan, GLFW, glm, and zlib
 - **zstd is the one third-party codec linked into `libveng`** (transitively, PUBLIC
   through `assetpack`, which inflates compressed archive blobs at runtime); it adds no
   public-header include.
+- **FreeType + msdfgen link PRIVATE into `libveng`** for the runtime glyph rasterizer
+  (`Veng/Text/GlyphSource`) — a **deliberate, documented exception** to the "no font
+  rasterizer / no source parser in the runtime" split, the price of rendering any codepoint a
+  face covers on demand rather than only an offline-baked charset. A font *face* is binary
+  outline data, not a source asset, and both libraries are contained behind the Native idiom, so
+  no `FT_*` / `msdfgen::` type reaches a public header (guarded by `include_hygiene`). Their
+  FetchContent is shared scope in the root `CMakeLists.txt` (the cooker's `FontImporter` also
+  links them); the atlas packer msdf-atlas-gen stays cooker-only. Now that a font parser ships in
+  the player binary, keeping the FreeType pin current for security patches is a runtime
+  obligation.
 - **Backend libs (Vulkan, GLFW, VMA, nfd) link PRIVATE** — guarded by the
   `include_hygiene` test (see the Native idiom below).
 - **Cooker-only deps** (assimp, Slang, stb, the `bc7enc_rdo` / `astc-encoder` texture

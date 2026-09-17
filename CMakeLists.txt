@@ -533,6 +533,68 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(JoltPhysics)
 
+# FreeType — font-outline loader. Shared scope: the cooker's FontImporter drives it (through
+# msdfgen) to bake atlases offline, AND libveng links it PRIVATE for the runtime glyph rasterizer
+# (Veng/Text/GlyphSource), which loads faces, reads metrics + kerning, and renders single-channel
+# SDF glyphs on demand. Declared here — ahead of add_subdirectory(engine) and add_subdirectory(cooker)
+# below, and ahead of the -Werror boundary further down — so both consumers reference the one pinned
+# target and the third-party sources never inherit veng's warnings-as-errors. msdfgen finds FreeType
+# through the Freetype::Freetype target, so it is fetched first and aliased into the name msdfgen's
+# find_package expects. Trim it to the core outline loader: no HarfBuzz, Brotli, PNG, zlib, or bzip2
+# subsystems, none of which the outline path needs. Built EXCLUDE_FROM_ALL so only the parts a
+# consumer links compile.
+set(FT_DISABLE_HARFBUZZ ON CACHE INTERNAL "")
+set(FT_DISABLE_BROTLI ON CACHE INTERNAL "")
+set(FT_DISABLE_PNG ON CACHE INTERNAL "")
+set(FT_DISABLE_ZLIB ON CACHE INTERNAL "")
+set(FT_DISABLE_BZIP2 ON CACHE INTERNAL "")
+FetchContent_Declare(
+        freetype
+        GIT_REPOSITORY https://github.com/freetype/freetype.git
+        GIT_TAG VER-2-13-3
+        GIT_SHALLOW TRUE
+        EXCLUDE_FROM_ALL
+)
+FetchContent_MakeAvailable(freetype)
+if (NOT TARGET Freetype::Freetype)
+    add_library(Freetype::Freetype ALIAS freetype)
+endif ()
+
+# msdf-atlas-gen / msdfgen — the multi-channel signed-distance-field generator. Shared scope: the
+# cooker's FontImporter drives msdf-atlas-gen to bake atlases offline, AND libveng links
+# msdfgen-core/ext PRIVATE for the runtime rasterizer's MSDF path (msdf-atlas-gen itself stays
+# cooker-only). Only the msdfgen submodule is needed; the artery-font export is disabled, so its
+# submodule is not fetched. Skia (a full renderer), vcpkg, PNG/SVG I/O, and the standalone
+# executables are all disabled — both consumers drive the library API directly. It uses the
+# Freetype::Freetype target aliased above; it links no system package.
+#
+# On MSVC both libraries default to the static CRT (/MT[d]); veng and every other dependency use
+# the dynamic CRT (/MD[d]), so their own DYNAMIC_RUNTIME opt-in is turned on to keep the runtime
+# uniform — otherwise linking fails with LNK2038 RuntimeLibrary mismatches.
+set(MSDFGEN_DYNAMIC_RUNTIME ON CACHE INTERNAL "")
+set(MSDF_ATLAS_DYNAMIC_RUNTIME ON CACHE INTERNAL "")
+set(MSDF_ATLAS_USE_VCPKG OFF CACHE INTERNAL "")
+set(MSDF_ATLAS_USE_SKIA OFF CACHE INTERNAL "")
+set(MSDF_ATLAS_BUILD_STANDALONE OFF CACHE INTERNAL "")
+set(MSDF_ATLAS_NO_ARTERY_FONT ON CACHE INTERNAL "")
+set(MSDF_ATLAS_INSTALL OFF CACHE INTERNAL "")
+set(MSDFGEN_DISABLE_PNG ON CACHE INTERNAL "")
+set(MSDFGEN_DISABLE_SVG ON CACHE INTERNAL "")
+set(MSDFGEN_USE_SKIA OFF CACHE INTERNAL "")
+set(MSDFGEN_USE_VCPKG OFF CACHE INTERNAL "")
+set(MSDFGEN_BUILD_STANDALONE OFF CACHE INTERNAL "")
+set(MSDFGEN_INSTALL OFF CACHE INTERNAL "")
+FetchContent_Declare(
+        msdf_atlas_gen
+        GIT_REPOSITORY https://github.com/Chlumsky/msdf-atlas-gen.git
+        GIT_TAG v1.3
+        GIT_SHALLOW TRUE
+        GIT_SUBMODULES msdfgen
+        GIT_SUBMODULES_RECURSE TRUE
+        EXCLUDE_FROM_ALL
+)
+FetchContent_MakeAvailable(msdf_atlas_gen)
+
 # ---------------------------------------------------------------------------
 # clang-tidy (opt-in)
 # ---------------------------------------------------------------------------
@@ -1014,6 +1076,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_fill_geometry.cpp
             tests/unit/gui_layout.cpp
             tests/unit/gui_localization.cpp
+            tests/unit/glyph_source.cpp
             tests/unit/gui_style_states.cpp
             tests/unit/gui_input.cpp
             tests/unit/gui_surface_input.cpp

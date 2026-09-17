@@ -97,6 +97,7 @@ add_library(veng SHARED
         src/Asset/Mesh.cpp
         src/Asset/Environment.cpp
         src/Asset/Font.cpp
+        src/Text/GlyphSource.cpp
         src/Asset/InputMappingContext.cpp
         src/Asset/Prefab.cpp
         src/Asset/Primitives.cpp
@@ -506,8 +507,23 @@ target_link_libraries(veng PRIVATE
         ZLIB::ZLIB
         yogacore
         Jolt
+        # FreeType + msdfgen back the runtime glyph rasterizer (Veng/Text/GlyphSource): on-demand SDF
+        # via FreeType, MSDF via msdfgen. Linked PRIVATE, contained behind the Native idiom, so no
+        # FT_* / msdfgen:: type reaches a public header (the include_hygiene test guards this). The
+        # FetchContent lives in the root CMakeLists.txt (shared with the cooker); the atlas packer
+        # msdf-atlas-gen stays cooker-only.
+        Freetype::Freetype
+        msdfgen::msdfgen-core
+        msdfgen::msdfgen-ext
         ${CMAKE_DL_LIBS}
 )
+
+# msdfgen's public headers key an <msdfgen/msdfgen-config.h> include off MSDFGEN_PUBLIC (only emitted
+# on an install build, which this fetch is not) and gate the ext font loader on MSDFGEN_EXTENSIONS.
+# GlyphSource.cpp is the one TU that includes them, so both are defined on it — matching what a
+# linking consumer of the static libraries sees, exactly as the cooker sets them for FontImporter.cpp.
+set_source_files_properties(src/Text/GlyphSource.cpp PROPERTIES
+        COMPILE_DEFINITIONS "MSDFGEN_PUBLIC=;MSDFGEN_EXTENSIONS")
 
 # Veng.h is the foundational header every TU includes (std + glm + fmt + house
 # aliases); precompiling it once cuts that front-end cost across the library.

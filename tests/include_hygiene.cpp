@@ -72,6 +72,7 @@
 #include <Veng/Log.h>
 #include <Veng/Result.h>
 #include <Veng/Task/ParallelFor.h>
+#include <Veng/Text/GlyphSource.h>
 #include <Veng/Time.h>
 #include <Veng/Veng.h>
 #include <Veng/Window.h>
