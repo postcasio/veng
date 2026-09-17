@@ -4,6 +4,7 @@
 #include <cstddef>
 
 #include <Veng/Asset/Texture.h>
+#include <Veng/Text/GlyphAtlas.h>
 
 namespace Veng
 {
@@ -13,6 +14,83 @@ namespace Veng
     {
         const auto it = m_Glyphs.find(codepoint);
         return it != m_Glyphs.end() ? &it->second : nullptr;
+    }
+
+    Font::ResolvedGlyph Font::Resolve(u32 codepoint) const
+    {
+        if (m_GlyphSource != nullptr && m_FaceId != Text::FaceId::Invalid)
+        {
+            if (m_GlyphSource->HasGlyph(m_FaceId, codepoint))
+            {
+                return ResolvedGlyph{.Face = m_FaceId,
+                                     .FieldType = m_FieldType,
+                                     .GlyphIndex = m_GlyphSource->GlyphIndex(m_FaceId, codepoint),
+                                     .Covered = true};
+            }
+            for (const AssetHandle<Font>& handle : m_Fallbacks)
+            {
+                const Font* fallback = handle.Get();
+                if (fallback == nullptr || fallback->m_FaceId == Text::FaceId::Invalid)
+                {
+                    continue;
+                }
+                if (m_GlyphSource->HasGlyph(fallback->m_FaceId, codepoint))
+                {
+                    return ResolvedGlyph{
+                        .Face = fallback->m_FaceId,
+                        .FieldType = fallback->m_FieldType,
+                        .GlyphIndex = m_GlyphSource->GlyphIndex(fallback->m_FaceId, codepoint),
+                        .Covered = true};
+                }
+            }
+        }
+        // No face covers it: this font's own face renders .notdef (glyph index 0).
+        return ResolvedGlyph{
+            .Face = m_FaceId, .FieldType = m_FieldType, .GlyphIndex = 0, .Covered = false};
+    }
+
+    bool Font::HasGlyph(u32 codepoint) const
+    {
+        return Resolve(codepoint).Covered;
+    }
+
+    FontGlyph Font::GetGlyphMetrics(u32 codepoint) const
+    {
+        FontGlyph out;
+        if (m_GlyphSource == nullptr || m_FaceId == Text::FaceId::Invalid)
+        {
+            return out;
+        }
+        const ResolvedGlyph resolved = Resolve(codepoint);
+        const Text::GlyphMetrics metrics =
+            m_GlyphSource->GetGlyphMetrics(resolved.Face, resolved.GlyphIndex);
+        out.Advance = metrics.Advance;
+        out.PlaneMin = metrics.PlaneMin;
+        out.PlaneMax = metrics.PlaneMax;
+        out.FieldType = resolved.FieldType;
+        return out;
+    }
+
+    FontGlyph Font::EnsureGlyph(u32 codepoint, f32 pixelSize) const
+    {
+        FontGlyph out;
+        if (m_GlyphSource == nullptr || m_GlyphAtlas == nullptr ||
+            m_FaceId == Text::FaceId::Invalid)
+        {
+            return out;
+        }
+        const ResolvedGlyph resolved = Resolve(codepoint);
+        const Text::GlyphKey key =
+            m_GlyphAtlas->KeyFor(resolved.Face, resolved.GlyphIndex, pixelSize, resolved.FieldType);
+        const Text::GlyphSlot slot = m_GlyphAtlas->Ensure(key);
+        out.Advance = slot.Advance;
+        out.PlaneMin = slot.PlaneMin;
+        out.PlaneMax = slot.PlaneMax;
+        out.UvMin = slot.UvMin;
+        out.UvMax = slot.UvMax;
+        out.Page = slot.Page;
+        out.FieldType = slot.FieldType;
+        return out;
     }
 
     f32 Font::GetKerning(u32 left, u32 right) const

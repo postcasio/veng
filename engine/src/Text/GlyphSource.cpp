@@ -12,6 +12,7 @@
 #include <ft2build.h>
 #include <freetype/freetype.h>
 #include <freetype/ftmodapi.h>
+#include <freetype/ftoutln.h>
 
 #include <msdfgen.h>
 #include <msdfgen-ext.h>
@@ -140,6 +141,31 @@ namespace Veng::Text
         const auto index = static_cast<usize>(face);
         VE_ASSERT(index < m_Native->Faces.size(), "GlyphSource: invalid FaceId");
         return FT_Get_Char_Index(m_Native->Faces[index].FtFace, codepoint);
+    }
+
+    GlyphMetrics GlyphSource::GetGlyphMetrics(FaceId face, u32 glyphIndex) const
+    {
+        const auto index = static_cast<usize>(face);
+        VE_ASSERT(index < m_Native->Faces.size(), "GlyphSource: invalid FaceId");
+        const Native::Face& entry = m_Native->Faces[index];
+
+        GlyphMetrics metrics;
+        // FT_LOAD_NO_SCALE reads the outline in font units without hinting or rasterizing, so the
+        // advance and box are size-independent and no bitmap is produced.
+        if (FT_Load_Glyph(entry.FtFace, glyphIndex, FT_LOAD_NO_SCALE) != 0)
+        {
+            return metrics;
+        }
+        const f32 unitsPerEm = entry.Metrics.UnitsPerEm;
+        metrics.Advance = static_cast<f32>(entry.FtFace->glyph->advance.x) / unitsPerEm;
+
+        FT_BBox box{};
+        FT_Outline_Get_CBox(&entry.FtFace->glyph->outline, &box);
+        metrics.PlaneMin =
+            vec2{static_cast<f32>(box.xMin) / unitsPerEm, static_cast<f32>(box.yMin) / unitsPerEm};
+        metrics.PlaneMax =
+            vec2{static_cast<f32>(box.xMax) / unitsPerEm, static_cast<f32>(box.yMax) / unitsPerEm};
+        return metrics;
     }
 
     f32 GlyphSource::GetKerning(FaceId face, u32 leftIndex, u32 rightIndex) const

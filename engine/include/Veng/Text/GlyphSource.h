@@ -83,6 +83,24 @@ namespace Veng::Text
         vector<u8> Pixels;
     };
 
+    /// @brief A glyph's size-independent placement metrics, read without rasterizing.
+    ///
+    /// The advance and the tight outline bounding box, both em-normalized (the em is 1.0) and y-up
+    /// with the baseline at 0 — everything a layout pass needs to place and advance a glyph without
+    /// touching a graphics device. The advance is identical to the one a Rasterize of the same glyph
+    /// reports; the plane bounds are the outline's own box, which the rasterized field grows by half
+    /// the distance range, so they are a measurement box, not the drawn quad. A whitespace glyph has
+    /// a zero advance-only box.
+    struct GlyphMetrics
+    {
+        /// @brief Horizontal advance from this glyph's origin to the next, in em units.
+        f32 Advance = 0.0f;
+        /// @brief Outline box lower-left corner offset from the pen origin, in em units.
+        vec2 PlaneMin{0.0f};
+        /// @brief Outline box upper-right corner offset from the pen origin, in em units.
+        vec2 PlaneMax{0.0f};
+    };
+
     /// @brief The runtime glyph rasterizer: faces in, one glyph's pixels and metrics out.
     ///
     /// Owns the FreeType library and, per loaded face, an msdfgen wrapper over the same FreeType
@@ -136,6 +154,15 @@ namespace Veng::Text
         /// @param face       A face handle from LoadFace.
         /// @param codepoint  The Unicode codepoint.
         [[nodiscard]] u32 GlyphIndex(FaceId face, u32 codepoint) const;
+
+        /// @brief Returns a glyph's advance and outline box in em units, without rasterizing it.
+        ///
+        /// Loads the outline for its metrics only — no field is generated, no bitmap allocated, no
+        /// graphics device touched — so a layout measurement stays device-free. The advance matches
+        /// the one Rasterize reports for the same glyph.
+        /// @param face        A face handle from LoadFace.
+        /// @param glyphIndex  The face's glyph index (from GlyphIndex).
+        [[nodiscard]] GlyphMetrics GetGlyphMetrics(FaceId face, u32 glyphIndex) const;
 
         /// @brief Rasterizes one glyph into a CPU bitmap plus its em-space metrics.
         ///

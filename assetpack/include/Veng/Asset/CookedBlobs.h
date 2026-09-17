@@ -908,8 +908,11 @@ namespace Veng
     ///
     /// Bumped on any CookedFontHeader/CookedGlyph/CookedKernPair layout change; the loader
     /// rejects a blob whose Version != this. v2 added the always-present `.notdef` glyph entry,
-    /// carried under CookedFontNotdefCodepoint.
-    inline constexpr u32 CookedFontVersion = 2u;
+    /// carried under CookedFontNotdefCodepoint. v3 embedded the face outline bytes, a default field
+    /// type, a hot-set codepoint list, and a fallback-font id chain after the atlas texels, so the
+    /// runtime can rasterize any codepoint the face covers on demand and resolve a missing one
+    /// through another shipped face.
+    inline constexpr u32 CookedFontVersion = 3u;
 
     /// @brief Reserved sentinel codepoint carrying a cooked font's `.notdef` (missing-glyph) entry.
     ///
@@ -933,6 +936,13 @@ namespace Veng
     ///   CookedGlyph[GlyphCount]  (one entry is the .notdef box, under CookedFontNotdefCodepoint)
     ///   CookedKernPair[KerningCount]
     ///   atlas texels (AtlasWidth * AtlasHeight * 4 bytes, RGBA8, row-major top-to-bottom)
+    ///   face outline bytes (FaceBytes; the TrueType/OpenType file the runtime loads to rasterize)
+    ///   u32 hot-set codepoints (HotsetCount; pre-rasterized into the shared atlas at load)
+    ///   u64 fallback font ids (FallbackCount; AssetIds of faces that cover what this one does not)
+    ///
+    /// The atlas, glyph table, and kerning table carry the cooked-charset renditions the current
+    /// text draw path samples directly. The trailing face bytes, hot set, and fallback chain drive
+    /// the runtime rasterizer, the shared dynamic atlas, and per-codepoint fallback resolution.
     struct CookedFontHeader
     {
         /// @brief Must equal CookedFontVersion; the loader rejects mismatches.
@@ -957,6 +967,17 @@ namespace Veng
         u32 GlyphCount = 0;
         /// @brief Number of CookedKernPair entries following the glyph table.
         u32 KerningCount = 0;
+        /// @brief Default glyph field type; underlying Text::GlyphFieldType integer (0 = Msdf, 1 = Sdf).
+        ///
+        /// The field representation the runtime rasterizes this font's glyphs into, unless a
+        /// resolved fallback face's own type applies. The cooked atlas above is always MSDF.
+        u32 FieldType = 0;
+        /// @brief Byte length of the embedded face outline data following the atlas texels.
+        u32 FaceBytes = 0;
+        /// @brief Number of u32 hot-set codepoints following the face bytes.
+        u32 HotsetCount = 0;
+        /// @brief Number of u64 fallback-font AssetIds following the hot-set codepoints.
+        u32 FallbackCount = 0;
     };
 
     /// @brief One glyph's metrics and atlas placement in a cooked font.

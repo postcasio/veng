@@ -1860,6 +1860,10 @@ if (VENG_BUILD_TESTS)
             # a GlyphAtlas, records the uploads into a frame, and reads a page back to prove the
             # rasterize+pack+upload, the hit path, LRU eviction, and the over-cap not-resident result.
             tests/gpu/glyph_atlas.cpp
+            # font_fallback.cpp cooks face-backed fonts, wires a shared GlyphSource + GlyphAtlas into
+            # the AssetManager, and proves fallback-chain resolution, the .notdef last resort, the
+            # hot-set warm at load, the MSDF/SDF page split, and the stale-version load reject.
+            tests/gpu/font_fallback.cpp
             # gui_golden.cpp cooks the font fixture pack, builds a hand-authored DrawList,
             # renders it through GuiScenePass over a solid scene output, and fuzzy-compares
             # the composite to the committed golden PNG (the Gui image floor). It loads the
@@ -2094,6 +2098,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/texture_cook.cpp
             tests/cooker/font_variations.cpp
             tests/cooker/font_charset.cpp
+            tests/cooker/font_asset.cpp
             tests/cooker/compression_resolution.cpp
             tests/cooker/mesh_cook.cpp
             tests/cooker/socket_cook.cpp

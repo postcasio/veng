@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstring>
+#include <fstream>
 #include <map>
 #include <vector>
 
@@ -11,6 +12,7 @@
 #include <msdf-atlas-gen/msdf-atlas-gen.h>
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Asset/HexId.h>
 #include <Veng/Cook/JsonFile.h>
 
 namespace Veng::Cook
@@ -56,8 +58,15 @@ namespace Veng::Cook
         {
             msdf_atlas::Charset charset;
 
+            // The preset names the hot set: the codepoints the cook bakes into the atlas and the
+            // runtime pre-rasterizes at load. "hotset" is the current key; "charset" is the earlier
+            // spelling of the same selector, still accepted.
             string preset = "ascii";
-            if (fontJson.contains("charset") && fontJson["charset"].is_string())
+            if (fontJson.contains("hotset") && fontJson["hotset"].is_string())
+            {
+                preset = fontJson["hotset"].get<string>();
+            }
+            else if (fontJson.contains("charset") && fontJson["charset"].is_string())
             {
                 preset = fontJson["charset"].get<string>();
             }
@@ -216,6 +225,106 @@ namespace Veng::Cook
         const path fontPath = sourcePath.parent_path() / fontJson["font"].get<string>();
         context.RecordDependency(fontPath);
 
+        // The runtime rasterizes any covered codepoint from the face itself, so the file's bytes are
+        // embedded rather than consumed and discarded — the runtime GlyphSource loads them from
+        // memory. The same bytes still feed the offline atlas bake below.
+        vector<u8> faceBytes;
+        {
+            std::ifstream file(fontPath, std::ios::binary | std::ios::ate);
+            if (!file.good())
+            {
+                return std::unexpected(fmt::format("font importer: '{}': cannot open font '{}'",
+                                                   sourcePath.string(), fontPath.string()));
+            }
+            const std::streamsize size = file.tellg();
+            file.seekg(0);
+            faceBytes.resize(static_cast<usize>(size));
+            if (size > 0)
+            {
+                file.read(reinterpret_cast<char*>(faceBytes.data()), size);
+            }
+            if (!file.good() || faceBytes.empty())
+            {
+                return std::unexpected(fmt::format("font importer: '{}': failed to read font '{}'",
+                                                   sourcePath.string(), fontPath.string()));
+            }
+        }
+
+        // The default glyph field type this font rasterizes into at runtime: msdf (crisp, multi-
+        // channel) or sdf (cheap, single-channel). The offline atlas below is always MSDF.
+        u32 fieldType = 0;
+        if (fontJson.contains("field"))
+        {
+            if (!fontJson["field"].is_string())
+            {
+                return std::unexpected(
+                    fmt::format("font importer: '{}': 'field' must be a string ('msdf' or 'sdf')",
+                                sourcePath.string()));
+            }
+            const string field = fontJson["field"].get<string>();
+            if (field == "msdf")
+            {
+                fieldType = 0;
+            }
+            else if (field == "sdf")
+            {
+                fieldType = 1;
+            }
+            else
+            {
+                return std::unexpected(fmt::format(
+                    "font importer: '{}': invalid field '{}' (expected 'msdf' or 'sdf')",
+                    sourcePath.string(), field));
+            }
+        }
+
+        // The fallback chain: other Font assets whose faces cover what this one does not, in
+        // priority order. Each id must resolve to a Font, the same reference discipline a material's
+        // texture takes.
+        vector<u64> fallbackIds;
+        if (fontJson.contains("fallback"))
+        {
+            if (!fontJson["fallback"].is_array())
+            {
+                return std::unexpected(fmt::format(
+                    "font importer: '{}': 'fallback' must be an array of font id strings",
+                    sourcePath.string()));
+            }
+            for (const json& item : fontJson["fallback"])
+            {
+                if (!item.is_string())
+                {
+                    return std::unexpected(fmt::format(
+                        "font importer: '{}': each 'fallback' entry must be a hex font id string",
+                        sourcePath.string()));
+                }
+                const optional<AssetId> fallback = ParseAssetId(item.get<string>());
+                if (!fallback)
+                {
+                    return std::unexpected(
+                        fmt::format("font importer: '{}': fallback '{}' is not a valid hex id",
+                                    sourcePath.string(), item.get<string>()));
+                }
+                if (context.Resolve)
+                {
+                    const optional<ResolvedSource> resolved = context.Resolve(*fallback);
+                    if (!resolved)
+                    {
+                        return std::unexpected(fmt::format(
+                            "font importer: '{}': fallback {} not found in pack or reference packs",
+                            sourcePath.string(), item.get<string>()));
+                    }
+                    if (resolved->Type != AssetTypes::Font)
+                    {
+                        return std::unexpected(
+                            fmt::format("font importer: '{}': fallback {} is not a Font asset",
+                                        sourcePath.string(), item.get<string>()));
+                    }
+                }
+                fallbackIds.push_back(fallback->Value);
+            }
+        }
+
         u32 glyphSize = DefaultGlyphSize;
         if (fontJson.contains("glyphSize") && fontJson["glyphSize"].is_number_unsigned())
         {
@@ -238,6 +347,10 @@ namespace Veng::Cook
         {
             return std::unexpected(charset.error());
         }
+
+        // The hot set the runtime pre-rasterizes into the shared atlas at load is exactly the charset
+        // cooked into the atlas below.
+        vector<u32> hotsetCodepoints(charset->begin(), charset->end());
 
         // FreeType loads the font's outlines; the handles are freed on every exit path below.
         msdfgen::FreetypeHandle* freetype = msdfgen::initializeFreetype();
@@ -450,10 +563,16 @@ namespace Veng::Cook
         header.Descender = static_cast<f32>(metrics.descenderY);
         header.GlyphCount = static_cast<u32>(cookedGlyphs.size());
         header.KerningCount = static_cast<u32>(cookedKerning.size());
+        header.FieldType = fieldType;
+        header.FaceBytes = static_cast<u32>(faceBytes.size());
+        header.HotsetCount = static_cast<u32>(hotsetCodepoints.size());
+        header.FallbackCount = static_cast<u32>(fallbackIds.size());
 
         vector<u8> blob;
         blob.reserve(sizeof(header) + cookedGlyphs.size() * sizeof(CookedGlyph) +
-                     cookedKerning.size() * sizeof(CookedKernPair) + atlasPixels.size());
+                     cookedKerning.size() * sizeof(CookedKernPair) + atlasPixels.size() +
+                     faceBytes.size() + hotsetCodepoints.size() * sizeof(u32) +
+                     fallbackIds.size() * sizeof(u64));
         AppendBytes(blob, &header, sizeof(header));
         if (!cookedGlyphs.empty())
         {
@@ -464,6 +583,15 @@ namespace Veng::Cook
             AppendBytes(blob, cookedKerning.data(), cookedKerning.size() * sizeof(CookedKernPair));
         }
         AppendBytes(blob, atlasPixels.data(), atlasPixels.size());
+        AppendBytes(blob, faceBytes.data(), faceBytes.size());
+        if (!hotsetCodepoints.empty())
+        {
+            AppendBytes(blob, hotsetCodepoints.data(), hotsetCodepoints.size() * sizeof(u32));
+        }
+        if (!fallbackIds.empty())
+        {
+            AppendBytes(blob, fallbackIds.data(), fallbackIds.size() * sizeof(u64));
+        }
 
         return blob;
     }

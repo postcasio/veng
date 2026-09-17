@@ -1,6 +1,7 @@
 {
   "font": "Roboto.ttf",
-  "charset": "ascii",
+  "field": "msdf",
+  "hotset": "ascii",
   "glyphSize": 40,
   "pixelRange": 4
 }

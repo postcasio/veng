@@ -263,6 +263,10 @@ namespace Veng
         m_GlyphSource = CreateUnique<Text::GlyphSource>();
         m_GlyphAtlas = CreateUnique<Text::GlyphAtlas>(m_RenderContext, *m_GlyphSource);
 
+        // Font loads resolve their faces into the shared rasterizer and warm their hot set into the
+        // shared atlas.
+        m_AssetManager->SetGlyphSystems(m_GlyphSource.get(), m_GlyphAtlas.get());
+
         // The audio subsystem. A headless run (CI, a dedicated server, the cooker) takes the null
         // backend; a windowed run tries the hardware device and falls to null when none initializes.
         // The self-test tone is gated behind an environment flag so it never sounds on an ordinary

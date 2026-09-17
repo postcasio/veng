@@ -16,6 +16,12 @@ namespace Veng::Renderer
     class Context;
 }
 
+namespace Veng::Text
+{
+    class GlyphSource;
+    class GlyphAtlas;
+}
+
 namespace Veng
 {
     class TaskSystem;
@@ -391,6 +397,26 @@ namespace Veng
         /// @brief Returns the global texture-quality mip-skip level future texture builds read.
         [[nodiscard]] u32 GetTextureQualityMipSkip() const { return m_TextureQualityMipSkip; }
 
+        /// @brief Points font loads at the shared runtime rasterizer and dynamic glyph atlas.
+        ///
+        /// The FontLoader loads a font's face into @p source and warms its hot set into @p atlas at
+        /// load, and each loaded Font resolves and ensures glyphs through them. Both are owned by
+        /// Application and outlive the manager's font handles; a manager with neither set (a headless
+        /// test) still loads a font's cooked-charset atlas, but the font carries no runtime face.
+        /// @param source  The shared GlyphSource, or null to clear.
+        /// @param atlas   The shared GlyphAtlas, or null to clear.
+        void SetGlyphSystems(Text::GlyphSource* source, Text::GlyphAtlas* atlas)
+        {
+            m_GlyphSource = source;
+            m_GlyphAtlas = atlas;
+        }
+
+        /// @brief Returns the shared runtime rasterizer font loads use, or null when none is set.
+        [[nodiscard]] Text::GlyphSource* GetGlyphSource() const { return m_GlyphSource; }
+
+        /// @brief Returns the shared dynamic glyph atlas font loads use, or null when none is set.
+        [[nodiscard]] Text::GlyphAtlas* GetGlyphAtlas() const { return m_GlyphAtlas; }
+
         /// @brief Runs any pending async finalizes whose uploads completed and whose dependencies are resident.
         ///
         /// Called from the frame loop after the task system's continuation pump, on the main thread.
@@ -496,6 +522,11 @@ namespace Veng
 
         /// @brief The global texture-quality mip-skip level applied to future cappable texture builds.
         u32 m_TextureQualityMipSkip = 0;
+
+        /// @brief The shared runtime rasterizer font loads use; non-owning, null until wired.
+        Text::GlyphSource* m_GlyphSource = nullptr;
+        /// @brief The shared dynamic glyph atlas font loads use; non-owning, null until wired.
+        Text::GlyphAtlas* m_GlyphAtlas = nullptr;
 
         vector<MountedArchive> m_Mounts;
         vector<MemoryMount> m_MemoryMounts;

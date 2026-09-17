@@ -5,9 +5,15 @@
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Types.h>
+#include <Veng/Text/GlyphSource.h>
 
 #include <span>
 #include <utility>
+
+namespace Veng::Text
+{
+    class GlyphAtlas;
+}
 
 namespace Veng
 {
@@ -31,6 +37,14 @@ namespace Veng
         vec2 UvMin{0.0f};
         /// @brief Glyph atlas rect upper-right corner, in normalized [0, 1] UV space.
         vec2 UvMax{0.0f};
+        /// @brief Bindless handle of the atlas page holding the glyph (ensure-resident lookups only).
+        ///
+        /// Set by EnsureGlyph to the shared dynamic atlas page the glyph was packed into; invalid on
+        /// the cooked-charset FontGlyph the GetGlyph shim returns, which is sampled through the
+        /// font-wide GetAtlasHandle accessor instead.
+        Renderer::TextureHandle Page;
+        /// @brief The signed-distance field type this glyph was rasterized into (ensure-resident only).
+        Text::GlyphFieldType FieldType = Text::GlyphFieldType::Msdf;
     };
 
     /// @brief One positioned glyph quad produced by shaping a run of text.
@@ -81,14 +95,19 @@ namespace Veng
         vec2 Size{0.0f};
     };
 
-    /// @brief A resident MSDF font: a bindless glyph atlas plus CPU metrics for shaping and drawing.
+    /// @brief A face-backed font: an outline the runtime rasterizes on demand, over a shared atlas.
     ///
-    /// The atlas is an ordinary RGBA8 texture registered into the bindless set (set 0); its three
-    /// colour channels carry the multi-channel signed-distance field a text shader samples. The CPU
-    /// metrics — the per-glyph table, kerning lookup, and line metrics, all em-normalized — drive
-    /// ShapeRun, the single device-free shaping/wrapping path text drawing and layout measurement
-    /// share. Built by FontLoader from a CookedFontHeader; GetAtlasHandle() is valid once the
-    /// atlas has been finalized into the bindless registry.
+    /// The font owns a face loaded into the Application's shared GlyphSource and an ordered fallback
+    /// chain of sibling fonts whose faces cover what this one does not. GetGlyphMetrics reads a
+    /// covered codepoint's advance and box from the resolved face without touching a device;
+    /// EnsureGlyph rasterizes and packs it into the shared dynamic atlas and returns its page. Both
+    /// walk the fallback chain — this face first, then each fallback's — and land on .notdef when no
+    /// face covers the codepoint. Both are const: the shared GlyphSource/GlyphAtlas are reached
+    /// through non-owning pointers, so ensuring residency mutates the shared atlas, not the font.
+    ///
+    /// The font also carries a cooked-charset MSDF atlas and glyph table: a single RGBA8 bindless
+    /// texture plus the per-glyph/kerning metrics ShapeRun and the current text draw path sample
+    /// through GetAtlasHandle/GetGlyph. Built by FontLoader from a CookedFontHeader.
     class Font
     {
     public:
@@ -134,6 +153,42 @@ namespace Veng
         /// layout honest rather than silently dropping the character.
         [[nodiscard]] const FontGlyph& GetNotdefGlyph() const { return m_Notdef; }
 
+        /// @brief Whether any face in this font's fallback chain covers a codepoint.
+        ///
+        /// Walks this font's face first, then each fallback's, returning true at the first that has
+        /// a glyph for the codepoint. False when no face in the chain covers it (the .notdef case)
+        /// or the font carries no runtime face (a font loaded without the shared glyph systems).
+        /// @param codepoint  The Unicode codepoint.
+        [[nodiscard]] bool HasGlyph(u32 codepoint) const;
+
+        /// @brief Returns a codepoint's advance and box from the covering face, without rasterizing.
+        ///
+        /// Resolves the codepoint through the fallback chain and reads its metrics from that face
+        /// device-free (no rasterization, no atlas touch), so a layout measurement — including a
+        /// clipped or never-drawn run — needs no graphics device. Lands on .notdef when no face
+        /// covers the codepoint. The returned FontGlyph carries only the advance, plane bounds, and
+        /// the resolved face's field type; its atlas rect and page are unset.
+        /// @param codepoint  The Unicode codepoint.
+        [[nodiscard]] FontGlyph GetGlyphMetrics(u32 codepoint) const;
+
+        /// @brief Resolves a codepoint through the fallback chain and ensures it in the shared atlas.
+        ///
+        /// Rasterizes and packs the glyph into the shared dynamic atlas at the resolved face's field
+        /// type — so an SDF-declared fallback rasterizes SDF even when this font is MSDF — and
+        /// returns a FontGlyph carrying the atlas page handle, field type, uv rect, plane bounds, and
+        /// advance. Lands on .notdef when no face covers the codepoint. The advance matches
+        /// GetGlyphMetrics, so a run laid out from metrics and drawn ensure-resident agree. Const:
+        /// the shared atlas is reached through a non-owning pointer, so residency mutates the atlas.
+        /// @param codepoint  The Unicode codepoint.
+        /// @param pixelSize  The draw size in pixels (an SDF size bucket; ignored for size-independent MSDF).
+        [[nodiscard]] FontGlyph EnsureGlyph(u32 codepoint, f32 pixelSize) const;
+
+        /// @brief Returns this font's own face in the shared GlyphSource, or FaceId::Invalid.
+        [[nodiscard]] Text::FaceId GetFaceId() const { return m_FaceId; }
+
+        /// @brief Returns this font's default glyph field type.
+        [[nodiscard]] Text::GlyphFieldType GetFieldType() const { return m_FieldType; }
+
         /// @brief Returns the kerning adjustment between an ordered codepoint pair, in em units.
         ///
         /// The extra advance added to `left`'s advance when `right` immediately follows it (usually
@@ -170,6 +225,22 @@ namespace Veng
 
         Font() = default;
 
+        /// @brief A resolved face for a codepoint: the face, its field type, and the glyph index.
+        struct ResolvedGlyph
+        {
+            /// @brief The face covering the codepoint, or this font's face for the .notdef fallback.
+            Text::FaceId Face = Text::FaceId::Invalid;
+            /// @brief The owning font's field type, so a fallback rasterizes at its own type.
+            Text::GlyphFieldType FieldType = Text::GlyphFieldType::Msdf;
+            /// @brief The covering face's own glyph index; 0 (.notdef) when no face covers it.
+            u32 GlyphIndex = 0;
+            /// @brief Whether a face in the chain covers the codepoint.
+            bool Covered = false;
+        };
+
+        /// @brief Walks the fallback chain for the first face covering a codepoint.
+        [[nodiscard]] ResolvedGlyph Resolve(u32 codepoint) const;
+
         string m_Name;
         uvec2 m_AtlasExtent{0};
         f32 m_DistanceRange = 0.0f;
@@ -186,6 +257,21 @@ namespace Veng
 
         /// @brief The MSDF atlas, a bindless RGBA8 texture the atlas handles delegate to.
         Ref<Texture> m_Atlas;
+
+        /// @brief The face's outline bytes, kept alive because the GlyphSource borrows them.
+        vector<u8> m_FaceData;
+        /// @brief This font's face in the shared GlyphSource, or Invalid when none was loaded.
+        Text::FaceId m_FaceId = Text::FaceId::Invalid;
+        /// @brief The default field type glyphs of this font rasterize into.
+        Text::GlyphFieldType m_FieldType = Text::GlyphFieldType::Msdf;
+        /// @brief The codepoints warmed into the shared atlas at load.
+        vector<u32> m_Hotset;
+        /// @brief The ordered fallback fonts, kept resident so their faces stay loadable.
+        vector<AssetHandle<Font>> m_Fallbacks;
+        /// @brief The shared runtime rasterizer; non-owning, null when the font carries no runtime face.
+        Text::GlyphSource* m_GlyphSource = nullptr;
+        /// @brief The shared dynamic atlas; non-owning, null when the font carries no runtime face.
+        Text::GlyphAtlas* m_GlyphAtlas = nullptr;
     };
 
     /// @brief AssetTypeTrait specialization mapping Font to AssetTypes::Font.
