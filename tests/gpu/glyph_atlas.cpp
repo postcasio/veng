@@ -120,6 +120,18 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(page.size() == static_cast<usize>(pageSize) * pageSize * 4);
     CHECK(CountRectMismatches(page, pageSize, slot, *expected) == 0);
 
+    // The gutter texel one column past the glyph's right edge must read zero ("fully outside"), so
+    // the atlas sampler's linear filtering blends the glyph edge toward zero coverage rather than
+    // into undefined page memory (the thin-edge-fringe regression). Zeroing the fresh page is what
+    // guarantees it.
+    const auto ox = static_cast<u32>(std::lround(slot.UvMin.x * static_cast<f32>(pageSize)));
+    const auto oy = static_cast<u32>(std::lround(slot.UvMin.y * static_cast<f32>(pageSize)));
+    const usize gutterByte = (static_cast<usize>(oy) * pageSize + ox + expected->Width) * 4;
+    CHECK(page[gutterByte + 0] == 0);
+    CHECK(page[gutterByte + 1] == 0);
+    CHECK(page[gutterByte + 2] == 0);
+    CHECK(page[gutterByte + 3] == 0);
+
     // A second ensure of the same glyph is a hit: the same rectangle, nothing new to upload.
     const GlyphSlot hit = atlas.Ensure(key);
     CHECK(hit.Resident);

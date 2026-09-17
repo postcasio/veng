@@ -143,6 +143,19 @@ namespace Veng::Text
         if (packed.NewPage)
         {
             CreatePage(packed.NewPageIndex, packed.NewPageFieldType);
+            // Zero the whole fresh page so every gutter texel — and every not-yet-packed region —
+            // reads as "fully outside"; the glyph copies below land on top of it.
+            m_Clears.push_back(Clear{.Page = packed.NewPageIndex,
+                                     .Offset = {0, 0},
+                                     .Size = {m_Info.PageSize, m_Info.PageSize}});
+        }
+
+        // Re-zero any rectangle eviction just freed, so a glyph later packed there inherits a clean
+        // gutter rather than the evicted glyph's stale texels.
+        for (const GlyphPacker::FreedRect& freed : packed.Freed)
+        {
+            m_Clears.push_back(
+                Clear{.Page = freed.Page, .Offset = freed.Offset, .Size = freed.Size});
         }
 
         // Stage the pixels for the next RecordUploads; a whitespace glyph has none.
@@ -207,63 +220,117 @@ namespace Veng::Text
 
     void GlyphAtlas::RecordUploads(CommandBuffer& cmd)
     {
-        if (m_Pending.empty())
+        if (m_Pending.empty() && m_Clears.empty())
         {
             return;
         }
 
-        // Batch every staged glyph destined for one page into a single staging buffer and copy, so a
-        // burst of new glyphs costs one transition pair and one command per page.
+        // Each page is touched in one pass: its clear rectangles (a fresh page whole, an evicted
+        // glyph's rectangle) are zeroed first, then a write-after-write barrier orders the glyph
+        // copies after them, so a glyph always lands on a cleared gutter. Every clear writes zero, so
+        // the clear rectangles may overlap harmlessly; the glyph rectangles are disjoint by
+        // construction. A burst of glyphs for one page still costs one staging buffer and one copy.
         for (u32 pageIndex = 0; pageIndex < m_Pages.size(); pageIndex++)
         {
-            usize totalBytes = 0;
+            const Page& page = m_Pages[pageIndex];
+            const u32 channels = page.FieldType == GlyphFieldType::Msdf ? 4u : 1u;
+
+            usize clearBytes = 0;
+            for (const Clear& clear : m_Clears)
+            {
+                if (clear.Page == pageIndex)
+                {
+                    clearBytes += static_cast<usize>(clear.Size.x) * clear.Size.y * channels;
+                }
+            }
+
+            usize glyphBytes = 0;
             for (const Pending& pending : m_Pending)
             {
                 if (pending.Page == pageIndex)
                 {
-                    totalBytes += pending.Pixels.size();
+                    glyphBytes += pending.Pixels.size();
                 }
             }
-            if (totalBytes == 0)
+
+            if (clearBytes == 0 && glyphBytes == 0)
             {
                 continue;
             }
 
-            vector<u8> blob;
-            blob.reserve(totalBytes);
-            vector<BufferImageCopyRegion> regions;
-            for (const Pending& pending : m_Pending)
+            cmd.PrepareForAccess(page.View, AccessKind::TransferDst);
+
+            if (clearBytes > 0)
             {
-                if (pending.Page != pageIndex)
+                const vector<u8> zeros(clearBytes, 0);
+                vector<BufferImageCopyRegion> regions;
+                usize offset = 0;
+                for (const Clear& clear : m_Clears)
                 {
-                    continue;
+                    if (clear.Page != pageIndex)
+                    {
+                        continue;
+                    }
+                    regions.push_back(BufferImageCopyRegion{
+                        .BufferOffset = offset,
+                        .MipLevel = 0,
+                        .ImageOffset = {clear.Offset.x, clear.Offset.y, 0},
+                        .Extent = {clear.Size.x, clear.Size.y, 1},
+                    });
+                    offset += static_cast<usize>(clear.Size.x) * clear.Size.y * channels;
                 }
-                regions.push_back(BufferImageCopyRegion{
-                    .BufferOffset = blob.size(),
-                    .MipLevel = 0,
-                    .ImageOffset = {pending.Offset.x, pending.Offset.y, 0},
-                    .Extent = {pending.Size.x, pending.Size.y, 1},
-                });
-                blob.insert(blob.end(), pending.Pixels.begin(), pending.Pixels.end());
+                const Ref<Buffer> staging =
+                    Buffer::Create(m_Context, {
+                                                  .Name = "GlyphAtlas Clear",
+                                                  .Size = zeros.size(),
+                                                  .Usage = BufferUsage::TransferSrc,
+                                              });
+                staging->UploadSync(zeros);
+                cmd.CopyBufferToImage(staging, page.Image, regions);
+                // Both the clear and the glyph copy are transfer writes to this page, so re-preparing
+                // for TransferDst inserts the write-after-write barrier that orders them.
+                if (glyphBytes > 0)
+                {
+                    cmd.PrepareForAccess(page.View, AccessKind::TransferDst);
+                }
             }
 
-            const Ref<Buffer> staging =
-                Buffer::Create(m_Context, {
-                                              .Name = "GlyphAtlas Upload",
-                                              .Size = blob.size(),
-                                              .Usage = BufferUsage::TransferSrc,
-                                          });
-            staging->UploadSync(blob);
+            if (glyphBytes > 0)
+            {
+                vector<u8> blob;
+                blob.reserve(glyphBytes);
+                vector<BufferImageCopyRegion> regions;
+                for (const Pending& pending : m_Pending)
+                {
+                    if (pending.Page != pageIndex)
+                    {
+                        continue;
+                    }
+                    regions.push_back(BufferImageCopyRegion{
+                        .BufferOffset = blob.size(),
+                        .MipLevel = 0,
+                        .ImageOffset = {pending.Offset.x, pending.Offset.y, 0},
+                        .Extent = {pending.Size.x, pending.Size.y, 1},
+                    });
+                    blob.insert(blob.end(), pending.Pixels.begin(), pending.Pixels.end());
+                }
+                const Ref<Buffer> staging =
+                    Buffer::Create(m_Context, {
+                                                  .Name = "GlyphAtlas Upload",
+                                                  .Size = blob.size(),
+                                                  .Usage = BufferUsage::TransferSrc,
+                                              });
+                staging->UploadSync(blob);
+                cmd.CopyBufferToImage(staging, page.Image, regions);
+            }
 
-            const Page& page = m_Pages[pageIndex];
-            cmd.PrepareForAccess(page.View, AccessKind::TransferDst);
-            cmd.CopyBufferToImage(staging, page.Image, regions);
             cmd.PrepareForAccess(page.View, AccessKind::SampleGraphics);
-            // The staging Ref drops here; deferred destruction keeps it alive until the frame fence,
-            // so the recorded copy still has its source when the GPU runs it.
+            // The staging Refs drop here; deferred destruction keeps them alive until the frame
+            // fence, so the recorded copies still have their source when the GPU runs them.
         }
 
         m_Pending.clear();
+        m_Clears.clear();
     }
 
     u32 GlyphAtlas::GetPageCount() const

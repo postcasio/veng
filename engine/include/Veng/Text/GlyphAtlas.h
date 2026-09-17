@@ -235,6 +235,22 @@ namespace Veng::Text
             vector<u8> Pixels;
         };
 
+        /// @brief A page rectangle to zero before the next RecordUploads' glyph copies.
+        ///
+        /// A newly created page is cleared whole and an evicted glyph's rectangle is re-cleared, so
+        /// every inter-glyph gutter texel reads as "fully outside" (zero coverage). Without it the
+        /// gutter holds undefined memory, and the atlas sampler's linear filtering blends that
+        /// garbage into a glyph's edge as a thin fringe.
+        struct Clear
+        {
+            /// @brief The page to clear into.
+            u32 Page = 0;
+            /// @brief The rectangle's top-left texel.
+            uvec2 Offset{0};
+            /// @brief The rectangle's texel dimensions.
+            uvec2 Size{0};
+        };
+
         /// @brief Creates and registers a new GPU page for a field type, at the packer's page index.
         void CreatePage(u32 pageIndex, GlyphFieldType fieldType);
 
@@ -252,6 +268,8 @@ namespace Veng::Text
         Renderer::SamplerHandle m_SamplerHandle;
         /// @brief Glyphs staged since the last RecordUploads.
         vector<Pending> m_Pending;
+        /// @brief Page rectangles to zero ahead of the staged glyphs on the next RecordUploads.
+        vector<Clear> m_Clears;
         /// @brief The current frame epoch.
         u64 m_Frame = 0;
     };

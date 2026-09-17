@@ -241,6 +241,8 @@ namespace Veng::Text
 
                 FreeOnPage(m_Pages[i], victim->second.Offset, victim->second.AllocSize);
                 result.Evicted.push_back(victim->first);
+                result.Freed.push_back(FreedRect{
+                    .Page = i, .Offset = victim->second.Offset, .Size = victim->second.AllocSize});
                 m_Entries.erase(victim);
             }
         }

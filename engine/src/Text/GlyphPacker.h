@@ -86,6 +86,17 @@ namespace Veng::Text
             NotResident,
         };
 
+        /// @brief A page rectangle an eviction returned to the free list.
+        struct FreedRect
+        {
+            /// @brief The page the rectangle belongs to.
+            u32 Page = 0;
+            /// @brief The rectangle's top-left texel.
+            uvec2 Offset{0};
+            /// @brief The rectangle's texel dimensions (the evicted glyph's alloc, gutter included).
+            uvec2 Size{0};
+        };
+
         /// @brief The outcome of packing one glyph, plus what it cost.
         struct Result
         {
@@ -101,6 +112,8 @@ namespace Veng::Text
             GlyphFieldType NewPageFieldType = GlyphFieldType::Msdf;
             /// @brief The keys evicted to make room for this glyph, in eviction order.
             vector<GlyphKey> Evicted;
+            /// @brief The page rectangles those evictions freed, so the atlas can clear their texels.
+            vector<FreedRect> Freed;
         };
 
         /// @brief Constructs a packer with no pages.
