@@ -2,7 +2,8 @@
 // tolerant-migrates (a stale setting id dropped, an added setting reading its schema default); a
 // missing file yields defaults and a corrupt one yields defaults plus a warning; applying a preset
 // touches only the preset-eligible settings and leaves the display-identity built-ins alone; the
-// Custom query flips after one knob moves off a preset; reset restores the default preset; and an
+// Custom query flips after one knob moves off a preset; reset restores the default preset; the
+// first-run render-scale seed inverts a display's content scale into the accepted range; and an
 // atomic Save that cannot complete leaves the previous file intact. No GPU is touched — the store
 // takes a schema Ref, a type registry, and a config path, so it runs without an Application.
 
@@ -220,6 +221,35 @@ TEST_CASE("GraphicsSettings: a corrupt file falls back to defaults with a warnin
     // The file was present, however malformed, so this is a returning install, not a first run —
     // the consumer must not overwrite it with a first-run default.
     CHECK(settings.WasLoadedFromFile());
+}
+
+TEST_CASE("GraphicsSettings: the first-run seed inverts the display's content scale")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    const Ref<GraphicsSchema> schema = GraphicsSchema::Create(SampleSchema());
+
+    GraphicsSettings settings(
+        GraphicsSettingsInfo{.Schema = schema.get(), .Types = &types, .ConfigPath = {}});
+
+    // The property: one render pixel per logical point, whatever the display's content scale.
+    settings.SeedRenderScaleForDisplay(2.0f);
+    CHECK(settings.GetDisplay().RenderScale == doctest::Approx(0.5f));
+
+    // A non-HiDPI display already draws one render pixel per point, so the seed leaves native alone.
+    settings.SeedRenderScaleForDisplay(1.0f);
+    CHECK(settings.GetDisplay().RenderScale == doctest::Approx(1.0f));
+
+    // Both ends clamp into the range the renderer accepts: a 5x display would ask for 0.2, and a
+    // sub-1 content scale would ask to supersample, which is MaxAllocationScale's job, not this.
+    settings.SeedRenderScaleForDisplay(5.0f);
+    CHECK(settings.GetDisplay().RenderScale == doctest::Approx(GraphicsRenderScaleMin));
+    settings.SeedRenderScaleForDisplay(0.5f);
+    CHECK(settings.GetDisplay().RenderScale == doctest::Approx(GraphicsRenderScaleMax));
+
+    // A display that reports no scale at all leaves native rather than dividing by zero.
+    settings.SeedRenderScaleForDisplay(0.0f);
+    CHECK(settings.GetDisplay().RenderScale == doctest::Approx(1.0f));
 }
 
 TEST_CASE("GraphicsSettings: applying a preset leaves the display-identity built-ins untouched")

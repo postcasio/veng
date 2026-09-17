@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+
 #include <Veng/Veng.h>
 #include <Veng/Path.h>
 #include <Veng/Reflection/Reflect.h>
@@ -10,6 +12,15 @@
 namespace Veng
 {
     class TypeRegistry;
+
+    /// @brief Smallest render scale the renderer accepts; a chosen value below it clamps up to it.
+    inline constexpr f32 GraphicsRenderScaleMin = 0.25f;
+
+    /// @brief Largest render scale the renderer accepts — native.
+    ///
+    /// The setting only downscales; supersampling past the backing extent is the separate
+    /// Viewport MaxAllocationScale ceiling, not a render-scale value.
+    inline constexpr f32 GraphicsRenderScaleMax = 1.0f;
 
     /// @brief The graphics-domain spelling of a persisted per-setting choice.
     ///
@@ -130,6 +141,25 @@ namespace Veng
 
         /// @brief Returns the current built-in display selections for in-place editing by the menu.
         [[nodiscard]] BuiltinDisplayChoices& GetDisplay() { return MutableDocument().Display; }
+
+        /// @brief Sets the render scale to the reciprocal of a display's content scale.
+        ///
+        /// A HiDPI display reports a content scale above 1, so a window sized in logical points backs
+        /// a render target several times its area — a first run at native scale on a 2x display draws
+        /// four times the pixels the same window would on a 1x one. This picks the scale that brings
+        /// the render extent back to one render pixel per logical point, clamped to
+        /// [GraphicsRenderScaleMin, GraphicsRenderScaleMax], so a 2x display seeds 0.5 and a 1x
+        /// display leaves 1 untouched.
+        ///
+        /// The engine never calls it: it is a first-run default a consumer chooses, typically guarded
+        /// by !WasLoadedFromFile() so it seeds a fresh install and never overrides a stored choice.
+        /// @param contentScale  The display's content scale (window pixels per logical point).
+        void SeedRenderScaleForDisplay(f32 contentScale)
+        {
+            const f32 scale = contentScale > 0.0f ? 1.0f / contentScale : 1.0f;
+            MutableDocument().Display.RenderScale =
+                std::clamp(scale, GraphicsRenderScaleMin, GraphicsRenderScaleMax);
+        }
 
     protected:
         /// @brief Routes the render-scale built-in preset entry to the display selections.

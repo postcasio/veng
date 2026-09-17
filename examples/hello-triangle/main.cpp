@@ -921,10 +921,9 @@ protected:
                 }
             }
 
-            // The localization service is live by OnWorldLoaded: resolve a plain HUD label and a
-            // count-driven plural through it — the maximal exemplar of the string system in the
-            // shipping launcher. The `en` catalog resolves these to their authored English, so no
-            // rendered text moves; plan-later work moves the HUD's own labels onto loc keys.
+            // Resolve a plain HUD label and a count-driven plural through the localization service —
+            // the maximal exemplar of the string system in the shipping launcher. The `en` catalog
+            // resolves these to their authored English, so no rendered text moves.
             const Localization::Localization& localization = GetLocalization();
             Log::Info("hello-triangle: {} — {}", localization.Get("hud.status"),
                       localization.Format("hud.jumps_left", {}, 3));

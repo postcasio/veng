@@ -250,6 +250,18 @@ open seeds the managed viewport's topology + per-frame view from the spawned sce
 binds world #0 to managed viewport #0 (`SetViewportWorld`). Each `Frame` the runner ticks every
 world and `ManagedViewportSet::PushViews` pulls each viewport's camera and pushes it.
 
+**The three per-machine settings stores are built and loaded before `OnInitialize` too.** Graphics
+(`graphics.json`), audio (`audio.json`, only when `ApplicationInfo::AudioSettingsSchema` names a
+schema) and language (`locale.json`, with the index-backed `Localization` service built on the
+language it names) need only the mounted packs and the user config directory, so `Run` constructs
+and `Load()`s each between the pack mount and `OnInitialize`. A consumer therefore reads its
+persisted choices while initializing — telling a first run from a returning one through
+`SettingsStoreBase::WasLoadedFromFile()`, which keeps reporting that one boot load for the rest of
+the run — and acts on them before the first presented frame, with no first-update flag.
+**Applying them is the consumer's**, so `OnResolveGraphics` never runs before `OnInitialize` and an
+app with no settings opinion is unchanged; audio is the single exception the engine applies for it,
+once after `OnInitialize`, when the authored bus graph has been adopted.
+
 **The boot session restore is opt-out, and the restore is consumer-triggerable.**
 `GameWorldInfo::RestoreLocalSessionOnBoot` (default `true`) has the bootstrap resume the local
 account's saved gameplay world once world #0 is bound — the continue-style posture, zero consumer

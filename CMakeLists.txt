@@ -1755,6 +1755,13 @@ if (VENG_BUILD_TESTS)
             # managed viewport reconfigured, and an empty set a clean no-op (needs a Context for the
             # Application/viewports, so it rides the gpu band).
             tests/gpu/graphics_settings_apply.cpp
+            # application_settings_boot.cpp drives a headless managed-world Application through Run()
+            # with a settings file already planted per domain, and pins what the settings boot has
+            # finished by the time OnInitialize runs: the graphics, audio and language stores all
+            # constructed and loaded from disk, and GetLocalization() already the index-backed service
+            # on the stored language rather than the null-object (it needs a Context for the
+            # Application, so it rides the gpu band though it pins no pixels).
+            tests/gpu/application_settings_boot.cpp
     )
     target_link_libraries(veng_test_gpu PRIVATE veng::veng veng_test_support doctest::doctest)
     target_precompile_headers(veng_test_gpu PRIVATE <Veng/Veng.h> <doctest/doctest.h>)

@@ -405,24 +405,18 @@ namespace Veng
         }
 
         // Application always owns a localization service: construct the inert null-object now so
-        // GetLocalization() is non-null through OnInitialize and any early-exit teardown. The
-        // index-backed service (when a LocaleIndex is named) replaces it after OnInitialize, below.
+        // GetLocalization() is non-null through any early-exit teardown. It is the standing service
+        // only for a launch naming no locale index, or one whose index fails to load: the
+        // index-backed service replaces it just below, still before OnInitialize.
         m_Localization = CreateUnique<Localization::Localization>();
-
-        OnInitialize();
-
-        // A subclass that hit a fatal startup failure calls RequestExit(status) from OnInitialize;
-        // initialization stops here rather than bootstrapping a world the app has already given up
-        // on, and Run skips the loop entirely. Teardown still runs in full.
-        if (m_ShouldExit)
-        {
-            return;
-        }
 
         // The per-machine graphics-settings store: resolve the game's schema (if it named one, now
         // that its packs are mounted) and root the settings file under the user config directory
-        // beside imgui.ini. Built here so a consumer can read it during the world bootstrap; the
-        // boot-time load and apply are the consumer's to drive.
+        // beside imgui.ini. Built and loaded before OnInitialize so a consumer can read its
+        // persisted choices — and tell a first run from a returning one — while initializing, and
+        // act on them before the first presented frame. Applying them stays the consumer's: the
+        // engine never calls ApplyGraphicsSettings on its behalf, so a consumer with no settings
+        // opinion sees the engine's own defaults.
         {
             const GraphicsSchema* schema = nullptr;
             if (m_Info.GraphicsSchema)
@@ -456,32 +450,14 @@ namespace Veng
 
             m_GraphicsSettings = CreateUnique<GraphicsSettings>(GraphicsSettingsInfo{
                 .Schema = schema, .Types = &m_TypeRegistry, .ConfigPath = std::move(configPath)});
+            static_cast<void>(m_GraphicsSettings->Load());
         }
 
-        // Adopt the game's authored mixer bus graph (if any) before the main loop. The engine
-        // already runs the roots-only default, so voices submitted during OnInitialize mix
-        // correctly; a graph that fails to load leaves that default in place. ConfigureBusGraph
-        // copies the topology it needs, so the handle need not outlive this block.
-        if (m_Info.AudioBusGraph && m_AudioDevice)
-        {
-            const AssetResult<AssetHandle<Audio::AudioBusGraph>> loaded =
-                m_AssetManager->LoadSync<Audio::AudioBusGraph>(*m_Info.AudioBusGraph);
-            if (loaded && loaded->Get() != nullptr)
-            {
-                m_AudioDevice->GetEngine().ConfigureBusGraph(*loaded->Get());
-            }
-            else
-            {
-                Log::Warn("audio: bus graph {} did not load ({}); using the roots-only default",
-                          m_Info.AudioBusGraph->Value,
-                          loaded ? "null asset" : loaded.error().Detail);
-            }
-        }
-
-        // The per-machine audio-settings store: mirrors the graphics block above, but the engine
-        // drives its boot load and apply here (audio applies live, so there is no reload-to-apply
-        // gate and the identity default resolver makes an unconfigured apply a no-op). Absent when
-        // no schema is named — the store is not constructed and GetAudioSettings() stays null.
+        // The per-machine audio-settings store: mirrors the graphics block above — constructed and
+        // loaded here, applied by the engine once the authored bus graph is adopted (audio applies
+        // live, so there is no reload-to-apply gate and the identity default resolver makes an
+        // unconfigured apply a no-op). Absent when no schema is named — the store is not
+        // constructed and GetAudioSettings() stays null.
         if (m_Info.AudioSettingsSchema)
         {
             const SettingsSchema* schema = nullptr;
@@ -514,14 +490,14 @@ namespace Veng
             m_AudioSettings = CreateUnique<SettingsStore<SettingsChoices>>(SettingsStoreInfo{
                 .Schema = schema, .Types = &m_TypeRegistry, .ConfigPath = std::move(configPath)});
             static_cast<void>(m_AudioSettings->Load());
-            ApplyAudioSettings();
         }
 
         // The localization service: resolve the game's locale index (if it named one, now that its
         // packs are mounted), read the chosen language from the per-machine locale.json (defaulting
         // to the index's source locale), and construct the index-backed service on it — replacing
-        // the null-object built before OnInitialize. Built here, before the world bootstrap, so the
-        // main menu is localized on frame one. An index that fails to load leaves the null-object.
+        // the null-object above. Built before OnInitialize so GetLocalization() resolves through the
+        // index from the moment a consumer initializes, and the first presented frame is localized.
+        // An index that fails to load leaves the null-object.
         if (m_Info.LocaleIndex)
         {
             const AssetResult<AssetHandle<Localization::LocaleIndex>> loaded =
@@ -565,6 +541,41 @@ namespace Veng
                           m_Info.LocaleIndex->Value, loaded.error().Detail);
             }
         }
+
+        OnInitialize();
+
+        // A subclass that hit a fatal startup failure calls RequestExit(status) from OnInitialize;
+        // initialization stops here rather than bootstrapping a world the app has already given up
+        // on, and Run skips the loop entirely. Teardown still runs in full.
+        if (m_ShouldExit)
+        {
+            return;
+        }
+
+        // Adopt the game's authored mixer bus graph (if any) before the main loop. The engine
+        // already runs the roots-only default, so voices submitted during OnInitialize mix
+        // correctly; a graph that fails to load leaves that default in place. ConfigureBusGraph
+        // copies the topology it needs, so the handle need not outlive this block.
+        if (m_Info.AudioBusGraph && m_AudioDevice)
+        {
+            const AssetResult<AssetHandle<Audio::AudioBusGraph>> loaded =
+                m_AssetManager->LoadSync<Audio::AudioBusGraph>(*m_Info.AudioBusGraph);
+            if (loaded && loaded->Get() != nullptr)
+            {
+                m_AudioDevice->GetEngine().ConfigureBusGraph(*loaded->Get());
+            }
+            else
+            {
+                Log::Warn("audio: bus graph {} did not load ({}); using the roots-only default",
+                          m_Info.AudioBusGraph->Value,
+                          loaded ? "null asset" : loaded.error().Detail);
+            }
+        }
+
+        // The audio store's boot apply: after the authored graph is adopted, so the resolve sees the
+        // buses it names. Audio is the one domain the engine applies for the consumer — the apply is
+        // live, and it no-ops on an absent domain, so an app with no audio opinion pays nothing.
+        ApplyAudioSettings();
 
         // The engine-managed game world bootstraps after OnInitialize, so a subclass has already
         // set up its ImGui surface and read the managed viewport.
@@ -888,9 +899,11 @@ namespace Veng
             }
             // The static render scale is a display built-in, applied here like the dynamic-resolution
             // choice below it: it is the allocation scale while DRS is off and the value DRS clamps
-            // into its band while on. Clamped to (0, 1] — the setting only downscales; supersampling
-            // past the backing extent is the separate MaxAllocationScale ceiling.
-            viewport->SetRenderScale(glm::clamp(display.RenderScale, 0.25f, 1.0f));
+            // into its band while on. Clamped to the accepted render-scale range — the setting only
+            // downscales; supersampling past the backing extent is the separate MaxAllocationScale
+            // ceiling.
+            viewport->SetRenderScale(
+                glm::clamp(display.RenderScale, GraphicsRenderScaleMin, GraphicsRenderScaleMax));
             if (output.DynamicResolutionEnabled)
             {
                 viewport->SetDynamicResolution(output.DynamicResolution);

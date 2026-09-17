@@ -583,9 +583,10 @@ namespace Veng
         /// @brief The game's graphics-quality schema asset; nullopt leaves the quality section empty.
         ///
         /// The engine cannot name a game asset, so a game declares its schema here by id. Application
-        /// resolves it at boot and hands it to the GraphicsSettings store (GetGraphicsSettings());
-        /// unset means no schema — the built-in display group still works and there are no
-        /// game-authored quality settings. Non-breaking: an app naming none gets an empty store.
+        /// resolves it before OnInitialize and hands it to the GraphicsSettings store
+        /// (GetGraphicsSettings()), which it then loads; unset means no schema — the built-in display
+        /// group still works and there are no game-authored quality settings. Non-breaking: an app
+        /// naming none gets an empty store.
         optional<AssetId> GraphicsSchema = std::nullopt;
 
         /// @brief The game's audio mixer bus graph asset; nullopt keeps the roots-only default.
@@ -599,9 +600,10 @@ namespace Veng
         /// @brief The game's audio-settings schema asset; nullopt leaves the audio settings domain absent.
         ///
         /// The engine cannot name a game asset, so a game declares its audio schema here by id.
-        /// Application resolves it at boot, constructs the per-machine audio SettingsStore over it
-        /// (config audio.json), loads persisted choices, and applies them once through
-        /// ApplyAudioSettings (GetAudioSettings()). Unset means no audio settings domain: no store is
+        /// Application resolves it before OnInitialize, constructs the per-machine audio SettingsStore
+        /// over it (config audio.json) and loads persisted choices there, then applies them once
+        /// through ApplyAudioSettings (GetAudioSettings()) after OnInitialize, once the authored bus
+        /// graph is adopted. Unset means no audio settings domain: no store is
         /// constructed and GetAudioSettings() is null, so an engine/headless consumer that wants none
         /// pays nothing. An instance of the same SettingsSchema asset type the graphics schema uses.
         optional<AssetId> AudioSettingsSchema = std::nullopt;
@@ -609,10 +611,11 @@ namespace Veng
         /// @brief The game's locale index asset; nullopt leaves an inert null-object localization service.
         ///
         /// The engine cannot name a game asset, so a game declares its LocaleIndex here by id.
-        /// Application resolves it at boot, builds the per-machine language SettingsStore (config
-        /// locale.json), reads the chosen language (defaulting to the index's source locale), and
-        /// constructs the localization service on it before the world bootstrap — so the main menu is
-        /// localized on frame one. Unset leaves Application owning an inert null-object service that
+        /// Application resolves it before OnInitialize, builds the per-machine language SettingsStore
+        /// (config locale.json), reads the chosen language (defaulting to the index's source locale),
+        /// and constructs the localization service on it — so a consumer initializes against the
+        /// index-backed service and the first frame is localized. Unset leaves Application owning an
+        /// inert null-object service that
         /// resolves every key to itself (GetLocalization() is still non-null), so a non-localized or
         /// headless consumer is unchanged.
         optional<AssetId> LocaleIndex = std::nullopt;
@@ -795,15 +798,21 @@ namespace Veng
 
         /// @brief Returns the per-machine graphics-settings store.
         ///
-        /// Constructed at boot with the schema named by ApplicationInfo::GraphicsSchema (or none),
-        /// the type registry, and the per-user config path. The menu reads and writes it; the boot
-        /// path loads and applies it.
-        /// @pre Run() has initialized the engine — the store exists only inside Run().
+        /// Constructed and loaded before OnInitialize, with the schema named by
+        /// ApplicationInfo::GraphicsSchema (or none), the type registry, and the per-user config
+        /// path — so a consumer reads its persisted choices while initializing and acts on them
+        /// before the first presented frame. That one boot Load() is what WasLoadedFromFile()
+        /// reports for the rest of the run, so a consumer tells a first run from a returning one
+        /// without loading again. Applying is the consumer's: the engine calls
+        /// ApplyGraphicsSettings() only when asked.
+        /// @pre Run() has reached the settings boot — every hook from OnInitialize on qualifies, a
+        ///      subclass constructor does not.
         [[nodiscard]] GraphicsSettings& GetGraphicsSettings()
         {
-            VE_ASSERT(m_GraphicsSettings,
-                      "GetGraphicsSettings before Run(): the graphics-settings "
-                      "store exists only once Run() has initialized the engine");
+            VE_ASSERT(
+                m_GraphicsSettings,
+                "GetGraphicsSettings from a subclass constructor: the graphics-settings store "
+                "is built early in Run(), before OnInitialize");
             return *m_GraphicsSettings;
         }
 
@@ -829,10 +838,11 @@ namespace Veng
 
         /// @brief Returns the per-machine audio-settings store, or null when the domain is absent.
         ///
-        /// Constructed at boot with the schema named by ApplicationInfo::AudioSettingsSchema, the
-        /// type registry, and the per-user config path (audio.json); null when no schema is named
-        /// (the domain is absent). The menu reads and writes it; the boot path loads and applies it.
-        /// @pre Run() has initialized the engine — the store exists only inside Run().
+        /// Constructed and loaded before OnInitialize, with the schema named by
+        /// ApplicationInfo::AudioSettingsSchema, the type registry, and the per-user config path
+        /// (audio.json); null when no schema is named (the domain is absent), and null from a
+        /// subclass constructor, which runs before the store is built. The menu reads and writes it;
+        /// the engine applies it once at boot, after the authored bus graph is adopted.
         /// @return The audio store, or nullptr when no audio schema was named.
         [[nodiscard]] SettingsStore<SettingsChoices>* GetAudioSettings()
         {
@@ -841,27 +851,30 @@ namespace Veng
 
         /// @brief Returns the localization service — always non-null.
         ///
-        /// A real, index-backed service when ApplicationInfo::LocaleIndex is set, else the inert
-        /// null-object that resolves every key to itself. Consumers resolve user-facing text through
-        /// it; SystemContext::Localization binds to the same service. The chosen language is read
-        /// from the per-machine locale.json at boot.
-        /// @pre Run() has initialized the engine — the service exists only inside Run().
+        /// A real, index-backed service when ApplicationInfo::LocaleIndex is set and its index loads,
+        /// else the inert null-object that resolves every key to itself. Consumers resolve
+        /// user-facing text through it; SystemContext::Localization binds to the same service. Both
+        /// the chosen language (read from the per-machine locale.json) and the service built on it
+        /// are resolved before OnInitialize, so text initialization reads through the index.
+        /// @pre Run() has reached the settings boot — every hook from OnInitialize on qualifies, a
+        ///      subclass constructor does not.
         /// @return The localization service.
         [[nodiscard]] Localization::Localization& GetLocalization() const
         {
             VE_ASSERT(m_Localization,
-                      "GetLocalization before Run(): the localization service exists only once "
-                      "Run() has initialized the engine");
+                      "GetLocalization from a subclass constructor: the localization service is "
+                      "built early in Run(), before OnInitialize");
             return *m_Localization;
         }
 
         /// @brief Returns the per-machine language-settings store, or null when no locale index is set.
         ///
-        /// Constructed at boot beside the localization service and persisted as locale.json under the
-        /// per-user config directory; it carries the chosen "language" option the boot path reads to
-        /// pick the active locale. A language selector writes the chosen locale id into it and saves,
-        /// so the choice survives a restart; null when ApplicationInfo::LocaleIndex names no index.
-        /// @pre Run() has initialized the engine — the store exists only inside Run().
+        /// Constructed and loaded before OnInitialize beside the localization service, and persisted
+        /// as locale.json under the per-user config directory; it carries the chosen "language"
+        /// option the boot reads to pick the active locale. A language selector writes the chosen
+        /// locale id into it and saves, so the choice survives a restart; null when
+        /// ApplicationInfo::LocaleIndex names no index or its index failed to load, and null from a
+        /// subclass constructor, which runs before the store is built.
         /// @return The language store, or nullptr when no locale index was named.
         [[nodiscard]] SettingsStore<SettingsChoices>* GetLanguageSettings()
         {
