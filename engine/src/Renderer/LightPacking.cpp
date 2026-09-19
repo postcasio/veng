@@ -54,7 +54,44 @@ namespace Veng::Renderer
             i32 PunctualSlot = -1;
             /// @brief A shadow-casting directional the cascade budget could not seat.
             bool CascadeDenied = false;
+            /// @brief The light's world-space aim direction — the authored Direction for a
+            /// directional or area light, and Direction rotated into world space by the
+            /// entity's transform for a point or spot (see ResolveAimDirection).
+            vec3 AimDir{0.0f, -1.0f, 0.0f};
         };
+
+        // Resolves a light's world-space aim, the direction its cone and its shadow frustum point.
+        // A point or spot aims along its entity-local Direction rotated into world space, so a
+        // light parented to a moving body keeps its beam fixed to that body. A Rect or Polygon
+        // panel aims along its emitting face — local +Z through the entity transform — the same
+        // orientation its shaded vertices already take, so the shadow it casts turns with the
+        // entity rather than tracking a separately authored Direction that can disagree with the
+        // panel's facing. A directional stays world-space (an infinite source is a world
+        // phenomenon), and a Sphere keeps its authored Direction (it has no face, and only the
+        // near-parallel cascade routing reads it). Falls back to the authored vector when the
+        // rotated direction is degenerate.
+        vec3 ResolveAimDirection(const Light& light, const mat4& world)
+        {
+            switch (light.Type)
+            {
+            case LightType::Point:
+            case LightType::Spot:
+            {
+                const vec3 rotated = mat3(world) * light.Direction;
+                return glm::length(rotated) > 1e-6f ? glm::normalize(rotated) : light.Direction;
+            }
+            case LightType::Rect:
+            case LightType::Polygon:
+            {
+                const vec3 normal = mat3(world) * vec3(0.0f, 0.0f, 1.0f);
+                return glm::length(normal) > 1e-6f ? glm::normalize(normal) : light.Direction;
+            }
+            case LightType::Directional:
+            case LightType::Sphere:
+                break;
+            }
+            return light.Direction;
+        }
 
         // Rec.709 luminance: the single scalar the contribution ranking compares two lights'
         // colours by, so a saturated dim light does not outrank a bright white one on the
@@ -215,6 +252,7 @@ namespace Veng::Renderer
             candidate.Source = &light;
             candidate.World = WorldMatrix(world, entity);
             candidate.WorldPos = vec3(candidate.World[3]);
+            candidate.AimDir = ResolveAimDirection(light, candidate.World);
             candidate.IsArea = light.Type == LightType::Rect || light.Type == LightType::Sphere ||
                                light.Type == LightType::Polygon;
             // A light that declines shadows scores zero: it is passed over for every arm, since
@@ -298,12 +336,13 @@ namespace Veng::Renderer
             { return std::clamp(worldPerTexel * 0.5f, 0.0005f, 0.01f); };
             if (light.Type != LightType::Point)
             {
-                // Aim the perspective map along the light's travel direction; area lights use a
+                // Aim the perspective map along the light's world-space travel direction (a spot's
+                // is entity-relative, so the shadow frustum turns with its cone); area lights use a
                 // wide fixed cone as the cap, a spot its own outer cone. The scene bound then
                 // tightens the frustum to the casters it must shadow.
-                const f32 dirLen = glm::length(light.Direction);
+                const f32 dirLen = glm::length(candidate.AimDir);
                 const vec3 aimDir =
-                    dirLen > 1e-5f ? light.Direction / dirLen : vec3(0.0f, -1.0f, 0.0f);
+                    dirLen > 1e-5f ? candidate.AimDir / dirLen : vec3(0.0f, -1.0f, 0.0f);
                 const f32 cone = candidate.IsArea ? AreaShadowCone : light.OuterCone;
                 const std::optional<AABB> fitBounds =
                     sceneBounds.IsEmpty() ? std::nullopt : std::optional<AABB>(sceneBounds);
@@ -446,7 +485,7 @@ namespace Veng::Renderer
 
             result.Lights[i] = PackedLight{
                 .PositionRange = vec4(worldPos, light.Range),
-                .DirectionType = vec4(light.Direction, static_cast<f32>(light.Type)),
+                .DirectionType = vec4(candidate.AimDir, static_cast<f32>(light.Type)),
                 .ColorIntensity = vec4(light.Color, IntensityToRadiance(light)),
                 .Cone = vec4(cosInner, cosOuter, shadowSlot, flags),
                 .Area = area,

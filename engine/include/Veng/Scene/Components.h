@@ -369,8 +369,10 @@ namespace Veng
 
     /// @brief Light component shaded by the deferred lighting pass.
     ///
-    /// Type selects the light's shape. Direction is the world-space travel
-    /// direction (directional and spot); Color is linear RGB; Intensity scales it.
+    /// Type selects the light's shape. Direction is a spot's travel direction —
+    /// entity-local, rotated into world space by the entity's Transform, so a spot
+    /// parented to a moving body aims with it — and a directional's world-space travel
+    /// direction. Color is linear RGB; Intensity scales it.
     /// Range is the falloff radius for every positioned light (point, spot, and the
     /// area lights). InnerCone/OuterCone are the spot's half-angles in radians: full
     /// intensity within InnerCone, zero beyond OuterCone, smooth between.
@@ -386,7 +388,8 @@ namespace Veng
     {
         /// @brief Light shape.
         LightType Type{LightType::Directional};
-        /// @brief World-space travel direction (directional and spot).
+        /// @brief Travel direction. Entity-local for a spot (rotated into world space by the
+        /// entity's Transform, so it aims with a parented body); world-space for a directional.
         vec3 Direction{0.0f, -1.0f, 0.0f};
         /// @brief Linear RGB color (a chromaticity; brightness lives in Intensity).
         vec3 Color{1.0f, 1.0f, 1.0f};

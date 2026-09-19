@@ -8,6 +8,7 @@
 #include <doctest/doctest.h>
 
 #include <glm/gtc/constants.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <cmath>
 
@@ -105,6 +106,61 @@ TEST_CASE("PackSceneLights: a lone directional packs exactly as it did before ca
     CHECK(light.AreaNormal.w == doctest::Approx(0.0f));
     CHECK(packed.PunctualCount == 0);
     CHECK(packed.DeniedDirectionalCount == 0);
+}
+
+TEST_CASE("PackSceneLights: a spot aims with its entity; a directional keeps its world direction")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+    const Unique<Scene> scene = Scene::Create(types);
+
+    // A 90° yaw about +Y sends local -Z (the authored aim below) to world -X.
+    const quat yaw = glm::angleAxis(glm::half_pi<f32>(), vec3(0.0f, 1.0f, 0.0f));
+
+    // A spot authored to aim along local -Z, on a yawed entity: the packed aim is the
+    // entity-rotated world direction, not the authored local vector.
+    const Entity spot = scene->CreateEntity();
+    scene->Add<Transform>(spot, Transform{.Rotation = yaw});
+    scene->Add<Light>(spot, Light{.Type = LightType::Spot,
+                                  .Direction = vec3(0.0f, 0.0f, -1.0f),
+                                  .Range = 8.0f,
+                                  .OuterCone = 0.5f});
+
+    // A directional with the same entity rotation keeps its authored world-space direction —
+    // an infinite source is a world phenomenon, exempt from the entity-relative rotation.
+    const Entity sun = scene->CreateEntity();
+    scene->Add<Transform>(sun, Transform{.Rotation = yaw});
+    scene->Add<Light>(sun, Light{.Type = LightType::Directional,
+                                 .Direction = vec3(0.0f, 0.0f, -1.0f),
+                                 .Intensity = 100000.0f});
+
+    // A Rect panel aims along its emitting face (local +Z) through the entity transform, so its
+    // packed direction is the yawed normal (world +X) regardless of any authored Direction.
+    const Entity panel = scene->CreateEntity();
+    scene->Add<Transform>(panel, Transform{.Rotation = yaw});
+    scene->Add<Light>(panel, Light{.Type = LightType::Rect,
+                                   .Direction = vec3(0.0f, 0.0f, -1.0f),
+                                   .Range = 8.0f,
+                                   .Width = 1.0f,
+                                   .Height = 1.0f});
+
+    const PackedSceneLights packed = PackSceneLights(*scene, true, 1024);
+    REQUIRE(packed.LightCount == 3);
+
+    const vec3 spotDir = vec3(packed.Lights[0].DirectionType);
+    CHECK(spotDir.x == doctest::Approx(-1.0f).epsilon(0.001));
+    CHECK(std::abs(spotDir.y) < 1e-4f);
+    CHECK(std::abs(spotDir.z) < 1e-4f);
+
+    const vec3 sunDir = vec3(packed.Lights[1].DirectionType);
+    CHECK(std::abs(sunDir.x) < 1e-4f);
+    CHECK(std::abs(sunDir.y) < 1e-4f);
+    CHECK(sunDir.z == doctest::Approx(-1.0f).epsilon(0.001));
+
+    const vec3 panelDir = vec3(packed.Lights[2].DirectionType);
+    CHECK(panelDir.x == doctest::Approx(1.0f).epsilon(0.001));
+    CHECK(std::abs(panelDir.y) < 1e-4f);
+    CHECK(std::abs(panelDir.z) < 1e-4f);
 }
 
 TEST_CASE(
