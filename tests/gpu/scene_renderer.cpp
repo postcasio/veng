@@ -198,6 +198,105 @@ namespace
 
         return pixels;
     }
+
+    // Samples the renderer's OWN bindless handle for `sourceView` through a separate consumer graph
+    // that imports the view (so the graph derives the sample barrier from the layout the lean path
+    // left it in — the cross-graph handoff), and writes the sampled value into an RGBA16F target so
+    // signed normals and reverse-Z depth read back as real floats. Returns the downloaded halves.
+    vector<u8> SampleHandleToHdr(Context& context, AssetManager& assets,
+                                 const Ref<ImageView>& sourceView, TextureHandle sourceHandle,
+                                 uvec2 extent)
+    {
+        const AssetResult<AssetHandle<Shader>> vertexAsset =
+            assets.LoadSync<Shader>(AssetId{0x1F42});
+        const AssetResult<AssetHandle<Shader>> fragmentAsset =
+            assets.LoadSync<Shader>(AssetId{0x1F44});
+        REQUIRE(vertexAsset.has_value());
+        REQUIRE(fragmentAsset.has_value());
+
+        const Ref<PipelineLayout> layout = PipelineLayout::Create(
+            context, {
+                         .Name = "Lean Sample Layout",
+                         .PushConstantRanges =
+                             {
+                                 PushConstantRange::Of<SamplePushConstants>(ShaderStage::Fragment),
+                             },
+                     });
+        const Ref<GraphicsPipeline> pipeline = GraphicsPipeline::Create(
+            context,
+            {
+                .Name = "Lean Sample Pipeline",
+                .ColorAttachments = {{.Format = Format::RGBA16Sfloat}},
+                .PipelineLayout = layout,
+                .ShaderStages =
+                    {
+                        {.Stage = ShaderStage::Vertex, .Module = vertexAsset->Get()->Module},
+                        {.Stage = ShaderStage::Fragment, .Module = fragmentAsset->Get()->Module},
+                    },
+            });
+
+        const Ref<Sampler> sampler =
+            Sampler::Create(context, {
+                                         .Name = "Lean Sample Sampler",
+                                         .AddressModeU = AddressMode::ClampToEdge,
+                                         .AddressModeV = AddressMode::ClampToEdge,
+                                         .AddressModeW = AddressMode::ClampToEdge,
+                                     });
+
+        const Ref<Image> target = Image::Create(
+            context, {
+                         .Name = "Lean Sample Output",
+                         .Extent = {extent.x, extent.y, 1},
+                         .Format = Format::RGBA16Sfloat,
+                         .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                     });
+        const Ref<ImageView> targetView =
+            ImageView::Create(context, {.Name = "Lean Sample Output View", .Image = target});
+
+        BindlessRegistry& bindless = context.GetBindlessRegistry();
+        const SamplerHandle samplerHandle = bindless.Register(sampler);
+
+        context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                RenderGraph graph(context);
+                const ResourceId sourceId = graph.Import("Lean Source");
+                const ResourceId outputId = graph.Import("Lean Sample Output");
+
+                graph.AddPass("Sample Lean Target")
+                    .Color({
+                        .Resource = outputId,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+                    })
+                    .Sample(sourceId)
+                    .Execute(
+                        [&](PassContext& ctx)
+                        {
+                            CommandBuffer& passCmd = ctx.Cmd();
+                            passCmd.BindPipeline(pipeline);
+                            passCmd.SetViewport({0, 0}, extent);
+                            passCmd.SetScissor({0, 0}, extent);
+                            bindless.Bind(passCmd);
+                            passCmd.PushConstants(SamplePushConstants{
+                                .TextureIndex = sourceHandle.Index,
+                                .SamplerIndex = samplerHandle.Index,
+                            });
+                            passCmd.DrawFullscreenTriangle();
+                        });
+
+                const RenderGraph::ImportBinding bindings[] = {
+                    {.Id = sourceId, .View = sourceView},
+                    {.Id = outputId, .View = targetView},
+                };
+                graph.Compile()->Execute(cmd, bindings);
+            });
+
+        vector<u8> pixels = target->Download();
+        bindless.Release(samplerHandle);
+        return pixels;
+    }
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
@@ -301,6 +400,104 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         SampleThroughBindless(Context, assets, renderer->GetOutput(), resizedExtent);
     REQUIRE(resampled.size() == static_cast<size_t>(resizedExtent.x) * resizedExtent.y * 4);
     CHECK(resampled[3] == 255);
+}
+
+// The lean geometry render path (RenderPath::GeometryDepthNormal): a shading-free render that
+// rasterizes opaque geometry writing only depth + world normal. It asserts the topology/cost
+// property — the colour g-buffer / ORM / HDR targets are NOT allocated — and, sampling the depth
+// and normal handles from a SEPARATE consumer graph (exercising the cross-graph layout handoff,
+// not merely a CPU readback), that depth carries the mesh silhouette (a foreground/background
+// depth step at the edge) and the normal carries plausible unit normals inside the silhouette and
+// the clear value outside.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: the lean depth+normal path skips the colour targets and "
+                  "exposes sampleable depth + world normal")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const VoidResult mountResult = assets.Mount(path(TEST_SHADER_PACK));
+    REQUIRE(mountResult.has_value());
+
+    constexpr uvec2 extent{64, 64};
+
+    // A cube filling the view center, its front face (world normal +Z) squarely toward the camera;
+    // the corners stay background.
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Ref<Mesh> cube = PopulateCubeScene(Context, assets, *scene);
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Path = RenderPath::GeometryDepthNormal},
+    });
+
+    // The cost property: none of the colour g-buffer / ORM / HDR targets are allocated on the lean
+    // path — the whole point is to pay for shape, not shading.
+    CHECK(renderer->GetAlbedoView() == nullptr);
+    CHECK(renderer->GetOrmView() == nullptr);
+    CHECK(renderer->GetHdrView() == nullptr);
+
+    // The depth and normal targets ARE allocated, in the engine's signed world-normal and sampled
+    // reverse-Z depth formats.
+    const Ref<ImageView> normalView = renderer->GetNormalView();
+    const Ref<ImageView> depthView = renderer->GetDepthView();
+    REQUIRE(normalView != nullptr);
+    REQUIRE(depthView != nullptr);
+    CHECK(normalView->GetImage()->GetFormat() == GBuffer::NormalFormat);
+    CHECK(depthView->GetImage()->GetFormat() == GBuffer::DepthFormat);
+    CHECK(normalView->GetImage()->GetWidth() == extent.x);
+    CHECK(depthView->GetImage()->GetWidth() == extent.x);
+
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            renderer->Execute(
+                cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+        });
+
+    // Sample the renderer's own depth + normal handles through a separate consumer graph — the
+    // cross-graph handoff, reading the layout the lean path's end-of-Execute bracket left them in.
+    const vector<u8> normalPixels = SampleHandleToHdr(Context, assets, renderer->GetNormalView(),
+                                                      renderer->GetNormalHandle(), extent);
+    const vector<u8> depthPixels = SampleHandleToHdr(Context, assets, renderer->GetDepthView(),
+                                                     renderer->GetDepthHandle(), extent);
+    REQUIRE(normalPixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+    REQUIRE(depthPixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+
+    auto decodeVec3 = [](const vector<u8>& hdr, uvec2 dims, u32 x, u32 y)
+    {
+        const auto* halves = reinterpret_cast<const u16*>(hdr.data());
+        const usize base = (static_cast<usize>(y) * dims.x + x) * 4;
+        return vec3(glm::unpackHalf1x16(halves[base + 0]), glm::unpackHalf1x16(halves[base + 1]),
+                    glm::unpackHalf1x16(halves[base + 2]));
+    };
+
+    const uvec2 center{extent.x / 2, extent.y / 2};
+    const uvec2 corner{1, 1};
+
+    // Normal: the centre texel (front face) is a unit world normal pointing at the camera (+Z);
+    // the corner texel is background, the target's zero clear.
+    const vec3 centerNormal = decodeVec3(normalPixels, extent, center.x, center.y);
+    const vec3 cornerNormal = decodeVec3(normalPixels, extent, corner.x, corner.y);
+    CHECK(glm::length(centerNormal) > 0.9f);
+    CHECK(glm::length(centerNormal) < 1.1f);
+    CHECK(centerNormal.z > 0.8f); // the +Z face faces the camera
+    CHECK(glm::length(cornerNormal) < 0.1f);
+
+    // Depth: reverse-Z, cleared to 0 (far) for background. The centre carries the cube's surface
+    // depth (> 0) and the corner stays at the far clear — the foreground/background silhouette step.
+    const f32 centerDepth = decodeVec3(depthPixels, extent, center.x, center.y).x;
+    const f32 cornerDepth = decodeVec3(depthPixels, extent, corner.x, corner.y).x;
+    CHECK(centerDepth > 0.01f);
+    CHECK(cornerDepth == doctest::Approx(0.0f));
+    CHECK(centerDepth > cornerDepth + 0.01f);
 }
 
 // The shadow-system / set-1-coexistence pin. Set 0 is the bindless registry; set 1

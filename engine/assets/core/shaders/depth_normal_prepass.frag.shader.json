@@ -1,0 +1,4 @@
+{
+  "source": "depth_normal_prepass.frag.slang",
+  "entry": "fsMain"
+}

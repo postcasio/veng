@@ -145,7 +145,9 @@ namespace Veng::Renderer
         ///
         /// The image is the post-resolve allocation and the tail writes all of it at any render
         /// scale, so a consumer samples it over the full [0,1] UV range. Invalidated by Resize and
-        /// Configure; re-fetch after those calls.
+        /// Configure; re-fetch after those calls. The GeometryDepthNormal path produces no colour
+        /// result — it writes depth and normal, not the output — so a consumer of that path reads
+        /// GetDepthHandle / GetNormalHandle instead.
         [[nodiscard]] Ref<ImageView> GetOutput() const;
 
         /// @brief Returns the rendered sub-rect extent of the scene from the last Execute.
@@ -289,14 +291,35 @@ namespace Veng::Renderer
         /// @brief Returns the g-buffer albedo (G0) view.
         ///
         /// Renderer-owned; invalidated by Resize. Exposed for tests and tooling; normal
-        /// consumers read only GetOutput().
+        /// consumers read only GetOutput(). Null on the GeometryDepthNormal path, which allocates no
+        /// colour g-buffer.
         [[nodiscard]] Ref<ImageView> GetAlbedoView() const;
-        /// @brief Returns the g-buffer world-normal (G1) view. Invalidated by Resize.
+        /// @brief Returns the world-normal view. Invalidated by Resize.
+        ///
+        /// Per-path backing: on the Shaded path this is the deferred g-buffer normal channel (G1); on
+        /// the GeometryDepthNormal path it is the lean prepass's own one-MRT world-normal target.
         [[nodiscard]] Ref<ImageView> GetNormalView() const;
         /// @brief Returns the g-buffer packed ORM (G2) view. Invalidated by Resize.
+        ///
+        /// Null on the GeometryDepthNormal path, which allocates no ORM channel.
         [[nodiscard]] Ref<ImageView> GetOrmView() const;
         /// @brief Returns the depth buffer view. Invalidated by Resize.
+        ///
+        /// Per-path backing: the g-buffer depth on the Shaded path, the lean prepass's own depth
+        /// target on the GeometryDepthNormal path.
         [[nodiscard]] Ref<ImageView> GetDepthView() const;
+
+        /// @brief Returns the bindless handle for the world-normal target a consumer samples through.
+        ///
+        /// The bindless twin of GetNormalView, per-path-backed the same way: the g-buffer normal
+        /// channel on the Shaded path, the lean prepass's world-normal target on the
+        /// GeometryDepthNormal path. Registered at Create; re-registered on Resize/Configure.
+        [[nodiscard]] TextureHandle GetNormalHandle() const;
+        /// @brief Returns the bindless handle for the depth target a consumer samples through.
+        ///
+        /// The bindless twin of GetDepthView, per-path-backed the same way. The lean path exposes it
+        /// under a depth-sampleable view. Registered at Create; re-registered on Resize/Configure.
+        [[nodiscard]] TextureHandle GetDepthHandle() const;
 
         /// @brief Returns the whole-chain sampled view of the hi-Z depth pyramid.
         ///
@@ -332,7 +355,8 @@ namespace Veng::Renderer
 
         /// @brief Returns the HDR target the deferred lighting pass writes before tonemap.
         ///
-        /// Exposed for tests and tooling. Invalidated by Resize.
+        /// Exposed for tests and tooling. Invalidated by Resize. Null on the GeometryDepthNormal
+        /// path, which runs no lighting and allocates no HDR target.
         [[nodiscard]] Ref<ImageView> GetHdrView() const;
 
         /// @brief Returns the bloom composite result the tonemap stage reads when Bloom is on.
@@ -404,6 +428,13 @@ namespace Veng::Renderer
         void CreateOutput();
         /// @brief Recreates g-buffer images/views at the current extent and (re-)registers them into bindless.
         void CreateGBuffer();
+        /// @brief Recreates the lean path's depth + world-normal targets and (re-)registers their handles.
+        ///
+        /// The GeometryDepthNormal path's only extent-sized targets: a signed-float world-normal
+        /// target (the g-buffer normal format) and a sampled reverse-Z depth target, plus their
+        /// bindless handles. None of the colour g-buffer / HDR / velocity / emissive targets are
+        /// allocated on this path.
+        void CreateLeanTargets();
         /// @brief Loads the baked LTC lookup tables from the core pack into textures and registers them.
         void CreateLtcResources();
         /// @brief Recreates the HDR image/view at the current extent and (re-)registers it into bindless.
@@ -418,6 +449,29 @@ namespace Veng::Renderer
 
         /// @brief Rebuilds the pass set from Settings.Mode and recompiles the RenderGraph.
         void Rebuild();
+
+        /// @brief Whether the renderer is on the shading-free depth + world-normal path.
+        [[nodiscard]] bool IsLeanPath() const
+        {
+            return m_Settings.Path == RenderPath::GeometryDepthNormal;
+        }
+
+        /// @brief Rebuilds the lean path's single-pass graph (the depth + world-normal prepass).
+        ///
+        /// The GeometryDepthNormal arm of Rebuild: a fresh graph importing only the lean normal and
+        /// depth targets, wiring the DepthNormalPrepassScenePass and nothing else — no colour
+        /// g-buffer, no lighting, no translucent, no tonemap, and none of their imports.
+        void RebuildLean();
+
+        /// @brief Replays the lean graph and brackets the depth + normal for out-of-graph sampling.
+        ///
+        /// The GeometryDepthNormal arm of Execute: syncs the broadphase, gathers the skinning palette,
+        /// runs the prepass, then transitions depth and normal to a graphics-sample layout so a
+        /// consumer graph samples them. The next Execute's graph restores them to their attachment
+        /// layouts from the tracked state (the SceneCapture bracket precedent).
+        /// @param cmd   Command buffer to record into.
+        /// @param view  Per-frame scene input.
+        void ExecuteLean(CommandBuffer& cmd, const SceneView& view);
 
         /// @brief Resolves the two allocations from the requested extents and the current settings.
         ///
@@ -665,6 +719,26 @@ namespace Veng::Renderer
         Ref<Image> m_DepthImage;
         /// @brief View over m_DepthImage.
         Ref<ImageView> m_DepthView;
+
+        /// @brief The lean path's own world-normal target (one MRT), backing GetNormalView there.
+        ///
+        /// Allocated only on the GeometryDepthNormal path (the g-buffer targets are not), in the
+        /// g-buffer normal format so a consumer reads the same signed world-space convention.
+        Ref<Image> m_LeanNormalImage;
+        /// @brief View over m_LeanNormalImage.
+        Ref<ImageView> m_LeanNormalView;
+        /// @brief The lean path's own depth target, backing GetDepthView there.
+        Ref<Image> m_LeanDepthImage;
+        /// @brief View over m_LeanDepthImage.
+        Ref<ImageView> m_LeanDepthView;
+        /// @brief Bindless slot for the lean world-normal view; GetNormalHandle returns it on the lean path.
+        TextureHandle m_LeanNormalHandle;
+        /// @brief Bindless slot for the lean depth view; GetDepthHandle returns it on the lean path.
+        TextureHandle m_LeanDepthHandle;
+        /// @brief Imported id for the lean world-normal target the prepass writes.
+        ResourceId m_LeanNormalId;
+        /// @brief Imported id for the lean depth target the prepass writes.
+        ResourceId m_LeanDepthId;
 
         /// @brief Camera world->clip captured at the end of last Execute (this frame's pyramid pairs with it).
         ///

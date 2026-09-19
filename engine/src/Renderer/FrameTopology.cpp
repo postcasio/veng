@@ -7,6 +7,16 @@ namespace Veng::Renderer
     {
         FrameTopology topology;
 
+        // The lean geometry path is a second topology axis with precedence over DebugView: it wires
+        // only the depth + world-normal prepass, so it early-returns here and DebugView Mode is never
+        // consulted. Every other field stays default (off), which is the whole point — none of the
+        // colour g-buffer / lighting / translucent / tonemap stages exist on this path.
+        if (settings.Path == RenderPath::GeometryDepthNormal)
+        {
+            topology.GeometryDepthNormal = true;
+            return topology;
+        }
+
         topology.DebugBloom = settings.Mode == DebugView::Bloom;
         topology.BloomActive = ResolveBloomActive(settings);
 

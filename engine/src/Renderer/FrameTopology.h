@@ -46,6 +46,14 @@ namespace Veng::Renderer
     /// rather than a scatter of flags set as a side effect of building the graph.
     struct FrameTopology
     {
+        /// @brief The frame runs the lean geometry path: a depth + world-normal prepass and nothing else.
+        ///
+        /// Set when SceneRendererSettings::Path is GeometryDepthNormal. It is exclusive with every
+        /// other field here — a lean topology wires only the prepass and allocates none of the colour
+        /// g-buffer / lighting / translucent / tonemap resources, so the resolve early-returns with
+        /// this set and all else default.
+        bool GeometryDepthNormal = false;
+
         /// @brief The frame composites the full lit scene before the HDR tail.
         bool SceneComposited = false;
 

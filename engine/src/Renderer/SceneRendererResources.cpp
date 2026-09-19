@@ -423,6 +423,56 @@ namespace Veng::Renderer
         m_GpuCull->ResizeHiZ(m_RenderAllocExtent, m_DepthView);
     }
 
+    void SceneRenderer::CreateLeanTargets()
+    {
+        // The GeometryDepthNormal path's only extent-sized targets: a world-normal MRT and a depth
+        // target the prepass writes and a consumer samples. Both are renderer-owned and imported like
+        // the g-buffer (sampled downstream through bindless), so releasing the old slots defers
+        // through the same per-frame window as the images retire.
+        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
+        bindless.Release(m_LeanNormalHandle);
+        bindless.Release(m_LeanDepthHandle);
+
+        m_LeanNormalImage = Image::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Lean Normal",
+                           .Extent = {m_RenderAllocExtent.x, m_RenderAllocExtent.y, 1},
+                           .Format = GBuffer::NormalFormat,
+                           .Usage = GBuffer::ColorUsage,
+                       });
+        m_LeanNormalView = ImageView::Create(
+            m_Context, {.Name = "SceneRenderer Lean Normal View", .Image = m_LeanNormalImage});
+
+        m_LeanDepthImage = Image::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Lean Depth",
+                           .Extent = {m_RenderAllocExtent.x, m_RenderAllocExtent.y, 1},
+                           .Format = GBuffer::DepthFormat,
+                           .Usage = GBuffer::DepthUsage,
+                       });
+        m_LeanDepthView = ImageView::Create(
+            m_Context, {.Name = "SceneRenderer Lean Depth View", .Image = m_LeanDepthImage});
+
+        if (!m_SamplerHandle.IsValid())
+        {
+            m_SamplerHandle = bindless
+                                  .AcquireSampler({
+                                      .Name = "SceneRenderer GBuffer Sampler",
+                                      .AddressModeU = AddressMode::ClampToEdge,
+                                      .AddressModeV = AddressMode::ClampToEdge,
+                                      .AddressModeW = AddressMode::ClampToEdge,
+                                  })
+                                  .Handle;
+        }
+
+        m_LeanNormalHandle = bindless.Register(m_LeanNormalView);
+        m_LeanDepthHandle = bindless.Register(m_LeanDepthView);
+
+        // The GPU-cull subsystem is created in either path; sizing its hi-Z against the lean depth
+        // keeps its per-frame upload valid even though the lean graph wires no cull/occlusion pass.
+        m_GpuCull->ResizeHiZ(m_RenderAllocExtent, m_LeanDepthView);
+    }
+
     void SceneRenderer::CreateCullResources()
     {
         // The per-draw DrawData SSBO drives both cull modes' buffer-indexed draw. Host-visible,

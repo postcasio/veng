@@ -163,6 +163,28 @@ namespace Veng::Renderer
         AntiAliasingModeNames.size() == static_cast<usize>(AntiAliasingMode::TAAU) + 1,
         "AntiAliasingModeNames must list every AntiAliasingMode arm in declaration order.");
 
+    /// @brief Selects the renderer's top-level render path — the topology axis above DebugView.
+    ///
+    /// A second axis of variation orthogonal to DebugView Mode: Shaded is the full deferred pipeline
+    /// (g-buffer → lighting → translucent → tonemap, DebugView and all), the default so every
+    /// existing consumer is unchanged. GeometryDepthNormal is the shading-free lean path — it
+    /// rasterizes opaque geometry writing only depth and a world normal, allocating and running none
+    /// of the colour g-buffer / lighting / translucent / tonemap stages, and exposes depth and normal
+    /// as sampleable bindless handles (GetDepthHandle / GetNormalHandle). It is for a consumer that
+    /// wants a mesh's shape rather than its shading — an object thumbnail, a minimap silhouette, an
+    /// editor selection outline, a custom occlusion input.
+    ///
+    /// When GeometryDepthNormal is selected, ResolveFrameTopology takes the lean topology and ignores
+    /// DebugView Mode entirely — the two axes are never combined. This is a topology change (a
+    /// Configure → recompile), and the target set is allocated for the path at Create.
+    enum class RenderPath : u8
+    {
+        /// @brief The full deferred pipeline (g-buffer, lighting, translucent, tonemap, DebugView).
+        Shaded,
+        /// @brief The shading-free lean path: opaque geometry to depth + world normal only.
+        GeometryDepthNormal,
+    };
+
     /// @brief Topology and sizing knobs for SceneRenderer.
     ///
     /// A change to any field here is a Configure → recompile. Knobs that turn a pass
@@ -203,7 +225,16 @@ namespace Veng::Renderer
             Quarter,
         };
 
+        /// @brief Selects the top-level render path; GeometryDepthNormal ignores DebugView Mode.
+        ///
+        /// Default Shaded, so an existing consumer is unchanged. Selected at Create — the renderer
+        /// allocates the target set for its path at construction. A change re-wires the pass set on
+        /// the Configure recompile.
+        RenderPath Path = RenderPath::Shaded;
+
         /// @brief Selects which result the renderer produces; re-wires the pass set on change.
+        ///
+        /// Consulted only on the Shaded path; the GeometryDepthNormal path ignores it entirely.
         DebugView Mode = DebugView::Final;
 
         /// @brief Whether the compute mip-pyramid bloom runs ahead of tonemap.

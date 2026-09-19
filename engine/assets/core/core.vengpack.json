@@ -72,6 +72,21 @@
       "source": "shaders/shadow_depth_skinned.vert.shader.json"
     },
     {
+      "id": "0xDFDE03653C23E0C9",
+      "type": "Shader",
+      "source": "shaders/depth_normal_prepass.vert.shader.json"
+    },
+    {
+      "id": "0x1DFC95204289CD78",
+      "type": "Shader",
+      "source": "shaders/depth_normal_prepass_skinned.vert.shader.json"
+    },
+    {
+      "id": "0xB5DBE86AAB243AA7",
+      "type": "Shader",
+      "source": "shaders/depth_normal_prepass.frag.shader.json"
+    },
+    {
       "id": "0xF90F709155D04BE7",
       "type": "Shader",
       "source": "shaders/albedo_blit.frag.shader.json"

@@ -15,6 +15,7 @@
 #include "Passes/DebugBlitScenePasses.h"
 #include "Passes/DebugDrawScenePass.h"
 #include "Passes/DeferredLightingScenePass.h"
+#include "Passes/DepthNormalPrepassScenePass.h"
 #include "Passes/GBufferScenePass.h"
 #include "Passes/IblCubeDebugScenePass.h"
 #include "Passes/PickingScenePass.h"
@@ -221,15 +222,26 @@ namespace Veng::Renderer
 
         ResolveAllocationExtents();
         CreateOutput();
-        CreateGBuffer();
-        CreateLtcResources();
+        // The skinning palette + per-draw buffers drive both paths (the lean prepass poses skinned
+        // meshes through the palette PrepareDraws fills), so they are always allocated.
         CreateCullResources();
-        CreateHdr();
-        CreateBloomMask();
-        RecreateExtentSubsystems();
-        // The metering set binds the scene colour the tail reads, so the meter is created after the
-        // promotion's own target exists.
-        m_AutoExposure = AutoExposureMeter::Create(m_Context, m_Assets, PostSceneView());
+        if (IsLeanPath())
+        {
+            // The lean path allocates only its depth + world-normal targets — none of the colour
+            // g-buffer / HDR / bloom-mask / battery targets, and no metering (it runs no tonemap).
+            CreateLeanTargets();
+        }
+        else
+        {
+            CreateGBuffer();
+            CreateLtcResources();
+            CreateHdr();
+            CreateBloomMask();
+            RecreateExtentSubsystems();
+            // The metering set binds the scene colour the tail reads, so the meter is created after
+            // the promotion's own target exists.
+            m_AutoExposure = AutoExposureMeter::Create(m_Context, m_Assets, PostSceneView());
+        }
         Rebuild();
     }
 
@@ -251,6 +263,10 @@ namespace Veng::Renderer
         bindless.Release(m_EmissiveHandle);
         bindless.Release(m_LtcMatHandle);
         bindless.Release(m_LtcMagHandle);
+        // The lean path's depth + normal handles (a no-op release on the Shaded path, where they
+        // were never registered).
+        bindless.Release(m_LeanNormalHandle);
+        bindless.Release(m_LeanDepthHandle);
         // The ping-pong effect targets are content-driven, not a subsystem, so their handles are
         // released here (a no-op when no effect ran) alongside the spine.
         bindless.Release(m_PpEffectHandleA);
@@ -262,6 +278,15 @@ namespace Veng::Renderer
 
     void SceneRenderer::Rebuild()
     {
+        // The lean geometry path is a second topology axis: its arm is a single guarded early branch
+        // wiring only the depth + world-normal prepass, so the shaded hot-path body below is not
+        // restructured.
+        if (IsLeanPath())
+        {
+            RebuildLean();
+            return;
+        }
+
         const FrameTopology next = ResolveFrameTopology(
             m_Settings, SkyTopologyInput{.Kind = m_SkyResolver->GetResolvedKind(),
                                          .Lighting = m_SkyResolver->GetResolvedLighting(),
@@ -1241,6 +1266,86 @@ namespace Veng::Renderer
         m_Internal->Graph = graph.Compile();
     }
 
+    void SceneRenderer::RebuildLean()
+    {
+        // The lean topology (only GeometryDepthNormal set), so m_Topology reflects the path for any
+        // reader; the sky input is unused on this arm.
+        *m_Topology = ResolveFrameTopology(m_Settings, SkyTopologyInput{});
+
+        RenderGraph graph(m_Context);
+        m_LeanNormalId = graph.Import("SceneRenderer Lean Normal");
+        m_LeanDepthId = graph.Import("SceneRenderer Lean Depth");
+
+        // Clear the pass list and every non-owning pass pointer the shaded arm populates, so nothing
+        // observes a stale pass after the lean rebuild.
+        m_Passes.clear();
+        m_PointFieldPass.reset();
+        m_DofCompositePass.reset();
+        m_ScenePromotionPass.reset();
+        m_BloomMaskPromotionPass.reset();
+        m_PostProcessEffectPasses.clear();
+        m_ScenePointFieldPass = nullptr;
+        m_ShadowPass = nullptr;
+        m_PunctualShadowPass = nullptr;
+        m_SsaoPass = nullptr;
+        m_SkyMaterialPass = nullptr;
+        m_IblCubeDebugPass = nullptr;
+
+        auto prepass = CreateUnique<DepthNormalPrepassScenePass>(
+            m_Context, m_Assets, m_RenderAllocExtent, m_LeanNormalId, m_LeanDepthId);
+        prepass->Configure(m_Settings);
+        m_Passes.push_back(std::move(prepass));
+
+        // The prepass reads its own ids, so a default PassIO suffices.
+        const PassIO io{};
+        for (const Unique<ScenePass>& pass : m_Passes)
+        {
+            pass->Declare(graph, io);
+        }
+
+        m_Internal->Graph = graph.Compile();
+    }
+
+    void SceneRenderer::ExecuteLean(CommandBuffer& cmd, const SceneView& view)
+    {
+        // The lean path renders the whole allocation (no dynamic resolution, no promotion tail).
+        m_ValidExtent = m_RenderAllocExtent;
+
+        // Sync the broadphase, then build the working view the prepass queries — the camera, the
+        // candidate span, and the tree — exactly the subset of the shaded Execute the prepass reads.
+        m_Broadphase.Sync(view.World, view.Exclude, view.VisibleLayers);
+
+        SceneView resolvedView = view;
+        resolvedView.RenderExtent = m_RenderAllocExtent;
+        resolvedView.PostResolveExtent = m_Extent;
+        resolvedView.SceneColorExtent = m_RenderAllocExtent;
+        resolvedView.Visible = m_Broadphase.GetCandidates();
+        resolvedView.Broadphase = &m_Broadphase;
+
+        // Fixed-timestep interpolation, the same as the shaded path — a static scene skips it.
+        ApplyTransformInterpolation(view, resolvedView);
+
+        // Fill the skinning palette (and the per-entity bases) the prepass poses skinned meshes
+        // through; the prepass does its own frustum cull, so the plan's slots are unread here. The
+        // view-constants index is unused by the prepass (it reads no view block), hence 0.
+        PrepareDraws(resolvedView, 0, 0, false);
+        resolvedView.SkinningPalette = m_PaletteSet;
+        resolvedView.SkinnedPaletteBases = &m_PaletteBaseByEntity;
+
+        const vector<RenderGraph::ImportBinding> bindings = {
+            {m_LeanNormalId, m_LeanNormalView},
+            {m_LeanDepthId, m_LeanDepthView},
+        };
+        m_Internal->Graph->Execute(cmd, bindings, &resolvedView);
+
+        // The single-copy output contract covers only the colour output, not depth/normal, which
+        // are internal to the graph on the shaded path. So this path explicitly leaves them in a
+        // graphics-sample layout for a consumer graph to sample; the next Execute's graph restores
+        // them to their attachment layouts from the tracked state (the SceneCapture bracket).
+        cmd.PrepareForAccess(m_LeanNormalView, AccessKind::SampleGraphics);
+        cmd.PrepareForAccess(m_LeanDepthView, AccessKind::SampleGraphics);
+    }
+
     void SceneRenderer::ResolvePointFields(const SceneView& view)
     {
         // Refill this Execute's live field sets from the scene's PointField components — the lights
@@ -1704,6 +1809,12 @@ namespace Veng::Renderer
         m_PreviousRenderScaleUV = vec2(1.0f);
         m_PreviousMaxValidUV = vec2(1.0f);
         CreateOutput();
+        if (IsLeanPath())
+        {
+            CreateLeanTargets();
+            Rebuild();
+            return;
+        }
         CreateGBuffer();
         CreateHdr();
         CreateBloomMask();
@@ -1779,6 +1890,16 @@ namespace Veng::Renderer
         const uvec2 priorRenderAlloc = m_RenderAllocExtent;
         const uvec2 priorSceneColorAlloc = m_SceneColorAllocExtent;
         ResolveAllocationExtents();
+        // The lean path carries only its depth + normal targets; recreate them at the (possibly
+        // moved) render allocation and rebuild the single-pass graph. Path is a construction-time
+        // selection, so this handles a same-path reconfigure, not a Shaded <-> lean switch.
+        if (IsLeanPath())
+        {
+            m_ValidExtent = m_RenderAllocExtent;
+            CreateLeanTargets();
+            Rebuild();
+            return;
+        }
         // The mode or the AA choice can move either allocation (a debug view pins the render side to
         // the tail's extent; temporal upscaling moves the scene colour to it), so the targets sized
         // to them are recreated before the subsystems rebind their views.
@@ -1809,6 +1930,13 @@ namespace Veng::Renderer
             DebugDraw& Accumulator;
             ~DebugDrawClearGuard() { Accumulator.Clear(); }
         } const debugDrawClearGuard{m_DebugDraw};
+
+        // The lean geometry path runs its own minimal frame: no lighting, no tail, no metering.
+        if (IsLeanPath())
+        {
+            ExecuteLean(cmd, view);
+            return;
+        }
 
         // Dynamic resolution: render into the top-left round(allocExtent * scale) sub-rect of the
         // (high-water-mark-allocated) targets; the terminal tonemap upscales it to the full output.
@@ -2629,7 +2757,7 @@ namespace Veng::Renderer
     }
     Ref<ImageView> SceneRenderer::GetNormalView() const
     {
-        return m_NormalView;
+        return IsLeanPath() ? m_LeanNormalView : m_NormalView;
     }
     Ref<ImageView> SceneRenderer::GetOrmView() const
     {
@@ -2637,7 +2765,15 @@ namespace Veng::Renderer
     }
     Ref<ImageView> SceneRenderer::GetDepthView() const
     {
-        return m_DepthView;
+        return IsLeanPath() ? m_LeanDepthView : m_DepthView;
+    }
+    TextureHandle SceneRenderer::GetNormalHandle() const
+    {
+        return IsLeanPath() ? m_LeanNormalHandle : m_NormalHandle;
+    }
+    TextureHandle SceneRenderer::GetDepthHandle() const
+    {
+        return IsLeanPath() ? m_LeanDepthHandle : m_DepthHandle;
     }
     Ref<ImageView> SceneRenderer::GetHiZView() const
     {
