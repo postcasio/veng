@@ -380,11 +380,9 @@ namespace VengGraph
                 break;
             case EmittedFieldKind::Param:
             {
-                // Engine-bound: a struct field with no authored value, not a field-list row.
-                if (field.Default.empty())
-                {
-                    break;
-                }
+                // Every param contributes a row, engine-bound included: the cooker requires a
+                // field-list entry for every MaterialParams member, and an engine-bound param has
+                // no authored value, so its row is the member's name alone at the zero default.
                 const char* type = field.ComponentCount == 1   ? "float"
                                    : field.ComponentCount == 2 ? "vec2"
                                    : field.ComponentCount == 3 ? "vec3"

@@ -126,10 +126,13 @@ at cook time:
   field set** — the parent's own declared `"fields"` list, read through the same entry reader the
   parent's own cook uses, so a member named alone and one spelled out with its type expose the same
   field, and the reflected `MaterialParams` supplies every override's type and offset — and
-  validates each override against it:
+  validates each override against it. The set is every member, **an engine-bound param included**:
+  a renderer or a game system that rewrites such a field by name each frame overwrites whatever an
+  override seeded, so an override on one is inert rather than rejected — the surface reports what
+  the parent declares, not which fields hold their value. The validation is
   the `.vmat`-against-shader check lifted one level to **instance-against-parent**. An override
-  naming a field the parent does not expose (an engine-bound field never appears in the parent's
-  declared list, nor does a sampler), or a type mismatch, is a **located cook error**; an omitted
+  naming a field the parent does not expose (a sampler, which has no independent value), or a type
+  mismatch, is a **located cook error**; an omitted
   field inherits the parent default. It emits the `CookedMaterialInstance` blob (the override table
   + a value region of the param overrides' raw bytes); the instance owns no shader or pipeline — the
   parent supplies those. The importer is in the **core** set (it links only the Slang reflection +

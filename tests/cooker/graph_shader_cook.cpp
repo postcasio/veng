@@ -27,6 +27,8 @@
 #include <Veng/Reflection/TypeId.h>
 
 #include <VengGraph/MaterialCatalog.h>
+#include <VengGraph/MaterialCompile.h>
+#include <VengGraph/MaterialShaderInterface.h>
 #include <VengGraph/NodeGraph.h>
 #include <VengGraph/NodeGraphSerialize.h>
 #include <VengGraph/NodeType.h>
@@ -307,6 +309,62 @@ TEST_CASE("Cooker: an exposed Param graph cooks a generated fragment + a field w
     CHECK(packed[3] == doctest::Approx(1.0f));
 
     std::filesystem::remove_all(fx.Dir);
+}
+
+TEST_CASE("Graph: an engine-bound Param contributes a field-list row, named alone")
+{
+    // An engine-bound param has no authored value — the engine writes it by name each frame — but
+    // it is a MaterialParams member like any other, and the cooker requires a field-list entry for
+    // every member. So the walk emits a row for it, and the thinned form writes that row as the
+    // member's name alone. Omitting the row makes a graph material carrying one uncookable.
+    NodeCatalog catalog;
+    MaterialEmitTable emit;
+    const MaterialNodeTypes types =
+        RegisterMaterialNodeTypes(catalog, emit, MaterialDomain::PostProcess);
+
+    NodeGraph graph(
+        MaterialCanConnect, [&catalog](NodeTypeId id) { return catalog.ShapeOf(id); },
+        [&catalog](NodeTypeId id)
+        {
+            const NodeType* type = catalog.Find(id);
+            return type != nullptr ? type->PropertySize : usize{0};
+        });
+
+    const NodeId output = graph.AddNode(types.MaterialOutput);
+    const NodeId param = graph.AddNode(types.Param);
+
+    const NodeType* paramType = catalog.Find(types.Param);
+    REQUIRE(paramType != nullptr);
+    const ParamProvenance provenance = ParamProvenance::EngineBound;
+    for (const FieldDescriptor& field : paramType->Properties)
+    {
+        if (field.Name == ParamProvenanceProperty)
+        {
+            graph.SetProperty(
+                param, field,
+                std::span<const std::byte>(reinterpret_cast<const std::byte*>(&provenance),
+                                           sizeof(provenance)));
+        }
+    }
+    REQUIRE(graph.Connect(PinRef{.Node = param, .Pin = 0}, PinRef{.Node = output, .Pin = 0})
+                .has_value());
+
+    const Result<GeneratedFragment> fragment =
+        CompileMaterialGraph(graph, catalog, emit, MaterialDomain::PostProcess);
+    REQUIRE_MESSAGE(fragment.has_value(), fragment.error());
+
+    // The generated struct declares the member, and the generated field list declares it too —
+    // the pair the cooker's every-member-declared check compares.
+    CHECK(fragment->Source.find("n1") != string::npos);
+    REQUIRE(fragment->Fields.size() == 1);
+    CHECK(fragment->Fields[0].Name == "n1");
+
+    // Written out, a valueless param is the member's name alone, not an object.
+    const string vmat = WriteMaterialVmat(
+        fragment->Fields,
+        MaterialShaderInterface{.VertexShader = AssetId{1}, .FragmentShader = AssetId{2}},
+        MaterialDomain::PostProcess);
+    CHECK(vmat.find("\"n1\"") != string::npos);
 }
 
 TEST_CASE("Cooker: a graph mixing math/swizzle nodes cooks a fragment that compiles")

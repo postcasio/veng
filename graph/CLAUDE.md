@@ -90,7 +90,10 @@ block, so an animated fill needs no per-frame consumer code).
 
 **A `Param` carries one of three provenances:** *const* folds its value inline; *exposed*
 contributes an author-tweakable `MaterialParams` field with a default; *engine-bound* contributes
-a field the engine writes by name at runtime (no default, not an instance-override surface). The
+a field the engine writes by name at runtime (no authored default, so its row is the member's name
+alone). **Every provenance emits a field-list row**, because the cooker requires one per
+`MaterialParams` member — a member the list omits would stay zero and draw wrong with nothing
+naming it — so an engine-bound param is part of the parent's override surface like any other. The
 walk generates the `MaterialParams` struct — in walk order, which the cooker's tight 4-byte
 reflection cursor and the shader's scalar-layout `Load<T>` resolve identically whatever the order —
 and the matching `.vmat` field list from the same pass, so reflected offsets and packed values
