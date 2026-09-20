@@ -320,6 +320,8 @@ namespace Veng::Cook
         // uniform offset 16-aligns vectors and so disagrees with the Load a vector placed after a
         // scalar reads. Every reflectable member is a 4-byte-component scalar or vector, so the tight
         // layout never inserts padding and the struct size is the cursor's final value.
+        // tests/gpu/material_block_layout.cpp is the end-to-end evidence: it renders a block whose
+        // vectors sit at offsets 4 and 36 and reads every member back through the shader.
         ReflectedStruct result;
         result.Fields.reserve(typeLayout->getFieldCount());
         u32 cursor = 0;

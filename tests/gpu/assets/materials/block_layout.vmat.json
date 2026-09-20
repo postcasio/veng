@@ -1,0 +1,15 @@
+{
+  "defaultInstance": "0xD2C398A7C469E011",
+  "domain": "PostProcess",
+  "shaders": {
+    "vertex": "0xE1781BA62DC6FE59",
+    "fragment": "0x8E607AA557DFC153"
+  },
+  "fields": [
+    { "name": "Lead", "type": "float", "value": 0.0 },
+    { "name": "Mid", "type": "vec3", "value": [0.0, 0.0, 0.0] },
+    { "name": "Region", "type": "vec4", "value": [0.0, 0.0, 0.0, 0.0] },
+    { "name": "Tag", "type": "uint", "value": 0 },
+    { "name": "Tail", "type": "vec2", "value": [0.0, 0.0] }
+  ]
+}

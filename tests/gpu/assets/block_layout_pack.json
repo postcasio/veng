@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0xE1781BA62DC6FE59",
+      "type": "Shader",
+      "source": "shaders/fullscreen.vert.shader.json"
+    },
+    {
+      "id": "0x8E607AA557DFC153",
+      "type": "Shader",
+      "source": "shaders/block_layout.frag.shader.json"
+    },
+    {
+      "id": "0xA4FE8A655DFC4287",
+      "type": "Material",
+      "source": "materials/block_layout.vmat.json"
+    }
+  ]
+}

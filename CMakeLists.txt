@@ -1942,6 +1942,10 @@ if (VENG_BUILD_TESTS)
             # The authoring → cook → render proof: cooks a *.vmatinst.json over a parent
             # and asserts the override renders a different albedo than the parent default.
             tests/gpu/material_instance_override.cpp
+            # The tight-layout proof: cooks a block whose vectors sit at offsets 4 and 36 —
+            # the offsets a 16-aligning packer would move — writes every member from the host
+            # and reads each one back out of a fullscreen draw.
+            tests/gpu/material_block_layout.cpp
             # The RTT-into-material proof: a producer viewport's output, sampled
             # through a consumer viewport's material, in registration order.
             # Cooks the brick g-buffer fixture, so it is gated with the rest.
@@ -1968,6 +1972,9 @@ if (VENG_BUILD_TESTS)
             # PostProcessScenePass to assert it samples an upstream target and
             # writes it through unchanged.
             GPU_POSTPROCESS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu/assets"
+            # material_block_layout.cpp cooks its own PostProcess material whose parameter
+            # block places vectors at non-16-aligned offsets.
+            GPU_MATERIAL_LAYOUT_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu/assets"
             # The gbuffer fixture's brick shaders `#include "Veng/surface.slang"`,
             # so the in-process cook adds the engine core shader dir to its search path.
             VENG_CORE_SHADER_DIR="${VENG_CORE_SHADER_DIR}"
