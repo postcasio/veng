@@ -6,8 +6,6 @@
 // (the test lays out a single float4 there).
 [[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
 
-static const uint MaterialParamStride = 1280;
-
 struct PushConstants
 {
     uint MaterialIndex;
@@ -24,5 +22,5 @@ struct VSOutput
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
 {
-    return g_MaterialParams.Load<float4>(g_PC.MaterialIndex * MaterialParamStride);
+    return g_MaterialParams.Load<float4>(g_PC.MaterialIndex);
 }

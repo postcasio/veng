@@ -18,6 +18,8 @@
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
 
+#include "MaterialArena.h"
+
 namespace Veng::Renderer
 {
     namespace
@@ -144,10 +146,10 @@ namespace Veng::Renderer
                          .Count = MaxStorageBuffers,
                          .Stages = ShaderStage::All,
                          .Bindless = true},
-                        // The per-material block buffer: a single ByteAddressBuffer on the
-                        // shader side, byte-addressed at index * MaterialParamStride. A draw
-                        // folds the current frame's region base into that index, so the load
-                        // lands in this frame's copy of the ring-buffered buffer.
+                        // The per-material parameter buffer: a single ByteAddressBuffer on
+                        // the shader side, read at the material's own byte offset. A draw folds
+                        // the current frame's region base into that offset, so the load lands in
+                        // this frame's copy of the ring-buffered buffer.
                         {.Binding = MaterialParamBinding,
                          .Type = DescriptorType::StorageBuffer,
                          .Count = 1,
@@ -217,15 +219,14 @@ namespace Veng::Renderer
 
         // Ring-buffered by framesInFlight; each frame writes its own region while
         // not yet submitted. Bound at full range — a draw folds the frame base into
-        // the pushed material index to select the current frame's region.
-        m_MaterialParamBuffer =
-            Buffer::Create(context, {
-                                        .Name = "Bindless MaterialParams",
-                                        .Size = static_cast<u64>(m_FramesInFlight) * MaxMaterials *
-                                                MaterialParamStride,
-                                        .Usage = BufferUsage::Storage,
-                                        .HostMapped = true,
-                                    });
+        // the pushed byte offset to select the current frame's region.
+        m_MaterialParamBuffer = Buffer::Create(
+            context, {
+                         .Name = "Bindless MaterialParams",
+                         .Size = static_cast<u64>(m_FramesInFlight) * MaterialArenaBytes,
+                         .Usage = BufferUsage::Storage,
+                         .HostMapped = true,
+                     });
         m_Set->Write(MaterialParamBinding, m_MaterialParamBuffer);
 
         // Ringed by framesInFlight * MaxViewsPerFrame: each viewport render owns a distinct region
@@ -269,8 +270,9 @@ namespace Veng::Renderer
         m_Samplers.Init(MaxSamplers, m_FramesInFlight);
         m_StorageImages.Init(MaxStorageImages, m_FramesInFlight);
         m_StorageBuffers.Init(MaxStorageBuffers, m_FramesInFlight);
-        m_Materials.Init(MaxMaterials, m_FramesInFlight);
-        m_MaterialEntries.resize(MaxMaterials);
+        m_MaterialArena = std::make_unique<MaterialArena>();
+        m_MaterialArena->Init(MaterialArenaBytes, m_FramesInFlight);
+        m_MaterialEntries.resize(MaterialArenaBytes / MaterialGranuleBytes);
     }
 
     BindlessRegistry::~BindlessRegistry() = default;
@@ -527,44 +529,84 @@ namespace Veng::Renderer
 
     MaterialHandle BindlessRegistry::RegisterMaterial(std::span<const std::byte> block)
     {
-        const u32 index = m_Materials.Allocate(Ref<void>{}, "material");
-        UpdateMaterial(MaterialHandle{index}, block);
-        return MaterialHandle{index};
+        const auto bytes = static_cast<u32>(block.size());
+        VE_ASSERT(bytes <= MaxMaterialBlockBytes,
+                  "BindlessRegistry::RegisterMaterial: block is {} bytes, exceeding the {}-byte "
+                  "per-material bound",
+                  bytes, MaxMaterialBlockBytes);
+
+        const optional<u32> offset = m_MaterialArena->Allocate(bytes);
+        VE_ASSERT(offset.has_value(),
+                  "BindlessRegistry: the material parameter arena has no run long enough for a {}-"
+                  "byte block ({} bytes once rounded to a granule). The arena is {} bytes per "
+                  "frame region, {} of them live across {} blocks, and the largest free run is {} "
+                  "bytes. Raise BindlessRegistry::MaterialArenaBytes.",
+                  bytes, MaterialArena::OccupiedBytes(bytes), MaterialArenaBytes,
+                  m_MaterialArena->GetLiveBytes(), m_MaterialArena->GetLiveBlocks(),
+                  m_MaterialArena->GetLargestFreeRun());
+
+        MaterialEntry& entry = m_MaterialEntries[MaterialEntryIndex(*offset)];
+        entry.Capacity = MaterialArena::OccupiedBytes(bytes);
+        entry.Live = true;
+
+        const MaterialHandle handle{.Offset = *offset};
+        UpdateMaterial(handle, block);
+        return handle;
     }
 
     void BindlessRegistry::UpdateMaterial(MaterialHandle handle, std::span<const std::byte> block)
     {
         VE_ASSERT(handle.IsValid(), "BindlessRegistry::UpdateMaterial: invalid handle");
-        VE_ASSERT(block.size() <= MaterialParamStride,
-                  "BindlessRegistry::UpdateMaterial: block is {} bytes, exceeds stride {}",
-                  block.size(), MaterialParamStride);
-        VE_ASSERT(handle.Index < MaxMaterials,
-                  "BindlessRegistry::UpdateMaterial: slot {} out of range", handle.Index);
+        VE_ASSERT(handle.Offset % MaterialGranuleBytes == 0 &&
+                      MaterialEntryIndex(handle.Offset) < m_MaterialEntries.size(),
+                  "BindlessRegistry::UpdateMaterial: offset {} names no arena allocation",
+                  handle.Offset);
+
+        const u32 entryIndex = MaterialEntryIndex(handle.Offset);
+        MaterialEntry& entry = m_MaterialEntries[entryIndex];
+        VE_ASSERT(entry.Live, "BindlessRegistry::UpdateMaterial: offset {} names no live material",
+                  handle.Offset);
+
+        // Blocks are packed, so the bound is this material's own allocation: an over-long write
+        // would land in the next material's bytes rather than in this one's padding.
+        VE_ASSERT(block.size() <= entry.Capacity,
+                  "BindlessRegistry::UpdateMaterial: a {}-byte block into the {}-byte allocation "
+                  "at offset {} would overwrite the neighbouring material",
+                  block.size(), entry.Capacity, handle.Offset);
 
         // Cache the block and mark it dirty for framesInFlight frames so
         // OnFrameAcquired flushes it into every ring region.
-        MaterialEntry& entry = m_MaterialEntries[handle.Index];
         const std::span<const u8> blockBytes(reinterpret_cast<const u8*>(block.data()),
                                              block.size());
         entry.Block.assign(blockBytes.begin(), blockBytes.end());
         entry.DirtyFrames = m_FramesInFlight;
+        if (!entry.Flushing)
+        {
+            entry.Flushing = true;
+            m_DirtyMaterials.push_back(entryIndex);
+        }
 
         // Also write the current frame's region immediately so a mid-frame update
         // is visible to this frame's draws. The current region is safe to write —
         // it is not yet submitted. This does not consume a dirty count.
-        WriteMaterialRegion(handle.Index, m_Context.GetCurrentFrameInFlight());
+        WriteMaterialRegion(entryIndex, m_Context.GetCurrentFrameInFlight());
     }
 
-    void BindlessRegistry::WriteMaterialRegion(u32 materialIndex, u32 frameInFlight) const
+    u32 BindlessRegistry::MaterialEntryIndex(u32 offset)
     {
-        const MaterialEntry& entry = m_MaterialEntries[materialIndex];
+        return offset / MaterialGranuleBytes;
+    }
+
+    void BindlessRegistry::WriteMaterialRegion(u32 entryIndex, u32 frameInFlight) const
+    {
+        const MaterialEntry& entry = m_MaterialEntries[entryIndex];
         if (entry.Block.empty())
         {
             return;
         }
 
-        const u64 regionBase = static_cast<u64>(frameInFlight) * MaxMaterials * MaterialParamStride;
-        const u64 offset = regionBase + static_cast<u64>(materialIndex) * MaterialParamStride;
+        const u64 regionBase = static_cast<u64>(frameInFlight) * MaterialArenaBytes;
+        const u64 offset = regionBase + static_cast<u64>(entryIndex) * MaterialGranuleBytes;
         auto* base = static_cast<u8*>(m_MaterialParamBuffer->GetMappedData());
         std::memcpy(base + offset, entry.Block.data(), entry.Block.size());
     }
@@ -641,7 +683,20 @@ namespace Veng::Renderer
         {
             return;
         }
-        m_Materials.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
+        const u32 entryIndex = MaterialEntryIndex(handle.Offset);
+        VE_ASSERT(entryIndex < m_MaterialEntries.size() && m_MaterialEntries[entryIndex].Live,
+                  "BindlessRegistry::Release: offset {} names no live material", handle.Offset);
+
+        MaterialEntry& entry = m_MaterialEntries[entryIndex];
+        m_MaterialArena->ReleaseDeferred(handle.Offset, entry.Capacity,
+                                         m_Context.GetCurrentFrameInFlight());
+
+        // Retire the entry with the range: an entry still owing flushes would write its stale
+        // bytes into whatever material the range is reallocated to.
+        entry.Block.clear();
+        entry.Capacity = 0;
+        entry.DirtyFrames = 0;
+        entry.Live = false;
     }
 
     BindlessCapacity BindlessRegistry::GetFreeSlots() const
@@ -653,12 +708,19 @@ namespace Veng::Renderer
             .Samplers = static_cast<u32>(m_Samplers.Free.size()),
             .StorageImages = static_cast<u32>(m_StorageImages.Free.size()),
             .StorageBuffers = static_cast<u32>(m_StorageBuffers.Free.size()),
-            .Materials = static_cast<u32>(m_Materials.Free.size()),
+            .Materials = m_MaterialArena->GetFreeBytes(),
+            .MaterialBlocks = m_MaterialArena->GetLiveBlocks(),
+            .MaterialLargestFreeRun = m_MaterialArena->GetLargestFreeRun(),
         };
     }
 
     vector<BindlessSlot> BindlessRegistry::DescribeSlots(const BindlessArray array) const
     {
+        if (array == BindlessArray::Materials)
+        {
+            return DescribeMaterialRanges();
+        }
+
         const SlotArray* const slots = SlotsFor(array);
         VE_ASSERT(slots != nullptr, "BindlessRegistry::DescribeSlots: unmapped BindlessArray {}",
                   static_cast<u32>(array));
@@ -714,7 +776,9 @@ namespace Veng::Renderer
         case BindlessArray::StorageBuffers:
             return &m_StorageBuffers;
         case BindlessArray::Materials:
-            return &m_Materials;
+            // The material arena is not a slot array; DescribeSlots answers it from the arena's
+            // own runs before reaching here.
+            return nullptr;
         }
         return nullptr;
     }
@@ -722,13 +786,6 @@ namespace Veng::Renderer
     void BindlessRegistry::Describe(const BindlessArray array, const Ref<void>& resource,
                                     BindlessSlot& slot) const
     {
-        // The material table allocates its slots against an empty Ref — a material is bytes in a
-        // buffer region, not a resource — so its description comes from the CPU-side block cache.
-        if (array == BindlessArray::Materials)
-        {
-            slot.SizeBytes = m_MaterialEntries[slot.Index].Block.size();
-            return;
-        }
         if (!resource)
         {
             return;
@@ -766,8 +823,51 @@ namespace Veng::Renderer
             break;
         }
         case BindlessArray::Materials:
+            // A material is bytes in a buffer region rather than a resource, so it holds no Ref
+            // to read back; DescribeMaterialRanges describes the arena instead.
             break;
         }
+    }
+
+    vector<BindlessSlot> BindlessRegistry::DescribeMaterialRanges() const
+    {
+        // One entry per range rather than per slot: a live block, a free run, or a run waiting out
+        // its release window, ascending by offset, so the listing reads as a map of the arena.
+        vector<BindlessSlot> described;
+        for (u32 entryIndex = 0; entryIndex < m_MaterialEntries.size(); ++entryIndex)
+        {
+            const MaterialEntry& entry = m_MaterialEntries[entryIndex];
+            if (!entry.Live)
+            {
+                continue;
+            }
+            described.push_back(BindlessSlot{
+                .Index = entryIndex * MaterialGranuleBytes,
+                .State = BindlessSlotState::Occupied,
+                .SizeBytes = entry.Block.size(),
+            });
+        }
+        for (const MaterialArena::Range& run : m_MaterialArena->GetFreeRuns())
+        {
+            described.push_back(BindlessSlot{
+                .Index = run.Offset,
+                .State = BindlessSlotState::Free,
+                .SizeBytes = run.Bytes,
+            });
+        }
+        for (const vector<MaterialArena::Range>& bucket : m_MaterialArena->GetPendingRuns())
+        {
+            for (const MaterialArena::Range& run : bucket)
+            {
+                described.push_back(BindlessSlot{
+                    .Index = run.Offset,
+                    .State = BindlessSlotState::PendingRelease,
+                    .SizeBytes = run.Bytes,
+                });
+            }
+        }
+        std::ranges::sort(described, {}, &BindlessSlot::Index);
+        return described;
     }
 
     void BindlessRegistry::Bind(CommandBuffer& cmd, PipelineBindPoint bindPoint) const
@@ -781,7 +881,7 @@ namespace Veng::Renderer
 
     u32 BindlessRegistry::GetCurrentFrameBase() const
     {
-        return m_Context.GetCurrentFrameInFlight() * MaxMaterials;
+        return m_Context.GetCurrentFrameInFlight() * MaterialArenaBytes;
     }
 
     bool BindlessRegistry::TryBeginView()
@@ -876,23 +976,32 @@ namespace Veng::Renderer
         m_Samplers.OnFrameAcquired(frameInFlight);
         m_StorageImages.OnFrameAcquired(frameInFlight);
         m_StorageBuffers.OnFrameAcquired(frameInFlight);
-        m_Materials.OnFrameAcquired(frameInFlight);
+        m_MaterialArena->OnFrameAcquired(frameInFlight);
 
         // Reset the per-frame view slot: the first Viewport::Render this frame takes slot 0.
         m_ViewsThisFrame = 0;
         m_ViewSlot = 0;
 
         // Flush still-dirty materials into the region just made current — the fence
-        // was waited before this call, so the prior GPU use has completed.
-        for (u32 i = 0; i < MaxMaterials; i++)
+        // was waited before this call, so the prior GPU use has completed. The walk is over the
+        // materials owing a write rather than over the arena, and compacts the set as it goes.
+        usize kept = 0;
+        for (const u32 entryIndex : m_DirtyMaterials)
         {
-            MaterialEntry& entry = m_MaterialEntries[i];
+            MaterialEntry& entry = m_MaterialEntries[entryIndex];
             if (entry.DirtyFrames == 0)
             {
+                entry.Flushing = false;
                 continue;
             }
-            WriteMaterialRegion(i, frameInFlight);
-            entry.DirtyFrames--;
+            WriteMaterialRegion(entryIndex, frameInFlight);
+            if (--entry.DirtyFrames == 0)
+            {
+                entry.Flushing = false;
+                continue;
+            }
+            m_DirtyMaterials[kept++] = entryIndex;
         }
+        m_DirtyMaterials.resize(kept);
     }
 }

@@ -16,19 +16,22 @@ namespace Veng::Renderer
     class DescriptorSet;
     class DescriptorSetLayout;
     class ImageView;
+    class MaterialArena;
 
-    /// @brief Slot index into the per-material block buffer (set 0, binding MaterialParamBinding).
+    /// @brief Byte offset of a material's parameter block within one region of the material
+    ///        parameter arena (set 0, binding MaterialParamBinding).
     ///
-    /// A draw pushes GetCurrentFrameBase() + Index so the shader's
-    /// index * MaterialParamStride load reads the current frame-in-flight's region.
+    /// The offset is allocated once and is the same in every frame-in-flight region, so a draw
+    /// pushes GetCurrentFrameBase() + Offset and the shader loads its block at that byte offset
+    /// directly. The allocator owns the range's length; the handle carries only where it starts.
     struct MaterialHandle
     {
         /// @brief Sentinel for an unregistered material.
         static constexpr u32 Invalid = ~0u;
-        /// @brief Slot in the material block buffer.
-        u32 Index = Invalid;
-        /// @brief Returns true if the handle names a registered material slot.
-        [[nodiscard]] bool IsValid() const { return Index != Invalid; }
+        /// @brief Byte offset of the block within one arena region.
+        u32 Offset = Invalid;
+        /// @brief Returns true if the handle names a registered material allocation.
+        [[nodiscard]] bool IsValid() const { return Offset != Invalid; }
     };
 
     /// @brief Slot index into the sampled-image array (set 0, binding TextureBinding).
@@ -151,8 +154,20 @@ namespace Veng::Renderer
         u32 StorageImages = 0;
         /// @brief Free slots in the byte-address storage-buffer array, of MaxStorageBuffers.
         u32 StorageBuffers = 0;
-        /// @brief Free slots in the material block table, of MaxMaterials.
+        /// @brief Free bytes in the material parameter arena, of MaterialArenaBytes.
+        ///
+        /// Materials are the one entry here denominated in bytes rather than slots: they are
+        /// suballocated from an arena rather than drawn from a fixed table, so what is left is a
+        /// byte count and how much of it is usable at once depends on how it is broken up — which
+        /// is what the two fields below say.
         u32 Materials = 0;
+        /// @brief Live parameter blocks in the material parameter arena.
+        u32 MaterialBlocks = 0;
+        /// @brief The longest single free run in the material parameter arena, in bytes.
+        ///
+        /// The largest block that can still be allocated. Far below Materials, it names
+        /// fragmentation rather than occupancy.
+        u32 MaterialLargestFreeRun = 0;
     };
 
     /// @brief One of the registry's arrayed bindings, named so a diagnostic can ask about a
@@ -173,7 +188,7 @@ namespace Veng::Renderer
         StorageImages,
         /// @brief The byte-address storage-buffer array (set 0, StorageBufferBinding).
         StorageBuffers,
-        /// @brief The per-material block table.
+        /// @brief The per-material parameter arena, described in bytes rather than in slots.
         Materials,
     };
 
@@ -198,11 +213,13 @@ namespace Veng::Renderer
     /// A union of the fields the seven arrays can describe, since the array being asked about
     /// decides which are meaningful: an image array fills the format/extent/mip/layer fields, the
     /// storage-buffer array fills SizeBytes, the sampler array fills only the name, and the
-    /// material table fills SizeBytes with its cached block's length. A field an array does not
-    /// describe is left at its zero, which is why every one has a zero that reads as absent.
+    /// material arena fills SizeBytes with a live entry's cached block length or a free or pending
+    /// run's byte length. A field an array does not describe is left at its zero, which is why
+    /// every one has a zero that reads as absent.
     struct BindlessSlot
     {
-        /// @brief The slot's index in its array — the value a handle carries and a shader indexes.
+        /// @brief The slot's index in its array — the value a handle carries and a shader indexes
+        ///        — or, for the material arena, the range's byte offset within one region.
         u32 Index = 0;
         /// @brief Whether the slot is free, occupied, or pending release.
         BindlessSlotState State = BindlessSlotState::Free;
@@ -342,24 +359,31 @@ namespace Veng::Renderer
         /// @return A handle naming the allocated storage-buffer slot.
         [[nodiscard]] StorageBufferHandle Register(const Ref<Buffer>& buffer);
 
-        /// @brief Allocates a material slot and stores its parameter block.
+        /// @brief Suballocates a range of the material parameter arena and stores its block.
         ///
         /// The block holds the material's whole entry — bindless handle slots and
         /// authored params alike, laid out by reflection; `block` must be <=
-        /// MaterialParamStride. Both cache the block CPU-side, mark the slot dirty
-        /// for framesInFlight frames, and write the current frame's region directly
+        /// MaxMaterialBlockBytes. The range is rounded up to a whole number of
+        /// MaterialGranuleBytes granules and fixes the material's offset for its lifetime; a
+        /// request no free run can serve is fatal, and the message names the arena size, the live
+        /// bytes, the largest free run and the request. Both cache the block CPU-side, mark it
+        /// dirty for framesInFlight frames, and write the current frame's region directly
         /// into the host-mapped, ring-buffered buffer — no staging, no WaitIdle.
         /// A per-frame UpdateMaterial is cheap and frame-safe.
-        /// @param block The serialized parameter block; must be <= MaterialParamStride bytes.
-        /// @return A handle naming the allocated material slot.
+        /// @param block The serialized parameter block; must be <= MaxMaterialBlockBytes bytes.
+        /// @return A handle naming the allocated range's byte offset.
         [[nodiscard]] MaterialHandle RegisterMaterial(std::span<const std::byte> block);
 
-        /// @brief Rewrites a live material slot's parameter block.
+        /// @brief Rewrites a live material's parameter block.
         ///
         /// Same write path as RegisterMaterial: caches the block, marks it dirty for
         /// framesInFlight frames, and writes the current frame's region immediately.
+        ///
+        /// The bound is the material's **own allocation**, not any global: blocks are packed, so
+        /// an over-long write would land in the next material's bytes rather than in this one's
+        /// padding. It is a fatal assert naming the material's offset and both figures.
         /// @param handle The handle returned by RegisterMaterial.
-        /// @param block  The updated parameter block; must be <= MaterialParamStride bytes.
+        /// @param block  The updated parameter block; must fit the handle's allocation.
         void UpdateMaterial(MaterialHandle handle, std::span<const std::byte> block);
 
         /// @brief Deferred release of a texture handle. A default-constructed (invalid) handle is a no-op.
@@ -385,6 +409,10 @@ namespace Veng::Renderer
         void Release(StorageBufferHandle handle);
 
         /// @brief Deferred release of a material handle. A default-constructed (invalid) handle is a no-op.
+        ///
+        /// The range returns to the free list only once its frames-in-flight window expires, and
+        /// the entry's CPU-side state retires immediately: a released entry still owing flushes
+        /// would write its stale bytes into a range a later material holds.
         void Release(MaterialHandle handle);
 
         /// @brief Binds the registry's typed bindless sets (2D at 0, 3D at 1, cube at 2) at the given bind point.
@@ -397,17 +425,17 @@ namespace Veng::Renderer
         void Bind(CommandBuffer& cmd,
                   PipelineBindPoint bindPoint = PipelineBindPoint::Graphics) const;
 
-        /// @brief The base material index of the current frame-in-flight's region in the
-        /// ring-buffered material buffer: currentFrameInFlight * MaxMaterials.
+        /// @brief The byte base of the current frame-in-flight's region in the ring-buffered
+        /// material parameter buffer: currentFrameInFlight * MaterialArenaBytes.
         ///
-        /// A draw pushes this plus the material slot so the shader's
-        /// index * MaterialParamStride load lands in the current frame's region.
+        /// A draw pushes this plus the material's block offset so the shader's load lands in the
+        /// current frame's region.
         ///
         /// MoltenVK realizes set 0 as a Metal argument buffer; a dynamic storage
         /// descriptor inside it mistranslates, so the per-frame region is selected
-        /// by folding the frame base into the pushed material index rather than by a
-        /// dynamic descriptor offset. The shader's indexing is unchanged.
-        /// @return The base material slot index for the current frame-in-flight.
+        /// by folding the frame base into the pushed selector rather than by a
+        /// dynamic descriptor offset. The binding stays non-dynamic and bound at full range.
+        /// @return The byte base of the current frame-in-flight's region.
         [[nodiscard]] u32 GetCurrentFrameBase() const;
 
         /// @brief Claims the next view slot within the current frame-in-flight, or reports the budget spent.
@@ -491,7 +519,8 @@ namespace Veng::Renderer
         /// @return The base area-vertex index for the current view slot.
         [[nodiscard]] u32 GetCurrentAreaVertexBase() const;
 
-        /// @brief The free slots left in each arrayed binding (see BindlessCapacity).
+        /// @brief The free slots left in each arrayed binding, and the material arena's free
+        ///        bytes (see BindlessCapacity).
         ///
         /// Every array has a fixed capacity whose exhaustion is fatal, so how much of one is left is
         /// worth being able to read: a diagnostic reports how close a build is running to a cap, and
@@ -512,7 +541,10 @@ namespace Veng::Renderer
         ///
         /// The result is one entry per slot of the array's fixed capacity — free slots included, so
         /// an index in the result is that slot's index — and it is a snapshot of values, borrowing
-        /// nothing.
+        /// nothing. The material arena is the exception the byte denomination forces: it has no
+        /// slots, so it answers one entry per *range* — a live block, a free run, or a run waiting
+        /// out its release window — with Index the range's byte offset and SizeBytes its length,
+        /// ascending by offset. That listing is an arena map rather than a table dump.
         /// @param array  Which arrayed binding to describe.
         /// @return Its slots, in index order, of the array's capacity.
         [[nodiscard]] vector<BindlessSlot> DescribeSlots(BindlessArray array) const;
@@ -520,9 +552,10 @@ namespace Veng::Renderer
         /// @brief The fixed capacity of one arrayed binding.
         ///
         /// The Max* constants keyed by BindlessArray, so a caller iterating the arrays reads a
-        /// capacity the same way it reads slots instead of re-deriving the mapping.
+        /// capacity the same way it reads slots instead of re-deriving the mapping. Materials
+        /// answer MaterialArenaBytes, in bytes, matching the denomination of their free count.
         /// @param array  Which arrayed binding.
-        /// @return Its capacity in slots.
+        /// @return Its capacity in slots, or in bytes for the material arena.
         [[nodiscard]] static constexpr u32 CapacityOf(BindlessArray array);
 
         /// @brief Returns the descriptor set layout for set 0 (the 2D sampled-image array).
@@ -605,18 +638,31 @@ namespace Veng::Renderer
         static constexpr u32 MaxStorageImages = 512;
         /// @brief Maximum registered byte-address storage buffers.
         static constexpr u32 MaxStorageBuffers = 256;
-        /// @brief Maximum registered material slots.
+        /// @brief The byte capacity of one frame-in-flight's material parameter region.
         ///
-        /// The table is engine-wide rather than per scene: a consumer holding several worlds open
+        /// The arena is engine-wide rather than per scene: a consumer holding several worlds open
         /// at once — a transition that keeps the departing world resident while the arriving one
-        /// builds, a world rendered to a capture beside the presented one — draws every one of them
-        /// from this table, so the budget a single scene appears to need is not the figure that has
-        /// to fit. Exhausting it is a fatal assert rather than a soft failure, so the cap is set
-        /// where a plausible multi-world consumer stays clear of it. It costs only the parameter
-        /// buffer it sizes (framesInFlight * MaxMaterials * MaterialParamStride, 640 KiB
-        /// of host-mapped storage per frame-in-flight); no descriptor array is indexed by it, and
-        /// no shader reads it — a draw is handed a slot index with the frame base already folded in.
-        static constexpr u32 MaxMaterials = 512;
+        /// builds, a world rendered to a capture beside the presented one — suballocates every one
+        /// of them from this arena, so the budget a single scene appears to need is not the figure
+        /// that has to fit. Exhausting it is a fatal assert rather than a soft failure, and under
+        /// an arena exhaustion is history-dependent where a slot count was not, so the figure
+        /// carries deliberate slack: it is four times what the materials of a plausible multi-world
+        /// consumer occupy, which is the headroom that keeps a fragmented run from aborting at a
+        /// capacity a tighter arena would have served. It costs only the parameter buffer it sizes
+        /// (framesInFlight * this, 2.5 MiB of host-mapped storage per frame-in-flight); no
+        /// descriptor array is indexed by it, and no shader reads it — a draw is handed a byte
+        /// offset with the frame base already folded in. Raising it is this one number with no
+        /// per-material consequence.
+        static constexpr u32 MaterialArenaBytes = 2621440;
+
+        /// @brief The allocation quantum of the material parameter arena.
+        ///
+        /// Every block occupies a whole number of granules, which is what makes a first-fit arena
+        /// exact rather than hopeful: no gap can be an unusable sliver, and a freed run of k
+        /// granules is exactly the size of the next k-granule request, so a pool claiming and
+        /// releasing one material class reuses its own hole every time. Internal waste is at most
+        /// 255 bytes per material.
+        static constexpr u32 MaterialGranuleBytes = 256;
 
         /// @brief The fixed cap on lights the deferred lighting pass loops per pixel.
         ///
@@ -643,27 +689,17 @@ namespace Veng::Renderer
         /// ViewportCompositor::RenderRegistered), and a refused claim records nothing.
         static constexpr u32 MaxViewsPerFrame = 32;
 
-        /// @brief The fixed byte stride of one material's parameter block in the
-        /// MaterialParamBinding ByteAddressBuffer.
+        /// @brief The largest parameter block a single material may declare, in bytes.
         ///
-        /// 16-byte aligned for vector loads; one stride is shared across every material
-        /// so a single ByteAddressBuffer can hold a different per-material block layout
-        /// per shader, read at index * MaterialParamStride. A block exceeding this is a
-        /// cook-time error, so the figure is what bounds how much a single material may
-        /// describe — eighty float4s. That bound is the whole reason the number is
-        /// generous: a block sitting within one aligned float4 of the ceiling turns every
-        /// added field into a packing exercise, which is exactly what a shared stride
-        /// exists to spare an author, and it is the largest material classes — the ones
-        /// carrying a domain's full parameter surface — that press on it first. It costs
-        /// framesInFlight * MaxMaterials * this, half a megabyte of host-mapped storage
-        /// per frame-in-flight.
-        ///
-        /// **Mirrored on the shader side and in the cooker, all of which move together**:
-        /// `MaterialParamStride` in Veng/surface.slang, Veng/postprocess.slang, Veng/sky.slang
-        /// and Veng/guifill.slang (the four domain contract headers a material includes), and
-        /// the cooker's own copy in Importers/MaterialImporter.cpp, which restates it so the
-        /// cooker gains no renderer-header dependency.
-        static constexpr u32 MaterialParamStride = 1280;
+        /// This is a per-material bound, not the arena's: it caps how much one material describes
+        /// where MaterialArenaBytes caps what all of them describe together. Exceeding it is a
+        /// cook-time error (the cooker restates the figure, gaining no renderer-header dependency)
+        /// and a load-time corruption for a blob claiming more, so it is also what makes a wild
+        /// BlockBytes in a cooked header nameable rather than a wild allocation. Eighty float4s,
+        /// which the largest material classes — the ones carrying a domain's full parameter
+        /// surface — press on first. Unlike the fixed stride it replaces it costs no memory per
+        /// material: raising it widens what one author may declare and nothing else.
+        static constexpr u32 MaxMaterialBlockBytes = 1280;
 
         /// @brief The fixed byte stride of one frame-in-flight's view-constants region in
         /// the ViewConstantsBinding ByteAddressBuffer.
@@ -758,6 +794,13 @@ namespace Veng::Renderer
         /// @param slot      The slot to fill; its Index must already be set.
         void Describe(BindlessArray array, const Ref<void>& resource, BindlessSlot& slot) const;
 
+        /// @brief Describes the material arena as one entry per range, ascending by byte offset.
+        ///
+        /// The arena's answer to DescribeSlots: a live block reports its cached block's length, a
+        /// free or pending run its own.
+        /// @return The arena's ranges, ascending by offset.
+        [[nodiscard]] vector<BindlessSlot> DescribeMaterialRanges() const;
+
         /// @brief The owning context.
         Context& m_Context;
         /// @brief The descriptor set layout for set 0.
@@ -815,18 +858,17 @@ namespace Veng::Renderer
         /// @brief Slot allocator for the byte-address storage-buffer array.
         SlotArray m_StorageBuffers;
 
-        /// @brief The per-material block buffer (binding MaterialParamBinding).
+        /// @brief The per-material parameter buffer (binding MaterialParamBinding).
         ///
         /// A host-visible, persistently-mapped storage buffer holding framesInFlight
-        /// copies of the MaxMaterials * MaterialParamStride material table, bound at
-        /// its full range. Each frame-in-flight f owns the region
-        /// [f * MaxMaterials * MaterialParamStride, ...); a draw folds f's base
-        /// (GetCurrentFrameBase()) into the pushed material index so the shader's
-        /// index * MaterialParamStride load reads the current frame's copy.
+        /// regions of MaterialArenaBytes, bound at its full range. Each frame-in-flight f owns
+        /// [f * MaterialArenaBytes, ...); a material's block offset within a region is the same in
+        /// every region, and a draw folds f's base (GetCurrentFrameBase()) into the pushed
+        /// selector so the shader's load reads the current frame's copy.
         ///
         /// The binding is a plain (non-dynamic) storage buffer: MoltenVK realizes set 0
         /// as a Metal argument buffer, where a dynamic storage descriptor mistranslates,
-        /// so the frame region is selected by the folded index, not a dynamic offset.
+        /// so the frame region is selected by the folded offset, not a dynamic offset.
         ///
         /// A write only ever touches the current frame's region (that frame is not yet
         /// submitted). To propagate a value to every region, Register/UpdateMaterial cache
@@ -835,27 +877,47 @@ namespace Veng::Renderer
         /// block into the region it just made current and decrements. No staging, no
         /// WaitIdle, no frames-in-flight hazard.
         Ref<Buffer> m_MaterialParamBuffer;
-        /// @brief Slot allocator for the material parameter block buffer.
-        SlotArray m_Materials;
+        /// @brief The byte suballocator over one region of the material parameter buffer.
+        ///
+        /// Held by pointer so the allocator stays an engine-internal type rather than part of this
+        /// public header's include graph.
+        Unique<MaterialArena> m_MaterialArena;
         /// @brief Number of frames-in-flight; determines ring-buffer region count.
         u32 m_FramesInFlight = 0;
 
-        /// @brief CPU-side cache of each material slot's block and its remaining flush count.
+        /// @brief CPU-side cache of one material's block, its allocation, and its flush debt.
         ///
-        /// Indexed by material slot. A zero DirtyFrames means the slot is clean across
+        /// Indexed by the allocation's granule, so an entry is reachable from the byte offset a
+        /// handle carries in constant time. A zero DirtyFrames means the block is present in
         /// every region.
         struct MaterialEntry
         {
             /// @brief Cached parameter block bytes.
             vector<u8> Block;
+            /// @brief The allocation's granule-rounded byte length, which bounds a write.
+            u32 Capacity = 0;
             /// @brief Writes still owed to in-flight regions.
             u32 DirtyFrames = 0;
+            /// @brief Whether the allocation is live (released, but still parked, reads false).
+            bool Live = false;
+            /// @brief Whether m_DirtyMaterials already names this entry.
+            bool Flushing = false;
         };
         vector<MaterialEntry> m_MaterialEntries;
 
-        /// @brief Memcpys a material slot's cached block into the given frame-in-flight's
+        /// @brief The entries the flush loop walks — those owing a write to another region.
+        ///
+        /// Kept so OnFrameAcquired costs the materials actually written rather than the arena's
+        /// whole granule count. An entry joins on its first dirtying write and leaves the pass
+        /// after which it owes nothing, including the pass after a Release retires it.
+        vector<u32> m_DirtyMaterials;
+
+        /// @brief The entry index of the allocation a handle's byte offset names.
+        [[nodiscard]] static u32 MaterialEntryIndex(u32 offset);
+
+        /// @brief Memcpys a material's cached block into the given frame-in-flight's
         /// region of the mapped buffer.
-        void WriteMaterialRegion(u32 materialIndex, u32 frameInFlight) const;
+        void WriteMaterialRegion(u32 entryIndex, u32 frameInFlight) const;
 
         /// @brief The shared view-constants buffer (binding ViewConstantsBinding).
         ///
@@ -920,7 +982,7 @@ namespace Veng::Renderer
         case BindlessArray::StorageBuffers:
             return MaxStorageBuffers;
         case BindlessArray::Materials:
-            return MaxMaterials;
+            return MaterialArenaBytes;
         }
         return 0;
     }

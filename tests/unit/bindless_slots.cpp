@@ -59,7 +59,10 @@ TEST_CASE("Bindless: every array carries its own nonzero capacity")
           BindlessRegistry::MaxStorageImages);
     CHECK(BindlessRegistry::CapacityOf(BindlessArray::StorageBuffers) ==
           BindlessRegistry::MaxStorageBuffers);
-    CHECK(BindlessRegistry::CapacityOf(BindlessArray::Materials) == BindlessRegistry::MaxMaterials);
+    // Materials answer bytes rather than slots — the arena's capacity, matching what their free
+    // count is denominated in.
+    CHECK(BindlessRegistry::CapacityOf(BindlessArray::Materials) ==
+          BindlessRegistry::MaterialArenaBytes);
 }
 
 TEST_CASE("Bindless: the three slot states name distinctly")

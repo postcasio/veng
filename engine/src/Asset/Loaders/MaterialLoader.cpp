@@ -321,13 +321,13 @@ namespace Veng
                   header.CullMode);
         const auto cullMode = static_cast<Renderer::CullMode>(header.CullMode);
 
-        // The single block must fit the registry's per-material param stride.
-        if (header.BlockBytes > Renderer::BindlessRegistry::MaterialParamStride)
+        // The single block must fit the registry's per-material bound.
+        if (header.BlockBytes > Renderer::BindlessRegistry::MaxMaterialBlockBytes)
         {
             return std::unexpected(
-                Corrupt(id, fmt::format("material: BlockBytes {} exceeds MaterialParamStride {}",
+                Corrupt(id, fmt::format("material: BlockBytes {} exceeds MaxMaterialBlockBytes {}",
                                         header.BlockBytes,
-                                        Renderer::BindlessRegistry::MaterialParamStride)));
+                                        Renderer::BindlessRegistry::MaxMaterialBlockBytes)));
         }
 
         // ── 2. CookedMaterialField table ─────────────────────────────────────

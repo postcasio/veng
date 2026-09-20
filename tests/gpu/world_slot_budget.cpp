@@ -314,6 +314,7 @@ TEST_CASE("world slot budget: a world opened and closed returns every bindless s
 
     REQUIRE(baseline.Taken);
     REQUIRE(baseline.Capacity.Materials > 0);
+    REQUIRE(baseline.Capacity.MaterialBlocks == 0);
     REQUIRE(perCycle.size() == static_cast<usize>(Cycles));
 
     // The count is the invariant, not any particular figure. A cycle that hands back one slot fewer
@@ -322,6 +323,7 @@ TEST_CASE("world slot budget: a world opened and closed returns every bindless s
     for (const BindlessCapacity& after : perCycle)
     {
         CHECK(after.Materials == baseline.Capacity.Materials);
+        CHECK(after.MaterialBlocks == baseline.Capacity.MaterialBlocks);
         CHECK(after.Textures == baseline.Capacity.Textures);
         CHECK(after.Samplers == baseline.Capacity.Samplers);
         CHECK(after.StorageImages == baseline.Capacity.StorageImages);
@@ -413,12 +415,15 @@ TEST_CASE("world slot budget: worlds open at once each hold their own slots, and
     // Each open world holds its own pool: the occupancy is per-world cost times worlds, not one
     // pool shared between them. This is the arithmetic a consumer sizes against — a per-world pool
     // that fits alone can still exhaust the table once the worlds that hold one are counted.
-    REQUIRE(before.Materials >= peak.Materials);
-    const u32 held = before.Materials - peak.Materials;
+    // Materials are counted as blocks rather than as bytes: the claim is one allocation per
+    // instance, which a byte figure would state as a sum over per-class block sizes instead.
+    REQUIRE(peak.MaterialBlocks >= before.MaterialBlocks);
+    const u32 held = peak.MaterialBlocks - before.MaterialBlocks;
     CHECK(held == static_cast<u32>(Worlds * InstancesPerWorld));
 
     // And the whole of it comes back, so the peak is a peak rather than a step.
     CHECK(after.Materials == before.Materials);
+    CHECK(after.MaterialBlocks == before.MaterialBlocks);
     CHECK(after.Textures == before.Textures);
     CHECK(after.Samplers == before.Samplers);
     CHECK(after.StorageImages == before.StorageImages);

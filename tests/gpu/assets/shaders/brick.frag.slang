@@ -10,7 +10,7 @@
 // the surface-flags channel through SetParam without a second material.
 
 // This fixture material's parameter block, reflected by the cooker and read through the
-// engine's set-0 g_MaterialParams at index * MaterialParamStride.
+// engine's set-0 g_MaterialParams at this material's own block offset.
 struct MaterialParams
 {
     uint   BaseColor;        uint BaseColorSampler;
@@ -21,9 +21,9 @@ struct MaterialParams
     float  OcclusionStrength; float SurfaceFlags;
 };
 
-MaterialParams LoadMaterialParams(uint index)
+MaterialParams LoadMaterialParams(uint offset)
 {
-    return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
+    return g_MaterialParams.Load<MaterialParams>(offset);
 }
 
 struct VSOutput

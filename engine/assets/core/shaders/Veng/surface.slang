@@ -8,12 +8,8 @@
 // their own contracts in Veng/postprocess.slang and Veng/sky.slang.
 //
 // The set-0 bindings mirror the BindlessRegistry layout (sampled images = 0, samplers = 1,
-// per-material block = 4, view constants = 5).
-
-// The per-material block byte stride. Mirrors BindlessRegistry::MaterialParamStride, and moves only with it; one
-// stride is shared across every material so a single ByteAddressBuffer holds a different
-// per-shader parameter layout, read at index * MaterialParamStride.
-static const uint MaterialParamStride = 1280;
+// per-material block = 4, view constants = 5). One ByteAddressBuffer holds every material's
+// block, each at its own byte offset, so a material reads its own at the selector it is handed.
 
 // The canonical per-frame view-constants block (set 0, binding 5) is declared in
 // view_constants.slang — the single source for the lighting, SSAO, and material shaders.

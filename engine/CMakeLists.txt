@@ -12,6 +12,7 @@ add_library(veng_backend_objs OBJECT
         src/Renderer/Backend/BarrierDecision.cpp
         src/Renderer/Backend/RenderGraphSchedule.cpp
         src/Renderer/Backend/BindlessRegistry.cpp
+        src/Renderer/Backend/MaterialArena.cpp
         src/Renderer/Backend/TransientAllocation.cpp
         src/Renderer/Backend/Buffer.cpp
         src/Renderer/Backend/CommandBuffer.cpp

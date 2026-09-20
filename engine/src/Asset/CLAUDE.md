@@ -437,7 +437,7 @@ the editor previews a parent through a runtime default instance over it (no cook
 default-instance id needed for the preview).
 
 A material instance's GPU parameters are **one reflection-sized block** per instance (set 0
-binding 4, byte-addressed at `index * MaterialParamStride`): its bindless handle slots (`uint`
+binding 4, byte-addressed at the instance's own block offset): its bindless handle slots (`uint`
 members seeded from the parent and overridden by a texture override) and its authored
 scalar/vector params share that single block, laid out by reflection at each field's offset in
 **scalar/tight layout** — the exact byte layout a shader's `g_MaterialParams.Load<MaterialParams>()`
@@ -453,18 +453,38 @@ the loader patches by offset. `CookedMaterialHeader` carries `Version` (`CookedM
 parameter-schema source and an instance's override surface, so the node editor reads a material's
 authorable parameters with no Slang in `libveng_editor`.
 
-The block buffer is **N-buffered for frames-in-flight, host-visible + persistently mapped**: it
-holds `framesInFlight` copies of the `MaxMaterials * MaterialParamStride` table, and each
-frame-in-flight owns one region. `Register/UpdateMaterial` mark an instance dirty for
-`framesInFlight` frames and write only the *current* frame's region (safe because that frame is
-not yet submitted); `OnFrameAcquired` flushes each still-dirty instance into the region it just
-made current. A per-frame `SetParam` / `SetTexture` is therefore a direct, stall-free write — no
-staging, no `WaitIdle`, no hazard. **The current frame's region is selected by folding the frame
-base (`currentFrame * MaxMaterials`, via `BindlessRegistry::GetCurrentFrameBase()`) into the
-pushed material selector index in `MaterialInstance::Bind`** — not by a dynamic descriptor offset:
-a `STORAGE_BUFFER_DYNAMIC` descriptor mistranslates inside set 0's bindless Metal argument buffer
-on MoltenVK. The buffer stays a plain storage buffer bound at full range, and the shader's
-`index * MaterialParamStride` load is unchanged.
+**A block is a byte-offset suballocation of one arena, not a fixed slot.** The block buffer is
+**N-buffered for frames-in-flight, host-visible + persistently mapped**: it holds `framesInFlight`
+regions of `BindlessRegistry::MaterialArenaBytes` (2.5 MiB), and each frame-in-flight owns one.
+`RegisterMaterial` suballocates a whole number of `MaterialGranuleBytes` (256) granules from a
+first-fit free list over one region; the resulting **block offset** is fixed for the material's
+lifetime and identical in every region, and `MaterialInstance::GetBlockOffset()` reports it.
+Rounding to a granule is what makes first fit exact rather than hopeful — no gap can be an
+unusable sliver, and a freed run of *k* granules is exactly the size of the next *k*-granule
+request, so a pool claiming and releasing one material class recycles its own hole. A freed range
+carries the same deferred window the slot allocators apply and **coalesces at reclaim, never at
+release** (a range merged at `Release` would be allocatable immediately, which is what the window
+exists to prevent), and `Release` retires the entry's CPU-side state with it so an owed flush
+cannot write stale bytes into a range since reallocated. Exhausting the arena is fatal, and the
+message names the arena size, the live bytes, the largest free run and the failed request.
+
+Two bounds, and they are different bounds: **`MaxMaterialBlockBytes`** (1280) caps what a single
+material may declare — a cook-time error to exceed, and the loader's `BlockBytes` corruption guard
+— while the arena caps what all of them declare together. The runtime bound on `UpdateMaterial` is
+narrower still: the material's **own allocation**, because blocks are packed and an over-long
+write would land in the next material's bytes.
+
+`Register/UpdateMaterial` mark an instance dirty for `framesInFlight` frames and write only the
+*current* frame's region (safe because that frame is not yet submitted); `OnFrameAcquired` flushes
+each still-dirty instance into the region it just made current, walking the materials owing a
+write rather than the whole arena. A per-frame `SetParam` / `SetTexture` is therefore a direct,
+stall-free write — no staging, no `WaitIdle`, no hazard. **The current frame's region is selected
+by folding the frame base (`currentFrame * MaterialArenaBytes`, via
+`BindlessRegistry::GetCurrentFrameBase()`) into the pushed material selector in
+`MaterialInstance::Bind`** — not by a dynamic descriptor offset: a `STORAGE_BUFFER_DYNAMIC`
+descriptor mistranslates inside set 0's bindless Metal argument buffer on MoltenVK. The buffer
+stays a plain storage buffer bound at full range, and a shader loads its block at the selector it
+is handed, with no multiply.
 
 A `Material` carries a first-class **`MaterialDomain`** (`Surface` / `PostProcess` / `Sky` /
 `Translucent` / `GuiFill`, `Veng/Asset/Material.h`) selecting its output contract, pipeline shape, standard vertex shader,

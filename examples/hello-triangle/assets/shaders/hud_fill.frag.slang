@@ -14,9 +14,9 @@ struct MaterialParams
     float4 Motion; // x: spatial frequency, y: sweep speed in turns/second, zw unused
 };
 
-MaterialParams LoadMaterialParams(uint index)
+MaterialParams LoadMaterialParams(uint offset)
 {
-    return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
+    return g_MaterialParams.Load<MaterialParams>(offset);
 }
 
 [shader("fragment")]

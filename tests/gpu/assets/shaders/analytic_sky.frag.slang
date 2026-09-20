@@ -10,9 +10,9 @@ struct MaterialParams
     float4 Scale; // rgb scale on the encoded direction; a authored param so the block is non-empty
 };
 
-MaterialParams LoadMaterialParams(uint index)
+MaterialParams LoadMaterialParams(uint offset)
 {
-    return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
+    return g_MaterialParams.Load<MaterialParams>(offset);
 }
 
 [[vk::push_constant]] ConstantBuffer<SkyPushConstants> g_SkyPC;

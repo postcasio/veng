@@ -11,9 +11,9 @@ struct MaterialParams
     uint ImageSampler; // bindless sampler index of that texture's sampler
 };
 
-MaterialParams LoadMaterialParams(uint index)
+MaterialParams LoadMaterialParams(uint offset)
 {
-    return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
+    return g_MaterialParams.Load<MaterialParams>(offset);
 }
 
 [shader("fragment")]

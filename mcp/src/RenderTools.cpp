@@ -712,9 +712,12 @@ namespace Veng::Mcp
             tool.Name = "render.bindless";
             tool.Description =
                 "Reports the bindless registry's seven arrayed bindings: free slots and total "
-                "capacity for textures, volumes, cubes, samplers, storage images, storage buffers, "
-                "and materials. This is the 'how much is left' read; render.bindless_slots is the "
-                "'what is in there' one. Takes no arguments.";
+                "capacity for textures, volumes, cubes, samplers, storage images and storage "
+                "buffers. Materials are suballocated from a byte arena rather than drawn from a "
+                "slot table, so they report free and total BYTES plus the live block count and "
+                "the largest free run — free bytes far above the largest run is fragmentation. "
+                "This is the 'how much is left' read; render.bindless_slots is the 'what is in "
+                "there' one. Takes no arguments.";
             tool.InputSchemaJson = R"({"type":"object","properties":{}})";
             tool.Handler = [&host](string_view) -> Result<string>
             {
@@ -730,7 +733,11 @@ namespace Veng::Mcp
                      {{"free", free.StorageImages}, {"capacity", Registry::MaxStorageImages}}},
                     {"storage_buffers",
                      {{"free", free.StorageBuffers}, {"capacity", Registry::MaxStorageBuffers}}},
-                    {"materials", {{"free", free.Materials}, {"capacity", Registry::MaxMaterials}}},
+                    {"materials",
+                     {{"free_bytes", free.Materials},
+                      {"capacity_bytes", Registry::MaterialArenaBytes},
+                      {"live_blocks", free.MaterialBlocks},
+                      {"largest_free_run_bytes", free.MaterialLargestFreeRun}}},
                 }
                     .dump();
             };
@@ -752,8 +759,11 @@ namespace Veng::Mcp
                 "slot reports the view's debug name, its format, the image extent, the mips and "
                 "layers the view exposes, and the tightly-packed bytes those subresources occupy "
                 "(the codec's own footprint, so a compressed texture reports compressed bytes); a "
-                "storage buffer reports its name and size; a sampler its name; a material its "
-                "cached parameter block's length. Optional 'state' filters by slot state — "
+                "storage buffer reports its name and size; a sampler its name. Materials are not "
+                "a slot array: they list one entry per RANGE of the parameter arena — a live "
+                "block, a free run, or a run still inside its release window — with 'index' the "
+                "range's byte offset and 'bytes' its length, so the listing reads as a map of the "
+                "arena. Optional 'state' filters by slot state — "
                 "'occupied' (the default), 'free', 'pending_release' (released but still inside "
                 "its deferred-release window, which is why a free count can trail the unoccupied "
                 "count), or 'all'. Paginated on { limit, cursor }; 'capacity', 'free' and "

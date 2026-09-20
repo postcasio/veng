@@ -15,8 +15,8 @@
 
 // MaterialParams is this material's whole parameter block: the bindless handle slots for the HDR
 // input (uint members the post pass writes each frame with the renderer's current HDR target
-// index) beside the authored Exposure and Tonemapper params, padded to MaterialParamStride. Read
-// through the standard set-0 byte-addressed material buffer at index * MaterialParamStride.
+// index) beside the authored Exposure and Tonemapper params. Read through the standard set-0
+// byte-addressed material buffer at this material's own block offset.
 struct MaterialParams
 {
     // Field order carries no correctness weight: the cooker reflects the block in the same
@@ -31,9 +31,9 @@ struct MaterialParams
     float  OutputGamma;      // display-calibration gamma, set per frame from the SceneView
 };
 
-MaterialParams LoadMaterialParams(uint index)
+MaterialParams LoadMaterialParams(uint offset)
 {
-    return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
+    return g_MaterialParams.Load<MaterialParams>(offset);
 }
 
 // The Narkowicz ACES filmic approximation: a rational fit of the ACES reference tone curve, applied

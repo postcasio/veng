@@ -105,7 +105,7 @@ namespace Veng
         /// @pre This instance is finalized (registered).
         [[nodiscard]] Ref<MaterialInstance> Clone(std::string_view name) const;
 
-        /// @brief Returns the frame-folded material selector (GetCurrentFrameBase() + slot index).
+        /// @brief Returns the frame-folded material selector (GetCurrentFrameBase() + block offset).
         ///
         /// The value the shader uses to index the ring-buffered per-material parameter block. A
         /// Surface draw's geometry pass writes this into each per-draw DrawData record instead of
@@ -161,8 +161,12 @@ namespace Veng
         /// @param handle The bindless volume handle to bind.
         void SetVolumeHandle(std::string_view name, Renderer::VolumeHandle handle);
 
-        /// @brief Returns the instance's slot index in the registry's per-material SSBO array.
-        [[nodiscard]] u32 GetIndex() const { return m_Handle.Index; }
+        /// @brief Returns the instance's byte offset within one region of the material arena.
+        ///
+        /// The frame base is *not* folded in — this is where the block sits in every region, which
+        /// is what the registry's own surfaces are keyed by. GetMaterialSelector() is the value a
+        /// draw pushes.
+        [[nodiscard]] u32 GetBlockOffset() const { return m_Handle.Offset; }
 
         /// @brief Returns a revision that bumps on every parameter/handle write.
         ///

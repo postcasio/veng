@@ -120,10 +120,16 @@ extern "C"
 /// materials are cooked against the stride and its shaders index the one parameter buffer at
 /// `index * MaterialParamStride`, so a stale module reads every material's block from the wrong
 /// offset — a silent mis-shade of every draw rather than a fault.
+/// Version 26 replaces that indexing scheme outright: a material's parameter block is a byte-offset
+/// suballocation of BindlessRegistry::MaterialArenaBytes rather than a fixed slot, the selector a
+/// draw pushes is a byte offset, and a shader loads its block at that offset with no multiply. A
+/// module's shaders carry the arithmetic and its MaterialInstance reads the offset, so a stale
+/// module scales an offset by a stride that no longer exists — the same silent mis-shade version 25
+/// names, at every draw rather than at a moved one.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 25u
+#define VENG_MODULE_ABI_VERSION 26u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

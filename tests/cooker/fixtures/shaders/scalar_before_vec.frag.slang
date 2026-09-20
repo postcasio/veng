@@ -12,13 +12,11 @@ struct MaterialParams
     uint   Count;  // trailing scalar — tight 32, std140 would be 48
 };
 
-static const uint MaterialParamStride = 1280;
-
 [[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
 
-MaterialParams LoadMaterialParams(uint index)
+MaterialParams LoadMaterialParams(uint offset)
 {
-    return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
+    return g_MaterialParams.Load<MaterialParams>(offset);
 }
 
 struct GBufferOutput

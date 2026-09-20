@@ -3724,7 +3724,7 @@ TEST_CASE_FIXTURE(
 
     const MaterialInstance& mat = *material->Get();
     CHECK(mat.GetDomain() == MaterialDomain::PostProcess);
-    CHECK(mat.GetIndex() != MaterialHandle::Invalid);
+    CHECK(mat.GetBlockOffset() != MaterialHandle::Invalid);
     CHECK(mat.GetPipeline() == nullptr);       // built by the pass, not the loader
     CHECK(mat.GetPipelineLayout() != nullptr); // built by the loader for both domains
 

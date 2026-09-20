@@ -36,6 +36,7 @@
 #include <Veng/InputRouter.h>
 #include <Veng/Log.h>
 
+#include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DescriptorSet.h>
@@ -450,6 +451,24 @@ namespace
             });
     }
 
+    void RunMaterialBlockOverrunsAllocation()
+    {
+        InGpuContext(
+            [](Context& context)
+            {
+                BindlessRegistry& bindless = context.GetBindlessRegistry();
+                const std::byte small[16] = {};
+                const MaterialHandle material =
+                    bindless.RegisterMaterial(std::span<const std::byte>(small, sizeof(small)));
+
+                // Blocks are packed, so a write past this material's own allocation lands in the
+                // next material's bytes rather than in its own padding.
+                const std::byte oversize[BindlessRegistry::MaterialGranuleBytes + 1] = {};
+                bindless.UpdateMaterial(material,
+                                        std::span<const std::byte>(oversize, sizeof(oversize)));
+            });
+    }
+
     void RunIndexU16IntoU32()
     {
         InGpuContext(
@@ -633,6 +652,10 @@ int main(int argc, char** argv)
     else if (name == "index_u32_into_u16")
     {
         RunIndexU32IntoU16();
+    }
+    else if (name == "material_block_overruns_allocation")
+    {
+        RunMaterialBlockOverrunsAllocation();
     }
     else if (name == "descriptor_type_mismatch")
     {

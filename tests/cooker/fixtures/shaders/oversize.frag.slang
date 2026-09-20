@@ -1,4 +1,4 @@
-// Material fragment fixture whose MaterialParams exceeds MaterialParamStride
+// Material fragment fixture whose MaterialParams exceeds MaxMaterialBlockBytes
 // (1280 bytes): two handle uints + 84 float4 members = 8 + 1344 = 1352 bytes.
 // Used by the material-cook test to assert a located over-stride cook error. All
 // param members are vectors so the struct reflects cleanly — the failure is the
@@ -31,15 +31,13 @@ struct MaterialParams
     uint AlbedoSampler;
 };
 
-static const uint MaterialParamStride = 1280;
-
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
 [[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
 
-MaterialParams LoadMaterialParams(uint index)
+MaterialParams LoadMaterialParams(uint offset)
 {
-    return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
+    return g_MaterialParams.Load<MaterialParams>(offset);
 }
 
 struct GBufferOutput

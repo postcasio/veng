@@ -15,9 +15,9 @@ struct MaterialParams
     uint   Document; // runtime-bound intermediate document handle (the composite writes it each frame)
 };
 
-MaterialParams LoadMaterialParams(uint index)
+MaterialParams LoadMaterialParams(uint offset)
 {
-    return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
+    return g_MaterialParams.Load<MaterialParams>(offset);
 }
 
 // A PostProcess fragment declaring a bloom mask returns SV_Target0 (color) + SV_Target1 (amplitude).

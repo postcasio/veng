@@ -23,10 +23,10 @@ namespace Veng::Cook
 {
     namespace
     {
-        // The per-material block buffer stride. Mirrors
-        // Renderer::BindlessRegistry::MaterialParamStride; restated here so the
+        // The largest parameter block one material may declare. Mirrors
+        // Renderer::BindlessRegistry::MaxMaterialBlockBytes; restated here so the
         // cooker gains no renderer-header dependency.
-        constexpr u32 MaterialParamStride = 1280;
+        constexpr u32 MaxMaterialBlockBytes = 1280;
 
         // Cooked names are fixed-size, nul-terminated char arrays (CookedBlobs.h);
         // truncate rather than fail on an over-long identifier.
@@ -476,11 +476,11 @@ namespace Veng::Cook
             return std::unexpected(blockReflected.error());
         }
 
-        if (blockReflected->Size > MaterialParamStride)
+        if (blockReflected->Size > MaxMaterialBlockBytes)
         {
-            return std::unexpected(
-                fmt::format("material importer: param block {} bytes exceeds stride {}",
-                            blockReflected->Size, MaterialParamStride));
+            return std::unexpected(fmt::format(
+                "material importer: param block {} bytes exceeds the per-material bound of {}",
+                blockReflected->Size, MaxMaterialBlockBytes));
         }
 
         // --- 4. Build the zero-initialized block image and the reflected lookup ---

@@ -278,8 +278,8 @@ namespace VengGraph
             source += fmt::format("    {} {};\n", field.SlangType, field.Name);
         }
         source += "};\n\n";
-        source += "MaterialParams LoadMaterialParams(uint index)\n{\n"
-                  "    return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);\n"
+        source += "MaterialParams LoadMaterialParams(uint offset)\n{\n"
+                  "    return g_MaterialParams.Load<MaterialParams>(offset);\n"
                   "}\n\n";
 
         const auto sinkOr = [&](Veng::usize index, const char* fallback) -> Veng::string

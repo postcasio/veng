@@ -157,7 +157,7 @@ struct MaterialParams
 GBufferOutput fsMain(SurfaceFragmentInput input)
 {
     MaterialParams params = g_MaterialParams.Load<MaterialParams>(
-        input.v_MaterialIndex * MaterialParamStride);
+        input.v_MaterialIndex);
     GBufferOutput output;
     output.Albedo = params.BaseColorFactor;
     output.Normal = float4(normalize(input.v_WorldNormal), 0.0);
@@ -221,7 +221,7 @@ GBufferOutput fsMain(SurfaceFragmentInput input)
     // The authored instance and the parent's default instance own distinct SSBO slots — the
     // per-instance slot the override seeds. (The pipeline-sharing invariant between two explicit
     // instances over one parent id is pinned by material_instance.cpp.)
-    CHECK(instance->Get()->GetIndex() != defaultInstance->Get()->GetIndex());
+    CHECK(instance->Get()->GetBlockOffset() != defaultInstance->Get()->GetBlockOffset());
     CHECK(instance->Get()->GetPipeline().get() != nullptr);
 
     const vec3 overrideCenter = RenderCenter(*this, assets, *instance);

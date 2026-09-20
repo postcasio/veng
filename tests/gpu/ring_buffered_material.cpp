@@ -8,10 +8,12 @@
 //   2. Write-once stability: a material registered once and never updated reads
 //      the same value on every frame across the in-flight window (the value
 //      flushed to every region).
+//   3. Reuse after release: a released material's owed flushes do not follow its
+//      range into the material allocated over it.
 //
 // Each frame draws a fullscreen triangle whose fragment shader loads the
-// material block at materialIndex * stride from the dynamic binding and outputs
-// the param as color; the value is read back from the off-screen target.
+// material block at the selector it is pushed and outputs the param as color;
+// the value is read back from the off-screen target.
 
 #include <array>
 #include <cstdlib>
@@ -106,9 +108,9 @@ namespace
                     passCmd.SetScissor({0, 0}, {Size, Size});
                     bindless.Bind(passCmd);
                     // Fold the current frame's region base into the selector so the
-                    // shader's index * stride load reads this frame's region.
+                    // shader's load reads this frame's region.
                     passCmd.PushConstants(MaterialPush{
-                        .MaterialIndex = bindless.GetCurrentFrameBase() + material.Index});
+                        .MaterialIndex = bindless.GetCurrentFrameBase() + material.Offset});
                     passCmd.DrawFullscreenTriangle();
                 });
 
@@ -185,6 +187,87 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     }
 
     bindless.Release(material);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "ring-buffered material: a released material's owed flushes do not reach the "
+                  "material allocated over its range")
+{
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
+
+    const AssetResult<AssetHandle<Shader>> vertexAsset = assets.LoadSync<Shader>(AssetId{0x1F42});
+    const AssetResult<AssetHandle<Shader>> fragmentAsset = assets.LoadSync<Shader>(AssetId{0x1F45});
+    REQUIRE(vertexAsset.has_value());
+    REQUIRE(fragmentAsset.has_value());
+
+    Ref<PipelineLayout> layout;
+    auto pipeline = CreateMaterialPipeline(Context, layout, vertexAsset->Get()->Module,
+                                           fragmentAsset->Get()->Module);
+
+    auto outputImage =
+        Image::Create(Context, {
+                                   .Name = "Ring Output Reuse",
+                                   .Extent = {Size, Size, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                               });
+    auto outputView =
+        ImageView::Create(Context, {.Name = "Ring Output Reuse View", .Image = outputImage});
+
+    auto& bindless = Context.GetBindlessRegistry();
+    const u32 window = Context.GetMaxFramesInFlight();
+
+    // Settle whatever earlier cases left parked, so the arena is one run and first fit is
+    // predictable: the reuse this case is about has to be the reuse it observes.
+    const MaterialHandle none{.Offset = 0};
+    for (u32 i = 0; i < window + 1; i++)
+    {
+        RenderFrame(Context, bindless, pipeline, outputImage, outputView, none);
+    }
+
+    // A guard below the range under test, so the reclaimed range is the lowest free run rather
+    // than a hole the arena's start would be handed out ahead of.
+    const auto guardBlock = MakeBlock(vec4{0.0f, 1.0f, 0.0f, 1.0f});
+    const MaterialHandle guard = bindless.RegisterMaterial(std::span<const std::byte>(guardBlock));
+    REQUIRE(guard.IsValid());
+
+    // Register, update so the entry owes a flush to every other region, then release with that
+    // debt outstanding. Blocks are packed and offsets are reused, so an entry that kept its debt
+    // would write these bytes into whatever material takes the range next.
+    const vec4 departed{0.9f, 0.0f, 0.0f, 1.0f};
+    const auto departedBlock = MakeBlock(departed);
+    const MaterialHandle first =
+        bindless.RegisterMaterial(std::span<const std::byte>(departedBlock));
+    REQUIRE(first.IsValid());
+    bindless.UpdateMaterial(first, std::span<const std::byte>(departedBlock));
+    bindless.Release(first);
+
+    // Cycle past the deferred-release window so the range is allocatable again, then take it with
+    // a same-sized block — first fit hands back the range just reclaimed.
+    for (u32 i = 0; i < window + 1; i++)
+    {
+        RenderFrame(Context, bindless, pipeline, outputImage, outputView, guard);
+    }
+
+    const vec4 arrived{0.0f, 0.0f, 0.4f, 1.0f};
+    const auto arrivedBlock = MakeBlock(arrived);
+    const MaterialHandle second =
+        bindless.RegisterMaterial(std::span<const std::byte>(arrivedBlock));
+    REQUIRE(second.IsValid());
+    REQUIRE(second.Offset == first.Offset);
+
+    // The new material's bytes hold across the whole window a stale flush would have landed in.
+    for (u32 i = 0; i < window + 3; i++)
+    {
+        const std::array<u8, 4> pixel =
+            RenderFrame(Context, bindless, pipeline, outputImage, outputView, second);
+        CHECK(ChannelNear(pixel[0], arrived.x));
+        CHECK(ChannelNear(pixel[2], arrived.z));
+    }
+
+    bindless.Release(guard);
+    bindless.Release(second);
 }
 
 TEST_CASE_FIXTURE(

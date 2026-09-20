@@ -221,10 +221,9 @@ namespace Veng
 
     u32 MaterialInstance::GetMaterialSelector() const
     {
-        // Fold the current frame's region base into the selector so the shader's
-        // index * MaterialParamStride load lands in this frame's copy of the
-        // ring-buffered material buffer.
-        return m_Context.GetBindlessRegistry().GetCurrentFrameBase() + m_Handle.Index;
+        // Fold the current frame's region base into the selector so the shader's load lands in
+        // this frame's copy of the ring-buffered material buffer.
+        return m_Context.GetBindlessRegistry().GetCurrentFrameBase() + m_Handle.Offset;
     }
 
     void MaterialInstance::UploadParams() const

@@ -762,7 +762,7 @@ TEST_CASE(
     std::filesystem::remove(outArchive);
 }
 
-TEST_CASE("Cooker: an authored block exceeding the param stride is a located cook error")
+TEST_CASE("Cooker: an authored block exceeding the per-material bound is a located cook error")
 {
     const path packJson = FixtureDir / "material_oversize_pack.json";
     const path outArchive = Veng::TestSupport::TempDir() / "veng_cooker_material_oversize.vengpack";
@@ -773,7 +773,7 @@ TEST_CASE("Cooker: an authored block exceeding the param stride is a located coo
     const VoidResult result = cooker.CookPack(packJson, outArchive);
 
     REQUIRE(!result.has_value());
-    CHECK(result.error().find("exceeds stride") != string::npos);
+    CHECK(result.error().find("exceeds the per-material bound") != string::npos);
 
     std::filesystem::remove(outArchive);
 }

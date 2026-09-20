@@ -136,9 +136,9 @@ TEST_CASE_FIXTURE(
     CHECK_FALSE(inst.GetFields().empty());
 
     // A distinct SSBO slot from the cooked default instance.
-    CHECK(inst.GetIndex() != MaterialHandle::Invalid);
-    CHECK(def.GetIndex() != MaterialHandle::Invalid);
-    CHECK(inst.GetIndex() != def.GetIndex());
+    CHECK(inst.GetBlockOffset() != MaterialHandle::Invalid);
+    CHECK(def.GetBlockOffset() != MaterialHandle::Invalid);
+    CHECK(inst.GetBlockOffset() != def.GetBlockOffset());
 
     std::filesystem::remove(outArchive);
 }
@@ -186,7 +186,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(handle.IsLoaded());
     CHECK(handle.Get()->GetParent().IsLoaded());
     CHECK(handle.Get()->GetPipeline() != nullptr);
-    CHECK(handle.Get()->GetIndex() != MaterialHandle::Invalid);
+    CHECK(handle.Get()->GetBlockOffset() != MaterialHandle::Invalid);
 
     std::filesystem::remove(outArchive);
 }
@@ -254,7 +254,7 @@ TEST_CASE_FIXTURE(
 
     // The MID shares the parent's pipeline and owns its own slot.
     CHECK(mid.Get()->GetPipeline().get() == parent->Get()->GetPipeline().get());
-    CHECK(mid.Get()->GetIndex() != MaterialHandle::Invalid);
+    CHECK(mid.Get()->GetBlockOffset() != MaterialHandle::Invalid);
 
     // A per-frame SetParam is a direct, stall-free ring-buffer write (no WaitIdle).
     const_cast<MaterialInstance&>(*mid.Get())
@@ -297,8 +297,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // The copy shares the parent (pipeline pointer-equal) but owns its own bindless slot, so it is
     // a distinct target the renderer selects separately.
     CHECK(clone.Get()->GetPipeline().get() == source.Get()->GetPipeline().get());
-    CHECK(clone.Get()->GetIndex() != MaterialHandle::Invalid);
-    CHECK(clone.Get()->GetIndex() != source.Get()->GetIndex());
+    CHECK(clone.Get()->GetBlockOffset() != MaterialHandle::Invalid);
+    CHECK(clone.Get()->GetBlockOffset() != source.Get()->GetBlockOffset());
 
     // Mutating the copy touches only the copy: its revision moves while the source's holds, which is
     // the whole point — a write into a clone reaches no other drawer of the shared source.

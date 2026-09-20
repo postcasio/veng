@@ -11,7 +11,7 @@
 // MaterialParams is this fixture's whole parameter block — the bindless handle slots
 // (uint members the loader patches with a resolved index) beside the authored Factors
 // tint, laid out by reflection. The cooker reflects this struct to validate a material's
-// fields and pack their values at the reflected offsets, read at index * MaterialParamStride.
+// fields and pack their values at the reflected offsets, read at the material's block offset.
 struct MaterialParams
 {
     float4 Factors;       // authored param
@@ -19,15 +19,13 @@ struct MaterialParams
     uint   AlbedoSampler; // bindless sampler index (sampler handle)
 };
 
-static const uint MaterialParamStride = 1280;
-
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
 [[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
 
-MaterialParams LoadMaterialParams(uint index)
+MaterialParams LoadMaterialParams(uint offset)
 {
-    return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
+    return g_MaterialParams.Load<MaterialParams>(offset);
 }
 
 // The deferred opaque g-buffer outputs the material fragment stage writes: albedo

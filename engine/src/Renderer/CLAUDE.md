@@ -1775,12 +1775,22 @@ third being a slot whose `Release` window has not expired, which is neither allo
 is what explains a free count trailing the unoccupied count — plus what the slot holds:
 `BindlessSlot`'s union of the fields the arrays can describe (an `ImageView`'s name, format, the
 image's extent, the mips and layers the view exposes, and their tightly-packed `ImageBytes` from
-`FormatInfo`'s block geometry; a `Buffer`'s name and size; a `Sampler`'s name; a material slot's
-cached block length). **Nothing is recorded per slot for it and no registration site changed**: each
-`SlotArray` is homogeneous in the type its own `Register` took, so the type-erased `Ref` the registry
-already keeps to stop a resource dangling casts back and the description is read off it at call time.
-The question it answers is the one a free count cannot — an array at 80 % of its capacity is either
-holding what it needs or holding one atlas nine times, and only the occupants tell those apart.
+`FormatInfo`'s block geometry; a `Buffer`'s name and size; a `Sampler`'s name). **Nothing is
+recorded per slot for it and no registration site changed**: each `SlotArray` is homogeneous in the
+type its own `Register` took, so the type-erased `Ref` the registry already keeps to stop a resource
+dangling casts back and the description is read off it at call time. The question it answers is the
+one a free count cannot — an array at 80 % of its capacity is either holding what it needs or
+holding one atlas nine times, and only the occupants tell those apart.
+
+**Materials are the one entry denominated in bytes**, because they are suballocated from the
+parameter arena rather than drawn from a slot table (see
+[../Asset/CLAUDE.md](../Asset/CLAUDE.md)): `BindlessCapacity::Materials` is free **bytes** of
+`MaterialArenaBytes`, beside `MaterialBlocks` (the live allocation count) and
+`MaterialLargestFreeRun` — free bytes far above the largest run is fragmentation rather than
+occupancy, which is the reading a slot count cannot give. `CapacityOf(Materials)` answers the arena
+size in bytes to match, and `DescribeSlots(Materials)` answers one entry per **range** — a live
+block, a free run, or a run still inside its release window — with `Index` the range's byte offset
+and `SizeBytes` its length, ascending, so the listing reads as a map of the arena.
 `BindlessArrayName` / `ParseBindlessArray` / `BindlessSlotStateName` are the text vocabulary a
 diagnostic reports and accepts through (`veng::mcp`'s `render.bindless_slots` is the consumer);
 `tests/unit/bindless_slots.cpp` pins the round trip and the capacity mapping device-free.

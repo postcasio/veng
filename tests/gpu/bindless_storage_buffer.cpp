@@ -263,7 +263,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                         bindless.Bind(inner);
                         // Fold in the current frame's material region base, as a draw does.
                         inner.PushConstants(MaterialPush{
-                            .MaterialIndex = bindless.GetCurrentFrameBase() + materialHandle.Index,
+                            .MaterialIndex = bindless.GetCurrentFrameBase() + materialHandle.Offset,
                         });
                         inner.DrawFullscreenTriangle();
                     });

@@ -942,6 +942,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/type_mapping.cpp
             tests/unit/format_info.cpp
             tests/unit/bindless_slots.cpp
+            tests/unit/material_arena.cpp
             tests/unit/sampler_anisotropy.cpp
             tests/unit/barrier_decision.cpp
             tests/unit/render_graph_schedule.cpp
@@ -1309,6 +1310,10 @@ if (VENG_BUILD_TESTS)
     add_test(NAME death.index_u32_into_u16 COMMAND veng_test_death index_u32_into_u16)
     set_tests_properties(death.index_u32_into_u16 PROPERTIES LABELS "gpu;death;fast"
             SKIP_RETURN_CODE 77 PASS_REGULAR_EXPRESSION "cannot upload u32 indices")
+
+    add_test(NAME death.material_block_overruns_allocation COMMAND veng_test_death material_block_overruns_allocation)
+    set_tests_properties(death.material_block_overruns_allocation PROPERTIES LABELS "gpu;death;fast"
+            SKIP_RETURN_CODE 77 PASS_REGULAR_EXPRESSION "would overwrite the neighbouring material")
 
     add_test(NAME death.descriptor_type_mismatch COMMAND veng_test_death descriptor_type_mismatch)
     set_tests_properties(death.descriptor_type_mismatch PROPERTIES LABELS "gpu;death;fast"

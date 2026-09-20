@@ -10,9 +10,9 @@ struct MaterialParams
     float4 UVOffset; // xy logical-UV offset applied to the scene sample; z blur in [0,1]; w unused
 };
 
-MaterialParams LoadMaterialParams(uint index)
+MaterialParams LoadMaterialParams(uint offset)
 {
-    return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
+    return g_MaterialParams.Load<MaterialParams>(offset);
 }
 
 [shader("fragment")]

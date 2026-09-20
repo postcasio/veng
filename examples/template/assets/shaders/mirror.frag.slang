@@ -24,9 +24,9 @@ struct MaterialParams
     uint   DepthSampler; // engine-bound: the distance map's point clamp sampler
 };
 
-MaterialParams LoadMaterialParams(uint index)
+MaterialParams LoadMaterialParams(uint offset)
 {
-    return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
+    return g_MaterialParams.Load<MaterialParams>(offset);
 }
 
 [shader("fragment")]

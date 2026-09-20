@@ -9,9 +9,9 @@ struct MaterialParams
     float4 Color; // Emitted radiance (linear HDR).
 };
 
-MaterialParams LoadMaterialParams(uint index)
+MaterialParams LoadMaterialParams(uint offset)
 {
-    return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
+    return g_MaterialParams.Load<MaterialParams>(offset);
 }
 
 [shader("fragment")]

@@ -77,7 +77,7 @@ struct MaterialParams
 GBufferOutput fsMain(SurfaceFragmentInput input)
 {
     MaterialParams params = g_MaterialParams.Load<MaterialParams>(
-        input.v_MaterialIndex * MaterialParamStride);
+        input.v_MaterialIndex);
     GBufferOutput output;
     output.Albedo = params.BaseColorFactor;
     output.Normal = float4(normalize(input.v_WorldNormal), 0.0);

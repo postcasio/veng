@@ -9,15 +9,13 @@ struct MaterialParams
     float Exposure;
 };
 
-static const uint MaterialParamStride = 1280;
-
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
 [[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
 
-MaterialParams LoadMaterialParams(uint index)
+MaterialParams LoadMaterialParams(uint offset)
 {
-    return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
+    return g_MaterialParams.Load<MaterialParams>(offset);
 }
 
 struct PushConstants

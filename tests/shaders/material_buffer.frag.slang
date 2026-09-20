@@ -7,16 +7,14 @@
 [[vk::binding(3, 0)]] ByteAddressBuffer g_Buffers[];
 [[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
 
-static const uint MaterialParamStride = 1280;
-
 struct MaterialParams
 {
     uint Points; // storage-buffer handle slot (SetStorageBufferHandle writes it)
 };
 
-MaterialParams LoadMaterialParams(uint index)
+MaterialParams LoadMaterialParams(uint offset)
 {
-    return g_MaterialParams.Load<MaterialParams>(index * MaterialParamStride);
+    return g_MaterialParams.Load<MaterialParams>(offset);
 }
 
 struct PushConstants
