@@ -89,6 +89,16 @@ namespace Veng
         return fields[field.Index];
     }
 
+    const MaterialField& MaterialInstance::ResolveParamField(const MaterialFieldHandle field,
+                                                             const std::string_view caller) const
+    {
+        const MaterialField& entry = ResolveField(field, caller);
+        VE_ASSERT(entry.Kind == MaterialField::FieldKind::Param,
+                  "MaterialInstance::{}: field '{}' in instance '{}' is not a Param (Kind={})",
+                  caller, entry.Name, m_Name, static_cast<u32>(entry.Kind));
+        return entry;
+    }
+
     MaterialFieldHandle MaterialInstance::RequireField(const std::string_view name,
                                                        const std::string_view caller) const
     {
@@ -336,11 +346,11 @@ namespace Veng
 
     void MaterialInstance::SetParam(const MaterialFieldHandle field, const vec4& value)
     {
-        const MaterialField& entry = ResolveField(field, "SetParam");
-        VE_ASSERT(
-            entry.Kind == MaterialField::FieldKind::Param,
-            "MaterialInstance::SetParam: field '{}' in instance '{}' is not a Param (Kind={})",
-            entry.Name, m_Name, static_cast<u32>(entry.Kind));
+        const MaterialField& entry = ResolveParamField(field, "SetParam");
+        VE_ASSERT(entry.ElementCount == 1,
+                  "MaterialInstance::SetParam: field '{}' in instance '{}' is an array of {} "
+                  "elements — write it with SetParamArray or the indexed overload",
+                  entry.Name, m_Name, entry.ElementCount);
 
         const u32 writeBytes = std::min(entry.Size, static_cast<u32>(sizeof(vec4)));
         VE_ASSERT(entry.Offset + writeBytes <= m_Block.size(),
@@ -359,11 +369,11 @@ namespace Veng
 
     void MaterialInstance::SetParam(const MaterialFieldHandle field, const f32 value)
     {
-        const MaterialField& entry = ResolveField(field, "SetParam");
-        VE_ASSERT(
-            entry.Kind == MaterialField::FieldKind::Param,
-            "MaterialInstance::SetParam: field '{}' in instance '{}' is not a Param (Kind={})",
-            entry.Name, m_Name, static_cast<u32>(entry.Kind));
+        const MaterialField& entry = ResolveParamField(field, "SetParam");
+        VE_ASSERT(entry.ElementCount == 1,
+                  "MaterialInstance::SetParam: field '{}' in instance '{}' is an array of {} "
+                  "elements — write it with SetParamArray or the indexed overload",
+                  entry.Name, m_Name, entry.ElementCount);
 
         // Write only the field's reflected size — for a scalar param that is 4
         // bytes, never spilling into the following bytes of the block.
@@ -375,6 +385,95 @@ namespace Veng
         std::memcpy(m_Block.data() + entry.Offset, &value, writeBytes);
 
         UploadParams(entry.Offset, writeBytes);
+    }
+
+    void MaterialInstance::SetParam(const MaterialFieldHandle field, const u32 index,
+                                    const vec4& value)
+    {
+        const MaterialField& entry = ResolveParamField(field, "SetParam");
+        VE_ASSERT(index < entry.ElementCount,
+                  "MaterialInstance::SetParam: element {} is past field '{}'s {} elements in "
+                  "instance '{}'",
+                  index, entry.Name, entry.ElementCount, m_Name);
+
+        const u32 offset = entry.Offset + index * entry.ElementStride;
+        const u32 writeBytes = std::min(entry.ElementStride, static_cast<u32>(sizeof(vec4)));
+        VE_ASSERT(offset + writeBytes <= m_Block.size(),
+                  "MaterialInstance::SetParam: field '{}' element {} at offset {} + {} exceeds "
+                  "block size {}",
+                  entry.Name, index, offset, writeBytes, m_Block.size());
+
+        std::memcpy(m_Block.data() + offset, &value, writeBytes);
+
+        UploadParams(offset, writeBytes);
+    }
+
+    void MaterialInstance::SetParam(const MaterialFieldHandle field, const u32 index,
+                                    const f32 value)
+    {
+        const MaterialField& entry = ResolveParamField(field, "SetParam");
+        VE_ASSERT(index < entry.ElementCount,
+                  "MaterialInstance::SetParam: element {} is past field '{}'s {} elements in "
+                  "instance '{}'",
+                  index, entry.Name, entry.ElementCount, m_Name);
+
+        const u32 offset = entry.Offset + index * entry.ElementStride;
+        const u32 writeBytes = std::min(entry.ElementStride, static_cast<u32>(sizeof(f32)));
+        VE_ASSERT(offset + writeBytes <= m_Block.size(),
+                  "MaterialInstance::SetParam: field '{}' element {} at offset {} + {} exceeds "
+                  "block size {}",
+                  entry.Name, index, offset, writeBytes, m_Block.size());
+
+        std::memcpy(m_Block.data() + offset, &value, writeBytes);
+
+        UploadParams(offset, writeBytes);
+    }
+
+    void MaterialInstance::SetParamArray(const MaterialFieldHandle field,
+                                         const std::span<const vec4> values)
+    {
+        const MaterialField& entry = ResolveParamField(field, "SetParamArray");
+        VE_ASSERT(values.size() == entry.ElementCount,
+                  "MaterialInstance::SetParamArray: field '{}' in instance '{}' holds {} elements "
+                  "but {} were given",
+                  entry.Name, m_Name, entry.ElementCount, values.size());
+        VE_ASSERT(
+            entry.Offset + entry.Size <= m_Block.size(),
+            "MaterialInstance::SetParamArray: field '{}' offset {} + {} exceeds block size {}",
+            entry.Name, entry.Offset, entry.Size, m_Block.size());
+
+        // Each element contributes its stride's leading bytes, so a float3[] takes xyz of every
+        // value; the whole table then goes up as the one range its bytes span.
+        const u32 elementBytes = std::min(entry.ElementStride, static_cast<u32>(sizeof(vec4)));
+        for (u32 i = 0; i < entry.ElementCount; ++i)
+        {
+            std::memcpy(m_Block.data() + entry.Offset + i * entry.ElementStride, &values[i],
+                        elementBytes);
+        }
+
+        UploadParams(entry.Offset, entry.Size);
+    }
+
+    void MaterialInstance::SetParamArray(const MaterialFieldHandle field,
+                                         const std::span<const f32> values)
+    {
+        const MaterialField& entry = ResolveParamField(field, "SetParamArray");
+        VE_ASSERT(values.size() == entry.ElementCount,
+                  "MaterialInstance::SetParamArray: field '{}' in instance '{}' holds {} elements "
+                  "but {} were given",
+                  entry.Name, m_Name, entry.ElementCount, values.size());
+        VE_ASSERT(entry.ElementStride == sizeof(f32),
+                  "MaterialInstance::SetParamArray: field '{}' in instance '{}' strides {} bytes, "
+                  "so its elements are not scalars",
+                  entry.Name, m_Name, entry.ElementStride);
+        VE_ASSERT(
+            entry.Offset + entry.Size <= m_Block.size(),
+            "MaterialInstance::SetParamArray: field '{}' offset {} + {} exceeds block size {}",
+            entry.Name, entry.Offset, entry.Size, m_Block.size());
+
+        std::memcpy(m_Block.data() + entry.Offset, values.data(), entry.Size);
+
+        UploadParams(entry.Offset, entry.Size);
     }
 
     void MaterialInstance::SetTextureHandle(std::string_view name, Renderer::TextureHandle handle)

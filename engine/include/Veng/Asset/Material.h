@@ -97,11 +97,25 @@ namespace Veng
         };
 
         /// @brief Field name; matched by SetTexture/SetParam.
+        ///
+        /// A member reached through a nested struct carries its dotted path (`Bands[1].Low`) —
+        /// the schema is flat, a nested struct being an authoring grouping with no runtime meaning.
         string Name;
         /// @brief Byte offset of the field within the parameter block.
         u32 Offset = 0;
-        /// @brief Size in bytes.
+        /// @brief Size in bytes of the whole field: ElementCount * ElementStride.
         u32 Size = 0;
+        /// @brief Number of array elements; 1 for a plain scalar or vector member.
+        ///
+        /// A material describing a table of N similar entries declares one array rather than N
+        /// numbered members, so the table is one field, one handle, and one ranged write.
+        u32 ElementCount = 1;
+        /// @brief Byte stride between array elements; equals Size for a non-array field.
+        ///
+        /// The tight stride the shader's Load<T> reads — a `float3[3]` strides by 12 bytes, not by
+        /// a std430-style 16 — so element i occupies [Offset + i * ElementStride, + ElementStride).
+        /// A caller assembling a field table may leave this zero: Material fills it from Size.
+        u32 ElementStride = 0;
         /// @brief Whether this field is a param or a bindless handle slot.
         FieldKind Kind{};
         /// @brief For handle fields, the AssetId of the texture whose bindless index is written here at Finalize(); 0 for Param fields.
@@ -170,8 +184,9 @@ namespace Veng
         vector<std::byte> Block;
         /// @brief Reflected field table describing the parameter block layout.
         ///
-        /// Each entry's PairedSampler is resolved by Material from the table's own names, so a
-        /// caller assembling this leaves it at its default.
+        /// Each entry's PairedSampler is resolved by Material from the table's own names, and a
+        /// zero ElementStride is filled in from Size, so a caller assembling this leaves both at
+        /// their defaults.
         vector<MaterialField> Fields;
         /// @brief Push-constant offset of the per-draw material selector, or NoSelectorPush.
         ///

@@ -130,10 +130,15 @@ extern "C"
 /// the material resolves once from its own schema. A module reads the field table through
 /// Material::GetFields and addresses a field by its index in it, so a stale module lays the struct
 /// out short and reads every field after the first at a shifted offset.
+/// Version 28 grows MaterialField again, with the element count and stride that let one field be an
+/// array of N scalars or vectors rather than N numbered members. A module reads the field table
+/// through Material::GetFields and writes a field through the setters that address an element by
+/// that stride, so a stale module lays the struct out short and reads the fields after Size at a
+/// shifted offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 27u
+#define VENG_MODULE_ABI_VERSION 28u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

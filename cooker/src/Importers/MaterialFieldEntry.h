@@ -23,7 +23,8 @@ namespace Veng::Cook
         string Name;
         /// @brief The canonical authoring type: one of texture, volume, sampler, storagebuffer,
         /// uint, float, vec2, vec3, vec4. An omitted type and the "param" spelling both resolve to
-        /// one of these.
+        /// one of these. For an array member it names the *element* type; the arity comes from
+        /// reflection, never from the entry.
         string Type;
         /// @brief The reflected member of the same name, or null when the struct declares no such
         /// member — which only the caller can judge, and only reachable for an entry that states

@@ -304,7 +304,7 @@ namespace Veng
     /// @brief The current material-format version.
     ///
     /// Bumped on any layout change; the loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedMaterialVersion = 10u;
+    inline constexpr u32 CookedMaterialVersion = 11u;
 
     /// @brief Cooked header for a material asset.
     ///
@@ -322,7 +322,9 @@ namespace Veng
     /// The field table is reflected from the shader at cook time and is self-describing: a field's
     /// Kind tells the loader whether the u32 at its offset is a bindless handle slot to patch
     /// (Kind 1/2) or an authored value to keep (Kind 0). The loader patches handle fields by offset;
-    /// Material::SetTexture/SetParam resolve a field by Name.
+    /// Material::SetTexture/SetParam resolve a field by Name. An array member is one entry whose
+    /// ElementCount exceeds 1; a nested struct's members appear as separate entries under their
+    /// dotted names (`Bands[1].Low`), the block being bytes at offsets either way.
     ///
     /// The engine asserts Version == CookedMaterialVersion (a stale blob is a loud reject) and
     /// BlockBytes <= the per-material param stride.
@@ -386,8 +388,15 @@ namespace Veng
         char Name[ShaderNameCapacity] = {};
         /// @brief Byte offset of the field within the parameter block.
         u32 Offset = 0;
-        /// @brief Byte size of the field.
+        /// @brief Byte size of the whole field: ElementCount * ElementStride.
         u32 Size = 0;
+        /// @brief Number of array elements; 1 for a plain scalar or vector member.
+        u32 ElementCount = 1;
+        /// @brief Byte stride between array elements; equals Size for a non-array field.
+        ///
+        /// The tight stride the shader's Load<T> reads — a `float3[3]` strides by 12 bytes, not by
+        /// a std430-style 16 — so a consumer addressing element i writes at Offset + i * this.
+        u32 ElementStride = 0;
         /// @brief Field kind: 0 = param value, 1 = sampled-image handle, 2 = sampler handle, 3 = storage-buffer handle, 4 = volume (3D sampled-image) handle.
         u32 Kind = 0;
         /// @brief The alignment gap before TextureId, named so it is written zero.

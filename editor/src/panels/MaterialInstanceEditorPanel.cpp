@@ -222,6 +222,13 @@ namespace VengEditor
                 continue;
             }
 
+            // An array field is written as a whole table and the instance cook rejects an override
+            // naming one, so offering a row for it would author a document that does not cook.
+            if (field.ElementCount > 1)
+            {
+                continue;
+            }
+
             OverrideSlot slot;
             slot.Name = field.Name;
 

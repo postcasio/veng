@@ -18,18 +18,30 @@
 namespace Veng::Cook
 {
     /// @brief One reflected field of a struct: name, byte offset/size within the struct,
-    /// component count (1 = scalar, 2/3/4 = vector), and scalar type (float vs. uint).
+    /// element count and stride, component count (1 = scalar, 2/3/4 = vector), and scalar type
+    /// (float vs. uint).
     struct ReflectedStructField
     {
         /// @brief Field name as declared in the Slang source.
+        ///
+        /// A member reached through a nested struct carries its dotted path, and an element of a
+        /// struct array carries its subscript: `Bands[1].Low`. A leaf array keeps its plain member
+        /// name and expresses its arity in ElementCount instead.
         string Name;
         /// @brief Byte offset of the field within its containing struct, in scalar/tight layout
         /// (the layout a shader's ByteAddressBuffer.Load<T> reads — 4-byte packed, vectors not
         /// 16-aligned).
         u32 Offset = 0;
-        /// @brief Byte size of the field: componentCount 4-byte components, no padding.
+        /// @brief Byte size of the whole field: ElementCount * ElementStride, no padding.
         u32 Size = 0;
-        /// @brief Component count: 1 for scalar, 2/3/4 for vector.
+        /// @brief Number of array elements; 1 for a plain scalar or vector member.
+        u32 ElementCount = 1;
+        /// @brief Byte stride between array elements: ComponentCount 4-byte components.
+        ///
+        /// The tight stride, which is what Load<T> reads — a `float3[3]` strides by 12, not by a
+        /// std430-style 16. Equals Size for a non-array member.
+        u32 ElementStride = 0;
+        /// @brief Component count of one element: 1 for scalar, 2/3/4 for vector.
         u32 ComponentCount = 1;
         /// @brief True if the scalar type is float; false if uint.
         bool IsFloat = true;
@@ -41,11 +53,15 @@ namespace Veng::Cook
         /// @brief Total byte size of the struct in scalar/tight layout — the sum of the fields'
         /// component spans, matching the byte extent a ByteAddressBuffer.Load<T> reads.
         u32 Size = 0;
-        /// @brief Fields in declaration order.
+        /// @brief Fields in declaration order, nested structs flattened into it.
         vector<ReflectedStructField> Fields;
     };
 
     /// @brief Compiles `slangSource` and reflects the named struct's field layout.
+    ///
+    /// A member that is an array of a scalar or vector is one field carrying its element count and
+    /// stride. A nested struct is flattened into dotted leaves, and a struct array is flattened per
+    /// element, so the returned list holds only scalar/vector leaves and leaf arrays.
     ///
     /// Returns a located error ("material importer: ...") on compile failure, a
     /// missing struct (unless `optional` is true), or an unsupported field type.

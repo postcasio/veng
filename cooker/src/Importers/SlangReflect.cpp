@@ -27,13 +27,12 @@ namespace Veng::Cook
                           diagnostics->getBufferSize());
         }
 
-        // Maps a reflected field's scalar/vector type to (componentCount, isFloat).
+        // Maps a reflected leaf's scalar/vector type to (componentCount, isFloat).
         // Only float/floatN and uint/uintN are supported — a material's params are
         // floats and its texture/sampler handles are uints.
-        Result<ReflectedStructField> ReflectField(slang::VariableLayoutReflection* field,
-                                                  std::string_view structName)
+        Result<ReflectedStructField> ReflectLeaf(slang::TypeReflection* type, std::string_view name,
+                                                 std::string_view structName)
         {
-            slang::TypeReflection* type = field->getType();
             const slang::TypeReflection::ScalarType scalar = type->getScalarType();
 
             const bool isFloat = scalar == slang::TypeReflection::ScalarType::Float32;
@@ -43,7 +42,7 @@ namespace Veng::Cook
                 return std::unexpected(fmt::format(
                     "material importer: struct '{}': field '{}' has an unsupported scalar type "
                     "(only float/floatN and uint/uintN are supported)",
-                    structName, field->getName()));
+                    structName, name));
             }
 
             u32 componentCount = 1;
@@ -56,18 +55,104 @@ namespace Veng::Cook
             {
                 return std::unexpected(fmt::format(
                     "material importer: struct '{}': field '{}' is not a scalar or vector",
-                    structName, field->getName()));
+                    structName, name));
             }
 
             ReflectedStructField result;
-            result.Name = field->getName();
+            result.Name = string(name);
             // Offset is assigned by the caller from a running cursor (scalar/tight layout, below).
-            // Size is the component span: every reflectable member is a float/uint scalar or a
-            // 2/3/4 vector, so its width is componentCount 4-byte components with no padding.
-            result.Size = componentCount * 4;
+            // The element span is componentCount 4-byte components with no padding, and a plain
+            // member is one element of it.
+            result.ElementCount = 1;
+            result.ElementStride = componentCount * 4;
+            result.Size = result.ElementStride;
             result.ComponentCount = componentCount;
             result.IsFloat = isFloat;
             return result;
+        }
+
+        // Walks one member of the block struct onto the running tight cursor, appending the leaves
+        // it resolves to. A scalar or vector is one leaf; an array of one is a single leaf carrying
+        // its element count and tight stride; a struct — and every element of a struct array —
+        // flattens into dotted leaves, because the block is bytes at offsets and a nested struct is
+        // a grouping convenience with no runtime meaning.
+        VoidResult FlattenMember(slang::TypeLayoutReflection* typeLayout, string name,
+                                 std::string_view structName, u32& cursor,
+                                 vector<ReflectedStructField>& out)
+        {
+            const slang::TypeReflection::Kind kind = typeLayout->getKind();
+
+            if (kind == slang::TypeReflection::Kind::Struct)
+            {
+                for (unsigned i = 0; i < typeLayout->getFieldCount(); ++i)
+                {
+                    slang::VariableLayoutReflection* member = typeLayout->getFieldByIndex(i);
+                    const char* memberName = member->getName();
+                    const VoidResult nested =
+                        FlattenMember(member->getTypeLayout(),
+                                      fmt::format("{}.{}", name, memberName ? memberName : "?"),
+                                      structName, cursor, out);
+                    if (!nested)
+                    {
+                        return nested;
+                    }
+                }
+                return {};
+            }
+
+            if (kind == slang::TypeReflection::Kind::Array)
+            {
+                slang::TypeLayoutReflection* element = typeLayout->getElementTypeLayout();
+                const usize count = typeLayout->getElementCount();
+                if (element == nullptr || count == 0)
+                {
+                    return std::unexpected(fmt::format(
+                        "material importer: struct '{}': field '{}' is an unbounded array; the "
+                        "block schema needs a cook-time element count",
+                        structName, name));
+                }
+
+                // An array whose element is itself a struct or an array has no single leaf to carry
+                // a count, so it expands per element.
+                if (element->getKind() == slang::TypeReflection::Kind::Struct ||
+                    element->getKind() == slang::TypeReflection::Kind::Array)
+                {
+                    for (usize i = 0; i < count; ++i)
+                    {
+                        const VoidResult nested = FlattenMember(
+                            element, fmt::format("{}[{}]", name, i), structName, cursor, out);
+                        if (!nested)
+                        {
+                            return nested;
+                        }
+                    }
+                    return {};
+                }
+
+                Result<ReflectedStructField> leaf =
+                    ReflectLeaf(element->getType(), name, structName);
+                if (!leaf)
+                {
+                    return std::unexpected(leaf.error());
+                }
+                leaf->ElementCount = static_cast<u32>(count);
+                leaf->Size = leaf->ElementStride * leaf->ElementCount;
+                leaf->Offset = cursor;
+                cursor += leaf->Size;
+                out.push_back(std::move(*leaf));
+                return {};
+            }
+
+            Result<ReflectedStructField> leaf =
+                ReflectLeaf(typeLayout->getType(), name, structName);
+            if (!leaf)
+            {
+                return std::unexpected(leaf.error());
+            }
+            leaf->Offset = cursor;
+            cursor += leaf->Size;
+            out.push_back(std::move(*leaf));
+            return {};
         }
 
         // Reflects one varying-output variable's scalar/vector type into a
@@ -321,21 +406,23 @@ namespace Veng::Cook
         // scalar reads. Every reflectable member is a 4-byte-component scalar or vector, so the tight
         // layout never inserts padding and the struct size is the cursor's final value.
         // tests/gpu/material_block_layout.cpp is the end-to-end evidence: it renders a block whose
-        // vectors sit at offsets 4 and 36 and reads every member back through the shader.
+        // vectors sit at offsets 4 and 36 and reads every member back through the shader. The same
+        // fixture pins the array strides, which are a distinct question from member packing: Slang
+        // strides a `float3[3]` by 12 bytes, not by a std430-style 16.
         ReflectedStruct result;
         result.Fields.reserve(typeLayout->getFieldCount());
         u32 cursor = 0;
         for (unsigned i = 0; i < typeLayout->getFieldCount(); ++i)
         {
-            Result<ReflectedStructField> field =
-                ReflectField(typeLayout->getFieldByIndex(i), structName);
-            if (!field)
+            slang::VariableLayoutReflection* member = typeLayout->getFieldByIndex(i);
+            const char* memberName = member->getName();
+            const VoidResult flattened =
+                FlattenMember(member->getTypeLayout(), memberName ? memberName : "?", structName,
+                              cursor, result.Fields);
+            if (!flattened)
             {
-                return std::unexpected(field.error());
+                return std::unexpected(flattened.error());
             }
-            field->Offset = cursor;
-            cursor += field->Size;
-            result.Fields.push_back(*field);
         }
         result.Size = cursor;
 

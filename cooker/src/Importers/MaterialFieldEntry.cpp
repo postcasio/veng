@@ -12,9 +12,10 @@ namespace Veng::Cook
         // The float param spellings, indexed by component count.
         constexpr std::array<const char*, 5> FloatTypeNames = {"", "float", "vec2", "vec3", "vec4"};
 
-        // The authoring spelling of a reflected member, so a mismatch error names what the shader
-        // actually declares. A uint vector has no spelling — the schema holds scalar uints only.
-        string ReflectedTypeName(const ReflectedStructField& reflected)
+        // The authoring spelling of a reflected member's element, so a mismatch error names what
+        // the shader actually declares. A uint vector has no spelling — the schema holds scalar
+        // uints only.
+        string ReflectedElementTypeName(const ReflectedStructField& reflected)
         {
             if (reflected.ComponentCount < 1 || reflected.ComponentCount > 4)
             {
@@ -30,6 +31,17 @@ namespace Veng::Cook
                 return "uint";
             }
             return fmt::format("uint{}", reflected.ComponentCount);
+        }
+
+        // The element spelling with the member's arity, so an error over an array says so.
+        string ReflectedTypeName(const ReflectedStructField& reflected)
+        {
+            const string element = ReflectedElementTypeName(reflected);
+            if (reflected.ElementCount > 1)
+            {
+                return fmt::format("{}[{}]", element, reflected.ElementCount);
+            }
+            return element;
         }
     }
 
@@ -99,6 +111,18 @@ namespace Veng::Cook
         entry.Reflected = &reflected;
 
         const bool scalarUint = !reflected.IsFloat && reflected.ComponentCount == 1;
+
+        // A handle kind names a bindless slot the loader patches from a single cooked id, and an
+        // array of handles wants an array-of-handles idiom with a resident asset per element —
+        // its own design, not this schema's.
+        if (reflected.ElementCount > 1 && (entry.Type == "texture" || entry.Type == "sampler" ||
+                                           entry.Type == "volume" || entry.Type == "storagebuffer"))
+        {
+            return std::unexpected(fmt::format(
+                "{}: field '{}' is declared '{}' but reflects as an array of {} elements; a "
+                "bindless handle is a single slot, so an array of handles is not expressible",
+                errorPrefix, entry.Name, entry.Type, reflected.ElementCount));
+        }
 
         if (!typeStated || entry.Type == "param")
         {

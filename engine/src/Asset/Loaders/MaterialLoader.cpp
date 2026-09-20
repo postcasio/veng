@@ -435,6 +435,20 @@ namespace Veng
                                             BridgeName(cf.Name), cf.Kind)));
             }
 
+            // A field's arity must describe its own byte span. The setters address element i at
+            // Offset + i * ElementStride and bound the write by Size, so a blob whose product
+            // disagrees, or whose span leaves the block, would write outside the field it names.
+            if (cf.ElementCount == 0 || cf.ElementStride == 0 ||
+                static_cast<u64>(cf.ElementCount) * cf.ElementStride != cf.Size ||
+                static_cast<u64>(cf.Offset) + cf.Size > header.BlockBytes)
+            {
+                return std::unexpected(Corrupt(
+                    id, fmt::format("material: field {} '{}' spans {} bytes as {} x {} at offset "
+                                    "{}, which does not fit a block of {}",
+                                    i, BridgeName(cf.Name), cf.Size, cf.ElementCount,
+                                    cf.ElementStride, cf.Offset, header.BlockBytes)));
+            }
+
             // Storage-buffer and volume handles are always runtime-bound (no cooked asset) — they
             // resolve like a runtime-bound texture handle: a uint slot the game writes per frame
             // via SetStorageBufferHandle / SetVolumeHandle, with no dependency to load.
@@ -463,6 +477,8 @@ namespace Veng
                         .Name = BridgeName(cf.Name),
                         .Offset = cf.Offset,
                         .Size = cf.Size,
+                        .ElementCount = cf.ElementCount,
+                        .ElementStride = cf.ElementStride,
                         .Kind = kind,
                         .TextureId = 0,
                     });
@@ -519,6 +535,8 @@ namespace Veng
                 .Name = BridgeName(cf.Name),
                 .Offset = cf.Offset,
                 .Size = cf.Size,
+                .ElementCount = cf.ElementCount,
+                .ElementStride = cf.ElementStride,
                 .Kind = kind,
                 .TextureId = isHandle ? cf.TextureId : 0,
             });

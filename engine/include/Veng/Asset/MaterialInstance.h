@@ -163,10 +163,50 @@ namespace Veng
         /// @brief Sets a vec4 parameter by resolved handle, rewriting the SSBO entry in place.
         ///
         /// Writes the field's reflected Size bytes, so a vec2 or vec3 field takes the leading
-        /// components and nothing spills into the block that follows.
+        /// components and nothing spills into the block that follows. An array field is a fatal
+        /// here — it is written a whole table at a time by SetParamArray, or an element at a time
+        /// by the indexed overload.
         /// @param field Handle of the Param field to write.
         /// @param value The value to write.
         void SetParam(MaterialFieldHandle field, const vec4& value);
+
+        /// @brief Sets one element of a vector-array parameter by resolved handle.
+        ///
+        /// Writes the field's ElementStride bytes at `Offset + index * ElementStride`, so a
+        /// `float3[]` element takes the leading three components and its neighbours are untouched.
+        /// An index at or past the field's ElementCount is a fatal rather than a write into the
+        /// element after it.
+        /// @param field Handle of the Param field to write.
+        /// @param index Element to write, below the field's ElementCount.
+        /// @param value The value to write.
+        void SetParam(MaterialFieldHandle field, u32 index, const vec4& value);
+
+        /// @brief Sets one element of a scalar-array parameter by resolved handle.
+        ///
+        /// The scalar form of the indexed setter, with the same bounds rule.
+        /// @param field Handle of the Param field to write.
+        /// @param index Element to write, below the field's ElementCount.
+        /// @param value The value to write.
+        void SetParam(MaterialFieldHandle field, u32 index, f32 value);
+
+        /// @brief Writes a whole vector-array parameter in one ranged write.
+        ///
+        /// The array is one logical parameter, so a table of N entries costs one write of its
+        /// N * ElementStride bytes rather than N writes. Each value contributes the field's
+        /// ElementStride leading bytes, so a `float3[]` takes xyz of every vec4. A span whose
+        /// length is not the field's ElementCount is a fatal rather than a partial write — a table
+        /// filled short is the mistake this catches.
+        /// @param field  Handle of the Param field to write.
+        /// @param values Exactly ElementCount values, in element order.
+        void SetParamArray(MaterialFieldHandle field, std::span<const vec4> values);
+
+        /// @brief Writes a whole scalar-array parameter in one ranged write.
+        ///
+        /// The scalar form of the whole-array write, with the same length rule. The field's
+        /// elements must be scalars.
+        /// @param field  Handle of the Param field to write.
+        /// @param values Exactly ElementCount values, in element order.
+        void SetParamArray(MaterialFieldHandle field, std::span<const f32> values);
 
         /// @brief Sets a scalar float parameter by field name.
         ///
@@ -175,7 +215,8 @@ namespace Veng
 
         /// @brief Sets a scalar float parameter by resolved handle.
         ///
-        /// Writes only the field's reflected Size bytes, never smearing a vec4 over adjacent fields.
+        /// Writes only the field's reflected Size bytes, never smearing a vec4 over adjacent
+        /// fields. An array field is a fatal here, as for the vec4 overload.
         /// @param field Handle of the Param field to write.
         /// @param value The value to write.
         void SetParam(MaterialFieldHandle field, f32 value);
@@ -366,6 +407,9 @@ namespace Veng
 
         [[nodiscard]] const MaterialField& ResolveField(MaterialFieldHandle field,
                                                         std::string_view caller) const;
+        /// @brief Resolves a handle that must name a Param field.
+        [[nodiscard]] const MaterialField& ResolveParamField(MaterialFieldHandle field,
+                                                             std::string_view caller) const;
         [[nodiscard]] MaterialFieldHandle RequireField(std::string_view name,
                                                        std::string_view caller) const;
         /// @brief Uploads the whole cached block and bumps the revision.

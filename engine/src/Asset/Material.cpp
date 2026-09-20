@@ -29,6 +29,20 @@ namespace Veng
         // Unfinalized at construction: the default block's handle slots are patched and the
         // pipeline is stored in Finalize().
 
+        // Normalize the arity a caller may have left at its default, so every setter can address
+        // element i at Offset + i * ElementStride without a special case for a plain member.
+        for (MaterialField& field : m_Fields)
+        {
+            if (field.ElementCount == 0)
+            {
+                field.ElementCount = 1;
+            }
+            if (field.ElementStride == 0)
+            {
+                field.ElementStride = field.Size;
+            }
+        }
+
         // Resolve each TextureHandle field's paired `<name>Sampler`, so binding a texture patches
         // both slots without composing the sampler's name and scanning the table for it. The table
         // is complete here, which the loader's single pass over the cooked fields is not.

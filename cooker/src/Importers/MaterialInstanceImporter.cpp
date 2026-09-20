@@ -306,6 +306,17 @@ namespace Veng::Cook
                 }
                 const ExposedField& field = exposedIt->second;
 
+                // An override is one value at the parent field's offset, and the arity check
+                // below derives from the field's components alone. An array is written as a whole
+                // table through SetParamArray, so it is not an instance-override surface.
+                if (field.Layout.ElementCount > 1)
+                {
+                    return std::unexpected(fmt::format(
+                        "material instance importer: '{}': override '{}' names an array of {} "
+                        "elements in parent material {}; an array field is not overridable",
+                        label, name, field.Layout.ElementCount, parentId));
+                }
+
                 CookedMaterialInstanceOverride co{};
                 SetName(co.Name, name);
 
