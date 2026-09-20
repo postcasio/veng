@@ -650,7 +650,7 @@ namespace Veng::Renderer
         /// so a single ByteAddressBuffer can hold a different per-material block layout
         /// per shader, read at index * MaterialParamStride. A block exceeding this is a
         /// cook-time error, so the figure is what bounds how much a single material may
-        /// describe — sixty-four float4s. That bound is the whole reason the number is
+        /// describe — eighty float4s. That bound is the whole reason the number is
         /// generous: a block sitting within one aligned float4 of the ceiling turns every
         /// added field into a packing exercise, which is exactly what a shared stride
         /// exists to spare an author, and it is the largest material classes — the ones
