@@ -261,7 +261,6 @@ namespace VengGraph
                 EmittedParamField emitted{.Name = field,
                                           .SlangType = "float",
                                           .Kind = EmittedFieldKind::Param,
-                                          .Alignment = 4,
                                           .ComponentCount = 1,
                                           .IsUint = false};
                 if (p.Provenance == ParamProvenance::Exposed)

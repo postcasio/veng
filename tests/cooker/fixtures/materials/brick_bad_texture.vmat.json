@@ -16,7 +16,6 @@
     },
     {
       "name": "Factors",
-      "type": "vec4",
       "value": [
         1.0,
         0.9,

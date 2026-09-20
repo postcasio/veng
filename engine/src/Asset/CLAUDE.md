@@ -400,8 +400,10 @@ serializable `ShaderInterface`; the engine loads plain **SPIR-V** and gains no S
 Shaders are Slang only; there is no GLSL path.
 
 A material (`*.vmat.json`) references its vertex/fragment shaders by `AssetId` and declares an
-**ordered, explicitly-typed** field list; the cook validates those fields against the fragment
-shader's reflected parameters.
+**ordered field list naming every `MaterialParams` member**, each entry stating only what the cook
+cannot reflect — a bare member-name string is a float member at its zero default, and a scalar-uint
+member states its `"type"` so a handle is not cooked as a param. The cook validates those entries
+against the fragment shader's reflected parameters.
 
 **A material is split into a parent and an instance — the standard cross-engine division.** A
 **`Material`** (`AssetTypes::Material`) is the **parent**: it owns the expensive half — the

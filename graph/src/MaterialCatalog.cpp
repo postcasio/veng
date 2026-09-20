@@ -310,14 +310,12 @@ namespace VengGraph
             ctx.ParamFields.push_back(EmittedParamField{.Name = textureField,
                                                         .SlangType = "uint",
                                                         .Kind = EmittedFieldKind::TextureHandle,
-                                                        .Alignment = 4,
                                                         .ComponentCount = 1,
                                                         .IsUint = true,
                                                         .TextureId = textureId});
             ctx.ParamFields.push_back(EmittedParamField{.Name = samplerField,
                                                         .SlangType = "uint",
                                                         .Kind = EmittedFieldKind::SamplerHandle,
-                                                        .Alignment = 4,
                                                         .ComponentCount = 1,
                                                         .IsUint = true,
                                                         .SamplerTexture = textureField});
@@ -361,14 +359,12 @@ namespace VengGraph
             ctx.ParamFields.push_back(EmittedParamField{.Name = volumeField,
                                                         .SlangType = "uint",
                                                         .Kind = EmittedFieldKind::VolumeHandle,
-                                                        .Alignment = 4,
                                                         .ComponentCount = 1,
                                                         .IsUint = true,
                                                         .TextureId = textureId});
             ctx.ParamFields.push_back(EmittedParamField{.Name = samplerField,
                                                         .SlangType = "uint",
                                                         .Kind = EmittedFieldKind::SamplerHandle,
-                                                        .Alignment = 4,
                                                         .ComponentCount = 1,
                                                         .IsUint = true,
                                                         .SamplerTexture = volumeField});
@@ -410,7 +406,6 @@ namespace VengGraph
             EmittedParamField emitted{.Name = field,
                                       .SlangType = "float4",
                                       .Kind = EmittedFieldKind::Param,
-                                      .Alignment = 16,
                                       .ComponentCount = 4,
                                       .IsUint = false};
             if (p.Provenance == ParamProvenance::Exposed)

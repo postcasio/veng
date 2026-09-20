@@ -390,6 +390,12 @@ namespace Veng
         u32 Size = 0;
         /// @brief Field kind: 0 = param value, 1 = sampled-image handle, 2 = sampler handle, 3 = storage-buffer handle, 4 = volume (3D sampled-image) handle.
         u32 Kind = 0;
+        /// @brief The alignment gap before TextureId, named so it is written zero.
+        ///
+        /// Aggregate initialization leaves an unnamed padding gap indeterminate, and the cook
+        /// memcpys whole entries into the blob — so an unnamed gap would put uninitialized bytes
+        /// on disk and make a cooked blob's bytes, and its content hash, irreproducible.
+        u32 Padding = 0;
         /// @brief AssetId for Kinds 1/2 (resolved to a bindless handle at load time); 0 for params, storage-buffer, and volume handles.
         u64 TextureId = 0;
     };
@@ -426,6 +432,12 @@ namespace Veng
         u32 OverrideCount = 0;
         /// @brief Byte size of the trailing override value region.
         u32 ValueRegionBytes = 0;
+        /// @brief The trailing alignment gap, named so it is written zero.
+        ///
+        /// Aggregate initialization leaves an unnamed padding gap indeterminate, and the cook
+        /// memcpys the whole header into the blob — so an unnamed gap would put uninitialized
+        /// bytes on disk and make a cooked blob's bytes, and its content hash, irreproducible.
+        u32 Padding = 0;
     };
 
     /// @brief One field override in a cooked material instance, matched against a parent field by name.
@@ -444,6 +456,12 @@ namespace Veng
         u32 ValueOffset = 0;
         /// @brief Byte size of this override's value in the value region; 0 for a texture override.
         u32 ValueSize = 0;
+        /// @brief The alignment gap before TextureId, named so it is written zero.
+        ///
+        /// Aggregate initialization leaves an unnamed padding gap indeterminate, and the cook
+        /// memcpys whole entries into the blob — so an unnamed gap would put uninitialized bytes
+        /// on disk and make a cooked blob's bytes, and its content hash, irreproducible.
+        u32 Padding = 0;
         /// @brief Override texture's AssetId (texture overrides only); 0 for a param override.
         u64 TextureId = 0;
     };

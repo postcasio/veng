@@ -6,7 +6,6 @@
   "fields": [
     {
       "name": "Factors",
-      "type": "vec4",
       "value": [
         1.0,
         0.5,
@@ -16,7 +15,6 @@
     },
     {
       "name": "Strength",
-      "type": "float",
       "value": 2.0
     }
   ]

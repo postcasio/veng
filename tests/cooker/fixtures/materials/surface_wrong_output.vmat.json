@@ -17,7 +17,6 @@
     },
     {
       "name": "Exposure",
-      "type": "float",
       "value": 1.0
     }
   ]

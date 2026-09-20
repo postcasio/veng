@@ -8,8 +8,12 @@
   "fields": [
     {
       "name": "Tint",
-      "type": "vec4",
-      "value": [0.31, 0.64, 1.0, 1.0]
+      "value": [
+        0.31,
+        0.64,
+        1.0,
+        1.0
+      ]
     },
     {
       "name": "Image",
@@ -22,7 +26,6 @@
     },
     {
       "name": "Speed",
-      "type": "float",
       "value": 2.0
     }
   ]

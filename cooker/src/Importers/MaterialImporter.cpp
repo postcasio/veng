@@ -15,6 +15,7 @@
 #include <Veng/Reflection/EnumName.h>
 
 #include "GraphShaderSource.h"
+#include "MaterialFieldEntry.h"
 #include "SlangReflect.h"
 #include "SlangSession.h"
 
@@ -482,7 +483,20 @@ namespace Veng::Cook
                             blockReflected->Size, MaterialParamStride));
         }
 
-        // --- 4. Parse vmat["fields"] into an ordered declared-field list ---
+        // --- 4. Build the zero-initialized block image and the reflected lookup ---
+
+        vector<u8> block(blockReflected->Size, 0);
+
+        // name → reflected field, in the one block. Every declared field (handle or param)
+        // validates against the single combined struct, and an entry that states no type takes its
+        // type from here.
+        std::map<string, const ReflectedStructField*> blockByName;
+        for (const ReflectedStructField& f : blockReflected->Fields)
+        {
+            blockByName[f.Name] = &f;
+        }
+
+        // --- 5. Parse vmat["fields"] into an ordered declared-field list ---
 
         if (!vmat.contains("fields") || !vmat["fields"].is_array())
         {
@@ -492,11 +506,12 @@ namespace Veng::Cook
         struct DeclaredField
         {
             string Name;
-            string Type;
+            string Type; // canonical, resolved against the reflected member
+            const ReflectedStructField* Reflected = nullptr;
             // texture / sampler
             u64 TextureAssetId = 0;    // texture: the asset id
             string SamplerTextureName; // sampler: the name of the referenced texture field
-            // float / vecN / uint
+            // float / vecN / uint — an empty FloatValues leaves the member at the block's zero
             vector<f32> FloatValues;
             u32 UintValue = 0;
         };
@@ -505,22 +520,25 @@ namespace Veng::Cook
         // name → index in declaredFields, for duplicate detection and sampler lookup
         std::map<string, usize> declaredByName;
 
-        const json& fieldsJson = vmat["fields"];
-
-        for (const json& fieldJson : fieldsJson)
+        for (const json& fieldJson : vmat["fields"])
         {
-            if (!fieldJson.contains("name") || !fieldJson["name"].is_string())
+            const Result<MaterialFieldEntry> resolved =
+                ResolveMaterialFieldEntry(fieldJson, blockByName, "material importer");
+            if (!resolved)
             {
-                return std::unexpected("material importer: field entry missing or invalid 'name'");
+                return std::unexpected(resolved.error());
             }
-            if (!fieldJson.contains("type") || !fieldJson["type"].is_string())
+            if (resolved->Reflected == nullptr)
             {
-                return std::unexpected("material importer: field entry missing or invalid 'type'");
+                return std::unexpected(fmt::format(
+                    "material importer: field '{}' does not match any field in MaterialParams",
+                    resolved->Name));
             }
 
             DeclaredField decl;
-            decl.Name = fieldJson["name"].get<string>();
-            decl.Type = fieldJson["type"].get<string>();
+            decl.Name = resolved->Name;
+            decl.Type = resolved->Type;
+            decl.Reflected = resolved->Reflected;
 
             if (declaredByName.count(decl.Name))
             {
@@ -528,14 +546,11 @@ namespace Veng::Cook
                     fmt::format("material importer: duplicate declared field '{}'", decl.Name));
             }
 
-            const vector<string> AllowedTypes = {"texture", "volume", "sampler",
-                                                 "float",   "vec2",   "vec3",
-                                                 "vec4",    "uint",   "storagebuffer"};
-            if (std::ranges::find(AllowedTypes, decl.Type) == AllowedTypes.end())
-            {
-                return std::unexpected(fmt::format(
-                    "material importer: field '{}' has unknown type '{}'", decl.Name, decl.Type));
-            }
+            // A bare-string entry states the member's name and nothing else; the object form's
+            // remaining keys are read here.
+            const json* body = fieldJson.is_object() ? &fieldJson : nullptr;
+            const json* value =
+                (body != nullptr && body->contains("value")) ? &(*body)["value"] : nullptr;
 
             if (decl.Type == "texture")
             {
@@ -543,101 +558,101 @@ namespace Veng::Cook
                 // writes its bindless index per frame (the PostProcess input
                 // handle). TextureAssetId stays 0, so the cook emits a handle
                 // field with no resolved id and the loader patches no asset.
-                if (fieldJson.contains("id"))
+                if (body != nullptr && body->contains("id"))
                 {
-                    if (!fieldJson["id"].is_string())
+                    if (!(*body)["id"].is_string())
                     {
                         return std::unexpected(fmt::format("material importer: texture field '{}' "
                                                            "'id' must be a hex id string",
                                                            decl.Name));
                     }
-                    const optional<AssetId> parsed = ParseAssetId(fieldJson["id"].get<string>());
+                    const optional<AssetId> parsed = ParseAssetId((*body)["id"].get<string>());
                     if (!parsed)
                     {
                         return std::unexpected(fmt::format("material importer: texture field '{}' "
                                                            "'id' is a malformed hex id '{}'",
-                                                           decl.Name,
-                                                           fieldJson["id"].get<string>()));
+                                                           decl.Name, (*body)["id"].get<string>()));
                     }
                     decl.TextureAssetId = parsed->Value;
                 }
             }
             else if (decl.Type == "sampler")
             {
-                if (!fieldJson.contains("texture") || !fieldJson["texture"].is_string())
+                if (body == nullptr || !body->contains("texture") ||
+                    !(*body)["texture"].is_string())
                 {
                     return std::unexpected(fmt::format(
                         "material importer: sampler field '{}' must have a 'texture' name",
                         decl.Name));
                 }
-                decl.SamplerTextureName = fieldJson["texture"].get<string>();
+                decl.SamplerTextureName = (*body)["texture"].get<string>();
             }
             else if (decl.Type == "uint")
             {
-                if (!fieldJson.contains("value") || !fieldJson["value"].is_number_unsigned())
+                if (value != nullptr)
                 {
-                    return std::unexpected(fmt::format(
-                        "material importer: uint field '{}' must have an unsigned integer 'value'",
-                        decl.Name));
+                    if (!value->is_number_unsigned())
+                    {
+                        return std::unexpected(
+                            fmt::format("material importer: uint field '{}' 'value' must be an "
+                                        "unsigned integer",
+                                        decl.Name));
+                    }
+                    decl.UintValue = value->get<u32>();
                 }
-                decl.UintValue = fieldJson["value"].get<u32>();
             }
-            else if (decl.Type == "storagebuffer")
+            else if (decl.Type == "storagebuffer" || decl.Type == "volume")
             {
-                // A storage-buffer field is always runtime-bound: the game registers a buffer
-                // and writes its bindless index per frame via SetStorageBufferHandle. It carries
-                // no cooked default, so nothing more is parsed here.
-            }
-            else if (decl.Type == "volume")
-            {
-                // A volume field is always runtime-bound: the game builds a 3D texture, registers
-                // it, and writes its bindless index per frame via SetVolumeHandle. No cooked
-                // default (there is no cooked 3D-texture asset), so nothing more is parsed here.
+                // Always runtime-bound: the consumer registers the buffer (or the 3D texture,
+                // which has no cooked asset) and writes its bindless index per frame. Neither
+                // carries a cooked default, so nothing more is parsed here.
             }
             else
             {
-                // float / vec2 / vec3 / vec4
-                const u32 expectedArity = decl.Type == "float"  ? 1u
-                                          : decl.Type == "vec2" ? 2u
-                                          : decl.Type == "vec3" ? 3u
-                                                                : 4u;
-
-                if (!fieldJson.contains("value"))
+                // float / vec2 / vec3 / vec4. 'value' is optional: an absent one leaves the member
+                // at the block image's zero, which is the default the array would have spelled
+                // out. Arity and value form both come from reflection, the single source of truth
+                // for the member's type.
+                const u32 components = decl.Reflected->ComponentCount;
+                if (value != nullptr)
                 {
-                    return std::unexpected(fmt::format(
-                        "material importer: field '{}' of type '{}' must have a 'value'", decl.Name,
-                        decl.Type));
-                }
-
-                const json& val = fieldJson["value"];
-                if (expectedArity == 1)
-                {
-                    if (!val.is_number())
+                    if (components == 1)
                     {
-                        return std::unexpected(fmt::format(
-                            "material importer: float field '{}' 'value' must be a number",
-                            decl.Name));
+                        if (!value->is_number())
+                        {
+                            return std::unexpected(fmt::format(
+                                "material importer: float field '{}' 'value' must be a number",
+                                decl.Name));
+                        }
+                        decl.FloatValues.push_back(value->get<f32>());
                     }
-                    decl.FloatValues.push_back(val.get<f32>());
-                }
-                else
-                {
-                    if (!val.is_array() || val.size() != expectedArity)
+                    else
                     {
-                        return std::unexpected(fmt::format("material importer: {} field '{}' "
-                                                           "'value' must be an array of {} numbers",
-                                                           decl.Type, decl.Name, expectedArity));
-                    }
-                    for (const json& elem : val)
-                    {
-                        if (!elem.is_number())
+                        if (!value->is_array())
                         {
                             return std::unexpected(
-                                fmt::format("material importer: {} field '{}' 'value' array "
-                                            "contains a non-number element",
-                                            decl.Type, decl.Name));
+                                fmt::format("material importer: {} field '{}' 'value' must be an "
+                                            "array of {} numbers",
+                                            decl.Type, decl.Name, components));
                         }
-                        decl.FloatValues.push_back(elem.get<f32>());
+                        if (value->size() != components)
+                        {
+                            return std::unexpected(
+                                fmt::format("material importer: field '{}' 'value' has {} elements "
+                                            "but the shader reflects {} components",
+                                            decl.Name, value->size(), components));
+                        }
+                        for (const json& elem : *value)
+                        {
+                            if (!elem.is_number())
+                            {
+                                return std::unexpected(
+                                    fmt::format("material importer: {} field '{}' 'value' array "
+                                                "contains a non-number element",
+                                                decl.Type, decl.Name));
+                            }
+                            decl.FloatValues.push_back(elem.get<f32>());
+                        }
                     }
                 }
             }
@@ -645,18 +660,6 @@ namespace Veng::Cook
             const usize idx = declaredFields.size();
             declaredFields.push_back(std::move(decl));
             declaredByName[declaredFields[idx].Name] = idx;
-        }
-
-        // --- 5. Build the zero-initialized block image and reflected lookup ---
-
-        vector<u8> block(blockReflected->Size, 0);
-
-        // name → reflected field, in the one block. Every declared field (handle
-        // or param) validates against the single combined struct.
-        std::map<string, const ReflectedStructField*> blockByName;
-        for (const ReflectedStructField& f : blockReflected->Fields)
-        {
-            blockByName[f.Name] = &f;
         }
 
         // Every member of MaterialParams is declared by the material. This is the direction the walk
@@ -688,7 +691,7 @@ namespace Veng::Cook
             {
                 return std::unexpected(fmt::format(
                     "material importer: MaterialParams members with no entry in the material's "
-                    "\"fields\": {}",
+                    "\"fields\" (the member's name alone is an entry): {}",
                     undeclared));
             }
         }
@@ -711,23 +714,7 @@ namespace Veng::Cook
                 decl.Type == "storagebuffer")
             {
                 // Handle fields are uint members of the one block.
-                auto it = blockByName.find(decl.Name);
-                if (it == blockByName.end())
-                {
-                    return std::unexpected(fmt::format(
-                        "material importer: field '{}' does not match any field in MaterialParams",
-                        decl.Name));
-                }
-                const ReflectedStructField& reflField = *it->second;
-
-                if (reflField.IsFloat || reflField.ComponentCount != 1)
-                {
-                    return std::unexpected(fmt::format(
-                        "material importer: {} field '{}' maps to a reflected field that is "
-                        "not a scalar uint (IsFloat={}, ComponentCount={})",
-                        decl.Type, decl.Name, reflField.IsFloat ? "true" : "false",
-                        reflField.ComponentCount));
-                }
+                const ReflectedStructField& reflField = *decl.Reflected;
 
                 cookedField.Offset = reflField.Offset;
                 cookedField.Size = reflField.Size;
@@ -799,14 +786,7 @@ namespace Veng::Cook
             else
             {
                 // Param fields (uint / float / vecN) are members of the one block.
-                auto it = blockByName.find(decl.Name);
-                if (it == blockByName.end())
-                {
-                    return std::unexpected(fmt::format(
-                        "material importer: field '{}' does not match any field in MaterialParams",
-                        decl.Name));
-                }
-                const ReflectedStructField& reflField = *it->second;
+                const ReflectedStructField& reflField = *decl.Reflected;
 
                 cookedField.Offset = reflField.Offset;
                 cookedField.Size = reflField.Size;
@@ -815,15 +795,6 @@ namespace Veng::Cook
 
                 if (decl.Type == "uint")
                 {
-                    if (reflField.IsFloat || reflField.ComponentCount != 1)
-                    {
-                        return std::unexpected(fmt::format(
-                            "material importer: uint field '{}' maps to a reflected field that is "
-                            "not a scalar uint (IsFloat={}, ComponentCount={})",
-                            decl.Name, reflField.IsFloat ? "true" : "false",
-                            reflField.ComponentCount));
-                    }
-
                     const usize writeEnd = static_cast<usize>(reflField.Offset) + sizeof(u32);
                     if (writeEnd > block.size())
                     {
@@ -837,22 +808,8 @@ namespace Veng::Cook
                 }
                 else
                 {
-                    // float / vec2 / vec3 / vec4
-                    const u32 expectedComponents = decl.Type == "float"  ? 1u
-                                                   : decl.Type == "vec2" ? 2u
-                                                   : decl.Type == "vec3" ? 3u
-                                                                         : 4u;
-
-                    if (!reflField.IsFloat || reflField.ComponentCount != expectedComponents)
-                    {
-                        return std::unexpected(fmt::format(
-                            "material importer: {} field '{}' maps to a reflected field with "
-                            "IsFloat={}, ComponentCount={} (expected IsFloat=true, "
-                            "ComponentCount={})",
-                            decl.Type, decl.Name, reflField.IsFloat ? "true" : "false",
-                            reflField.ComponentCount, expectedComponents));
-                    }
-
+                    // float / vec2 / vec3 / vec4. FloatValues is empty when the entry states no
+                    // 'value', which leaves the member at the block image's zero.
                     const usize writeEnd = static_cast<usize>(reflField.Offset) +
                                            decl.FloatValues.size() * sizeof(f32);
                     if (writeEnd > block.size())
@@ -865,8 +822,11 @@ namespace Veng::Cook
                     }
 
                     // Write as little-endian f32 (host order == LE on macOS/x86).
-                    std::memcpy(block.data() + reflField.Offset, decl.FloatValues.data(),
-                                decl.FloatValues.size() * sizeof(f32));
+                    if (!decl.FloatValues.empty())
+                    {
+                        std::memcpy(block.data() + reflField.Offset, decl.FloatValues.data(),
+                                    decl.FloatValues.size() * sizeof(f32));
+                    }
                 }
             }
 

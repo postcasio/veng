@@ -8,12 +8,16 @@ namespace Veng::Cook
     /// CookedMaterialField table + a single param block (assetpack's CookedBlobs.h).
     ///
     /// The source declares "domain" ("Surface" or "PostProcess"), "shaders" (vertex +
-    /// fragment AssetIds), and "fields" (ordered, explicitly-typed list). Each field
-    /// carries a "type": texture → Kind 1 handle; sampler → Kind 2 handle reusing a
-    /// named texture field's id; scalar/vector → Kind 0 value. The param block layout
-    /// is reflected from the fragment shader's MaterialParams struct via
-    /// SlangReflect::ReflectStructLayout; declared fields are validated by name, type,
-    /// and offset. The fragment entry's SV_TargetN outputs are validated against the
+    /// fragment AssetIds), and "fields" — an ordered list naming every MaterialParams
+    /// member, each entry stating only what reflection cannot supply. A float member at
+    /// its zero default is written as its name alone; a scalar-uint member is an object
+    /// stating its "type", which routes it: texture → Kind 1 handle; sampler → Kind 2
+    /// handle reusing a named texture field's id; uint → Kind 0 value. The param block
+    /// layout is reflected from the fragment shader's MaterialParams struct via
+    /// SlangReflect::ReflectStructLayout; each entry is validated by name, by type where
+    /// it states one, and by the arity of the "value" it carries. Every member must have
+    /// an entry: one the material omits would stay zero and cook clean. The fragment
+    /// entry's SV_TargetN outputs are validated against the
     /// domain contract: Surface writes float4 SV_Target0+1+2 + float2 SV_Target3 + float3
     /// SV_Target4 (the g-buffer: albedo/normal/ORM + velocity + emissive); PostProcess writes a
     /// single float4 SV_Target0.

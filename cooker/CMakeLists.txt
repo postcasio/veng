@@ -294,6 +294,7 @@ add_library(veng_cook_objs OBJECT
         src/Importers/TextureImporter.cpp
         src/Importers/MeshImporter.cpp
         src/Importers/ShaderImporter.cpp
+        src/Importers/MaterialFieldEntry.cpp
         src/Importers/MaterialImporter.cpp
         src/Importers/MaterialInstanceImporter.cpp
         src/Importers/SlangReflect.cpp

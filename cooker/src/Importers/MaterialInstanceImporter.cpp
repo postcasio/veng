@@ -13,6 +13,7 @@
 #include <Veng/Cook/JsonFile.h>
 
 #include "GraphShaderSource.h"
+#include "MaterialFieldEntry.h"
 #include "SlangReflect.h"
 #include "SlangSession.h"
 
@@ -129,8 +130,9 @@ namespace Veng::Cook
                 reflectedByName[f.Name] = &f;
             }
 
-            // The parent's declared "fields" are its exposed surface. Each must resolve against the
-            // reflected struct (a handle field is a uint member; a param field carries its type).
+            // The parent's declared "fields" are its exposed surface. Each entry resolves against
+            // the reflected struct through the same reader the parent's own cook uses, so a member
+            // named alone and one spelled out with its type expose the same field.
             if (!parentVmat.contains("fields") || !parentVmat["fields"].is_array())
             {
                 return std::unexpected(
@@ -141,30 +143,30 @@ namespace Veng::Cook
             std::map<string, ExposedField> exposed;
             for (const json& fieldJson : parentVmat["fields"])
             {
-                if (!fieldJson.contains("name") || !fieldJson["name"].is_string() ||
-                    !fieldJson.contains("type") || !fieldJson["type"].is_string())
+                const Result<MaterialFieldEntry> resolved = ResolveMaterialFieldEntry(
+                    fieldJson, reflectedByName, "material instance importer");
+                if (!resolved)
                 {
-                    continue;
-                }
-                const string name = fieldJson["name"].get<string>();
-                const string type = fieldJson["type"].get<string>();
-
-                // A sampler field is not an override surface — it has no independent value, it
-                // mirrors a texture field. Skip it; an override naming it is rejected as non-exposed.
-                if (type == "sampler")
-                {
-                    continue;
+                    return std::unexpected(resolved.error());
                 }
 
-                const auto it = reflectedByName.find(name);
-                if (it == reflectedByName.end())
+                if (resolved->Reflected == nullptr)
                 {
                     // A field the parent declares but the shader does not reflect cannot be packed;
                     // the parent cook would already have rejected it, so this is unreachable for a
                     // valid parent. Skip rather than fabricate an override target.
                     continue;
                 }
-                exposed[name] = ExposedField{.Type = type, .Layout = *it->second};
+
+                // A sampler field is not an override surface — it has no independent value, it
+                // mirrors a texture field. Skip it; an override naming it is rejected as non-exposed.
+                if (resolved->Type == "sampler")
+                {
+                    continue;
+                }
+
+                exposed[resolved->Name] =
+                    ExposedField{.Type = resolved->Type, .Layout = *resolved->Reflected};
             }
 
             return exposed;
@@ -362,19 +364,12 @@ namespace Veng::Cook
                 }
                 else
                 {
-                    // A param override (float / vecN / uint) — validate its arity against the
-                    // declared type and the reflected scalar/vector type, then pack its bytes.
+                    // A param override (float / vecN / uint) — its arity comes from the parent
+                    // field's reflected layout, the single source of truth for the member's type.
                     const ReflectedStructField& layout = field.Layout;
 
                     if (field.Type == "uint")
                     {
-                        if (layout.IsFloat || layout.ComponentCount != 1)
-                        {
-                            return std::unexpected(fmt::format(
-                                "material instance importer: '{}': override '{}' is declared uint "
-                                "but the parent field is not a scalar uint",
-                                label, name));
-                        }
                         if (!value.is_number_unsigned())
                         {
                             return std::unexpected(fmt::format(
@@ -392,26 +387,16 @@ namespace Veng::Cook
                     }
                     else
                     {
-                        const u32 arity = field.Type == "float"  ? 1u
-                                          : field.Type == "vec2" ? 2u
-                                          : field.Type == "vec3" ? 3u
-                                          : field.Type == "vec4" ? 4u
-                                                                 : 0u;
-                        if (arity == 0)
+                        // A runtime-bound handle (volume, storage buffer) reflects as a scalar
+                        // uint and carries no overridable value.
+                        if (!layout.IsFloat)
                         {
                             return std::unexpected(fmt::format(
                                 "material instance importer: '{}': override '{}' has unsupported "
                                 "parent field type '{}'",
                                 label, name, field.Type));
                         }
-                        if (!layout.IsFloat || layout.ComponentCount != arity)
-                        {
-                            return std::unexpected(
-                                fmt::format("material instance importer: '{}': override '{}' is "
-                                            "declared {} but "
-                                            "the parent field's reflected layout does not match",
-                                            label, name, field.Type));
-                        }
+                        const u32 arity = layout.ComponentCount;
 
                         vector<f32> values;
                         if (arity == 1)

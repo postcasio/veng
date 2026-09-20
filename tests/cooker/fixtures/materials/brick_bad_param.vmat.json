@@ -16,7 +16,6 @@
     },
     {
       "name": "Factors",
-      "type": "vec4",
       "value": [
         1.0,
         0.9,
@@ -26,7 +25,6 @@
     },
     {
       "name": "Nonexistent",
-      "type": "float",
       "value": 1.0
     }
   ]

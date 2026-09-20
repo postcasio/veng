@@ -94,8 +94,17 @@ at cook time:
   the engine header. The core pack itself cooks without `--shader-include` — its shaders reach the
   header through their own source dir.
 - **Materials** (`*.vmat.json`) are validated against the fragment shader's reflected
-  parameters — the declared, explicitly-typed field list must match — and the
-  fragment outputs are validated against the material domain's contract (Surface →
+  parameters — the declared field list must name **every** `MaterialParams` member, because a
+  member with no entry would stay zero in the block image, cook clean, and read zero for the life
+  of the asset. An entry states only what reflection cannot supply: a bare **member-name string**
+  is a float or float-vector member at its zero default, and an object adds `"value"` where the
+  default is not zero. **A scalar-`uint` member must be an object stating its `"type"`** —
+  `texture`, `sampler`, `volume`, `storagebuffer`, or `uint`/`param` for a plain param — because
+  reflection sees all five as the same bare `uint`, and a handle silently cooked as a param would
+  sample bindless slot 0. A stated `"type"` is checked against reflection and a contradiction is a
+  located error naming both; a `"value"` array's length is checked against the reflected component
+  count the same way. The fragment
+  outputs are validated against the material domain's contract (Surface →
   the five-target g-buffer MRT `SV_Target0`..`SV_Target4` — albedo/normal/ORM, velocity, and
   emissive; PostProcess, Sky, Translucent, and GuiFill → a single `SV_Target0`). Because the
   Surface contract's output set is part of what a cooked material *means*, a change to it bumps
@@ -114,8 +123,10 @@ at cook time:
   `Material` through the `MaterialInstanceImporter`. The source declares `"parent"` (a parent
   `Material` `AssetId`) and a sparse `"overrides"` object (parent-field name → value for a param,
   or → an `AssetId` for a texture field). The importer resolves the parent, reflects its **exposed
-  field set** — the parent's own declared `"fields"` list, cross-checked against the parent fragment
-  shader's reflected `MaterialParams` for type and offset — and validates each override against it:
+  field set** — the parent's own declared `"fields"` list, read through the same entry reader the
+  parent's own cook uses, so a member named alone and one spelled out with its type expose the same
+  field, and the reflected `MaterialParams` supplies every override's type and offset — and
+  validates each override against it:
   the `.vmat`-against-shader check lifted one level to **instance-against-parent**. An override
   naming a field the parent does not expose (an engine-bound field never appears in the parent's
   declared list, nor does a sampler), or a type mismatch, is a **located cook error**; an omitted

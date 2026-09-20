@@ -7,11 +7,7 @@
     "fragment": "0x0CA7000000000001"
   },
   "fields": [
-    {
-      "name": "Center",
-      "type": "vec4",
-      "value": [0.0, 0.0, 0.0, 0.0]
-    },
+    "Center",
     {
       "name": "Texture",
       "type": "texture",

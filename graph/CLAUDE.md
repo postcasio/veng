@@ -91,9 +91,12 @@ block, so an animated fill needs no per-frame consumer code).
 **A `Param` carries one of three provenances:** *const* folds its value inline; *exposed*
 contributes an author-tweakable `MaterialParams` field with a default; *engine-bound* contributes
 a field the engine writes by name at runtime (no default, not an instance-override surface). The
-walk generates the `MaterialParams` struct — ordered large-alignment-first so the cooker's std140
-reflection and the shader's scalar-layout `Load<T>` resolve identical offsets — and the matching
-`.vmat` field list from the same pass, so reflected offsets and packed values agree.
+walk generates the `MaterialParams` struct — in walk order, which the cooker's tight 4-byte
+reflection cursor and the shader's scalar-layout `Load<T>` resolve identically whatever the order —
+and the matching `.vmat` field list from the same pass, so reflected offsets and packed values
+agree. The field list is written in the thinned form: a float param at its zero default is its
+member's name alone, and a scalar-uint member always states its `"type"` because reflection cannot
+tell a handle from a plain `uint`.
 
 ## Consumers
 

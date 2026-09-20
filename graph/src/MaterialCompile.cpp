@@ -268,18 +268,12 @@ namespace VengGraph
         }
         Veng::string source = fmt::format("#include \"{}\"\n\n", domainInclude);
 
-        // The generated MaterialParams struct, exactly the texture + exposed/engine-bound
-        // param fields the walk collected. Order them large-alignment-first (descending
-        // alignment, stable within a rank) so the cooker's std140 reflection and the
-        // shader's scalar-layout Load<MaterialParams> resolve identical offsets — a scalar
-        // before a vec4 would land the vec at a different offset under each layout and read
-        // as 0.
-        Veng::vector<EmittedParamField> ordered = ctx.ParamFields;
-        std::ranges::stable_sort(ordered, [](const EmittedParamField& a, const EmittedParamField& b)
-                                 { return a.Alignment > b.Alignment; });
-
+        // The generated MaterialParams struct, exactly the texture + exposed/engine-bound param
+        // fields the walk collected, in walk order. The cooker reflects the struct with a tight
+        // 4-byte cursor — the same scalar layout the shader's Load<MaterialParams> reads — so the
+        // two sides resolve identical offsets whatever order the members appear in.
         source += "struct MaterialParams\n{\n";
-        for (const EmittedParamField& field : ordered)
+        for (const EmittedParamField& field : ctx.ParamFields)
         {
             source += fmt::format("    {} {};\n", field.SlangType, field.Name);
         }
@@ -360,14 +354,14 @@ namespace VengGraph
                                   sinkOr(0, "g_Textures[0].Sample(g_Samplers[0], input.v_UV)"));
         }
 
-        // --- The matching .vmat field list, from the same ordered set ---
+        // --- The matching .vmat field list, from the same walk ---
         //
         // A handle slot emits a texture/sampler row; an exposed param a float/vecN row
         // carrying its authored default; an engine-bound param no row (the engine writes
         // it by name). The order matches the struct so the row order reads naturally,
         // though the cook matches each row to the reflected struct by name.
         Veng::vector<CompiledField> generatedFields;
-        for (const EmittedParamField& field : ordered)
+        for (const EmittedParamField& field : ctx.ParamFields)
         {
             switch (field.Kind)
             {
@@ -418,35 +412,55 @@ namespace VengGraph
         shaders["fragment"] = Veng::FormatAssetId(shader.FragmentShader);
         out["shaders"] = std::move(shaders);
 
+        // An entry states only what the cooker cannot reflect from the shader: a float param at
+        // its zero default is its member's name alone, and a scalar-uint member always names its
+        // kind, because reflection cannot tell a handle from a plain uint.
         Json fieldArray = Json::array();
         for (const CompiledField& field : fields)
         {
             Json entry = Json::object();
             entry["name"] = field.Name;
-            entry["type"] = field.Type;
 
             if (field.Type == "texture")
             {
+                entry["type"] = field.Type;
                 entry["id"] = Veng::FormatAssetId(Veng::AssetId{.Value = field.TextureId});
             }
-            else if (field.Type == "volume")
+            else if (field.Type == "volume" || field.Type == "storagebuffer")
             {
                 // Runtime-bound: no cooked id, the consumer writes the handle each frame.
+                entry["type"] = field.Type;
             }
             else if (field.Type == "sampler")
             {
+                entry["type"] = field.Type;
                 entry["texture"] = field.SamplerTexture;
             }
             else if (field.Type == "uint")
             {
-                entry["value"] = field.UintValue;
+                entry["type"] = field.Type;
+                if (field.UintValue != 0)
+                {
+                    entry["value"] = field.UintValue;
+                }
             }
             else if (field.Type == "float")
             {
-                entry["value"] = field.Values.empty() ? 0.0f : field.Values[0];
+                const Veng::f32 value = field.Values.empty() ? 0.0f : field.Values[0];
+                if (value == 0.0f)
+                {
+                    fieldArray.push_back(field.Name);
+                    continue;
+                }
+                entry["value"] = value;
             }
             else
             {
+                if (std::ranges::all_of(field.Values, [](Veng::f32 v) { return v == 0.0f; }))
+                {
+                    fieldArray.push_back(field.Name);
+                    continue;
+                }
                 Json values = Json::array();
                 for (const Veng::f32 v : field.Values)
                 {

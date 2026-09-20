@@ -16,7 +16,6 @@
     },
     {
       "name": "Factors",
-      "type": "vec4",
       "value": [
         1.0,
         0.9,
@@ -26,7 +25,6 @@
     },
     {
       "name": "Roughness",
-      "type": "float",
       "value": 0.25
     }
   ]

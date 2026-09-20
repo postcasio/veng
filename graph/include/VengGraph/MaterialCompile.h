@@ -36,10 +36,10 @@ namespace VengGraph
     /// matching .vmat field list.
     ///
     /// CompileMaterialGraph's product. The generated MaterialParams struct (emitted into
-    /// Source, ordered large-alignment-first) and the field list are produced from one walk,
-    /// so the cooker's reflected offsets and the material's packed values agree by
-    /// construction. An engine-bound param contributes a struct field but no field-list
-    /// entry (the engine writes it by name); a const param contributes neither.
+    /// Source in walk order) and the field list are produced from one walk, so the cooker's
+    /// reflected offsets and the material's packed values agree by construction. An
+    /// engine-bound param contributes a struct field but no field-list entry (the engine
+    /// writes it by name); a const param contributes neither.
     struct GeneratedFragment
     {
         /// @brief The generated Slang fragment-shader source.
@@ -77,8 +77,10 @@ namespace VengGraph
     /// @brief Serializes a compiled field list into a .vmat JSON document string.
     ///
     /// Writes the "domain" key as its enumerator name, the "shaders" block
-    /// (vertex/fragment ids from @p shader), and the regenerated "fields" array. JSON
-    /// assembly is in the .cpp so this header carries no JSON type.
+    /// (vertex/fragment ids from @p shader), and the regenerated "fields" array. An entry
+    /// carries only what the cooker cannot reflect: a float param at its zero default is
+    /// written as its member's name alone, and a scalar-uint member always states its
+    /// "type". JSON assembly is in the .cpp so this header carries no JSON type.
     [[nodiscard]] Veng::string WriteMaterialVmat(const Veng::vector<CompiledField>& fields,
                                                  const MaterialShaderInterface& shader,
                                                  Veng::MaterialDomain domain);

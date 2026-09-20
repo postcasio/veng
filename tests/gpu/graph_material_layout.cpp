@@ -1,14 +1,11 @@
-// Graph-material layout guard (GPU). The std140/scalar offset trap: the cooker
-// reflects the generated MaterialParams under std140 (a float4 16-byte-aligned),
-// while the shader reads it scalar through Load<MaterialParams> (a float4
-// 4-byte-aligned). If the generator emitted a vec4 param *after* the uint texture
-// handle slots, the two layouts would place it at different offsets and the
-// runtime would write the authored color where the shader cannot read it — the
-// material renders black. The emit walk orders fields large-alignment-first
-// precisely to avoid this; this test renders a graph whose MaterialParams holds a
-// vec4 param alongside uint handle slots and asserts the authored color reaches
-// the albedo, the only check that exercises the invariant on the GPU rather than
-// by an offset-equality assert.
+// Graph-material layout guard (GPU). A generated MaterialParams mixes a vec4 param with the
+// uint handle slots a TextureSample contributes, in whatever order the walk reached them, so a
+// vector routinely follows a scalar. The cooker reflects the struct with a tight 4-byte cursor
+// and the shader reads it scalar through Load<MaterialParams>; a uniform/std140 offset would
+// 16-align the vector and the runtime would write the authored color where the shader cannot
+// read it — the material renders black. This test renders such a graph and asserts the authored
+// color reaches the albedo, exercising the agreement on the GPU rather than by an
+// offset-equality assert.
 
 #include <cstring>
 #include <filesystem>
@@ -70,13 +67,13 @@ namespace
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "graph material: a vec4 param alongside uint handle slots renders its color "
-                  "(std140/scalar offset guard)")
+                  "(tight/scalar offset guard)")
 {
     RegisterBuiltinTypes(Types);
 
     // --- Author the Surface graph: an exposed vec4 Param → Albedo, a TextureSample → Normal.
     // The reached TextureSample contributes two uint handle slots to MaterialParams, so the
-    // generated struct mixes a vec4 with uints — the exact layout the ordering guards. ---
+    // generated struct mixes a vec4 with uints — the exact layout this case guards. ---
     NodeCatalog catalog;
     MaterialEmitTable emit;
     const MaterialNodeTypes types =

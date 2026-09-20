@@ -46,9 +46,8 @@ namespace VengGraph
     /// The generated parameter block is exactly the texture + exposed/engine-bound param
     /// nodes: a TextureSample contributes its texture and sampler handle slots, an exposed
     /// or engine-bound Param its value field (a const Param folds its value inline and
-    /// contributes nothing). The emit walk collects these, orders them large-alignment-first
-    /// (so the cooker's std140 reflection and the shader's scalar-layout Load resolve identical
-    /// offsets), and emits the final struct + the matching .vmat field list from the one set.
+    /// contributes nothing). The emit walk collects these in walk order and emits the final
+    /// struct + the matching .vmat field list from the one set.
     struct EmittedParamField
     {
         /// @brief The Slang member name (a node-unique identifier).
@@ -57,11 +56,6 @@ namespace VengGraph
         Veng::string SlangType;
         /// @brief Which .vmat row kind this field produces.
         EmittedFieldKind Kind = EmittedFieldKind::Param;
-        /// @brief std140/scalar alignment of the member in bytes (16 vec3/vec4, 8 vec2, 4 scalar/uint).
-        ///
-        /// The walk orders fields by descending alignment so std140 reflection and scalar
-        /// Load\<MaterialParams\> resolve identical offsets.
-        Veng::u32 Alignment = 4;
         /// @brief Component count: 1 scalar/uint, 2/3/4 for a vecN param.
         Veng::u32 ComponentCount = 1;
         /// @brief True for a uint handle slot; false for a float param.
