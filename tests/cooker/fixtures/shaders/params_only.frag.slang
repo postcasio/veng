@@ -9,7 +9,7 @@ struct MaterialParams
     float  Strength;
 };
 
-static const uint MaterialParamStride = 1024;
+static const uint MaterialParamStride = 1280;
 
 [[vk::binding(4, 0)]] ByteAddressBuffer g_MaterialParams;
 

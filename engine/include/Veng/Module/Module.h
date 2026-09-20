@@ -116,10 +116,14 @@ extern "C"
 /// OnWorldArrival, and a DrawsCursor field to GuiOverlay. A module subclasses Application, so a
 /// stale module's vtable is short of the slots the host dispatches through, and it lays out the
 /// component the host reflects and spawns short of the field the host reads.
+/// Version 25 widens BindlessRegistry::MaterialParamStride from 1024 to 1280 bytes. A module's
+/// materials are cooked against the stride and its shaders index the one parameter buffer at
+/// `index * MaterialParamStride`, so a stale module reads every material's block from the wrong
+/// offset — a silent mis-shade of every draw rather than a fault.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 24u
+#define VENG_MODULE_ABI_VERSION 25u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

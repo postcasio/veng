@@ -1,5 +1,5 @@
 // Material fragment fixture whose MaterialParams exceeds MaterialParamStride
-// (1024 bytes): four handle uints + 68 float4 members = 16 + 1088 = 1104 bytes.
+// (1280 bytes): two handle uints + 84 float4 members = 8 + 1344 = 1352 bytes.
 // Used by the material-cook test to assert a located over-stride cook error. All
 // param members are vectors so the struct reflects cleanly — the failure is the
 // stride bound, not field support.
@@ -23,11 +23,15 @@ struct MaterialParams
     float4 P56; float4 P57; float4 P58; float4 P59;
     float4 P60; float4 P61; float4 P62; float4 P63;
     float4 P64; float4 P65; float4 P66; float4 P67;
+    float4 P68; float4 P69; float4 P70; float4 P71;
+    float4 P72; float4 P73; float4 P74; float4 P75;
+    float4 P76; float4 P77; float4 P78; float4 P79;
+    float4 P80; float4 P81; float4 P82; float4 P83;
     uint Albedo;
     uint AlbedoSampler;
 };
 
-static const uint MaterialParamStride = 1024;
+static const uint MaterialParamStride = 1280;
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];

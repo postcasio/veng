@@ -8,7 +8,7 @@ struct MaterialParams
     uint AlbedoSampler;
 };
 
-static const uint MaterialParamStride = 1024;
+static const uint MaterialParamStride = 1280;
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];

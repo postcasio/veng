@@ -613,7 +613,7 @@ namespace Veng::Renderer
         /// from this table, so the budget a single scene appears to need is not the figure that has
         /// to fit. Exhausting it is a fatal assert rather than a soft failure, so the cap is set
         /// where a plausible multi-world consumer stays clear of it. It costs only the parameter
-        /// buffer it sizes (framesInFlight * MaxMaterials * MaterialParamStride, half a megabyte
+        /// buffer it sizes (framesInFlight * MaxMaterials * MaterialParamStride, 640 KiB
         /// of host-mapped storage per frame-in-flight); no descriptor array is indexed by it, and
         /// no shader reads it — a draw is handed a slot index with the frame base already folded in.
         static constexpr u32 MaxMaterials = 512;
@@ -663,7 +663,7 @@ namespace Veng::Renderer
         /// and Veng/guifill.slang (the four domain contract headers a material includes), and
         /// the cooker's own copy in Importers/MaterialImporter.cpp, which restates it so the
         /// cooker gains no renderer-header dependency.
-        static constexpr u32 MaterialParamStride = 1024;
+        static constexpr u32 MaterialParamStride = 1280;
 
         /// @brief The fixed byte stride of one frame-in-flight's view-constants region in
         /// the ViewConstantsBinding ByteAddressBuffer.
