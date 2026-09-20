@@ -453,6 +453,19 @@ the loader patches by offset. `CookedMaterialHeader` carries `Version` (`CookedM
 parameter-schema source and an instance's override surface, so the node editor reads a material's
 authorable parameters with no Slang in `libveng_editor`.
 
+**A field name is resolved once, to a `MaterialFieldHandle`.** `Material::Field(name)` (delegated by
+`MaterialInstance::Field`) returns an index into the **parent's** table — so one handle addresses the
+same field in every instance of that parent, and a service that writes the same field every frame
+resolves its names where it resolves its material rather than walking the table per write. Every
+`Set*` takes either spelling: the name overload is `Field(name)` followed by the handle overload, so
+an editor, an MCP mutation, or a one-shot caller hoists nothing, and the two cannot reach different
+bytes. An absent name yields an invalid handle (the registry-handle idiom — `Invalid` plus
+`IsValid()`) rather than a fatal, which is how a consumer probes for an optional field; a handle
+resolved against another parent is caught by the parent it carries. `MaterialField` also carries the
+index of a texture field's paired `<name>Sampler`, resolved from the table's own names when the
+material takes it — so binding a texture patches both slots with no per-call string composition and
+no second scan. It is derived at load, not cooked, so `CookedMaterialField` is unchanged.
+
 **A block is a byte-offset suballocation of one arena, not a fixed slot.** The block buffer is
 **N-buffered for frames-in-flight, host-visible + persistently mapped**: it holds `framesInFlight`
 regions of `BindlessRegistry::MaterialArenaBytes` (2.5 MiB), and each frame-in-flight owns one.

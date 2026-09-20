@@ -28,6 +28,40 @@ namespace Veng
     {
         // Unfinalized at construction: the default block's handle slots are patched and the
         // pipeline is stored in Finalize().
+
+        // Resolve each TextureHandle field's paired `<name>Sampler`, so binding a texture patches
+        // both slots without composing the sampler's name and scanning the table for it. The table
+        // is complete here, which the loader's single pass over the cooked fields is not.
+        for (usize i = 0; i < m_Fields.size(); ++i)
+        {
+            if (m_Fields[i].Kind != MaterialField::FieldKind::TextureHandle)
+            {
+                continue;
+            }
+
+            const string samplerName = m_Fields[i].Name + "Sampler";
+            for (usize j = 0; j < m_Fields.size(); ++j)
+            {
+                if (m_Fields[j].Kind == MaterialField::FieldKind::SamplerHandle &&
+                    m_Fields[j].Name == samplerName)
+                {
+                    m_Fields[i].PairedSampler = static_cast<u32>(j);
+                    break;
+                }
+            }
+        }
+    }
+
+    MaterialFieldHandle Material::Field(std::string_view name) const
+    {
+        for (usize i = 0; i < m_Fields.size(); ++i)
+        {
+            if (m_Fields[i].Name == name)
+            {
+                return MaterialFieldHandle{.Index = static_cast<u32>(i), .Parent = this};
+            }
+        }
+        return MaterialFieldHandle{};
     }
 
     Task<Detail::BuiltAsset<Material>>

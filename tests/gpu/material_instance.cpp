@@ -20,6 +20,8 @@
 
 #include <cstring>
 #include <filesystem>
+#include <span>
+#include <string_view>
 #include "support/TempPath.h"
 
 #include <doctest/doctest.h>
@@ -259,6 +261,86 @@ TEST_CASE_FIXTURE(
     // A per-frame SetParam is a direct, stall-free ring-buffer write (no WaitIdle).
     const_cast<MaterialInstance&>(*mid.Get())
         .SetParam("BaseColorFactor", vec4(1.0f, 0.0f, 0.0f, 1.0f));
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "material fields: a name resolves once, and a texture field names its sampler")
+{
+    const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
+    const path outArchive =
+        Veng::TestSupport::TempDir() / "veng_gpu_material_instance_fields.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker
+                .CookPack(fixtureDir / "gbuffer_pack.json", outArchive, {}, nullptr, nullptr,
+                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+                .has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<Material>> parent = assets.LoadSync<Material>(BrickParentId);
+    REQUIRE(parent.has_value());
+    const Material& material = *parent->Get();
+    const std::span<const MaterialField> fields = material.GetFields();
+
+    // A resolved handle names the field the linear scan would have found, for each kind the
+    // setters write: a param, a texture handle, and a sampler handle.
+    const auto scan = [fields](std::string_view name) -> const MaterialField*
+    {
+        for (const MaterialField& field : fields)
+        {
+            if (field.Name == name)
+            {
+                return &field;
+            }
+        }
+        return nullptr;
+    };
+    for (const std::string_view name : {"BaseColorFactor", "BaseColor", "BaseColorSampler"})
+    {
+        const MaterialFieldHandle handle = material.Field(name);
+        REQUIRE(handle.IsValid());
+        CHECK(handle.Parent == &material);
+        const MaterialField* scanned = scan(name);
+        REQUIRE(scanned != nullptr);
+        CHECK(&fields[handle.Index] == scanned);
+    }
+
+    // A name the schema does not carry resolves to an invalid handle rather than a fatal, so a
+    // consumer probing for an optional field branches on it.
+    CHECK_FALSE(material.Field("NoSuchField").IsValid());
+
+    // A TextureHandle field carries the index of its <name>Sampler companion; a sampler field and
+    // a plain param carry none.
+    const MaterialFieldHandle baseColor = material.Field("BaseColor");
+    const MaterialFieldHandle baseColorSampler = material.Field("BaseColorSampler");
+    REQUIRE(fields[baseColor.Index].PairedSampler != MaterialFieldHandle::Invalid);
+    CHECK(fields[baseColor.Index].PairedSampler == baseColorSampler.Index);
+    CHECK(fields[baseColorSampler.Index].PairedSampler == MaterialFieldHandle::Invalid);
+    CHECK(fields[material.Field("BaseColorFactor").Index].PairedSampler ==
+          MaterialFieldHandle::Invalid);
+
+    // An instance delegates the resolve to its parent, so one handle addresses the same field in
+    // every instance of that parent — which is what makes it hoistable out of a per-frame write.
+    const AssetHandle<MaterialInstance> instance =
+        assets.BuildSync<MaterialInstance>(MaterialInstanceInfo{
+            .Name = "Field Handles", .Context = &Context, .Parent = *parent, .Overrides = {}});
+    REQUIRE(instance.IsLoaded());
+    const MaterialFieldHandle viaInstance = instance.Get()->Field("BaseColorFactor");
+    CHECK(viaInstance.Index == material.Field("BaseColorFactor").Index);
+    CHECK(viaInstance.Parent == &material);
+
+    // Each kind's handle overload writes through, so a bad bound or kind check would fault here.
+    const u32 revision = instance.Get()->GetRevision();
+    instance.Get()->SetParam(viaInstance, vec4(0.25f, 0.5f, 0.75f, 1.0f));
+    instance.Get()->SetParam(material.Field("RoughnessFactor"), 0.5f);
+    instance.Get()->SetTextureHandle(baseColor, TextureHandle{.Index = 3});
+    instance.Get()->SetSamplerHandle(baseColorSampler, SamplerHandle{.Index = 2});
+    CHECK(instance.Get()->GetRevision() == revision + 4);
 
     std::filesystem::remove(outArchive);
 }

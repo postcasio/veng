@@ -30,22 +30,54 @@ namespace Veng
         Gui::Document* DriverDocument = nullptr;
         /// @brief Whether the emissive material's white default has been applied once.
         bool EmissiveSeeded = false;
+
+        /// @brief The parent material the bound field handles below were resolved against.
+        const Material* BoundParent = nullptr;
+        /// @brief The domain those handles were resolved for; a different domain names other fields.
+        GuiSurfaceDomain BoundDomain{};
+        /// @brief The domain's texture field, or an invalid handle when the material declares none.
+        MaterialFieldHandle TextureField;
+        /// @brief The domain's sampler field, or an invalid handle when the material declares none.
+        MaterialFieldHandle SamplerField;
+        /// @brief The emissive tint field, or an invalid handle outside the emissive domain.
+        MaterialFieldHandle ColorField;
     };
 
     namespace
     {
-        /// @brief Whether a material declares a field of the given name and kind.
-        bool HasField(const MaterialInstance& material, std::string_view name,
-                      MaterialField::FieldKind kind)
+        /// @brief Resolves a field name to a handle, invalid unless the material declares it at that kind.
+        MaterialFieldHandle FieldOfKind(const MaterialInstance& material, std::string_view name,
+                                        MaterialField::FieldKind kind)
         {
-            for (const MaterialField& field : material.GetFields())
+            const MaterialFieldHandle handle = material.Field(name);
+            if (!handle.IsValid() || material.GetFields()[handle.Index].Kind != kind)
             {
-                if (field.Name == name && field.Kind == kind)
-                {
-                    return true;
-                }
+                return MaterialFieldHandle{};
             }
-            return false;
+            return handle;
+        }
+
+        /// @brief Resolves the domain's field handles, once per material and domain the surface binds.
+        void ResolveBoundFields(GuiSurfaceRuntime& runtime, GuiSurfaceDomain domain,
+                                const MaterialInstance& material)
+        {
+            const Material* const parent = material.GetParent().Get();
+            if (runtime.BoundParent == parent && runtime.BoundDomain == domain)
+            {
+                return;
+            }
+
+            runtime.BoundParent = parent;
+            runtime.BoundDomain = domain;
+
+            const bool emissive = domain == GuiSurfaceDomain::OpaqueEmissive;
+            runtime.TextureField = FieldOfKind(material, emissive ? "EmissiveTexture" : "Texture",
+                                               MaterialField::FieldKind::TextureHandle);
+            runtime.SamplerField = FieldOfKind(material, emissive ? "EmissiveSampler" : "Sampler",
+                                               MaterialField::FieldKind::SamplerHandle);
+            runtime.ColorField =
+                emissive ? FieldOfKind(material, "EmissiveColor", MaterialField::FieldKind::Param)
+                         : MaterialFieldHandle{};
         }
 
         /// @brief Binds the document handle onto the surface material for the chosen domain.
@@ -53,36 +85,23 @@ namespace Veng
                           MaterialInstance& material, Renderer::TextureHandle handle,
                           Renderer::SamplerHandle sampler)
         {
-            if (domain == GuiSurfaceDomain::OpaqueEmissive)
-            {
-                if (HasField(material, "EmissiveTexture", MaterialField::FieldKind::TextureHandle))
-                {
-                    material.SetTextureHandle("EmissiveTexture", handle);
-                }
-                if (HasField(material, "EmissiveSampler", MaterialField::FieldKind::SamplerHandle))
-                {
-                    material.SetSamplerHandle("EmissiveSampler", sampler);
-                }
-                // The consumer material's fragment writes EmissiveColor * texel into the emissive
-                // g-buffer channel; a white default lets the document value pass through
-                // unmodulated. Seeded once so a game tint set later wins over the default.
-                if (!runtime.EmissiveSeeded &&
-                    HasField(material, "EmissiveColor", MaterialField::FieldKind::Param))
-                {
-                    material.SetParam("EmissiveColor", vec4(1.0f, 1.0f, 1.0f, 0.0f));
-                    runtime.EmissiveSeeded = true;
-                }
-                return;
-            }
+            ResolveBoundFields(runtime, domain, material);
 
-            // Translucent: the panel material samples a Texture/Sampler pair as its radiance.
-            if (HasField(material, "Texture", MaterialField::FieldKind::TextureHandle))
+            if (runtime.TextureField.IsValid())
             {
-                material.SetTextureHandle("Texture", handle);
+                material.SetTextureHandle(runtime.TextureField, handle);
             }
-            if (HasField(material, "Sampler", MaterialField::FieldKind::SamplerHandle))
+            if (runtime.SamplerField.IsValid())
             {
-                material.SetSamplerHandle("Sampler", sampler);
+                material.SetSamplerHandle(runtime.SamplerField, sampler);
+            }
+            // The consumer material's fragment writes EmissiveColor * texel into the emissive
+            // g-buffer channel; a white default lets the document value pass through unmodulated.
+            // Seeded once so a game tint set later wins over the default.
+            if (!runtime.EmissiveSeeded && runtime.ColorField.IsValid())
+            {
+                material.SetParam(runtime.ColorField, vec4(1.0f, 1.0f, 1.0f, 0.0f));
+                runtime.EmissiveSeeded = true;
             }
         }
     }

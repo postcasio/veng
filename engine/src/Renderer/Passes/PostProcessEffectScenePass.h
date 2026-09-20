@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetHandle.h>
+#include <Veng/Asset/Material.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/ScenePass.h>
@@ -84,8 +85,29 @@ namespace Veng::Renderer
         void Declare(RenderGraph& graph, const PassIO& io) override;
 
     private:
-        /// @brief Builds the output-format-dependent fullscreen pipeline from the bound material.
+        /// @brief Builds the output-format-dependent fullscreen pipeline from the bound material,
+        ///        and resolves the field handles its per-frame writes address.
         void BuildPipeline();
+
+        /// @brief The material's per-frame input fields, resolved once beside the pipeline.
+        ///
+        /// An effect declares only the inputs it reads, so a handle left invalid means the material
+        /// has no such field and the frame writes nothing to it.
+        struct EffectFields
+        {
+            /// @brief The scene-color source's texture field ("Scene").
+            MaterialFieldHandle Scene;
+            /// @brief The scene-color source's sampler field ("SceneSampler").
+            MaterialFieldHandle SceneSampler;
+            /// @brief The g-buffer depth's texture field ("Depth").
+            MaterialFieldHandle Depth;
+            /// @brief The g-buffer depth's sampler field ("DepthSampler").
+            MaterialFieldHandle DepthSampler;
+            /// @brief The scene-color UV mapping field ("SceneScaleUV").
+            MaterialFieldHandle SceneScaleUv;
+            /// @brief The depth UV mapping field ("DepthScaleUV").
+            MaterialFieldHandle DepthScaleUv;
+        };
 
         /// @brief Context for pipeline creation.
         Context& m_Context;
@@ -112,5 +134,7 @@ namespace Veng::Renderer
         Ref<GraphicsPipeline> m_Pipeline;
         /// @brief The material id the pipeline was built for; a change rebuilds it.
         u64 m_PipelineMaterialId = 0;
+        /// @brief The bound material's input fields, resolved when the pipeline is built.
+        EffectFields m_Fields;
     };
 }

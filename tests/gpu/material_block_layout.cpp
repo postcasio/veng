@@ -113,13 +113,15 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(FieldNamed(fields, "Tail").Offset == 36);
 
     // Every member written from the host; the cooked defaults are all zero, so a value that
-    // arrives can only have come through the write.
+    // arrives can only have come through the write. Two of the five go through a handle resolved
+    // from the same name — the vector at the non-16-aligned offset and the scalar — so both
+    // spellings of the setter are held to the one layout.
     material.SetParam("Lead", Lead);
-    material.SetParam("Mid", vec4(Mid, 0.0f));
+    material.SetParam(material.Field("Mid"), vec4(Mid, 0.0f));
     material.SetParam("Region", Region);
     // The scalar setter copies the field's four bytes verbatim, so a uint member is written by
     // handing it the integer's bit pattern.
-    material.SetParam("Tag", std::bit_cast<f32>(Tag));
+    material.SetParam(material.Field("Tag"), std::bit_cast<f32>(Tag));
     material.SetParam("Tail", vec4(Tail, 0.0f, 0.0f));
 
     const Ref<Image> outputImage =

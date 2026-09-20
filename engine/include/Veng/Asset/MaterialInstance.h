@@ -112,16 +112,52 @@ namespace Veng
         /// pushing it; it changes per frame-in-flight, so read it at record time.
         [[nodiscard]] u32 GetMaterialSelector() const;
 
+        /// @brief Resolves a field name to a handle into the parent's schema.
+        ///
+        /// Delegates to the parent Material, which owns the table — so the handle is valid for
+        /// every instance of that parent, and a pool of instances resolves its names once at
+        /// construction rather than once per instance per write.
+        /// @param name The field name to resolve.
+        /// @return A handle naming the field, or an invalid handle when the schema has no such name.
+        [[nodiscard]] MaterialFieldHandle Field(std::string_view name) const
+        {
+            return m_Parent.Get()->Field(name);
+        }
+
         /// @brief Sets the texture for a named handle field and rewrites the SSBO entry in place.
         void SetTexture(std::string_view name, AssetHandle<Texture> texture);
 
+        /// @brief Sets the texture for a resolved handle field and rewrites the SSBO entry in place.
+        ///
+        /// Writes the texture's bindless index into the field and, when the field carries one, its
+        /// sampler index into the paired `<name>Sampler` field; the texture is kept resident on the
+        /// instance. The handle must name a TextureHandle field of this instance's parent.
+        /// @param field   Handle of the TextureHandle field to write.
+        /// @param texture The texture to bind, kept resident.
+        void SetTexture(MaterialFieldHandle field, AssetHandle<Texture> texture);
+
         /// @brief Sets a vec4 parameter by field name, rewriting the SSBO entry in place.
         void SetParam(std::string_view name, const vec4& value);
+
+        /// @brief Sets a vec4 parameter by resolved handle, rewriting the SSBO entry in place.
+        ///
+        /// Writes the field's reflected Size bytes, so a vec2 or vec3 field takes the leading
+        /// components and nothing spills into the block that follows.
+        /// @param field Handle of the Param field to write.
+        /// @param value The value to write.
+        void SetParam(MaterialFieldHandle field, const vec4& value);
 
         /// @brief Sets a scalar float parameter by field name.
         ///
         /// Writes only the field's reflected Size bytes, never smearing a vec4 over adjacent fields.
         void SetParam(std::string_view name, f32 value);
+
+        /// @brief Sets a scalar float parameter by resolved handle.
+        ///
+        /// Writes only the field's reflected Size bytes, never smearing a vec4 over adjacent fields.
+        /// @param field Handle of the Param field to write.
+        /// @param value The value to write.
+        void SetParam(MaterialFieldHandle field, f32 value);
 
         /// @brief Writes a raw bindless texture index into a TextureHandle field by name.
         ///
@@ -130,10 +166,25 @@ namespace Veng
         /// ring-buffered block's current frame region — cheap and frame-safe.
         void SetTextureHandle(std::string_view name, Renderer::TextureHandle handle);
 
+        /// @brief Writes a raw bindless texture index into a TextureHandle field by resolved handle.
+        ///
+        /// The per-frame form of the runtime-bound path: a pass or a surface that rebinds the same
+        /// slot every frame resolves the field once and writes the index thereafter.
+        /// @param field  Handle of the TextureHandle field to write.
+        /// @param handle The bindless texture handle to bind.
+        void SetTextureHandle(MaterialFieldHandle field, Renderer::TextureHandle handle);
+
         /// @brief Writes a raw bindless sampler index into a SamplerHandle field by name.
         ///
         /// Same semantics as SetTextureHandle but targets a SamplerHandle field.
         void SetSamplerHandle(std::string_view name, Renderer::SamplerHandle handle);
+
+        /// @brief Writes a raw bindless sampler index into a SamplerHandle field by resolved handle.
+        ///
+        /// Same semantics as SetTextureHandle but targets a SamplerHandle field.
+        /// @param field  Handle of the SamplerHandle field to write.
+        /// @param handle The bindless sampler handle to bind.
+        void SetSamplerHandle(MaterialFieldHandle field, Renderer::SamplerHandle handle);
 
         /// @brief Writes a bindless byte-address storage-buffer index into a StorageBufferHandle field by name.
         ///
@@ -148,6 +199,14 @@ namespace Veng
         /// @param handle The bindless storage-buffer handle to bind.
         void SetStorageBufferHandle(std::string_view name, Renderer::StorageBufferHandle handle);
 
+        /// @brief Writes a bindless byte-address storage-buffer index into a StorageBufferHandle field by resolved handle.
+        ///
+        /// Same semantics as the name-taking overload, with the field resolved once.
+        /// @param field  Handle of the StorageBufferHandle field to write.
+        /// @param handle The bindless storage-buffer handle to bind.
+        void SetStorageBufferHandle(MaterialFieldHandle field,
+                                    Renderer::StorageBufferHandle handle);
+
         /// @brief Writes a raw bindless volume (3D sampled-image) index into a VolumeHandle field by name.
         ///
         /// The 3D counterpart of SetTextureHandle: binds a runtime-registered volume to a material.
@@ -160,6 +219,13 @@ namespace Veng
         /// @param name   The VolumeHandle field to write.
         /// @param handle The bindless volume handle to bind.
         void SetVolumeHandle(std::string_view name, Renderer::VolumeHandle handle);
+
+        /// @brief Writes a raw bindless volume (3D sampled-image) index into a VolumeHandle field by resolved handle.
+        ///
+        /// Same semantics as the name-taking overload, with the field resolved once.
+        /// @param field  Handle of the VolumeHandle field to write.
+        /// @param handle The bindless volume handle to bind.
+        void SetVolumeHandle(MaterialFieldHandle field, Renderer::VolumeHandle handle);
 
         /// @brief Returns the instance's byte offset within one region of the material arena.
         ///
@@ -277,7 +343,10 @@ namespace Veng
 
         explicit MaterialInstance(const MaterialInstanceInfo& info);
 
-        [[nodiscard]] const MaterialField* FindField(std::string_view name) const;
+        [[nodiscard]] const MaterialField& ResolveField(MaterialFieldHandle field,
+                                                        std::string_view caller) const;
+        [[nodiscard]] MaterialFieldHandle RequireField(std::string_view name,
+                                                       std::string_view caller) const;
         void UploadParams() const;
 
         Renderer::Context& m_Context;

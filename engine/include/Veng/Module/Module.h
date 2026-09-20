@@ -126,10 +126,14 @@ extern "C"
 /// module's shaders carry the arithmetic and its MaterialInstance reads the offset, so a stale
 /// module scales an offset by a stride that no longer exists — the same silent mis-shade version 25
 /// names, at every draw rather than at a moved one.
+/// Version 27 grows MaterialField with the index of a texture field's paired sampler field, which
+/// the material resolves once from its own schema. A module reads the field table through
+/// Material::GetFields and addresses a field by its index in it, so a stale module lays the struct
+/// out short and reads every field after the first at a shifted offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 26u
+#define VENG_MODULE_ABI_VERSION 27u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

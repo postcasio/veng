@@ -8,6 +8,15 @@
 
 namespace Veng::Renderer
 {
+    /// @brief A named material slot and the field handle that name last resolved to.
+    struct ResolvedSlot
+    {
+        /// @brief The slot name the handle was resolved from; empty before the first resolve.
+        string Name;
+        /// @brief The field the name resolved to, invalid when the material declares no such field.
+        MaterialFieldHandle Handle;
+    };
+
     /// @brief The capture and its output sampler a CaptureSurface materializes on the first Drive.
     struct CaptureSurfaceRuntime
     {
@@ -27,18 +36,33 @@ namespace Veng::Renderer
 
         /// @brief The material the last drive bound onto, held resident so the unbind can reach it.
         AssetHandle<MaterialInstance> BoundMaterial;
-        /// @brief Texture-slot name the last drive filled on BoundMaterial; empty when it filled none.
-        string BoundTextureSlot;
-        /// @brief Sampler-slot name the last drive filled on BoundMaterial; empty when it filled none.
-        string BoundSamplerSlot;
-        /// @brief Centre-slot name the last drive filled on BoundMaterial; empty when it filled none.
-        string BoundCenterSlot;
-        /// @brief Orientation-slot name the last drive filled on BoundMaterial; empty when none.
-        string BoundOrientationSlot;
-        /// @brief Distance-map texture-slot name the last drive filled; empty when it filled none.
-        string BoundDepthTextureSlot;
-        /// @brief Distance-map sampler-slot name the last drive filled; empty when it filled none.
-        string BoundDepthSamplerSlot;
+        /// @brief The parent the slots below were resolved against; a change re-resolves every slot.
+        const Material* ResolvedParent = nullptr;
+        /// @brief The texture slot, resolved from TextureSlot.
+        ResolvedSlot Texture;
+        /// @brief The sampler slot, resolved from SamplerSlot.
+        ResolvedSlot Sampler;
+        /// @brief The probe-centre slot, resolved from CenterSlot.
+        ResolvedSlot Center;
+        /// @brief The capture-frame slot, resolved from OrientationSlot.
+        ResolvedSlot Orientation;
+        /// @brief The distance-map texture slot, resolved from DepthTextureSlot.
+        ResolvedSlot DepthTexture;
+        /// @brief The distance-map sampler slot, resolved from DepthSamplerSlot.
+        ResolvedSlot DepthSampler;
+
+        /// @brief Texture field the last drive filled on BoundMaterial; invalid when it filled none.
+        MaterialFieldHandle BoundTexture;
+        /// @brief Sampler field the last drive filled on BoundMaterial; invalid when it filled none.
+        MaterialFieldHandle BoundSampler;
+        /// @brief Centre field the last drive filled on BoundMaterial; invalid when it filled none.
+        MaterialFieldHandle BoundCenter;
+        /// @brief Orientation field the last drive filled on BoundMaterial; invalid when none.
+        MaterialFieldHandle BoundOrientation;
+        /// @brief Distance-map texture field the last drive filled; invalid when it filled none.
+        MaterialFieldHandle BoundDepthTexture;
+        /// @brief Distance-map sampler field the last drive filled; invalid when it filled none.
+        MaterialFieldHandle BoundDepthSampler;
     };
 
     namespace
@@ -46,18 +70,28 @@ namespace Veng::Renderer
         /// @brief The rotation an unbound orientation slot carries — world space, in xyzw order.
         constexpr vec4 IdentityOrientation{0.0f, 0.0f, 0.0f, 1.0f};
 
-        /// @brief Whether a material declares a field of the given name and kind.
-        bool HasField(const MaterialInstance& material, std::string_view name,
-                      MaterialField::FieldKind kind)
+        /// @brief Resolves a field name to a handle, invalid unless the material declares it at that kind.
+        MaterialFieldHandle FieldOfKind(const MaterialInstance& material, std::string_view name,
+                                        MaterialField::FieldKind kind)
         {
-            for (const MaterialField& field : material.GetFields())
+            const MaterialFieldHandle handle = material.Field(name);
+            if (!handle.IsValid() || material.GetFields()[handle.Index].Kind != kind)
             {
-                if (field.Name == name && field.Kind == kind)
-                {
-                    return true;
-                }
+                return MaterialFieldHandle{};
             }
-            return false;
+            return handle;
+        }
+
+        /// @brief Re-resolves a slot when its authored name moved, or when the target material did.
+        void ResolveSlot(ResolvedSlot& slot, const MaterialInstance& material,
+                         std::string_view name, MaterialField::FieldKind kind, bool reresolve)
+        {
+            if (!reresolve && slot.Name == name)
+            {
+                return;
+            }
+            slot.Name = name;
+            slot.Handle = FieldOfKind(material, name, kind);
         }
 
         /// @brief Writes the unbound state back into the slots a drive filled, and forgets the binding.
@@ -69,44 +103,44 @@ namespace Veng::Renderer
                 // capture's output slot is released with the capture, and the next registration reuses
                 // it, so leaving the index bound would sample an unrelated texture. The centre's w goes
                 // to 0, which is the signal a consuming fragment gates its sample on.
-                if (!runtime.BoundTextureSlot.empty())
+                if (runtime.BoundTexture.IsValid())
                 {
-                    material->SetTextureHandle(runtime.BoundTextureSlot, TextureHandle{});
+                    material->SetTextureHandle(runtime.BoundTexture, TextureHandle{});
                 }
-                if (!runtime.BoundSamplerSlot.empty())
+                if (runtime.BoundSampler.IsValid())
                 {
-                    material->SetSamplerHandle(runtime.BoundSamplerSlot, SamplerHandle{});
+                    material->SetSamplerHandle(runtime.BoundSampler, SamplerHandle{});
                 }
                 // The distance map's handle rides back to the same sentinel as the radiance map: the
                 // capture releases the slot and the next registration reuses it.
-                if (!runtime.BoundDepthTextureSlot.empty())
+                if (runtime.BoundDepthTexture.IsValid())
                 {
-                    material->SetTextureHandle(runtime.BoundDepthTextureSlot, TextureHandle{});
+                    material->SetTextureHandle(runtime.BoundDepthTexture, TextureHandle{});
                 }
-                if (!runtime.BoundDepthSamplerSlot.empty())
+                if (runtime.BoundDepthSampler.IsValid())
                 {
-                    material->SetSamplerHandle(runtime.BoundDepthSamplerSlot, SamplerHandle{});
+                    material->SetSamplerHandle(runtime.BoundDepthSampler, SamplerHandle{});
                 }
-                if (!runtime.BoundCenterSlot.empty())
+                if (runtime.BoundCenter.IsValid())
                 {
-                    material->SetParam(runtime.BoundCenterSlot, vec4(0.0f));
+                    material->SetParam(runtime.BoundCenter, vec4(0.0f));
                 }
                 // The frame goes back to the identity rather than to zero: the centre's flag is what
                 // gates the sample, so this value is unread once unbound, and a zero quaternion
                 // normalizes to a NaN in a consumer that reads it without the gate.
-                if (!runtime.BoundOrientationSlot.empty())
+                if (runtime.BoundOrientation.IsValid())
                 {
-                    material->SetParam(runtime.BoundOrientationSlot, IdentityOrientation);
+                    material->SetParam(runtime.BoundOrientation, IdentityOrientation);
                 }
             }
 
             runtime.BoundMaterial = {};
-            runtime.BoundTextureSlot.clear();
-            runtime.BoundSamplerSlot.clear();
-            runtime.BoundCenterSlot.clear();
-            runtime.BoundOrientationSlot.clear();
-            runtime.BoundDepthTextureSlot.clear();
-            runtime.BoundDepthSamplerSlot.clear();
+            runtime.BoundTexture = {};
+            runtime.BoundSampler = {};
+            runtime.BoundCenter = {};
+            runtime.BoundOrientation = {};
+            runtime.BoundDepthTexture = {};
+            runtime.BoundDepthSampler = {};
         }
 
         /// @brief A lean renderer config for a capture: the heavy per-view batteries multiply by six
@@ -277,67 +311,82 @@ namespace Veng::Renderer
         // regardless of the push decision. The slot names default to Texture/Sampler.
         if (MaterialInstance* const target = material.Get(); target != nullptr)
         {
+            // The slot names are authored data and the target material can change under the drive,
+            // so each name resolves to a field handle once and is reused until either moves.
+            const Material* const parent = target->GetParent().Get();
+            const bool reresolve = runtime.ResolvedParent != parent;
+            runtime.ResolvedParent = parent;
+            ResolveSlot(runtime.Texture, *target, TextureSlot,
+                        MaterialField::FieldKind::TextureHandle, reresolve);
+            ResolveSlot(runtime.Sampler, *target, SamplerSlot,
+                        MaterialField::FieldKind::SamplerHandle, reresolve);
+            ResolveSlot(runtime.Center, *target, CenterSlot, MaterialField::FieldKind::Param,
+                        reresolve);
+            ResolveSlot(runtime.Orientation, *target, OrientationSlot,
+                        MaterialField::FieldKind::Param, reresolve);
+            ResolveSlot(runtime.DepthTexture, *target, DepthTextureSlot,
+                        MaterialField::FieldKind::TextureHandle, reresolve);
+            ResolveSlot(runtime.DepthSampler, *target, DepthSamplerSlot,
+                        MaterialField::FieldKind::SamplerHandle, reresolve);
+
             // Re-record which slots this drive filled, so a renamed slot's old binding is not the one
             // the unbind clears.
-            runtime.BoundTextureSlot.clear();
-            runtime.BoundSamplerSlot.clear();
-            runtime.BoundCenterSlot.clear();
-            runtime.BoundOrientationSlot.clear();
-            runtime.BoundDepthTextureSlot.clear();
-            runtime.BoundDepthSamplerSlot.clear();
+            runtime.BoundTexture = {};
+            runtime.BoundSampler = {};
+            runtime.BoundCenter = {};
+            runtime.BoundOrientation = {};
+            runtime.BoundDepthTexture = {};
+            runtime.BoundDepthSampler = {};
 
             const TextureHandle output = runtime.Capture->GetOutputHandle();
-            if (HasField(*target, TextureSlot, MaterialField::FieldKind::TextureHandle))
+            if (runtime.Texture.Handle.IsValid())
             {
-                target->SetTextureHandle(TextureSlot, output);
-                runtime.BoundTextureSlot = TextureSlot;
+                target->SetTextureHandle(runtime.Texture.Handle, output);
+                runtime.BoundTexture = runtime.Texture.Handle;
             }
-            if (HasField(*target, SamplerSlot, MaterialField::FieldKind::SamplerHandle))
+            if (runtime.Sampler.Handle.IsValid())
             {
-                target->SetSamplerHandle(SamplerSlot, runtime.SamplerHandle);
-                runtime.BoundSamplerSlot = SamplerSlot;
+                target->SetSamplerHandle(runtime.Sampler.Handle, runtime.SamplerHandle);
+                runtime.BoundSampler = runtime.Sampler.Handle;
             }
             // The octahedral distance map and its point sampler, when the component opted into a
             // distance map (DepthTextureSlot names one) and the material declares the fields. Both
             // ride back to the unbound sentinel on teardown, and CenterSlot's flag gates the sample.
-            if (!DepthTextureSlot.empty() &&
-                HasField(*target, DepthTextureSlot, MaterialField::FieldKind::TextureHandle))
+            if (runtime.DepthTexture.Handle.IsValid())
             {
-                target->SetTextureHandle(DepthTextureSlot,
+                target->SetTextureHandle(runtime.DepthTexture.Handle,
                                          runtime.Capture->GetDistanceOutputHandle());
-                runtime.BoundDepthTextureSlot = DepthTextureSlot;
+                runtime.BoundDepthTexture = runtime.DepthTexture.Handle;
             }
             // The point sampler binds only when the distance path is on (DepthTextureSlot names one):
             // DepthSamplerSlot defaults non-empty, but a capture with no distance map holds no sampler.
-            if (!DepthTextureSlot.empty() && !DepthSamplerSlot.empty() &&
-                HasField(*target, DepthSamplerSlot, MaterialField::FieldKind::SamplerHandle))
+            if (!DepthTextureSlot.empty() && runtime.DepthSampler.Handle.IsValid())
             {
-                target->SetSamplerHandle(DepthSamplerSlot, runtime.DepthSamplerHandle);
-                runtime.BoundDepthSamplerSlot = DepthSamplerSlot;
+                target->SetSamplerHandle(runtime.DepthSampler.Handle, runtime.DepthSamplerHandle);
+                runtime.BoundDepthSampler = runtime.DepthSampler.Handle;
             }
             // The centre is where a parallax-correcting fragment starts marching the recorded distance,
             // and w is 1 only once an output slot exists — so a fragment can tell an unpopulated slot
             // from a probe at the origin and reach its fallback instead of indexing the array with it.
-            if (!CenterSlot.empty() &&
-                HasField(*target, CenterSlot, MaterialField::FieldKind::Param))
+            if (runtime.Center.Handle.IsValid())
             {
-                target->SetParam(CenterSlot, vec4(position, output.IsValid() ? 1.0f : 0.0f));
-                runtime.BoundCenterSlot = CenterSlot;
+                target->SetParam(runtime.Center.Handle,
+                                 vec4(position, output.IsValid() ? 1.0f : 0.0f));
+                runtime.BoundCenter = runtime.Center.Handle;
             }
             // The frame the faces were oriented in, so a fragment can express a world direction in
             // the map's own frame. It carries no flag of its own — the centre's w already reports
             // whether a capture is bound, and both slots are written by the same drive.
-            if (!OrientationSlot.empty() &&
-                HasField(*target, OrientationSlot, MaterialField::FieldKind::Param))
+            if (runtime.Orientation.Handle.IsValid())
             {
-                target->SetParam(OrientationSlot, PackCaptureOrientation(faceBasis));
-                runtime.BoundOrientationSlot = OrientationSlot;
+                target->SetParam(runtime.Orientation.Handle, PackCaptureOrientation(faceBasis));
+                runtime.BoundOrientation = runtime.Orientation.Handle;
             }
 
             // Hold the material resident only when something was actually written onto it.
-            if (!runtime.BoundTextureSlot.empty() || !runtime.BoundSamplerSlot.empty() ||
-                !runtime.BoundCenterSlot.empty() || !runtime.BoundOrientationSlot.empty() ||
-                !runtime.BoundDepthTextureSlot.empty() || !runtime.BoundDepthSamplerSlot.empty())
+            if (runtime.BoundTexture.IsValid() || runtime.BoundSampler.IsValid() ||
+                runtime.BoundCenter.IsValid() || runtime.BoundOrientation.IsValid() ||
+                runtime.BoundDepthTexture.IsValid() || runtime.BoundDepthSampler.IsValid())
             {
                 runtime.BoundMaterial = material;
             }

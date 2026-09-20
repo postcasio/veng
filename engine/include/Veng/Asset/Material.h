@@ -20,6 +20,7 @@ namespace Veng::Renderer
 namespace Veng
 {
     class AssetManager;
+    class Material;
     struct Shader;
     class Texture;
 
@@ -56,6 +57,30 @@ namespace Veng
     /// its push block against this value, so the two cannot drift.
     inline constexpr u32 GuiFillSelectorPushOffset = 20;
 
+    /// @brief A material field resolved from its name, reusable across every instance of one parent.
+    ///
+    /// The index is into the **parent's** field table, so one handle addresses the same field in
+    /// every MaterialInstance of that parent — which is what lets a consumer that writes the same
+    /// field every frame resolve the name once, where it resolves its material, and keep the handle
+    /// beside it. Obtained from Material::Field or MaterialInstance::Field; an unknown name yields
+    /// an invalid handle rather than a fatal, so a caller probing for an optional field branches on
+    /// IsValid().
+    struct MaterialFieldHandle
+    {
+        /// @brief Sentinel for a name that named no field of the parent's schema.
+        static constexpr u32 Invalid = ~0u;
+        /// @brief Index into the parent material's field table.
+        u32 Index = Invalid;
+        /// @brief The parent whose field table Index addresses; null for an invalid handle.
+        ///
+        /// Compared by the setters, so a handle resolved against one parent and passed to an
+        /// instance of another is a fatal rather than a write at an unrelated field's offset. It is
+        /// never dereferenced.
+        const Material* Parent = nullptr;
+        /// @brief Returns true if the handle names a field of its parent's schema.
+        [[nodiscard]] bool IsValid() const { return Index != Invalid; }
+    };
+
     /// @brief One reflected material parameter field, kept at runtime for name-based SetTexture/SetParam dispatch.
     struct MaterialField
     {
@@ -81,6 +106,13 @@ namespace Veng
         FieldKind Kind{};
         /// @brief For handle fields, the AssetId of the texture whose bindless index is written here at Finalize(); 0 for Param fields.
         u64 TextureId = 0;
+        /// @brief For a TextureHandle field, the index of its paired `<name>Sampler` field; MaterialFieldHandle::Invalid otherwise.
+        ///
+        /// A texture and the sampler it is read through are written together — binding a texture
+        /// fills both slots — and the pairing is derivable from the two names alone. Material
+        /// resolves it once when it takes the field table, so a write patches both slots from data
+        /// it already holds instead of building `<name>Sampler` and scanning the table again.
+        u32 PairedSampler = MaterialFieldHandle::Invalid;
     };
 
     /// @brief Construction parameters for Material, assembled by MaterialLoader before calling Create.
@@ -137,6 +169,9 @@ namespace Veng
         /// @brief The default parameter block: bindless handle slots (patched at Finalize) and authored scalar/vector params.
         vector<std::byte> Block;
         /// @brief Reflected field table describing the parameter block layout.
+        ///
+        /// Each entry's PairedSampler is resolved by Material from the table's own names, so a
+        /// caller assembling this leaves it at its default.
         vector<MaterialField> Fields;
         /// @brief Push-constant offset of the per-draw material selector, or NoSelectorPush.
         ///
@@ -263,6 +298,16 @@ namespace Veng
         /// An instance validates its overrides against this; an editor reads it rather than
         /// re-reflecting the shader.
         [[nodiscard]] std::span<const MaterialField> GetFields() const { return m_Fields; }
+
+        /// @brief Resolves a field name to a handle into this material's schema.
+        ///
+        /// The one place a material parameter's name is matched. A consumer that writes the same
+        /// field every frame calls this once — where it resolves the material — and passes the
+        /// handle to the setters thereafter; the handle stays valid for the material's lifetime and
+        /// for every MaterialInstance sharing it as a parent.
+        /// @param name The field name to resolve.
+        /// @return A handle naming the field, or an invalid handle when the schema has no such name.
+        [[nodiscard]] MaterialFieldHandle Field(std::string_view name) const;
 
         /// @brief Returns the cooked default parameter block (handle slots patched at Finalize).
         ///

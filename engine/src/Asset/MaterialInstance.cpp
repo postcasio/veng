@@ -72,16 +72,30 @@ namespace Veng
         }
     }
 
-    const MaterialField* MaterialInstance::FindField(std::string_view name) const
+    const MaterialField& MaterialInstance::ResolveField(const MaterialFieldHandle field,
+                                                        const std::string_view caller) const
     {
-        for (const MaterialField& f : m_Parent.Get()->GetFields())
-        {
-            if (f.Name == name)
-            {
-                return &f;
-            }
-        }
-        return nullptr;
+        const Material* const parent = m_Parent.Get();
+        VE_ASSERT(field.IsValid(), "MaterialInstance::{}: invalid field handle on instance '{}'",
+                  caller, m_Name);
+        VE_ASSERT(field.Parent == parent,
+                  "MaterialInstance::{}: field handle was resolved against another material, not "
+                  "instance '{}'s parent",
+                  caller, m_Name);
+        const std::span<const MaterialField> fields = parent->GetFields();
+        VE_ASSERT(field.Index < fields.size(),
+                  "MaterialInstance::{}: field index {} is past instance '{}'s schema of {} fields",
+                  caller, field.Index, m_Name, fields.size());
+        return fields[field.Index];
+    }
+
+    MaterialFieldHandle MaterialInstance::RequireField(const std::string_view name,
+                                                       const std::string_view caller) const
+    {
+        const MaterialFieldHandle field = Field(name);
+        VE_ASSERT(field.IsValid(), "MaterialInstance::{}: field '{}' not found in instance '{}'",
+                  caller, name, m_Name);
+        return field;
     }
 
     void MaterialInstance::Finalize()
@@ -95,12 +109,14 @@ namespace Veng
         m_Block.assign(defaultBlock.begin(), defaultBlock.end());
 
         // Apply each override over the seeded default block.
+        const std::span<const MaterialField> parentFields = m_Parent.Get()->GetFields();
         for (const MaterialOverride& ov : m_Overrides)
         {
-            const MaterialField* field = FindField(ov.Name);
-            VE_ASSERT(field != nullptr,
+            const MaterialFieldHandle handle = Field(ov.Name);
+            VE_ASSERT(handle.IsValid(),
                       "MaterialInstance::Finalize: '{}' overrides field '{}' not in parent schema",
                       m_Name, ov.Name);
+            const MaterialField* field = &parentFields[handle.Index];
 
             if (!ov.Value.empty())
             {
@@ -134,16 +150,13 @@ namespace Veng
             std::memcpy(m_Block.data() + field->Offset, &index, sizeof(u32));
 
             // Patch the paired <name>Sampler slot when overriding a TextureHandle.
-            if (field->Kind == MaterialField::FieldKind::TextureHandle)
+            if (field->PairedSampler != MaterialFieldHandle::Invalid)
             {
-                const string samplerName = ov.Name + "Sampler";
-                const MaterialField* samplerField = FindField(samplerName);
-                if (samplerField != nullptr &&
-                    samplerField->Kind == MaterialField::FieldKind::SamplerHandle &&
-                    samplerField->Offset + sizeof(u32) <= m_Block.size())
+                const MaterialField& samplerField = parentFields[field->PairedSampler];
+                if (samplerField.Offset + sizeof(u32) <= m_Block.size())
                 {
                     const u32 samplerIndex = tex->GetSamplerHandle().Index;
-                    std::memcpy(m_Block.data() + samplerField->Offset, &samplerIndex, sizeof(u32));
+                    std::memcpy(m_Block.data() + samplerField.Offset, &samplerIndex, sizeof(u32));
                 }
             }
         }
@@ -235,37 +248,37 @@ namespace Veng
 
     void MaterialInstance::SetTexture(std::string_view name, AssetHandle<Texture> texture)
     {
-        const MaterialField* field = FindField(name);
-        VE_ASSERT(field != nullptr,
-                  "MaterialInstance::SetTexture: field '{}' not found in instance '{}'", name,
-                  m_Name);
+        SetTexture(RequireField(name, "SetTexture"), std::move(texture));
+    }
+
+    void MaterialInstance::SetTexture(const MaterialFieldHandle field, AssetHandle<Texture> texture)
+    {
+        const MaterialField& entry = ResolveField(field, "SetTexture");
         VE_ASSERT(
-            field->Kind == MaterialField::FieldKind::TextureHandle,
+            entry.Kind == MaterialField::FieldKind::TextureHandle,
             "MaterialInstance::SetTexture: field '{}' in instance '{}' is not a TextureHandle "
             "(Kind={})",
-            name, m_Name, static_cast<u32>(field->Kind));
+            entry.Name, m_Name, static_cast<u32>(entry.Kind));
 
         const Texture& tex = *texture.Get();
 
-        VE_ASSERT(field->Offset + sizeof(u32) <= m_Block.size(),
+        VE_ASSERT(entry.Offset + sizeof(u32) <= m_Block.size(),
                   "MaterialInstance::SetTexture: field '{}' offset {} + 4 exceeds block size {}",
-                  name, field->Offset, m_Block.size());
+                  entry.Name, entry.Offset, m_Block.size());
         const u32 textureIndex = tex.GetHandle().Index;
-        std::memcpy(m_Block.data() + field->Offset, &textureIndex, sizeof(u32));
+        std::memcpy(m_Block.data() + entry.Offset, &textureIndex, sizeof(u32));
 
-        // Also patch the paired <name>Sampler field if it exists.
-        const string samplerFieldName = string(name) + "Sampler";
-        const MaterialField* samplerField = FindField(samplerFieldName);
-        if (samplerField != nullptr &&
-            samplerField->Kind == MaterialField::FieldKind::SamplerHandle)
+        // Also patch the paired <name>Sampler field if the schema resolved one.
+        if (entry.PairedSampler != MaterialFieldHandle::Invalid)
         {
+            const MaterialField& samplerField = m_Parent.Get()->GetFields()[entry.PairedSampler];
             VE_ASSERT(
-                samplerField->Offset + sizeof(u32) <= m_Block.size(),
+                samplerField.Offset + sizeof(u32) <= m_Block.size(),
                 "MaterialInstance::SetTexture: sampler field '{}' offset {} + 4 exceeds block "
                 "size {}",
-                samplerFieldName, samplerField->Offset, m_Block.size());
+                samplerField.Name, samplerField.Offset, m_Block.size());
             const u32 samplerIndex = tex.GetSamplerHandle().Index;
-            std::memcpy(m_Block.data() + samplerField->Offset, &samplerIndex, sizeof(u32));
+            std::memcpy(m_Block.data() + samplerField.Offset, &samplerIndex, sizeof(u32));
         }
 
         const u64 texId = texture.Id().Value;
@@ -289,86 +302,96 @@ namespace Veng
 
     void MaterialInstance::SetParam(std::string_view name, const vec4& value)
     {
-        const MaterialField* field = FindField(name);
-        VE_ASSERT(field != nullptr,
-                  "MaterialInstance::SetParam: field '{}' not found in instance '{}'", name,
-                  m_Name);
+        SetParam(RequireField(name, "SetParam"), value);
+    }
+
+    void MaterialInstance::SetParam(const MaterialFieldHandle field, const vec4& value)
+    {
+        const MaterialField& entry = ResolveField(field, "SetParam");
         VE_ASSERT(
-            field->Kind == MaterialField::FieldKind::Param,
+            entry.Kind == MaterialField::FieldKind::Param,
             "MaterialInstance::SetParam: field '{}' in instance '{}' is not a Param (Kind={})",
-            name, m_Name, static_cast<u32>(field->Kind));
+            entry.Name, m_Name, static_cast<u32>(entry.Kind));
 
-        const u32 writeBytes = std::min(field->Size, static_cast<u32>(sizeof(vec4)));
-        VE_ASSERT(field->Offset + writeBytes <= m_Block.size(),
+        const u32 writeBytes = std::min(entry.Size, static_cast<u32>(sizeof(vec4)));
+        VE_ASSERT(entry.Offset + writeBytes <= m_Block.size(),
                   "MaterialInstance::SetParam: field '{}' offset {} + {} exceeds block size {}",
-                  name, field->Offset, writeBytes, m_Block.size());
+                  entry.Name, entry.Offset, writeBytes, m_Block.size());
 
-        std::memcpy(m_Block.data() + field->Offset, &value, writeBytes);
+        std::memcpy(m_Block.data() + entry.Offset, &value, writeBytes);
 
         UploadParams();
     }
 
     void MaterialInstance::SetParam(std::string_view name, f32 value)
     {
-        const MaterialField* field = FindField(name);
-        VE_ASSERT(field != nullptr,
-                  "MaterialInstance::SetParam: field '{}' not found in instance '{}'", name,
-                  m_Name);
+        SetParam(RequireField(name, "SetParam"), value);
+    }
+
+    void MaterialInstance::SetParam(const MaterialFieldHandle field, const f32 value)
+    {
+        const MaterialField& entry = ResolveField(field, "SetParam");
         VE_ASSERT(
-            field->Kind == MaterialField::FieldKind::Param,
+            entry.Kind == MaterialField::FieldKind::Param,
             "MaterialInstance::SetParam: field '{}' in instance '{}' is not a Param (Kind={})",
-            name, m_Name, static_cast<u32>(field->Kind));
+            entry.Name, m_Name, static_cast<u32>(entry.Kind));
 
         // Write only the field's reflected size — for a scalar param that is 4
         // bytes, never spilling into the following bytes of the block.
-        const u32 writeBytes = std::min(field->Size, static_cast<u32>(sizeof(f32)));
-        VE_ASSERT(field->Offset + writeBytes <= m_Block.size(),
+        const u32 writeBytes = std::min(entry.Size, static_cast<u32>(sizeof(f32)));
+        VE_ASSERT(entry.Offset + writeBytes <= m_Block.size(),
                   "MaterialInstance::SetParam: field '{}' offset {} + {} exceeds block size {}",
-                  name, field->Offset, writeBytes, m_Block.size());
+                  entry.Name, entry.Offset, writeBytes, m_Block.size());
 
-        std::memcpy(m_Block.data() + field->Offset, &value, writeBytes);
+        std::memcpy(m_Block.data() + entry.Offset, &value, writeBytes);
 
         UploadParams();
     }
 
     void MaterialInstance::SetTextureHandle(std::string_view name, Renderer::TextureHandle handle)
     {
-        const MaterialField* field = FindField(name);
-        VE_ASSERT(field != nullptr,
-                  "MaterialInstance::SetTextureHandle: field '{}' not found in instance '{}'", name,
-                  m_Name);
-        VE_ASSERT(field->Kind == MaterialField::FieldKind::TextureHandle,
+        SetTextureHandle(RequireField(name, "SetTextureHandle"), handle);
+    }
+
+    void MaterialInstance::SetTextureHandle(const MaterialFieldHandle field,
+                                            Renderer::TextureHandle handle)
+    {
+        const MaterialField& entry = ResolveField(field, "SetTextureHandle");
+        VE_ASSERT(entry.Kind == MaterialField::FieldKind::TextureHandle,
                   "MaterialInstance::SetTextureHandle: field '{}' in instance '{}' is not a "
                   "TextureHandle (Kind={})",
-                  name, m_Name, static_cast<u32>(field->Kind));
-        VE_ASSERT(field->Offset + sizeof(u32) <= m_Block.size(),
+                  entry.Name, m_Name, static_cast<u32>(entry.Kind));
+        VE_ASSERT(entry.Offset + sizeof(u32) <= m_Block.size(),
                   "MaterialInstance::SetTextureHandle: field '{}' offset {} + 4 exceeds block "
                   "size {}",
-                  name, field->Offset, m_Block.size());
+                  entry.Name, entry.Offset, m_Block.size());
 
         const u32 index = handle.Index;
-        std::memcpy(m_Block.data() + field->Offset, &index, sizeof(u32));
+        std::memcpy(m_Block.data() + entry.Offset, &index, sizeof(u32));
 
         UploadParams();
     }
 
     void MaterialInstance::SetSamplerHandle(std::string_view name, Renderer::SamplerHandle handle)
     {
-        const MaterialField* field = FindField(name);
-        VE_ASSERT(field != nullptr,
-                  "MaterialInstance::SetSamplerHandle: field '{}' not found in instance '{}'", name,
-                  m_Name);
-        VE_ASSERT(field->Kind == MaterialField::FieldKind::SamplerHandle,
+        SetSamplerHandle(RequireField(name, "SetSamplerHandle"), handle);
+    }
+
+    void MaterialInstance::SetSamplerHandle(const MaterialFieldHandle field,
+                                            Renderer::SamplerHandle handle)
+    {
+        const MaterialField& entry = ResolveField(field, "SetSamplerHandle");
+        VE_ASSERT(entry.Kind == MaterialField::FieldKind::SamplerHandle,
                   "MaterialInstance::SetSamplerHandle: field '{}' in instance '{}' is not a "
                   "SamplerHandle (Kind={})",
-                  name, m_Name, static_cast<u32>(field->Kind));
-        VE_ASSERT(field->Offset + sizeof(u32) <= m_Block.size(),
+                  entry.Name, m_Name, static_cast<u32>(entry.Kind));
+        VE_ASSERT(entry.Offset + sizeof(u32) <= m_Block.size(),
                   "MaterialInstance::SetSamplerHandle: field '{}' offset {} + 4 exceeds block "
                   "size {}",
-                  name, field->Offset, m_Block.size());
+                  entry.Name, entry.Offset, m_Block.size());
 
         const u32 index = handle.Index;
-        std::memcpy(m_Block.data() + field->Offset, &index, sizeof(u32));
+        std::memcpy(m_Block.data() + entry.Offset, &index, sizeof(u32));
 
         UploadParams();
     }
@@ -376,43 +399,49 @@ namespace Veng
     void MaterialInstance::SetStorageBufferHandle(std::string_view name,
                                                   Renderer::StorageBufferHandle handle)
     {
-        const MaterialField* field = FindField(name);
-        VE_ASSERT(field != nullptr,
-                  "MaterialInstance::SetStorageBufferHandle: field '{}' not found in instance '{}'",
-                  name, m_Name);
-        VE_ASSERT(field->Kind == MaterialField::FieldKind::StorageBufferHandle,
+        SetStorageBufferHandle(RequireField(name, "SetStorageBufferHandle"), handle);
+    }
+
+    void MaterialInstance::SetStorageBufferHandle(const MaterialFieldHandle field,
+                                                  Renderer::StorageBufferHandle handle)
+    {
+        const MaterialField& entry = ResolveField(field, "SetStorageBufferHandle");
+        VE_ASSERT(entry.Kind == MaterialField::FieldKind::StorageBufferHandle,
                   "MaterialInstance::SetStorageBufferHandle: field '{}' in instance '{}' is not a "
                   "StorageBufferHandle (Kind={})",
-                  name, m_Name, static_cast<u32>(field->Kind));
+                  entry.Name, m_Name, static_cast<u32>(entry.Kind));
         VE_ASSERT(
-            field->Offset + sizeof(u32) <= m_Block.size(),
+            entry.Offset + sizeof(u32) <= m_Block.size(),
             "MaterialInstance::SetStorageBufferHandle: field '{}' offset {} + 4 exceeds block "
             "size {}",
-            name, field->Offset, m_Block.size());
+            entry.Name, entry.Offset, m_Block.size());
 
         const u32 index = handle.Index;
-        std::memcpy(m_Block.data() + field->Offset, &index, sizeof(u32));
+        std::memcpy(m_Block.data() + entry.Offset, &index, sizeof(u32));
 
         UploadParams();
     }
 
     void MaterialInstance::SetVolumeHandle(std::string_view name, Renderer::VolumeHandle handle)
     {
-        const MaterialField* field = FindField(name);
-        VE_ASSERT(field != nullptr,
-                  "MaterialInstance::SetVolumeHandle: field '{}' not found in instance '{}'", name,
-                  m_Name);
-        VE_ASSERT(field->Kind == MaterialField::FieldKind::VolumeHandle,
+        SetVolumeHandle(RequireField(name, "SetVolumeHandle"), handle);
+    }
+
+    void MaterialInstance::SetVolumeHandle(const MaterialFieldHandle field,
+                                           Renderer::VolumeHandle handle)
+    {
+        const MaterialField& entry = ResolveField(field, "SetVolumeHandle");
+        VE_ASSERT(entry.Kind == MaterialField::FieldKind::VolumeHandle,
                   "MaterialInstance::SetVolumeHandle: field '{}' in instance '{}' is not a "
                   "VolumeHandle (Kind={})",
-                  name, m_Name, static_cast<u32>(field->Kind));
-        VE_ASSERT(field->Offset + sizeof(u32) <= m_Block.size(),
+                  entry.Name, m_Name, static_cast<u32>(entry.Kind));
+        VE_ASSERT(entry.Offset + sizeof(u32) <= m_Block.size(),
                   "MaterialInstance::SetVolumeHandle: field '{}' offset {} + 4 exceeds block "
                   "size {}",
-                  name, field->Offset, m_Block.size());
+                  entry.Name, entry.Offset, m_Block.size());
 
         const u32 index = handle.Index;
-        std::memcpy(m_Block.data() + field->Offset, &index, sizeof(u32));
+        std::memcpy(m_Block.data() + entry.Offset, &index, sizeof(u32));
 
         UploadParams();
     }

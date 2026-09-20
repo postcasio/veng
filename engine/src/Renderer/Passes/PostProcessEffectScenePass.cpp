@@ -1,9 +1,5 @@
 #include "PostProcessEffectScenePass.h"
 
-#include <algorithm>
-#include <span>
-#include <string_view>
-
 #include <fmt/format.h>
 
 #include <Veng/Assert.h>
@@ -62,6 +58,17 @@ namespace Veng::Renderer
                     },
             });
         m_PipelineMaterialId = m_Material.Id().Value;
+
+        // The per-frame inputs are addressed by handle from here on: the names are the pass's own
+        // and the schema is the material's, so both are settled the moment the material is.
+        m_Fields = EffectFields{
+            .Scene = material.Field("Scene"),
+            .SceneSampler = material.Field("SceneSampler"),
+            .Depth = material.Field("Depth"),
+            .DepthSampler = material.Field("DepthSampler"),
+            .SceneScaleUv = material.Field("SceneScaleUV"),
+            .DepthScaleUv = material.Field("DepthScaleUV"),
+        };
     }
 
     void PostProcessEffectScenePass::Declare(RenderGraph& graph, const PassIO& io)
@@ -136,36 +143,30 @@ namespace Veng::Renderer
 
                     // Write the runtime-bound inputs into the material's fields where it declares
                     // them, so an effect that ignores depth (or the scale maps) need not declare
-                    // those fields.
-                    const auto hasField = [&material](std::string_view name)
+                    // those fields. The handles were resolved with the pipeline.
+                    if (m_Fields.Scene.IsValid())
                     {
-                        const std::span<const MaterialField> fields = material.GetFields();
-                        return std::ranges::any_of(fields, [name](const MaterialField& f)
-                                                   { return f.Name == name; });
-                    };
-                    if (hasField("Scene"))
-                    {
-                        material.SetTextureHandle("Scene", m_SourceHandle);
+                        material.SetTextureHandle(m_Fields.Scene, m_SourceHandle);
                     }
-                    if (hasField("SceneSampler"))
+                    if (m_Fields.SceneSampler.IsValid())
                     {
-                        material.SetSamplerHandle("SceneSampler", samplerHandle);
+                        material.SetSamplerHandle(m_Fields.SceneSampler, samplerHandle);
                     }
-                    if (hasField("Depth"))
+                    if (m_Fields.Depth.IsValid())
                     {
-                        material.SetTextureHandle("Depth", depthHandle);
+                        material.SetTextureHandle(m_Fields.Depth, depthHandle);
                     }
-                    if (hasField("DepthSampler"))
+                    if (m_Fields.DepthSampler.IsValid())
                     {
-                        material.SetSamplerHandle("DepthSampler", samplerHandle);
+                        material.SetSamplerHandle(m_Fields.DepthSampler, samplerHandle);
                     }
-                    if (hasField("SceneScaleUV"))
+                    if (m_Fields.SceneScaleUv.IsValid())
                     {
-                        material.SetParam("SceneScaleUV", sceneScaleUv);
+                        material.SetParam(m_Fields.SceneScaleUv, sceneScaleUv);
                     }
-                    if (hasField("DepthScaleUV"))
+                    if (m_Fields.DepthScaleUv.IsValid())
                     {
-                        material.SetParam("DepthScaleUV", depthScaleUv);
+                        material.SetParam(m_Fields.DepthScaleUv, depthScaleUv);
                     }
 
                     // The effect writes the post-resolve region (what bloom and the tonemap treat as
