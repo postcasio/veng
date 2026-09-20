@@ -19,9 +19,9 @@
 // through the standard set-0 byte-addressed material buffer at index * MaterialParamStride.
 struct MaterialParams
 {
-    // RenderScale is first so its offset is 0 in both the cooker's std140 reflection and the
-    // shader's scalar-layout Load: a float4 placed after the scalar fields would land at offset 16
-    // under std140 but 12 under scalar, so the runtime would write it where the shader cannot read.
+    // Field order carries no correctness weight: the cooker reflects the block in the same
+    // scalar/tight layout the shader's Load reads, so a vector after a scalar packs identically
+    // on both sides.
     float4 RenderScale; // dynamic-resolution upscale: xy source validExtent/allocExtent, zw clamp
     uint   Hdr;         // bindless sampled-image index (runtime-bound each frame)
     uint   HdrSampler;  // bindless sampler index (runtime-bound each frame)
