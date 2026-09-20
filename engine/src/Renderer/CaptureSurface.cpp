@@ -309,6 +309,13 @@ namespace Veng::Renderer
         // Bind the capture output onto the sibling material's named slots every frame:
         // SetTextureHandle writes the current frame-in-flight region, so the handle must land
         // regardless of the push decision. The slot names default to Texture/Sampler.
+        //
+        // Every viewport presenting this world drives the component, and the material is shared
+        // across them — but each value written here is derived from the capture and its carrier
+        // entity, never from the recording view, so the viewports write identical bytes and the
+        // shared block is correct for all of them. This is the view-independent case
+        // BindlessRegistry::MaterialArenaBytes describes; a per-view value would need a per-view
+        // instance instead.
         if (MaterialInstance* const target = material.Get(); target != nullptr)
         {
             // The slot names are authored data and the target material can change under the drive,

@@ -653,6 +653,20 @@ namespace Veng::Renderer
         /// descriptor array is indexed by it, and no shader reads it — a draw is handed a byte
         /// offset with the frame base already folded in. Raising it is this one number with no
         /// per-material consequence.
+        ///
+        /// **The arena rings by frame-in-flight only — it is not part of the per-view ring.** A
+        /// block sits at one offset in the frame's region whichever view is recording, so a value
+        /// written between two Viewport::Render calls of one frame is the value every one of those
+        /// viewports' draws reads at submit: the last writer wins for all of them. Ringing the arena
+        /// by MaxViewsPerFrame the way view constants are ringed would multiply it by 32 for every
+        /// material in every frame to serve the handful written per view, and would still leave a
+        /// consumer-owned instance written per view from outside the renderer with one block. So the
+        /// sanctioned mechanism for a per-view value is a **per-view instance**: build one per
+        /// renderer with AssetManager::BuildSync over the shared instance's parent, keep it current
+        /// with MaterialInstance::CopyParamsFrom, and write the per-view value into it. A pass
+        /// writing a value derived from the recording view — its extents, the bindless handle of a
+        /// target the pass owns per viewport — is writing a per-view value and needs this; a pass
+        /// writing a value derived only from the scene may keep the shared instance.
         static constexpr u32 MaterialArenaBytes = 2621440;
 
         /// @brief The allocation quantum of the material parameter arena.
@@ -687,6 +701,9 @@ namespace Veng::Renderer
         /// framesInFlight * that per added slot. Content that wants more views than this in one
         /// frame is spent against rather than aborted on — the captures give way first (see
         /// ViewportCompositor::RenderRegistered), and a refused claim records nothing.
+        ///
+        /// The per-material parameter arena is deliberately outside this ring; MaterialArenaBytes
+        /// states what a block means across two views and what a per-view value takes instead.
         static constexpr u32 MaxViewsPerFrame = 32;
 
         /// @brief The largest parameter block a single material may declare, in bytes.

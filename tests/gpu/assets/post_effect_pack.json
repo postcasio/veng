@@ -30,6 +30,16 @@
       "id": "0x0000000000002524",
       "type": "Material",
       "source": "materials/depth_band_effect.vmat.json"
+    },
+    {
+      "id": "0xD0DFE33502D1EBDB",
+      "type": "Shader",
+      "source": "shaders/view_scale_effect.frag.shader.json"
+    },
+    {
+      "id": "0x3C08695826CCE03C",
+      "type": "Material",
+      "source": "materials/view_scale_effect.vmat.json"
     }
   ]
 }

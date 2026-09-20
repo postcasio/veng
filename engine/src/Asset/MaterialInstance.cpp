@@ -190,6 +190,21 @@ namespace Veng
         return copy;
     }
 
+    void MaterialInstance::CopyParamsFrom(const MaterialInstance& source)
+    {
+        VE_ASSERT(m_Registered, "MaterialInstance::CopyParamsFrom: '{}' is not finalized", m_Name);
+        VE_ASSERT(source.m_Registered,
+                  "MaterialInstance::CopyParamsFrom: source '{}' is not finalized", source.m_Name);
+        VE_ASSERT(source.m_Parent.Get() == m_Parent.Get(),
+                  "MaterialInstance::CopyParamsFrom: '{}' and source '{}' have different parents, "
+                  "so their blocks describe different schemas",
+                  m_Name, source.m_Name);
+
+        m_Textures = source.m_Textures;
+        m_Block = source.m_Block;
+        UploadParams();
+    }
+
     void MaterialInstance::Bind(CommandBuffer& cmd) const
     {
         const Material& parent = *m_Parent.Get();

@@ -57,6 +57,14 @@ namespace Veng
     /// One AssetId names one asset of one type: a parent Material's id and its cooked
     /// default-instance id are distinct assets, and a MaterialInstance request for a bare Material
     /// id is a WrongType, never a synthesized default.
+    ///
+    /// **A block is per frame-in-flight, not per view.** The registry rings the arena by
+    /// frames-in-flight alone (see BindlessRegistry::MaterialArenaBytes), so a value written between
+    /// two Viewport::Render calls of one frame is the value *both* viewports' draws read at submit —
+    /// the last writer wins for every view. A consumer needing a per-view value therefore needs a
+    /// per-view instance: build one per renderer with AssetManager::BuildSync over the shared
+    /// instance's parent and CopyParamsFrom the shared one, then write the per-view value into the
+    /// copy.
     class MaterialInstance
     {
     public:
@@ -104,6 +112,17 @@ namespace Veng
         /// @return The runtime copy, finalized and ready to draw.
         /// @pre This instance is finalized (registered).
         [[nodiscard]] Ref<MaterialInstance> Clone(std::string_view name) const;
+
+        /// @brief Overwrites this instance's parameter block with @p source's current one.
+        ///
+        /// Copies the live block — the parent's defaults, @p source's authored overrides and every
+        /// Set* write since — and takes over @p source's resident override textures, then uploads.
+        /// This is how a per-view instance tracks the shared instance it stands in for: re-copying
+        /// whenever GetRevision() moves keeps an override, an editor tweak or a game write on the
+        /// shared instance reaching the draw, which a one-time seed would not.
+        /// @param source The instance to copy from.
+        /// @pre Both instances are finalized and share one parent Material.
+        void CopyParamsFrom(const MaterialInstance& source);
 
         /// @brief Returns the frame-folded material selector (GetCurrentFrameBase() + block offset).
         ///

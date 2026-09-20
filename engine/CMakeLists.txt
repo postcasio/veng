@@ -282,6 +282,7 @@ add_library(veng SHARED
         src/Renderer/Passes/SceneUpscaleScenePass.cpp
         src/Renderer/Passes/AaScenePasses.cpp
         src/Renderer/Passes/DebugBlitScenePasses.cpp
+        src/Renderer/Passes/PerViewMaterial.cpp
         src/Renderer/Passes/PostProcessScenePass.cpp
         src/Renderer/Passes/PostProcessEffectScenePass.cpp
         src/Renderer/DebugBlitPipelines.cpp

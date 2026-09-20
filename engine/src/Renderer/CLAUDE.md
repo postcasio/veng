@@ -834,6 +834,19 @@ per frame): two viewports rendering in one frame write distinct regions rather t
 camera clobbering the region the first's draws still read at submit. The shared per-frame light
 buffer rings the same way.
 
+**The per-material parameter arena is not in this ring** — it rings by frame-in-flight alone, so a
+material's block sits at one offset whichever view is recording and a value written between two
+`Execute`s of one frame is what *both* viewports' draws read at submit. Ringing it per view would
+multiply the arena by `MaxViewsPerFrame`, and would still not cover a consumer-owned instance written
+per view from outside the renderer. So a pass writing a **per-view** value into a material — the
+recording view's extents, the bindless handle of a target the pass owns per viewport — draws through
+a **per-view instance**: `PerViewMaterial` builds one over the shared instance's parent and keeps it
+current with `MaterialInstance::CopyParamsFrom`. `PostProcessEffectScenePass` and
+`GuiHdrOverlayScenePass`'s composite each hold one; `PostProcessScenePass` is handed a per-renderer
+instance by its constructor instead. A pass whose writes derive only from the scene —
+`CaptureSurface`'s output handle, centre and orientation — keeps the shared instance, because every
+viewport writes the same bytes.
+
 **`MaxViewsPerFrame` (32) is a budget spent against, not a contract.** Its consumers are the
 registered viewports (one slot each), one face per driven scene capture, and one slot per amortized
 sky-bake tick — a single tile of a face (the display cube fills through `GeneratedTextureService`, so

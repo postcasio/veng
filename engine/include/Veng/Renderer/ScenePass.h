@@ -278,7 +278,9 @@ namespace Veng::Renderer
     public:
         /// @brief Constructs the pass and builds the fullscreen pipeline from the material.
         /// @param context       Renderer context for pipeline and resource creation.
-        /// @param material      The PostProcess-domain material driving this pass.
+        /// @param material      The PostProcess-domain material driving this pass; a per-view
+        ///                      instance, since the pass writes per-view source handles into it
+        ///                      (see BindlessRegistry::MaterialArenaBytes).
         /// @param input         Primary runtime-bound input descriptor.
         /// @param output        The output ResourceId this pass writes.
         /// @param outputFormat  Color format of the output target.

@@ -10,6 +10,8 @@
 //      flushed to every region).
 //   3. Reuse after release: a released material's owed flushes do not follow its
 //      range into the material allocated over it.
+//   4. Two views, one frame: the ring is per frame-in-flight and not per view, so a
+//      write made between two views is the value both of them read at submit.
 //
 // Each frame draws a fullscreen triangle whose fragment shader loads the
 // material block at the selector it is pushed and outputs the param as color;
@@ -123,6 +125,77 @@ namespace
         const vector<u8> pixels = outputImage->Download();
         REQUIRE(pixels.size() == static_cast<size_t>(Size) * Size * 4);
         return {pixels[0], pixels[1], pixels[2], pixels[3]};
+    }
+
+    // One frame, two passes of different extents — the shape two Viewport::Renders take — with a
+    // parameter write between them. Returns each pass's center pixel.
+    struct TwoViewPixels
+    {
+        std::array<u8, 4> First;
+        std::array<u8, 4> Second;
+    };
+
+    TwoViewPixels RenderTwoViews(Context& context, BindlessRegistry& bindless,
+                                 const Ref<GraphicsPipeline>& pipeline,
+                                 const Ref<Image>& firstImage, const Ref<ImageView>& firstView,
+                                 const Ref<Image>& secondImage, const Ref<ImageView>& secondView,
+                                 MaterialHandle material, const vec4& betweenViews)
+    {
+        CommandBuffer& cmd = context.BeginFrame();
+
+        RenderGraph graph(context);
+        const ResourceId firstId = graph.Import("First");
+        const ResourceId secondId = graph.Import("Second");
+
+        const auto draw = [&](PassContext& ctx, const uvec2 extent)
+        {
+            CommandBuffer& passCmd = ctx.Cmd();
+            passCmd.BindPipeline(pipeline);
+            passCmd.SetViewport({0, 0}, extent);
+            passCmd.SetScissor({0, 0}, extent);
+            bindless.Bind(passCmd);
+            passCmd.PushConstants(
+                MaterialPush{.MaterialIndex = bindless.GetCurrentFrameBase() + material.Offset});
+            passCmd.DrawFullscreenTriangle();
+        };
+
+        graph.AddPass("First View")
+            .Color({
+                .Resource = firstId,
+                .Load = LoadOp::Clear,
+                .Store = StoreOp::Store,
+                .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+            })
+            .Execute([&](PassContext& ctx) { draw(ctx, {Size, Size}); });
+
+        graph.AddPass("Second View")
+            .Color({
+                .Resource = secondId,
+                .Load = LoadOp::Clear,
+                .Store = StoreOp::Store,
+                .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+            })
+            .Execute(
+                [&](PassContext& ctx)
+                {
+                    // The second view's own value, written while the first view's draw is already
+                    // recorded into this frame's command buffer.
+                    const auto block = MakeBlock(betweenViews);
+                    bindless.UpdateMaterial(material, std::span<const std::byte>(block));
+                    draw(ctx, {Size * 2, Size * 2});
+                });
+
+        const RenderGraph::ImportBinding bindings[] = {{.Id = firstId, .View = firstView},
+                                                       {.Id = secondId, .View = secondView}};
+        graph.Compile()->Execute(cmd, bindings);
+
+        context.EndFrame();
+        context.WaitIdle();
+
+        const vector<u8> first = firstImage->Download();
+        const vector<u8> second = secondImage->Download();
+        return {.First = {first[0], first[1], first[2], first[3]},
+                .Second = {second[0], second[1], second[2], second[3]}};
     }
 
     // Renders to RGBA8Unorm, so a [0,1] float channel quantizes to ~round(c*255);
@@ -313,6 +386,67 @@ TEST_CASE_FIXTURE(
 
         CHECK(ChannelNear(pixel[1], value.y));
     }
+
+    bindless.Release(material);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "ring-buffered material: a block written between two views of one frame is the "
+                  "written value for both of them")
+{
+    // The material arena rings by frame-in-flight and not by view, so this is what a material's
+    // block *means* across two views: both views' draws read the host value standing at submit, and
+    // the view that wrote last decides it for every view. The contract
+    // BindlessRegistry::MaterialArenaBytes states, executable — a consumer needing a per-view value
+    // needs a per-view instance, and this is the behaviour that makes that necessary.
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
+
+    const AssetResult<AssetHandle<Shader>> vertexAsset = assets.LoadSync<Shader>(AssetId{0x1F42});
+    const AssetResult<AssetHandle<Shader>> fragmentAsset = assets.LoadSync<Shader>(AssetId{0x1F45});
+    REQUIRE(vertexAsset.has_value());
+    REQUIRE(fragmentAsset.has_value());
+
+    Ref<PipelineLayout> layout;
+    auto pipeline = CreateMaterialPipeline(Context, layout, vertexAsset->Get()->Module,
+                                           fragmentAsset->Get()->Module);
+
+    // Two targets of different extents, the case MaxViewsPerFrame's own doc names: an editor
+    // renders one viewport per visible panel and they are not the same size.
+    auto firstImage =
+        Image::Create(Context, {
+                                   .Name = "Two View First",
+                                   .Extent = {Size, Size, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                               });
+    auto firstView =
+        ImageView::Create(Context, {.Name = "Two View First View", .Image = firstImage});
+    auto secondImage =
+        Image::Create(Context, {
+                                   .Name = "Two View Second",
+                                   .Extent = {Size * 2, Size * 2, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                               });
+    auto secondView =
+        ImageView::Create(Context, {.Name = "Two View Second View", .Image = secondImage});
+
+    auto& bindless = Context.GetBindlessRegistry();
+
+    const vec4 firstValue{0.8f, 0.0f, 0.0f, 1.0f};
+    const vec4 secondValue{0.2f, 0.0f, 0.0f, 1.0f};
+    const auto initial = MakeBlock(firstValue);
+    const MaterialHandle material = bindless.RegisterMaterial(std::span<const std::byte>(initial));
+    REQUIRE(material.IsValid());
+
+    const TwoViewPixels pixels = RenderTwoViews(Context, bindless, pipeline, firstImage, firstView,
+                                                secondImage, secondView, material, secondValue);
+
+    // Both views read the second value: the first view's draw was recorded before the write but
+    // reads the buffer at submit, after it.
+    CHECK(ChannelNear(pixels.First[0], secondValue.x));
+    CHECK(ChannelNear(pixels.Second[0], secondValue.x));
 
     bindless.Release(material);
 }

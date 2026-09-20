@@ -6,6 +6,8 @@
 #include <Veng/Renderer/ScenePass.h>
 #include <Veng/Renderer/Types.h>
 
+#include "PerViewMaterial.h"
+
 namespace Veng
 {
     class AssetManager;
@@ -46,6 +48,11 @@ namespace Veng::Renderer
     /// The renderer inserts this after any post-process effect passes and before bloom, and points it
     /// at the resolved scene-color id (the effect chain's output, or the raw HDR when no effect ran),
     /// so bloom reads the overlays' output.
+    ///
+    /// The intermediate is renderer-owned, so its bindless slot is a per-view value; a composite
+    /// therefore writes it into this renderer's own PerViewMaterial mirror of the overlay's material
+    /// and draws through that, since two viewports presenting one world carry the same instance
+    /// pointer on their overlays.
     class GuiHdrOverlayScenePass final : public ScenePass
     {
     public:
@@ -100,6 +107,8 @@ namespace Veng::Renderer
 
         /// @brief The render context, held for composite-pipeline creation.
         Context& m_Context;
+        /// @brief The asset manager, held for the per-view material mirrors.
+        AssetManager& m_Assets;
         /// @brief The allocation extent (the record maps to the frame's PostResolveExtent).
         uvec2 m_Extent;
         /// @brief Color format of the scene-color target, for the composite color attachment.
@@ -124,6 +133,11 @@ namespace Veng::Renderer
         Unique<GuiScenePass> m_Gui;
         /// @brief The per-frame merged/projected screen-space draw list a record draws from.
         Gui::DrawList m_Merged;
+        /// @brief One mirror per composited overlay, indexed as MaterialOverlay indexes them.
+        ///
+        /// A slot rebuilds its mirror when the overlay at that index names a different instance, so
+        /// the set is bounded by the frame's composite count rather than by every instance seen.
+        vector<PerViewMaterial> m_ViewMaterials;
         /// @brief One composite pipeline per parent Material, keyed by parent; rebuilt on a mask-presence flip.
         map<const Material*, Ref<GraphicsPipeline>> m_CompositePipelines;
         /// @brief Whether the cached composite pipelines were built with the mask attachment.

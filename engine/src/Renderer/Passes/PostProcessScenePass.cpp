@@ -80,7 +80,10 @@ namespace Veng::Renderer
                 MaterialInstance& material = *m_Material.Get();
 
                 // Write the live upstream bindless slots; must precede Material::Bind
-                // so the pushed selector reads this frame's region.
+                // so the pushed selector reads this frame's region. These are per-view values (the
+                // sources are renderer-owned intermediates), so the instance the constructor was
+                // handed must be one this renderer alone writes — see
+                // BindlessRegistry::MaterialArenaBytes and SceneRenderer's tonemap material.
                 material.SetTextureHandle(input.TextureField, input.SourceTexture);
                 material.SetSamplerHandle(input.SamplerField, input.Sampler);
                 if (hasExtra)

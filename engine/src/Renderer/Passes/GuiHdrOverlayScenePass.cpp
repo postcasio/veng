@@ -2,6 +2,7 @@
 
 #include <fmt/format.h>
 
+#include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Renderer/BindlessRegistry.h>
@@ -37,7 +38,7 @@ namespace Veng::Renderer
 
     GuiHdrOverlayScenePass::GuiHdrOverlayScenePass(Context& context, AssetManager& assets,
                                                    Format outputFormat, uvec2 extent)
-        : m_Context(context), m_Extent(extent), m_OutputFormat(outputFormat)
+        : m_Context(context), m_Assets(assets), m_Extent(extent), m_OutputFormat(outputFormat)
     {
         // The recorder is driven only through RecordInto, so its composite images stay unbuilt (the
         // lazy path in GuiScenePass); it supplies the geometry rings, the shape/msdf/material
@@ -187,7 +188,18 @@ namespace Veng::Renderer
         }
 
         CommandBuffer& cmd = ctx.Cmd();
-        MaterialInstance& material = *overlay->Material;
+
+        // The intermediate is this renderer's own, so its slot is a per-view value and a material's
+        // block rings by frame-in-flight rather than by view: written into the overlay's shared
+        // instance it would hand every viewport the last one recorded. The composite draws through
+        // this renderer's mirror instead.
+        if (index >= m_ViewMaterials.size())
+        {
+            m_ViewMaterials.resize(index + 1);
+        }
+        MaterialInstance& material =
+            m_ViewMaterials[index].Resolve(m_Assets, m_Context, *overlay->Material,
+                                           fmt::format("{} (View)", overlay->Material->GetName()));
 
         // Write the intermediate's live bindless slot into the material's Document field, so the
         // fullscreen fragment samples this frame's rendered document; must precede Material::Bind so

@@ -1,0 +1,12 @@
+{
+  "defaultInstance": "0x3E3058326ECC6188",
+  "domain": "PostProcess",
+  "shaders": {
+    "vertex": "0x0000000000002530",
+    "fragment": "0xD0DFE33502D1EBDB"
+  },
+  "fields": [
+    "DepthScaleUV",
+    { "name": "Tint", "value": 0.0 }
+  ]
+}

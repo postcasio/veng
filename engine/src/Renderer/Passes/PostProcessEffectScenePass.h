@@ -8,8 +8,11 @@
 #include <Veng/Renderer/ScenePass.h>
 #include <Veng/Renderer/Types.h>
 
+#include "PerViewMaterial.h"
+
 namespace Veng
 {
+    class AssetManager;
     class MaterialInstance;
 }
 
@@ -47,19 +50,25 @@ namespace Veng::Renderer
     /// depth lives in the rendered sub-rect of the separate, render-scaled render allocation). The
     /// pass renders over the post-resolve extent, so its output is a drop-in scene-color source for
     /// the downstream pre-bloom consumers.
+    ///
+    /// Those two mappings are derived from the recording view, so they are per-view values and the
+    /// draw goes through this renderer's own PerViewMaterial mirror of the resolved instance rather
+    /// than the instance itself — two viewports presenting one world resolve the same asset handle.
     class PostProcessEffectScenePass final : public ScenePass
     {
     public:
         /// @brief Constructs the pass; the pipeline builds on the first Declare with a bound material.
         /// @param context             The render context for pipeline creation.
+        /// @param assets              Asset manager the per-view material mirror is built through.
         /// @param outputFormat        Color format of the intermediate HDR target this pass writes.
         /// @param extent              The post-resolve allocation this pass writes.
         /// @param renderExtent        The render allocation the depth mapping is derived against.
         /// @param passthroughPipeline Shared unclamped-HDR copy pipeline used when no material is
         ///                            bound (a rebuild frame), so the output is the source rather
         ///                            than a black clear.
-        PostProcessEffectScenePass(Context& context, Format outputFormat, uvec2 extent,
-                                   uvec2 renderExtent, Ref<GraphicsPipeline> passthroughPipeline);
+        PostProcessEffectScenePass(Context& context, AssetManager& assets, Format outputFormat,
+                                   uvec2 extent, uvec2 renderExtent,
+                                   Ref<GraphicsPipeline> passthroughPipeline);
 
         /// @brief Sets the effect material to run (or a null handle to disable the pass this frame).
         ///
@@ -111,6 +120,8 @@ namespace Veng::Renderer
 
         /// @brief Context for pipeline creation.
         Context& m_Context;
+        /// @brief Asset manager the per-view material mirror is built through.
+        AssetManager& m_Assets;
         /// @brief Output color format the pipeline is built against.
         Format m_OutputFormat;
         /// @brief The post-resolve allocation the scene mapping is derived against.
@@ -130,6 +141,8 @@ namespace Veng::Renderer
 
         /// @brief The effect material instance driving this pass (set per frame).
         AssetHandle<MaterialInstance> m_Material;
+        /// @brief This renderer's mirror of it, which the per-view writes and the draw go through.
+        PerViewMaterial m_ViewMaterial;
         /// @brief Built from the material's shaders; rebuilt on a material-identity change.
         Ref<GraphicsPipeline> m_Pipeline;
         /// @brief The material id the pipeline was built for; a change rebuilds it.

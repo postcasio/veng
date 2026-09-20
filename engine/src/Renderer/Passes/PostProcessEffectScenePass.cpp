@@ -3,6 +3,7 @@
 #include <fmt/format.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Renderer/BindlessRegistry.h>
@@ -13,9 +14,9 @@
 namespace Veng::Renderer
 {
     PostProcessEffectScenePass::PostProcessEffectScenePass(
-        Context& context, Format outputFormat, uvec2 extent, uvec2 renderExtent,
-        Ref<GraphicsPipeline> passthroughPipeline)
-        : m_Context(context), m_OutputFormat(outputFormat), m_Extent(extent),
+        Context& context, AssetManager& assets, Format outputFormat, uvec2 extent,
+        uvec2 renderExtent, Ref<GraphicsPipeline> passthroughPipeline)
+        : m_Context(context), m_Assets(assets), m_OutputFormat(outputFormat), m_Extent(extent),
           m_RenderExtent(renderExtent), m_PassthroughPipeline(std::move(passthroughPipeline))
     {
     }
@@ -127,8 +128,16 @@ namespace Veng::Renderer
                     const ScenePassContext ctx = Wrap(inner);
                     CommandBuffer& cmd = ctx.Cmd();
                     const SceneView& view = ctx.View();
-                    MaterialInstance& material = *m_Material.Get();
                     const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+
+                    // The scale maps below are derived from the recording view, and a material's
+                    // block rings by frame-in-flight rather than by view, so writing them into the
+                    // resolved instance would hand every viewport sharing it the last one recorded.
+                    // This renderer's own mirror is what the writes and the draw go through.
+                    MaterialInstance& resolved = *m_Material.Get();
+                    MaterialInstance& material =
+                        m_ViewMaterial.Resolve(m_Assets, m_Context, resolved,
+                                               fmt::format("{} (View)", resolved.GetName()));
 
                     // The finished scene color fills the post-resolve allocation the promotion
                     // handed on; the g-buffer depth is the rendered sub-rect of the render
