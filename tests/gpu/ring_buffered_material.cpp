@@ -12,6 +12,11 @@
 //      range into the material allocated over it.
 //   4. Two views, one frame: the ring is per frame-in-flight and not per view, so a
 //      write made between two views is the value both of them read at submit.
+//   5. Ranged writes: a write of one field's bytes reaches every region, leaving the
+//      block's other fields intact in all of them, and two writes before a frame
+//      advance both reach every region.
+//   6. Packed neighbours: interleaved ranged writes to two materials whose blocks are
+//      adjacent in the arena leave each other's bytes untouched.
 //
 // Each frame draws a fullscreen triangle whose fragment shader loads the
 // material block at the selector it is pushed and outputs the param as color;
@@ -83,11 +88,33 @@ namespace
         return block;
     }
 
-    // Renders one frame sampling the material block and returns the center pixel.
+    // A block holding two float4s the test shader reads one at a time, by pushing the field's
+    // byte offset beside the block's.
+    std::array<std::byte, 32> MakePairBlock(const vec4& first, const vec4& second)
+    {
+        std::array<std::byte, 32> block{};
+        std::memcpy(block.data(), &first, sizeof(first));
+        std::memcpy(block.data() + sizeof(first), &second, sizeof(second));
+        return block;
+    }
+
+    // The bytes of one float4, for a ranged write of a single field.
+    std::array<std::byte, 16> FieldBytes(const vec4& value)
+    {
+        std::array<std::byte, 16> bytes{};
+        std::memcpy(bytes.data(), &value, sizeof(value));
+        return bytes;
+    }
+
+    // Renders one frame sampling the material block at the given byte offset within it and returns
+    // the center pixel. An empty beforeDraw is the ordinary frame; a non-empty one runs while the
+    // frame's command buffer is recording, so the writes it makes take the immediate write path
+    // into the region this frame's draw reads.
     std::array<u8, 4> RenderFrame(Context& context, BindlessRegistry& bindless,
                                   const Ref<GraphicsPipeline>& pipeline,
                                   const Ref<Image>& outputImage, const Ref<ImageView>& outputView,
-                                  MaterialHandle material)
+                                  MaterialHandle material, u32 fieldOffset = 0,
+                                  const function<void()>& beforeDraw = {})
     {
         CommandBuffer& cmd = context.BeginFrame();
 
@@ -104,6 +131,10 @@ namespace
             .Execute(
                 [&](PassContext& ctx)
                 {
+                    if (beforeDraw)
+                    {
+                        beforeDraw();
+                    }
                     CommandBuffer& passCmd = ctx.Cmd();
                     passCmd.BindPipeline(pipeline);
                     passCmd.SetViewport({0, 0}, {Size, Size});
@@ -111,8 +142,9 @@ namespace
                     bindless.Bind(passCmd);
                     // Fold the current frame's region base into the selector so the
                     // shader's load reads this frame's region.
-                    passCmd.PushConstants(MaterialPush{
-                        .MaterialIndex = bindless.GetCurrentFrameBase() + material.Offset});
+                    passCmd.PushConstants(
+                        MaterialPush{.MaterialIndex = bindless.GetCurrentFrameBase() +
+                                                      material.Offset + fieldOffset});
                     passCmd.DrawFullscreenTriangle();
                 });
 
@@ -449,4 +481,184 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(ChannelNear(pixels.Second[0], secondValue.x));
 
     bindless.Release(material);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "ring-buffered material: a ranged write reaches every region and leaves the "
+                  "block's other fields standing")
+{
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
+
+    const AssetResult<AssetHandle<Shader>> vertexAsset = assets.LoadSync<Shader>(AssetId{0x1F42});
+    const AssetResult<AssetHandle<Shader>> fragmentAsset = assets.LoadSync<Shader>(AssetId{0x1F45});
+    REQUIRE(vertexAsset.has_value());
+    REQUIRE(fragmentAsset.has_value());
+
+    Ref<PipelineLayout> layout;
+    auto pipeline = CreateMaterialPipeline(Context, layout, vertexAsset->Get()->Module,
+                                           fragmentAsset->Get()->Module);
+
+    auto outputImage =
+        Image::Create(Context, {
+                                   .Name = "Ranged Output",
+                                   .Extent = {Size, Size, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                               });
+    auto outputView =
+        ImageView::Create(Context, {.Name = "Ranged Output View", .Image = outputImage});
+
+    auto& bindless = Context.GetBindlessRegistry();
+
+    const vec4 registeredSecond{0.0f, 0.6f, 0.0f, 1.0f};
+    const auto initial = MakePairBlock(vec4{0.1f, 0.0f, 0.0f, 1.0f}, registeredSecond);
+    const MaterialHandle material = bindless.RegisterMaterial(std::span<const std::byte>(initial));
+    REQUIRE(material.IsValid());
+
+    // One field written by range, the other left alone: the replication into the regions this
+    // frame did not touch must carry the written bytes and nothing else.
+    const vec4 written{0.9f, 0.0f, 0.0f, 1.0f};
+    const auto writtenBytes = FieldBytes(written);
+    bindless.UpdateMaterial(material, 0, std::span<const std::byte>(writtenBytes));
+
+    const u32 frames = Context.GetMaxFramesInFlight() + 2;
+    for (u32 i = 0; i < frames; i++)
+    {
+        const std::array<u8, 4> first =
+            RenderFrame(Context, bindless, pipeline, outputImage, outputView, material, 0);
+        const std::array<u8, 4> second =
+            RenderFrame(Context, bindless, pipeline, outputImage, outputView, material, 16);
+        CHECK(ChannelNear(first[0], written.x));
+        CHECK(ChannelNear(second[1], registeredSecond.y));
+    }
+
+    // Two ranged writes with no frame advance between them: the owed replication covers both,
+    // so no region holds one field's new bytes beside the other's old ones.
+    const vec4 pairFirst{0.2f, 0.0f, 0.0f, 1.0f};
+    const vec4 pairSecond{0.0f, 0.4f, 0.0f, 1.0f};
+    const auto pairFirstBytes = FieldBytes(pairFirst);
+    const auto pairSecondBytes = FieldBytes(pairSecond);
+    bindless.UpdateMaterial(material, 0, std::span<const std::byte>(pairFirstBytes));
+    bindless.UpdateMaterial(material, 16, std::span<const std::byte>(pairSecondBytes));
+
+    for (u32 i = 0; i < frames; i++)
+    {
+        const std::array<u8, 4> first =
+            RenderFrame(Context, bindless, pipeline, outputImage, outputView, material, 0);
+        const std::array<u8, 4> second =
+            RenderFrame(Context, bindless, pipeline, outputImage, outputView, material, 16);
+        CHECK(ChannelNear(first[0], pairFirst.x));
+        CHECK(ChannelNear(second[1], pairSecond.y));
+    }
+
+    bindless.Release(material);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "ring-buffered material: interleaved ranged writes to adjacent blocks leave each "
+                  "other's bytes untouched")
+{
+    // Blocks are packed, so a ranged write's destination is the block offset plus the field
+    // offset: getting that arithmetic wrong writes into the next material rather than into this
+    // one's padding, which is the failure mode the packed arena introduces.
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(path(TEST_SHADER_PACK)).has_value());
+
+    const AssetResult<AssetHandle<Shader>> vertexAsset = assets.LoadSync<Shader>(AssetId{0x1F42});
+    const AssetResult<AssetHandle<Shader>> fragmentAsset = assets.LoadSync<Shader>(AssetId{0x1F45});
+    REQUIRE(vertexAsset.has_value());
+    REQUIRE(fragmentAsset.has_value());
+
+    Ref<PipelineLayout> layout;
+    auto pipeline = CreateMaterialPipeline(Context, layout, vertexAsset->Get()->Module,
+                                           fragmentAsset->Get()->Module);
+
+    auto outputImage =
+        Image::Create(Context, {
+                                   .Name = "Adjacent Output",
+                                   .Extent = {Size, Size, 1},
+                                   .Format = Format::RGBA8Unorm,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                               });
+    auto outputView =
+        ImageView::Create(Context, {.Name = "Adjacent Output View", .Image = outputImage});
+
+    auto& bindless = Context.GetBindlessRegistry();
+    const u32 window = Context.GetMaxFramesInFlight();
+
+    // Settle whatever earlier cases left parked, so the arena is one run and first fit places the
+    // two blocks next to each other — which is what this case is about.
+    const MaterialHandle none{.Offset = 0};
+    for (u32 i = 0; i < window + 1; i++)
+    {
+        RenderFrame(Context, bindless, pipeline, outputImage, outputView, none);
+    }
+
+    const auto lowerInitial =
+        MakePairBlock(vec4{0.0f, 0.0f, 0.0f, 1.0f}, vec4{0.0f, 0.0f, 0.0f, 1.0f});
+    const MaterialHandle lower =
+        bindless.RegisterMaterial(std::span<const std::byte>(lowerInitial));
+    const MaterialHandle upper =
+        bindless.RegisterMaterial(std::span<const std::byte>(lowerInitial));
+    REQUIRE(lower.IsValid());
+    REQUIRE(upper.IsValid());
+    REQUIRE(upper.Offset == lower.Offset + BindlessRegistry::MaterialGranuleBytes);
+
+    // Interleaved, so a write that landed in the neighbour would be overwritten by the
+    // neighbour's own next write rather than standing where a single ordering would show it.
+    const vec4 lowerFirst{0.9f, 0.0f, 0.0f, 1.0f};
+    const vec4 upperFirst{0.3f, 0.0f, 0.0f, 1.0f};
+    const vec4 lowerSecond{0.0f, 0.7f, 0.0f, 1.0f};
+    const vec4 upperSecond{0.0f, 0.1f, 0.0f, 1.0f};
+    const auto writeAll = [&]
+    {
+        const auto lowerFirstBytes = FieldBytes(lowerFirst);
+        const auto upperFirstBytes = FieldBytes(upperFirst);
+        const auto lowerSecondBytes = FieldBytes(lowerSecond);
+        const auto upperSecondBytes = FieldBytes(upperSecond);
+        bindless.UpdateMaterial(lower, 0, std::span<const std::byte>(lowerFirstBytes));
+        bindless.UpdateMaterial(upper, 0, std::span<const std::byte>(upperFirstBytes));
+        bindless.UpdateMaterial(lower, 16, std::span<const std::byte>(lowerSecondBytes));
+        bindless.UpdateMaterial(upper, 16, std::span<const std::byte>(upperSecondBytes));
+    };
+
+    struct Read
+    {
+        MaterialHandle Material;
+        u32 FieldOffset;
+        u32 Channel;
+        f32 Expected;
+    };
+    const std::array<Read, 4> reads = {
+        Read{.Material = lower, .FieldOffset = 0, .Channel = 0, .Expected = lowerFirst.x},
+        Read{.Material = lower, .FieldOffset = 16, .Channel = 1, .Expected = lowerSecond.y},
+        Read{.Material = upper, .FieldOffset = 0, .Channel = 0, .Expected = upperFirst.x},
+        Read{.Material = upper, .FieldOffset = 16, .Channel = 1, .Expected = upperSecond.y},
+    };
+
+    // Written mid-frame, so each read is of the region the writes landed in directly — the
+    // immediate path, where a destination off by a block lands in the neighbour and stays there.
+    for (const Read& read : reads)
+    {
+        const std::array<u8, 4> pixel =
+            RenderFrame(Context, bindless, pipeline, outputImage, outputView, read.Material,
+                        read.FieldOffset, writeAll);
+        CHECK(ChannelNear(pixel[read.Channel], read.Expected));
+    }
+
+    // And the replication into the other regions keeps them apart the same way.
+    for (u32 i = 0; i < window + 2; i++)
+    {
+        for (const Read& read : reads)
+        {
+            const std::array<u8, 4> pixel =
+                RenderFrame(Context, bindless, pipeline, outputImage, outputView, read.Material,
+                            read.FieldOffset);
+            CHECK(ChannelNear(pixel[read.Channel], read.Expected));
+        }
+    }
+
+    bindless.Release(lower);
+    bindless.Release(upper);
 }

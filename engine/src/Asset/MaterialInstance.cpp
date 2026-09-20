@@ -261,6 +261,13 @@ namespace Veng
                                                        std::span<const std::byte>(m_Block));
     }
 
+    void MaterialInstance::UploadParams(const u32 offset, const u32 bytes) const
+    {
+        ++m_Revision;
+        m_Context.GetBindlessRegistry().UpdateMaterial(
+            m_Handle, offset, std::span<const std::byte>(m_Block.data() + offset, bytes));
+    }
+
     void MaterialInstance::SetTexture(std::string_view name, AssetHandle<Texture> texture)
     {
         SetTexture(RequireField(name, "SetTexture"), std::move(texture));
@@ -283,6 +290,11 @@ namespace Veng
         const u32 textureIndex = tex.GetHandle().Index;
         std::memcpy(m_Block.data() + entry.Offset, &textureIndex, sizeof(u32));
 
+        // The write is the texture slot and, when the schema paired one, the sampler slot beside
+        // it — uploaded as the one range spanning both.
+        u32 writeLow = entry.Offset;
+        u32 writeHigh = entry.Offset + static_cast<u32>(sizeof(u32));
+
         // Also patch the paired <name>Sampler field if the schema resolved one.
         if (entry.PairedSampler != MaterialFieldHandle::Invalid)
         {
@@ -294,6 +306,8 @@ namespace Veng
                 samplerField.Name, samplerField.Offset, m_Block.size());
             const u32 samplerIndex = tex.GetSamplerHandle().Index;
             std::memcpy(m_Block.data() + samplerField.Offset, &samplerIndex, sizeof(u32));
+            writeLow = std::min(writeLow, samplerField.Offset);
+            writeHigh = std::max(writeHigh, samplerField.Offset + static_cast<u32>(sizeof(u32)));
         }
 
         const u64 texId = texture.Id().Value;
@@ -312,7 +326,7 @@ namespace Veng
             m_Textures.push_back(std::move(texture));
         }
 
-        UploadParams();
+        UploadParams(writeLow, writeHigh - writeLow);
     }
 
     void MaterialInstance::SetParam(std::string_view name, const vec4& value)
@@ -335,7 +349,7 @@ namespace Veng
 
         std::memcpy(m_Block.data() + entry.Offset, &value, writeBytes);
 
-        UploadParams();
+        UploadParams(entry.Offset, writeBytes);
     }
 
     void MaterialInstance::SetParam(std::string_view name, f32 value)
@@ -360,7 +374,7 @@ namespace Veng
 
         std::memcpy(m_Block.data() + entry.Offset, &value, writeBytes);
 
-        UploadParams();
+        UploadParams(entry.Offset, writeBytes);
     }
 
     void MaterialInstance::SetTextureHandle(std::string_view name, Renderer::TextureHandle handle)
@@ -384,7 +398,7 @@ namespace Veng
         const u32 index = handle.Index;
         std::memcpy(m_Block.data() + entry.Offset, &index, sizeof(u32));
 
-        UploadParams();
+        UploadParams(entry.Offset, static_cast<u32>(sizeof(u32)));
     }
 
     void MaterialInstance::SetSamplerHandle(std::string_view name, Renderer::SamplerHandle handle)
@@ -408,7 +422,7 @@ namespace Veng
         const u32 index = handle.Index;
         std::memcpy(m_Block.data() + entry.Offset, &index, sizeof(u32));
 
-        UploadParams();
+        UploadParams(entry.Offset, static_cast<u32>(sizeof(u32)));
     }
 
     void MaterialInstance::SetStorageBufferHandle(std::string_view name,
@@ -434,7 +448,7 @@ namespace Veng
         const u32 index = handle.Index;
         std::memcpy(m_Block.data() + entry.Offset, &index, sizeof(u32));
 
-        UploadParams();
+        UploadParams(entry.Offset, static_cast<u32>(sizeof(u32)));
     }
 
     void MaterialInstance::SetVolumeHandle(std::string_view name, Renderer::VolumeHandle handle)
@@ -458,6 +472,6 @@ namespace Veng
         const u32 index = handle.Index;
         std::memcpy(m_Block.data() + entry.Offset, &index, sizeof(u32));
 
-        UploadParams();
+        UploadParams(entry.Offset, static_cast<u32>(sizeof(u32)));
     }
 }

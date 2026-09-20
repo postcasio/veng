@@ -52,7 +52,9 @@ namespace Veng
     /// schema, and domain — binding the parent's pipeline and pushing **its own** selector. A
     /// runtime-built instance plus per-frame SetParam is the MID (Material Instance Dynamic): the
     /// ring-buffered SetParam/SetTexture writes are stall-free, landing in the current
-    /// frame-in-flight region.
+    /// frame-in-flight region. **A Set* copies the field's bytes, not the block** — so writing a
+    /// field list every frame costs the fields, and the replication into the other regions costs
+    /// one span covering them.
     ///
     /// One AssetId names one asset of one type: a parent Material's id and its cooked
     /// default-instance id are distinct assets, and a MaterialInstance request for a bare Material
@@ -366,7 +368,13 @@ namespace Veng
                                                         std::string_view caller) const;
         [[nodiscard]] MaterialFieldHandle RequireField(std::string_view name,
                                                        std::string_view caller) const;
+        /// @brief Uploads the whole cached block and bumps the revision.
         void UploadParams() const;
+
+        /// @brief Uploads one byte range of the cached block and bumps the revision.
+        /// @param offset Byte offset of the range within the block.
+        /// @param bytes  Length of the range.
+        void UploadParams(u32 offset, u32 bytes) const;
 
         Renderer::Context& m_Context;
         string m_Name;

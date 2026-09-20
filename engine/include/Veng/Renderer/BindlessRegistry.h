@@ -2,6 +2,7 @@
 
 #include <array>
 #include <span>
+#include <string_view>
 
 #include <Veng/Veng.h>
 #include <Veng/Renderer/Sampler.h>
@@ -385,6 +386,21 @@ namespace Veng::Renderer
         /// @param handle The handle returned by RegisterMaterial.
         /// @param block  The updated parameter block; must fit the handle's allocation.
         void UpdateMaterial(MaterialHandle handle, std::span<const std::byte> block);
+
+        /// @brief Rewrites one byte range of a live material's parameter block.
+        ///
+        /// A field write costs the field, not the block: the bytes go into the cached block and
+        /// into the current frame's region at the block offset plus @p offset, and the entry's
+        /// owed span grows to cover them, so the replication into the other regions copies one
+        /// contiguous span however many fields were written into it.
+        ///
+        /// The bound is the material's **own block**, not any global: blocks are packed, so a
+        /// range running past it lands in the neighbouring material's bytes. It is a fatal assert
+        /// naming the material's offset and the range.
+        /// @param handle The handle returned by RegisterMaterial.
+        /// @param offset Byte offset of the range within the block.
+        /// @param bytes  The bytes to write there; offset + size must fit the block.
+        void UpdateMaterial(MaterialHandle handle, u32 offset, std::span<const std::byte> bytes);
 
         /// @brief Deferred release of a texture handle. A default-constructed (invalid) handle is a no-op.
         void Release(TextureHandle handle);
@@ -889,9 +905,9 @@ namespace Veng::Renderer
         ///
         /// A write only ever touches the current frame's region (that frame is not yet
         /// submitted). To propagate a value to every region, Register/UpdateMaterial cache
-        /// the block CPU-side, set the material's dirty counter to framesInFlight, and
+        /// the bytes CPU-side, set the material's dirty counter to framesInFlight, and
         /// write the current region; OnFrameAcquired memcpys each still-dirty material's
-        /// block into the region it just made current and decrements. No staging, no
+        /// accumulated span into the region it just made current and decrements. No staging, no
         /// WaitIdle, no frames-in-flight hazard.
         Ref<Buffer> m_MaterialParamBuffer;
         /// @brief The byte suballocator over one region of the material parameter buffer.
@@ -915,6 +931,10 @@ namespace Veng::Renderer
             u32 Capacity = 0;
             /// @brief Writes still owed to in-flight regions.
             u32 DirtyFrames = 0;
+            /// @brief First byte of the span the owed writes replicate.
+            u32 DirtyLow = 0;
+            /// @brief One past the span's last byte; equal to DirtyLow when the span is empty.
+            u32 DirtyHigh = 0;
             /// @brief Whether the allocation is live (released, but still parked, reads false).
             bool Live = false;
             /// @brief Whether m_DirtyMaterials already names this entry.
@@ -925,16 +945,34 @@ namespace Veng::Renderer
         /// @brief The entries the flush loop walks — those owing a write to another region.
         ///
         /// Kept so OnFrameAcquired costs the materials actually written rather than the arena's
-        /// whole granule count. An entry joins on its first dirtying write and leaves the pass
-        /// after which it owes nothing, including the pass after a Release retires it.
+        /// whole granule count. An entry joins on its first dirtying write and leaves either the
+        /// pass that pays its last owed write or the Release that retires it, so membership and
+        /// Flushing agree and every listed entry owes at least one write.
         vector<u32> m_DirtyMaterials;
 
         /// @brief The entry index of the allocation a handle's byte offset names.
         [[nodiscard]] static u32 MaterialEntryIndex(u32 offset);
 
-        /// @brief Memcpys a material's cached block into the given frame-in-flight's
-        /// region of the mapped buffer.
-        void WriteMaterialRegion(u32 entryIndex, u32 frameInFlight) const;
+        /// @brief The entry index a handle names, fatal when it is not a live allocation.
+        /// @param handle The handle to validate.
+        /// @param caller Name of the calling method, for the assert message.
+        /// @return The entry index of the handle's allocation.
+        [[nodiscard]] u32 RequireMaterialEntry(MaterialHandle handle,
+                                               std::string_view caller) const;
+
+        /// @brief Grows an entry's owed span to cover a write and re-arms its flush debt.
+        /// @param entryIndex The entry the write landed in.
+        /// @param offset     Byte offset of the write within the block.
+        /// @param bytes      Length of the write.
+        void MarkMaterialDirty(u32 entryIndex, u32 offset, u32 bytes);
+
+        /// @brief Memcpys one byte range of a material's cached block into the given
+        /// frame-in-flight's region of the mapped buffer.
+        /// @param entryIndex    The entry whose cached bytes are the source.
+        /// @param frameInFlight The region to write.
+        /// @param offset        Byte offset of the range within the block.
+        /// @param bytes         Length of the range; zero writes nothing.
+        void WriteMaterialRegion(u32 entryIndex, u32 frameInFlight, u32 offset, u32 bytes) const;
 
         /// @brief The shared view-constants buffer (binding ViewConstantsBinding).
         ///

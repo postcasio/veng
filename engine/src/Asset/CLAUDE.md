@@ -484,15 +484,24 @@ message names the arena size, the live bytes, the largest free run and the faile
 Two bounds, and they are different bounds: **`MaxMaterialBlockBytes`** (1280) caps what a single
 material may declare — a cook-time error to exceed, and the loader's `BlockBytes` corruption guard
 — while the arena caps what all of them declare together. The runtime bound on `UpdateMaterial` is
-narrower still: the material's **own allocation**, because blocks are packed and an over-long
-write would land in the next material's bytes.
+narrower still: the material's **own allocation** (its **own block**, for the ranged form), because
+blocks are packed and an over-long write would land in the next material's bytes.
+
+**A field write copies the field, not the block.** `UpdateMaterial(handle, offset, bytes)` is the
+ranged form every `MaterialInstance` setter routes through, with the field's own offset and
+reflected size — so writing one `float4` of a 1280-byte block moves sixteen bytes into the cache
+and sixteen into the mapped buffer, and a consumer writing a whole field list per frame pays the
+fields rather than the block once per field. The whole-block form stays for `RegisterMaterial`,
+`CopyParamsFrom`, and any caller genuinely replacing everything.
 
 `Register/UpdateMaterial` mark an instance dirty for `framesInFlight` frames and write only the
 *current* frame's region (safe because that frame is not yet submitted); `OnFrameAcquired` flushes
 each still-dirty instance into the region it just made current, walking the materials owing a
-write rather than the whole arena. A per-frame `SetParam` / `SetTexture` is therefore a direct,
-stall-free write — no staging, no `WaitIdle`, no hazard. **The current frame's region is selected
-by folding the frame base (`currentFrame * MaterialArenaBytes`, via
+write rather than the whole arena. What it copies there is the entry's **accumulated dirty span** —
+the union of the ranges written since the last flush, one contiguous copy whose in-between bytes
+the cache holds current anyway — so several field writes in a frame replicate as one span. A
+per-frame `SetParam` / `SetTexture` is therefore a direct, stall-free write — no staging, no
+`WaitIdle`, no hazard. **The current frame's region is selected by folding the frame base (`currentFrame * MaterialArenaBytes`, via
 `BindlessRegistry::GetCurrentFrameBase()`) into the pushed material selector in
 `MaterialInstance::Bind`** — not by a dynamic descriptor offset: a `STORAGE_BUFFER_DYNAMIC`
 descriptor mistranslates inside set 0's bindless Metal argument buffer on MoltenVK. The buffer

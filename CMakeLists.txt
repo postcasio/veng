@@ -1315,6 +1315,10 @@ if (VENG_BUILD_TESTS)
     set_tests_properties(death.material_block_overruns_allocation PROPERTIES LABELS "gpu;death;fast"
             SKIP_RETURN_CODE 77 PASS_REGULAR_EXPRESSION "would overwrite the neighbouring material")
 
+    add_test(NAME death.material_range_overruns_block COMMAND veng_test_death material_range_overruns_block)
+    set_tests_properties(death.material_range_overruns_block PROPERTIES LABELS "gpu;death;fast"
+            SKIP_RETURN_CODE 77 PASS_REGULAR_EXPRESSION "would overwrite the neighbouring material")
+
     add_test(NAME death.descriptor_type_mismatch COMMAND veng_test_death descriptor_type_mismatch)
     set_tests_properties(death.descriptor_type_mismatch PROPERTIES LABELS "gpu;death;fast"
             SKIP_RETURN_CODE 77 PASS_REGULAR_EXPRESSION "not a sampled or storage image")

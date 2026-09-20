@@ -556,16 +556,8 @@ namespace Veng::Renderer
 
     void BindlessRegistry::UpdateMaterial(MaterialHandle handle, std::span<const std::byte> block)
     {
-        VE_ASSERT(handle.IsValid(), "BindlessRegistry::UpdateMaterial: invalid handle");
-        VE_ASSERT(handle.Offset % MaterialGranuleBytes == 0 &&
-                      MaterialEntryIndex(handle.Offset) < m_MaterialEntries.size(),
-                  "BindlessRegistry::UpdateMaterial: offset {} names no arena allocation",
-                  handle.Offset);
-
-        const u32 entryIndex = MaterialEntryIndex(handle.Offset);
+        const u32 entryIndex = RequireMaterialEntry(handle, "UpdateMaterial");
         MaterialEntry& entry = m_MaterialEntries[entryIndex];
-        VE_ASSERT(entry.Live, "BindlessRegistry::UpdateMaterial: offset {} names no live material",
-                  handle.Offset);
 
         // Blocks are packed, so the bound is this material's own allocation: an over-long write
         // would land in the next material's bytes rather than in this one's padding.
@@ -574,22 +566,36 @@ namespace Veng::Renderer
                   "at offset {} would overwrite the neighbouring material",
                   block.size(), entry.Capacity, handle.Offset);
 
-        // Cache the block and mark it dirty for framesInFlight frames so
-        // OnFrameAcquired flushes it into every ring region.
         const std::span<const u8> blockBytes(reinterpret_cast<const u8*>(block.data()),
                                              block.size());
         entry.Block.assign(blockBytes.begin(), blockBytes.end());
-        entry.DirtyFrames = m_FramesInFlight;
-        if (!entry.Flushing)
-        {
-            entry.Flushing = true;
-            m_DirtyMaterials.push_back(entryIndex);
-        }
+        const auto bytes = static_cast<u32>(block.size());
+        MarkMaterialDirty(entryIndex, 0, bytes);
 
         // Also write the current frame's region immediately so a mid-frame update
         // is visible to this frame's draws. The current region is safe to write —
         // it is not yet submitted. This does not consume a dirty count.
-        WriteMaterialRegion(entryIndex, m_Context.GetCurrentFrameInFlight());
+        WriteMaterialRegion(entryIndex, m_Context.GetCurrentFrameInFlight(), 0, bytes);
+    }
+
+    void BindlessRegistry::UpdateMaterial(MaterialHandle handle, u32 offset,
+                                          std::span<const std::byte> bytes)
+    {
+        const u32 entryIndex = RequireMaterialEntry(handle, "UpdateMaterial");
+        MaterialEntry& entry = m_MaterialEntries[entryIndex];
+
+        // Blocks are packed, so a range running past this material's own block lands in the
+        // neighbouring material's bytes rather than in this one's padding.
+        const auto size = static_cast<u32>(bytes.size());
+        const auto blockBytes = static_cast<u32>(entry.Block.size());
+        VE_ASSERT(offset <= blockBytes && size <= blockBytes - offset,
+                  "BindlessRegistry::UpdateMaterial: a {}-byte range at {} into the {}-byte block "
+                  "at offset {} would overwrite the neighbouring material",
+                  size, offset, blockBytes, handle.Offset);
+
+        std::memcpy(entry.Block.data() + offset, bytes.data(), size);
+        MarkMaterialDirty(entryIndex, offset, size);
+        WriteMaterialRegion(entryIndex, m_Context.GetCurrentFrameInFlight(), offset, size);
     }
 
     u32 BindlessRegistry::MaterialEntryIndex(u32 offset)
@@ -597,18 +603,59 @@ namespace Veng::Renderer
         return offset / MaterialGranuleBytes;
     }
 
-    void BindlessRegistry::WriteMaterialRegion(u32 entryIndex, u32 frameInFlight) const
+    u32 BindlessRegistry::RequireMaterialEntry(MaterialHandle handle,
+                                               const std::string_view caller) const
     {
-        const MaterialEntry& entry = m_MaterialEntries[entryIndex];
-        if (entry.Block.empty())
+        VE_ASSERT(handle.IsValid(), "BindlessRegistry::{}: invalid handle", caller);
+        const u32 entryIndex = MaterialEntryIndex(handle.Offset);
+        VE_ASSERT(
+            handle.Offset % MaterialGranuleBytes == 0 && entryIndex < m_MaterialEntries.size(),
+            "BindlessRegistry::{}: offset {} names no arena allocation", caller, handle.Offset);
+        VE_ASSERT(m_MaterialEntries[entryIndex].Live,
+                  "BindlessRegistry::{}: offset {} names no live material", caller, handle.Offset);
+        return entryIndex;
+    }
+
+    void BindlessRegistry::MarkMaterialDirty(u32 entryIndex, u32 offset, u32 bytes)
+    {
+        MaterialEntry& entry = m_MaterialEntries[entryIndex];
+
+        // Grow the owed span to cover the write. The cache holds the current value of every byte
+        // between two written ranges, so replicating their union is one contiguous copy of bytes
+        // that are all correct — and one copy however many fields a frame writes.
+        if (entry.DirtyHigh == entry.DirtyLow)
+        {
+            entry.DirtyLow = offset;
+            entry.DirtyHigh = offset + bytes;
+        }
+        else
+        {
+            entry.DirtyLow = std::min(entry.DirtyLow, offset);
+            entry.DirtyHigh = std::max(entry.DirtyHigh, offset + bytes);
+        }
+
+        entry.DirtyFrames = m_FramesInFlight;
+        if (!entry.Flushing)
+        {
+            entry.Flushing = true;
+            m_DirtyMaterials.push_back(entryIndex);
+        }
+    }
+
+    void BindlessRegistry::WriteMaterialRegion(u32 entryIndex, u32 frameInFlight, u32 offset,
+                                               u32 bytes) const
+    {
+        if (bytes == 0)
         {
             return;
         }
 
+        const MaterialEntry& entry = m_MaterialEntries[entryIndex];
         const u64 regionBase = static_cast<u64>(frameInFlight) * MaterialArenaBytes;
-        const u64 offset = regionBase + static_cast<u64>(entryIndex) * MaterialGranuleBytes;
+        const u64 destination =
+            regionBase + static_cast<u64>(entryIndex) * MaterialGranuleBytes + offset;
         auto* base = static_cast<u8*>(m_MaterialParamBuffer->GetMappedData());
-        std::memcpy(base + offset, entry.Block.data(), entry.Block.size());
+        std::memcpy(base + destination, entry.Block.data() + offset, bytes);
     }
 
     void BindlessRegistry::Release(TextureHandle handle)
@@ -696,7 +743,14 @@ namespace Veng::Renderer
         entry.Block.clear();
         entry.Capacity = 0;
         entry.DirtyFrames = 0;
+        entry.DirtyLow = 0;
+        entry.DirtyHigh = 0;
         entry.Live = false;
+        if (entry.Flushing)
+        {
+            entry.Flushing = false;
+            std::erase(m_DirtyMaterials, entryIndex);
+        }
     }
 
     BindlessCapacity BindlessRegistry::GetFreeSlots() const
@@ -984,19 +1038,18 @@ namespace Veng::Renderer
 
         // Flush still-dirty materials into the region just made current — the fence
         // was waited before this call, so the prior GPU use has completed. The walk is over the
-        // materials owing a write rather than over the arena, and compacts the set as it goes.
+        // materials owing a write rather than over the arena, each copy is the span that changed
+        // rather than the block, and the set compacts as it goes.
         usize kept = 0;
         for (const u32 entryIndex : m_DirtyMaterials)
         {
             MaterialEntry& entry = m_MaterialEntries[entryIndex];
-            if (entry.DirtyFrames == 0)
-            {
-                entry.Flushing = false;
-                continue;
-            }
-            WriteMaterialRegion(entryIndex, frameInFlight);
+            WriteMaterialRegion(entryIndex, frameInFlight, entry.DirtyLow,
+                                entry.DirtyHigh - entry.DirtyLow);
             if (--entry.DirtyFrames == 0)
             {
+                entry.DirtyLow = 0;
+                entry.DirtyHigh = 0;
                 entry.Flushing = false;
                 continue;
             }

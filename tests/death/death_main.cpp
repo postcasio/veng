@@ -469,6 +469,24 @@ namespace
             });
     }
 
+    void RunMaterialRangeOverrunsBlock()
+    {
+        InGpuContext(
+            [](Context& context)
+            {
+                BindlessRegistry& bindless = context.GetBindlessRegistry();
+                const std::byte small[16] = {};
+                const MaterialHandle material =
+                    bindless.RegisterMaterial(std::span<const std::byte>(small, sizeof(small)));
+
+                // A field write whose range runs past the block lands in the next material's
+                // bytes, since blocks are packed.
+                const std::byte field[8] = {};
+                bindless.UpdateMaterial(material, 12,
+                                        std::span<const std::byte>(field, sizeof(field)));
+            });
+    }
+
     void RunIndexU16IntoU32()
     {
         InGpuContext(
@@ -656,6 +674,10 @@ int main(int argc, char** argv)
     else if (name == "material_block_overruns_allocation")
     {
         RunMaterialBlockOverrunsAllocation();
+    }
+    else if (name == "material_range_overruns_block")
+    {
+        RunMaterialRangeOverrunsBlock();
     }
     else if (name == "descriptor_type_mismatch")
     {
