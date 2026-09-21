@@ -78,7 +78,7 @@ source is prefixed with its domain's contract include (`Veng/surface.slang`,
 
 **`GuiFill` is the one domain whose entry point wraps the graph rather than returning it.** Its
 `fsMain` takes the gui vertex stage's interpolants (`GuiFillInputs`), reads its selector from the
-reserved GUI push block (`g_PC.MaterialIndex`, at `Veng::GuiFillSelectorPushOffset`), and returns
+reserved GUI push block (`g_PC.MaterialOffset`, at `Veng::GuiFillSelectorPushOffset`), and returns
 `GuiFillResolve(input, <Color>)` — the engine's fixed rounded-rect SDF coverage and border ring
 multiplying the authored fill. A material in this domain is a **fill source**, never a silhouette:
 corner radius, border, clip, and rotation compose with it exactly as they do with a flat color,

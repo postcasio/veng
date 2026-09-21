@@ -33,14 +33,14 @@
 // material index here rather than from a vertex interpolant.
 struct PostProcessPushConstants
 {
-    uint MaterialIndex; // per-material param-block selector (frame-folded)
+    uint MaterialOffset; // per-material param-block selector (frame-folded)
 };
 
 [[vk::push_constant]] ConstantBuffer<PostProcessPushConstants> g_PC;
 
 // The screen-UV interpolant a PostProcess fragment reads, written by the fullscreen vertex
 // stage (fullscreen.vert). A PostProcess fragment's fsMain signature takes this struct and
-// reads its material selector from g_PC, since it has no per-draw v_MaterialIndex interpolant.
+// reads its material selector from g_PC, since it has no per-draw v_MaterialOffset interpolant.
 struct PostProcessFragmentInput
 {
     float4 sv_position : SV_Position;

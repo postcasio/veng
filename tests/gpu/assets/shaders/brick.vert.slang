@@ -19,7 +19,7 @@ struct VSOutput
     float4 sv_position : SV_Position;
     float2 v_UV : TEXCOORD0;
     float3 v_WorldNormal : NORMAL;
-    nointerpolation uint v_MaterialIndex : TEXCOORD1;
+    nointerpolation uint v_MaterialOffset : TEXCOORD1;
     float4 v_CurClip : TEXCOORD2;   // unjittered current clip position (g-buffer motion vector)
     float4 v_PrevClip : TEXCOORD3;  // unjittered previous clip position (g-buffer motion vector)
 };
@@ -43,6 +43,6 @@ VSOutput vsMain(VSInput input)
     output.v_PrevClip = mul(view.PrevViewProj, prevWorldPos);
     output.v_UV = input.a_UV;
     output.v_WorldNormal = c0 * input.a_Normal.x + c1 * input.a_Normal.y + c2 * input.a_Normal.z;
-    output.v_MaterialIndex = draw.MaterialIndex;
+    output.v_MaterialOffset = draw.MaterialOffset;
     return output;
 }

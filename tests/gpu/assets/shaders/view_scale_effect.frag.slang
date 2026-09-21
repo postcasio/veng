@@ -16,6 +16,6 @@ struct MaterialParams
 [shader("fragment")]
 float4 fsMain(PostProcessFragmentInput input) : SV_Target0
 {
-    MaterialParams p = g_MaterialParams.Load<MaterialParams>(g_PC.MaterialIndex);
+    MaterialParams p = g_MaterialParams.Load<MaterialParams>(g_PC.MaterialOffset);
     return float4(p.DepthScaleUV.x, p.Tint, 0.0, 1.0);
 }

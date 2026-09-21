@@ -118,7 +118,7 @@ float3 TonemapAgx(float3 color)
 [shader("fragment")]
 float4 fsMain(PostProcessFragmentInput input) : SV_Target0
 {
-    MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);
+    MaterialParams p = LoadMaterialParams(g_PC.MaterialOffset);
     // The HDR source is rendered into a dynamic-resolution sub-rect; this terminal pass renders the
     // full output and upscales by mapping the full-output UV across the source's valid region
     // (RenderScale.xy), clamped (RenderScale.zw) so the bilinear tap never bleeds past it. At scale

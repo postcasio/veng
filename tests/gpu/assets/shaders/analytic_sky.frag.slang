@@ -25,7 +25,7 @@ float4 fsMain(SkyFragmentInput input) : SV_Target0
         discard;
     }
 
-    MaterialParams p = LoadMaterialParams(g_SkyPC.MaterialIndex);
+    MaterialParams p = LoadMaterialParams(g_SkyPC.MaterialOffset);
     float3 dir = SkyViewDirection(g_SkyPC, input.v_UV);
     return float4((0.5 + 0.5 * dir) * p.Scale.rgb, 1.0);
 }

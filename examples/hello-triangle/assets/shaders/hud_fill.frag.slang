@@ -22,7 +22,7 @@ MaterialParams LoadMaterialParams(uint offset)
 [shader("fragment")]
 float4 fsMain(GuiFillInputs input) : SV_Target0
 {
-    MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);
+    MaterialParams p = LoadMaterialParams(g_PC.MaterialOffset);
     float2 box = GuiFillBoxCoord(input);
     float phase = (box.x + box.y) * p.Motion.x + g_PC.Time * p.Motion.y;
     float t = saturate(0.5 + 0.5 * sin(phase));

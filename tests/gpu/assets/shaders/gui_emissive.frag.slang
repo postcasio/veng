@@ -23,7 +23,7 @@ struct VSOutput
     float4 sv_position : SV_Position;
     float2 v_UV : TEXCOORD0;
     float3 v_WorldNormal : NORMAL;
-    nointerpolation uint v_MaterialIndex : TEXCOORD1;
+    nointerpolation uint v_MaterialOffset : TEXCOORD1;
     float4 v_CurClip : TEXCOORD2;
     float4 v_PrevClip : TEXCOORD3;
 };
@@ -31,7 +31,7 @@ struct VSOutput
 [shader("fragment")]
 GBufferOutput fsMain(VSOutput input)
 {
-    MaterialParams p = LoadMaterialParams(input.v_MaterialIndex);
+    MaterialParams p = LoadMaterialParams(input.v_MaterialOffset);
 
     // A dark bezel; the emissive channel carries the document glow, sampled from the bound target.
     float3 albedo = float3(0.02, 0.02, 0.02);

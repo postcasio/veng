@@ -127,7 +127,7 @@ namespace Veng::Renderer
                 .NormalColumn0 = vec4(normalMatrix[0], 0.0f),
                 .NormalColumn1 = vec4(normalMatrix[1], 0.0f),
                 .NormalColumn2 = vec4(normalMatrix[2], 0.0f),
-                .MaterialIndex = material.GetMaterialSelector(),
+                .MaterialOffset = material.GetMaterialSelector(),
                 .EntityIndex = item.Owner.Index,
                 .PrevWorld = prevWorld,
             };
@@ -257,7 +257,7 @@ namespace Veng::Renderer
                 .NormalColumn0 = vec4(normalMatrix[0], 0.0f),
                 .NormalColumn1 = vec4(normalMatrix[1], 0.0f),
                 .NormalColumn2 = vec4(normalMatrix[2], 0.0f),
-                .MaterialIndex = material.GetMaterialSelector(),
+                .MaterialOffset = material.GetMaterialSelector(),
                 .PaletteBase = paletteBase,
                 .PrevPaletteBase = prevPaletteBase,
                 .EntityIndex = item.Owner.Index,
@@ -313,7 +313,7 @@ namespace Veng::Renderer
                 .NormalColumn0 = vec4(normalMatrix[0], 0.0f),
                 .NormalColumn1 = vec4(normalMatrix[1], 0.0f),
                 .NormalColumn2 = vec4(normalMatrix[2], 0.0f),
-                .MaterialIndex = material.GetMaterialSelector(),
+                .MaterialOffset = material.GetMaterialSelector(),
                 .EntityIndex = item.Owner.Index,
                 .PrevWorld = prevWorld,
             };

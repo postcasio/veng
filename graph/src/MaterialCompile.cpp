@@ -250,7 +250,7 @@ namespace VengGraph
 
         // Each domain's include declares its own fragment-input struct and push block. Surface and
         // Translucent both draw per-submesh through the canonical vertex stage and read the
-        // v_MaterialIndex interpolant (Veng/surface.slang, via Veng/translucent.slang for the
+        // v_MaterialOffset interpolant (Veng/surface.slang, via Veng/translucent.slang for the
         // forward domain); a fullscreen (PostProcess/Sky) graph reads the postprocess contract; a
         // GuiFill graph reads the gui vertex stage's interpolants and the reserved GUI push block.
         const char* domainInclude = "Veng/postprocess.slang";
@@ -295,7 +295,7 @@ namespace VengGraph
         {
             source += "[shader(\"fragment\")]\n";
             source += "GBufferOutput fsMain(SurfaceFragmentInput input)\n{\n";
-            source += "    MaterialParams p = LoadMaterialParams(input.v_MaterialIndex);\n";
+            source += "    MaterialParams p = LoadMaterialParams(input.v_MaterialOffset);\n";
             source += ctx.Body;
             source += "    GBufferOutput o;\n";
             // Sink order matches DomainOutputContract(Surface): Albedo (0), Normal (1),
@@ -312,13 +312,13 @@ namespace VengGraph
         else if (domain == Veng::MaterialDomain::Translucent)
         {
             // Translucent is a forward surface domain: it draws per-submesh through the canonical
-            // vertex stage (SurfaceFragmentInput, the v_MaterialIndex interpolant) but emits a
+            // vertex stage (SurfaceFragmentInput, the v_MaterialOffset interpolant) but emits a
             // single float4 SV_Target0 — final HDR color in rgb, coverage in a — alpha-blended
             // into the lit scene by the forward translucent pass. A graph-authored translucent is
             // unlit; its single color pin is the returned radiance.
             source += "[shader(\"fragment\")]\n";
             source += "float4 fsMain(SurfaceFragmentInput input) : SV_Target0\n{\n";
-            source += "    MaterialParams p = LoadMaterialParams(input.v_MaterialIndex);\n";
+            source += "    MaterialParams p = LoadMaterialParams(input.v_MaterialOffset);\n";
             source += ctx.Body;
             source += fmt::format("    return {};\n}}\n", sinkOr(0, "float4(0,0,0,1)"));
         }
@@ -331,7 +331,7 @@ namespace VengGraph
             // fragment reads it from g_PC exactly as a fullscreen material does.
             source += "[shader(\"fragment\")]\n";
             source += "float4 fsMain(GuiFillInputs input) : SV_Target0\n{\n";
-            source += "    MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);\n";
+            source += "    MaterialParams p = LoadMaterialParams(g_PC.MaterialOffset);\n";
             source += ctx.Body;
             source += fmt::format("    return GuiFillResolve(input, {});\n}}\n",
                                   sinkOr(0, "input.v_Color"));
@@ -346,9 +346,9 @@ namespace VengGraph
             source += "float4 fsMain(PostProcessFragmentInput input) : SV_Target0\n{\n";
             // A PostProcess material pushes its frame-folded selector at push-constant
             // offset 0 (Material::Bind, SelectorOffset 0), read through the postprocess
-            // header's g_PC.MaterialIndex — a Surface shader instead reads its selector from
-            // the v_MaterialIndex interpolant.
-            source += "    MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);\n";
+            // header's g_PC.MaterialOffset — a Surface shader instead reads its selector from
+            // the v_MaterialOffset interpolant.
+            source += "    MaterialParams p = LoadMaterialParams(g_PC.MaterialOffset);\n";
             source += ctx.Body;
             source += fmt::format("    return {};\n}}\n",
                                   sinkOr(0, "g_Textures[0].Sample(g_Samplers[0], input.v_UV)"));

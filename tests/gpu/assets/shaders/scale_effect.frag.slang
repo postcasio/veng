@@ -22,7 +22,7 @@ MaterialParams LoadMaterialParams(uint offset)
 [shader("fragment")]
 float4 fsMain(PostProcessFragmentInput input) : SV_Target0
 {
-    MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);
+    MaterialParams p = LoadMaterialParams(g_PC.MaterialOffset);
     float3 scene = SamplePostProcessScene(p.Scene, p.SceneSampler, p.SceneScaleUV, input.v_UV);
     return float4(scene * 0.5, 1.0);
 }

@@ -41,7 +41,7 @@ SurfaceFragmentInput AssembleSurfaceVertex(DrawData draw, uint candidateId, View
     // canonical tangent's w is the bitangent handedness sign, passed through.
     output.v_WorldTangent =
         float4(c0 * objTangent.x + c1 * objTangent.y + c2 * objTangent.z, objTangent.w);
-    output.v_MaterialIndex = draw.MaterialIndex;
+    output.v_MaterialOffset = draw.MaterialOffset;
     output.v_CandidateId = candidateId;
     return output;
 }

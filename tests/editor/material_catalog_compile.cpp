@@ -240,8 +240,8 @@ TEST_CASE("CompileMaterialGraph: a bare PostProcess output passes the screen sam
     CHECK(Contains(src, "#include \"Veng/postprocess.slang\""));
     CHECK(Contains(src, "float4 fsMain(PostProcessFragmentInput input) : SV_Target0"));
     // The PostProcess selector arrives at push offset 0, read through the postprocess
-    // header's g_PC.MaterialIndex.
-    CHECK(Contains(src, "g_PC.MaterialIndex"));
+    // header's g_PC.MaterialOffset.
+    CHECK(Contains(src, "g_PC.MaterialOffset"));
 }
 
 TEST_CASE("CompileMaterialGraph: a connected Param feeds the Albedo sink")
@@ -883,7 +883,7 @@ TEST_CASE("CompileMaterialGraph: a bare GuiFill output resolves through the engi
     CHECK(Contains(src, "float4 fsMain(GuiFillInputs input) : SV_Target0"));
     // The selector rides the reserved GUI push block, read the same way a fullscreen
     // material reads its own.
-    CHECK(Contains(src, "LoadMaterialParams(g_PC.MaterialIndex)"));
+    CHECK(Contains(src, "LoadMaterialParams(g_PC.MaterialOffset)"));
     // The silhouette is never the material's: the authored fill is always wrapped by the
     // engine's rounded-rect coverage multiply.
     CHECK(Contains(src, "return GuiFillResolve(input, "));

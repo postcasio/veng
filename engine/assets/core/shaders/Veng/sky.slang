@@ -35,7 +35,7 @@
 // push_constant block, so the pipeline layout carries a single 16-byte range at offset 0.
 struct SkyPushConstants
 {
-    uint MaterialIndex;      // per-material param-block selector (frame-folded)
+    uint MaterialOffset;      // per-material param-block selector (frame-folded)
     uint DepthTexture;       // g-buffer depth bindless sampled-image index
     uint DepthSampler;       // shared sampler bindless index
     uint ViewConstantsIndex; // current frame's view-constants region

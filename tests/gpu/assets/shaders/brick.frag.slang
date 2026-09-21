@@ -31,7 +31,7 @@ struct VSOutput
     float4 sv_position : SV_Position;
     float2 v_UV : TEXCOORD0;
     float3 v_WorldNormal : NORMAL;
-    nointerpolation uint v_MaterialIndex : TEXCOORD1;  // per-draw material selector from the vertex stage
+    nointerpolation uint v_MaterialOffset : TEXCOORD1;  // per-draw material selector from the vertex stage
     float4 v_CurClip : TEXCOORD2;   // unjittered current clip position (g-buffer motion vector)
     float4 v_PrevClip : TEXCOORD3;  // unjittered previous clip position (g-buffer motion vector)
 };
@@ -39,7 +39,7 @@ struct VSOutput
 [shader("fragment")]
 GBufferOutput fsMain(VSOutput input)
 {
-    MaterialParams p = LoadMaterialParams(input.v_MaterialIndex);
+    MaterialParams p = LoadMaterialParams(input.v_MaterialOffset);
 
     float4 baseColor = g_Textures[NonUniformResourceIndex(p.BaseColor)].Sample(
         g_Samplers[NonUniformResourceIndex(p.BaseColorSampler)], input.v_UV);

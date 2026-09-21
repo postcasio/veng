@@ -86,14 +86,14 @@ namespace Veng::Renderer
 
     // Per-draw record indexed by the candidate id; std430-identical to the shader's
     // DrawData. World is the model matrix; the three NormalColumns carry the
-    // inverse-transpose of its upper 3×3; MaterialIndex is the frame-folded selector.
+    // inverse-transpose of its upper 3×3; MaterialOffset is the frame-folded selector.
     struct GpuDrawData
     {
         mat4 World;
         vec4 NormalColumn0;
         vec4 NormalColumn1;
         vec4 NormalColumn2;
-        u32 MaterialIndex;
+        u32 MaterialOffset;
         u32 PaletteBase;
         u32 PrevPaletteBase;
         u32 EntityIndex; // packed Entity slot index; the picking fragment writes index + 1

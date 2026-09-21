@@ -4,7 +4,7 @@
 // normal into G1, and a constant packed ORM into G2 (the surface output contract).
 //
 // This fixture is deliberately self-contained — its MaterialParams (a single Factors
-// tint) and its MVP/MaterialIndex push block exercise the cook machinery generically,
+// tint) and its MVP/MaterialOffset push block exercise the cook machinery generically,
 // not the engine's PBR material contract. It is the sibling of handles_only.frag /
 // params_only.frag / oversize.frag, which are self-contained the same way.
 
@@ -42,14 +42,14 @@ struct GBufferOutput
 };
 
 // One shared push-constant block, used by both stages. The vertex stage reads MVP
-// (offset 0) and NormalMatrix (offset 80); the fragment stage reads MaterialIndex (the
+// (offset 0) and NormalMatrix (offset 80); the fragment stage reads MaterialOffset (the
 // per-draw selector at offset 64). The block is exactly 128 bytes — the guaranteed-
 // minimum push-constant size. Matrices are column-major (the cooker compiles Slang
 // column-major), matching the glm matrices veng pushes verbatim.
 struct PushConstants
 {
     float4x4 MVP;          // offset 0
-    uint MaterialIndex;    // offset 64
+    uint MaterialOffset;    // offset 64
     uint Pad0;             // offset 68 — three scalar pads carry the cursor to
     uint Pad1;             // offset 72   NormalMatrix's 16-byte boundary at 80
     uint Pad2;             // offset 76
@@ -68,7 +68,7 @@ struct VSOutput
 [shader("fragment")]
 GBufferOutput fsMain(VSOutput input)
 {
-    MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);
+    MaterialParams p = LoadMaterialParams(g_PC.MaterialOffset);
     float4 albedo = g_Textures[NonUniformResourceIndex(p.Albedo)].Sample(
         g_Samplers[NonUniformResourceIndex(p.AlbedoSampler)], input.v_UV);
 

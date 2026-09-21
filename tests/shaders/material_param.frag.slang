@@ -1,6 +1,6 @@
 // Reads a material's parameter block from the ring-buffered per-material storage
 // buffer (set 0, binding 4) and outputs a float4 param as color. The pushed
-// MaterialIndex already folds in the current frame-in-flight's region base
+// MaterialOffset already folds in the current frame-in-flight's region base
 // (BindlessRegistry::GetCurrentFrameBase()), so the load at index * stride reads
 // this frame's copy of the block. The param sits at byte offset 0 of the block
 // (the test lays out a single float4 there).
@@ -8,7 +8,7 @@
 
 struct PushConstants
 {
-    uint MaterialIndex;
+    uint MaterialOffset;
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
@@ -22,5 +22,5 @@ struct VSOutput
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
 {
-    return g_MaterialParams.Load<float4>(g_PC.MaterialIndex);
+    return g_MaterialParams.Load<float4>(g_PC.MaterialOffset);
 }

@@ -39,7 +39,7 @@ MaterialParams LoadMaterialParams(uint offset)
 [shader("fragment")]
 float4 fsMain(SurfaceFragmentInput input) : SV_Target0
 {
-    MaterialParams p = LoadMaterialParams(input.v_MaterialIndex);
+    MaterialParams p = LoadMaterialParams(input.v_MaterialOffset);
 
     // The march branch is first: it authors its own ray and does not read the centre, so it runs
     // whether or not CenterSlot is bound.

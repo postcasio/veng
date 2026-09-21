@@ -38,7 +38,7 @@ struct MaterialParams
 float4 fsMain(PostProcessFragmentInput input) : SV_Target0
 {
     MaterialParams p =
-        g_MaterialParams.Load<MaterialParams>(g_PC.MaterialIndex);
+        g_MaterialParams.Load<MaterialParams>(g_PC.MaterialOffset);
 
     float members[37] = {
         p.Lead,

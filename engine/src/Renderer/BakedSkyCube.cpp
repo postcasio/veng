@@ -45,7 +45,7 @@ namespace Veng::Renderer
         // far-plane stand-in and the view-constants region with the face basis.
         struct SkyMaterialPushConstants
         {
-            u32 MaterialIndex;
+            u32 MaterialOffset;
             u32 DepthTexture;
             u32 DepthSampler;
             u32 ViewConstantsIndex;
@@ -582,7 +582,7 @@ namespace Veng::Renderer
                        tileExtent);
         registry.Bind(cmd);
         cmd.PushConstants(SkyMaterialPushConstants{
-            .MaterialIndex = selector,
+            .MaterialOffset = selector,
             .DepthTexture = m_DepthHandle.Index,
             .DepthSampler = m_DepthSamplerHandle.Index,
             .ViewConstantsIndex = viewIndex,

@@ -5,7 +5,7 @@
 // build-from-material, set-0 bind, upstream sample, selector push at offset 0,
 // fullscreen draw, output written.
 //
-// The push block is the per-draw MaterialIndex selector alone, at offset 0 — a
+// The push block is the per-draw MaterialOffset selector alone, at offset 0 — a
 // PostProcess shader has no geometry block, so the selector sits at the start of
 // the push range (the PostProcess domain's selector offset).
 
@@ -26,7 +26,7 @@ MaterialParams LoadMaterialParams(uint offset)
 
 struct PushConstants
 {
-    uint MaterialIndex;
+    uint MaterialOffset;
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
@@ -40,7 +40,7 @@ struct VSOutput
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target0
 {
-    MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);
+    MaterialParams p = LoadMaterialParams(g_PC.MaterialOffset);
     return g_Textures[NonUniformResourceIndex(p.Source)].Sample(
         g_Samplers[NonUniformResourceIndex(p.SourceSampler)], input.v_UV);
 }

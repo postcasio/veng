@@ -31,7 +31,7 @@ struct GBufferOutput
 struct PushConstants
 {
     float4x4 MVP;
-    uint MaterialIndex;
+    uint MaterialOffset;
     uint Pad0;
     uint Pad1;
     uint Pad2;
@@ -50,7 +50,7 @@ struct VSOutput
 [shader("fragment")]
 GBufferOutput fsMain(VSOutput input)
 {
-    MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);
+    MaterialParams p = LoadMaterialParams(g_PC.MaterialOffset);
 
     GBufferOutput output;
     output.Albedo = p.Region * p.Lead + float4(p.Mid, float(p.Count));

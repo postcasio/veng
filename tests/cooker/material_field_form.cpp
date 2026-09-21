@@ -65,7 +65,7 @@ SurfaceFragmentInput vsMain(VSInput input)
     output.v_UV = input.a_UV;
     output.v_WorldNormal = draw.NormalColumn0.xyz;
     output.v_WorldTangent = float4(draw.NormalColumn0.xyz, 1.0);
-    output.v_MaterialIndex = draw.MaterialIndex;
+    output.v_MaterialOffset = draw.MaterialOffset;
     return output;
 }
 )";
@@ -82,7 +82,7 @@ struct MaterialParams
 GBufferOutput fsMain(SurfaceFragmentInput input)
 {
     MaterialParams params = g_MaterialParams.Load<MaterialParams>(
-        input.v_MaterialIndex);
+        input.v_MaterialOffset);
     GBufferOutput output;
     output.Albedo = params.Tint * params.Strength * float(params.Mode);
     output.Normal = float4(normalize(input.v_WorldNormal), 0.0);
@@ -114,7 +114,7 @@ struct MaterialParams
 GBufferOutput fsMain(SurfaceFragmentInput input)
 {
     MaterialParams params = g_MaterialParams.Load<MaterialParams>(
-        input.v_MaterialIndex);
+        input.v_MaterialOffset);
     GBufferOutput output;
     output.Albedo = params.Tint * params.Scalars[2] *
         float4(params.Tri[0] + params.Tri[1] + params.Tri[2], 1.0) *

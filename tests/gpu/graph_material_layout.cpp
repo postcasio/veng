@@ -168,7 +168,7 @@ SurfaceFragmentInput vsMain(VSInput input)
     output.v_UV = input.a_UV;
     output.v_WorldNormal = c0 * input.a_Normal.x + c1 * input.a_Normal.y + c2 * input.a_Normal.z;
     output.v_WorldTangent = float4(c0, 1.0);
-    output.v_MaterialIndex = draw.MaterialIndex;
+    output.v_MaterialOffset = draw.MaterialOffset;
     return output;
 }
 )");
@@ -335,7 +335,7 @@ SurfaceFragmentInput vsMain(VSInput input)
     output.v_UV = input.a_UV;
     output.v_WorldNormal = c0 * input.a_Normal.x + c1 * input.a_Normal.y + c2 * input.a_Normal.z;
     output.v_WorldTangent = float4(c0, 1.0);
-    output.v_MaterialIndex = draw.MaterialIndex;
+    output.v_MaterialOffset = draw.MaterialOffset;
     return output;
 }
 )");

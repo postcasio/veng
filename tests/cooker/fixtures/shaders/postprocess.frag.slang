@@ -21,7 +21,7 @@ MaterialParams LoadMaterialParams(uint offset)
 struct PushConstants
 {
     float4x4 MVP;
-    uint MaterialIndex;
+    uint MaterialOffset;
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
@@ -35,7 +35,7 @@ struct VSOutput
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target0
 {
-    MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);
+    MaterialParams p = LoadMaterialParams(g_PC.MaterialOffset);
     float4 color = g_Textures[NonUniformResourceIndex(p.Hdr)].Sample(
         g_Samplers[NonUniformResourceIndex(p.HdrSampler)], input.v_UV);
     return color * p.Exposure;

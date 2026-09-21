@@ -131,7 +131,7 @@ namespace Veng::Renderer
         // region the sky fragment reconstructs the view ray from.
         struct SkyMaterialPushConstants
         {
-            u32 MaterialIndex;
+            u32 MaterialOffset;
             u32 DepthTexture;
             u32 DepthSampler;
             u32 ViewConstantsIndex;
@@ -234,7 +234,7 @@ namespace Veng::Renderer
                     // here the pass pushes the whole sky push block — the frame-folded selector plus
                     // the runtime depth handle/sampler/view-constants the material's contract reads.
                     cmd.PushConstants(SkyMaterialPushConstants{
-                        .MaterialIndex = material.GetMaterialSelector(),
+                        .MaterialOffset = material.GetMaterialSelector(),
                         .DepthTexture = depthHandle.Index,
                         .DepthSampler = samplerHandle.Index,
                         .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),

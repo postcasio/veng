@@ -26,7 +26,7 @@
 // The GUI pass's own push block, reserved verbatim by this domain, with the per-draw material
 // selector placed immediately after it. The leading members are GuiScenePass's GuiPushConstants
 // (the gui vertex stage reads InvScreenSize from the identical offsets, so one range serves both
-// stages); MaterialIndex sits at byte offset 20, which is Veng::GuiFillSelectorPushOffset and what
+// stages); MaterialOffset sits at byte offset 20, which is Veng::GuiFillSelectorPushOffset and what
 // MaterialLoader's SelectorPushOffsetFor requires a merged range to cover.
 struct GuiFillPushConstants
 {
@@ -34,7 +34,7 @@ struct GuiFillPushConstants
     uint GradientBuffer;  // bindless g_Buffers slot of the gradient-record buffer
     uint GradientBase;    // record-index base for the current frame-in-flight
     float Time;           // seconds, for an animated fill
-    uint MaterialIndex;   // per-material param-block selector (frame-folded)
+    uint MaterialOffset;   // per-material param-block selector (frame-folded)
 };
 
 [[vk::push_constant]] ConstantBuffer<GuiFillPushConstants> g_PC;

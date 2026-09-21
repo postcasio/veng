@@ -21,7 +21,7 @@ MaterialParams LoadMaterialParams(uint offset)
 [shader("fragment")]
 float4 fsMain(GuiFillInputs input) : SV_Target0
 {
-    MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);
+    MaterialParams p = LoadMaterialParams(g_PC.MaterialOffset);
     float4 texel = g_Textures[NonUniformResourceIndex(p.Image)].Sample(
         g_Samplers[NonUniformResourceIndex(p.ImageSampler)], input.v_UV);
     float2 box = GuiFillBoxCoord(input);

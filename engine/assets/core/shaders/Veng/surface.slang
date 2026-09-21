@@ -37,7 +37,7 @@
 // DrawData (Veng/Renderer/SceneRenderer's GpuDrawData). The geometry pass uploads
 // one record per per-submesh candidate into a ring-buffered SSBO; the vertex stage
 // reads its record by the candidate id carried in the instance-rate attribute,
-// replacing the per-draw MVP / NormalMatrix / MaterialIndex push constants. Both
+// replacing the per-draw MVP / NormalMatrix / MaterialOffset push constants. Both
 // CullMode::CPU (a direct DrawIndexed per submesh) and CullMode::GPU (one
 // DrawIndexedIndirect per mesh group) drive the same buffer, differing only in
 // submission and in who writes the indirect command's instanceCount.
@@ -47,7 +47,7 @@ struct DrawData
     float4   NormalColumn0;  // inverse-transpose of World's upper 3x3, column 0 (xyz; w pad)
     float4   NormalColumn1;  // column 1
     float4   NormalColumn2;  // column 2
-    uint     MaterialIndex;  // GetCurrentFrameBase()-folded material selector
+    uint     MaterialOffset;  // GetCurrentFrameBase()-folded material selector
     uint     PaletteBase;    // skinned meshes: base offset of this instance's bones in g_Palette
     uint     PrevPaletteBase; // skinned meshes: previous frame's palette base (TAA velocity)
     uint     EntityIndex;    // packed Entity slot index; the picking fragment writes index + 1
@@ -160,7 +160,7 @@ float3 UnpackNormal(float4 sampled)
 // LoadDrawData. FrameBase folds the ring-buffered draw-data region into the candidate id
 // (the current frame's region base); ViewConstantsIndex selects the per-frame set-0
 // view-constants region the vertex stage multiplies by. A Surface fragment reads its
-// material selector from the v_MaterialIndex interpolant, not from this block. Matrices
+// material selector from the v_MaterialOffset interpolant, not from this block. Matrices
 // are column-major (the cooker compiles Slang column-major), matching the glm matrices
 // veng uploads verbatim.
 struct PushConstants
@@ -179,7 +179,7 @@ struct SurfaceFragmentInput
     float2 v_UV : TEXCOORD0;
     float3 v_WorldNormal : NORMAL;
     float4 v_WorldTangent : TANGENT;  // xyz world tangent; w handedness sign for the bitangent
-    nointerpolation uint v_MaterialIndex : TEXCOORD1;  // per-draw material selector from the vertex stage
+    nointerpolation uint v_MaterialOffset : TEXCOORD1;  // per-draw material selector from the vertex stage
     float4 v_CurClip : TEXCOORD2;   // unjittered current clip position (g-buffer motion vector)
     float4 v_PrevClip : TEXCOORD3;  // unjittered previous clip position (g-buffer motion vector)
     // This draw's candidate id, so a fragment can identify its own draw and load its DrawData —

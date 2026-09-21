@@ -32,7 +32,7 @@ MaterialParams LoadMaterialParams(uint offset)
 [shader("fragment")]
 float4 fsMain(SurfaceFragmentInput input) : SV_Target0
 {
-    MaterialParams p = LoadMaterialParams(input.v_MaterialIndex);
+    MaterialParams p = LoadMaterialParams(input.v_MaterialOffset);
 
     // Reconstruct this fragment's world position from its window depth (the reconstruction deferred
     // lighting and ComputeMotionVector share), then reflect the eye ray to it off the surface normal.

@@ -17,7 +17,7 @@ MaterialParams LoadMaterialParams(uint offset)
 [shader("fragment")]
 GBufferOutput fsMain(SurfaceFragmentInput input)
 {
-    MaterialParams p = LoadMaterialParams(input.v_MaterialIndex);
+    MaterialParams p = LoadMaterialParams(input.v_MaterialOffset);
 
     GBufferOutput output;
     output.Albedo = float4(0.0, 0.0, 0.0, 1.0);

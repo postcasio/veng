@@ -19,7 +19,7 @@ MaterialParams LoadMaterialParams(uint offset)
 [shader("fragment")]
 float4 fsMain(GuiFillInputs input) : SV_Target0
 {
-    MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);
+    MaterialParams p = LoadMaterialParams(g_PC.MaterialOffset);
     float2 box = GuiFillBoxCoord(input);
     float t = saturate(0.5 + 0.5 * sin((box.x + box.y) * 3.0 + g_PC.Time * 2.0));
     float4 fill = lerp(p.TintA, p.TintB, t);

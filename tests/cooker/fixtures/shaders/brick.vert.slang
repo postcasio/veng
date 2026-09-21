@@ -10,7 +10,7 @@
 struct PushConstants
 {
     float4x4 MVP;          // offset 0
-    uint MaterialIndex;    // offset 64
+    uint MaterialOffset;    // offset 64
     uint Pad0;             // offset 68
     uint Pad1;             // offset 72
     uint Pad2;             // offset 76

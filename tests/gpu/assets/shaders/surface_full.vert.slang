@@ -38,7 +38,7 @@ SurfaceFragmentInput vsMain(VSInput input)
     output.v_WorldTangent =
         float4(c0 * input.a_Tangent.x + c1 * input.a_Tangent.y + c2 * input.a_Tangent.z,
                input.a_Tangent.w);
-    output.v_MaterialIndex = draw.MaterialIndex;
+    output.v_MaterialOffset = draw.MaterialOffset;
     output.v_CandidateId = input.a_CandidateId;
     return output;
 }

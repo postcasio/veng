@@ -210,7 +210,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     struct MaterialPush
     {
-        u32 MaterialIndex;
+        u32 MaterialOffset;
     };
     const Ref<PipelineLayout> layout = PipelineLayout::Create(
         Context,
@@ -263,7 +263,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                         bindless.Bind(inner);
                         // Fold in the current frame's material region base, as a draw does.
                         inner.PushConstants(MaterialPush{
-                            .MaterialIndex = bindless.GetCurrentFrameBase() + materialHandle.Offset,
+                            .MaterialOffset =
+                                bindless.GetCurrentFrameBase() + materialHandle.Offset,
                         });
                         inner.DrawFullscreenTriangle();
                     });

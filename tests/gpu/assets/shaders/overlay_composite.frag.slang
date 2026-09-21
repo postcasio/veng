@@ -30,7 +30,7 @@ struct CompositeOutput
 [shader("fragment")]
 CompositeOutput fsMain(PostProcessFragmentInput input)
 {
-    MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);
+    MaterialParams p = LoadMaterialParams(g_PC.MaterialOffset);
     Texture2D document = g_Textures[NonUniformResourceIndex(p.Document)];
 
     const float4 texel = document.Load(int3(int2(input.sv_position.xy), 0)); // premultiplied

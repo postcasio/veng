@@ -2,7 +2,7 @@
 // writes final HDR radiance directly (not the g-buffer). A Translucent material shares the
 // canonical-layout vertex stage and the per-draw plumbing of the Surface domain — it is drawn
 // per-submesh from the same gathered geometry, reads its per-draw record from the DrawData SSBO
-// by the instance-rate candidate id, and reads its material selector from the v_MaterialIndex
+// by the instance-rate candidate id, and reads its material selector from the v_MaterialOffset
 // interpolant — so it `#include`s Veng/surface.slang for the set-0 bindless declarations, the
 // per-frame view block, DrawData / LoadDrawData, the surface push block (g_PC), and the
 // SurfaceFragmentInput struct. It declares its own MaterialParams beside this include, exactly as

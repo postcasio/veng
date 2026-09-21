@@ -51,7 +51,7 @@ namespace
 
     struct MaterialPush
     {
-        u32 MaterialIndex;
+        u32 MaterialOffset;
     };
 
     Ref<GraphicsPipeline> CreateMaterialPipeline(Context& context, Ref<PipelineLayout>& outLayout,
@@ -143,8 +143,8 @@ namespace
                     // Fold the current frame's region base into the selector so the
                     // shader's load reads this frame's region.
                     passCmd.PushConstants(
-                        MaterialPush{.MaterialIndex = bindless.GetCurrentFrameBase() +
-                                                      material.Offset + fieldOffset});
+                        MaterialPush{.MaterialOffset = bindless.GetCurrentFrameBase() +
+                                                       material.Offset + fieldOffset});
                     passCmd.DrawFullscreenTriangle();
                 });
 
@@ -187,7 +187,7 @@ namespace
             passCmd.SetScissor({0, 0}, extent);
             bindless.Bind(passCmd);
             passCmd.PushConstants(
-                MaterialPush{.MaterialIndex = bindless.GetCurrentFrameBase() + material.Offset});
+                MaterialPush{.MaterialOffset = bindless.GetCurrentFrameBase() + material.Offset});
             passCmd.DrawFullscreenTriangle();
         };
 

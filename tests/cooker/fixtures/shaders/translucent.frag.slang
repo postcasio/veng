@@ -17,18 +17,18 @@ MaterialParams LoadMaterialParams(uint offset)
     return g_MaterialParams.Load<MaterialParams>(offset);
 }
 
-// A Translucent material reads its selector from the v_MaterialIndex interpolant (the surface
+// A Translucent material reads its selector from the v_MaterialOffset interpolant (the surface
 // vertex path), so the fixture carries it on its input struct rather than a push block.
 struct VSOutput
 {
     float4 sv_position : SV_Position;
     float2 v_UV : TEXCOORD0;
-    nointerpolation uint v_MaterialIndex : TEXCOORD1;
+    nointerpolation uint v_MaterialOffset : TEXCOORD1;
 };
 
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target0
 {
-    MaterialParams p = LoadMaterialParams(input.v_MaterialIndex);
+    MaterialParams p = LoadMaterialParams(input.v_MaterialOffset);
     return p.Color;
 }

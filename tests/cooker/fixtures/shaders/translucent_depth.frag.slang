@@ -20,7 +20,7 @@ struct VSOutput
 {
     float4 sv_position : SV_Position;
     float2 v_UV : TEXCOORD0;
-    nointerpolation uint v_MaterialIndex : TEXCOORD1;
+    nointerpolation uint v_MaterialOffset : TEXCOORD1;
 };
 
 struct FSOutput
@@ -32,7 +32,7 @@ struct FSOutput
 [shader("fragment")]
 FSOutput fsMain(VSOutput input)
 {
-    MaterialParams p = LoadMaterialParams(input.v_MaterialIndex);
+    MaterialParams p = LoadMaterialParams(input.v_MaterialOffset);
     FSOutput o;
     o.Color = p.Color;
     o.Depth = saturate(input.sv_position.z);

@@ -23,7 +23,7 @@ MaterialParams LoadMaterialParams(uint offset)
 [shader("fragment")]
 float4 fsMain(PostProcessFragmentInput input) : SV_Target0
 {
-    MaterialParams p = LoadMaterialParams(g_PC.MaterialIndex);
+    MaterialParams p = LoadMaterialParams(g_PC.MaterialOffset);
     float depth = SamplePostProcessDepth(p.Depth, p.DepthSampler, p.DepthScaleUV, input.v_UV);
     // Reverse-Z: any geometry has depth > 0, the cleared far background is exactly 0. Emit a
     // high-contrast near/far mask in red (robust to the small reverse-Z magnitude) and the raw

@@ -18,7 +18,7 @@ MaterialParams LoadMaterialParams(uint offset)
 [shader("fragment")]
 float4 fsMain(SurfaceFragmentInput input) : SV_Target0
 {
-    MaterialParams p = LoadMaterialParams(input.v_MaterialIndex);
+    MaterialParams p = LoadMaterialParams(input.v_MaterialOffset);
     ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
     const float2 uv = SceneScreenUV(vc, input.sv_position) + p.UVOffset.xy;
     // Blur zero routes through the blurred helper too, so the case that asserts the two agree is
