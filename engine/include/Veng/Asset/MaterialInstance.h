@@ -296,6 +296,16 @@ namespace Veng
         /// draw pushes.
         [[nodiscard]] u32 GetBlockOffset() const { return m_Handle.Offset; }
 
+        /// @brief Returns the instance's current parameter block, as last written.
+        ///
+        /// The CPU-side cache the ranged writers keep in step with the arena, so it is what the
+        /// shader will read: the parent's defaults, the instance's authored overrides and every
+        /// Set* since. The instance sibling of Material::GetDefaultBlock, and the read a consumer
+        /// verifying its own writes needs — a field's bytes are at its MaterialField Offset, an
+        /// array element i at Offset + i * ElementStride.
+        /// @return The block's bytes; empty until the instance is finalized.
+        [[nodiscard]] std::span<const std::byte> GetBlock() const { return m_Block; }
+
         /// @brief Returns a revision that bumps on every parameter/handle write.
         ///
         /// A monotonic counter incremented whenever the instance's parameter block is rewritten
