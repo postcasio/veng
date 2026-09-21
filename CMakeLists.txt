@@ -963,6 +963,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/asset_handle_type.cpp
             tests/unit/hex_id.cpp
             tests/unit/cooked_project.cpp
+            tests/unit/cooked_blob_padding.cpp
             tests/unit/launch_arguments.cpp
             tests/unit/asset_manager.cpp
             tests/unit/data_table.cpp

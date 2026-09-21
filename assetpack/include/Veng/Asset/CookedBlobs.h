@@ -568,6 +568,12 @@ namespace Veng
     {
         /// @brief Must equal CookedLevelVersion; the loader rejects mismatches.
         u32 Version = 0;
+        /// @brief Zeroes the alignment gap before the 8-byte-aligned WorldPrefabId.
+        ///
+        /// The whole record is memcpy'd into the blob, so a named, zero-initialized filler keeps
+        /// the gap deterministic — an unnamed gap left by aggregate init leaks stack bytes into
+        /// the cooked blob and the content hash the cook cache keys on.
+        u32 Padding0 = 0;
         /// @brief AssetId of the world prefab this level spawns; resolved as a load-time dependency.
         u64 WorldPrefabId = 0;
         /// @brief Number of u64 SystemId entries following this header, in run order.
@@ -576,6 +582,8 @@ namespace Veng
         u32 GameModeRecordBytes = 0;
         /// @brief Byte size of the render-settings record following the game-mode record.
         u32 RenderRecordBytes = 0;
+        /// @brief Zeroes the tail padding so the whole memcpy'd record is deterministic.
+        u32 Padding1 = 0;
     };
 
     /// @brief The current skeleton-format version.
@@ -1294,6 +1302,12 @@ namespace Veng
         /// Set by the `<Text loc="…">` markup form: the runtime resolves the key through the
         /// document's translator into the presented text. 0 leaves the Text a literal.
         u32 IsLocKey = 0;
+        /// @brief Zeroes the tail padding so the whole memcpy'd record is deterministic.
+        ///
+        /// The element table is memcpy'd into the blob, so an unnamed gap after IsLocKey (the
+        /// record is 8-byte-aligned for its u64 members) would leak stack bytes into the cooked
+        /// blob and the content hash the cook cache keys on.
+        u32 Padding0 = 0;
     };
 
     /// @brief One binding on a cooked UI element: the target property name and its expression.
