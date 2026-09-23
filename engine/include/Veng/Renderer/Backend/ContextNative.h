@@ -214,6 +214,24 @@ namespace Veng::Renderer
         /// matching EndGpuScope balances without writing a timestamp.
         vector<u32> OpenScopeStack;
 
+        /// @brief Timestamp query pool for one-shot command buffers: MaxGpuScopes (start, end)
+        /// scope pairs, scope i at queries 2·i / 2·i+1.
+        ///
+        /// Reset at the head of each ImmediateCommands recording and read back once its submit
+        /// has completed, so it is never shared with the per-frame pool's slots. Null when the
+        /// device reports no timestamp support.
+        vk::QueryPool ImmediateTimestampPool;
+        /// @brief True while an ImmediateCommands callback records with timing, routing
+        /// BeginGpuScope/EndGpuScope into ImmediateTimestampPool rather than the frame's run.
+        bool ImmediateScopeRecording = false;
+        /// @brief Names of the scopes opened during the in-progress one-shot recording.
+        vector<string> ImmediateScopeNames;
+        /// @brief Nesting depth of each scope in ImmediateScopeNames, parallel to it.
+        vector<u32> ImmediateScopeDepths;
+        /// @brief Open one-shot scope indices awaiting their EndGpuScope, with MaxGpuScopes as
+        /// the past-the-budget sentinel exactly as OpenScopeStack holds it.
+        vector<u32> ImmediateOpenScopeStack;
+
         /// @brief Per-in-flight-frame deferred-destruction bins.
         ///
         /// A handle retired while frame i is recording goes into bin i and is protected

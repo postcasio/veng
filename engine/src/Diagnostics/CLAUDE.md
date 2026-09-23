@@ -248,6 +248,13 @@ The call sites that make a capture worth taking, plus the seam and bridge that p
   `Name`/`Milliseconds` keep their meaning, so existing readers are unchanged. This changes what the
   accessor *reports*, not how timestamps are collected: the 128-scope budget, the readback latency,
   and the `m_GpuScopeRecording` gate are untouched.
+- **A one-shot command buffer times its own scopes.** `Context::ImmediateCommands` resets a
+  second, 128-scope query pool at the head of its recording and routes every `BeginGpuScope` /
+  `EndGpuScope` inside the callback there, pausing the frame's run while it does; once the submit
+  has completed it reads the pairs back into `GetLastImmediateGpuPassTimings()`, placed against the
+  first scope's begin. Work measured outside the frame loop — a headless tool, an offline bake —
+  brackets itself the way a graph pass is bracketed and reads the result synchronously. The bridge
+  does not read it: a one-shot recording belongs to no frame.
 - **The bridge back-dates.** `Application::BridgeGpuTimings()` runs once per frame after
   `Context::EndFrame()`, reads the timings **through the public `Context` accessors only**, and
   emits each pass as a scope-shaped event onto a virtual GPU track (`CreateTrack` once, then the

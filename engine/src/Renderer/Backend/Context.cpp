@@ -398,6 +398,12 @@ namespace Veng::Renderer
                         .queryCount = m_Native->MaxFramesInFlight * queriesPerFrame,
                     })
                     .value;
+            m_Native->ImmediateTimestampPool = m_Native->Device
+                                                   .createQueryPool({
+                                                       .queryType = vk::QueryType::eTimestamp,
+                                                       .queryCount = 2 * Native::MaxGpuScopes,
+                                                   })
+                                                   .value;
         }
     }
 
@@ -489,6 +495,11 @@ namespace Veng::Renderer
         {
             m_Native->Device.destroyQueryPool(m_Native->TimestampPool);
             m_Native->TimestampPool = nullptr;
+        }
+        if (m_Native->ImmediateTimestampPool)
+        {
+            m_Native->Device.destroyQueryPool(m_Native->ImmediateTimestampPool);
+            m_Native->ImmediateTimestampPool = nullptr;
         }
 
         m_Native->Device.destroyPipelineCache(m_Native->PipelineCache);
@@ -677,6 +688,11 @@ namespace Veng::Renderer
         return m_GpuPassTimings;
     }
 
+    std::span<const Context::GpuPassTiming> Context::GetLastImmediateGpuPassTimings() const
+    {
+        return m_ImmediateGpuPassTimings;
+    }
+
     Context::GpuMemoryUsage Context::GetGpuMemoryUsage() const
     {
         const VkPhysicalDeviceMemoryProperties* memoryProperties = nullptr;
@@ -699,75 +715,131 @@ namespace Veng::Renderer
         return usage;
     }
 
-    void Context::BeginGpuScope(CommandBuffer& cmd, const string_view name)
+    namespace
     {
-        // Only inside a driven frame are the queries reset and writable; a graph executed
-        // out-of-frame (ImmediateCommands, a one-shot render) records no scopes.
-        if (!m_GpuTimingSupported || !m_GpuScopeRecording)
+        /// @brief One run of timestamp scopes being recorded: the pool and first query its pairs
+        /// land in, and the names, depths and open stack that pair them back up at readback.
+        struct ScopeRun
         {
-            return;
-        }
+            vk::QueryPool Pool;
+            u32 FirstQuery = 0;
+            vector<string>& Names;
+            vector<u32>& Depths;
+            vector<u32>& OpenStack;
+        };
 
-        // Past the budget: still push a sentinel so the matching EndGpuScope balances the stack.
-        if (m_Native->CurrentScopeNames.size() >= Native::MaxGpuScopes)
+        void OpenScope(CommandBuffer& cmd, const ScopeRun& run, const string_view name)
         {
-            m_Native->OpenScopeStack.push_back(Native::MaxGpuScopes);
-            return;
-        }
+            // Past the budget: still push a sentinel so the matching close balances the stack.
+            if (run.Names.size() >= Context::Native::MaxGpuScopes)
+            {
+                run.OpenStack.push_back(Context::Native::MaxGpuScopes);
+                return;
+            }
 
-        const u32 slot = m_Native->CurrentFrameInFlight;
-        const u32 scopeBase = (slot * (2 + 2 * Native::MaxGpuScopes)) + 2;
-        const auto index = static_cast<u32>(m_Native->CurrentScopeNames.size());
+            const auto index = static_cast<u32>(run.Names.size());
 
-        // Depth is the number of scopes open before this one, so the flattened span reconstructs
-        // the pass tree its execution order would otherwise lose.
-        const auto depth = static_cast<u32>(m_Native->OpenScopeStack.size());
+            // Depth is the number of scopes open before this one, so the flattened span
+            // reconstructs the pass tree its execution order would otherwise lose.
+            const auto depth = static_cast<u32>(run.OpenStack.size());
 
-        m_Native->CurrentScopeNames.emplace_back(name);
-        m_Native->CurrentScopeDepths.push_back(depth);
-        m_Native->OpenScopeStack.push_back(index);
-        GetVkCommandBuffer(cmd).writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe,
-                                               m_Native->TimestampPool, scopeBase + (index * 2));
+            run.Names.emplace_back(name);
+            run.Depths.push_back(depth);
+            run.OpenStack.push_back(index);
+            GetVkCommandBuffer(cmd).writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe,
+                                                   run.Pool, run.FirstQuery + (index * 2));
 
 #if defined(VE_DEBUG) && VE_DEBUG
-        // Bracket the pass with a debug-utils label so a RenderDoc or Xcode capture reads as named
-        // regions rather than an unlabelled wall of draws. Emitted only in a debug build; a shipping
-        // build pays no per-pass label cost. A no-op when the instance lacks VK_EXT_debug_utils.
-        DebugMarkers::BeginLabel(GetVkCommandBuffer(cmd), string(name));
+            // Bracket the pass with a debug-utils label so a RenderDoc or Xcode capture reads as
+            // named regions rather than an unlabelled wall of draws. Emitted only in a debug build;
+            // a shipping build pays no per-pass label cost. A no-op when the instance lacks
+            // VK_EXT_debug_utils.
+            DebugMarkers::BeginLabel(GetVkCommandBuffer(cmd), string(name));
 #endif
+        }
+
+        void CloseScope(CommandBuffer& cmd, const ScopeRun& run)
+        {
+            VE_ASSERT(!run.OpenStack.empty(),
+                      "Context::EndGpuScope called without a matching BeginGpuScope");
+            const u32 index = run.OpenStack.back();
+            run.OpenStack.pop_back();
+
+            // The sentinel marks a scope opened past the budget — nothing to close.
+            if (index == Context::Native::MaxGpuScopes)
+            {
+                return;
+            }
+
+            GetVkCommandBuffer(cmd).writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe,
+                                                   run.Pool, run.FirstQuery + (index * 2) + 1);
+
+#if defined(VE_DEBUG) && VE_DEBUG
+            // Close the region OpenScope opened. Symmetric: a scope opened past the budget took
+            // the sentinel branch and emitted no BeginLabel, so it emits no EndLabel here either.
+            DebugMarkers::EndLabel(GetVkCommandBuffer(cmd));
+#endif
+        }
+    }
+
+    void Context::BeginGpuScope(CommandBuffer& cmd, const string_view name)
+    {
+        if (!m_GpuTimingSupported)
+        {
+            return;
+        }
+        if (m_Native->ImmediateScopeRecording)
+        {
+            OpenScope(cmd,
+                      {.Pool = m_Native->ImmediateTimestampPool,
+                       .Names = m_Native->ImmediateScopeNames,
+                       .Depths = m_Native->ImmediateScopeDepths,
+                       .OpenStack = m_Native->ImmediateOpenScopeStack},
+                      name);
+            return;
+        }
+        // Only inside a driven frame are the frame's queries reset and writable; a graph executed
+        // out-of-frame and outside a timed one-shot recording records no scopes.
+        if (!m_GpuScopeRecording)
+        {
+            return;
+        }
+        const u32 slot = m_Native->CurrentFrameInFlight;
+        OpenScope(cmd,
+                  {.Pool = m_Native->TimestampPool,
+                   .FirstQuery = (slot * (2 + 2 * Native::MaxGpuScopes)) + 2,
+                   .Names = m_Native->CurrentScopeNames,
+                   .Depths = m_Native->CurrentScopeDepths,
+                   .OpenStack = m_Native->OpenScopeStack},
+                  name);
     }
 
     void Context::EndGpuScope(CommandBuffer& cmd)
     {
-        // Symmetric with BeginGpuScope: out-of-frame the matching Begin pushed nothing, so the
-        // stack stays balanced without a pop here.
-        if (!m_GpuTimingSupported || !m_GpuScopeRecording)
+        // Symmetric with BeginGpuScope: where the matching Begin recorded nothing it pushed
+        // nothing, so the stack stays balanced without a pop here.
+        if (!m_GpuTimingSupported)
         {
             return;
         }
-
-        VE_ASSERT(!m_Native->OpenScopeStack.empty(),
-                  "Context::EndGpuScope called without a matching BeginGpuScope");
-        const u32 index = m_Native->OpenScopeStack.back();
-        m_Native->OpenScopeStack.pop_back();
-
-        // The sentinel marks a scope opened past the per-frame budget — nothing to close.
-        if (index == Native::MaxGpuScopes)
+        if (m_Native->ImmediateScopeRecording)
+        {
+            CloseScope(cmd, {.Pool = m_Native->ImmediateTimestampPool,
+                             .Names = m_Native->ImmediateScopeNames,
+                             .Depths = m_Native->ImmediateScopeDepths,
+                             .OpenStack = m_Native->ImmediateOpenScopeStack});
+            return;
+        }
+        if (!m_GpuScopeRecording)
         {
             return;
         }
-
         const u32 slot = m_Native->CurrentFrameInFlight;
-        const u32 scopeBase = (slot * (2 + 2 * Native::MaxGpuScopes)) + 2;
-        GetVkCommandBuffer(cmd).writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe,
-                                               m_Native->TimestampPool,
-                                               scopeBase + (index * 2) + 1);
-
-#if defined(VE_DEBUG) && VE_DEBUG
-        // Close the region BeginGpuScope opened. Symmetric: a scope opened past the budget took the
-        // sentinel branch above and emitted no BeginLabel, so it emits no EndLabel here either.
-        DebugMarkers::EndLabel(GetVkCommandBuffer(cmd));
-#endif
+        CloseScope(cmd, {.Pool = m_Native->TimestampPool,
+                         .FirstQuery = (slot * (2 + 2 * Native::MaxGpuScopes)) + 2,
+                         .Names = m_Native->CurrentScopeNames,
+                         .Depths = m_Native->CurrentScopeDepths,
+                         .OpenStack = m_Native->OpenScopeStack});
     }
 
     bool Context::IsFormatLinearFilterSupported(const Format format) const
@@ -1209,25 +1281,80 @@ namespace Veng::Renderer
 
     void Context::ImmediateCommands(const std::function<void(CommandBuffer&)>& function) const
     {
-        auto commandBuffer = CommandBuffer::Create(const_cast<Context&>(*this));
+        auto& self = const_cast<Context&>(*this);
+        Native& native = *m_Native;
+        auto commandBuffer = CommandBuffer::Create(self);
         commandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
 
-        // A one-shot command buffer is not the driven frame's, so it never received the per-frame
-        // timestamp-query reset that BeginFrame records. Suppress GPU scope recording while its work
-        // records, so a RenderGraph executed here (a clear, a cube bake) writes no timestamps into
-        // un-reset queries — otherwise, when an ImmediateCommands runs mid-frame (a viewport created
-        // or reconfigured during rendering, so m_GpuScopeRecording is still true), each such scope
-        // trips VUID-vkCmdWriteTimestamp-None-00830. Restored after, so the frame's own scopes resume.
-        auto& self = const_cast<Context&>(*this);
+        // A one-shot command buffer is not the driven frame's and never receives the per-frame
+        // query reset, so its scopes go to a pool of their own, reset here at its head. A frame
+        // left recording (an ImmediateCommands run mid-frame) is paused so none of this work lands
+        // in the frame's queries, and restored after. A nested call records untimed: the outer
+        // recording owns the pool until its own submit has been read back.
         const bool wasRecording = self.m_GpuScopeRecording;
+        const bool wasImmediate = native.ImmediateScopeRecording;
+        const bool timed = m_GpuTimingSupported && !wasImmediate;
         self.m_GpuScopeRecording = false;
+        native.ImmediateScopeRecording = timed;
+        if (timed)
+        {
+            native.ImmediateScopeNames.clear();
+            native.ImmediateScopeDepths.clear();
+            native.ImmediateOpenScopeStack.clear();
+            GetVkCommandBuffer(*commandBuffer)
+                .resetQueryPool(native.ImmediateTimestampPool, 0, 2 * Native::MaxGpuScopes);
+        }
 
         function(*commandBuffer);
 
+        VE_ASSERT(!timed || native.ImmediateOpenScopeStack.empty(),
+                  "ImmediateCommands: {} GPU scope(s) left open by the recording",
+                  native.ImmediateOpenScopeStack.size());
+        native.ImmediateScopeRecording = wasImmediate;
         self.m_GpuScopeRecording = wasRecording;
 
         commandBuffer->End();
         SubmitImmediateCommands(*commandBuffer);
+
+        if (!timed)
+        {
+            return;
+        }
+        // The submit has completed, so every written query is available.
+        self.m_ImmediateGpuPassTimings.clear();
+        const vector<string>& names = native.ImmediateScopeNames;
+        if (names.empty())
+        {
+            return;
+        }
+        vector<u64> stamps(names.size() * 2);
+        const vk::Result result = native.Device.getQueryPoolResults(
+            native.ImmediateTimestampPool, 0, static_cast<u32>(stamps.size()),
+            stamps.size() * sizeof(u64), stamps.data(), sizeof(u64),
+            vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
+        if (result != vk::Result::eSuccess)
+        {
+            return;
+        }
+        const u64 mask = native.TimestampValidMask;
+        const f64 periodNs = native.TimestampPeriodNs;
+        // Placed against the first scope's begin, the one-shot recording having no frame start.
+        const u64 base = stamps[0];
+        self.m_ImmediateGpuPassTimings.reserve(names.size());
+        for (usize i = 0; i < names.size(); i++)
+        {
+            const u64 beginTick = stamps[i * 2];
+            const u64 endTick = stamps[(i * 2) + 1];
+            const u64 ticks = (endTick - beginTick) & mask;
+            self.m_ImmediateGpuPassTimings.push_back({
+                .Name = names[i],
+                .Milliseconds = static_cast<f32>(static_cast<f64>(ticks) * periodNs * 1e-6),
+                .BeginNanos =
+                    static_cast<u64>(static_cast<f64>((beginTick - base) & mask) * periodNs),
+                .EndNanos = static_cast<u64>(static_cast<f64>((endTick - base) & mask) * periodNs),
+                .Depth = native.ImmediateScopeDepths[i],
+            });
+        }
     }
 
     void Context::AcquireNextImage(Semaphore& semaphore)

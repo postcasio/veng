@@ -217,12 +217,29 @@ namespace Veng::Renderer
         /// @return The last completed frame's per-pass timings, in execution order.
         [[nodiscard]] std::span<const GpuPassTiming> GetLastGpuPassTimings() const;
 
+        /// @brief Returns the GPU timings of the scopes the last ImmediateCommands recorded.
+        ///
+        /// A one-shot command buffer times its scopes against a query pool of its own, reset at
+        /// the head of the recording, so a caller measuring work outside the frame loop — an
+        /// offline render, a bake, a headless tool — brackets it with BeginGpuScope/EndGpuScope
+        /// inside the callback and reads the result here once ImmediateCommands returns, which it
+        /// does only after the submit has completed. Entries are in execution order, with
+        /// BeginNanos/EndNanos placed against the first scope's begin and Depth carrying the
+        /// nesting as GetLastGpuPassTimings does. Empty when IsGpuTimingSupported() is false,
+        /// after a recording that opened no scope, and unchanged by an ImmediateCommands nested
+        /// inside another's callback (which records untimed). Valid until the next
+        /// ImmediateCommands.
+        /// @return The last one-shot recording's per-scope timings, in execution order.
+        [[nodiscard]] std::span<const GpuPassTiming> GetLastImmediateGpuPassTimings() const;
+
         /// @brief Opens a named GPU timestamp scope, recording a begin timestamp into @p cmd.
         ///
         /// The RenderGraph brackets every pass with a scope; a caller recording raw passes
         /// outside the graph may bracket its own work the same way. Scopes may nest and must be
-        /// balanced by an EndGpuScope on the same command buffer. A no-op when
-        /// IsGpuTimingSupported() is false or the per-frame scope budget is exhausted.
+        /// balanced by an EndGpuScope on the same command buffer. Recorded into the driven frame's
+        /// run between BeginFrame and EndFrame, and into the one-shot run inside an
+        /// ImmediateCommands callback (see GetLastImmediateGpuPassTimings). A no-op anywhere else,
+        /// when IsGpuTimingSupported() is false, or once the run's scope budget is exhausted.
         /// @param cmd   Command buffer the begin timestamp is recorded into.
         /// @param name  Label paired with this scope's duration in GetLastGpuPassTimings().
         void BeginGpuScope(CommandBuffer& cmd, string_view name);
@@ -539,6 +556,10 @@ namespace Veng::Renderer
         [[nodiscard]] void* GetExternalDevice() const;
 
         /// @brief Records commands via a callback on a one-shot command buffer and waits for completion.
+        ///
+        /// GPU scopes the callback opens are timed against a query pool of the one-shot buffer's
+        /// own and read back before this returns; see GetLastImmediateGpuPassTimings.
+        /// @param function  Records the work into the one-shot command buffer it is handed.
         void ImmediateCommands(const std::function<void(CommandBuffer&)>& function) const;
 
         /// @brief Acquires the next swap chain image, signalling `semaphore` when available.
@@ -645,10 +666,16 @@ namespace Veng::Renderer
 
         /// @brief True between BeginFrame and EndFrame, when the frame's query run is reset.
         ///
-        /// Gates BeginGpuScope/EndGpuScope: a graph executed outside the frame loop (an
-        /// ImmediateCommands render, a one-shot offscreen render) writes no timestamps, since
-        /// its queries were never reset. Per-pass timing covers only the driven frame.
+        /// Gates the frame half of BeginGpuScope/EndGpuScope: work recorded outside the frame loop
+        /// writes nothing into the frame's queries, since they were never reset for it. A one-shot
+        /// recording times its own scopes instead (m_ImmediateGpuPassTimings).
         bool m_GpuScopeRecording = false;
+
+        /// @brief Per-scope GPU durations of the last timed ImmediateCommands, in execution order.
+        ///
+        /// Rebuilt once that recording's submit completes. Returned by
+        /// GetLastImmediateGpuPassTimings().
+        vector<GpuPassTiming> m_ImmediateGpuPassTimings;
 
         /// @brief Bindless-sampled resources awaiting their one-time graphics-queue acquire.
         ///
