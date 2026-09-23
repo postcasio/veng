@@ -6,7 +6,8 @@
 // (vmaCopyMemoryToAllocation / vmaCopyAllocationToMemory) rather than a GPU
 // transfer, so no TransferSrc/TransferDst usage is required for them to work —
 // but BufferUsage::TransferSrc | TransferDst is set anyway here as the
-// realistic usage for a staging-style buffer.
+// realistic usage for a staging-style buffer. A DeviceLocal buffer is the exception: the host
+// cannot map it, so its transfers stage through a one-shot copy, which the last case covers.
 
 #include <array>
 #include <numeric>
@@ -85,4 +86,38 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         CAPTURE(i);
         CHECK(afterPatch[i] == expected);
     }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "buffer roundtrip: a device-local buffer stages its uploads and downloads")
+{
+    constexpr u64 size = 256;
+
+    // Storage alone: the staged copies need TransferSrc | TransferDst, which DeviceLocal adds.
+    auto buffer = Buffer::Create(Context, {
+                                              .Name = "Device-Local Buffer",
+                                              .Size = size,
+                                              .Usage = BufferUsage::Storage,
+                                              .DeviceLocal = true,
+                                          });
+
+    std::array<u8, size> source{};
+    std::ranges::iota(source, u8{0});
+    buffer->UploadSync(source);
+
+    constexpr u64 offset = 100;
+    const std::array<u8, 4> patch = {0xAA, 0xBB, 0xCC, 0xDD};
+    buffer->UploadSync(patch, offset);
+
+    const vector<u8> downloaded = buffer->Download();
+    REQUIRE(downloaded.size() == size);
+
+    u32 mismatches = 0;
+    for (u64 i = 0; i < size; i++)
+    {
+        const bool patched = i >= offset && i < offset + patch.size();
+        const u8 expected = patched ? patch[i - offset] : source[i];
+        mismatches += downloaded[i] == expected ? 0 : 1;
+    }
+    CHECK(mismatches == 0);
 }

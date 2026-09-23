@@ -43,8 +43,11 @@ namespace Veng::Renderer
         vk::Buffer Buffer;
         VmaAllocation Allocation{};
         /// @brief Persistent mapping for a HostMapped buffer (VMA_ALLOCATION_CREATE_MAPPED_BIT);
-        /// null for device-local buffers.
+        /// null for every other buffer.
         void* MappedData = nullptr;
+        /// @brief Whether the host may copy into and out of the allocation directly; false for a
+        /// DeviceLocal buffer, whose transfers are staged.
+        bool HostAccess = true;
     };
 
     struct Image::Native

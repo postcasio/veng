@@ -32,9 +32,19 @@ namespace Veng::Renderer
         /// @brief When true, the allocation is pinned in HOST_VISIBLE | HOST_COHERENT memory
         /// and mapped once at creation, so GetMappedData() returns a stable pointer for
         /// direct writes with no per-write map/unmap and no flush. Used for data rewritten
-        /// every frame (the ring-buffered material param store); the default path lets VMA
-        /// place the buffer in device-local memory and stage transfers as needed.
+        /// every frame (the ring-buffered material param store).
         bool HostMapped = false;
+
+        /// @brief When true, the allocation prefers device-local memory and carries no host
+        /// access at all, so the GPU reads it at full speed on a device whose host-visible memory
+        /// is slower to read.
+        ///
+        /// For data written once or rarely and read by the GPU many times. The host never maps
+        /// it: UploadSync and Download stage through a transient host-visible buffer and a copy on
+        /// a one-shot command buffer, blocking until the copy completes, so they are render-thread
+        /// calls and the asynchronous Upload is not available. TransferSrc and TransferDst are
+        /// added to Usage for those copies. Mutually exclusive with HostMapped.
+        bool DeviceLocal = false;
     };
 
     /// @brief A GPU buffer with deferred destruction.
@@ -62,13 +72,19 @@ namespace Veng::Renderer
 
         /// @brief Copies data into the buffer at a byte offset, blocking the caller.
         ///
-        /// Performs a host-visible memcpy; the device is never waited. offset + size
-        /// must fit within the buffer.
+        /// Performs a host-visible memcpy and never waits the device — except on a
+        /// BufferInfo::DeviceLocal buffer, which it stages through a transient host-visible buffer
+        /// and a one-shot copy it waits for, leaving the write visible to every later GPU read;
+        /// that path records commands and so runs on the render thread. offset + size must fit
+        /// within the buffer.
         /// @param data   Bytes to write.
         /// @param offset Byte offset into the buffer (default 0).
         void UploadSync(std::span<const u8> data, u64 offset = 0) const;
 
         /// @brief Copies data into the buffer on a worker thread, returning immediately.
+        ///
+        /// @pre The buffer is not BufferInfo::DeviceLocal — asserted; its staged copy records
+        /// commands, which a worker may not.
         ///
         /// A Buffer is always HOST_VISIBLE | HOST_COHERENT, so the upload is a plain memcpy
         /// with no staging, no GPU command, and no device wait — the job runs UploadSync
@@ -95,6 +111,9 @@ namespace Veng::Renderer
         [[nodiscard]] Task<void> Upload(TaskSystem& tasks, vector<u8>&& data, u64 offset = 0);
 
         /// @brief Downloads the full buffer contents to the host, blocking until complete.
+        ///
+        /// A BufferInfo::DeviceLocal buffer is copied into a transient host-visible buffer on a
+        /// one-shot command buffer first, ordered after every earlier GPU write to it.
         /// @return A byte vector containing a snapshot of the buffer.
         [[nodiscard]] vector<u8> Download() const;
 
