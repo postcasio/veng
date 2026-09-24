@@ -1137,8 +1137,6 @@ namespace Veng::Renderer
             .DofCoc = m_DofCocId,
             .DofCocHandle = m_Dof->GetCocHandle(),
             .SamplerHandle = m_SamplerHandle,
-            .LtcMatHandle = m_LtcMatHandle,
-            .LtcMagHandle = m_LtcMagHandle,
             .ShadowMap = shadowId,
             .ShadowView = shadowAtlasView,
             .PunctualShadowMap = punctualShadowId,
