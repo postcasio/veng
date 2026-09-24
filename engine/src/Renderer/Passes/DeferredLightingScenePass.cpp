@@ -15,12 +15,8 @@ namespace Veng::Renderer
         const TextureHandle depthHandle = io.DepthHandle;
         const TextureHandle emissiveHandle = io.EmissiveHandle;
         const TextureHandle ssaoHandle = io.SsaoHandle;
-        const TextureHandle ltcMatHandle = io.LtcMatHandle;
-        const TextureHandle ltcMagHandle = io.LtcMagHandle;
         const SamplerHandle samplerHandle = io.SamplerHandle;
         const bool useSsao = m_UseSsao;
-        const bool skylight = m_Skylight;
-        const bool iblAllowed = m_IblAllowed;
         const Ref<DescriptorSet> shadowSet = m_ShadowSet;
         const u32 shadowRingStride = m_ShadowRingStride;
         const u32 punctualRingStride = m_PunctualRingStride;
@@ -41,7 +37,7 @@ namespace Veng::Renderer
 
         // Declaring the shadow/punctual maps sampled drives the graph-derived
         // depth-attachment → shader-read barriers. The atlases reach the
-        // lighting shader through set 1 (off bindless); the declarations here
+        // lighting shader through set 3 (off bindless); the declarations here
         // are only for barrier derivation.
         if (io.ShadowMap.IsValid())
         {
@@ -58,11 +54,10 @@ namespace Veng::Renderer
         }
 
         const Ref<DescriptorSet> iblSet = m_IblSet;
-        const u32 prefilterMipCount = m_PrefilterMipCount;
         builder.Execute(
             [this, albedoHandle, normalHandle, ormHandle, depthHandle, emissiveHandle, ssaoHandle,
-             ltcMatHandle, ltcMagHandle, samplerHandle, useSsao, skylight, iblAllowed, shadowSet,
-             shadowRingStride, punctualRingStride, iblSet, prefilterMipCount](PassContext& inner)
+             samplerHandle, useSsao, shadowSet, shadowRingStride, punctualRingStride,
+             iblSet](PassContext& inner)
             {
                 const ScenePassContext ctx = Wrap(inner);
                 CommandBuffer& cmd = ctx.Cmd();
@@ -90,20 +85,8 @@ namespace Veng::Renderer
                                        frameSlot * punctualRingStride},
                 });
 
-                // IBL is active when the resolved sky requests the IBL tier (iblAllowed)
-                // AND its cube-backed source is resident — an environment map, or a baked
-                // material sky whose material is loaded. A display-only source shows its
-                // sky but does not light the scene. EnvIntensity rides the per-frame
-                // SceneView; the sky itself is a separate pass.
-                const SceneView& view = ctx.View();
-                const bool sourceResident =
-                    view.Environment.IsLoaded() || view.SkyMaterial.IsLoaded();
-                const u32 iblEnabled = (iblAllowed && sourceResident) ? 1u : 0u;
-                // The SH skylight is the second ambient arm, below IBL: active only when
-                // its setting is on AND no environment is bound (IBL wins). The shader's
-                // three-way branch reads it after IblEnabled.
-                const u32 skylightOn = (skylight && iblEnabled == 0u) ? 1u : 0u;
-
+                // The light state (bases, count, ambient arm and parameters, LTC LUTs) rides the
+                // view block this index selects.
                 if (useSsao)
                 {
                     cmd.PushConstants(SsaoLightingPushConstants{
@@ -114,17 +97,6 @@ namespace Veng::Renderer
                         .EmissiveTexture = emissiveHandle.Index,
                         .Sampler = samplerHandle.Index,
                         .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
-                        .LightBase = registry.GetCurrentLightBase(),
-                        .LightCount = view.LightCount,
-                        .IblEnabled = iblEnabled,
-                        .SkylightOn = skylightOn,
-                        .PrefilterMipCount = prefilterMipCount,
-                        .AmbientFloor = view.AmbientFloor,
-                        .EnvIntensity = view.EnvironmentIntensity,
-                        .SkylightIntensity = view.SkylightIntensity,
-                        .LtcMatTexture = ltcMatHandle.Index,
-                        .LtcMagTexture = ltcMagHandle.Index,
-                        .AreaVertexBase = registry.GetCurrentAreaVertexBase(),
                         .SsaoTexture = ssaoHandle.Index,
                     });
                 }
@@ -138,17 +110,6 @@ namespace Veng::Renderer
                         .EmissiveTexture = emissiveHandle.Index,
                         .Sampler = samplerHandle.Index,
                         .ViewConstantsIndex = registry.GetCurrentViewConstantsIndex(),
-                        .LightBase = registry.GetCurrentLightBase(),
-                        .LightCount = view.LightCount,
-                        .IblEnabled = iblEnabled,
-                        .SkylightOn = skylightOn,
-                        .PrefilterMipCount = prefilterMipCount,
-                        .AmbientFloor = view.AmbientFloor,
-                        .EnvIntensity = view.EnvironmentIntensity,
-                        .SkylightIntensity = view.SkylightIntensity,
-                        .LtcMatTexture = ltcMatHandle.Index,
-                        .LtcMagTexture = ltcMagHandle.Index,
-                        .AreaVertexBase = registry.GetCurrentAreaVertexBase(),
                     });
                 }
                 cmd.DrawFullscreenTriangle();

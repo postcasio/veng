@@ -1,7 +1,10 @@
 #include "TranslucentScenePass.h"
 
+#include <algorithm>
+
 #include <fmt/format.h>
 
+#include <Veng/Assert.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Mesh.h>
@@ -13,12 +16,13 @@
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/PipelineLayout.h>
+#include <Veng/Renderer/ShaderInterface.h>
 
 #include "../HalfResTranslucency.h"
 
 namespace Veng::Renderer
 {
-    void TranslucentScenePass::Declare(RenderGraph& graph, const PassIO& /*io*/)
+    void TranslucentScenePass::Declare(RenderGraph& graph, const PassIO& io)
     {
         RenderGraph::PassBuilder builder =
             graph.AddPass(m_HalfResolution ? "Scene Translucent Half" : "Scene Translucent");
@@ -73,10 +77,52 @@ namespace Veng::Renderer
         {
             builder.Sample(m_SceneDepthId);
         }
+        // A forward-lit material samples the shadow atlases, as the deferred lighting pass does.
+        if (io.ShadowMap.IsValid())
+        {
+            builder.Sample(io.ShadowMap);
+        }
+        if (io.PunctualShadowMap.IsValid())
+        {
+            builder.Sample(io.PunctualShadowMap);
+        }
         builder.Execute([this](PassContext& inner) { Record(Wrap(inner)); });
     }
 
-    const Ref<GraphicsPipeline>&
+    bool TranslucentScenePass::IsForwardLit(const Material& material)
+    {
+        return std::ranges::any_of(material.GetFragmentInterface().Bindings,
+                                   [](const ShaderBinding& binding)
+                                   {
+                                       return binding.Set == ForwardLightingIblSet ||
+                                              binding.Set == ForwardLightingShadowSet;
+                                   });
+    }
+
+    Ref<PipelineLayout> TranslucentScenePass::ForwardLitLayoutFor(const Material& parent) const
+    {
+        const Ref<PipelineLayout>& reflected = parent.GetPipelineLayout();
+        const vector<Ref<DescriptorSetLayout>>& authored = reflected->GetDescriptorSetLayouts();
+        // Author set 0 is set 3, the DrawData every surface-drawn fragment declares; the two after
+        // it are the forward-lighting sets, and nothing may follow them.
+        VE_ASSERT(
+            !authored.empty() &&
+                authored.size() <= ForwardLightingShadowSet - BindlessRegistry::FirstUserSet + 1,
+            "TranslucentScenePass: forward-lit material '{}' declares {} author sets; sets 3-{} "
+            "are the DrawData and forward-lighting sets and a Translucent fragment may "
+            "declare no others",
+            parent.GetName(), authored.size(), ForwardLightingShadowSet);
+        return PipelineLayout::Create(
+            m_Context,
+            {
+                .Name = fmt::format("Translucent Forward-Lit Layout ({})", parent.GetName()),
+                .DescriptorSetLayouts = {authored.front(), m_Forward.IblLayout,
+                                         m_Forward.ShadowLayout},
+                .PushConstantRanges = reflected->GetPushConstantRanges(),
+            });
+    }
+
+    const TranslucentScenePass::CachedPipeline&
     TranslucentScenePass::PipelineFor(const MaterialInstance& material) const
     {
         const Material* parent = material.GetParent().Get();
@@ -85,6 +131,13 @@ namespace Veng::Renderer
         {
             return it->second;
         }
+
+        // A forward-lit fragment reads the renderer's IBL and shadow sets, so its pipeline is built
+        // against their layouts: the reflected shadow set cannot carry the immutable comparison
+        // sampler, and only an identically-defined layout accepts the renderer's set.
+        const bool forwardLit = IsForwardLit(*parent);
+        const Ref<PipelineLayout> layout =
+            forwardLit ? ForwardLitLayoutFor(*parent) : material.GetPipelineLayout();
 
         vector<PipelineAttachmentInfo> attachments = {
             {.Format = m_TargetFormat, .Blend = BlendState::AlphaBlend()}};
@@ -113,7 +166,7 @@ namespace Veng::Renderer
                 // The surface vertex stage reads the per-draw candidate id as an
                 // instance-rate attribute on binding 1 (fetched at firstInstance).
                 .InstanceCandidateId = true,
-                .PipelineLayout = material.GetPipelineLayout(),
+                .PipelineLayout = layout,
                 .ShaderStages =
                     {
                         {.Stage = ShaderStage::Vertex, .Module = material.GetVertexModule()},
@@ -128,7 +181,10 @@ namespace Veng::Renderer
                 .DepthCompareOp = CompareOp::GreaterOrEqual,
             });
 
-        return m_Pipelines.emplace(parent, std::move(pipeline)).first->second;
+        return m_Pipelines
+            .emplace(parent,
+                     CachedPipeline{.Pipeline = std::move(pipeline), .ForwardLit = forwardLit})
+            .first->second;
     }
 
     void TranslucentScenePass::Record(const ScenePassContext& ctx) const
@@ -158,20 +214,37 @@ namespace Veng::Renderer
         // rebound with the pipeline (its layout is per-material). Translucent materials push
         // no selector (they read it from DrawData), so Material::Bind only binds the
         // pipeline; the selector rides each draw's DrawData record via the candidate id.
+        // The shadow rings are renderer-owned and framesInFlight-deep, so their dynamic offsets
+        // are the frame-in-flight index, exactly as the deferred lighting pass binds them.
+        const u32 frameSlot = m_Context.GetCurrentFrameInFlight();
         const GraphicsPipeline* lastPipeline = nullptr;
         const Mesh* lastMesh = nullptr;
         for (const TranslucentDraw& draw : plan.Draws)
         {
-            const Ref<GraphicsPipeline>& pipeline = PipelineFor(*draw.Material);
+            const CachedPipeline& cached = PipelineFor(*draw.Material);
+            const Ref<GraphicsPipeline>& pipeline = cached.Pipeline;
             if (pipeline.get() != lastPipeline)
             {
                 cmd.BindPipeline(pipeline);
                 registry.Bind(cmd);
-                cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                    .Sets = {plan.DrawDataSet},
-                    .FirstSet = 3,
-                    .PipelineBindPoint = PipelineBindPoint::Graphics,
-                });
+                if (cached.ForwardLit)
+                {
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {plan.DrawDataSet, m_Forward.IblSet, m_Forward.ShadowSet},
+                        .FirstSet = BindlessRegistry::FirstUserSet,
+                        .PipelineBindPoint = PipelineBindPoint::Graphics,
+                        .DynamicOffsets = {frameSlot * m_Forward.ShadowRingStride,
+                                           frameSlot * m_Forward.PunctualRingStride},
+                    });
+                }
+                else
+                {
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {plan.DrawDataSet},
+                        .FirstSet = BindlessRegistry::FirstUserSet,
+                        .PipelineBindPoint = PipelineBindPoint::Graphics,
+                    });
+                }
                 cmd.PushConstants(plan.Push);
                 lastPipeline = pipeline.get();
                 lastMesh = nullptr;

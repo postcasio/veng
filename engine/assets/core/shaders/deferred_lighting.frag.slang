@@ -1,8 +1,9 @@
 // Deferred lighting fragment stage: samples the g-buffer (G0 albedo, G1
 // world-space normal, G2 packed occlusion/roughness/metallic plus the surface-flags
 // alpha, and the depth attachment) through the bindless set-0 array, reconstructs world position
-// from depth, and evaluates a Cook-Torrance BRDF over a list of typed lights read
-// from the per-frame light buffer. Writes linear HDR.
+// from depth, and evaluates the shared lighting core (Veng/lighting.slang) — a Cook-Torrance BRDF
+// over the typed lights in the per-view light buffer, plus the ambient arm the view block names.
+// Writes linear HDR.
 //
 // VE_USE_SSAO selects a compile-time variant: when defined (by the
 // deferred_lighting_ssao.frag wrapper), the screen-space AO target is sampled and
@@ -25,54 +26,15 @@
 // the depth attachment via ViewConstants.InvViewProj — one of the two depth targets
 // read as textures in the engine — rather than stored in a fat position target.
 #include "view_constants.slang"
-#include "shadow.slang"
-#include "Veng/sh.slang"
 #include "Veng/surface_flags.slang"
-#include "Veng/light_flags.slang"
-#include "Veng/ltc.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
-[[vk::binding(6, 0)]] ByteAddressBuffer g_Lights;
-// The per-frame area-light polygon-vertex buffer (Rect/Polygon world-space vertices, one vec4
-// each). A light's Area.y/z give the base/count relative to this view's region; AreaVertexBase
-// folds in the region start, exactly as LightBase does for the light buffer.
-[[vk::binding(7, 0)]] ByteAddressBuffer g_AreaVertices;
 
-// Set 2: the image-based-lighting maps (off the bindless registry, a closed
-// renderer-owned set). Irradiance is the diffuse term; the prefiltered cube + the BRDF
-// LUT are the split-sum specular term. Binding 0 (the radiance cube) is the skybox pass's
-// and is unused here. Always bound and valid; sampling is gated on the IblEnabled push flag.
-[[vk::binding(1, 4)]] TextureCube g_Irradiance;
-[[vk::binding(2, 4)]] TextureCube g_Prefilter;
-[[vk::binding(3, 4)]] Texture2D g_BrdfLut;
-[[vk::binding(4, 4)]] SamplerState g_IblSampler;
-
-static const uint LightStride = 96;
-static const uint AreaVertexStride = 16;
-
-// LightType, matching the Light builtin's enum.
-static const float LightTypeDirectional = 0.0;
-static const float LightTypePoint = 1.0;
-static const float LightTypeSpot = 2.0;
-static const float LightTypeRect = 3.0;
-static const float LightTypeSphere = 4.0;
-static const float LightTypePolygon = 5.0;
-
-// One light, packed by the renderer into the ring-buffered light buffer. Position
-// is the entity's world transform; the type rides DirectionType.w. The last two
-// vec4 carry the source/shape size: a Sphere's or a Point/Spot's source radius, a
-// Rect/Polygon's vertex range into the area-vertex buffer, the area-shadow slot, and
-// the world area normal.
-struct GpuLight
-{
-    float4 PositionRange;   // xyz world position, w range
-    float4 DirectionType;   // xyz travel direction, w LightType
-    float4 ColorIntensity;  // rgb linear color, a intensity
-    float4 Cone;            // x cos(inner), y cos(outer), z punctual shadow slot, w LightFlag bits
-    float4 Area;            // x sphere/point/spot source radius, y poly vertex base, z poly vertex count, w area-shadow slot
-    float4 AreaNormal;      // xyz world area normal (Rect/Polygon), w pad
-};
+// The shared lighting core: the BRDF, the light loop, shadowing, and the ambient arms, read from
+// the per-view light state in the view block — the same evaluation a forward-lit translucent
+// fragment runs (Veng/forward_lighting.slang). The shadow system sits at set 3 in this layout.
+#include "Veng/lighting.slang"
 
 struct PushConstants
 {
@@ -82,23 +44,9 @@ struct PushConstants
     uint DepthTexture;        // depth bindless index
     uint EmissiveTexture;     // G4 emissive bindless index
     uint Sampler;             // shared sampler index
-    uint ViewConstantsIndex;  // current frame-in-flight's view-constants region
-    uint LightBase;           // current frame's base index into the light buffer
-    uint LightCount;          // live light count this frame
-    uint IblEnabled;          // 1 = split-sum IBL ambient; 0 = flat ambient fallback
-    uint SkylightOn;          // 1 = SH skylight ambient (second arm, below IBL); 0 = flat fallback
-    uint PrefilterMipCount;   // prefiltered specular mip count (roughness -> LOD)
-    // A scene's authored ambient in a scene with no lit sky: the flat fallback ambient, multiplied
-    // by the surface occlusion. 16-byte aligned (std430 vec3), so a scalar follows it in the same slot.
-    float3 AmbientFloor;
-    float EnvIntensity;       // scales the IBL ambient
-    float SkylightIntensity;  // scales the SH skylight ambient
-    uint LtcMatTexture;       // LTC inverse-matrix LUT bindless index (area lights)
-    uint LtcMagTexture;       // LTC magnitude/Fresnel LUT bindless index (area lights)
-    uint AreaVertexBase;      // current frame's base index into the area-vertex buffer
+    uint ViewConstantsIndex;  // current view's view-constants region (carries the light state)
 #if VE_USE_SSAO
     uint SsaoTexture;         // screen-space AO bindless index (the SSAO variant only)
-    uint Pad1;
 #endif
 };
 
@@ -109,202 +57,6 @@ struct VSOutput
     float4 sv_position : SV_Position;
     float2 v_UV : TEXCOORD0;
 };
-
-static const float Pi = 3.14159265358979323846;
-
-// GGX / Trowbridge-Reitz normal distribution.
-float DistributionGGX(float nDotH, float roughness)
-{
-    float a = roughness * roughness;
-    float a2 = a * a;
-    float d = nDotH * nDotH * (a2 - 1.0) + 1.0;
-    return a2 / max(Pi * d * d, 1e-7);
-}
-
-// Smith geometry with the Schlick-GGX approximation, direct-lighting k.
-float GeometrySchlickGGX(float nDotX, float roughness)
-{
-    float r = roughness + 1.0;
-    float k = (r * r) / 8.0;
-    return nDotX / (nDotX * (1.0 - k) + k);
-}
-
-float GeometrySmith(float nDotV, float nDotL, float roughness)
-{
-    return GeometrySchlickGGX(nDotV, roughness) * GeometrySchlickGGX(nDotL, roughness);
-}
-
-float3 FresnelSchlick(float cosTheta, float3 f0)
-{
-    return f0 + (1.0 - f0) * pow(saturate(1.0 - cosTheta), 5.0);
-}
-
-// Roughness-aware Fresnel for the IBL ambient term: a rough surface's grazing
-// reflectance is bounded by its f0 rather than rising to white.
-float3 FresnelSchlickRoughness(float cosTheta, float3 f0, float roughness)
-{
-    float3 fr = max(float3(1.0 - roughness), f0);
-    return f0 + (fr - f0) * pow(saturate(1.0 - cosTheta), 5.0);
-}
-
-// The Cook-Torrance contribution of one light: the surface's specular + diffuse
-// response to the incoming radiance from direction L, scaled by N·L. The caller
-// supplies the per-light radiance (already distance/cone-attenuated). f0 is the
-// surface's base reflectance, already metal-tinted.
-float3 EvaluateLight(float3 N, float3 V, float3 L, float3 radiance,
-                     float3 albedo, float roughness, float metallic, float3 f0)
-{
-    float3 H = normalize(V + L);
-
-    float nDotL = max(dot(N, L), 0.0);
-    float nDotV = max(dot(N, V), 1e-4);
-    float nDotH = max(dot(N, H), 0.0);
-    float vDotH = max(dot(V, H), 0.0);
-
-    float ndf = DistributionGGX(nDotH, roughness);
-    float g = GeometrySmith(nDotV, nDotL, roughness);
-    float3 fresnel = FresnelSchlick(vDotH, f0);
-
-    float3 specular = (ndf * g * fresnel) / max(4.0 * nDotV * nDotL, 1e-4);
-
-    float3 kd = (1.0 - fresnel) * (1.0 - metallic);
-    float3 diffuse = kd * albedo / Pi;
-
-    return (diffuse + specular) * radiance * nDotL;
-}
-
-// ---- Area lights: Linearly Transformed Cosines (Heitz et al.) ----
-//
-// The geometry-agnostic core — the edge integrator, the horizon-clipped form factor, and the
-// Sphere integrator — lives in Veng/ltc.slang, shared with the LTC test shader. This file supplies
-// the pieces that name the pass's bindings: the LUT matrix sample and the Rect/Polygon vertex
-// integrator.
-static const float LtcLutSize = 64.0;
-static const float LtcLutScale = (LtcLutSize - 1.0) / LtcLutSize;
-static const float LtcLutBias = 0.5 / LtcLutSize;
-
-// Sample the LTC LUTs by (roughness, sqrt(1 - N·V)) and reconstruct the inverse transform.
-// t2 returns the BRDF magnitude (x) and Fresnel weight (y) the specular tint is split across.
-float3x3 LtcMatrix(float nDotV, float roughness, SamplerState samp, out float4 t2)
-{
-    float2 uv = float2(roughness, sqrt(saturate(1.0 - nDotV)));
-    uv = uv * LtcLutScale + LtcLutBias;
-    float4 t1 = g_Textures[NonUniformResourceIndex(g_PC.LtcMatTexture)].SampleLevel(samp, uv, 0.0);
-    t2 = g_Textures[NonUniformResourceIndex(g_PC.LtcMagTexture)].SampleLevel(samp, uv, 0.0);
-    // The LUT packs glm column-major invM[col][row]: t1.y is row 2/col 0 and t1.z row 0/col 2,
-    // so the row-major reconstruction places t1.z in the top row — swapping them transposes the
-    // matrix and mirrors the specular lobe to the wrong side of the light.
-    return float3x3(t1.x, 0.0, t1.z,
-                    0.0, 1.0, 0.0,
-                    t1.y, 0.0, t1.w);
-}
-
-// Load a packed area-light polygon vertex (world space) by its region-relative index.
-float3 LtcAreaVertex(uint index)
-{
-    return g_AreaVertices.Load<float4>((g_PC.AreaVertexBase + index) * AreaVertexStride).xyz;
-}
-
-// The LTC integral over a convex polygon read from the area-vertex buffer. Minv is the fitted
-// matrix (specular) or identity (Lambert diffuse). areaNormal is the polygon's CCW front-face
-// normal; a one-sided light contributes nothing to a point behind its plane.
-float LtcPolygon(float3 N, float3 V, float3 P, float3x3 Minv, uint base, uint count,
-                 bool twoSided, float3 areaNormal)
-{
-    float3 T1 = normalize(V - N * dot(V, N));
-    float3 T2 = cross(N, T1);
-    // Slang's float3x3(a,b,c) fills rows, so this is already the world→(T1,T2,N) rotation.
-    float3x3 M = mul(Minv, float3x3(T1, T2, N));
-
-    float3 prev = normalize(mul(M, LtcAreaVertex(base + count - 1u) - P));
-    float3 vsum = float3(0.0);
-    for (uint i = 0; i < count; ++i)
-    {
-        float3 cur = normalize(mul(M, LtcAreaVertex(base + i) - P));
-        vsum += LtcIntegrateEdgeVec(prev, cur);
-        prev = cur;
-    }
-
-    float len = length(vsum);
-    if (len < 1e-6)
-    {
-        return 0.0;
-    }
-    // The edge-vector z sums negative for a front face pointing at the shading point (the
-    // Rect/Polygon CCW authoring convention), so the front-lit axis cosine is the negated z.
-    float z = -vsum.z / len;
-    bool behind = dot(P - LtcAreaVertex(base), areaNormal) < 0.0;
-    if (behind && !twoSided)
-    {
-        return 0.0;
-    }
-    if (behind)
-    {
-        z = -z;
-    }
-    return LtcClippedFormFactor(z, len);
-}
-
-// The full area-light contribution (diffuse + tinted specular), before range attenuation and
-// shadowing. Metals drop the diffuse arm; the specular arm is split across the Fresnel weights.
-float3 EvaluateAreaLight(GpuLight light, float3 N, float3 V, float3 P, float3 albedo,
-                         float roughness, float metallic, float3 f0, SamplerState samp)
-{
-    float nDotV = max(dot(N, V), 1e-4);
-    float4 t2;
-    float3x3 Minv = LtcMatrix(nDotV, roughness, samp, t2);
-    float3x3 ident = float3x3(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
-
-    float type = light.DirectionType.w;
-    bool twoSided = LightIsTwoSided(light.Cone.w);
-
-    float specSum;
-    float diffSum;
-    if (type == LightTypeSphere)
-    {
-        float3 center = light.PositionRange.xyz;
-        float radius = max(light.Area.x, 1e-4);
-        specSum = LtcSphere(N, V, P, Minv, center, radius);
-        diffSum = LtcSphere(N, V, P, ident, center, radius);
-    }
-    else
-    {
-        uint base = uint(light.Area.y);
-        uint count = uint(light.Area.z);
-        if (count < 3u)
-        {
-            return float3(0.0);
-        }
-        specSum = LtcPolygon(N, V, P, Minv, base, count, twoSided, light.AreaNormal.xyz);
-        diffSum = LtcPolygon(N, V, P, ident, base, count, twoSided, light.AreaNormal.xyz);
-    }
-
-    float3 specScale = f0 * t2.x + (1.0 - f0) * t2.y;
-    float3 diffuse = albedo * (1.0 - metallic) * diffSum;
-    float3 specular = specSum * specScale;
-    float3 radiance = light.ColorIntensity.rgb * light.ColorIntensity.a;
-    // diffSum/specSum are the normalized clamped-cosine form factor in [0, 1] (LtcClippedFormFactor),
-    // so the reflected radiance is the emitter radiance times the BRDF terms directly — in the
-    // point-light limit this matches EvaluateLight's diffuse albedo/Pi * radiance * nDotL.
-    return radiance * (diffuse + specular);
-}
-
-// Area-light visibility through the punctual shadow atlas with PCSS softening. An area light is
-// shadowed as a spot-style caster (its slot rides Cone.z, -1 = unshadowed); the penumbra widens
-// with how large the shadow source (AreaNormal.w) subtends from this fragment, so a large light
-// casts a soft shadow. AreaNormal.w is the shadow source radius, not the LTC emitter radius in
-// Area.x — the two are the same authored size but only the shadow one is capped.
-float AreaShadowVisibility(GpuLight light, float3 worldPos, float3 N)
-{
-    int slot = int(light.Cone.z);
-    if (slot < 0)
-    {
-        return 1.0;
-    }
-    float3 toLight = light.PositionRange.xyz - worldPos;
-    float3 L = normalize(toLight);
-    return AreaShadowSample(slot, worldPos, N, L, light.AreaNormal.w, length(toLight));
-}
 
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
@@ -334,7 +86,7 @@ float4 fsMain(VSOutput input) : SV_Target
     }
 
     float occlusion = orm.r;
-    float roughness = clamp(orm.g, 0.04, 1.0);
+    float roughness = orm.g;
     float metallic  = orm.b;
     // The surface-flags channel. A fragment whose material declines shadow-map reception is lit
     // exactly as any other, but every atlas lookup below resolves to full visibility: the world
@@ -352,136 +104,18 @@ float4 fsMain(VSOutput input) : SV_Target
     float4 worldH = mul(vc.InvViewProj, clip);
     float3 worldPos = worldH.xyz / worldH.w;
 
-    // The fragment's view-space depth (positive distance in front of the camera),
-    // the cascade-selection key for both the shadow sample and the debug tint.
-    float viewDepth = -mul(vc.View, float4(worldPos, 1.0)).z;
+    float3 V = normalize(vc.CameraPosition.xyz - worldPos);
+    LightingSurface surface =
+        MakeLightingSurface(vc, worldPos, N, V, albedo, roughness, metallic, declinesShadowMaps);
 
 #if VE_DEBUG_CASCADES
     // The cascade debug arm: tint by the selected cascade, unlit, so cascade
     // selection (near → cascade 0, far → a higher cascade) is directly observable.
     // Background pixels already returned black above.
-    return float4(CascadeDebugTint(viewDepth), 1.0);
+    return float4(CascadeDebugTint(surface.ViewDepth), 1.0);
 #endif
 
-    float3 V = normalize(vc.CameraPosition.xyz - worldPos);
-
-    // Metallic workflow: dielectrics reflect a flat 0.04, metals tint specular by
-    // albedo; diffuse vanishes for metals.
-    float3 f0 = lerp(float3(0.04), albedo, metallic);
-
-    // Accumulate the Cook-Torrance response over every live light. Directional
-    // lights have no attenuation; point/spot fall off with distance, and spot adds
-    // a cone factor.
-    float3 direct = float3(0.0);
-    for (uint i = 0; i < g_PC.LightCount; ++i)
-    {
-        GpuLight light = g_Lights.Load<GpuLight>((g_PC.LightBase + i) * LightStride);
-
-        float type = light.DirectionType.w;
-        float3 radiance = light.ColorIntensity.rgb * light.ColorIntensity.a;
-
-        // Rect/Sphere/Polygon are area lights: shade analytically through the LTC path and fall
-        // off with a smooth range cutoff only — the solid-angle integral already carries the
-        // inverse-square, so no separate distance term. (Area shadowing is applied below.)
-        if (type > LightTypeSpot + 0.5)
-        {
-            float3 area =
-                EvaluateAreaLight(light, N, V, worldPos, albedo, roughness, metallic, f0, samp);
-            float dist = length(light.PositionRange.xyz - worldPos);
-            float range = max(light.PositionRange.w, 1e-4);
-            float rangeFactor = saturate(1.0 - pow(dist / range, 4.0));
-            rangeFactor *= rangeFactor;
-            // A near-parallel area light is shadowed by the cascade set fit to it — parallel
-            // projection, fit to the camera view — using its travel direction, not its position.
-            // Any other area light samples its punctual perspective tile.
-            float areaVisibility;
-            if (declinesShadowMaps)
-            {
-                areaVisibility = 1.0;
-            }
-            else if (LightIsAreaCascadeShadowed(light.Cone.w))
-            {
-                float3 sunL = normalize(-light.DirectionType.xyz);
-                areaVisibility = DirectionalShadowVisibility(worldPos, N, sunL, viewDepth,
-                                                            LightCascadeSet(light.Cone.w));
-            }
-            else
-            {
-                areaVisibility = AreaShadowVisibility(light, worldPos, N);
-            }
-            direct += area * rangeFactor * areaVisibility;
-            continue;
-        }
-
-        float3 L;
-        float attenuation = 1.0;
-        bool isDirectional = type == LightTypeDirectional;
-        if (isDirectional)
-        {
-            // The light direction is the direction the light travels; the surface
-            // faces the light along -direction.
-            L = normalize(-light.DirectionType.xyz);
-        }
-        else
-        {
-            // Point and spot are placed at PositionRange.xyz; L points from the
-            // surface toward the light.
-            float3 toLight = light.PositionRange.xyz - worldPos;
-            float dist = length(toLight);
-            L = dist > 1e-4 ? toLight / dist : float3(0.0, 0.0, 1.0);
-
-            // Inverse-square falloff with a smooth cutoff at Range: physically
-            // correct near the light, faded to zero by the range radius so the loop
-            // bound stays meaningful.
-            //
-            // The near field is bounded by the light's spherical source radius (Area.x):
-            // the shading distance is clamped to be no less than it before the square, so a
-            // real source size — not an epsilon guard — caps the response at contact. A zero
-            // radius (the default) falls back to the 1e-4 floor and is bit-identical to a pure
-            // inverse-square. A 1/(d^2 + 1) denominator is deliberately not used: the +1
-            // perturbs the falloff at every distance, not only near the singularity, so it
-            // cannot be read as absolute radiance under a fixed exposure. L still comes from the
-            // true toLight — the clamp bounds the magnitude of the response, not its direction.
-            float range = max(light.PositionRange.w, 1e-4);
-            float sourceRadius = light.Area.x;
-            float distanceFactor = 1.0 / max(max(dist * dist, sourceRadius * sourceRadius), 1e-4);
-            float rangeFactor = saturate(1.0 - pow(dist / range, 4.0));
-            rangeFactor *= rangeFactor;
-            attenuation = distanceFactor * rangeFactor;
-
-            if (type == LightTypeSpot)
-            {
-                // Smoothstep the cone between cos(inner) (full) and cos(outer)
-                // (zero); the surface-to-light direction is compared against the
-                // light's travel direction.
-                float cosAngle = dot(normalize(-light.DirectionType.xyz), L);
-                float cosInner = light.Cone.x;
-                float cosOuter = light.Cone.y;
-                attenuation *= smoothstep(cosOuter, cosInner, cosAngle);
-            }
-        }
-
-        // A directional light is shadowed by the cascade set fit to its direction, unless the
-        // atlas had none left for it (the denied flag), in which case it shades unshadowed
-        // rather than reading a cascade fit to some other light. A point or spot light is
-        // shadowed by its punctual atlas tile, gated by its shadow slot (Cone.z, -1 =
-        // unshadowed). Both sample through hardware SampleCmp.
-        float visibility;
-        if (declinesShadowMaps)
-            visibility = 1.0;
-        else if (isDirectional)
-            visibility = LightIsCascadeDenied(light.Cone.w)
-                ? 1.0
-                : DirectionalShadowVisibility(worldPos, N, L, viewDepth,
-                                              LightCascadeSet(light.Cone.w));
-        else
-        {
-            int slot = int(light.Cone.z);
-            visibility = PunctualShadowVisibility(worldPos, N, L, slot);
-        }
-
-        direct += EvaluateLight(N, V, L, radiance * attenuation, albedo, roughness, metallic, f0) * visibility;
-    }
+    LightingResult direct = EvaluateDirectLighting(vc, surface);
 
     // The ambient occlusion factor. The SSAO variant samples the screen-space AO
     // target and combines it with the baked ORM.r occlusion by min — SSAO modulates
@@ -495,50 +129,13 @@ float4 fsMain(VSOutput input) : SV_Target
     float ambientOcclusion = occlusion;
 #endif
 
-    // Indirect (ambient) term, three-way. With an environment bound, split-sum IBL: diffuse
-    // irradiance + GGX-prefiltered specular weighted by the BRDF LUT. With no environment but
-    // a dynamic skylight, the diffuse-only SH ambient: the sky projected to order-2 SH on the
-    // CPU each frame, reconstructed here per fragment (directional, day/night) and tinted by
-    // albedo. Otherwise the flat hemispheric fill. Every arm is gated by the combined
-    // occlusion so the occlusion channel reads.
-    float3 ambient;
-    if (g_PC.IblEnabled != 0)
-    {
-        float nDotV = max(dot(N, V), 1e-4);
-        float3 fresnel = FresnelSchlickRoughness(nDotV, f0, roughness);
-        float3 kd = (1.0 - fresnel) * (1.0 - metallic);
-
-        float3 irradiance = g_Irradiance.SampleLevel(g_IblSampler, N, 0.0).rgb;
-        float3 diffuseIbl = kd * irradiance * albedo;
-
-        float3 reflection = reflect(-V, N);
-        float maxMip = float(max(g_PC.PrefilterMipCount, 1u) - 1u);
-        float3 prefiltered =
-            g_Prefilter.SampleLevel(g_IblSampler, reflection, roughness * maxMip).rgb;
-        float2 brdf = g_BrdfLut.SampleLevel(g_IblSampler, float2(nDotV, roughness), 0.0).rg;
-        float3 specularIbl = prefiltered * (fresnel * brdf.x + brdf.y);
-
-        ambient = (diffuseIbl + specularIbl) * g_PC.EnvIntensity * ambientOcclusion;
-    }
-    else if (g_PC.SkylightOn != 0)
-    {
-        // The cosine-convolved coefficients reconstruct cosine-weighted irradiance directly;
-        // clamp the SH ringing below zero before it darkens the surface. The Lambertian
-        // albedo/pi turns irradiance into outgoing radiance, matching the direct arm's
-        // normalization (the IBL arm folds the same 1/pi into its irradiance convolution).
-        float3 irradiance = max(ShEvalIrradiance(vc.SkyShCoeffs, N), float3(0.0));
-        ambient = irradiance * (albedo / Pi) * g_PC.SkylightIntensity * ambientOcclusion;
-    }
-    else
-    {
-        ambient = g_PC.AmbientFloor * albedo * ambientOcclusion;
-    }
+    LightingResult ambient = EvaluateAmbientLighting(vc, surface, ambientOcclusion);
 
 #if VE_DEBUG_IBL
     // The IBL-contribution debug arm: the ambient term alone, unlit, so the environment
     // lighting each pixel receives (whichever ambient arm it took) is directly observable.
     // Background pixels already returned black above.
-    return float4(ambient, 1.0);
+    return float4(ambient.Diffuse + ambient.Specular, 1.0);
 #endif
 
     // G4 emissive: the linear HDR radiance the surface fragment authored, added into the
@@ -548,5 +145,6 @@ float4 fsMain(VSOutput input) : SV_Target
     // returned black above) carries none.
     float3 emissive = g_Textures[NonUniformResourceIndex(g_PC.EmissiveTexture)].Sample(samp, sampleUV).rgb;
 
-    return float4(direct + ambient + emissive, 1.0);
+    return float4(direct.Diffuse + direct.Specular + ambient.Diffuse + ambient.Specular + emissive,
+                  1.0);
 }

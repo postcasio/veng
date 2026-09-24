@@ -164,7 +164,7 @@ namespace Veng::Renderer
                                       const TextureHandle depthHandle, const ResourceId targetId,
                                       const TranslucentDrawPlan* plan,
                                       const ResourceId sceneColorId, const ResourceId sceneDepthId,
-                                      const uvec2 extent) const
+                                      const uvec2 extent, const ForwardLightingSets& forward) const
     {
         passes.push_back(CreateUnique<HalfResDepthReduceScenePass>(
             m_Context, m_ReducePipeline, depthId, depthHandle, halfDepthId, plan));
@@ -173,7 +173,8 @@ namespace Veng::Renderer
         // its glow rides the scene the way an unmasked full-res translucent's does.
         passes.push_back(CreateUnique<TranslucentScenePass>(
             m_Context, HalfResExtent(extent), plan, layerId, halfDepthId, sceneColorId,
-            sceneDepthId, HdrFormat, ResourceId{}, Format::Undefined, /*halfResolution=*/true));
+            sceneDepthId, HdrFormat, ResourceId{}, Format::Undefined, /*halfResolution=*/true,
+            forward));
         passes.push_back(CreateUnique<HalfResCompositeScenePass>(
             m_Context, m_CompositePipeline, layerId, m_LayerHandle, halfDepthId, m_DepthHandle,
             depthId, depthHandle, targetId, plan));

@@ -91,6 +91,16 @@ namespace Veng::Renderer
         /// @brief Returns the layout's debug name.
         [[nodiscard]] const string& GetName() const { return m_Name; }
 
+        /// @brief Returns the author descriptor-set layouts, in set order.
+        ///
+        /// Element i is set (BindlessRegistry::FirstUserSet + i); the typed bindless sets the layout
+        /// prepends are not included. A pass building a sibling layout over the same shaders — the
+        /// same sets with one replaced by a compatible layout of its own — starts from these.
+        [[nodiscard]] const vector<Ref<DescriptorSetLayout>>& GetDescriptorSetLayouts() const
+        {
+            return m_DescriptorSetLayouts;
+        }
+
         /// @brief Returns the declared push-constant ranges.
         ///
         /// CommandBuffer::PushConstants<T> searches this list to recover stage flags and size.

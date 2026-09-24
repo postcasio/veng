@@ -5,8 +5,10 @@
 //    a baked material sky (as it does for the atmosphere) — the SH tier reads SkylightIntensity,
 //    which stayed at its default 1.0 for a material sky before, so the knob was dead.
 //  - A scene authoring no floor resolves the engine's flat-ambient default, and that default rides
-//    both lighting push blocks (base and SSAO) at one 16-byte-aligned offset — so a missed twin
-//    struct fails here rather than silently on one pipeline at the byte level.
+//    the view block's AmbientFloor at a 16-byte-aligned offset, where every lit surface — the
+//    deferred pass and a forward-lit translucent alike — reads it.
+//  - ResolveAmbientArm picks one arm per view: IBL only with its source resident, the SH skylight
+//    only where IBL does not light, the flat floor otherwise.
 
 #include <doctest/doctest.h>
 
@@ -18,7 +20,7 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 
-#include "Renderer/Passes/DeferredLightingScenePass.h"
+#include "Renderer/GpuBlocks.h"
 #include "Renderer/SkySourceResolve.h"
 
 using namespace Veng;
@@ -66,7 +68,7 @@ TEST_CASE("ResolveSkySource: the atmosphere sets both intensities identically")
     CHECK(view.SkylightIntensity == doctest::Approx(3.0f));
 }
 
-TEST_CASE("AmbientFloor: no authored floor resolves the engine default across both push blocks")
+TEST_CASE("AmbientFloor: no authored floor resolves the engine default into the view block")
 {
     // The engine default is the historical flat ambient, so a consumer authoring nothing — a fresh
     // view, and an unauthored LevelRenderSettings — is byte-for-byte unchanged.
@@ -79,15 +81,24 @@ TEST_CASE("AmbientFloor: no authored floor resolves the engine default across bo
     CHECK(view.AmbientFloor == engineDefault);
     CHECK(LevelRenderSettings{}.AmbientFloor == engineDefault);
 
-    // Both lighting push blocks carry the floor, at one 16-byte-aligned offset — the SSAO twin as
-    // well as the base — so a struct missing the field fails here (and at compile time in the pass).
-    LightingPushConstants base{};
-    base.AmbientFloor = view.AmbientFloor;
-    SsaoLightingPushConstants ssao{};
-    ssao.AmbientFloor = view.AmbientFloor;
-    CHECK(base.AmbientFloor == engineDefault);
-    CHECK(ssao.AmbientFloor == engineDefault);
-    CHECK(offsetof(LightingPushConstants, AmbientFloor) ==
-          offsetof(SsaoLightingPushConstants, AmbientFloor));
-    CHECK(offsetof(LightingPushConstants, AmbientFloor) % 16 == 0);
+    // The floor's rgb rides the view block's AmbientFloor vec4 at a std140/std430 16-byte boundary,
+    // so the shader's float4 read lands on it.
+    ViewConstantsBlock block{};
+    block.AmbientFloor = vec4(view.AmbientFloor, view.EnvironmentIntensity);
+    CHECK(vec3(block.AmbientFloor) == engineDefault);
+    CHECK(offsetof(ViewConstantsBlock, AmbientFloor) % 16 == 0);
+    CHECK(sizeof(ViewConstantsBlock) == BindlessRegistry::ViewConstantsStride);
+}
+
+TEST_CASE("ResolveAmbientArm: IBL needs its source resident, and SH lights only where IBL does not")
+{
+    // IBL wins whenever it is allowed and its cube-backed source is resident, whatever SH wants.
+    CHECK(ResolveAmbientArm(true, true, false) == AmbientArm::Ibl);
+    CHECK(ResolveAmbientArm(true, true, true) == AmbientArm::Ibl);
+    // An allowed IBL tier whose source is not resident falls through, never to a half-lit IBL.
+    CHECK(ResolveAmbientArm(true, false, true) == AmbientArm::Skylight);
+    CHECK(ResolveAmbientArm(true, false, false) == AmbientArm::Flat);
+    // Residency alone does not light the scene through IBL.
+    CHECK(ResolveAmbientArm(false, true, true) == AmbientArm::Skylight);
+    CHECK(ResolveAmbientArm(false, true, false) == AmbientArm::Flat);
 }

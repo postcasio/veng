@@ -17,6 +17,7 @@ namespace Veng::Renderer
     class GraphicsPipeline;
     class PipelineLayout;
     class ScenePass;
+    struct ForwardLightingSets;
     struct TranslucentDrawPlan;
 
     /// @brief The half-resolution extent a full-resolution extent reduces to.
@@ -89,10 +90,12 @@ namespace Veng::Renderer
         /// @param sceneColorId Refraction scene-color intermediate, or invalid when off.
         /// @param sceneDepthId Refraction depth intermediate, or invalid when off.
         /// @param extent       The full-resolution allocation extent.
+        /// @param forward      The IBL and shadow sets a forward-lit material's draws bind.
         void Declare(vector<Unique<ScenePass>>& passes, ResourceId layerId, ResourceId halfDepthId,
                      ResourceId depthId, TextureHandle depthHandle, ResourceId targetId,
                      const TranslucentDrawPlan* plan, ResourceId sceneColorId,
-                     ResourceId sceneDepthId, uvec2 extent) const;
+                     ResourceId sceneDepthId, uvec2 extent,
+                     const ForwardLightingSets& forward) const;
 
         /// @brief The half-res layer color view (bound to its import while the layer is active).
         [[nodiscard]] const Ref<ImageView>& GetLayerView() const { return m_LayerView; }

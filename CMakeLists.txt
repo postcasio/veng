@@ -1764,6 +1764,9 @@ if (VENG_BUILD_TESTS)
             tests/gpu/sh_consistency.cpp
             tests/gpu/area_shadow_size.cpp
             tests/gpu/ltc_sphere.cpp
+            # forward_lighting.cpp renders an opaque cube and its forward-lit Translucent twin under
+            # the same lights and compares them texel for texel: the forward loop is the deferred one.
+            tests/gpu/forward_lighting.cpp
             tests/gpu/environment_ibl.cpp
             tests/gpu/generated_texture.cpp
             tests/gpu/fluid_sim.cpp

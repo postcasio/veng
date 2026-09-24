@@ -95,21 +95,21 @@ namespace Veng::Renderer
         /// @brief Groups the bindings by descriptor set, validating the set numbering.
         ///
         /// The device-free core of BuildDescriptorSetLayouts: returns one binding list
-        /// per declared set, indexed so element i holds set (i + 1)'s bindings. Enforces
-        /// the engine's set-numbering contract by fatal assert — every binding targets a
-        /// set >= 1 (set 0 is reserved for the bindless registry) and the declared sets
-        /// form a contiguous run starting at 1 (no gaps). Returns an empty vector when
-        /// this interface declares no bindings.
-        /// @return Per-set binding lists, element i for set (i + 1).
+        /// per declared set, indexed so element i holds set (FirstUserSet + i)'s bindings.
+        /// Enforces the engine's set-numbering contract by fatal assert — every binding targets
+        /// a set >= BindlessRegistry::FirstUserSet (the sets below it are the typed bindless
+        /// registries) and the declared sets form a contiguous run starting there (no gaps).
+        /// Returns an empty vector when this interface declares no bindings.
+        /// @return Per-set binding lists, element i for set (FirstUserSet + i).
         [[nodiscard]] vector<vector<DescriptorBinding>> GroupBindingsBySet() const;
 
         /// @brief Builds one DescriptorSetLayout per declared set, in set order.
         ///
-        /// Ready to append (in order) to PipelineLayoutInfo::DescriptorSetLayouts — set 0
-        /// is supplied separately by the BindlessRegistry (see PipelineLayout.cpp). Declared
-        /// sets must be a contiguous run starting at 1; a gap or a call on an interface with
-        /// no bindings is a fatal authoring error (VE_ASSERT), not silent UB. Returns an empty
-        /// vector if this interface declares no bindings.
+        /// Ready to append (in order) to PipelineLayoutInfo::DescriptorSetLayouts — the typed
+        /// bindless sets are supplied separately by the BindlessRegistry (see PipelineLayout.cpp).
+        /// Declared sets must be a contiguous run starting at FirstUserSet; a gap or a call on an
+        /// interface with no bindings is a fatal authoring error (VE_ASSERT), not silent UB.
+        /// Returns an empty vector if this interface declares no bindings.
         /// @param context     Context for Vulkan descriptor-set-layout creation.
         /// @param namePrefix  Prefix prepended to each layout's debug name.
         [[nodiscard]] vector<Ref<DescriptorSetLayout>>

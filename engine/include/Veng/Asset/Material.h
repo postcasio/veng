@@ -15,6 +15,7 @@ namespace Veng::Renderer
 {
     class CommandBuffer;
     class Context;
+    struct ShaderInterface;
 }
 
 namespace Veng
@@ -290,6 +291,13 @@ namespace Veng
 
         /// @brief Returns the fragment shader module.
         [[nodiscard]] const Ref<Renderer::ShaderModule>& GetFragmentModule() const;
+
+        /// @brief Returns the fragment shader's reflected interface — its descriptor bindings and
+        /// push-constant ranges.
+        ///
+        /// A pass building a domain's pipeline reads it to learn which engine-provided sets the
+        /// fragment declares, and so which it must bind.
+        [[nodiscard]] const Renderer::ShaderInterface& GetFragmentInterface() const;
 
         /// @brief Returns the push-constant offset of the per-draw material selector.
         ///

@@ -1,4 +1,4 @@
-// The dedicated directional-shadow system (set 1, off bindless): the depth atlas,
+// The dedicated directional-shadow system (its own descriptor set, off bindless): the depth atlas,
 // an immutable comparison sampler for hardware SampleCmp, and the per-frame
 // ShadowConstants dynamic uniform. The atlas is one 2D image holding every cascade of
 // every cascade set in tiles; each cascade's ShadowConstants matrix bakes in the tile UV
@@ -11,7 +11,16 @@
 // A set is one near-parallel light's cascades, fit to that light's direction. The atlas
 // carries MaxCascadeSets of them, stacked as row bands, so a scene lit by two comparable
 // distant sources shadows from both; a light's set index rides its GpuLight flags word.
+//
+// VE_SHADOW_SET names the descriptor set the shadow system is declared at: 3 in the deferred
+// lighting layout (the default), and a later set where set 3 is already taken — a forward-lit
+// material's layout carries the per-draw DrawData there (see Veng/forward_lighting.slang). Define
+// it before including this file.
 #include "Veng/area_shadow.slang"
+
+#ifndef VE_SHADOW_SET
+#define VE_SHADOW_SET 3
+#endif
 
 static const uint MaxCascades = 4;
 static const uint MaxCascadeSets = 2;
@@ -32,9 +41,9 @@ struct ShadowConstants
     float4     ShadowParams; // x 1/tileRes, y blend-band, z cascade count, w enabled
 };
 
-[[vk::binding(0, 3)]] Texture2D g_ShadowAtlas;
-[[vk::binding(1, 3)]] SamplerComparisonState g_ShadowSampler;
-[[vk::binding(2, 3)]] ConstantBuffer<ShadowConstants> g_Shadow;
+[[vk::binding(0, VE_SHADOW_SET)]] Texture2D g_ShadowAtlas;
+[[vk::binding(1, VE_SHADOW_SET)]] SamplerComparisonState g_ShadowSampler;
+[[vk::binding(2, VE_SHADOW_SET)]] ConstantBuffer<ShadowConstants> g_Shadow;
 
 // The shadow system also carries a bounded set of punctual (point/spot) shadows.
 // MaxShadowedPunctual lights get a record; the lighting pass reads light.Cone.z as
@@ -59,8 +68,8 @@ struct PunctualShadows
     float4               AtlasParams; // x 1/tileRes (per-tile texel size), yzw pad
 };
 
-[[vk::binding(3, 3)]] ConstantBuffer<PunctualShadows> g_Punctual;
-[[vk::binding(4, 3)]] Texture2D g_PunctualAtlas;
+[[vk::binding(3, VE_SHADOW_SET)]] ConstantBuffer<PunctualShadows> g_Punctual;
+[[vk::binding(4, VE_SHADOW_SET)]] Texture2D g_PunctualAtlas;
 
 // The PCF tap grid half-extent: a (2*Radius+1)² kernel of comparison taps, each
 // offset by the atlas texel size and individually hardware-filtered, widening the
@@ -233,7 +242,7 @@ uint SelectCubeFace(float3 toFragment)
 }
 
 // Per-shadowed-light punctual visibility via hardware SampleCmp, the punctual sibling
-// of DirectionalShadowVisibility over the set-1 punctual atlas (binding 4) and the
+// of DirectionalShadowVisibility over the punctual atlas (binding 4) and the
 // shared comparison sampler (binding 1). slot is light.Cone.z (-1 = unshadowed); a
 // negative slot returns full visibility with no sample, so an unshadowed light (past
 // the budget, or with PunctualShadows off) costs nothing. A spot (Params.x == 2)

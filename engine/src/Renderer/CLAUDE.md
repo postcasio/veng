@@ -504,11 +504,11 @@ and orientation and loses only the pictogram. `SceneGizmoStyle::Pickable` writes
 entity pick id, which is what makes an icon selectable in an editor viewport and is inert in a
 viewport running no picking pass.
 
-**Set 1 is a general shadow system**, not just the directional one: the directional cascade atlas,
+**The shadow set is a general shadow system**, not just the directional one: the directional cascade atlas,
 the punctual shadow atlas, a **shared** immutable comparison sampler (hardware `SampleCmp`), the
 per-frame `ShadowConstants` block (per cascade set: the matrices, splits, texel sizes and depth
 ranges; plus the shared params) bound as a **dynamic uniform**, and the `PunctualShadowBlock` (the per-light shadow records — view-proj(s),
-tile rects, type) ringed beside it. All of set 1 is held **off the set-0 bindless registry**,
+tile rects, type) ringed beside it. The whole set is held **off the set-0 bindless registry**,
 where a comparison sampler mistranslates inside the Metal argument buffer on MoltenVK and a closed
 producer→consumer resource needs no global registration. The set-0 view-constants block stays
 trimmed to material-facing camera/view state. A `GpuLight`'s shadow **slot** (an index into the
@@ -627,6 +627,46 @@ reads like `SampleSceneColor` work unchanged. The region is claimed **before** t
 slot, because every pass reading `GetCurrentViewConstantsIndex()` at record time must land on the
 full region; a frame whose view budget refuses the extra claim folds the layer's draws back into
 the full-res plan for that frame, the same fallback as the activation edge.
+
+### Forward lighting for translucent surfaces
+
+**A Translucent fragment can run the deferred pass's own light loop.** The lighting math — the
+Cook-Torrance BRDF, the typed-light loop with its LTC area lights, the cascade / punctual / PCSS
+shadow lookups, and the three ambient arms — lives in one shared core, `Veng/lighting.slang`, which
+`deferred_lighting.frag` evaluates per g-buffer pixel and `Veng/forward_lighting.slang` per
+translucent fragment. A material includes the latter in place of `Veng/translucent.slang` (it
+re-exports that contract), fills a `ForwardSurface` (world position, normal, view vector, albedo,
+roughness, metallic, occlusion) and calls `EvaluateForwardLighting`, which returns `Diffuse` and
+`Specular` radiance apart in the deferred output's exposure-scaled HDR units;
+`ForwardWorldPosition(sv_position)` reconstructs the position through the same `InvViewProj` the
+deferred pass uses. The split exists because straight alpha weights the whole returned colour by
+coverage, and a clear surface is mostly reflection — a material raises its coverage by the
+specular term, or divides it out, rather than letting the blend dim both alike.
+
+- **The inputs are the view block's, which is why the light state lives there.** Every consumer of
+  a view already reads that block, the half-res layer's region carries its own light bases, and a
+  translucent pipeline's push layout is reflected per material — the deferred push could not carry
+  the state to it. One producer (`SceneRenderer::Execute`'s pack) feeds both paths.
+- **Shadows are supported.** The shadow system and the IBL maps are descriptor sets, not bindless
+  entries (a comparison sampler and a cube mistranslate in a Metal argument buffer), so a
+  forward-lit fragment declares them at **set 4** (IBL) and **set 5** (shadows, through
+  `VE_SHADOW_SET`) — set 3 is the per-draw `DrawData` in a surface-drawn layout, where the lighting
+  layout keeps its shadow set. `TranslucentScenePass` recognises a forward-lit material by its
+  reflected fragment interface declaring either set (`IsForwardLit`) and builds its pipeline against
+  its own `DrawData` layout plus the renderer's IBL and shadow layouts — the reflected shadow layout
+  cannot carry the immutable comparison sampler, and only an identically-defined layout accepts the
+  renderer's set — then binds the renderer's sets there, with the frame-slot dynamic offsets the
+  lighting pass uses. Sets 4 and 5 are therefore reserved to that include in the Translucent domain;
+  a translucent material that does not include it binds nothing extra. The pass declares the shadow
+  atlases sampled, as the lighting pass does. **The shadow maps hold only opaque casters** (a
+  Translucent submesh casts no shadow), so a translucent surface is shadowed by opaque geometry and
+  never by another translucent one.
+- **What differs from the deferred result.** Screen-space AO is not applied — it is computed from the
+  opaque depth, which describes what lies behind the surface — so only `ForwardSurface.Occlusion`
+  scales the ambient. Emission is not part of the result. The g-buffer quantises albedo (sRGB8) and
+  roughness/metallic (8-bit) where the forward path shades exact floats, so the two agree to that
+  quantisation rather than bit for bit; `tests/gpu/forward_lighting.cpp` renders an opaque cube and
+  its full-coverage forward-lit twin under a directional and a point light and holds them within it.
 
 ### Bloom
 
@@ -750,11 +790,12 @@ compute-with-manual-barriers pattern (per-face/per-mip storage views, cube sampl
 environment changes** (a `m_LastEnvironment` gate in `Execute`, into the same command buffer
 before the graph runs); the BRDF LUT is generated once on first use. The four sampled maps + a
 linear sampler reach the deferred lighting pass as **one dedicated descriptor set bound at set
-2** — **off the set-0 bindless registry**, mirroring the shadow-atlas "closed producer→consumer"
+4** — **off the set-0 bindless registry**, mirroring the shadow-atlas "closed producer→consumer"
 precedent (a cubemap in a Metal argument buffer is a MoltenVK risk, and a closed resource needs no
 global registration). The lighting fragment replaces its flat hemispheric ambient with
 `kD · irradiance · albedo` diffuse + `prefiltered · (F · brdf.x + brdf.y)` specular when an
-environment is bound. IBL is a **runtime push flag** (`IblEnabled`), not a pipeline variant: the
+environment is bound. IBL is a **runtime ambient arm** in the view block (`LightState.w`), not a
+pipeline variant: the
 set is always bound and valid (the maps are transitioned to a sampled layout at first `Execute`
 even before an environment arrives), so a scene **without** a lighting sky falls back to the exact
 flat-ambient path and renders unchanged.
@@ -861,12 +902,21 @@ and `ViewportCompositor::RenderRegistered` reserves one slot per registered
 viewport before driving the captures at all — so **captures give way before viewports do**, a missing
 reflection over a stale window. An over-budget capture set is driven **round-robin** across frames
 from a retained cursor (`CaptureRotation.h`, the device-free arithmetic), which costs each map refresh
-latency instead of starving whichever captures registered last. Its stride is **640 bytes**. The shadow system's own state — each cascade
-set's matrices and splits, and the shared params — rides the **set-1** `ShadowConstants` block instead, so set
-0 stays a lean, material-facing view block (shared by materials, lighting, and SSAO). Push
-constants in the deferred path carry only small per-invocation bindless handle indices and the
-live light count; the typed lights ride a separate ring-buffered light buffer the lighting pass
-loops over.
+latency instead of starving whichever captures registered last. Its stride is **704 bytes**. The shadow system's own state — each cascade
+set's matrices and splits, and the shared params — rides the shadow set's `ShadowConstants` block
+instead, so set 0 stays a lean, material-facing view block (shared by materials, lighting, and SSAO).
+
+**The block carries the view's light state**, not the lighting pass's push: the light-buffer and
+area-vertex bases of the region the view claimed, the live light count, the ambient arm
+(`AmbientArm` — flat floor, SH skylight, or split-sum IBL, resolved once per view by
+`ResolveAmbientArm`), the arm's parameters (the flat floor, the IBL and skylight intensities), and
+the LTC LUT handles with the prefiltered cube's mip count. Everything that lights a surface in this
+view reads it from there — the deferred pass and a forward-lit translucent fragment alike (see
+[Forward lighting for translucent surfaces](#forward-lighting-for-translucent-surfaces)) — so the two
+cannot be handed different lights. The bases are the claimed region's, filled after `TryBeginView`,
+so the half-resolution layer's second region carries its own. The deferred push is left with the
+g-buffer slots, the shared sampler, and the view-constants index; the typed lights ride a separate
+ring-buffered light buffer the lighting core loops over.
 
 ### SceneView: the per-frame view
 

@@ -624,6 +624,17 @@ namespace Veng::Renderer
         m_Shadows->RebuildSets(m_Topology->ShadowActive ? shadowAtlasView
                                                         : m_Shadows->GetDummyView());
 
+        // A forward-lit translucent draw binds the same IBL and shadow sets the lighting pass does,
+        // so they are read after the shadow set is rebuilt above.
+        const ForwardLightingSets forwardSets{
+            .IblLayout = m_SkyResolver->GetIbl().GetSetLayout(),
+            .IblSet = m_SkyResolver->GetIbl().GetSet(),
+            .ShadowLayout = m_Shadows->GetSetLayout(),
+            .ShadowSet = m_Shadows->GetSet(),
+            .ShadowRingStride = m_Shadows->GetConstantsRingStride(),
+            .PunctualRingStride = m_Shadows->GetPunctualRingStride(),
+        };
+
         // The GPU cull arm imports the indirect command buffer so the cull compute pass
         // (StorageBufferWrite) and the geometry pass (IndirectRead) share it through the
         // graph-derived buffer barrier.
@@ -677,8 +688,7 @@ namespace Veng::Renderer
                 m_Context, m_Topology->SsaoFold ? m_SsaoLightingPipeline : m_LightingPipeline,
                 renderExtent, m_Topology->SsaoFold, m_Shadows->GetSet(),
                 m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
-                m_SkyResolver->GetIbl().GetSet(), m_SkyResolver->GetIbl().GetPrefilterMipCount(),
-                m_Topology->SkylightWanted, m_Topology->IblAllowed));
+                m_SkyResolver->GetIbl().GetSet()));
 
             // The resolved sky source wires exactly one fullscreen sky pass in the shared sky slot,
             // before the TAA/SSR/bloom tail so the sky resolves, reflects, and tonemaps with the
@@ -753,12 +763,12 @@ namespace Veng::Renderer
                 m_HalfResTranslucent->Declare(
                     m_Passes, m_HalfResLayerId, m_HalfResDepthReducedId, depthId, m_DepthHandle,
                     lightingTargetId, &m_Internal->HalfResTranslucentPlan, m_RefractionSceneId,
-                    m_RefractionDepthId, renderExtent);
+                    m_RefractionDepthId, renderExtent, forwardSets);
             }
             m_Passes.push_back(CreateUnique<TranslucentScenePass>(
                 m_Context, renderExtent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
                 m_RefractionSceneId, m_RefractionDepthId, HdrFormat, m_BloomMaskId, BloomMaskFormat,
-                /*halfResolution=*/false));
+                /*halfResolution=*/false, forwardSets));
 
             // TAA resolves the lit target into the HDR target the tail samples, so it sits
             // between lighting and the bloom/tonemap tail.
@@ -973,8 +983,6 @@ namespace Veng::Renderer
                 m_Context, m_CascadeDebugPipeline, renderExtent, /*useSsao=*/false,
                 m_Shadows->GetSet(), m_Shadows->GetConstantsRingStride(),
                 m_Shadows->GetPunctualRingStride(), m_SkyResolver->GetIbl().GetSet(),
-                m_SkyResolver->GetIbl().GetPrefilterMipCount(), m_Topology->SkylightWanted,
-                m_Topology->IblAllowed,
                 /*writeToOutput=*/true));
             break;
         case DebugView::Bloom:
@@ -989,8 +997,7 @@ namespace Veng::Renderer
                 m_Context, m_Topology->SsaoFold ? m_SsaoLightingPipeline : m_LightingPipeline,
                 renderExtent, m_Topology->SsaoFold, m_Shadows->GetSet(),
                 m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
-                m_SkyResolver->GetIbl().GetSet(), m_SkyResolver->GetIbl().GetPrefilterMipCount(),
-                m_Topology->SkylightWanted, m_Topology->IblAllowed));
+                m_SkyResolver->GetIbl().GetSet()));
             if (m_Topology->SkyboxWanted)
             {
                 m_Passes.push_back(CreateUnique<SkyboxScenePass>(
@@ -1027,12 +1034,12 @@ namespace Veng::Renderer
                 m_HalfResTranslucent->Declare(
                     m_Passes, m_HalfResLayerId, m_HalfResDepthReducedId, depthId, m_DepthHandle,
                     lightingTargetId, &m_Internal->HalfResTranslucentPlan, m_RefractionSceneId,
-                    m_RefractionDepthId, renderExtent);
+                    m_RefractionDepthId, renderExtent, forwardSets);
             }
             m_Passes.push_back(CreateUnique<TranslucentScenePass>(
                 m_Context, renderExtent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
                 m_RefractionSceneId, m_RefractionDepthId, HdrFormat, m_BloomMaskId, BloomMaskFormat,
-                /*halfResolution=*/false));
+                /*halfResolution=*/false, forwardSets));
             m_Passes.push_back(
                 CreateUnique<FullscreenBlitScenePass>(m_Context, m_DebugBlits->Albedo, tailExtent,
                                                       FullscreenBlitScenePass::Source::Bloom));
@@ -1050,8 +1057,7 @@ namespace Veng::Renderer
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, m_LightingPipeline, renderExtent, /*useSsao=*/false, m_Shadows->GetSet(),
                 m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
-                m_SkyResolver->GetIbl().GetSet(), m_SkyResolver->GetIbl().GetPrefilterMipCount(),
-                m_Topology->SkylightWanted, m_Topology->IblAllowed));
+                m_SkyResolver->GetIbl().GetSet()));
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
                 m_Context, m_DebugBlits->Albedo, tailExtent,
                 FullscreenBlitScenePass::Source::Reflections));
@@ -1063,8 +1069,7 @@ namespace Veng::Renderer
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, m_LightingPipeline, renderExtent, /*useSsao=*/false, m_Shadows->GetSet(),
                 m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
-                m_SkyResolver->GetIbl().GetSet(), m_SkyResolver->GetIbl().GetPrefilterMipCount(),
-                m_Topology->SkylightWanted, m_Topology->IblAllowed));
+                m_SkyResolver->GetIbl().GetSet()));
             m_Passes.push_back(
                 CreateUnique<CocBlitScenePass>(m_Context, m_DebugBlits->Coc, tailExtent));
             break;
@@ -1096,8 +1101,6 @@ namespace Veng::Renderer
                 m_Context, m_IblContributionDebugPipeline, renderExtent, /*useSsao=*/false,
                 m_Shadows->GetSet(), m_Shadows->GetConstantsRingStride(),
                 m_Shadows->GetPunctualRingStride(), m_SkyResolver->GetIbl().GetSet(),
-                m_SkyResolver->GetIbl().GetPrefilterMipCount(), m_Topology->SkylightWanted,
-                m_Topology->IblAllowed,
                 /*writeToOutput=*/true));
             break;
         }
@@ -2085,7 +2088,7 @@ namespace Veng::Renderer
         // this records only the request, the completion-copy, and the readback, so it claims none.
         m_SkyResolver->RecordPreBeginView(cmd, resolvedView, m_SkyPipeline);
 
-        // Pack view constants (camera/view state only; shadow system rides set-1).
+        // Pack view constants: camera/view state and the light state (shadows ride their own set).
         // The unjittered view-projection drives the frustum cull, hi-Z, and next frame's
         // reprojection matrix; the jittered one (TAA only) is what the geometry and
         // lighting actually render through.
@@ -2116,6 +2119,13 @@ namespace Veng::Renderer
         // near-equal numbers that costs f32 precision in proportion to how far the camera is from
         // the world origin. Jittered with renderProj, so it agrees with what was rasterized.
         const mat4 renderViewRotProj = renderProj * mat4(mat3(view.Camera.View()));
+        // The ambient arm every lit surface of this view takes, deferred and forward alike. IBL
+        // needs its cube-backed source resident — an environment map, or a baked material sky
+        // whose material is loaded; a display-only source shows its sky but lights nothing.
+        const AmbientArm ambientArm = ResolveAmbientArm(m_Topology->IblAllowed,
+                                                        resolvedView.Environment.IsLoaded() ||
+                                                            resolvedView.SkyMaterial.IsLoaded(),
+                                                        m_Topology->SkylightWanted);
         ViewConstantsBlock viewConstants{
             .InvViewProj = glm::inverse(renderViewProj),
             .InvViewRotProj = glm::inverse(renderViewRotProj),
@@ -2137,6 +2147,13 @@ namespace Veng::Renderer
                 uvec4(m_Refraction->GetSceneHandle().Index, m_Refraction->GetSamplerHandle().Index,
                       m_Topology->RefractionActive ? 1u : 0u, m_Refraction->GetDepthHandle().Index),
             .SceneColorChain = uvec4(m_Refraction->GetSceneMipCount(), 0, 0, 0),
+            // The light and area-vertex bases (x, z) are the claimed region's, filled once the
+            // region is claimed below.
+            .LightState = uvec4(0u, packed.LightCount, 0u, static_cast<u32>(ambientArm)),
+            .LightLuts = uvec4(m_LtcMatHandle.Index, m_LtcMagHandle.Index, m_SamplerHandle.Index,
+                               m_SkyResolver->GetIbl().GetPrefilterMipCount()),
+            .AmbientFloor = vec4(resolvedView.AmbientFloor, resolvedView.EnvironmentIntensity),
+            .AmbientParams = vec4(resolvedView.SkylightIntensity, 0.0f, 0.0f, 0.0f),
         };
         for (u32 i = 0; i < ShCoefficientCount; ++i)
         {
@@ -2161,6 +2178,8 @@ namespace Veng::Renderer
             ViewConstantsBlock halfResConstants = viewConstants;
             halfResConstants.ExtentParams =
                 vec4(vec2(HalfResExtent(validExtent)), vec2(HalfResExtent(m_RenderAllocExtent)));
+            halfResConstants.LightState.x = registry.GetCurrentLightBase();
+            halfResConstants.LightState.z = registry.GetCurrentAreaVertexBase();
             registry.WriteViewConstants(std::as_bytes(std::span(&halfResConstants, 1)));
             halfResViewConstantsIndex = registry.GetCurrentViewConstantsIndex();
             halfResViewReady = true;
@@ -2179,6 +2198,8 @@ namespace Veng::Renderer
         registry.WriteLights(std::as_bytes(std::span(packed.Lights.data(), packed.LightCount)));
         registry.WriteAreaVertices(
             std::as_bytes(std::span(packed.AreaVertices.data(), packed.AreaVertexCount)));
+        viewConstants.LightState.x = registry.GetCurrentLightBase();
+        viewConstants.LightState.z = registry.GetCurrentAreaVertexBase();
         registry.WriteViewConstants(std::as_bytes(std::span(&viewConstants, 1)));
         const u32 viewConstantsIndex = registry.GetCurrentViewConstantsIndex();
         if (!halfResViewReady)

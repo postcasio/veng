@@ -4,12 +4,12 @@
 // position, the view matrix for view-space depth and the SSAO hemisphere, and the
 // previous and current unjittered view-projections (PrevViewProj / CurViewProj) the
 // TAA resolve reprojects through and the surface stage writes its g-buffer velocity
-// channel from. The directional-shadow system rides a separate set-1 ShadowConstants
-// block, not here.
+// channel from, plus the view's light state (LightState onward) the shared lighting core
+// (Veng/lighting.slang) reads. The shadow system rides its own ShadowConstants block, not here.
 //
 // Ring-buffered across frames-in-flight, byte-addressed at index * ViewConstantsStride;
 // mirrors BindlessRegistry::ViewConstantsStride and the CPU ViewConstantsBlock exactly.
-// Lights ride a separate ring-buffered light buffer at binding 6.
+// The lights themselves ride a separate ring-buffered light buffer at binding 6.
 struct ViewConstants
 {
     float4x4 InvViewProj;    // world-position reconstruction from depth (jittered under TAA)
@@ -70,9 +70,24 @@ struct ViewConstants
     // instead of reading a level that was never generated. yzw unused. See
     // Veng/translucent.slang's SampleSceneColorBlurred.
     uint4 SceneColorChain;
+
+    // The view's light state — everything the shared lighting core needs beyond the surface, so the
+    // deferred pass and a forward-lit translucent fragment run the same loop over the same lights.
+    // x the view's base index into the light buffer (binding 6), y the live light count, z the
+    // view's base index into the area-vertex buffer (binding 7), w the ambient arm: 0 the flat
+    // floor, 1 the SH skylight (SkyShCoeffs), 2 the split-sum IBL maps.
+    uint4 LightState;
+    // x the LTC inverse-matrix LUT's bindless texture index, y the LTC magnitude/Fresnel LUT's, z
+    // the sampler index both are read through, w the prefiltered specular cube's mip count.
+    uint4 LightLuts;
+    // rgb the flat ambient floor the flat arm multiplies by albedo and occlusion; w the IBL arm's
+    // intensity.
+    float4 AmbientFloor;
+    // x the SH skylight arm's intensity; yzw unused.
+    float4 AmbientParams;
 };
 
-static const uint ViewConstantsStride = 640;
+static const uint ViewConstantsStride = 704;
 
 [[vk::binding(5, 0)]] ByteAddressBuffer g_ViewConstants;
 

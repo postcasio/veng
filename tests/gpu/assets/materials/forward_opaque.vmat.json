@@ -1,0 +1,14 @@
+{
+  "defaultInstance": "0xF34FF2CE488F7B19",
+  "shaders": {
+    "vertex": "0x0000000000002400",
+    "fragment": "0x67077ECD2D8C4F1A"
+  },
+  "fields": [
+    { "name": "BaseColor", "type": "vec4", "value": [0.8, 0.5, 0.25, 1.0] },
+    { "name": "Roughness", "type": "float", "value": 0.6 },
+    { "name": "Metallic", "type": "float", "value": 0.2 },
+    { "name": "Occlusion", "type": "float", "value": 1.0 },
+    { "name": "Coverage", "type": "float", "value": 1.0 }
+  ]
+}

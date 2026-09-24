@@ -17,9 +17,12 @@
 // writes OFF (a translucent surface never occludes another), sorts submeshes back-to-front by view
 // depth, and blends with STRAIGHT (non-premultiplied) alpha: the destination is weighted by
 // (1 - a) and the source color by a, so a fragment returns its color un-premultiplied and lets the
-// blend apply coverage. A fragment returns final radiance directly — it is responsible for its own
-// shading, and the engine runs no forward light loop for it; the set-0 view block (camera/view
-// state) is available for a fragment that shades itself.
+// blend apply coverage. A fragment returns final radiance directly and is responsible for its own
+// shading. To be lit by the scene's lights the way an opaque surface is, a fragment includes
+// Veng/forward_lighting.slang in place of this file (it re-exports this contract) and calls
+// EvaluateForwardLighting — the deferred pass's own light loop, shadows and ambient, fed the same
+// per-view light state. A fragment that includes only this file runs no light loop; the set-0 view
+// block (camera/view state) is available for one that shades itself.
 //
 // Refraction: when the renderer's Refraction setting is on, the lit opaque scene color
 // (lighting + sky + emissive) is copied ahead of the translucent pass and reaches a fragment

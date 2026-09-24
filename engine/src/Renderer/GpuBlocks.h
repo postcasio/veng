@@ -10,8 +10,8 @@
 
 namespace Veng::Renderer
 {
-    // The per-frame view-constants block (set-0 binding 5): camera/view state only.
-    // The directional shadow system rides the set-1 ShadowConstants block.
+    // The per-frame view-constants block (set-0 binding 5): camera/view state and the view's light
+    // state. The shadow system rides its own ShadowConstants block.
     // Mirrors view_constants.slang ViewConstants byte-for-byte.
     struct ViewConstantsBlock
     {
@@ -40,10 +40,40 @@ namespace Veng::Renderer
         // is off, so a blurred sample degrades to the sharp one rather than reading a level that
         // does not exist. yzw unused.
         uvec4 SceneColorChain;
+        // x the view's light-buffer base, y the live light count, z the view's area-vertex base,
+        // w the AmbientArm the lighting core takes.
+        uvec4 LightState;
+        // x the LTC matrix LUT texture handle, y the LTC magnitude LUT handle, z the sampler handle
+        // both are read through, w the prefiltered specular cube's mip count.
+        uvec4 LightLuts;
+        vec4 AmbientFloor;  // rgb the flat-arm ambient floor, w the IBL arm's intensity
+        vec4 AmbientParams; // x the SH skylight arm's intensity; yzw unused
     };
 
     static_assert(sizeof(ViewConstantsBlock) <= BindlessRegistry::ViewConstantsStride,
                   "ViewConstantsBlock must fit one ring-buffered view-constants region");
+
+    // The ambient arm the shared lighting core evaluates (ViewConstantsBlock::LightState.w).
+    // Mirrors Veng/lighting.slang's AmbientArm* constants.
+    enum class AmbientArm : u32
+    {
+        Flat = 0,
+        Skylight = 1,
+        Ibl = 2,
+    };
+
+    // Picks the ambient arm the view's lighting takes: the split-sum IBL when the resolved sky asks
+    // for that tier and its cube-backed source is resident, else the SH skylight when that tier is
+    // wanted, else the flat floor. A pure function of its arguments so the rule is unit-testable.
+    [[nodiscard]] constexpr AmbientArm
+    ResolveAmbientArm(const bool iblAllowed, const bool sourceResident, const bool skylightWanted)
+    {
+        if (iblAllowed && sourceResident)
+        {
+            return AmbientArm::Ibl;
+        }
+        return skylightWanted ? AmbientArm::Skylight : AmbientArm::Flat;
+    }
 
     // One cascade set: one near-parallel light's cascades, fit to that light's direction.
     // std140: ViewProj is float4x4[MaxCascades] (16-byte aligned elements) and each per-cascade
@@ -60,7 +90,7 @@ namespace Veng::Renderer
     static_assert(sizeof(CascadeSetBlock) == 304,
                   "CascadeSetBlock must be the std140-packed 304-byte set record");
 
-    // The directional-shadow constants (set 1 binding 2, ring-buffered dynamic uniform).
+    // The directional-shadow constants (shadow set binding 2, ring-buffered dynamic uniform).
     // Mirrors shadow.slang's ShadowConstants byte-for-byte.
     struct ShadowConstantsBlock
     {
@@ -72,7 +102,7 @@ namespace Veng::Renderer
                   "ShadowConstantsBlock must be the std140-packed cascade-set array plus the "
                   "trailing ShadowParams vec4");
 
-    // Set 1 binding 3, ring-buffered dynamic uniform. Separate from ShadowConstantsBlock
+    // Shadow set binding 3, ring-buffered dynamic uniform. Separate from ShadowConstantsBlock
     // so the directional block's layout is unchanged when punctual records are added.
     struct PunctualShadowBlock
     {

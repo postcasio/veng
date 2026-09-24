@@ -130,6 +130,11 @@ namespace Veng
         return m_FragmentShader.Get()->Module;
     }
 
+    const Renderer::ShaderInterface& Material::GetFragmentInterface() const
+    {
+        return m_FragmentShader.Get()->Interface;
+    }
+
     Ref<Renderer::PipelineLayout> Material::GetSkinnedPipelineLayout() const
     {
         return m_SkinnedPipeline != nullptr ? m_SkinnedPipeline->GetPipelineLayout() : nullptr;
