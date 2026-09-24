@@ -8,6 +8,7 @@
     "Normal": "ASTC4x4Unorm",
     "Mask": "ASTC4x4Unorm",
     "HDR": "RGBA16Sfloat",
-    "UI": "ASTC4x4Unorm"
+    "UI": "ASTC4x4Unorm",
+    "Packed": "ASTC4x4Unorm"
   }
 }

@@ -591,7 +591,7 @@ imnodes, zstd) — no system install needed beyond Vulkan, GLFW, glm, and zlib
 
 A texture's codec is a **platform** decision, not a per-asset one: a texture's
 `*.tex.json` declares a compression **role** (its intent — Color / Normal / Mask /
-HDR / UI), never a raw codec, and the active **`BuildConfiguration`** (one
+HDR / UI / Packed), never a raw codec, and the active **`BuildConfiguration`** (one
 `*.buildcfg` per ship target, listed by the project's `project.veng`) resolves
 role → concrete format per platform. The cook emits, per configuration, its packs
 plus a cooked project file (`.vengproj`) — the runtime entrypoint naming the packs to

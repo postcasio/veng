@@ -8,6 +8,7 @@
     "Normal": "BC5Unorm",
     "Mask": "BC4Unorm",
     "HDR": "RGBA16Sfloat",
-    "UI": "BC7Unorm"
+    "UI": "BC7Unorm",
+    "Packed": "BC7Unorm"
   }
 }

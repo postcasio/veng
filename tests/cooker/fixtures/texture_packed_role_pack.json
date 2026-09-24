@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0xBA52FFFCF68C73DC",
+      "type": "Texture",
+      "source": "textures/texture_packed_role.tex.json"
+    }
+  ]
+}

@@ -26,6 +26,8 @@ namespace Veng
         CompressionFormat HDR = CompressionFormat::RGBA16Sfloat;
         /// @brief Format the UI role resolves to.
         CompressionFormat UI = CompressionFormat::ASTC4x4Unorm;
+        /// @brief Format the Packed role resolves to.
+        CompressionFormat Packed = CompressionFormat::ASTC4x4Unorm;
 
         /// @brief Reads the format @p role resolves to.
         /// @param role  The role to look up.
@@ -44,6 +46,8 @@ namespace Veng
                 return HDR;
             case CompressionRole::UI:
                 return UI;
+            case CompressionRole::Packed:
+                return Packed;
             }
             return Color;
         }
@@ -69,6 +73,9 @@ namespace Veng
                 return;
             case CompressionRole::UI:
                 UI = format;
+                return;
+            case CompressionRole::Packed:
+                Packed = format;
                 return;
             }
         }
@@ -104,6 +111,7 @@ VE_FIELD(Normal, .DisplayName = "Normal")
 VE_FIELD(Mask, .DisplayName = "Mask")
 VE_FIELD(HDR, .DisplayName = "HDR")
 VE_FIELD(UI, .DisplayName = "UI")
+VE_FIELD(Packed, .DisplayName = "Packed")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::BuildConfiguration, 0xE2FB0DDD547CA088ULL)

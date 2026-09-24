@@ -5,7 +5,8 @@
         "HDR": "RGBA16Sfloat",
         "Mask": "ASTC4x4Unorm",
         "Normal": "ASTC4x4Unorm",
-        "UI": "ASTC4x4Unorm"
+        "UI": "ASTC4x4Unorm",
+        "Packed": "ASTC4x4Unorm"
     },
     "name": "macos",
     "outputSuffix": "-macos",

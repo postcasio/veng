@@ -51,6 +51,8 @@ namespace
             return table.HDR;
         case CompressionRole::UI:
             return table.UI;
+        case CompressionRole::Packed:
+            return table.Packed;
         }
         return table.Color;
     }

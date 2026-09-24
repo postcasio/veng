@@ -5,7 +5,8 @@
         "HDR": "RGBA16Sfloat",
         "Mask": "BC4Unorm",
         "Normal": "BC5Unorm",
-        "UI": "BC7Unorm"
+        "UI": "BC7Unorm",
+        "Packed": "BC7Unorm"
     },
     "name": "linux",
     "outputSuffix": "-linux",

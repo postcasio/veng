@@ -212,6 +212,22 @@ TEST_CASE("Cooker: a Mask role resolves to BC4 with the Direct channel layout un
     CHECK(header.ChannelLayout == static_cast<u32>(CookedChannelLayout::Direct));
 }
 
+TEST_CASE("Cooker: a Packed role keeps every channel under a BC config")
+{
+    const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);
+    const Result<BuildConfiguration> config =
+        ParseBuildConfiguration(fixtureDir / "windows.buildcfg");
+    REQUIRE(config.has_value());
+
+    // Where the same configuration narrows Mask to BC4's red channel, Packed resolves to BC7 — the
+    // full-channel codec a texture of independent channels (occlusion/roughness/metallic) needs.
+    const CookedTextureHeader header =
+        CookHeader(fixtureDir / "texture_packed_role_pack.json", AssetId{0xBA52FFFCF68C73DCULL},
+                   &*config, fixtureDir / "windows.buildcfg");
+    CHECK(header.Format == static_cast<u32>(Renderer::Format::BC7Unorm));
+    CHECK(header.ChannelLayout == static_cast<u32>(CookedChannelLayout::Direct));
+}
+
 TEST_CASE("Cooker: a Normal role under the ASTC default flags the NormalXY channel layout")
 {
     const path fixtureDir = path(VENG_COOKER_TEST_FIXTURE_DIR);

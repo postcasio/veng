@@ -23,18 +23,23 @@ namespace Veng
         Color,
         /// @brief Tangent-space normal map. Resolves to the unorm (linear) block codec.
         Normal,
-        /// @brief Single- or multi-channel mask (occlusion/roughness/metallic). Resolves to the unorm block codec.
+        /// @brief Single-channel linear data — a mask, a height field. Resolves to the unorm block codec,
+        ///        which may keep only the red channel (BC4 on desktop targets).
         Mask,
         /// @brief High-dynamic-range source. Resolves to uncompressed RGBA16Sfloat — the LDR block codecs cannot carry HDR.
         HDR,
         /// @brief UI / sprite texture. Resolves to the unorm block codec.
         UI,
+        /// @brief Several independent linear channels packed into one texture — occlusion, roughness
+        ///        and metallic in one map. Resolves to a full-channel unorm block codec, so no channel
+        ///        is dropped where a single-channel role's codec would drop all but red.
+        Packed,
     };
 
     /// @brief The ordered list of every CompressionRole, for enumeration and name-table lookup.
-    inline constexpr std::array<CompressionRole, 5> CompressionRoles = {
+    inline constexpr std::array<CompressionRole, 6> CompressionRoles = {
         CompressionRole::Color, CompressionRole::Normal, CompressionRole::Mask,
-        CompressionRole::HDR, CompressionRole::UI};
+        CompressionRole::HDR,   CompressionRole::UI,     CompressionRole::Packed};
 
     /// @brief The canonical authoring name of a compression role (e.g. "Color").
     ///
@@ -58,6 +63,8 @@ namespace Veng
             return "HDR";
         case CompressionRole::UI:
             return "UI";
+        case CompressionRole::Packed:
+            return "Packed";
         }
         return {};
     }
@@ -87,4 +94,5 @@ VE_ENUMERATOR(Normal)
 VE_ENUMERATOR(Mask)
 VE_ENUMERATOR(HDR)
 VE_ENUMERATOR(UI)
+VE_ENUMERATOR(Packed)
 VE_ENUM_END();

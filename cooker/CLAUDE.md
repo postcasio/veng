@@ -327,7 +327,7 @@ shared `ToString`/`Parse` tables, never ordinal. The runtime carries no JSON par
   `vengc cook … --config <file>` parses one `*.buildcfg` and threads it through. With no
   `--config` the field is null.
 - **The `TextureImporter` resolves `role → format` through it.** A `*.tex.json` declares a
-  `role` (the intent — Color / Normal / Mask / HDR / UI); the importer reads the config's
+  `role` (the intent — Color / Normal / Mask / HDR / UI / Packed); the importer reads the config's
   `RoleToFormat` table for that role and lowers the resulting `CompressionFormat` to the
   cook's encode-path codec. The resolution chain is **raw `"compression"` (the escape
   hatch — `"ASTC"`, `"BC7"`, `"None"`, or `"RGBA16F"`) wins, else the config's role table, else
