@@ -38,8 +38,10 @@ namespace Veng
 
     /// @brief The engine's default predicted set — what an unset PredictionPolicy falls back to.
     ///
-    /// The pawn, plus every entity in its Hierarchy subtree that carries replicated state (a purely
-    /// client-local view child carries none and is left Remote). Exposed so a game that narrows
+    /// The pawn, plus every entity in its Hierarchy subtree that carries replicated state. A
+    /// Tier::Local descendant — a view child this peer derives, whatever components it carries — is
+    /// left out with its whole subtree, since nothing authoritative exists to reconcile it against.
+    /// Exposed so a game that narrows
     /// prediction for one world through PredictionPolicy can defer to the engine default for the
     /// rest, rather than reimplementing the owner-pawn-subtree walk to keep it.
     /// @param scene  The client scene the pawn and its subtree live in.

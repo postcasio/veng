@@ -16,6 +16,7 @@
 #include <Veng/Net/Host.h>
 #include <Veng/Net/InputFeed.h>
 #include <Veng/Net/LoopbackTransport.h>
+#include <Veng/Net/PredictionHistory.h>
 #include <Veng/Net/Replication.h>
 #include <Veng/Net/Server.h>
 #include <Veng/Net/WorldEnvelope.h>
@@ -28,6 +29,7 @@
 #include <Veng/Scene/RemoteInterpolationSystem.h>
 #include <Veng/Scene/Scene.h>
 
+#include <algorithm>
 #include <unordered_map>
 #include <utility>
 
@@ -509,4 +511,33 @@ TEST_CASE("Depossession demotes the predicted pawn back to a Remote mirror and u
     {
         CHECK(world.Get<Authority>(clientPawn).Tier == Tier::Remote);
     }
+}
+
+TEST_CASE("The default predicted set leaves out a pawn's Local-tier descendants")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    const Unique<Scene> world = Scene::Create(types);
+
+    // A pawn with a replicated child (joins the set) and a Local-tier view child carrying the same
+    // replicated Transform, with a child of its own — derived on this peer, so neither has anything
+    // authoritative to reconcile against.
+    const Entity pawn = world->CreateEntity();
+    world->Add<Transform>(pawn);
+    const Entity replicated = world->CreateEntity();
+    world->Add<Transform>(replicated);
+    world->SetParent(replicated, pawn);
+    const Entity local = world->CreateEntity();
+    world->Add<Transform>(local);
+    world->Add<Authority>(local, Authority{.Tier = Tier::Local});
+    world->SetParent(local, pawn);
+    const Entity underLocal = world->CreateEntity();
+    world->Add<Transform>(underLocal);
+    world->SetParent(underLocal, local);
+
+    const vector<Entity> set = DefaultPredictedEntities(*world, pawn);
+    CHECK(std::ranges::contains(set, pawn));
+    CHECK(std::ranges::contains(set, replicated));
+    CHECK_FALSE(std::ranges::contains(set, local));
+    CHECK_FALSE(std::ranges::contains(set, underLocal));
 }

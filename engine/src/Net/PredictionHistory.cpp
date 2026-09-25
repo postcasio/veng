@@ -4,6 +4,7 @@
 #include <Veng/Log.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 
 #include <algorithm>
@@ -316,7 +317,10 @@ namespace Veng
             return false;
         };
 
-        // The pawn always predicts; a descendant joins only when it carries replicated state.
+        // The pawn always predicts; a descendant joins only when it carries replicated state. A
+        // Local-tier descendant is derived on this peer and has no authoritative record to reconcile
+        // against, even when it carries a replicated type (a Transform), so it and its subtree stay
+        // out.
         set.push_back(pawn);
         vector<Entity> stack;
         scene.ForEachChild(pawn, [&](const Entity child) { stack.push_back(child); });
@@ -324,7 +328,16 @@ namespace Veng
         {
             const Entity entity = stack.back();
             stack.pop_back();
-            if (scene.IsAlive(entity) && carriesReplicated(entity))
+            if (!scene.IsAlive(entity))
+            {
+                continue;
+            }
+            if (const auto* authority = scene.TryGet<Authority>(entity);
+                authority != nullptr && authority->Tier == Tier::Local)
+            {
+                continue;
+            }
+            if (carriesReplicated(entity))
             {
                 set.push_back(entity);
             }
