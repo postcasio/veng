@@ -292,7 +292,8 @@ at cook time:
   set of transformed **`"children"`** — each a primitive (`"box"` with `"halfExtents"`, `"sphere"`
   or `"capsule"` with `"radius"`/`"halfHeight"`, described inline) or its own `"convex"`/`"mesh"`
   (naming a `"model"`), placed by a per-child `"offset"` and quaternion `"rotation"` (default
-  identity). A `"model"` is relative to the source JSON (as a `*.mesh.json`'s is — there is no
+  identity; normalized on cook, since only its direction names a rotation and the solver asserts
+  unit length, and a zero quaternion is an error). A `"model"` is relative to the source JSON (as a `*.mesh.json`'s is — there is no
   `"part"` concept at cook time). An optional `"import": { "scale": …, "orientation": … }` matches
   the mesh importer's and, for a compound, applies to every child model that does not declare its
   own — so a collision shape and the render mesh cooked from one model stay the same size and the

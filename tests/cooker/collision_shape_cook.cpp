@@ -3,6 +3,7 @@
 // reducing the model's 24 split vertices to the cube's 8 corners, and the mesh mode welding them
 // to the same 8 while keeping all 12 triangles.
 
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -206,13 +207,18 @@ TEST_CASE("Cooker: a compound collision shape carries its children and their tra
     CHECK(box.Rotation[3] == doctest::Approx(1.0f));
     CHECK(box.PointCount == 0);
 
-    // Child 1: a capsule, its radius/half-height and rotation carried.
+    // Child 1: a capsule, its radius/half-height carried and its rotation — authored as a scaled
+    // quaternion — normalized, since the solver asserts every rotation it applies is unit length.
     const CookedCollisionChild& capsule = shape.Children[1];
     CHECK(capsule.Kind == static_cast<u32>(CookedCollisionChildKind::Capsule));
     CHECK(capsule.Extents[0] == doctest::Approx(0.5f));
     CHECK(capsule.Extents[1] == doctest::Approx(2.0f));
     CHECK(capsule.Rotation[1] == doctest::Approx(0.7071068f));
     CHECK(capsule.Rotation[3] == doctest::Approx(0.7071068f));
+    const f32 lengthSquared =
+        (capsule.Rotation[0] * capsule.Rotation[0]) + (capsule.Rotation[1] * capsule.Rotation[1]) +
+        (capsule.Rotation[2] * capsule.Rotation[2]) + (capsule.Rotation[3] * capsule.Rotation[3]);
+    CHECK(std::abs(lengthSquared - 1.0f) < 1.0e-6f);
     CHECK(capsule.PointCount == 0);
 
     // Child 2: a convex hull owning all eight points, its offset carried.

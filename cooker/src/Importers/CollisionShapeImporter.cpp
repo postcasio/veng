@@ -1,6 +1,7 @@
 #include "CollisionShapeImporter.h"
 #include <Veng/Asset/Path.h>
 
+#include <cmath>
 #include <cstring>
 
 #include <fmt/format.h>
@@ -236,9 +237,23 @@ namespace Veng::Cook
                 {
                     return std::unexpected(string("a child \"rotation\" must be [x, y, z, w]"));
                 }
+                // A quaternion names a rotation only up to scale, while the solver rotates by it
+                // directly and asserts it is unit length to a tolerance a hand-typed value can miss.
+                // So it is normalized here, in double, and a zero quaternion — no rotation at all —
+                // is refused.
+                f64 lengthSquared = 0.0;
                 for (u32 i = 0; i < 4; ++i)
                 {
-                    out.Rotation[i] = rotation[i].get<f32>();
+                    lengthSquared += rotation[i].get<f64>() * rotation[i].get<f64>();
+                }
+                if (lengthSquared < 1.0e-12)
+                {
+                    return std::unexpected(string("a child \"rotation\" must not be zero"));
+                }
+                const f64 length = std::sqrt(lengthSquared);
+                for (u32 i = 0; i < 4; ++i)
+                {
+                    out.Rotation[i] = static_cast<f32>(rotation[i].get<f64>() / length);
                 }
             }
 
