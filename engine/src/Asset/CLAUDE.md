@@ -296,6 +296,18 @@ level from the resolve seam's global facet (`GraphicsGlobalFacet::TextureQuality
   Attaching an entity to one is `AttachToSocket` — see [../Scene/CLAUDE.md](../Scene/CLAUDE.md).
   A socket is **mesh-space and static**: it does not follow a skinned mesh's animated skeleton, and
   a joint anchor is a different mechanism.
+- **Sockets can be read without making the mesh resident.** `AssetManager::ReadMeshSockets(id) →
+  AssetResult<vector<MeshSocket>>` decodes the socket table of the mounted cooked blob and nothing
+  else — no vertex/index buffer, no material dependency, no render context, nothing cached — for a
+  process that needs *where things attach* but never draws the model. It decodes through
+  `ParseCookedMeshSockets` (`Veng/Asset/Mesh.h`), the one function `MeshLoader` decodes a resident
+  mesh's table with, so a CPU read and `Mesh::GetSockets()` cannot disagree. The prefab-level read,
+  in prefab-root space, is `ReadPrefabSockets` — see [../Scene/CLAUDE.md](../Scene/CLAUDE.md). Both
+  sit on **`AssetManager::ReadCooked(type, id)`**, which resolves an id exactly as a load does
+  (memory mounts first, type-checked) and returns the cooked bytes without running a loader; a zstd
+  entry is inflated into the archive reader's cache on first read, the same cost a load pays. Use
+  the resident reads (`FindMeshSocket` / `AttachToSocket`) to place things in a live scene, the CPU
+  reads to reason about a model without presenting it.
 - **Skinned meshes carry a skeleton and animate through GPU skinning.** A `Mesh` with a
   `SkeletonId` is **skinned** (`Mesh::IsSkinned()`): its vertices use the skinned layout
   (`Mesh::SkinnedLayout()` — canonical attributes plus `RGBA16Uint` bone indices + `RGBA32Sfloat`
@@ -333,8 +345,8 @@ asset references (a `MeshRenderer`'s mesh, a `Material`, …) are resolved as or
 dependencies, exactly as a `Material` resolves its textures and shaders. The cooked blob **is** the
 reflection serializer's name-keyed `WriteFields` record encoding, per component, wrapped in an
 entity/component table — not a new format. A `Scene` is an engine primitive, **never loaded**; you
-create one and spawn into it: `Prefab::SpawnInto(Scene&, AssetManager&) const → vector<Entity>`
-(the spawned roots) creates the entities, `ReadFields` each component, remaps intra-prefab `Entity`
+create one and spawn into it: `Prefab::SpawnInto(Scene&, AssetManager&) const → SpawnResult`
+(the spawned roots plus the `ResidencyBatch` the spawn left pending) creates the entities, `ReadFields` each component, remaps intra-prefab `Entity`
 reference fields to the fresh handles, and rehydrates the embedded `AssetHandle` fields. Spawning
 the same prefab twice spawns two independent copies — a prefab is a reusable recipe, not a
 singleton. `SpawnInto` lives on `Prefab`, so the dependency points asset → primitive; the `Scene`
@@ -379,13 +391,18 @@ Two properties fall out of expanding at spawn rather than flattening at cook:
 - **A parent never goes stale behind its child.** A flattened parent would need a cook-time
   dependency edge to avoid exactly the silent staleness the asset system is built to prevent.
 
+**One decoder reads a cooked prefab's tables.** `DecodeCookedPrefab` (in the loader's own header)
+validates the header and every table and record range and returns the entities with their records
+verbatim; `PrefabLoader` and the CPU-only `ReadPrefabSockets` both decode through it, so neither
+accepts a blob the other rejects.
+
 **Entity references stay prefab-local.** A `Reference` field cooks to an index into its *own*
 prefab's entity table and is remapped within its own nesting level, so a parent cannot name an
 entity inside its child and a child cannot name one in its parent — the property that makes a prefab
 reusable wherever it is instanced. A prefab that transitively names itself is a **cook error**
 ([cooker/CLAUDE.md](../../../cooker/CLAUDE.md)), which is what keeps the runtime recursion finite.
 The editor spawns a prefab into a live document scene and round-trips it back to `*.prefab.json`; it
-does not yet author or preserve a nesting edge, so it treats a nested subtree as it treats any
+does not author or preserve a nesting edge, so it treats a nested subtree as it treats any
 spawned entity and saves it flattened.
 
 ## Shaders & materials

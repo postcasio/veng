@@ -76,6 +76,19 @@ returns **false** rather than asserting when the entity draws nothing, its mesh 
 or the model carries no socket by that name — each is a content or timing condition a consumer
 reports. `FindMeshSocket` is the same resolution without the attachment.
 
+**Where a prefab's sockets are, without spawning it.** Those two are the **resident** reads — for
+placing something in a presented scene. `ReadPrefabSockets(assets, prefab) →
+AssetResult<vector<PrefabSocket>>` (same header) is the **CPU** read, for a process that reasons
+about where things attach without presenting the model (a headless process, a planner, a test with
+no render context). It walks the cooked prefab directly — never `Load`ing it, since a prefab load
+makes every mesh it names resident — expands nested prefabs exactly as `Prefab::SpawnInto` does,
+and reads each rendered mesh's socket table through `AssetManager::ReadMeshSockets` (see
+[../Asset/CLAUDE.md](../Asset/CLAUDE.md)). Each `PrefabSocket { EntityName; Mesh; Local; RootSpace }`
+carries the socket in **prefab-root space**: composed up the entity chain to, but not including, the
+root, so the root's own `Transform` is left out and a root placed at world transform `W` puts the
+socket at `W · RootSpace` — exactly where `AttachToSocket` onto the entity named `EntityName` lands.
+Results sort by entity name then socket name. Nothing is cached; the caller caches.
+
 ## Spatial version
 
 A `Scene` carries a monotonic **spatial version counter** (`GetSpatialVersion()`): it bumps on any

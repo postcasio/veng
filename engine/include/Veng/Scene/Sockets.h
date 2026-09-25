@@ -3,12 +3,26 @@
 #include <string_view>
 
 #include <Veng/Veng.h>
+#include <Veng/Asset/AssetError.h>
+#include <Veng/Asset/AssetId.h>
+#include <Veng/Asset/Mesh.h>
+#include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
+
+/// @file
+/// @brief Reaching a model's sockets: resident reads in a live scene, CPU reads from cooked data.
+///
+/// The **resident** reads — FindMeshSocket and AttachToSocket — resolve a live entity's loaded
+/// mesh, and are what places something in a presented scene. The **CPU** reads —
+/// AssetManager::ReadMeshSockets and ReadPrefabSockets — decode the cooked data directly and make
+/// nothing resident, for a process that reasons about where things attach without presenting the
+/// model (a headless process, a planner, a tool). Both decode the same cooked socket table, so
+/// they cannot disagree.
 
 namespace Veng
 {
+    class AssetManager;
     class Scene;
-    struct MeshSocket;
 
     /// @brief Returns the named socket on the mesh `meshEntity` draws, or nullptr.
     ///
@@ -43,4 +57,49 @@ namespace Veng
     /// @return True when the socket resolved and the child was attached; false when it did not,
     ///         leaving both entities untouched.
     bool AttachToSocket(Scene& scene, Entity child, Entity meshEntity, std::string_view socketName);
+
+    /// @brief One socket of a prefab, placed in prefab-root space.
+    struct PrefabSocket
+    {
+        /// @brief The Name component of the prefab entity drawing the socket's mesh.
+        ///
+        /// Empty when that entity carries no Name. It is how the socket is reached once the
+        /// prefab is spawned: AttachToSocket onto the entity by this name, with Local.Name.
+        string EntityName;
+        /// @brief The cooked mesh the socket belongs to.
+        AssetId Mesh;
+        /// @brief The socket as the mesh authored it, in mesh space.
+        MeshSocket Local;
+        /// @brief The socket's transform relative to its prefab root.
+        ///
+        /// Composed through the entity chain from the socket's entity up to — but not including
+        /// — the root entity it descends from, so the root's own Transform is left out: an
+        /// entity placing that root at world transform W finds the socket at W · RootSpace, the
+        /// same world pose AttachToSocket gives an entity attached there.
+        Transform RootSpace;
+    };
+
+    /// @brief Reads every socket a prefab's meshes carry, in prefab-root space, making nothing resident.
+    ///
+    /// Walks the cooked prefab directly — never loading it, since a prefab load makes each mesh
+    /// it names resident — and reads each rendered mesh's sockets through
+    /// AssetManager::ReadMeshSockets. A socket is reported for every entity carrying a
+    /// MeshRenderer whose cooked Mesh is set and whose inline recipe Source is empty (a recipe
+    /// replaces the cooked mesh at spawn, and a built primitive carries no sockets);
+    /// MeshRenderer::Visible is not consulted. Nested prefabs are expanded exactly as
+    /// Prefab::SpawnInto expands them — the nesting entity is its body's first root, its records
+    /// replace the body root's whole components, and the body's further roots hang under it — so
+    /// the result matches what a spawn would present.
+    ///
+    /// No render context is used, nothing is cached (the caller caches), and a prefab whose
+    /// entities render the same mesh twice reads it once. A prefab with several roots reports each
+    /// socket relative to the root its entity descends from.
+    /// @param assets  The manager whose mounted archives hold the prefab and its meshes; its
+    ///                TypeRegistry must know the builtin component types.
+    /// @param prefab  The AssetTypes::Prefab asset to read.
+    /// @return The sockets, sorted by EntityName then socket name (authored order breaks a tie),
+    ///         or the first NotFound / WrongType / Corrupt error met reading the prefab, a nested
+    ///         prefab, or a mesh.
+    [[nodiscard]] AssetResult<vector<PrefabSocket>> ReadPrefabSockets(const AssetManager& assets,
+                                                                      AssetId prefab);
 }

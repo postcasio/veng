@@ -2,6 +2,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/HexId.h>
+#include <Veng/Asset/Mesh.h>
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Log.h>
 #include <Veng/Task/TaskSystem.h>
@@ -263,8 +264,7 @@ namespace Veng
         return std::nullopt;
     }
 
-    AssetResult<std::pair<AssetLoader*, ArchiveEntry>> AssetManager::Resolve(AssetTypeId type,
-                                                                             AssetId id)
+    AssetResult<ArchiveEntry> AssetManager::FindTyped(AssetTypeId type, AssetId id) const
     {
         const optional<ArchiveEntry> found = Find(id);
         if (!found)
@@ -284,6 +284,45 @@ namespace Veng
                 .Detail = fmt::format("asset {} is asset type {}, not {}", id.Value,
                                       TypeName(found->Type), TypeName(type)),
             });
+        }
+
+        return *found;
+    }
+
+    AssetResult<std::span<const u8>> AssetManager::ReadCooked(AssetTypeId type, AssetId id) const
+    {
+        const AssetResult<ArchiveEntry> found = FindTyped(type, id);
+        if (!found)
+        {
+            return std::unexpected(found.error());
+        }
+        return found->Blob;
+    }
+
+    AssetResult<vector<MeshSocket>> AssetManager::ReadMeshSockets(AssetId mesh) const
+    {
+        const AssetResult<std::span<const u8>> cooked = ReadCooked(AssetTypes::Mesh, mesh);
+        if (!cooked)
+        {
+            return std::unexpected(cooked.error());
+        }
+
+        Result<vector<MeshSocket>> sockets = ParseCookedMeshSockets(*cooked);
+        if (!sockets)
+        {
+            return std::unexpected(AssetLoadError{
+                .Kind = AssetError::Corrupt, .Id = mesh, .Detail = std::move(sockets.error())});
+        }
+        return std::move(*sockets);
+    }
+
+    AssetResult<std::pair<AssetLoader*, ArchiveEntry>> AssetManager::Resolve(AssetTypeId type,
+                                                                             AssetId id)
+    {
+        const AssetResult<ArchiveEntry> found = FindTyped(type, id);
+        if (!found)
+        {
+            return std::unexpected(found.error());
         }
 
         const auto loaderIt = m_Loaders.find(type);

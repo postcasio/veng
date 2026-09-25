@@ -10,6 +10,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetBuild.h>
+#include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/TypedBuffers.h>
@@ -104,6 +105,54 @@ namespace Veng
                 .Sockets = data.Sockets,
             };
         }
+    }
+
+    Result<vector<MeshSocket>> ParseCookedMeshSockets(const std::span<const u8> cooked)
+    {
+        if (cooked.size() < sizeof(CookedMeshHeader))
+        {
+            return std::unexpected(string("mesh: cooked blob smaller than CookedMeshHeader"));
+        }
+
+        CookedMeshHeader header;
+        std::memcpy(&header, cooked.data(), sizeof(header));
+        if (header.Version != CookedMeshVersion)
+        {
+            return std::unexpected(fmt::format("mesh: cooked version {} does not match expected {}",
+                                               header.Version, CookedMeshVersion));
+        }
+
+        // The socket table follows the attribute descriptor and the submesh table.
+        const usize socketOffset =
+            sizeof(CookedMeshHeader) +
+            static_cast<usize>(header.AttributeCount) * sizeof(CookedVertexAttribute) +
+            static_cast<usize>(header.SubMeshCount) * sizeof(CookedSubMesh);
+        const usize socketBytes = static_cast<usize>(header.SocketCount) * sizeof(CookedMeshSocket);
+        if (cooked.size() < socketOffset + socketBytes)
+        {
+            return std::unexpected(string("mesh: cooked blob smaller than socket table"));
+        }
+
+        vector<MeshSocket> sockets(header.SocketCount);
+        for (u32 i = 0; i < header.SocketCount; ++i)
+        {
+            CookedMeshSocket cookedSocket;
+            std::memcpy(&cookedSocket,
+                        cooked.data() + socketOffset + (i * sizeof(CookedMeshSocket)),
+                        sizeof(cookedSocket));
+            cookedSocket.Name[ShaderNameCapacity - 1] = '\0';
+
+            // The cooked quaternion is xyzw; glm's constructor takes w first.
+            sockets[i] = MeshSocket{
+                .Name = cookedSocket.Name,
+                .Position = vec3(cookedSocket.Position[0], cookedSocket.Position[1],
+                                 cookedSocket.Position[2]),
+                .Rotation = quat(cookedSocket.Rotation[3], cookedSocket.Rotation[0],
+                                 cookedSocket.Rotation[1], cookedSocket.Rotation[2]),
+                .Scale = vec3(cookedSocket.Scale[0], cookedSocket.Scale[1], cookedSocket.Scale[2]),
+            };
+        }
+        return sockets;
     }
 
     const MeshSocket* Mesh::FindSocket(std::string_view name) const

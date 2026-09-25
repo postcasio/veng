@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include <Veng/Veng.h>
+#include <Veng/Result.h>
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
@@ -68,6 +69,17 @@ namespace Veng
         /// @brief Mesh-space scale; usually unit.
         vec3 Scale{1.0f};
     };
+
+    /// @brief Decodes the socket table of a cooked mesh blob, touching nothing else in it.
+    ///
+    /// Validates the header's format version and that the blob reaches the end of the socket
+    /// table, then decodes each entry exactly as the resident mesh load does — the mesh loader
+    /// calls this, so a resident mesh's GetSockets() and a CPU read of the same blob cannot
+    /// disagree. The attribute layout, vertices and indices are neither validated nor read.
+    /// Pure CPU: no render context, no allocation beyond the returned list.
+    /// @param cooked  The cooked AssetTypes::Mesh blob, as the archive stores it (inflated).
+    /// @return The sockets, sorted by name as cooked, or an error naming what is malformed.
+    [[nodiscard]] Result<vector<MeshSocket>> ParseCookedMeshSockets(std::span<const u8> cooked);
 
     /// @brief One interleaved vertex in the canonical layout (48 bytes).
     ///

@@ -26,6 +26,7 @@ namespace Veng
 {
     class TaskSystem;
     class TypeRegistry;
+    struct MeshSocket;
 
     /// @brief Construction parameters for AssetManager.
     struct AssetManagerInfo
@@ -339,6 +340,34 @@ namespace Veng
         [[nodiscard]] AssetResult<Ref<Detail::AssetCacheEntry>> LoadSyncUntyped(AssetTypeId type,
                                                                                 AssetId id);
 
+        /// @brief Returns an asset's cooked bytes as the mounted archives hold them, loading nothing.
+        ///
+        /// Resolves @p id exactly as a load does — memory mounts first, then on-disk archives in
+        /// mount order — and checks the archive entry's type, but runs no loader: nothing is made
+        /// resident, cached, registered, or uploaded, and the manager's render context is never
+        /// touched. It is the seam for reading what a cooked asset says without presenting it (a
+        /// headless process, a planner, a tool). A stored entry is a zero-copy view into the
+        /// archive; a zstd entry is inflated on first read into the archive reader's own cache,
+        /// where it stays for that archive's lifetime (the same cost a load of it pays).
+        /// @param type  The asset type the entry must carry.
+        /// @param id    The asset to read.
+        /// @return A view of the cooked blob, valid while the archive holding it stays mounted, or
+        ///         NotFound / WrongType.
+        [[nodiscard]] AssetResult<std::span<const u8>> ReadCooked(AssetTypeId type,
+                                                                  AssetId id) const;
+
+        /// @brief Reads a cooked mesh's sockets without making the mesh resident.
+        ///
+        /// Decodes the socket table of the mesh's cooked blob (ParseCookedMeshSockets) — the same
+        /// decoder the mesh loader runs, so the result equals Mesh::GetSockets() of the resident
+        /// mesh — and touches nothing else: no vertex or index buffer, no material dependency, no
+        /// render context. Costs what ReadCooked costs plus the socket decode; nothing is cached,
+        /// so a caller reading the same mesh repeatedly caches the result itself. Include
+        /// Veng/Asset/Mesh.h to use the MeshSocket values.
+        /// @param mesh  The AssetTypes::Mesh asset to read.
+        /// @return The sockets, sorted by name, or NotFound / WrongType / Corrupt.
+        [[nodiscard]] AssetResult<vector<MeshSocket>> ReadMeshSockets(AssetId mesh) const;
+
         /// @brief Returns the cache entry for an id, or null if it is not cached.
         ///
         /// Untyped — the prefab loader uses it to rehydrate an embedded handle without naming
@@ -492,6 +521,11 @@ namespace Veng
         /// Runs on the main thread; the entry stays permanently pending (null Resource) and is
         /// freed once the last handle drops — mirroring an async Load's deferred-failure behavior.
         void FailPendingCreate(const Ref<Detail::AssetCacheEntry>& entry, const string& error);
+
+        /// @brief Finds an id's archive entry and checks it carries the requested type.
+        ///
+        /// Shared by the load paths and ReadCooked, so a read and a load resolve identically.
+        [[nodiscard]] AssetResult<ArchiveEntry> FindTyped(AssetTypeId type, AssetId id) const;
 
         /// @brief Resolves an id to a loader and cooked blob, validating type against the archive entry.
         ///

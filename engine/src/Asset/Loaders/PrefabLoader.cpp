@@ -153,17 +153,11 @@ namespace Veng
         }
     }
 
-    AssetResult<Detail::LoadJob> PrefabLoader::Load(AssetManager& manager,
-                                                    Renderer::Context& /*context*/,
-                                                    TaskSystem& /*tasks*/, TypeRegistry& types,
-                                                    AssetId id, std::span<const u8> cooked,
-                                                    bool async) const
+    Result<vector<Prefab::PrefabEntity>> DecodeCookedPrefab(const std::span<const u8> cooked)
     {
-        // ── 1. CookedPrefabHeader ────────────────────────────────────────────
         if (cooked.size() < sizeof(CookedPrefabHeader))
         {
-            return std::unexpected(
-                Corrupt(id, "prefab: cooked blob smaller than CookedPrefabHeader"));
+            return std::unexpected(string("prefab: cooked blob smaller than CookedPrefabHeader"));
         }
 
         CookedPrefabHeader header;
@@ -172,9 +166,9 @@ namespace Veng
         // A stale/foreign blob is a recoverable load failure, not a crash.
         if (header.Version != CookedPrefabVersion)
         {
-            return std::unexpected(Corrupt(
-                id, fmt::format("prefab: blob version {} does not match expected version {}",
-                                header.Version, CookedPrefabVersion)));
+            return std::unexpected(
+                fmt::format("prefab: blob version {} does not match expected version {}",
+                            header.Version, CookedPrefabVersion));
         }
 
         const usize entityTableBytes =
@@ -186,10 +180,9 @@ namespace Veng
         if (cooked.size() < cursor + entityTableBytes + componentTableBytes +
                                 static_cast<usize>(header.RecordBytes))
         {
-            return std::unexpected(Corrupt(id, "prefab: cooked blob truncated"));
+            return std::unexpected(string("prefab: cooked blob truncated"));
         }
 
-        // ── 2. Entity + component tables ─────────────────────────────────────
         vector<CookedPrefabEntity> cookedEntities(header.EntityCount);
         if (entityTableBytes > 0)
         {
@@ -206,83 +199,100 @@ namespace Veng
 
         const std::span<const u8> records = cooked.subspan(cursor, header.RecordBytes);
 
-        // ── 3. Build the decoded value tree (records kept verbatim) ──────────
         vector<Prefab::PrefabEntity> entities;
         entities.reserve(header.EntityCount);
-
-        // Embedded AssetHandle (id, type) pairs, surfaced as dependencies.
-        vector<HandleDep> handleDeps;
-
-        for (u32 e = 0; e < header.EntityCount; ++e)
+        for (const CookedPrefabEntity& ce : cookedEntities)
         {
-            const CookedPrefabEntity& ce = cookedEntities[e];
-
-            if (ce.FirstComponent + ce.ComponentCount > header.ComponentCount)
+            if (static_cast<u64>(ce.FirstComponent) + ce.ComponentCount > header.ComponentCount)
             {
-                return std::unexpected(Corrupt(id, "prefab: entity component range out of bounds"));
+                return std::unexpected(string("prefab: entity component range out of bounds"));
             }
 
             Prefab::PrefabEntity entity;
             entity.Components.reserve(ce.ComponentCount);
             entity.NestedPrefab = AssetId{ce.NestedPrefab};
 
-            // A nesting entity's body is an ordinary load-time dependency, resolved and kept
-            // resident exactly like an embedded AssetHandle field's target.
-            if (entity.NestedPrefab.IsValid())
-            {
-                handleDeps.push_back(HandleDep{.Id = ce.NestedPrefab, .Type = AssetTypes::Prefab});
-            }
-
             for (u32 c = 0; c < ce.ComponentCount; ++c)
             {
                 const CookedPrefabComponent& cc = cookedComponents[ce.FirstComponent + c];
-
                 if (static_cast<usize>(cc.RecordOffset) + cc.RecordSize > header.RecordBytes)
                 {
-                    return std::unexpected(
-                        Corrupt(id, "prefab: component record range out of bounds"));
+                    return std::unexpected(string("prefab: component record range out of bounds"));
                 }
 
                 Prefab::Component component;
                 component.Type = cc.TypeId;
                 component.Record.assign(records.begin() + cc.RecordOffset,
                                         records.begin() + cc.RecordOffset + cc.RecordSize);
-
-                // Deserialize the record into a type-erased instance to walk its handle fields.
-                // Skip unregistered types — they have no handle ids to contribute here;
-                // spawn will assert on the missing registration later.
-                if (types.IsRegistered(cc.TypeId))
-                {
-                    const TypeInfo& typeInfo = types.Info(cc.TypeId);
-                    vector<u8> instance(typeInfo.Size);
-                    typeInfo.DefaultConstruct(instance.data());
-
-                    // The untrusted-first parse: a truncated record from a corrupt
-                    // cooked blob surfaces as a recoverable Corrupt load failure.
-                    const VoidResult read =
-                        ReadFields(component.Record, instance.data(), typeInfo, types);
-                    if (!read)
-                    {
-                        typeInfo.Destruct(instance.data());
-                        return std::unexpected(Corrupt(id, read.error()));
-                    }
-
-                    const VoidResult collected = CollectHandleDeps(
-                        id, instance.data(), typeInfo, types, manager.GetAssetTypes(), handleDeps);
-                    typeInfo.Destruct(instance.data());
-                    if (!collected)
-                    {
-                        return std::unexpected(Corrupt(id, collected.error()));
-                    }
-                }
-
                 entity.Components.push_back(std::move(component));
             }
 
             entities.push_back(std::move(entity));
         }
+        return entities;
+    }
 
-        // ── 4. Fan out embedded handle dependencies (deduplicated by id) ─────
+    AssetResult<Detail::LoadJob> PrefabLoader::Load(AssetManager& manager,
+                                                    Renderer::Context& /*context*/,
+                                                    TaskSystem& /*tasks*/, TypeRegistry& types,
+                                                    AssetId id, std::span<const u8> cooked,
+                                                    bool async) const
+    {
+        Result<vector<Prefab::PrefabEntity>> decoded = DecodeCookedPrefab(cooked);
+        if (!decoded)
+        {
+            return std::unexpected(Corrupt(id, std::move(decoded.error())));
+        }
+        vector<Prefab::PrefabEntity> entities = std::move(*decoded);
+
+        // Embedded AssetHandle (id, type) pairs, surfaced as dependencies.
+        vector<HandleDep> handleDeps;
+
+        for (const Prefab::PrefabEntity& entity : entities)
+        {
+            // A nesting entity's body is an ordinary load-time dependency, resolved and kept
+            // resident exactly like an embedded AssetHandle field's target.
+            if (entity.NestedPrefab.IsValid())
+            {
+                handleDeps.push_back(
+                    HandleDep{.Id = entity.NestedPrefab.Value, .Type = AssetTypes::Prefab});
+            }
+
+            for (const Prefab::Component& component : entity.Components)
+            {
+                // Deserialize the record into a type-erased instance to walk its handle fields.
+                // Skip unregistered types — they have no handle ids to contribute here;
+                // spawn will assert on the missing registration later.
+                if (!types.IsRegistered(component.Type))
+                {
+                    continue;
+                }
+
+                const TypeInfo& typeInfo = types.Info(component.Type);
+                vector<u8> instance(typeInfo.Size);
+                typeInfo.DefaultConstruct(instance.data());
+
+                // The untrusted-first parse: a truncated record from a corrupt
+                // cooked blob surfaces as a recoverable Corrupt load failure.
+                const VoidResult read =
+                    ReadFields(component.Record, instance.data(), typeInfo, types);
+                if (!read)
+                {
+                    typeInfo.Destruct(instance.data());
+                    return std::unexpected(Corrupt(id, read.error()));
+                }
+
+                const VoidResult collected = CollectHandleDeps(id, instance.data(), typeInfo, types,
+                                                               manager.GetAssetTypes(), handleDeps);
+                typeInfo.Destruct(instance.data());
+                if (!collected)
+                {
+                    return std::unexpected(Corrupt(id, collected.error()));
+                }
+            }
+        }
+
+        // Fan out embedded handle dependencies (deduplicated by id).
         vector<Ref<Detail::AssetCacheEntry>> dependencies;
         vector<u64> loaded;
         for (const HandleDep& dep : handleDeps)
@@ -311,7 +321,6 @@ namespace Veng
             dependencies.push_back(*entry);
         }
 
-        // ── 5. Construct the Prefab ──────────────────────────────────────────
         const Ref<Prefab> prefab = Prefab::Create(std::move(entities), dependencies, id);
 
         return Detail::LoadJob{

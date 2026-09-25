@@ -204,32 +204,14 @@ namespace Veng
         }
         cursor += subMeshBytes;
 
-        // Sockets: the cooked table is sorted by name, which Mesh::FindSocket's binary search
-        // relies on; the loader carries it through verbatim.
-        const usize socketBytes = static_cast<usize>(header.SocketCount) * sizeof(CookedMeshSocket);
-        if (cooked.size() < cursor + socketBytes)
+        // The socket table goes through the one decoder a CPU-only socket read uses too, so a
+        // resident mesh and a read of the same blob cannot disagree.
+        Result<vector<Veng::MeshSocket>> sockets = ParseCookedMeshSockets(cooked);
+        if (!sockets)
         {
-            return std::unexpected(Corrupt(id, "mesh: cooked blob smaller than socket table"));
+            return std::unexpected(Corrupt(id, std::move(sockets.error())));
         }
-
-        vector<Veng::MeshSocket> sockets(header.SocketCount);
-        for (u32 i = 0; i < header.SocketCount; ++i)
-        {
-            CookedMeshSocket cookedSocket;
-            std::memcpy(&cookedSocket, cooked.data() + cursor + i * sizeof(CookedMeshSocket),
-                        sizeof(cookedSocket));
-            cookedSocket.Name[ShaderNameCapacity - 1] = '\0';
-
-            sockets[i] = Veng::MeshSocket{
-                .Name = cookedSocket.Name,
-                .Position = vec3(cookedSocket.Position[0], cookedSocket.Position[1],
-                                 cookedSocket.Position[2]),
-                .Rotation = quat(cookedSocket.Rotation[3], cookedSocket.Rotation[0],
-                                 cookedSocket.Rotation[1], cookedSocket.Rotation[2]),
-                .Scale = vec3(cookedSocket.Scale[0], cookedSocket.Scale[1], cookedSocket.Scale[2]),
-            };
-        }
-        cursor += socketBytes;
+        cursor += static_cast<usize>(header.SocketCount) * sizeof(CookedMeshSocket);
 
         const usize vertexBytes = static_cast<usize>(header.VertexCount) * header.VertexStride;
         if (cooked.size() < cursor + vertexBytes)
@@ -303,7 +285,7 @@ namespace Veng
             .Materials = std::move(materials),
             .Bounds = Veng::Mesh::ComputeBounds(vertexData, header.VertexStride),
             .Skeleton = skeleton,
-            .Sockets = std::move(sockets),
+            .Sockets = std::move(*sockets),
         });
 
         return Detail::LoadJob{.Resource = Detail::RefAny(mesh)};
