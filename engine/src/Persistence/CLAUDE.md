@@ -196,7 +196,10 @@ exactly one type claims a blob.
 `SingletonFamily(id, fileStem)` builds a hook-less family holding one record at
 **`SingletonRecordKey`** (the zero key) — the whole-slot settings shape, written directly rather
 than captured off entities. `ReadSingleton<T>` returns `nullopt` when the record or `T`'s blob is
-absent, or the blob failed to decode (logged).
+absent, or the blob failed to decode (logged). It is `ReadRecordComponent<T>` at the zero key: that
+keyed read decodes one component out of any family's record with no scene involved, for a caller
+that must read a record before it knows which entities to build — rehydrate only lands on entities
+that already exist.
 
 `WriteSingleton<T>` is **read-modify-write at the blob level**: it reads the stored record back,
 replaces or inserts `T`'s blob, and preserves every other blob in the record, so independent types

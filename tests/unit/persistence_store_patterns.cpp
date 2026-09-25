@@ -375,6 +375,36 @@ TEST_CASE("where several entities claim one key the first wins")
     CHECK(fresh->TryGet<PatternAlpha>(second) == nullptr);
 }
 
+TEST_CASE("a keyed record component reads by key and type, without a scene")
+{
+    const TempSlot slot;
+    const TypeRegistry types = MakeRegistry();
+    Result<Unique<Store>> store = Store::Open(slot.Dir);
+    REQUIRE(store);
+    (*store)->RegisterFamily(MakePatternFamily(types));
+
+    const PatternAlpha alphaValue{.Value = 17};
+    const PatternBeta betaValue{.Weight = 5};
+    StoreRecord record;
+    ComponentBlob alpha{.Type = TypeIdOf<PatternAlpha>()};
+    WriteFields(alpha.Bytes, &alphaValue, types.Info(alpha.Type), types);
+    record.Components.push_back(std::move(alpha));
+    ComponentBlob beta{.Type = TypeIdOf<PatternBeta>()};
+    WriteFields(beta.Bytes, &betaValue, types.Info(beta.Type), types);
+    record.Components.push_back(std::move(beta));
+    const StoreKey key{.Lo = 9, .Hi = 3};
+    (*store)->Write(PatternFamily, key, std::move(record));
+
+    const optional<PatternAlpha> read =
+        ReadRecordComponent<PatternAlpha>(**store, PatternFamily, key, types);
+    REQUIRE(read.has_value());
+    CHECK(read->Value == 17);
+    CHECK_FALSE(ReadRecordComponent<PatternStray>(**store, PatternFamily, key, types).has_value());
+    CHECK_FALSE(
+        ReadRecordComponent<PatternAlpha>(**store, PatternFamily, StoreKey{.Lo = 9, .Hi = 4}, types)
+            .has_value());
+}
+
 TEST_CASE("the singleton reads nullopt when its record or blob is absent")
 {
     const TempSlot slot;

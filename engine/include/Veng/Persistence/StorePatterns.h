@@ -195,18 +195,23 @@ namespace Veng
     /// @return The family, ready to register.
     [[nodiscard]] VE_API StoreFamily SingletonFamily(StoreFamilyId id, string fileStem);
 
-    /// @brief Reads T out of a singleton family's record.
+    /// @brief Reads one component out of a keyed store record, without a scene to rehydrate onto.
+    ///
+    /// For a caller that must know one field of a record before it can decide which entities to
+    /// build — rehydrating needs the entities to exist first, so a record naming *which* entities
+    /// to create is read this way.
     /// @tparam T  The reflected type to read.
     /// @param store   The store holding the family.
-    /// @param family  The singleton family's id.
+    /// @param family  The family's id.
+    /// @param key     The record's key.
     /// @param types   The registry T is reflected in.
     /// @return The decoded value, or nullopt when the record or T's blob is absent, or the blob
     /// failed to decode (which is logged).
     template <typename T>
-    [[nodiscard]] optional<T> ReadSingleton(Store& store, const StoreFamilyId family,
-                                            const TypeRegistry& types)
+    [[nodiscard]] optional<T> ReadRecordComponent(Store& store, const StoreFamilyId family,
+                                                  const StoreKey key, const TypeRegistry& types)
     {
-        const optional<StoreRecord> record = store.Read(family, SingletonRecordKey);
+        const optional<StoreRecord> record = store.Read(family, key);
         if (!record.has_value())
         {
             return std::nullopt;
@@ -222,13 +227,27 @@ namespace Veng
                     ReadFields(std::span(blob.Bytes), &value, types.Info(blob.Type), types);
                 !read)
             {
-                Log::Warn("singleton record: a stored '{}' did not decode: {}",
+                Log::Warn("store record: a stored '{}' did not decode: {}",
                           types.Info(blob.Type).Name, read.error());
                 return std::nullopt;
             }
             return value;
         }
         return std::nullopt;
+    }
+
+    /// @brief Reads T out of a singleton family's record.
+    /// @tparam T  The reflected type to read.
+    /// @param store   The store holding the family.
+    /// @param family  The singleton family's id.
+    /// @param types   The registry T is reflected in.
+    /// @return The decoded value, or nullopt when the record or T's blob is absent, or the blob
+    /// failed to decode (which is logged).
+    template <typename T>
+    [[nodiscard]] optional<T> ReadSingleton(Store& store, const StoreFamilyId family,
+                                            const TypeRegistry& types)
+    {
+        return ReadRecordComponent<T>(store, family, SingletonRecordKey, types);
     }
 
     /// @brief Writes T into a singleton family's record, preserving the record's other blobs.
