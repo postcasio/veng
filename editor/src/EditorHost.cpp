@@ -21,6 +21,7 @@
 #include <VengEditor/AssetEditorPanel.h>
 #include "AssetSourceIndex.h"
 #include "CommandStack.h"
+#include "EditorOnly.h"
 #include "JsonUtil.h"
 #include "PreviewCapability.h"
 #include <VengEditor/StatusTracker.h>
@@ -825,6 +826,8 @@ namespace VengEditor
         // The project-settings panel inspects ProjectSettings through reflection; registering
         // it auto-registers its compression enums, whose VE_ENUM tables drive the named combos.
         GetTypeRegistry().Register<ProjectSettings>();
+        // The marker the scene editors put on entities they add for their own presentation.
+        GetTypeRegistry().Register<EditorOnly>();
 
         // A prefab is edited live in a spawned Scene, so its editor needs no manifest
         // source; register it unconditionally.

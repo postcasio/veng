@@ -159,6 +159,12 @@ across the whole project's one AssetId namespace, not just its own pack.
   hand-authored structure) survive untouched. Its `JsonFieldHooks::WriteReference` maps a live
   `Entity` back to a prefab-local index, the inverse of the importer's `ReadReference`; enums come
   out as enumerator names, matching what the cooker's `JsonReadFields`-based read requires.
+- **An entity the editor adds for its own presentation carries `EditorOnly`** (`src/EditorOnly.h`,
+  registered by the host). The prefab editor lights a document with no light of its own with a
+  marked preview light; the explorer does not list a marked entity, the toolbar does not count it,
+  and `PrefabSerialize::Save` skips it and its subtree, so it never reaches a saved prefab. It still
+  renders and still carries into a play session's clone. Any future editor-added stand-in (a
+  reference grid, a preview floor) takes the same marker rather than a special case.
 - **The level editor is the game-wiring surface.** `LevelEditorPanel` (registered for
   `AssetTypes::Level`) **derives from** `PrefabEditorPanel`, so the viewport / explorer / inspector
   edit the level's **world prefab** with no scene-editing reimplemented, and adds two level-scoped

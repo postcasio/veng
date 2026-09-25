@@ -18,6 +18,7 @@
 
 #include "AssetSourceIndex.h"
 #include "EditorGizmo.h"
+#include "EditorOnly.h"
 #include "panels/InspectorPanel.h"
 #include "panels/PrefabExplorerPanel.h"
 #include "panels/SceneViewportPanel.h"
@@ -360,7 +361,10 @@ namespace VengEditor
             UI::SameLine();
             UI::Separator();
             UI::SameLine();
-            UI::TextDisabled(fmt::format("{} entities", m_Context.Scene->EntityCount()));
+            usize editorOnly = 0;
+            m_Context.Scene->Each<EditorOnly>([&editorOnly](Entity, EditorOnly&) { ++editorOnly; });
+            UI::TextDisabled(
+                fmt::format("{} entities", m_Context.Scene->EntityCount() - editorOnly));
         }
     }
 
@@ -381,13 +385,16 @@ namespace VengEditor
             m_Context.SelectOnly(spawned.Roots[0]);
         }
 
-        // Light the scene when the prefab carries none, so the spawned content is visible.
+        // Light the scene when the prefab carries none, so the spawned content is visible. The
+        // light is the editor's, not the document's: marked EditorOnly, it is neither listed nor
+        // saved.
         bool hasLight = false;
         m_Scene->Each<Light>([&hasLight](Entity, Light&) { hasLight = true; });
         if (!hasLight)
         {
             const Entity light = m_Scene->CreateEntity();
-            m_Scene->Add<Name>(light) = Name{.Value = "Directional Light"};
+            m_Scene->Add<EditorOnly>(light);
+            m_Scene->Add<Name>(light) = Name{.Value = "Preview Light"};
             m_Scene->Add<Light>(light) = Light{
                 .Type = LightType::Directional,
                 .Direction = glm::normalize(vec3(-0.4f, -0.7f, -0.5f)),

@@ -1,6 +1,7 @@
 #include "panels/PrefabExplorerPanel.h"
 
 #include "EditorIcons.h"
+#include "EditorOnly.h"
 
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -206,6 +207,11 @@ namespace VengEditor
         scene->ForEachEntity(
             [&](Entity entity)
             {
+                // An entity the editor added for its own presentation is not the document's.
+                if (scene->Has<EditorOnly>(entity))
+                {
+                    return;
+                }
                 const Entity parent = scene->GetParent(entity);
                 if (!parent.IsNull() && scene->IsAlive(parent))
                 {

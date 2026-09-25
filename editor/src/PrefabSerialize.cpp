@@ -1,6 +1,7 @@
 #include "PrefabSerialize.h"
 
 #include "JsonUtil.h"
+#include "EditorOnly.h"
 
 #include <Veng/Reflection/JsonSerialize.h>
 #include <Veng/Reflection/TypeId.h>
@@ -113,9 +114,14 @@ namespace VengEditor
 
         // Collects the scene's entities in a stable hierarchy order: each root (no parent) followed
         // by its Hierarchy subtree depth-first in ForEachChild (sibling) order, so a save→cook→
-        // spawn round-trip reproduces the authored hierarchy and sibling order exactly.
+        // spawn round-trip reproduces the authored hierarchy and sibling order exactly. An
+        // EditorOnly entity is the editor's, not the document's: it and its subtree are skipped.
         void GatherHierarchyOrder(const Scene& scene, Entity entity, vector<Entity>& out)
         {
+            if (scene.Has<EditorOnly>(entity))
+            {
+                return;
+            }
             out.push_back(entity);
             scene.ForEachChild(entity,
                                [&](Entity child) { GatherHierarchyOrder(scene, child, out); });

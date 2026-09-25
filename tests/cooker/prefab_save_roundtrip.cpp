@@ -33,6 +33,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "EditorOnly.h"
 #include "PrefabSerialize.h"
 
 using namespace Veng;
@@ -119,6 +120,7 @@ namespace
         registry.Register<AllFields>();
         registry.Register<ShapeVariant>();
         registry.Register<ArrayHolder>();
+        registry.Register<VengEditor::EditorOnly>();
         return registry;
     }
 
@@ -448,4 +450,31 @@ TEST_CASE("prefab save: deleting + reordering entities re-aligns by id, preservi
     CHECK(doc["entities"][0]["components"]["Veng::Name"]["Value"] == "Parent");
     CHECK(doc["entities"][1][string{VengEditor::PrefabSerialize::EntityIdKey}].get<u64>() == idC);
     CHECK(doc["entities"][2][string{VengEditor::PrefabSerialize::EntityIdKey}].get<u64>() == idA);
+}
+
+TEST_CASE("prefab save: an EditorOnly entity and its subtree are never written")
+{
+    const TypeRegistry registry = BuildRegistry();
+
+    const auto scene = Scene::Create(const_cast<TypeRegistry&>(registry));
+    const Entity kept = scene->CreateEntity();
+    scene->Add<Name>(kept) = Name{.Value = "Kept"};
+    // What the prefab editor adds to light a document with no light of its own, plus a child to
+    // show the whole subtree goes with it.
+    const Entity preview = scene->CreateEntity();
+    scene->Add<VengEditor::EditorOnly>(preview);
+    scene->Add<Name>(preview) = Name{.Value = "Preview Light"};
+    scene->Add<Light>(preview) = Light{.Type = LightType::Directional};
+    const Entity child = scene->CreateEntity();
+    scene->Add<Name>(child) = Name{.Value = "Preview Child"};
+    scene->SetParent(child, preview);
+
+    const path prefabPath = Veng::TestSupport::TempDir() / "save_editor_only.prefab.json";
+    std::filesystem::remove(prefabPath);
+    REQUIRE(VengEditor::PrefabSerialize::Save(*scene, registry, prefabPath).has_value());
+
+    const json doc = ReadDoc(prefabPath);
+    REQUIRE(doc["entities"].is_array());
+    REQUIRE(doc["entities"].size() == 1);
+    CHECK(doc["entities"][0]["components"]["Veng::Name"]["Value"] == "Kept");
 }
