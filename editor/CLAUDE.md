@@ -262,9 +262,9 @@ across the whole project's one AssetId namespace, not just its own pack.
 
 ## Cook-on-demand and the single-asset editors
 
-- **Cook-on-demand keeps the importer boundary.** `libveng_cook` is linked **only into the editor
-  exe** — never `libveng_editor`, never `libgame` — so the editor framework library stays
-  importer-free. The exe injects a `CookBackend` implementation;
+- **Cook-on-demand keeps the importer boundary.** Of the editor's images, `libveng_cook` is linked
+  **only into the editor exe** — never `libveng_editor`, never `libgame` — so the editor framework
+  library stays importer-free. The exe injects a `CookBackend` implementation;
   `EditorHost::RequestCook(CookRequest, callback)` cooks a single source off the render thread via
   `TaskSystem` (`CookSession` → `Task<vector<u8>>`), then mounts the resulting in-memory archive
   via `AssetManager::MountMemory` and hot-reloads behind the stable `AssetHandle`.

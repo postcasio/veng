@@ -2,7 +2,11 @@
 
 `cooker/` is `libveng_cook` plus the `vengc` CLI: the offline toolchain that turns
 hand-written JSON asset sources into the binary `.vengpack` archive the runtime
-mounts. It is **never linked by the engine**. The on-disk archive format it emits is
+mounts. It is **never linked by the engine**. `libveng_cook` is a **shared library, exported as
+`veng::cook`** for authoring tools that cook in-process — the editor's cook-on-demand, or a tool
+that generates shaders and materials and loads them through the real importers and loader
+(`Cooker::CookPack` / `CookSource`, then `AssetManager::Mount` / `MountMemory`). A game's
+runtime never links it. The on-disk archive format it emits is
 documented in [assetpack/CLAUDE.md](../assetpack/CLAUDE.md); runtime loading of the
 result (the `AssetManager`, `AssetHandle`, async/sync `Load`) and the full
 shader/material model are in [engine/src/Asset/CLAUDE.md](../engine/src/Asset/CLAUDE.md).
@@ -718,9 +722,9 @@ own handle, because `dlsym` searches an image's dependents and `GetProcAddress` 
 `--module` alone stays valid (a game with reflected components and no custom importers), and
 passing both is an explicit override of the sibling lookup.
 
-- **It must not link `libveng_cook`.** That static library carries the cooker's machinery and its
-  process-wide state — the Slang session, the graph-shader resolver hook — and a second copy of
-  both would ride into the dlopened image beside the tool's own. The cook module links
+- **It does not link `libveng_cook`.** A cook module is a plug-in to the cooker that loads it, which
+  already carries the cooker's machinery and its process-wide state — the Slang session, the
+  graph-shader resolver hook. The cook module links
   **`veng::cook_interface`** instead: an INTERFACE target carrying the importer contract as
   headers only (`Cook/Importer.h`, `Cook/CookModule.h`, nlohmann-json, `veng::assetpack`,
   `JSON_NOEXCEPTION`). `libveng_cook` consumes the same headers, so there is one contract and no

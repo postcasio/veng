@@ -11,6 +11,11 @@
 # veng is the tools: the cooker builds unconditionally whenever veng is built from
 # source. A library-only consumer uses find_package(veng) and gets the prebuilt
 # vengc imported from vengTargets instead of building the cooker's heavy deps.
+#
+# libveng_cook is a shared library, exported as veng::cook for authoring tools that cook
+# in-process (an editor recooking an edited asset, a tool generating shaders and materials): it
+# absorbs its vendored static deps, so everything built in this directory is position-independent.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # The cooker fetches its heavy third-party deps (bc7enc_rdo, astc-encoder, assimp)
 # inline below. Shield them from the debug build's -Werror, inherited here as a
@@ -248,12 +253,12 @@ set_directory_properties(PROPERTIES COMPILE_OPTIONS "${VENG_COOK_SAVED_COMPILE_O
 # veng::cook_interface — the importer contract as headers only.
 #
 # A game's optional cook module registers real AssetImporters, so it needs AssetImporter,
-# CookContext, Result, nlohmann-json, and assetpack — and nothing else. It must NOT link
-# libveng_cook: that static library would carry a second copy of the cooker machinery and its
-# process-wide state (the Slang session, the graph-shader resolver hook) into the dlopened image
-# beside the tool's own. This INTERFACE target is that contract, consumed by both libveng_cook
-# (through veng_cook_objs below) and by every out-of-tree cook module, so there is one contract
-# and no duplicated machinery.
+# CookContext, Result, nlohmann-json, and assetpack — and nothing else. It does not link
+# libveng_cook: the cooker that dlopens it already carries the machinery and its process-wide
+# state (the Slang session, the graph-shader resolver hook), and a module is a plug-in to that
+# cooker, not a second one. This INTERFACE target is that contract, consumed by both libveng_cook
+# and by every out-of-tree cook module, so there is one contract. (A tool that cooks in-process
+# links libveng_cook itself, as veng::cook.)
 #
 # It deliberately does not link veng::veng: veng_cook_objs must stay veng-free for the
 # core-pack bootstrap. Cook/Importer.h names engine types (TypeRegistry, BuildConfiguration), so
@@ -429,7 +434,7 @@ target_compile_options(veng_cook_objs PRIVATE
 # path; ordinary importers (texture/mesh/shader/material) link nothing from
 # libveng. veng's own embedded core pack is cooked by the veng-free bootstrap
 # cooker below to keep this link off the core-pack build edge.
-add_library(libveng_cook STATIC
+add_library(libveng_cook SHARED
         src/BuiltinImporters.cpp
         src/ModuleTypes.cpp
         # The cook-module loader reuses libveng's platform loader (LoadedModule), so it lives
@@ -460,12 +465,36 @@ add_library(libveng_cook STATIC
         # graph sources.
         src/Importers/GraphShaderSource.cpp)
 add_library(veng::cook ALIAS libveng_cook)
-target_link_libraries(libveng_cook PUBLIC veng_cook_objs veng::veng veng::assetpack veng::graph)
-target_link_libraries(libveng_cook PRIVATE
+# The veng-free core's objects are compiled into this library, so they link PRIVATE; its public
+# face is the importer contract (Cook/*.h) plus the engine libraries its headers name.
+target_link_libraries(libveng_cook PUBLIC veng_cook_interface veng::veng veng::assetpack veng::graph)
+target_link_libraries(libveng_cook PRIVATE veng_cook_objs
         fmt::fmt assimp::assimp slang::slang ZLIB::ZLIB ${VENG_ASTCENC_TARGET}
         msdf-atlas-gen::msdf-atlas-gen pugixml::pugixml)
 target_compile_options(libveng_cook PRIVATE -fno-exceptions)
 target_precompile_headers(libveng_cook PRIVATE <Veng/Veng.h>)
+# libveng_cook.dylib / .so, exported as veng::cook — the spelling in-tree consumers already use.
+set_target_properties(libveng_cook PROPERTIES OUTPUT_NAME veng_cook EXPORT_NAME cook)
+# Auto-export all symbols on MSVC, mirroring macOS/Linux default visibility (as veng_graph does).
+if (MSVC)
+    set_target_properties(libveng_cook PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+endif ()
+
+# Installed beside libveng, finding it through the loader-relative lib dir and the host's Slang
+# through the directory find_library found it in (the SDK's, not vendored — see vengc below).
+get_filename_component(VENG_SLANG_LIBDIR "${Slang_LIBRARY}" DIRECTORY)
+if (APPLE)
+    set_target_properties(libveng_cook PROPERTIES
+            INSTALL_RPATH "@loader_path/../${CMAKE_INSTALL_LIBDIR};${VENG_SLANG_LIBDIR}")
+else ()
+    set_target_properties(libveng_cook PROPERTIES
+            INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR};${VENG_SLANG_LIBDIR}")
+endif ()
+install(TARGETS libveng_cook
+        EXPORT vengTargets
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 add_executable(vengc tool/main.cpp)
 target_link_libraries(vengc PRIVATE veng::cook fmt::fmt)
@@ -476,7 +505,6 @@ target_link_libraries(vengc PRIVATE veng::cook fmt::fmt)
 # $ORIGIN/../lib (Linux), and the host's Slang resolves through the directory find_library
 # found it in. Slang is not vendored — an installed veng requires the Vulkan SDK (with its
 # Slang component) present to run the cooker, the same prerequisite the in-tree build carries.
-get_filename_component(VENG_SLANG_LIBDIR "${Slang_LIBRARY}" DIRECTORY)
 if (APPLE)
     set_target_properties(vengc PROPERTIES
             INSTALL_RPATH "@loader_path/../${CMAKE_INSTALL_LIBDIR};${VENG_SLANG_LIBDIR}")

@@ -33,9 +33,10 @@ endif ()
 # when the editor subdirectory was added (install always includes it; a build-tree export from a
 # -DVENG_INSTALL_SDK=OFF non-top-level build omits it), so the recreations are additionally guarded
 # on the imported target existing — a no-op in an editor-less build-tree config rather than a dangle.
-# libveng_cook is statically linked into the exes and not exported — a consumer never links the
-# cooker itself. Its header-only importer *contract* is exported separately as
-# veng::veng_cook_interface and aliased below, which is what a game's cook module links.
+# libveng_cook is exported as veng::cook (its export name) for a tool that cooks in-process — an
+# editor recooking an edited asset, a tool generating materials. A game's cook module links only
+# the header-only importer *contract*, exported separately as veng::veng_cook_interface and
+# aliased below: it is a plug-in to the cooker that loads it, never a cooker of its own.
 # The editor's only PUBLIC deps (veng::veng, veng::graph, and the
 # ImGui headers riding veng's interface) are already resolved above (veng::veng's own PUBLIC deps —
 # glm/fmt/nlohmann_json — included), so no extra find_dependency is required.

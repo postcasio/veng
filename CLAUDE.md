@@ -30,7 +30,8 @@ every module is written against; each module's architecture lives in its own `CL
   importer-free; linked PUBLIC by `engine` and `cooker`.
   **[assetpack/CLAUDE.md](assetpack/CLAUDE.md)**.
 - **`cooker/`** — `libveng_cook` + the `vengc` CLI (stb, assimp, Slang, the texture encoders —
-  cooker-only deps, never linked by the engine). Its prefab-cooking path links `veng::veng` to
+  cooker-only deps, never linked by the engine). `libveng_cook` is shared and exported as
+  `veng::cook` for tools that cook in-process. Its prefab-cooking path links `veng::veng` to
   `dlopen` a game module and reflect its types — the one place the Vulkan-free cooker relaxes
   its separation. A cook runs its pack's assets across a **bounded work pool**, so an importer —
   including one a consumer's cook module supplies — declares its concurrency class; see
