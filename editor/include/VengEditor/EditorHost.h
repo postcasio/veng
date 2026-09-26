@@ -22,6 +22,7 @@ namespace VengEditor
     class AssetSourceIndex;
     class CommandStack;
     class StatusTracker;
+    struct MaterialPreviewLook;
 
     /// @brief Construction parameters for EditorHost.
     struct EditorHostInfo
@@ -244,6 +245,9 @@ namespace VengEditor
         /// @brief Where the build puts an editor-only pack's cooked file: editor/ beside the
         /// launcher, apart from the packs that ship.
         [[nodiscard]] Veng::path EditorPackPath(const Veng::path& packSource) const;
+        /// @brief Resolves the project's preview settings against its packs: reads the preview
+        /// level's render block from its source and lists every Environment the index holds.
+        [[nodiscard]] MaterialPreviewLook ResolvePreviewLook();
 
         /// @brief Owned registries, constructed before this Application so the base
         /// can borrow the TypeRegistry by reference.
@@ -301,6 +305,10 @@ namespace VengEditor
 
         /// @brief Tracks in-flight long-running tasks (cooks) the status bar reports.
         Veng::Unique<StatusTracker> m_Status;
+
+        /// @brief How material previews look by default: the project's "preview" block resolved
+        /// against its packs (the level's render block, the environments they hold).
+        Veng::Unique<MaterialPreviewLook> m_PreviewLook;
 
         /// @brief The host-owned project settings: the build-configuration list and the active
         /// one. Loaded from project.veng beside the manifest at startup, or left empty.

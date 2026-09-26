@@ -1537,6 +1537,7 @@ if (VENG_BUILD_TESTS)
             tests/editor/field_widget.cpp
             tests/editor/asset_source_index.cpp
             tests/editor/editor_camera.cpp
+            tests/editor/material_preview_look.cpp
             tests/editor/preview_capability.cpp
             tests/editor/status_tracker.cpp
             tests/editor/table_document.cpp

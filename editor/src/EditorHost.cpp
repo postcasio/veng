@@ -5,6 +5,7 @@
 #include <Veng/Asset/HexId.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Log.h>
+#include <Veng/Reflection/JsonSerialize.h>
 #include <Veng/Module/Module.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
@@ -19,6 +20,7 @@
 #include <VengGraph/MaterialCatalog.h>
 
 #include <VengEditor/AssetEditorPanel.h>
+#include "AssetChip.h"
 #include "AssetSourceIndex.h"
 #include "CommandStack.h"
 #include "EditorOnly.h"
@@ -39,10 +41,12 @@
 #include "panels/TableSchemaEditorPanel.h"
 #include "panels/TextureEditorPanel.h"
 #include "panels/UIDocumentEditorPanel.h"
+#include "material/MaterialPreview.h"
 
 #include <Veng/Project/CompressionFormat.h>
 #include <Veng/Project/CompressionRole.h>
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -221,6 +225,38 @@ namespace VengEditor
             readPacks("packs", settings.Packs);
             readPacks("editorPacks", settings.EditorPacks);
 
+            // How previews look: a level to take the render block of, a field of view, an
+            // environment. A malformed id is reported and left unset.
+            if (project->contains("preview") && (*project)["preview"].is_object())
+            {
+                const nlohmann::json& preview = (*project)["preview"];
+                const auto readId = [&](const char* key, AssetId& out)
+                {
+                    if (!preview.contains(key))
+                    {
+                        return;
+                    }
+                    const optional<AssetId> id = preview[key].is_string()
+                                                     ? ParseAssetId(preview[key].get<string>())
+                                                     : std::nullopt;
+                    if (id)
+                    {
+                        out = *id;
+                    }
+                    else
+                    {
+                        Log::Error("Project '{}': preview '{}' must be a hex id string",
+                                   projectFile.string(), key);
+                    }
+                };
+                readId("level", settings.Preview.Level);
+                readId("environment", settings.Preview.Environment);
+                if (preview.contains("fovY") && preview["fovY"].is_number())
+                {
+                    settings.Preview.FovY = preview["fovY"].get<f32>();
+                }
+            }
+
             if (project->contains("configurations") && (*project)["configurations"].is_array())
             {
                 for (const nlohmann::json& entry : (*project)["configurations"])
@@ -287,9 +323,10 @@ namespace VengEditor
         public:
             MaterialEditorFactory(const AssetSourceIndex& index, Application& app,
                                   AssetManager& assets, ImGuiLayer& imgui, EditorRegistry& editors,
-                                  VengEditor::CookDriver cook, function<AssetId()> mintId)
+                                  VengEditor::CookDriver cook, function<AssetId()> mintId,
+                                  const MaterialPreviewLook& look)
                 : m_Index(index), m_App(app), m_Assets(assets), m_ImGui(imgui), m_Editors(editors),
-                  m_Cook(std::move(cook)), m_MintId(std::move(mintId))
+                  m_Cook(std::move(cook)), m_MintId(std::move(mintId)), m_Look(look)
             {
             }
 
@@ -306,7 +343,7 @@ namespace VengEditor
 
                 return CreateUnique<MaterialEditorPanel>(id, entry->Source, m_Index, m_App,
                                                          m_Assets, m_ImGui, m_Editors, m_Cook,
-                                                         m_MintId);
+                                                         m_MintId, m_Look);
             }
 
         private:
@@ -317,6 +354,7 @@ namespace VengEditor
             EditorRegistry& m_Editors;
             VengEditor::CookDriver m_Cook;
             function<AssetId()> m_MintId;
+            const MaterialPreviewLook& m_Look;
         };
 
         // Resolves a material-instance AssetId to its .vmatinst.json source through the manifest
@@ -326,9 +364,10 @@ namespace VengEditor
         public:
             MaterialInstanceEditorFactory(const AssetSourceIndex& index, Application& app,
                                           AssetManager& assets, ImGuiLayer& imgui,
-                                          VengEditor::CookDriver cook)
+                                          VengEditor::CookDriver cook,
+                                          const MaterialPreviewLook& look)
                 : m_Index(index), m_App(app), m_Assets(assets), m_ImGui(imgui),
-                  m_Cook(std::move(cook))
+                  m_Cook(std::move(cook)), m_Look(look)
             {
             }
 
@@ -354,7 +393,7 @@ namespace VengEditor
                 }
 
                 return CreateUnique<MaterialInstanceEditorPanel>(id, entry->Source, m_Index, m_App,
-                                                                 m_Assets, m_ImGui, m_Cook);
+                                                                 m_Assets, m_ImGui, m_Cook, m_Look);
             }
 
         private:
@@ -363,6 +402,7 @@ namespace VengEditor
             AssetManager& m_Assets;
             ImGuiLayer& m_ImGui;
             VengEditor::CookDriver m_Cook;
+            const MaterialPreviewLook& m_Look;
         };
 
         // Resolves an input-map AssetId to its .inputmap.json source through the manifest index,
@@ -838,6 +878,7 @@ namespace VengEditor
             AssetSourceIndex::ParsePacks(AllPacks(), m_Registries->AssetTypes));
 
         m_Status = CreateUnique<StatusTracker>();
+        m_PreviewLook = CreateUnique<MaterialPreviewLook>(ResolvePreviewLook());
 
         // The project-settings panel inspects ProjectSettings through reflection; registering
         // it auto-registers its compression enums, whose VE_ENUM tables drive the named combos.
@@ -872,14 +913,14 @@ namespace VengEditor
 
             m_Registries->Editor.RegisterAssetEditor(
                 AssetTypes::Material,
-                CreateUnique<MaterialEditorFactory>(*m_Sources, *this, GetAssetManager(),
-                                                    *GetImGuiLayer(), m_Registries->Editor,
-                                                    cookFor(), [this] { return MintAssetId(); }));
+                CreateUnique<MaterialEditorFactory>(
+                    *m_Sources, *this, GetAssetManager(), *GetImGuiLayer(), m_Registries->Editor,
+                    cookFor(), [this] { return MintAssetId(); }, *m_PreviewLook));
 
             m_Registries->Editor.RegisterAssetEditor(
-                AssetTypes::MaterialInstance,
-                CreateUnique<MaterialInstanceEditorFactory>(*m_Sources, *this, GetAssetManager(),
-                                                            *GetImGuiLayer(), cookFor()));
+                AssetTypes::MaterialInstance, CreateUnique<MaterialInstanceEditorFactory>(
+                                                  *m_Sources, *this, GetAssetManager(),
+                                                  *GetImGuiLayer(), cookFor(), *m_PreviewLook));
 
             m_Registries->Editor.RegisterAssetEditor(
                 AssetTypes::Level, CreateUnique<LevelEditorFactory>(
@@ -965,6 +1006,52 @@ namespace VengEditor
     path EditorHost::EditorPackPath(const path& packSource) const
     {
         return m_BuildDir / "editor" / packSource.stem();
+    }
+
+    MaterialPreviewLook EditorHost::ResolvePreviewLook()
+    {
+        const ProjectPreviewSettings& preview = m_ProjectSettings.Preview;
+        MaterialPreviewLook look;
+        if (preview.FovY > 0.0f)
+        {
+            look.FovY = preview.FovY;
+        }
+        look.Environment = preview.Environment;
+        // The level's render block, read from its source through the reflection walk the level
+        // editor and the cooker read it with.
+        if (preview.Level.IsValid())
+        {
+            const AssetSourceIndex::Entry* entry = m_Sources->Find(preview.Level);
+            const optional<nlohmann::json> level =
+                entry ? ReadJsonObject(entry->Source) : std::nullopt;
+            if (level && level->contains("render") && (*level)["render"].is_object())
+            {
+                LevelRenderSettings render;
+                const TypeRegistry& types = GetTypeRegistry();
+                const VoidResult read =
+                    JsonReadFields(&render, types.Info(TypeIdOf<LevelRenderSettings>()),
+                                   (*level)["render"], types, {}, true);
+                if (read)
+                {
+                    look.Render = render;
+                }
+                else
+                {
+                    Log::Error("editor: preview level render block: {}", read.error());
+                }
+            }
+            else
+            {
+                Log::Warn("editor: the preview level 0x{:X} has no readable render block",
+                          preview.Level.Value);
+            }
+        }
+        for (const AssetId id : m_Sources->EntriesOfType(AssetTypes::Environment))
+        {
+            look.Environments.emplace_back(AssetDisplayName(id, *m_Sources), id);
+        }
+        std::ranges::sort(look.Environments, {}, [](const auto& e) { return e.first; });
+        return look;
     }
 
     AssetId EditorHost::MintAssetId() const

@@ -55,10 +55,12 @@ through `LoadProjectSettings` (the host-owned `ProjectSettings` — its `Configu
 output dir is resolved once in `Create`** (`m_BuildDir`): an explicit `EditorHostInfo::BuildDir`
 (`--build-dir`) override, else discovery from the `.veng/build.json` sidecar beside the project
 (`DiscoverProjectBuildDir`), else `ExecutableDirectory()` (the relocatable ship layout). The
-editor mounts each cooked pack from `m_BuildDir` (under the source manifest's stem) and builds its
-`AssetSourceIndex` from the **union** of the project's pack manifests
-(`AssetSourceIndex::ParsePacks`). The editor's own icon pack stays beside the editor exe
-(`ExecutableDirectory()`), distinct from the project's build dir. The runtime `.vengproj` is a
+editor mounts each cooked pack from `m_BuildDir` (under the source manifest's stem) — and each
+**editor-only** pack (`ProjectSettings::EditorPacks`, cooked alongside but never named in the
+`.vengproj`) from `m_BuildDir/editor/`, where the build copies them apart from what ships — and
+builds its `AssetSourceIndex` from the **union** of both lists (`AssetSourceIndex::ParsePacks`).
+The editor's own icon pack stays beside the editor exe (`ExecutableDirectory()`), distinct from
+the project's build dir. The runtime `.vengproj` is a
 game-launch artifact the editor does not consume. Cook-on-demand passes **every** project pack as
 a reference (`CookRequest::ReferenceManifests`), so an edited asset resolves cross-asset ids
 across the whole project's one AssetId namespace, not just its own pack.
@@ -283,10 +285,10 @@ across the whole project's one AssetId namespace, not just its own pack.
   and the cook-validated surface are the same set by construction. Each param slot draws a
   `UI::Drag` over its component count and each texture slot an `AssetChip`; an un-toggled slot
   shows the parent default (read from the parent's `GetDefaultBlock()`) disabled. It previews
-  through the **same** `MaterialPreview` path the material editor uses (the instance over its
-  parent on a turntable sphere). Changing the parent reloads the schema and drops the prior
-  overrides. Save merge-writes the `*.vmatinst.json`, then recooks and hot-reloads behind the
-  stable handle.
+  through the **same** `MaterialPreview` the material editor uses (the instance over its parent,
+  with the same shape, lighting and orbit controls). Changing the parent reloads the schema and
+  drops the prior overrides. Save merge-writes the `*.vmatinst.json`, then recooks and
+  hot-reloads behind the stable handle.
 - **The input-map editor is near-free.** `InputMappingEditorPanel` (registered for
   `AssetTypes::InputMap`) draws a `.inputmap.json`'s reflected document — its
   `vector<InputAction>` actions and its `vector<Binding>` bindings — through the shared reflection
@@ -395,9 +397,20 @@ editor owns only the **UI**:
   never links the cooker) and writing it through the same preserve-unknown-keys `.vmat`
   round-trip. The id shows read-only in the panel beside the material id. A material never opened
   in the editor stays on the hand-mint floor (`vengc generate-id`, paste).
-- **`MaterialPreview` renders one material on a sphere through an `Offscreen` `Viewport`** into an
-  ImGui texture. It is **not** an `EditorPanel`, so its owning `MaterialEditorPanel` registers the
-  viewport on its behalf; each frame the preview advances the turntable and pushes its
-  `ViewState`, the engine renders the registered viewport, and `GetTexture()` samples the result.
-  A save recooks off-thread and hot-reloads behind the stable `AssetHandle`, re-fetching the
-  texture after a recompile/resize invalidates the output.
+- **`MaterialPreview` renders one material on a chosen shape through an `Offscreen` `Viewport`**
+  into an ImGui texture. It is **not** an `EditorPanel`, so its owning panel registers the viewport
+  on its behalf; each frame the preview pushes its `ViewState`, the engine renders the registered
+  viewport, and `Draw` shows the result under its controls: the shape (the engine primitives,
+  whose UVs `Primitives.h` documents as reading upright), the view (lit, or one g-buffer channel
+  through `DebugView`), the environment (every `Environment` the project's packs hold), and a
+  settings popup (tiling — the mesh's UVs repeat, since a generic material has no tiling field —
+  exposure, environment intensity and rotation, an optional sun, bloom, field of view). Drag
+  orbits, wheel zooms, right-drag turns the environment (Shift: the sun), double-click resets
+  the view; the environment cannot rotate, so the shape, camera and sun turn the other way. **The
+  look starts from the project's**: `EditorHost` resolves project.veng's `"preview"` block
+  (`ProjectPreviewSettings`) into a `MaterialPreviewLook` — the preview level's `render` block,
+  read through the reflection walk the level editor uses and applied by
+  `ApplyLevelRenderSettings`, its field of view, its opening environment — which both material
+  factories hand their panels; without one the preview keeps the renderer's defaults and, having
+  no environment, a sun. A save recooks off-thread and hot-reloads behind the stable
+  `AssetHandle`; the shown texture re-registers whenever the viewport's output is replaced.

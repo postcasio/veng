@@ -51,7 +51,7 @@ namespace VengEditor
         MaterialInstanceEditorPanel(Veng::AssetId id, Veng::path sourcePath,
                                     const AssetSourceIndex& sources, Veng::Application& app,
                                     Veng::AssetManager& assets, Veng::ImGuiLayer& imgui,
-                                    CookDriver cook);
+                                    CookDriver cook, const MaterialPreviewLook& previewLook);
         ~MaterialInstanceEditorPanel() override;
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }

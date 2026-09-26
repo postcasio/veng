@@ -15,6 +15,19 @@ namespace Veng
     /// BuildConfiguration. Reflected so the editor lists/edits the configurations
     /// through the property table; Configurations is a genuine reflected array, so
     /// adding or removing a configuration is reflection, not a fixed-capacity hack.
+    /// @brief How the editor previews an asset (a material on a shape) by default, so a preview
+    /// looks as the project's scenes do rather than as the renderer's defaults.
+    struct ProjectPreviewSettings
+    {
+        /// @brief A Level whose render block — exposure, tonemapper, bloom, ambient — previews
+        ///        render under; the invalid id leaves the renderer's defaults.
+        AssetId Level;
+        /// @brief The preview camera's vertical field of view, in radians; 0 leaves the editor's.
+        f32 FovY = 0.0f;
+        /// @brief The Environment a preview opens lit by; the invalid id opens with none.
+        AssetId Environment;
+    };
+
     struct ProjectSettings
     {
         /// @brief The project's build configurations, one per ship target.
@@ -36,6 +49,9 @@ namespace Veng
         /// into an editor/ directory beside the launcher, apart from what ships. Persisted by hand
         /// through project.veng's "editorPacks" key, like Packs.
         vector<path> EditorPacks;
+        /// @brief How the editor's previews look by default. Persisted by hand through
+        /// project.veng's "preview" object ("level", "fovY", "environment"), like Packs.
+        ProjectPreviewSettings Preview;
         /// @brief The Level the engine bootstraps when a managed game world mounts the project.
         ///
         /// The cook writes it into the cooked project file (.vengproj); the runtime reads it back on

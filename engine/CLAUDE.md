@@ -545,6 +545,8 @@ blobs stay binary (the runtime load path parses no JSON).
   persisted by hand through the `"packs"`/`"editorPacks"`/`"startupLevel"` keys, kept off the
   reflected field list; the cook writes the startup level + the game packs' mount names into the
   cooked project file (`.vengproj`), not the pack header, and leaves the editor packs out of it.
+  A `ProjectPreviewSettings Preview` (the `"preview"` object: a `level` whose render block the
+  editor's previews render under, a `fovY`, an opening `environment`) is editor-only too.
 - **`BuildConfiguration`** (`Veng/Project/BuildConfiguration.h`) — a named ship target: a
   `RoleToFormat` codec table (a fixed record, one `CompressionFormat` field per role — the role
   set is closed), a zstd `CompressionLevel`, a `Target` label, and an `OutputSuffix` (the single

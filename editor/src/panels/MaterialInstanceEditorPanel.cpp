@@ -25,7 +25,8 @@ namespace VengEditor
 
     namespace
     {
-        constexpr uvec2 PreviewExtent{256, 256};
+        // Rendered above its displayed size so it stays sharp on a high-density display.
+        constexpr uvec2 PreviewExtent{512, 512};
 
         // Reads Components float channels from the parent default block at a field's offset.
         vec4 ReadParamDefault(std::span<const std::byte> block, const MaterialField& field)
@@ -43,7 +44,8 @@ namespace VengEditor
     MaterialInstanceEditorPanel::MaterialInstanceEditorPanel(AssetId id, path sourcePath,
                                                              const AssetSourceIndex& sources,
                                                              Application& app, AssetManager& assets,
-                                                             ImGuiLayer& imgui, CookDriver cook)
+                                                             ImGuiLayer& imgui, CookDriver cook,
+                                                             const MaterialPreviewLook& previewLook)
         : m_Sources(sources), m_Context(app.GetRenderContext()), m_Assets(assets), m_ImGui(imgui),
           m_Cook(std::move(cook)), m_Id(id), m_SourcePath(std::move(sourcePath))
     {
@@ -54,7 +56,8 @@ namespace VengEditor
         m_TempPath = m_SourcePath.parent_path() /
                      fmt::format(".{}.editor-tmp.vmatinst.json", m_SourcePath.stem().string());
 
-        m_Preview = CreateUnique<MaterialPreview>(m_Context, m_Assets, m_ImGui, PreviewExtent);
+        m_Preview =
+            CreateUnique<MaterialPreview>(m_Context, m_Assets, m_ImGui, PreviewExtent, previewLook);
         app.RegisterViewport(m_Preview->GetViewport());
 
         if (!LoadInstance())
@@ -394,10 +397,9 @@ namespace VengEditor
         const f32 sideWidth = 280.0f;
         if (auto side = UI::Child("InstSide", vec2(sideWidth, 0)))
         {
-            const f32 previewSide = PreviewExtent.x;
             if (m_PreviewReady)
             {
-                UI::Image(m_Preview->GetTexture(), vec2(previewSide, previewSide));
+                m_Preview->Draw(UI::ContentRegionAvail().x);
             }
             else
             {

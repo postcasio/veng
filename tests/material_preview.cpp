@@ -132,7 +132,8 @@ int main()
 
         constexpr uvec2 previewExtent{256, 256};
 
-        VengEditor::MaterialPreview preview(context, assets, *imgui, previewExtent);
+        const VengEditor::MaterialPreviewLook look;
+        VengEditor::MaterialPreview preview(context, assets, *imgui, previewExtent, look);
         if (brick.has_value())
         {
             preview.SetMaterial(*brick);

@@ -95,6 +95,22 @@ namespace Veng::UI
         return ImGui::IsMouseDoubleClicked(ToImGui(button));
     }
 
+    bool IsMouseDown(MouseButton button)
+    {
+        return ImGui::IsMouseDown(ToImGui(button));
+    }
+
+    vec2 MouseDelta()
+    {
+        const ImVec2 d = ImGui::GetIO().MouseDelta;
+        return {d.x, d.y};
+    }
+
+    f32 MouseWheel()
+    {
+        return ImGui::GetIO().MouseWheel;
+    }
+
     bool IsKeyPressed(Key key)
     {
         return ImGui::IsKeyPressed(ToImGui(key));

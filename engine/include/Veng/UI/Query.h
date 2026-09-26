@@ -61,6 +61,17 @@ namespace Veng::UI
     /// @param button  Mouse button to query.
     [[nodiscard]] bool IsItemClicked(MouseButton button = MouseButton::Left);
 
+    /// @brief Returns true while the button is held.
+    /// @param button  Mouse button to query.
+    [[nodiscard]] bool IsMouseDown(MouseButton button);
+
+    /// @brief Returns how far the mouse moved this frame, in UI pixels.
+    [[nodiscard]] vec2 MouseDelta();
+
+    /// @brief Returns this frame's vertical wheel (or trackpad scroll) movement: positive away
+    /// from the user.
+    [[nodiscard]] f32 MouseWheel();
+
     /// @brief Returns true the frame the last item was deactivated after an edit.
     [[nodiscard]] bool ItemEdited();
 
