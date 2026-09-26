@@ -232,7 +232,7 @@ namespace VengEditor
         Veng::path m_PrefabSource;
 
     private:
-        /// @brief Loads and spawns the prefab, then adds the preview lighting it lacks.
+        /// @brief Loads and spawns the prefab, lighting it when no preview look will.
         void BuildScene();
 
         /// @brief Pushes gameplay input focus (capturing the cursor) if not already held.

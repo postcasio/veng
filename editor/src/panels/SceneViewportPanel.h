@@ -10,6 +10,7 @@
 #include "EditorCamera.h"
 #include "EditorGizmo.h"
 #include "panels/PrefabEditContext.h"
+#include "PreviewLook.h"
 
 #include <Veng/Scene/Components.h>
 
@@ -17,6 +18,7 @@ namespace Veng
 {
     class Application;
     class AssetManager;
+    class EnvironmentMap;
     class ImGuiLayer;
     class ImGuiTexture;
     class Input;
@@ -43,7 +45,9 @@ namespace VengEditor
     /// wheel dolly, F to frame); reads the live Scene from the shared PrefabEditContext.
     /// The engine drive-list renders the viewport each frame from the region and view the
     /// panel pushes in OnUI; the panel records no scene render itself. The toolbar overlay
-    /// drives the viewport-local camera and debug-view controls; the play transport and the
+    /// carries the camera controls, the debug view, the environment (under a preview look) and a
+    /// button opening the rendering settings popup — lighting, post, shadows and field of view,
+    /// laid out as the material preview's; the play transport and the
     /// gizmo-mode selector live on the document toolbar. The gizmo mode is shared document state
     /// (PrefabEditContext::Gizmo) every viewport reads; this panel owns only the per-viewport
     /// EditorGizmo hover/drag state.
@@ -88,9 +92,18 @@ namespace VengEditor
         /// @param render  The level's post/pipeline render settings.
         void ApplyLevelRenderSettings(const Veng::LevelRenderSettings& render);
 
-        /// @brief Sets the editor camera's vertical field of view, as the toolbar's FOV slider does.
+        /// @brief Sets the editor camera's vertical field of view, and the one Reset All returns to.
         /// @param fovY  Radians.
         void SetFovY(Veng::f32 fovY);
+
+        /// @brief Lights the scene under a preview look, with the controls to adjust it.
+        ///
+        /// The viewport then keeps the editor's own sky and sun on the scene (EditorOnly entities,
+        /// opening as DefaultSceneLighting says) and shows the environment dropdown and the
+        /// lighting section of the settings popup. Without a look — a level, which brings its own
+        /// sky and render block — neither is shown.
+        /// @param look  The project's preview look; must outlive the panel.
+        void SetPreviewLook(const PreviewLook& look);
 
         /// @brief Whether the last pushed view resolved its depth-of-field lens from the camera.
         ///
@@ -101,6 +114,19 @@ namespace VengEditor
     private:
         /// @brief Draws the toolbar overlay (play/camera/debug controls) over the viewport image.
         void DrawToolbar();
+
+        /// @brief Draws the rendering settings popup the toolbar's "..." button opens.
+        void DrawSettings();
+
+        /// @brief Returns every setting the popup edits to how the viewport opened.
+        void ResetAll();
+
+        /// @brief Keeps the editor's sky and sun on the edit scene in step with m_Lighting.
+        ///
+        /// A no-op without a preview look, with no scene, or while playing (the play clone carries
+        /// the lighting it was cloned with). The first call reads the scene's own lighting to
+        /// choose the defaults.
+        void ApplyPreviewLighting();
 
         /// @brief Draws the centered banner telling the player how to release a captured mouse.
         void DrawCaptureNotice();
@@ -197,18 +223,37 @@ namespace VengEditor
         Veng::Renderer::SceneRendererSettings m_Settings;
         bool m_SettingsDirty = false;
 
-        /// @brief Per-frame tonemap exposure written into the pushed ViewState each frame.
-        Veng::f32 m_Exposure = 1.0f;
-        /// @brief Per-frame bloom composite intensity written into the pushed ViewState each frame.
-        Veng::f32 m_BloomIntensity = 1.0f;
-        /// @brief Per-frame depth-of-field focus distance written into the pushed ViewState.
-        Veng::f32 m_DofFocusDistance = 10.0f;
-        /// @brief Per-frame depth-of-field aperture written into the pushed ViewState.
-        Veng::f32 m_DofAperture = 0.0179f;
-        /// @brief Per-frame depth-of-field blur radius ceiling written into the pushed ViewState.
-        Veng::f32 m_DofMaxCoc = 16.0f;
-        /// @brief Per-frame depth-of-field gather ring count written into the pushed ViewState.
-        Veng::u32 m_DofRingCount = 4;
+        /// @brief The settings the viewport opened with, before any render block; Reset All's base.
+        Veng::Renderer::SceneRendererSettings m_DefaultSettings;
+
+        /// @brief The per-frame view the render block maps to (exposure, tonemapper, ambient,
+        /// bloom, depth of field), with the popup's edits; each frame's ViewState starts from it.
+        Veng::Renderer::ViewState m_BaseView;
+
+        /// @brief The render block last applied, which Reset All re-applies; none for the defaults.
+        Veng::optional<Veng::LevelRenderSettings> m_Render;
+
+        /// @brief The field of view Reset All returns to.
+        Veng::f32 m_DefaultFovY = 0.0f;
+
+        /// @brief The preview look lighting the scene, or null when the viewport adds no lighting.
+        const PreviewLook* m_Look = nullptr;
+        /// @brief The lighting controls' current state.
+        SceneLighting m_Lighting;
+        /// @brief The lighting the scene opened with; Reset All's.
+        SceneLighting m_DefaultLighting;
+        /// @brief Whether the defaults have been read from the scene.
+        bool m_LightingReady = false;
+        /// @brief Whether the scene carries a sky of its own, which the editor's then stands aside for.
+        bool m_OwnSky = false;
+        /// @brief The editor's sky entity on the edit scene, or null.
+        Veng::Entity m_PreviewSky;
+        /// @brief The editor's sun entity on the edit scene, or null.
+        Veng::Entity m_PreviewSun;
+        /// @brief The environment the editor's sky shows, held resident.
+        Veng::AssetHandle<Veng::EnvironmentMap> m_Environment;
+        /// @brief The environment id m_Environment was loaded for.
+        Veng::AssetId m_LoadedEnvironment;
         /// @brief Whether the last pushed view resolved its lens fields from a Physical camera.
         bool m_DofFromPhysicalCamera = false;
 

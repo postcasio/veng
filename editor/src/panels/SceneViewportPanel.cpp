@@ -6,12 +6,14 @@
 
 #include <Veng/Application.h>
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Environment.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Texture.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/ImGui/ImGuiTexture.h>
 #include <Veng/Input.h>
 #include <Veng/InputRouter.h>
+#include <Veng/Log.h>
 #include <Veng/Math/AABB.h>
 #include <Veng/Math/Ray.h>
 #include <Veng/Renderer/Context.h>
@@ -28,8 +30,10 @@
 
 #include "CommandStack.h"
 #include "EditorCommand.h"
+#include "EditorOnly.h"
 
 #include <array>
+#include <cmath>
 
 namespace VengEditor
 {
@@ -41,9 +45,20 @@ namespace VengEditor
         constexpr AssetId LightIconId{0x9BA14A4E1E8AD8F4ULL};
         constexpr AssetId CameraIconId{0x010CD6BC54B24B5DULL};
 
-        // Linear-RGBA gizmo colors.
         // World-unit edge length of an icon billboard.
         constexpr f32 IconSize = 0.6f;
+
+        // SceneLighting::SunIntensity is in these, so its slider reads in a friendly range.
+        constexpr f32 LuxPerSunUnit = 10000.0f;
+
+        constexpr const char* SettingsPopup = "ViewportSettings";
+
+        // The unit vector toward a light at `yaw` about +Y and `pitch` above the horizon.
+        vec3 SunTowards(f32 yaw, f32 pitch)
+        {
+            const f32 c = std::cos(pitch);
+            return {c * std::cos(yaw), std::sin(pitch), c * std::sin(yaw)};
+        }
     }
 
     SceneViewportPanel::SceneViewportPanel(Application& app, AssetManager& assets,
@@ -64,6 +79,8 @@ namespace VengEditor
         // icon); enabled for the viewport's lifetime, not toggled per pick.
         m_Settings.DebugDraw = true;
         m_Settings.Picking = true;
+        m_DefaultSettings = m_Settings;
+        m_DefaultFovY = m_Camera.GetFovY();
 
         m_Viewport = Renderer::Viewport::Create({
             .Context = context,
@@ -342,41 +359,138 @@ namespace VengEditor
     void SceneViewportPanel::SetFovY(f32 fovY)
     {
         m_Camera.SetFovY(fovY);
+        m_DefaultFovY = fovY;
+    }
+
+    void SceneViewportPanel::SetPreviewLook(const PreviewLook& look)
+    {
+        m_Look = &look;
+        m_LightingReady = false;
     }
 
     void SceneViewportPanel::ApplyLevelRenderSettings(const LevelRenderSettings& render)
     {
-        // Run the level's post/pipeline subset through the shared runtime mapping so the
-        // level→renderer wiring lives in one place; the sky is the scene's Sky component, resolved
-        // by the renderer itself each Execute. Start the topology half from the live settings so
-        // the editor-only bits (DebugDraw, the debug-view Mode, the toolbar toggles) survive, and
-        // seed the per-frame half into a scratch view we pull the level-owned values from.
+        // Run the render block through the shared runtime mapping so the level→renderer wiring
+        // lives in one place; the sky is the scene's Sky component, resolved by the renderer itself.
+        // The editor-only bits (DebugDraw, Picking, the debug view) survive from the live settings.
+        m_Render = render;
         Renderer::SceneRendererSettings next = m_Settings;
-        Renderer::ViewState scratch;
-        Veng::ApplyLevelRenderSettings(render, next, scratch);
+        Veng::ApplyLevelRenderSettings(render, next, m_BaseView);
 
-        // A topology change is the only thing that needs a Configure recompile, and this is called
-        // per settings-panel edit (an Exposure drag too), so flip dirty only when a toggle moved.
-        if (next.Bloom != m_Settings.Bloom || next.Shadows != m_Settings.Shadows ||
-            next.AO != m_Settings.AO || next.DepthOfField != m_Settings.DepthOfField)
+        // Called per settings-panel edit (an Exposure drag too), so reconfigure only when the
+        // topology actually moved.
+        if (next != m_Settings)
         {
             m_Settings = next;
             m_SettingsDirty = true;
         }
+    }
 
-        m_Exposure = scratch.Exposure;
-        m_BloomIntensity = scratch.BloomIntensity;
-        m_DofFocusDistance = scratch.DofFocusDistance;
-        m_DofAperture = scratch.DofAperture;
-        m_DofMaxCoc = scratch.DofMaxCoc;
-        m_DofRingCount = scratch.DofRingCount;
+    void SceneViewportPanel::ResetAll()
+    {
+        Renderer::SceneRendererSettings next = m_DefaultSettings;
+        m_BaseView = {};
+        if (m_Render)
+        {
+            Veng::ApplyLevelRenderSettings(*m_Render, next, m_BaseView);
+        }
+        if (next != m_Settings)
+        {
+            m_Settings = next;
+            m_SettingsDirty = true;
+        }
+        m_Camera.SetFovY(m_DefaultFovY);
+        m_Lighting = m_DefaultLighting;
+    }
+
+    void SceneViewportPanel::ApplyPreviewLighting()
+    {
+        if (m_Look == nullptr || m_Ctx.Scene == nullptr || m_Ctx.IsPlaying())
+        {
+            return;
+        }
+        Scene& scene = *m_Ctx.Scene;
+
+        // A sky the document authors takes precedence; the editor's stands aside while there is one.
+        m_OwnSky = false;
+        scene.Each<Sky>([&](Entity entity, Sky&)
+                        { m_OwnSky = m_OwnSky || !scene.Has<EditorOnly>(entity); });
+
+        if (m_Lighting.Environment != m_LoadedEnvironment || !m_LightingReady)
+        {
+            const AssetId wanted = m_LightingReady ? m_Lighting.Environment : m_Look->Environment;
+            m_LoadedEnvironment = wanted;
+            m_Environment = {};
+            if (wanted.IsValid())
+            {
+                if (auto loaded = m_Assets.LoadSync<EnvironmentMap>(wanted))
+                {
+                    m_Environment = *loaded;
+                }
+                else
+                {
+                    Log::Warn("Scene viewport: environment 0x{:X} did not load: {}", wanted.Value,
+                              loaded.error().Detail);
+                }
+            }
+            if (!m_LightingReady)
+            {
+                // The defaults read the scene before the editor adds anything to it.
+                m_DefaultLighting = DefaultSceneLighting(
+                    scene, m_Environment.IsValid() ? m_Look->Environment : AssetId{});
+                m_Lighting = m_DefaultLighting;
+                m_LoadedEnvironment = m_Lighting.Environment;
+                m_LightingReady = true;
+            }
+        }
+
+        const bool wantSky = !m_OwnSky && m_Environment.IsValid();
+        if (wantSky && (m_PreviewSky.IsNull() || !scene.IsAlive(m_PreviewSky)))
+        {
+            m_PreviewSky = scene.CreateEntity();
+            scene.Add<EditorOnly>(m_PreviewSky);
+            scene.Add<Name>(m_PreviewSky) = Name{.Value = "Preview Sky"};
+            scene.Add<Sky>(m_PreviewSky).Lighting = SkyLighting::IBL;
+        }
+        else if (!wantSky && !m_PreviewSky.IsNull() && scene.IsAlive(m_PreviewSky))
+        {
+            scene.DestroyEntity(m_PreviewSky);
+            m_PreviewSky = {};
+        }
+        if (wantSky)
+        {
+            auto& sky = scene.Get<Sky>(m_PreviewSky);
+            sky.Intensity = m_Lighting.EnvIntensity;
+            auto* source =
+                static_cast<EnvironmentSky*>(sky.Source.SetActive(TypeIdOf<EnvironmentSky>()));
+            source->Map = m_Environment;
+        }
+
+        if (m_Lighting.Sun && (m_PreviewSun.IsNull() || !scene.IsAlive(m_PreviewSun)))
+        {
+            m_PreviewSun = scene.CreateEntity();
+            scene.Add<EditorOnly>(m_PreviewSun);
+            scene.Add<Name>(m_PreviewSun) = Name{.Value = "Preview Light"};
+            scene.Add<Light>(m_PreviewSun) = Light{.Type = LightType::Directional};
+        }
+        else if (!m_Lighting.Sun && !m_PreviewSun.IsNull() && scene.IsAlive(m_PreviewSun))
+        {
+            scene.DestroyEntity(m_PreviewSun);
+            m_PreviewSun = {};
+        }
+        if (m_Lighting.Sun)
+        {
+            auto& sun = scene.Get<Light>(m_PreviewSun);
+            sun.Direction = -SunTowards(m_Lighting.SunYaw, m_Lighting.SunPitch);
+            sun.Color = m_Lighting.SunColor;
+            sun.Intensity = m_Lighting.SunIntensity * LuxPerSunUnit;
+        }
     }
 
     void SceneViewportPanel::DrawToolbar()
     {
         if (auto bar = UI::ViewportOverlay("##viewport-toolbar", UI::OverlayAnchor::TopLeft))
         {
-            // Camera: fly speed, FOV, and a frame-selection shortcut.
             f32 flySpeed = m_Camera.GetFlySpeed();
             UI::SetNextItemWidth(110.0f);
             if (UI::Drag("Speed", flySpeed,
@@ -385,15 +499,6 @@ namespace VengEditor
                 m_Camera.SetFlySpeed(flySpeed);
             }
             UI::Tooltip("Fly-camera movement speed");
-
-            UI::SameLine();
-            f32 fovDegrees = glm::degrees(m_Camera.GetFovY());
-            UI::SetNextItemWidth(110.0f);
-            if (UI::Slider("FOV", fovDegrees, {.Min = 20.0f, .Max = 110.0f, .Format = "%.0f deg"}))
-            {
-                m_Camera.SetFovY(glm::radians(fovDegrees));
-            }
-            UI::Tooltip("Vertical field of view");
 
             UI::SameLine();
             if (UI::IconButton(Icons::Frame))
@@ -405,64 +510,125 @@ namespace VengEditor
             UI::Separator();
             UI::SameLine();
 
-            // Debug visualizations: the DebugView dropdown plus the battery toggles.
-            // The change is deferred via m_SettingsDirty so Configure runs once in OnUI,
-            // not per widget.
+            // A debug view is a Configure recompile, deferred via m_SettingsDirty to OnUI.
             i32 mode = static_cast<i32>(m_Settings.Mode);
             UI::SetNextItemWidth(120.0f);
-            if (UI::Combo("View", mode, Renderer::DebugViewNames))
+            if (UI::Combo("##view", mode, Renderer::DebugViewNames))
             {
                 m_Settings.Mode = static_cast<Renderer::DebugView>(mode);
                 m_SettingsDirty = true;
             }
             UI::Tooltip("Debug visualization mode");
 
-            UI::SameLine();
-            // Shadows are two independent arms behind one combo: Settings.Shadows is the
-            // directional cascade, Settings.PunctualShadows the point/spot atlas. A scene's
-            // visible shadows can come from either, so both are exposed; each drives a
-            // Configure recompile.
-            UI::SetNextItemWidth(120.0f);
-            if (auto shadowMenu = UI::ComboBox("##shadows", "Shadows"))
+            if (m_Look != nullptr && !m_OwnSky)
             {
-                if (UI::Checkbox("Directional", m_Settings.Shadows))
+                UI::SameLine();
+                vector<string_view> names{"No Environment"};
+                i32 env = 0;
+                for (usize i = 0; i < m_Look->Environments.size(); ++i)
                 {
-                    m_SettingsDirty = true;
+                    names.push_back(m_Look->Environments[i].first);
+                    if (m_Look->Environments[i].second == m_Lighting.Environment)
+                    {
+                        env = static_cast<i32>(i + 1);
+                    }
                 }
-                if (UI::Checkbox("Punctual", m_Settings.PunctualShadows))
+                UI::SetNextItemWidth(120.0f);
+                if (UI::Combo("##environment", env, names))
                 {
-                    m_SettingsDirty = true;
+                    m_Lighting.Environment =
+                        env == 0 ? AssetId{}
+                                 : m_Look->Environments[static_cast<usize>(env - 1)].second;
                 }
+                UI::Tooltip("The environment lighting the scene");
             }
+
             UI::SameLine();
-            if (UI::ToggleButton("AO", m_Settings.AO))
+            if (UI::Button("..."))
             {
-                m_SettingsDirty = true;
+                UI::OpenPopup(SettingsPopup);
             }
-            UI::SameLine();
-            if (UI::ToggleButton("Bloom", m_Settings.Bloom))
+            UI::Tooltip("Rendering settings");
+            DrawSettings();
+        }
+    }
+
+    void SceneViewportPanel::DrawSettings()
+    {
+        auto popup = UI::Popup(SettingsPopup);
+        if (!popup)
+        {
+            return;
+        }
+
+        // Lighting is the editor's own, so only a viewport under a preview look offers it; a
+        // level's is its render block and sky, edited in its settings panel.
+        if (m_Look != nullptr)
+        {
+            SceneLighting& l = m_Lighting;
+            UI::SeparatorText("Lighting");
+            (void)UI::Slider("Exposure", l.Exposure,
+                             {.Min = -4.0f, .Max = 4.0f, .Format = "%.2f EV"});
+            if (!m_OwnSky)
             {
-                m_SettingsDirty = true;
+                (void)UI::Slider("Environment Intensity", l.EnvIntensity,
+                                 {.Min = 0.0f, .Max = 4.0f, .Format = "%.2f"});
             }
-            UI::SameLine();
+            (void)UI::Checkbox("Sun", l.Sun);
+            if (l.Sun)
             {
-                // Anti-aliasing is one mutually-exclusive mode; the index casts straight to the
-                // enum through AntiAliasingModeNames.
-                i32 aa = static_cast<i32>(m_Settings.AntiAliasing);
-                UI::SetNextItemWidth(96.0f);
-                if (UI::Combo("##aa", aa, Renderer::AntiAliasingModeNames))
+                f32 yaw = glm::degrees(l.SunYaw);
+                if (UI::Slider("Sun Azimuth", yaw,
+                               {.Min = -180.0f, .Max = 180.0f, .Format = "%.0f deg"}))
                 {
-                    m_Settings.AntiAliasing = static_cast<Renderer::AntiAliasingMode>(aa);
-                    m_SettingsDirty = true;
+                    l.SunYaw = glm::radians(yaw);
                 }
-                UI::Tooltip("Anti-aliasing mode");
+                f32 pitch = glm::degrees(l.SunPitch);
+                if (UI::Slider("Sun Elevation", pitch,
+                               {.Min = 0.0f, .Max = 90.0f, .Format = "%.0f deg"}))
+                {
+                    l.SunPitch = glm::radians(pitch);
+                }
+                (void)UI::Slider("Sun Intensity", l.SunIntensity,
+                                 {.Min = 0.0f, .Max = 20.0f, .Format = "%.1f"});
+                (void)UI::ColorEdit3("Sun Colour", l.SunColor);
             }
-            UI::SameLine();
-            if (UI::ToggleButton("DoF", m_Settings.DepthOfField))
-            {
-                m_SettingsDirty = true;
-            }
-            UI::Tooltip("Depth of field");
+        }
+
+        // Each toggle below is a Configure recompile, deferred via m_SettingsDirty to OnUI.
+        UI::SeparatorText("Post");
+        m_SettingsDirty |= UI::Checkbox("Bloom", m_Settings.Bloom);
+        if (m_Settings.Bloom)
+        {
+            (void)UI::Slider("Bloom Strength", m_BaseView.BloomIntensity,
+                             {.Min = 0.0f, .Max = 2.0f, .Format = "%.2f"});
+            (void)UI::Slider("Bloom Radius", m_BaseView.BloomRadius,
+                             {.Min = 0.25f, .Max = 3.0f, .Format = "%.2f"});
+        }
+        m_SettingsDirty |= UI::Checkbox("Ambient Occlusion", m_Settings.AO);
+        i32 aa = static_cast<i32>(m_Settings.AntiAliasing);
+        if (UI::Combo("Anti-aliasing", aa, Renderer::AntiAliasingModeNames))
+        {
+            m_Settings.AntiAliasing = static_cast<Renderer::AntiAliasingMode>(aa);
+            m_SettingsDirty = true;
+        }
+        m_SettingsDirty |= UI::Checkbox("Depth of Field", m_Settings.DepthOfField);
+
+        // Directional is the cascade, punctual the point/spot atlas; a scene's shadows can come
+        // from either.
+        UI::SeparatorText("Shadows");
+        m_SettingsDirty |= UI::Checkbox("Directional", m_Settings.Shadows);
+        m_SettingsDirty |= UI::Checkbox("Punctual", m_Settings.PunctualShadows);
+
+        UI::SeparatorText("Camera");
+        f32 fov = glm::degrees(m_Camera.GetFovY());
+        if (UI::Slider("Field of View", fov, {.Min = 15.0f, .Max = 110.0f, .Format = "%.0f deg"}))
+        {
+            m_Camera.SetFovY(glm::radians(fov));
+        }
+        if (UI::Button("Reset All"))
+        {
+            ResetAll();
         }
     }
 
@@ -625,20 +791,16 @@ namespace VengEditor
             }
         }
 
-        Renderer::ViewState view{
-            .World = m_Ctx.Scene,
-            .Camera = camera,
-            .Delta = Time::GetDeltaTime(),
-            // Interpolate the play clone between its last two Sim ticks (zero while editing), so Play
-            // renders as smoothly as the launcher above the tick rate.
-            .Alpha = m_Ctx.IsPlaying() ? m_Ctx.PlayAlpha : 0.0f,
-            .Exposure = m_Exposure,
-            .BloomIntensity = m_BloomIntensity,
-            .DofFocusDistance = m_DofFocusDistance,
-            .DofAperture = m_DofAperture,
-            .DofMaxCoc = m_DofMaxCoc,
-            .DofRingCount = m_DofRingCount,
-        };
+        ApplyPreviewLighting();
+
+        Renderer::ViewState view = m_BaseView;
+        view.World = m_Ctx.Scene;
+        view.Camera = camera;
+        view.Delta = Time::GetDeltaTime();
+        // Interpolate the play clone between its last two Sim ticks (zero while editing), so Play
+        // renders as smoothly as the launcher above the tick rate.
+        view.Alpha = m_Ctx.IsPlaying() ? m_Ctx.PlayAlpha : 0.0f;
+        view.Exposure = m_BaseView.Exposure * std::exp2(m_Lighting.Exposure);
 
         // The one site the defocus parameters resolve: a Physical camera's lens wins over the
         // stored knobs, the CoC scale is derived from the target height, and the two quality knobs

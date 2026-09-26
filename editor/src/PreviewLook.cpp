@@ -1,6 +1,5 @@
 #include "PreviewLook.h"
 
-#include <Veng/Asset/Environment.h>
 #include <Veng/Scene/Scene.h>
 
 #include "EditorOnly.h"
@@ -20,32 +19,31 @@ namespace VengEditor
         return {.Sky = sky, .Sun = !hasLight && !sky};
     }
 
-    void AddPreviewLighting(Scene& scene, const AssetHandle<EnvironmentMap>& environment)
+    void AddPreviewLighting(Scene& scene)
+    {
+        if (!PlanPreviewLighting(scene, false).Sun)
+        {
+            return;
+        }
+        const Entity entity = scene.CreateEntity();
+        scene.Add<EditorOnly>(entity);
+        scene.Add<Name>(entity) = Name{.Value = "Preview Light"};
+        scene.Add<Light>(entity) = Light{
+            .Type = LightType::Directional,
+            .Direction = glm::normalize(vec3(-0.4f, -0.7f, -0.5f)),
+            .Color = vec3(1.0f, 1.0f, 1.0f),
+            // A directional's intensity is an illuminance in lux: direct daylight.
+            .Intensity = 100000.0f,
+        };
+    }
+
+    SceneLighting DefaultSceneLighting(const Scene& scene, AssetId environment)
     {
         const PreviewLighting plan = PlanPreviewLighting(scene, environment.IsValid());
-        if (plan.Sky)
-        {
-            const Entity entity = scene.CreateEntity();
-            scene.Add<EditorOnly>(entity);
-            scene.Add<Name>(entity) = Name{.Value = "Preview Sky"};
-            Sky& sky = scene.Add<Sky>(entity);
-            sky.Lighting = SkyLighting::IBL;
-            auto* source =
-                static_cast<EnvironmentSky*>(sky.Source.SetActive(TypeIdOf<EnvironmentSky>()));
-            source->Map = environment;
-        }
-        if (plan.Sun)
-        {
-            const Entity entity = scene.CreateEntity();
-            scene.Add<EditorOnly>(entity);
-            scene.Add<Name>(entity) = Name{.Value = "Preview Light"};
-            scene.Add<Light>(entity) = Light{
-                .Type = LightType::Directional,
-                .Direction = glm::normalize(vec3(-0.4f, -0.7f, -0.5f)),
-                .Color = vec3(1.0f, 1.0f, 1.0f),
-                // A directional's intensity is an illuminance in lux: direct daylight.
-                .Intensity = 100000.0f,
-            };
-        }
+        SceneLighting lighting;
+        lighting.Environment = plan.Sky ? environment : AssetId{};
+        lighting.Sun = plan.Sun;
+        lighting.SunIntensity = plan.Sun ? 10.0f : 3.0f;
+        return lighting;
     }
 }

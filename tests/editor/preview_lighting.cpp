@@ -62,7 +62,7 @@ TEST_CASE("PreviewLighting: the added lighting is the editor's")
     TypeRegistry types = MakeRegistry();
     const Unique<Scene> scene = Scene::Create(types);
 
-    AddPreviewLighting(*scene, {});
+    AddPreviewLighting(*scene);
     usize lights = 0;
     usize marked = 0;
     scene->Each<Light>(
@@ -75,6 +75,28 @@ TEST_CASE("PreviewLighting: the added lighting is the editor's")
     CHECK(marked == 1);
 
     // A second pass finds the scene lit and adds nothing.
-    AddPreviewLighting(*scene, {});
+    AddPreviewLighting(*scene);
     CHECK(scene->EntityCount() == 1);
+}
+
+TEST_CASE("SceneLighting: a viewport opens lit by the environment, or sunlit without one")
+{
+    TypeRegistry types = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(types);
+    constexpr AssetId Environment{0x0123456789ABCDEFULL};
+
+    const SceneLighting lit = DefaultSceneLighting(*scene, Environment);
+    CHECK(lit.Environment == Environment);
+    CHECK_FALSE(lit.Sun);
+
+    const SceneLighting dark = DefaultSceneLighting(*scene, AssetId{});
+    CHECK_FALSE(dark.Environment.IsValid());
+    CHECK(dark.Sun);
+    CHECK(dark.SunIntensity > lit.SunIntensity);
+
+    // A scene with its own sky keeps it, and with no light of its own is sunlit.
+    scene->Add<Sky>(scene->CreateEntity());
+    const SceneLighting ownSky = DefaultSceneLighting(*scene, Environment);
+    CHECK_FALSE(ownSky.Environment.IsValid());
+    CHECK(ownSky.Sun);
 }

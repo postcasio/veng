@@ -133,15 +133,22 @@ across the whole project's one AssetId namespace, not just its own pack.
 - **The prefab editor is the scene-editing surface.** `PrefabEditorPanel` (registered for
   `AssetTypes::Prefab`) loads + `SpawnInto`s the prefab into a document-owned live `Scene`, shown
   under the project's `PreviewLook` (the one the material previews open with: its render block and
-  field of view on the viewport, its environment as the scene's sky when the prefab has none, and
-  a directional light only when the prefab would otherwise be unlit — `PlanPreviewLighting` in
-  `src/PreviewLook.h`; the level editor, which brings its own render block and sky, passes no
-  look) and hosts three children over one
+  field of view on the viewport, and lighting the viewport keeps on the scene as `EditorOnly`
+  entities — its environment as the sky when the prefab has none, a sun only when the prefab would
+  otherwise be unlit, `DefaultSceneLighting` in `src/PreviewLook.h` — which the viewport's
+  controls then adjust; the level editor, which brings its own render block and sky, passes no
+  look, and its world gets only a fallback sun when unlit) and hosts three children over one
   shared `PrefabEditContext` (`Scene*` + `AssetManager*` + a multi-entity `Selection` + the
   `Active` entity + the `EntityPayload` drag tag + a `ResolveEntity` helper): `SceneViewportPanel`
   (owns a registered `Offscreen` `Viewport` the engine renders, samples its output into a
   `UI::Image`, feeds the viewport's region from the panel content rect and pushes an orbit-camera
-  `ViewState` each frame, with the `DebugView` dropdown; `Viewport::ScreenToWorldRay` is the
+  `ViewState` each frame starting from the render block's mapped view; its overlay carries the
+  fly speed, frame-selection, the `DebugView` dropdown, the environment dropdown (under a look) and
+  a "..." button opening the rendering settings popup in the material preview's layout — Lighting
+  (under a look: exposure over the look's, environment intensity, the sun), Post (bloom strength
+  and radius, AO, anti-aliasing, depth of field), Shadows, Camera (field of view, Reset All); a
+  scene's sky cannot rotate, so unlike the material preview there is no environment rotation;
+  `Viewport::ScreenToWorldRay` is the
   entity-picking seam), `PrefabExplorerPanel`, and `InspectorPanel`. The host opens the sample
   prefab as the initial document; double-clicking a prefab in the asset browser opens another.
 - **`PrefabExplorerPanel` is a full scene-graph tree** over the intrusive `Hierarchy`

@@ -4,7 +4,6 @@
 
 #include <Veng/Application.h>
 #include <Veng/Asset/AssetManager.h>
-#include <Veng/Asset/Environment.h>
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
@@ -110,8 +109,8 @@ namespace VengEditor
         auto inspector =
             CreateUnique<InspectorPanel>(m_Assets, editors, sources, m_Context, m_Commands);
 
-        // The viewport opens under the preview look, when the document has one: the look's render
-        // block and field of view (its environment is the scene's sky, added by BuildScene).
+        // The viewport opens under the preview look, when the document has one: its render block,
+        // field of view and lighting.
         if (m_Look != nullptr)
         {
             if (m_Look->Render)
@@ -119,6 +118,7 @@ namespace VengEditor
                 m_Viewport->ApplyLevelRenderSettings(*m_Look->Render);
             }
             m_Viewport->SetFovY(m_Look->FovY);
+            m_Viewport->SetPreviewLook(*m_Look);
         }
 
         m_ViewportChild = AddChild(std::move(viewport));
@@ -400,23 +400,12 @@ namespace VengEditor
             m_Context.SelectOnly(spawned.Roots[0]);
         }
 
-        // Light the scene with what it lacks: the look's environment as its sky, and a sun when it
-        // would otherwise be unlit. Both are the editor's, not the document's: marked EditorOnly,
-        // they are neither listed nor saved.
-        AssetHandle<EnvironmentMap> environment;
-        if (m_Look != nullptr && m_Look->Environment.IsValid())
+        // Under a preview look the viewport lights the scene, with its controls; otherwise the
+        // scene is only kept from rendering black.
+        if (m_Look == nullptr)
         {
-            if (auto loaded = m_Assets.LoadSync<EnvironmentMap>(m_Look->Environment))
-            {
-                environment = *loaded;
-            }
-            else
-            {
-                Log::Warn("Prefab editor: preview environment 0x{:X} did not load: {}",
-                          m_Look->Environment.Value, loaded.error().Detail);
-            }
+            AddPreviewLighting(*m_Scene);
         }
-        AddPreviewLighting(*m_Scene, environment);
     }
 
     void PrefabEditorPanel::BuildDefaultLayout(u32 dockspaceId)
