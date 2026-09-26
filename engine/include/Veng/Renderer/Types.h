@@ -307,6 +307,13 @@ namespace Veng::Renderer
         StorageRead,
         /// @brief Written as a storage image.
         StorageWrite,
+        /// @brief Read and written as a storage image by one dispatch: atomics, or an in-place
+        /// update where a texel reads what an earlier invocation of the same pass wrote.
+        ///
+        /// StorageWrite declares only the write, so a barrier into it does not make earlier
+        /// writes visible to reads; a pass that loads what it or a previous pass stored needs
+        /// this kind.
+        StorageReadWrite,
         /// @brief Source of a transfer operation.
         TransferSrc,
         /// @brief Destination of a transfer operation.

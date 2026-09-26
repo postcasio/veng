@@ -107,6 +107,18 @@ TEST_CASE("DecideBarrier: write -> read at same layout is a source-write hazard"
     CHECK(d.Dst.Access == vk::AccessFlagBits::eShaderRead);
 }
 
+TEST_CASE("DecideBarrier: read-write -> read-write makes the earlier writes visible to reads")
+{
+    // Two passes of atomics on one storage image: the second must see what the first stored.
+    const auto rw = ScopeFor(AccessKind::StorageReadWrite);
+    const auto d = DecideSameQueue(rw, rw.Layout, rw.Stage, rw.Access);
+
+    CHECK(d.NeedsBarrier);
+    CHECK((d.Src.Access & vk::AccessFlagBits::eShaderWrite) == vk::AccessFlagBits::eShaderWrite);
+    CHECK((d.Dst.Access & vk::AccessFlagBits::eShaderRead) == vk::AccessFlagBits::eShaderRead);
+    CHECK(d.Dst.Layout == vk::ImageLayout::eGeneral);
+}
+
 TEST_CASE("DecideBarrier: transfer-produced, families differ, acquires on first graphics use")
 {
     // A texture uploaded on the transfer queue (transfer-produced, transfer-dst
@@ -294,6 +306,15 @@ TEST_CASE("ScopeFor maps each AccessKind to its documented scope")
     CHECK(swrite.Layout == vk::ImageLayout::eGeneral);
     CHECK(swrite.Stage == vk::PipelineStageFlagBits::eComputeShader);
     CHECK(swrite.Access == vk::AccessFlagBits::eShaderWrite);
+
+    // Read-write carries both accesses, so a barrier into it makes earlier writes visible to the
+    // pass's loads and atomics, and it counts as a write for the next use's hazard.
+    const auto srw = ScopeFor(Kind::StorageReadWrite);
+    CHECK(srw.Layout == vk::ImageLayout::eGeneral);
+    CHECK(srw.Stage == vk::PipelineStageFlagBits::eComputeShader);
+    CHECK(srw.Access == (vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite));
+    CHECK(IsWriteAccess(srw.Access));
+    CHECK_FALSE(IsSampledAccess(Kind::StorageReadWrite));
 
     const auto tsrc = ScopeFor(Kind::TransferSrc);
     CHECK(tsrc.Layout == vk::ImageLayout::eTransferSrcOptimal);

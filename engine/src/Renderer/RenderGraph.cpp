@@ -83,6 +83,12 @@ namespace Veng::Renderer
         return *this;
     }
 
+    RenderGraph::PassBuilder& RenderGraph::PassBuilder::StorageReadWrite(const ResourceId resource)
+    {
+        m_Pass.Accesses.push_back({.Resource = resource, .Kind = AccessKind::StorageReadWrite});
+        return *this;
+    }
+
     RenderGraph::PassBuilder& RenderGraph::PassBuilder::StorageBufferRead(const ResourceId resource)
     {
         m_Pass.Accesses.push_back({.Resource = resource, .Kind = AccessKind::StorageBufferRead});

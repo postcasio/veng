@@ -109,6 +109,7 @@ namespace Veng::Renderer::Backend
                 // A transient read before any pass writes it produces undefined contents.
                 const bool isRead = IsSampledAccess(access.Kind) ||
                                     access.Kind == AccessKind::StorageRead ||
+                                    access.Kind == AccessKind::StorageReadWrite ||
                                     access.Kind == AccessKind::TransferSrc;
                 if (!source.IsImport && isRead)
                 {

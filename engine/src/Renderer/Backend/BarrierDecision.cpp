@@ -112,6 +112,12 @@ namespace Veng::Renderer::Backend
                 .Stage = vk::PipelineStageFlagBits::eComputeShader,
                 .Access = vk::AccessFlagBits::eShaderWrite,
             };
+        case Kind::StorageReadWrite:
+            return {
+                .Layout = vk::ImageLayout::eGeneral,
+                .Stage = vk::PipelineStageFlagBits::eComputeShader,
+                .Access = vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite,
+            };
         case Kind::TransferSrc:
             return {
                 .Layout = vk::ImageLayout::eTransferSrcOptimal,

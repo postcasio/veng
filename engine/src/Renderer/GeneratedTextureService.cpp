@@ -33,6 +33,7 @@ namespace Veng::Renderer
                 return ImageUsage::DepthAttachment;
             case AccessKind::StorageRead:
             case AccessKind::StorageWrite:
+            case AccessKind::StorageReadWrite:
                 return ImageUsage::Storage;
             case AccessKind::TransferDst:
                 return ImageUsage::TransferDst;
