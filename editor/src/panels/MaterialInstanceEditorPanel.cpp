@@ -45,7 +45,7 @@ namespace VengEditor
                                                              const AssetSourceIndex& sources,
                                                              Application& app, AssetManager& assets,
                                                              ImGuiLayer& imgui, CookDriver cook,
-                                                             const MaterialPreviewLook& previewLook)
+                                                             const PreviewLook& previewLook)
         : m_Sources(sources), m_Context(app.GetRenderContext()), m_Assets(assets), m_ImGui(imgui),
           m_Cook(std::move(cook)), m_Id(id), m_SourcePath(std::move(sourcePath))
     {

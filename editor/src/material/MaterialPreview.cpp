@@ -104,7 +104,7 @@ namespace VengEditor
         }
     }
 
-    MaterialPreviewState MaterialPreview::DefaultState(const MaterialPreviewLook& look)
+    MaterialPreviewState MaterialPreview::DefaultState(const PreviewLook& look)
     {
         MaterialPreviewState s;
         s.Environment = look.Environment;
@@ -120,8 +120,7 @@ namespace VengEditor
     }
 
     MaterialPreview::MaterialPreview(Renderer::Context& context, AssetManager& assets,
-                                     ImGuiLayer& imgui, uvec2 extent,
-                                     const MaterialPreviewLook& look)
+                                     ImGuiLayer& imgui, uvec2 extent, const PreviewLook& look)
         : m_Context(context), m_Assets(assets), m_ImGui(imgui), m_Look(look), m_Extent(extent),
           m_State(DefaultState(look))
     {

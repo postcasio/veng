@@ -339,6 +339,11 @@ namespace VengEditor
         m_Commands.Push(CreateUnique<EditTransform>(m_Ctx.Active, start, final));
     }
 
+    void SceneViewportPanel::SetFovY(f32 fovY)
+    {
+        m_Camera.SetFovY(fovY);
+    }
+
     void SceneViewportPanel::ApplyLevelRenderSettings(const LevelRenderSettings& render)
     {
         // Run the level's post/pipeline subset through the shared runtime mapping so the

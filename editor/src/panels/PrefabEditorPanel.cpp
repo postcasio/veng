@@ -4,6 +4,7 @@
 
 #include <Veng/Application.h>
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Environment.h>
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
@@ -23,6 +24,7 @@
 #include "panels/PrefabExplorerPanel.h"
 #include "panels/SceneViewportPanel.h"
 #include "PrefabSerialize.h"
+#include "PreviewLook.h"
 
 namespace VengEditor
 {
@@ -31,9 +33,10 @@ namespace VengEditor
     PrefabEditorPanel::PrefabEditorPanel(AssetId id, Application& app, AssetManager& assets,
                                          ImGuiLayer& imgui, TypeRegistry& types,
                                          EditorRegistry& editors, const AssetSourceIndex& sources,
-                                         Input& input, InputRouter& router, SystemRegistry& systems)
+                                         Input& input, InputRouter& router, SystemRegistry& systems,
+                                         const PreviewLook& look)
         : PrefabEditorPanel(id, fmt::format("Prefab 0x{:X}", id.Value), app, assets, imgui, types,
-                            editors, sources, input, router, systems)
+                            editors, sources, input, router, systems, &look)
     {
         // The prefab document saves its entities back to the .prefab.json the manifest points at;
         // an unindexed id leaves the source empty, which disables Save.
@@ -49,8 +52,9 @@ namespace VengEditor
                                          AssetManager& assets, ImGuiLayer& imgui,
                                          TypeRegistry& types, EditorRegistry& /*editors*/,
                                          const AssetSourceIndex& /*sources*/, Input& input,
-                                         InputRouter& router, SystemRegistry& systems)
-        : m_Id(worldPrefab), m_BaseTitle(std::move(title)),
+                                         InputRouter& router, SystemRegistry& systems,
+                                         const PreviewLook* look)
+        : m_Id(worldPrefab), m_Look(look), m_BaseTitle(std::move(title)),
           m_TitleId(fmt::format("##doc0x{:X}", worldPrefab.Value)), m_Assets(assets),
           m_Input(input), m_Audio(app.GetAudioEngine()), m_Router(router), m_Systems(systems)
     {
@@ -105,6 +109,17 @@ namespace VengEditor
         auto explorer = CreateUnique<PrefabExplorerPanel>(m_Context, m_Commands);
         auto inspector =
             CreateUnique<InspectorPanel>(m_Assets, editors, sources, m_Context, m_Commands);
+
+        // The viewport opens under the preview look, when the document has one: the look's render
+        // block and field of view (its environment is the scene's sky, added by BuildScene).
+        if (m_Look != nullptr)
+        {
+            if (m_Look->Render)
+            {
+                m_Viewport->ApplyLevelRenderSettings(*m_Look->Render);
+            }
+            m_Viewport->SetFovY(m_Look->FovY);
+        }
 
         m_ViewportChild = AddChild(std::move(viewport));
         m_ExplorerChild = AddChild(std::move(explorer));
@@ -385,24 +400,23 @@ namespace VengEditor
             m_Context.SelectOnly(spawned.Roots[0]);
         }
 
-        // Light the scene when the prefab carries none, so the spawned content is visible. The
-        // light is the editor's, not the document's: marked EditorOnly, it is neither listed nor
-        // saved.
-        bool hasLight = false;
-        m_Scene->Each<Light>([&hasLight](Entity, Light&) { hasLight = true; });
-        if (!hasLight)
+        // Light the scene with what it lacks: the look's environment as its sky, and a sun when it
+        // would otherwise be unlit. Both are the editor's, not the document's: marked EditorOnly,
+        // they are neither listed nor saved.
+        AssetHandle<EnvironmentMap> environment;
+        if (m_Look != nullptr && m_Look->Environment.IsValid())
         {
-            const Entity light = m_Scene->CreateEntity();
-            m_Scene->Add<EditorOnly>(light);
-            m_Scene->Add<Name>(light) = Name{.Value = "Preview Light"};
-            m_Scene->Add<Light>(light) = Light{
-                .Type = LightType::Directional,
-                .Direction = glm::normalize(vec3(-0.4f, -0.7f, -0.5f)),
-                .Color = vec3(1.0f, 1.0f, 1.0f),
-                // A directional's intensity is an illuminance in lux: direct daylight.
-                .Intensity = 100000.0f,
-            };
+            if (auto loaded = m_Assets.LoadSync<EnvironmentMap>(m_Look->Environment))
+            {
+                environment = *loaded;
+            }
+            else
+            {
+                Log::Warn("Prefab editor: preview environment 0x{:X} did not load: {}",
+                          m_Look->Environment.Value, loaded.error().Detail);
+            }
         }
+        AddPreviewLighting(*m_Scene, environment);
     }
 
     void PrefabEditorPanel::BuildDefaultLayout(u32 dockspaceId)

@@ -47,6 +47,7 @@ add_library(veng_editor SHARED
         src/panels/UIDocumentSource.cpp
         src/FieldWidget.cpp
         src/material/MaterialPreview.cpp
+        src/PreviewLook.cpp
 )
 add_library(veng_editor::veng_editor ALIAS veng_editor)
 

@@ -15,8 +15,9 @@ namespace Veng
     /// BuildConfiguration. Reflected so the editor lists/edits the configurations
     /// through the property table; Configurations is a genuine reflected array, so
     /// adding or removing a configuration is reflection, not a fixed-capacity hack.
-    /// @brief How the editor previews an asset (a material on a shape) by default, so a preview
-    /// looks as the project's scenes do rather than as the renderer's defaults.
+    /// @brief How the editor previews an asset (a material on a shape, a prefab in its editor) by
+    /// default, so a preview looks as the project's scenes do rather than as the renderer's
+    /// defaults.
     struct ProjectPreviewSettings
     {
         /// @brief A Level whose render block — exposure, tonemapper, bloom, ambient — previews

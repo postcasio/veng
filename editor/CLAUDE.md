@@ -131,8 +131,12 @@ across the whole project's one AssetId namespace, not just its own pack.
 ## Scene editing: the prefab and level editors
 
 - **The prefab editor is the scene-editing surface.** `PrefabEditorPanel` (registered for
-  `AssetTypes::Prefab`) loads + `SpawnInto`s the prefab into a document-owned live `Scene` (adding
-  a default directional light when the prefab carries none) and hosts three children over one
+  `AssetTypes::Prefab`) loads + `SpawnInto`s the prefab into a document-owned live `Scene`, shown
+  under the project's `PreviewLook` (the one the material previews open with: its render block and
+  field of view on the viewport, its environment as the scene's sky when the prefab has none, and
+  a directional light only when the prefab would otherwise be unlit — `PlanPreviewLighting` in
+  `src/PreviewLook.h`; the level editor, which brings its own render block and sky, passes no
+  look) and hosts three children over one
   shared `PrefabEditContext` (`Scene*` + `AssetManager*` + a multi-entity `Selection` + the
   `Active` entity + the `EntityPayload` drag tag + a `ResolveEntity` helper): `SceneViewportPanel`
   (owns a registered `Offscreen` `Viewport` the engine renders, samples its output into a
@@ -162,8 +166,8 @@ across the whole project's one AssetId namespace, not just its own pack.
   `Entity` back to a prefab-local index, the inverse of the importer's `ReadReference`; enums come
   out as enumerator names, matching what the cooker's `JsonReadFields`-based read requires.
 - **An entity the editor adds for its own presentation carries `EditorOnly`** (`src/EditorOnly.h`,
-  registered by the host). The prefab editor lights a document with no light of its own with a
-  marked preview light; the explorer does not list a marked entity, the toolbar does not count it,
+  registered by the host). The prefab editor lights a document with what it lacks — a marked
+  preview sky from the look's environment, a marked preview light when otherwise unlit; the explorer does not list a marked entity, the toolbar does not count it,
   and `PrefabSerialize::Save` skips it and its subtree, so it never reaches a saved prefab. It still
   renders and still carries into a play session's clone. Any future editor-added stand-in (a
   reference grid, a preview floor) takes the same marker rather than a special case.
@@ -408,9 +412,9 @@ editor owns only the **UI**:
   orbits, wheel zooms, right-drag turns the environment (Shift: the sun), double-click resets
   the view; the environment cannot rotate, so the shape, camera and sun turn the other way. **The
   look starts from the project's**: `EditorHost` resolves project.veng's `"preview"` block
-  (`ProjectPreviewSettings`) into a `MaterialPreviewLook` — the preview level's `render` block,
+  (`ProjectPreviewSettings`) into a `PreviewLook` — the preview level's `render` block,
   read through the reflection walk the level editor uses and applied by
   `ApplyLevelRenderSettings`, its field of view, its opening environment — which both material
-  factories hand their panels; without one the preview keeps the renderer's defaults and, having
+  factories hand their panels, and the prefab factory its documents; without one the preview keeps the renderer's defaults and, having
   no environment, a sun. A save recooks off-thread and hot-reloads behind the stable
   `AssetHandle`; the shown texture re-registers whenever the viewport's output is replaced.

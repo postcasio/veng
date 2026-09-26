@@ -8,6 +8,8 @@
 #include <Veng/Scene/Entity.h>
 #include <Veng/Veng.h>
 
+#include "PreviewLook.h"
+
 namespace Veng
 {
     class AssetManager;
@@ -29,22 +31,6 @@ namespace Veng
 
 namespace VengEditor
 {
-    /// @brief How a project wants its material previews to look by default, and what they may
-    /// show: resolved once by the editor host from project.veng's "preview" block and the
-    /// project's packs.
-    struct MaterialPreviewLook
-    {
-        /// @brief The render block of the level the project previews under — its exposure,
-        /// tonemapper, bloom and ambient — or nothing for the renderer's own defaults.
-        Veng::optional<Veng::LevelRenderSettings> Render;
-        /// @brief The camera's vertical field of view, in radians.
-        Veng::f32 FovY = glm::radians(45.0f);
-        /// @brief The environment the preview opens with; the invalid id for none.
-        Veng::AssetId Environment;
-        /// @brief Every environment the project's packs hold, by display name, for the picker.
-        Veng::vector<std::pair<Veng::string, Veng::AssetId>> Environments;
-    };
-
     /// @brief The shapes a material preview can wear.
     enum class MaterialPreviewShape : Veng::u8
     {
@@ -99,7 +85,7 @@ namespace VengEditor
     /// environment for image-based lighting), an Offscreen Veng::Renderer::Viewport, and the
     /// ImGuiTexture the panel draws. SetMaterial swaps the previewed material after a recook hands
     /// back a fresh handle. The look — exposure, tonemapper, bloom, field of view, environment —
-    /// starts from the project's (MaterialPreviewLook) and the controls adjust it.
+    /// starts from the project's (PreviewLook) and the controls adjust it.
     ///
     /// The environment cannot rotate, so rotating it turns the shape, camera and sun the other
     /// way. The viewport is rendered by the engine drive-list (its owning panel registers it on
@@ -114,8 +100,7 @@ namespace VengEditor
         /// @param extent   Render resolution in pixels.
         /// @param look     The project's defaults; must outlive the preview.
         MaterialPreview(Veng::Renderer::Context& context, Veng::AssetManager& assets,
-                        Veng::ImGuiLayer& imgui, Veng::uvec2 extent,
-                        const MaterialPreviewLook& look);
+                        Veng::ImGuiLayer& imgui, Veng::uvec2 extent, const PreviewLook& look);
         ~MaterialPreview();
 
         MaterialPreview(const MaterialPreview&) = delete;
@@ -148,7 +133,7 @@ namespace VengEditor
         [[nodiscard]] MaterialPreviewState& State() { return m_State; }
 
         /// @brief The state a preview opens with under `look`.
-        [[nodiscard]] static MaterialPreviewState DefaultState(const MaterialPreviewLook& look);
+        [[nodiscard]] static MaterialPreviewState DefaultState(const PreviewLook& look);
 
     private:
         void BuildScene();
@@ -158,7 +143,7 @@ namespace VengEditor
         Veng::Renderer::Context& m_Context;
         Veng::AssetManager& m_Assets;
         Veng::ImGuiLayer& m_ImGui;
-        const MaterialPreviewLook& m_Look;
+        const PreviewLook& m_Look;
 
         /// @brief Private TypeRegistry for the preview scene's builtin components.
         Veng::Unique<Veng::TypeRegistry> m_Types;

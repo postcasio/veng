@@ -36,13 +36,15 @@ namespace VengEditor
 {
     class AssetSourceIndex;
     class SceneViewportPanel;
+    struct PreviewLook;
 
     /// @brief Asset editor for a prefab: a private dockspace hosting a scene viewport,
     /// an entity-hierarchy explorer, and a reflection inspector over one spawned Scene.
     ///
-    /// On open the prefab is loaded and spawned into a fresh Scene the document owns; a
-    /// default directional light is added when the prefab carries none so the content is
-    /// lit. The explorer drives selection, the inspector edits the selected entity's
+    /// On open the prefab is loaded and spawned into a fresh Scene the document owns, and shown
+    /// under the project's preview look (PreviewLook): its render block and field of view, and
+    /// its environment as the sky when the prefab carries none. A default directional light is
+    /// added when the prefab would otherwise be unlit. The explorer drives selection, the inspector edits the selected entity's
     /// components, and the viewport renders the live scene — all sharing one
     /// PrefabEditContext.
     class PrefabEditorPanel : public AssetEditorPanel
@@ -59,11 +61,12 @@ namespace VengEditor
         /// @param input     Frame-coherent input service the viewport camera reads.
         /// @param router    Input router whose gameplay focus captures the mouse during Play.
         /// @param systems   System registry the play session instantiates its systems from.
+        /// @param look      The project's preview look; must outlive the panel.
         PrefabEditorPanel(Veng::AssetId id, Veng::Application& app, Veng::AssetManager& assets,
                           Veng::ImGuiLayer& imgui, Veng::TypeRegistry& types,
                           Veng::EditorRegistry& editors, const AssetSourceIndex& sources,
                           Veng::Input& input, Veng::InputRouter& router,
-                          Veng::SystemRegistry& systems);
+                          Veng::SystemRegistry& systems, const PreviewLook& look);
         ~PrefabEditorPanel() override;
 
         /// @brief The document window title, carrying an unsaved-changes marker when dirty.
@@ -155,11 +158,15 @@ namespace VengEditor
         /// @param input        Frame-coherent input service the viewport camera reads.
         /// @param router       Input router whose gameplay focus captures the mouse during Play.
         /// @param systems      System registry the play session instantiates its systems from.
+        /// @param look         The preview look to show the scene under, or nullptr to show it
+        ///                     under the viewport's defaults (a level brings its own render block
+        ///                     and sky); must outlive the panel.
         PrefabEditorPanel(Veng::AssetId worldPrefab, Veng::string title, Veng::Application& app,
                           Veng::AssetManager& assets, Veng::ImGuiLayer& imgui,
                           Veng::TypeRegistry& types, Veng::EditorRegistry& editors,
                           const AssetSourceIndex& sources, Veng::Input& input,
-                          Veng::InputRouter& router, Veng::SystemRegistry& systems);
+                          Veng::InputRouter& router, Veng::SystemRegistry& systems,
+                          const PreviewLook* look);
 
         /// @brief Splits the dockspace into explorer (left), viewport (center), inspector (right).
         void BuildDefaultLayout(Veng::u32 dockspaceId) override;
@@ -225,7 +232,7 @@ namespace VengEditor
         Veng::path m_PrefabSource;
 
     private:
-        /// @brief Loads and spawns the prefab, adding a default light when none is present.
+        /// @brief Loads and spawns the prefab, then adds the preview lighting it lacks.
         void BuildScene();
 
         /// @brief Pushes gameplay input focus (capturing the cursor) if not already held.
@@ -234,6 +241,9 @@ namespace VengEditor
         void ReleaseFromPlay();
 
         Veng::AssetId m_Id;
+
+        /// @brief The preview look the scene is shown under, or nullptr for the viewport defaults.
+        const PreviewLook* m_Look = nullptr;
 
         /// @brief Stable "##doc<id>" suffix keeping the ImGui dock identity constant across the marker.
         Veng::string m_TitleId;

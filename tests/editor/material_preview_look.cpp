@@ -10,7 +10,7 @@ using namespace VengEditor;
 
 TEST_CASE("MaterialPreview: with no environment the preview opens sunlit")
 {
-    const MaterialPreviewState state = MaterialPreview::DefaultState(MaterialPreviewLook{});
+    const MaterialPreviewState state = MaterialPreview::DefaultState(PreviewLook{});
     CHECK(state.Sun);
     CHECK_FALSE(state.Environment.IsValid());
 }
@@ -21,7 +21,7 @@ TEST_CASE("MaterialPreview: a project's look sets the opening field of view, env
     render.Bloom = false;
     render.BloomIntensity = 0.7f;
     render.BloomRadius = 0.4f;
-    const MaterialPreviewLook look{
+    const PreviewLook look{
         .Render = render, .FovY = 1.0f, .Environment = AssetId{0x0123456789ABCDEFULL}};
 
     const MaterialPreviewState state = MaterialPreview::DefaultState(look);

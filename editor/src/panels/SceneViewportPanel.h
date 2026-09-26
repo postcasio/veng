@@ -88,6 +88,10 @@ namespace VengEditor
         /// @param render  The level's post/pipeline render settings.
         void ApplyLevelRenderSettings(const Veng::LevelRenderSettings& render);
 
+        /// @brief Sets the editor camera's vertical field of view, as the toolbar's FOV slider does.
+        /// @param fovY  Radians.
+        void SetFovY(Veng::f32 fovY);
+
         /// @brief Whether the last pushed view resolved its depth-of-field lens from the camera.
         ///
         /// True when the camera the panel pushed is Physical, so an authoring surface can show the

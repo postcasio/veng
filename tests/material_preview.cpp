@@ -132,7 +132,7 @@ int main()
 
         constexpr uvec2 previewExtent{256, 256};
 
-        const VengEditor::MaterialPreviewLook look;
+        const VengEditor::PreviewLook look;
         VengEditor::MaterialPreview preview(context, assets, *imgui, previewExtent, look);
         if (brick.has_value())
         {

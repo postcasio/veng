@@ -42,6 +42,7 @@
 #include "panels/TextureEditorPanel.h"
 #include "panels/UIDocumentEditorPanel.h"
 #include "material/MaterialPreview.h"
+#include "PreviewLook.h"
 
 #include <Veng/Project/CompressionFormat.h>
 #include <Veng/Project/CompressionRole.h>
@@ -324,7 +325,7 @@ namespace VengEditor
             MaterialEditorFactory(const AssetSourceIndex& index, Application& app,
                                   AssetManager& assets, ImGuiLayer& imgui, EditorRegistry& editors,
                                   VengEditor::CookDriver cook, function<AssetId()> mintId,
-                                  const MaterialPreviewLook& look)
+                                  const PreviewLook& look)
                 : m_Index(index), m_App(app), m_Assets(assets), m_ImGui(imgui), m_Editors(editors),
                   m_Cook(std::move(cook)), m_MintId(std::move(mintId)), m_Look(look)
             {
@@ -354,7 +355,7 @@ namespace VengEditor
             EditorRegistry& m_Editors;
             VengEditor::CookDriver m_Cook;
             function<AssetId()> m_MintId;
-            const MaterialPreviewLook& m_Look;
+            const PreviewLook& m_Look;
         };
 
         // Resolves a material-instance AssetId to its .vmatinst.json source through the manifest
@@ -364,8 +365,7 @@ namespace VengEditor
         public:
             MaterialInstanceEditorFactory(const AssetSourceIndex& index, Application& app,
                                           AssetManager& assets, ImGuiLayer& imgui,
-                                          VengEditor::CookDriver cook,
-                                          const MaterialPreviewLook& look)
+                                          VengEditor::CookDriver cook, const PreviewLook& look)
                 : m_Index(index), m_App(app), m_Assets(assets), m_ImGui(imgui),
                   m_Cook(std::move(cook)), m_Look(look)
             {
@@ -402,7 +402,7 @@ namespace VengEditor
             AssetManager& m_Assets;
             ImGuiLayer& m_ImGui;
             VengEditor::CookDriver m_Cook;
-            const MaterialPreviewLook& m_Look;
+            const PreviewLook& m_Look;
         };
 
         // Resolves an input-map AssetId to its .inputmap.json source through the manifest index,
@@ -552,9 +552,10 @@ namespace VengEditor
             PrefabEditorFactory(Application& app, AssetManager& assets, ImGuiLayer& imgui,
                                 TypeRegistry& types, EditorRegistry& editors,
                                 const AssetSourceIndex& sources, Input& input, InputRouter& router,
-                                SystemRegistry& systems)
+                                SystemRegistry& systems, const PreviewLook& look)
                 : m_App(app), m_Assets(assets), m_ImGui(imgui), m_Types(types), m_Editors(editors),
-                  m_Sources(sources), m_Input(input), m_Router(router), m_Systems(systems)
+                  m_Sources(sources), m_Input(input), m_Router(router), m_Systems(systems),
+                  m_Look(look)
             {
             }
 
@@ -563,7 +564,7 @@ namespace VengEditor
             {
                 return CreateUnique<PrefabEditorPanel>(id, m_App, m_Assets, m_ImGui, m_Types,
                                                        m_Editors, m_Sources, m_Input, m_Router,
-                                                       m_Systems);
+                                                       m_Systems, m_Look);
             }
 
         private:
@@ -576,6 +577,7 @@ namespace VengEditor
             Input& m_Input;
             InputRouter& m_Router;
             SystemRegistry& m_Systems;
+            const PreviewLook& m_Look;
         };
 
         // Resolves a level AssetId to its world prefab (by loading the level) and its
@@ -878,7 +880,7 @@ namespace VengEditor
             AssetSourceIndex::ParsePacks(AllPacks(), m_Registries->AssetTypes));
 
         m_Status = CreateUnique<StatusTracker>();
-        m_PreviewLook = CreateUnique<MaterialPreviewLook>(ResolvePreviewLook());
+        m_PreviewLook = CreateUnique<PreviewLook>(ResolvePreviewLook());
 
         // The project-settings panel inspects ProjectSettings through reflection; registering
         // it auto-registers its compression enums, whose VE_ENUM tables drive the named combos.
@@ -887,12 +889,13 @@ namespace VengEditor
         GetTypeRegistry().Register<EditorOnly>();
 
         // A prefab is edited live in a spawned Scene, so its editor needs no manifest
-        // source; register it unconditionally.
+        // source; register it unconditionally. It shows the prefab under the preview look
+        // resolved above, the same one the material previews open with.
         m_Registries->Editor.RegisterAssetEditor(
             AssetTypes::Prefab,
-            CreateUnique<PrefabEditorFactory>(*this, GetAssetManager(), *GetImGuiLayer(),
-                                              GetTypeRegistry(), m_Registries->Editor, *m_Sources,
-                                              GetInput(), GetInputRouter(), GetSystemRegistry()));
+            CreateUnique<PrefabEditorFactory>(
+                *this, GetAssetManager(), *GetImGuiLayer(), GetTypeRegistry(), m_Registries->Editor,
+                *m_Sources, GetInput(), GetInputRouter(), GetSystemRegistry(), *m_PreviewLook));
 
         // try_emplace no-ops if the game module already registered a factory for these types.
         if (m_Info.ProjectPath)
@@ -1008,10 +1011,10 @@ namespace VengEditor
         return m_BuildDir / "editor" / packSource.stem();
     }
 
-    MaterialPreviewLook EditorHost::ResolvePreviewLook()
+    PreviewLook EditorHost::ResolvePreviewLook()
     {
         const ProjectPreviewSettings& preview = m_ProjectSettings.Preview;
-        MaterialPreviewLook look;
+        PreviewLook look;
         if (preview.FovY > 0.0f)
         {
             look.FovY = preview.FovY;

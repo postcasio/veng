@@ -65,7 +65,7 @@ namespace VengEditor
                                        InputRouter& router, SystemRegistry& systems,
                                        CookDriver cook)
         : PrefabEditorPanel(worldPrefab, fmt::format("Level 0x{:X}", id.Value), app, assets, imgui,
-                            types, editors, sources, input, router, systems),
+                            types, editors, sources, input, router, systems, nullptr),
           m_Id(id), m_SourcePath(std::move(sourcePath)), m_AssetManager(assets), m_Catalog(systems),
           m_Editors(editors), m_Sources(sources), m_Cook(std::move(cook))
     {
