@@ -673,6 +673,106 @@ TEST_CASE("Capsule: segments and rings clamp to minimums")
     CHECK(clamped.Indices.size() == explicitMin.Indices.size());
 }
 
+namespace
+{
+    // How a primitive's texture mapping reads, over every triangle with a UV area (its tangent
+    // frame the average of its corners', which is what a fragment inside it interpolates): triangles
+    // whose texture is mirrored seen from outside (U to the right and V down, against the normal,
+    // is unmirrored), whose tangent does not run along +U, whose bitangent cross(N, T) * w does
+    // not point up the image (toward -V), and, of the outward walls of a shape standing about Y,
+    // those where V does not run down the world's -Y.
+    struct Orientation
+    {
+        usize Triangles = 0;
+        usize Mirrored = 0;
+        usize Framed = 0;
+        usize TangentOff = 0;
+        usize BitangentDown = 0;
+        usize Walls = 0;
+        usize WallsUpsideDown = 0;
+    };
+
+    Orientation MeasureOrientation(const MeshData& data)
+    {
+        Orientation o;
+        for (usize i = 0; i + 2 < data.Indices.size(); i += 3)
+        {
+            const CanonicalVertex& a = data.Vertices[data.Indices[i + 0]];
+            const CanonicalVertex& b = data.Vertices[data.Indices[i + 1]];
+            const CanonicalVertex& c = data.Vertices[data.Indices[i + 2]];
+            const vec2 d1 = b.UV - a.UV;
+            const vec2 d2 = c.UV - a.UV;
+            const f32 det = d1.x * d2.y - d2.x * d1.y;
+            const vec3 e1 = b.Position - a.Position;
+            const vec3 e2 = c.Position - a.Position;
+            if (std::abs(det) < 1e-9f || glm::length(glm::cross(e1, e2)) <= 1e-12f)
+            {
+                continue;
+            }
+            const vec3 dPdu = (e1 * d2.y - e2 * d1.y) / det;
+            const vec3 dPdv = (e2 * d1.x - e1 * d2.x) / det;
+            const vec3 n = glm::normalize(a.Normal + b.Normal + c.Normal);
+            const vec3 t = vec3(a.Tangent) + vec3(b.Tangent) + vec3(c.Tangent);
+            const vec3 bitangent = glm::cross(n, t) * a.Tangent.w;
+            ++o.Triangles;
+            o.Mirrored += glm::dot(glm::cross(dPdu, dPdv), n) >= 0.0f ? 1 : 0;
+            // Where the corners' tangents disagree (an equirectangular pole, whose corners sit at
+            // longitudes far apart) the triangle has no one frame to judge.
+            if (glm::length(t) >= 2.0f)
+            {
+                ++o.Framed;
+                o.TangentOff += glm::dot(t, dPdu) <= 0.0f ? 1 : 0;
+                o.BitangentDown += glm::dot(bitangent, dPdv) >= 0.0f ? 1 : 0;
+            }
+            const vec3 centroid = (a.Position + b.Position + c.Position) / 3.0f;
+            const bool wall = std::abs(n.y) < 0.5f &&
+                              glm::dot(vec2(n.x, n.z), vec2(centroid.x, centroid.z)) > 0.0f;
+            if (wall && std::abs(dPdv.y) > 1e-4f)
+            {
+                ++o.Walls;
+                o.WallsUpsideDown += dPdv.y > 0.0f ? 1 : 0;
+            }
+        }
+        return o;
+    }
+}
+
+TEST_CASE("Primitives: a texture reads upright and unmirrored, its bitangent up the image")
+{
+    const struct
+    {
+        const char* Name;
+        MeshData Data;
+        bool Walls;
+    } shapes[] = {
+        {.Name = "Cube", .Data = Primitives::Cube(), .Walls = true},
+        {.Name = "Plane", .Data = Primitives::Plane(vec2(1.0f), uvec2(2)), .Walls = false},
+        {.Name = "Sphere", .Data = Primitives::Sphere(), .Walls = true},
+        {.Name = "Icosphere", .Data = Primitives::Icosphere(), .Walls = true},
+        {.Name = "Cylinder", .Data = Primitives::Cylinder(), .Walls = true},
+        {.Name = "Cone", .Data = Primitives::Cone(), .Walls = true},
+        {.Name = "Torus", .Data = Primitives::Torus(), .Walls = true},
+        {.Name = "Annulus", .Data = Primitives::Annulus(), .Walls = false},
+        {.Name = "Capsule", .Data = Primitives::Capsule(), .Walls = true},
+    };
+    for (const auto& shape : shapes)
+    {
+        const std::string name = shape.Name;
+        CAPTURE(name);
+        const Orientation o = MeasureOrientation(shape.Data);
+        CHECK(o.Triangles > 0);
+        CHECK(o.Framed * 50 >= o.Triangles * 49);
+        CHECK(o.Mirrored == 0);
+        CHECK(o.TangentOff == 0);
+        CHECK(o.BitangentDown == 0);
+        if (shape.Walls)
+        {
+            CHECK(o.Walls > 0);
+            CHECK(o.WallsUpsideDown == 0);
+        }
+    }
+}
+
 TEST_CASE("Primitives: a generator records a material handle that is not yet resident")
 {
     // The asynchronous Build returns a handle naming a real asset that becomes resident a frame or

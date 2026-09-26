@@ -225,6 +225,12 @@ level from the resolve seam's global facet (`GraphicsGlobalFacet::TextureQuality
   both being in the canonical layout (`Mesh::CanonicalLayout()`), and `AssetManager::Adopt` wraps
   its `Ref<Mesh>` in an (id-less) `AssetHandle<Mesh>` so it is equally usable anywhere a cooked
   handle is — e.g. a `MeshRenderer`.
+- **Every generator maps textures the way an imported mesh does.** Textures sample top-left, V
+  down, so seen from outside a primitive's U runs right and V down (unmirrored), walls standing
+  about Y read upright, and `cross(N, T) * w` points up the image — the frame a green-up normal
+  map and a parallax march assume, and the one the importer's handedness bit reproduces. A new
+  generator joins the orientation case in `tests/unit/primitives.cpp`, which measures all of this
+  per triangle.
 - **One generator is projection-derived: `Primitives::ProjectionShell`.** Every other generator's
   shape is a function of its own dimensions; this one's is a function of a **camera projection**. A
   grid over a normalized screen rect is unprojected through a given `(fovY, aspect)` into camera-space

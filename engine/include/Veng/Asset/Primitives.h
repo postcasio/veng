@@ -17,11 +17,22 @@ namespace Veng
 /// and UVs. A valid material handle is recorded on the produced submesh
 /// (the mesh owns it; the draw loop binds it); an empty handle leaves the
 /// submesh unassigned (SubMesh::NoMaterial).
+///
+/// **Texture orientation.** The engine uploads textures top row first and samples them with a
+/// top-left origin, V down (the mesh importer flips a model's UVs to match), and every generator
+/// maps to that: seen from outside — the side the normals face — U runs to the right and V down,
+/// so a texture reads unmirrored, and the tangent frame's bitangent, cross(N, T) * w, points up
+/// the image (toward -V), the frame a green-up normal map and a parallax march expect. A surface
+/// standing about the Y axis reads upright on its outward face: V runs down the world's -Y. Shapes
+/// swept about Y run U eastward (to the right seen from outside), against the counter-clockwise
+/// sweep angle.
 namespace Veng::Primitives
 {
     /// @brief Axis-aligned cube centered at the origin, `extent` units across the full width (±extent/2 per axis).
     ///
-    /// 24 vertices (4 per face, hard normals), 36 indices, one submesh. Per-face UVs span [0,1].
+    /// 24 vertices (4 per face, hard normals), 36 indices, one submesh. Per-face UVs span [0,1],
+    /// each side face upright (V down its -Y), the top and bottom with their image's top toward -Z
+    /// and +Z respectively.
     [[nodiscard]] MeshData Cube(f32 extent = 1.0f, AssetHandle<MaterialInstance> material = {});
 
     /// @brief Flat XZ-plane quad (+Y normal) centered at the origin, tessellated into `subdivisions` quads per axis.
@@ -262,7 +273,7 @@ namespace Veng::Primitives
 
     /// @brief UV sphere of `radius` with `rings` latitude bands and `segments` longitude bands (min 3 each).
     ///
-    /// Smooth normals; UVs are (longitude, latitude). One submesh.
+    /// Smooth normals; UVs are (longitude eastward, latitude down from the +Y pole). One submesh.
     [[nodiscard]] MeshData Sphere(f32 radius = 0.5f, u32 rings = 16, u32 segments = 32,
                                   AssetHandle<MaterialInstance> material = {});
 
@@ -270,7 +281,8 @@ namespace Veng::Primitives
     ///
     /// Each of the 20 base faces is split `subdivisions` times (4^subdivisions triangles each)
     /// and projected onto the sphere, so vertices are near-uniformly distributed with no pole
-    /// clustering. Smooth normals; equirectangular UVs with the wrap seam split to avoid smearing.
+    /// clustering. Smooth normals; equirectangular UVs (as Sphere's) with the wrap seam split to
+    /// avoid smearing.
     /// One submesh.
     [[nodiscard]] MeshData Icosphere(f32 radius = 0.5f, u32 subdivisions = 3,
                                      AssetHandle<MaterialInstance> material = {});
@@ -279,7 +291,8 @@ namespace Veng::Primitives
     ///
     /// A radial side band of `segments` longitude columns (min 3) plus a top and bottom cap fan,
     /// each with its own hard +Y / -Y normal. Side normals point radially outward; side UVs are
-    /// (longitude, height). One submesh.
+    /// (longitude eastward, height down from the top rim); each cap's UVs are the disc as seen from
+    /// its own side. One submesh.
     [[nodiscard]] MeshData Cylinder(f32 radius = 0.5f, f32 height = 1.0f, u32 segments = 32,
                                     AssetHandle<MaterialInstance> material = {});
 
@@ -287,7 +300,7 @@ namespace Veng::Primitives
     ///
     /// A side band of `segments` longitude columns (min 3) whose apex ring duplicates the apex
     /// per segment so each side face carries its own slanted normal, plus a bottom cap fan with a
-    /// hard -Y normal. One submesh.
+    /// hard -Y normal. Side UVs are (longitude eastward, slant down from the apex). One submesh.
     [[nodiscard]] MeshData Cone(f32 radius = 0.5f, f32 height = 1.0f, u32 segments = 32,
                                 AssetHandle<MaterialInstance> material = {});
 
@@ -295,7 +308,8 @@ namespace Veng::Primitives
     ///
     /// `majorSegments` columns around the ring and `minorSegments` columns around the tube (min 3
     /// each); seam columns duplicate so UVs do not wrap. Smooth normals point away from the tube
-    /// center circle; UVs are (major angle, minor angle). One submesh.
+    /// center circle; UVs are (major angle eastward, minor angle down the outer wall from its
+    /// equator). One submesh.
     [[nodiscard]] MeshData Torus(f32 majorRadius = 0.5f, f32 minorRadius = 0.2f,
                                  u32 majorSegments = 32, u32 minorSegments = 16,
                                  AssetHandle<MaterialInstance> material = {});
@@ -347,7 +361,8 @@ namespace Veng::Primitives
     ///
     /// `segments` longitude columns (min 3) shared by the band and both caps; each hemisphere has
     /// `rings` latitude bands (min 1). The cylinder spans the central `height`; the hemisphere
-    /// centers sit at ±height/2, so the full extent is height + 2*radius. Smooth normals; one submesh.
+    /// centers sit at ±height/2, so the full extent is height + 2*radius. Smooth normals; UVs as
+    /// Sphere's (longitude eastward, latitude down from the top). One submesh.
     [[nodiscard]] MeshData Capsule(f32 radius = 0.5f, f32 height = 1.0f, u32 segments = 32,
                                    u32 rings = 8, AssetHandle<MaterialInstance> material = {});
 }

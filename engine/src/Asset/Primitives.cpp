@@ -51,35 +51,37 @@ namespace Veng::Primitives
         const f32 h = extent * 0.5f;
 
         // Six faces, each with its own normal and tangent (hard edges). Per
-        // face: the outward normal, the U-direction tangent, and the V
-        // direction; the four corners are normal-centered plus ±U/±V. UVs span
-        // the unit square; handedness w = +1 (UVs are not mirrored).
+        // face: the outward normal, the U-direction tangent, and the direction
+        // up the face (toward the image's top edge); the four corners are
+        // normal-centered plus ±U/±Up. UVs span the unit square with V running
+        // down from the top edge, so seen from outside a face reads upright and
+        // unmirrored; handedness w = +1 (cross(N, T) points up the face).
         struct Face
         {
             vec3 Normal;
             vec3 Tangent;
-            vec3 Bitangent;
+            vec3 Up;
         };
 
         const Face faces[6] = {
             {.Normal = {+1.0f, 0.0f, 0.0f},
              .Tangent = {0.0f, 0.0f, -1.0f},
-             .Bitangent = {0.0f, +1.0f, 0.0f}}, // +X
+             .Up = {0.0f, +1.0f, 0.0f}}, // +X
             {.Normal = {-1.0f, 0.0f, 0.0f},
              .Tangent = {0.0f, 0.0f, +1.0f},
-             .Bitangent = {0.0f, +1.0f, 0.0f}}, // -X
+             .Up = {0.0f, +1.0f, 0.0f}}, // -X
             {.Normal = {0.0f, +1.0f, 0.0f},
              .Tangent = {+1.0f, 0.0f, 0.0f},
-             .Bitangent = {0.0f, 0.0f, -1.0f}}, // +Y
+             .Up = {0.0f, 0.0f, -1.0f}}, // +Y
             {.Normal = {0.0f, -1.0f, 0.0f},
              .Tangent = {+1.0f, 0.0f, 0.0f},
-             .Bitangent = {0.0f, 0.0f, +1.0f}}, // -Y
+             .Up = {0.0f, 0.0f, +1.0f}}, // -Y
             {.Normal = {0.0f, 0.0f, +1.0f},
              .Tangent = {+1.0f, 0.0f, 0.0f},
-             .Bitangent = {0.0f, +1.0f, 0.0f}}, // +Z
+             .Up = {0.0f, +1.0f, 0.0f}}, // +Z
             {.Normal = {0.0f, 0.0f, -1.0f},
              .Tangent = {-1.0f, 0.0f, 0.0f},
-             .Bitangent = {0.0f, +1.0f, 0.0f}}, // -Z
+             .Up = {0.0f, +1.0f, 0.0f}}, // -Z
         };
 
         MeshData data;
@@ -93,23 +95,24 @@ namespace Veng::Primitives
             // Corners ordered so the index pattern below winds CCW when viewed
             // from outside (along -normal toward the face).
             const vec2 corners[4] = {
-                {0.0f, 0.0f}, // -U -V
-                {1.0f, 0.0f}, // +U -V
-                {1.0f, 1.0f}, // +U +V
-                {0.0f, 1.0f}, // -U +V
+                {0.0f, 0.0f}, // -U -Up
+                {1.0f, 0.0f}, // +U -Up
+                {1.0f, 1.0f}, // +U +Up
+                {0.0f, 1.0f}, // -U +Up
             };
 
-            for (const vec2& uv : corners)
+            for (const vec2& corner : corners)
             {
-                const f32 u = uv.x * 2.0f - 1.0f;
-                const f32 v = uv.y * 2.0f - 1.0f;
-                const vec3 position = (face.Normal + face.Tangent * u + face.Bitangent * v) * h;
+                const f32 u = corner.x * 2.0f - 1.0f;
+                const f32 up = corner.y * 2.0f - 1.0f;
+                const vec3 position = (face.Normal + face.Tangent * u + face.Up * up) * h;
 
                 data.Vertices.push_back(CanonicalVertex{
                     .Position = position,
                     .Normal = face.Normal,
                     .Tangent = vec4(face.Tangent, 1.0f),
-                    .UV = uv,
+                    // V runs down the face: 0 at its top edge.
+                    .UV = vec2(corner.x, 1.0f - corner.y),
                 });
             }
 
@@ -564,8 +567,10 @@ namespace Veng::Primitives
         constexpr f32 Pi = 3.14159265358979323846f;
 
         // (rings+1) latitude rows x (segments+1) longitude columns. theta runs
-        // 0..pi from the +Y pole; phi runs 0..2pi. The seam column (phi = 2pi)
-        // duplicates the phi = 0 verts with UV.x = 1 so UVs do not wrap.
+        // 0..pi from the +Y pole; phi runs 0..2pi, counter-clockwise seen from
+        // above. U runs the other way — eastward, to the right seen from outside
+        // — so the map reads unmirrored; V runs down from the +Y pole. The seam
+        // column duplicates the first with U at the other end so UVs do not wrap.
         for (u32 r = 0; r <= rings; ++r)
         {
             const f32 vt = static_cast<f32>(r) / static_cast<f32>(rings);
@@ -582,19 +587,15 @@ namespace Veng::Primitives
 
                 const vec3 normal = vec3(sinTheta * cosPhi, cosTheta, sinTheta * sinPhi);
 
-                // d(position)/d(phi), normalized: the +U (longitude) direction.
-                // Degenerate at the poles (sinTheta = 0); fall back to +X there.
-                vec3 tangent = vec3(-sinPhi, 0.0f, cosPhi);
-                if (sinTheta <= 1e-6f)
-                {
-                    tangent = vec3(1.0f, 0.0f, 0.0f);
-                }
+                // The +U (eastward) direction at this column's longitude, which stays
+                // defined at the poles: each pole vertex belongs to its own column.
+                const vec3 tangent = vec3(sinPhi, 0.0f, -cosPhi);
 
                 data.Vertices.push_back(CanonicalVertex{
                     .Position = normal * radius,
                     .Normal = normal,
-                    .Tangent = vec4(glm::normalize(tangent), 1.0f),
-                    .UV = vec2(vu, vt),
+                    .Tangent = vec4(tangent, 1.0f),
+                    .UV = vec2(1.0f - vu, vt),
                 });
             }
         }
@@ -687,12 +688,13 @@ namespace Veng::Primitives
             faces = std::move(next);
         }
 
-        // Equirectangular UVs: u = longitude/2pi (0 at +X, wrapping at -X),
-        // v = 0 at the +Y pole to 1 at the -Y pole. No base or midpoint vertex
-        // lands exactly on a pole, so atan2 is always well-defined.
+        // Equirectangular UVs: u = longitude/2pi (0 at +X, increasing eastward —
+        // to the right seen from outside, toward -Z — and wrapping at +X), v = 0
+        // at the +Y pole to 1 at the -Y pole. No base or midpoint vertex lands
+        // exactly on a pole, so atan2 is always well-defined.
         auto uvOf = [&](const vec3& d)
         {
-            f32 u = std::atan2(d.z, d.x) / (2.0f * Pi);
+            f32 u = std::atan2(-d.z, d.x) / (2.0f * Pi);
             if (u < 0.0f)
             {
                 u += 1.0f;
@@ -706,7 +708,7 @@ namespace Veng::Primitives
         {
             // East-pointing tangent (increasing longitude); undefined at the
             // poles, where it falls back to +X.
-            vec3 tangent = glm::cross(d, vec3(0.0f, 1.0f, 0.0f));
+            vec3 tangent = glm::cross(vec3(0.0f, 1.0f, 0.0f), d);
             tangent =
                 glm::length(tangent) > 1e-6f ? glm::normalize(tangent) : vec3(1.0f, 0.0f, 0.0f);
             data.Vertices.push_back(CanonicalVertex{
@@ -781,8 +783,10 @@ namespace Veng::Primitives
         data.Vertices.reserve(static_cast<usize>(segments + 1) * 2 + (segments + 2) * 2);
         data.Indices.reserve(static_cast<usize>(segments) * 6 + static_cast<usize>(segments) * 6);
 
-        // Side band: outward radial normals, +U around, +V up. The seam column
-        // (s = segments) duplicates s = 0 with UV.x = 1 so UVs do not wrap.
+        // Side band: outward radial normals, +U eastward (to the right seen from
+        // outside, against increasing phi), +V down from the top rim. The seam
+        // column (s = segments) duplicates s = 0 with U at the other end so UVs
+        // do not wrap.
         const u32 sideBase = static_cast<u32>(data.Vertices.size());
         for (u32 s = 0; s <= segments; ++s)
         {
@@ -792,19 +796,19 @@ namespace Veng::Primitives
             const f32 sinPhi = std::sin(phi);
 
             const vec3 normal = vec3(cosPhi, 0.0f, sinPhi);
-            const vec4 tangent = vec4(-sinPhi, 0.0f, cosPhi, 1.0f);
+            const vec4 tangent = vec4(sinPhi, 0.0f, -cosPhi, 1.0f);
 
             data.Vertices.push_back(CanonicalVertex{
                 .Position = vec3(cosPhi * radius, -halfH, sinPhi * radius),
                 .Normal = normal,
                 .Tangent = tangent,
-                .UV = vec2(u, 0.0f),
+                .UV = vec2(1.0f - u, 1.0f),
             });
             data.Vertices.push_back(CanonicalVertex{
                 .Position = vec3(cosPhi * radius, +halfH, sinPhi * radius),
                 .Normal = normal,
                 .Tangent = tangent,
-                .UV = vec2(u, 1.0f),
+                .UV = vec2(1.0f - u, 0.0f),
             });
         }
 
@@ -824,14 +828,17 @@ namespace Veng::Primitives
             data.Indices.push_back(c);
         }
 
-        // Each cap is a center vertex plus a rim fan, with a hard ±Y normal.
+        // Each cap is a center vertex plus a rim fan, with a hard ±Y normal. Its UVs are the
+        // disc seen from outside: +U along +X from above, and along -X from below (the bottom
+        // cap, `flip`), so neither reads mirrored.
         auto appendCap = [&](f32 y, const vec3& normal, bool flip)
         {
+            const f32 across = flip ? -1.0f : 1.0f;
             const u32 center = static_cast<u32>(data.Vertices.size());
             data.Vertices.push_back(CanonicalVertex{
                 .Position = vec3(0.0f, y, 0.0f),
                 .Normal = normal,
-                .Tangent = vec4(1.0f, 0.0f, 0.0f, 1.0f),
+                .Tangent = vec4(across, 0.0f, 0.0f, 1.0f),
                 .UV = vec2(0.5f, 0.5f),
             });
 
@@ -844,8 +851,8 @@ namespace Veng::Primitives
                 data.Vertices.push_back(CanonicalVertex{
                     .Position = vec3(cosPhi * radius, y, sinPhi * radius),
                     .Normal = normal,
-                    .Tangent = vec4(1.0f, 0.0f, 0.0f, 1.0f),
-                    .UV = vec2(cosPhi * 0.5f + 0.5f, sinPhi * 0.5f + 0.5f),
+                    .Tangent = vec4(across, 0.0f, 0.0f, 1.0f),
+                    .UV = vec2(across * cosPhi * 0.5f + 0.5f, sinPhi * 0.5f + 0.5f),
                 });
             }
 
@@ -910,24 +917,26 @@ namespace Veng::Primitives
             const vec3 apexNormal =
                 glm::normalize(vec3(std::cos(phiMid) * nr, ny, std::sin(phiMid) * nr));
 
+            // +U eastward (to the right seen from outside, against increasing phi), +V down
+            // from the apex to the base rim.
             const u32 base = static_cast<u32>(data.Vertices.size());
             data.Vertices.push_back(CanonicalVertex{
                 .Position = vec3(0.0f, +halfH, 0.0f),
                 .Normal = apexNormal,
-                .Tangent = vec4(-std::sin(phiMid), 0.0f, std::cos(phiMid), 1.0f),
-                .UV = vec2((static_cast<f32>(s) + 0.5f) / static_cast<f32>(segments), 1.0f),
+                .Tangent = vec4(std::sin(phiMid), 0.0f, -std::cos(phiMid), 1.0f),
+                .UV = vec2(1.0f - (static_cast<f32>(s) + 0.5f) / static_cast<f32>(segments), 0.0f),
             });
             data.Vertices.push_back(CanonicalVertex{
                 .Position = vec3(baseDir0.x * radius, -halfH, baseDir0.z * radius),
                 .Normal = normal0,
-                .Tangent = vec4(-std::sin(phi0), 0.0f, std::cos(phi0), 1.0f),
-                .UV = vec2(static_cast<f32>(s) / static_cast<f32>(segments), 0.0f),
+                .Tangent = vec4(std::sin(phi0), 0.0f, -std::cos(phi0), 1.0f),
+                .UV = vec2(1.0f - static_cast<f32>(s) / static_cast<f32>(segments), 1.0f),
             });
             data.Vertices.push_back(CanonicalVertex{
                 .Position = vec3(baseDir1.x * radius, -halfH, baseDir1.z * radius),
                 .Normal = normal1,
-                .Tangent = vec4(-std::sin(phi1), 0.0f, std::cos(phi1), 1.0f),
-                .UV = vec2(static_cast<f32>(s + 1) / static_cast<f32>(segments), 0.0f),
+                .Tangent = vec4(std::sin(phi1), 0.0f, -std::cos(phi1), 1.0f),
+                .UV = vec2(1.0f - static_cast<f32>(s + 1) / static_cast<f32>(segments), 1.0f),
             });
 
             // CCW seen from outside.
@@ -936,13 +945,14 @@ namespace Veng::Primitives
             data.Indices.push_back(base + 1);
         }
 
-        // Bottom cap fan, hard -Y normal, wound CCW seen from below.
+        // Bottom cap fan, hard -Y normal, wound CCW seen from below; +U along -X, which is to
+        // the right seen from below, so the disc does not read mirrored.
         const vec3 capNormal = vec3(0.0f, -1.0f, 0.0f);
         const u32 center = static_cast<u32>(data.Vertices.size());
         data.Vertices.push_back(CanonicalVertex{
             .Position = vec3(0.0f, -halfH, 0.0f),
             .Normal = capNormal,
-            .Tangent = vec4(1.0f, 0.0f, 0.0f, 1.0f),
+            .Tangent = vec4(-1.0f, 0.0f, 0.0f, 1.0f),
             .UV = vec2(0.5f, 0.5f),
         });
         const u32 rimBase = static_cast<u32>(data.Vertices.size());
@@ -954,8 +964,8 @@ namespace Veng::Primitives
             data.Vertices.push_back(CanonicalVertex{
                 .Position = vec3(cosPhi * radius, -halfH, sinPhi * radius),
                 .Normal = capNormal,
-                .Tangent = vec4(1.0f, 0.0f, 0.0f, 1.0f),
-                .UV = vec2(cosPhi * 0.5f + 0.5f, sinPhi * 0.5f + 0.5f),
+                .Tangent = vec4(-1.0f, 0.0f, 0.0f, 1.0f),
+                .UV = vec2(0.5f - cosPhi * 0.5f, sinPhi * 0.5f + 0.5f),
             });
         }
         for (u32 s = 0; s < segments; ++s)
@@ -982,7 +992,9 @@ namespace Veng::Primitives
         data.Indices.reserve(static_cast<usize>(majorSegments) * minorSegments * 6);
 
         // (majorSegments+1) columns around the ring x (minorSegments+1) columns
-        // around the tube. The seam columns duplicate so UVs do not wrap.
+        // around the tube. The seam columns duplicate so UVs do not wrap. U runs
+        // eastward (to the right seen from outside, against the major angle) and
+        // V down the outer wall from its equator, so the outside reads upright.
         for (u32 i = 0; i <= majorSegments; ++i)
         {
             const f32 u = static_cast<f32>(i) / static_cast<f32>(majorSegments);
@@ -1002,14 +1014,14 @@ namespace Veng::Primitives
 
                 const vec3 normal = vec3(cosTheta * cosPhi, sinPhi, sinTheta * cosPhi);
 
-                // +U direction (increasing major angle), tangent to the ring.
-                const vec3 tangent = vec3(-sinTheta, 0.0f, cosTheta);
+                // +U direction (decreasing major angle), tangent to the ring.
+                const vec3 tangent = vec3(sinTheta, 0.0f, -cosTheta);
 
                 data.Vertices.push_back(CanonicalVertex{
                     .Position = center + normal * minorRadius,
                     .Normal = normal,
                     .Tangent = vec4(tangent, 1.0f),
-                    .UV = vec2(u, v),
+                    .UV = vec2(1.0f - u, 1.0f - v),
                 });
             }
         }
@@ -1160,17 +1172,14 @@ namespace Veng::Primitives
 
                 const vec3 normal = vec3(sinPolar * cosPhi, cosPolar, sinPolar * sinPhi);
 
-                vec3 tangent = vec3(-sinPhi, 0.0f, cosPhi);
-                if (sinPolar <= 1e-6f)
-                {
-                    tangent = vec3(1.0f, 0.0f, 0.0f);
-                }
+                // +U eastward, as on Sphere (and, as there, defined at the poles).
+                const vec3 tangent = vec3(sinPhi, 0.0f, -cosPhi);
 
                 data.Vertices.push_back(CanonicalVertex{
                     .Position = normal * radius + vec3(0.0f, centerY, 0.0f),
                     .Normal = normal,
-                    .Tangent = vec4(glm::normalize(tangent), 1.0f),
-                    .UV = vec2(vu, vt),
+                    .Tangent = vec4(tangent, 1.0f),
+                    .UV = vec2(1.0f - vu, vt),
                 });
             }
         };
