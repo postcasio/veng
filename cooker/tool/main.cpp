@@ -662,8 +662,12 @@ int main(int argc, char** argv)
         CookedProject cooked;
         cooked.StartupLevel = project->StartupLevel;
 
+        // The game's packs, then the editor-only ones: all cooked alike, but only the game's are
+        // named in the cooked project the launcher mounts.
+        vector<path> allPacks = project->Packs;
+        allPacks.insert(allPacks.end(), project->EditorPacks.begin(), project->EditorPacks.end());
         vector<path> dependencies;
-        for (const path& packManifest : project->Packs)
+        for (const path& packManifest : allPacks)
         {
             const path mountName =
                 packManifest.stem(); // template.vengpack.json -> template.vengpack
@@ -676,7 +680,7 @@ int main(int argc, char** argv)
             // sibling. The reference set is the CLI references (e.g. the engine core pack) plus
             // every other project pack.
             vector<path> packRefs = referencePacks;
-            for (const path& sibling : project->Packs)
+            for (const path& sibling : allPacks)
             {
                 if (sibling != packManifest)
                 {
@@ -695,7 +699,10 @@ int main(int argc, char** argv)
                 return 1;
             }
 
-            cooked.PackMountNames.push_back(mountName.string());
+            if (std::ranges::find(project->Packs, packManifest) != project->Packs.end())
+            {
+                cooked.PackMountNames.push_back(mountName.string());
+            }
             dependencies.insert(dependencies.end(), packDeps.begin(), packDeps.end());
         }
 

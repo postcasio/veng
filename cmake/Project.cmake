@@ -32,6 +32,9 @@
 #   VENG_PROJECT_MOUNT   the un-suffixed .vengproj name the runtime loads
 #   VENG_PACK_OUTPUTS    the cooked pack paths (suffixed), parallel to VENG_PACK_MOUNTS
 #   VENG_PACK_MOUNTS     the un-suffixed pack names the runtime mounts
+#   VENG_EDITOR_PACK_OUTPUTS / VENG_EDITOR_PACK_MOUNTS  the same for the project's optional
+#                        `editorPacks`: cooked alongside, never named in the .vengproj, and copied
+#                        by veng_add_game into editor/ beside the launcher, apart from what ships
 #   VENG_PROJECT_SOURCE  the absolute project.veng source path (for the editor)
 function(veng_add_project TARGET_NAME)
     cmake_parse_arguments(ARG "" "PROJECT;OUTPUT_DIR;MODULE;COOK_MODULE" "REFERENCE" ${ARGN})
@@ -97,6 +100,25 @@ function(veng_add_project TARGET_NAME)
         list(APPEND PACK_MOUNTS ${PACK_MOUNT})
     endforeach ()
 
+    # The editor-only packs, if any: the same resolution, kept in lists of their own.
+    set(EDITOR_PACK_STEMS)
+    set(EDITOR_PACK_MOUNTS)
+    string(JSON EDITOR_PACK_COUNT ERROR_VARIABLE EDITOR_PACK_ERR LENGTH ${PROJECT_JSON} editorPacks)
+    if (NOT EDITOR_PACK_ERR AND EDITOR_PACK_COUNT GREATER 0)
+        math(EXPR EDITOR_PACK_LAST "${EDITOR_PACK_COUNT} - 1")
+        foreach (i RANGE 0 ${EDITOR_PACK_LAST})
+            string(JSON PACK_REL GET ${PROJECT_JSON} editorPacks ${i})
+            cmake_path(ABSOLUTE_PATH PACK_REL BASE_DIRECTORY ${PROJECT_DIR} NORMALIZE
+                    OUTPUT_VARIABLE PACK_ABS)
+            cmake_path(GET PACK_ABS STEM LAST_ONLY PACK_MOUNT)
+            set(PACK_MOUNT_PATH ${PACK_MOUNT})
+            cmake_path(GET PACK_MOUNT_PATH STEM LAST_ONLY PACK_STEM)
+            list(APPEND PACK_MANIFESTS ${PACK_ABS})
+            list(APPEND EDITOR_PACK_STEMS ${PACK_STEM})
+            list(APPEND EDITOR_PACK_MOUNTS ${PACK_MOUNT})
+        endforeach ()
+    endif ()
+
     # The configurations the project ships; each cooks its own output set.
     string(JSON CFG_COUNT ERROR_VARIABLE CFG_ERR LENGTH ${PROJECT_JSON} configurations)
     if (CFG_ERR OR CFG_COUNT EQUAL 0)
@@ -139,6 +161,12 @@ function(veng_add_project TARGET_NAME)
             list(APPEND CFG_OUTPUTS ${PACK_OUT})
             list(APPEND CFG_PACK_OUTPUTS ${PACK_OUT})
         endforeach ()
+        set(CFG_EDITOR_PACK_OUTPUTS)
+        foreach (PACK_STEM IN LISTS EDITOR_PACK_STEMS)
+            set(PACK_OUT ${ARG_OUTPUT_DIR}/${PACK_STEM}${CFG_SUFFIX}.vengpack)
+            list(APPEND CFG_OUTPUTS ${PACK_OUT})
+            list(APPEND CFG_EDITOR_PACK_OUTPUTS ${PACK_OUT})
+        endforeach ()
 
         # The engine core shader dir is on every cook's Slang search path so a consumer
         # shader resolves `#include "Veng/surface.slang"`. A source-dir include still wins.
@@ -170,6 +198,8 @@ function(veng_add_project TARGET_NAME)
                 VENG_PROJECT_MOUNT ${PROJECT_STEM}.vengproj
                 VENG_PACK_OUTPUTS "${CFG_PACK_OUTPUTS}"
                 VENG_PACK_MOUNTS "${PACK_MOUNTS}"
+                VENG_EDITOR_PACK_OUTPUTS "${CFG_EDITOR_PACK_OUTPUTS}"
+                VENG_EDITOR_PACK_MOUNTS "${EDITOR_PACK_MOUNTS}"
                 VENG_PROJECT_SOURCE ${PROJECT_ABS})
 
         if (CFG_NAME STREQUAL VENG_BUILD_CONFIG)

@@ -28,6 +28,14 @@ namespace Veng
         /// through project.veng's "packs" key, not reflection — kept off the reflected field list so
         /// the editor's build-policy property table stays focused on the configurations.
         vector<path> Packs;
+        /// @brief Asset-pack manifests only the editor mounts, relative to project.veng's directory.
+        ///
+        /// Authoring aids a shipped game has no use for — preview environments, reference assets.
+        /// The cook cooks them with the project (they share its AssetId namespace) but leaves them
+        /// out of the cooked project file, so the runtime never mounts them; the build copies them
+        /// into an editor/ directory beside the launcher, apart from what ships. Persisted by hand
+        /// through project.veng's "editorPacks" key, like Packs.
+        vector<path> EditorPacks;
         /// @brief The Level the engine bootstraps when a managed game world mounts the project.
         ///
         /// The cook writes it into the cooked project file (.vengproj); the runtime reads it back on

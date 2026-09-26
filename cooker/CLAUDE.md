@@ -672,10 +672,14 @@ so the cooker and the runtime loader share one encoder.
   <project.veng> --config <name> --out-dir <dir> [--module <lib>] [--cook-module <lib>]
   [--reference <pack>]... [--shader-include <dir>] [--cache-dir <dir>] [--jobs <n>]
   [--timing[=<out.csv>]]`.
-  `ParseProject` hand-parses the project's `packs`, `configurations`, and `startupLevel`;
-  the named configuration is matched by `BuildConfiguration.Name`; each pack cooks into
-  `<stem><suffix>.vengpack` and a `<projstem><suffix>.vengproj` (`WriteCookedProject`) names
-  the packs' un-suffixed mount names + the startup level — the runtime entrypoint. One
+  `ParseProject` hand-parses the project's `packs`, `editorPacks`, `configurations`, and
+  `startupLevel`; the named configuration is matched by `BuildConfiguration.Name`; each pack
+  cooks into `<stem><suffix>.vengpack` and a `<projstem><suffix>.vengproj` (`WriteCookedProject`)
+  names the packs' un-suffixed mount names + the startup level — the runtime entrypoint. The
+  `editorPacks` cook alike (and resolve ids with the rest) but are **not** named in the
+  `.vengproj`, so the runtime never mounts them; `veng_add_game` copies them into `editor/` beside
+  the launcher, where the editor mounts them and a bundle collecting the top-level packs never
+  looks. One
   combined depfile covers every pack source + the project + the buildcfg. **A project's packs
   share one AssetId namespace:** each pack is cooked with the project's *other* packs (plus the
   CLI `--reference` packs) as references, so an asset in one pack may reference an asset declared

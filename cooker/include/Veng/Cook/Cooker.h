@@ -66,6 +66,10 @@ namespace Veng::Cook
         path Directory;
         /// @brief The asset-pack manifests the project cooks, as absolute paths.
         vector<path> Packs;
+        /// @brief Packs only the editor mounts (preview environments, authoring aids), as absolute
+        ///        paths: cooked beside the others and resolving ids with them, but never named in
+        ///        the cooked project, so the game neither mounts nor ships them.
+        vector<path> EditorPacks;
         /// @brief The build-configuration (`*.buildcfg`) files, as absolute paths.
         vector<path> ConfigFiles;
         /// @brief The Name of the configuration the cook defaults to.
@@ -76,8 +80,9 @@ namespace Veng::Cook
 
     /// @brief Hand-parses a `project.veng` JSON authoring file into a CookProject.
     ///
-    /// Reads the `"packs"`, `"configurations"`, `"activeConfiguration"`, and `"startupLevel"` keys;
-    /// relative `packs`/`configurations` entries resolve against the project file's directory. The
+    /// Reads the `"packs"`, `"editorPacks"`, `"configurations"`, `"activeConfiguration"`, and
+    /// `"startupLevel"` keys; relative `packs`/`editorPacks`/`configurations` entries resolve against
+    /// the project file's directory. The
     /// `"startupLevel"` is a hex-string AssetId; an absent or zero key yields the invalid id. Errors
     /// are located: `"project '<path>': <reason>"`.
     /// @param projectFile  Path to the `project.veng` JSON file.

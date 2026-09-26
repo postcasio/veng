@@ -203,17 +203,23 @@ namespace VengEditor
 
             const path dir = projectFile.parent_path();
 
-            // The packs the project owns, resolved to absolute source-manifest paths.
-            if (project->contains("packs") && (*project)["packs"].is_array())
+            // The packs the project owns, and those only the editor mounts, resolved to absolute
+            // source-manifest paths.
+            const auto readPacks = [&](const char* key, vector<path>& out)
             {
-                for (const nlohmann::json& entry : (*project)["packs"])
+                if (project->contains(key) && (*project)[key].is_array())
                 {
-                    if (entry.is_string())
+                    for (const nlohmann::json& entry : (*project)[key])
                     {
-                        settings.Packs.push_back(dir / entry.get<string>());
+                        if (entry.is_string())
+                        {
+                            out.push_back(dir / entry.get<string>());
+                        }
                     }
                 }
-            }
+            };
+            readPacks("packs", settings.Packs);
+            readPacks("editorPacks", settings.EditorPacks);
 
             if (project->contains("configurations") && (*project)["configurations"].is_array())
             {
@@ -805,6 +811,16 @@ namespace VengEditor
             const VoidResult mount = GetAssetManager().Mount(buildDir / mountName);
             VE_ASSERT(mount, "{}", mount.error());
         }
+        // The editor-only packs, which the build copies apart from the shipped set (editor/).
+        // Best-effort: a missing one drops what it holds from the editor, not the editor.
+        for (const path& packSource : m_ProjectSettings.EditorPacks)
+        {
+            const VoidResult mount = GetAssetManager().Mount(EditorPackPath(packSource));
+            if (!mount)
+            {
+                Log::Warn("editor: editor pack not mounted: {}", mount.error());
+            }
+        }
 
         // The editor's own icon pack (light/camera billboard textures) sits beside the exe.
         // The engine ships no icon content; the viewport gizmos resolve their TextureHandles
@@ -819,7 +835,7 @@ namespace VengEditor
         // Built from the union of the project's pack manifests; an empty index when no project is
         // configured keeps the picker candidate-free rather than absent.
         m_Sources = CreateUnique<AssetSourceIndex>(
-            AssetSourceIndex::ParsePacks(m_ProjectSettings.Packs, m_Registries->AssetTypes));
+            AssetSourceIndex::ParsePacks(AllPacks(), m_Registries->AssetTypes));
 
         m_Status = CreateUnique<StatusTracker>();
 
@@ -896,10 +912,14 @@ namespace VengEditor
         // The asset browser shows every pack the project owns (each cooked in the build dir under
         // its source manifest's stem) as a top-level folder; an unconfigured project leaves it empty.
         vector<path> browserPacks;
-        browserPacks.reserve(m_ProjectSettings.Packs.size());
+        browserPacks.reserve(m_ProjectSettings.Packs.size() + m_ProjectSettings.EditorPacks.size());
         for (const path& packSource : m_ProjectSettings.Packs)
         {
             browserPacks.push_back(buildDir / packSource.stem());
+        }
+        for (const path& packSource : m_ProjectSettings.EditorPacks)
+        {
+            browserPacks.push_back(EditorPackPath(packSource));
         }
         m_Panels.push_back(
             {CreateUnique<AssetBrowserPanel>(std::move(browserPacks), *m_Sources, *this), true});
@@ -934,6 +954,19 @@ namespace VengEditor
         }
     }
 
+    vector<path> EditorHost::AllPacks() const
+    {
+        vector<path> packs = m_ProjectSettings.Packs;
+        packs.insert(packs.end(), m_ProjectSettings.EditorPacks.begin(),
+                     m_ProjectSettings.EditorPacks.end());
+        return packs;
+    }
+
+    path EditorHost::EditorPackPath(const path& packSource) const
+    {
+        return m_BuildDir / "editor" / packSource.stem();
+    }
+
     AssetId EditorHost::MintAssetId() const
     {
         if (!m_Info.MintId)
@@ -943,7 +976,7 @@ namespace VengEditor
 
         // The same reference set RequestCook resolves against: every project pack plus the core
         // pack, so the minted id avoids the whole project's one AssetId namespace.
-        vector<path> references = m_ProjectSettings.Packs;
+        vector<path> references = AllPacks();
         if (!m_CorePackManifest.empty())
         {
             references.push_back(m_CorePackManifest);
@@ -967,7 +1000,7 @@ namespace VengEditor
         // core pack's built-in assets (the standard vertex shaders); panels build manifest-agnostic
         // requests. This mirrors the --reference set the file-based add_project cook passes.
         CookRequest resolved = request;
-        resolved.ReferenceManifests = m_ProjectSettings.Packs;
+        resolved.ReferenceManifests = AllPacks();
         if (!m_CorePackManifest.empty())
         {
             resolved.ReferenceManifests.push_back(m_CorePackManifest);

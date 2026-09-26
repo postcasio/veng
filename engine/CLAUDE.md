@@ -540,9 +540,11 @@ blobs stay binary (the runtime load path parses no JSON).
   `project.veng`): a reflected `vector<BuildConfiguration> Configurations` (a genuine
   `FieldClass::Array` field), the `ActiveConfiguration` name the editor previews through and the
   cook defaults to, a `vector<path> Packs` (the pack manifests the project owns), and a
-  `StartupLevel` `AssetId`. `Packs` and `StartupLevel` are persisted by hand through the
-  `"packs"`/`"startupLevel"` keys, kept off the reflected field list; the cook writes the startup
-  level + pack mount names into the cooked project file (`.vengproj`), not the pack header.
+  `StartupLevel` `AssetId`, and a `vector<path> EditorPacks` — packs only the editor mounts
+  (authoring aids a shipped game has no use for). `Packs`, `EditorPacks` and `StartupLevel` are
+  persisted by hand through the `"packs"`/`"editorPacks"`/`"startupLevel"` keys, kept off the
+  reflected field list; the cook writes the startup level + the game packs' mount names into the
+  cooked project file (`.vengproj`), not the pack header, and leaves the editor packs out of it.
 - **`BuildConfiguration`** (`Veng/Project/BuildConfiguration.h`) — a named ship target: a
   `RoleToFormat` codec table (a fixed record, one `CompressionFormat` field per role — the role
   set is closed), a zstd `CompressionLevel`, a `Target` label, and an `OutputSuffix` (the single

@@ -448,6 +448,11 @@ namespace Veng::Cook
         {
             return std::unexpected(packs.error());
         }
+        if (const VoidResult editorPacks = resolveList("editorPacks", parsed.EditorPacks);
+            !editorPacks)
+        {
+            return std::unexpected(editorPacks.error());
+        }
         if (const VoidResult configs = resolveList("configurations", parsed.ConfigFiles); !configs)
         {
             return std::unexpected(configs.error());

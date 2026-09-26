@@ -2140,6 +2140,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/material_field_form.cpp
             tests/cooker/material_instance_cook.cpp
             tests/cooker/generate_id.cpp
+            tests/cooker/project_parse.cpp
             tests/cooker/graph_shader_cook.cpp
             tests/cooker/vertex_layout_cook.cpp
             tests/cooker/verify.cpp

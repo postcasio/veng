@@ -88,7 +88,8 @@ namespace VengEditor
         /// @param info        Construction parameters (project path, cook backend, engine app info).
         /// @param outModules  Receives the loaded game/editor modules; the caller must keep it alive
         ///                    until after the returned host is destroyed (declare it first).
-        static Veng::Unique<EditorHost> Create(const EditorHostInfo& info, LoadedModules& outModules);
+        static Veng::Unique<EditorHost> Create(const EditorHostInfo& info,
+                                               LoadedModules& outModules);
 
         /// @brief Destroys the host, releasing its panels, pending panels, asset sources, and status
         ///        tracker while the base engine services are still alive.
@@ -237,6 +238,13 @@ namespace VengEditor
         void OnRender() override;
 
     private:
+        /// @brief Every pack the project names — the game's, then the editor-only ones — as the
+        /// source index, the asset browser and cook references see them (one id namespace).
+        [[nodiscard]] Veng::vector<Veng::path> AllPacks() const;
+        /// @brief Where the build puts an editor-only pack's cooked file: editor/ beside the
+        /// launcher, apart from the packs that ship.
+        [[nodiscard]] Veng::path EditorPackPath(const Veng::path& packSource) const;
+
         /// @brief Owned registries, constructed before this Application so the base
         /// can borrow the TypeRegistry by reference.
         struct Registries;

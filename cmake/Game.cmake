@@ -170,6 +170,28 @@ function(veng_add_game NAME)
             list(APPEND COPIED_BESIDE_LAUNCHER ${PACK_BESIDE_LAUNCHER})
         endforeach ()
 
+        # The editor-only packs go into editor/ beside the launcher, where the editor mounts them
+        # and where nothing that collects the shipped set (the top-level *.vengpack) looks.
+        get_target_property(EDITOR_PACK_OUTPUTS ${ARG_PROJECT} VENG_EDITOR_PACK_OUTPUTS)
+        get_target_property(EDITOR_PACK_MOUNTS ${ARG_PROJECT} VENG_EDITOR_PACK_MOUNTS)
+        if (EDITOR_PACK_OUTPUTS)
+            list(LENGTH EDITOR_PACK_OUTPUTS EDITOR_PACK_N)
+            math(EXPR EDITOR_PACK_LAST "${EDITOR_PACK_N} - 1")
+            foreach (i RANGE 0 ${EDITOR_PACK_LAST})
+                list(GET EDITOR_PACK_OUTPUTS ${i} PACK_OUTPUT)
+                list(GET EDITOR_PACK_MOUNTS ${i} PACK_MOUNT)
+                set(PACK_FOR_EDITOR ${CMAKE_CURRENT_BINARY_DIR}/editor/${PACK_MOUNT})
+                add_custom_command(
+                    OUTPUT ${PACK_FOR_EDITOR}
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/editor
+                    COMMAND ${CMAKE_COMMAND} -E copy ${PACK_OUTPUT} ${PACK_FOR_EDITOR}.tmp
+                    COMMAND ${CMAKE_COMMAND} -E rename ${PACK_FOR_EDITOR}.tmp ${PACK_FOR_EDITOR}
+                    DEPENDS ${PACK_OUTPUT}
+                    COMMENT "Copying editor pack beside ${NAME}-launcher")
+                list(APPEND COPIED_BESIDE_LAUNCHER ${PACK_FOR_EDITOR})
+            endforeach ()
+        endif ()
+
         add_custom_target(${NAME}-launcher-pack DEPENDS ${COPIED_BESIDE_LAUNCHER})
         add_dependencies(${NAME}-launcher ${NAME}-launcher-pack)
     endif ()
