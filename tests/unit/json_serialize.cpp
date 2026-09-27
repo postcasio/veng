@@ -115,6 +115,21 @@ VE_REFLECT_END();
 
 namespace
 {
+    // A u16 scalar and a u16 array: the 2-byte width, alone and at an element stride.
+    struct Quantized
+    {
+        u16 Peak = 0;
+        vector<u16> Samples;
+    };
+}
+
+VE_REFLECT(::Quantized, 0xDAACA750672C1A9CULL)
+VE_FIELD(Peak)
+VE_ARRAY_FIELD(Samples)
+VE_REFLECT_END();
+
+namespace
+{
     TypeRegistry MakeRegistry()
     {
         TypeRegistry registry;
@@ -329,6 +344,34 @@ TEST_CASE("A u8 field writes as a plain JSON number and round-trips byte-compara
     // A second write of the read-back value reproduces the same document byte-for-byte.
     const Json roundTripped = JsonWriteFields(&dst, info, registry, hooks);
     CHECK(roundTripped.dump() == doc.dump());
+}
+
+// ---- u16 scalar leaf pinned -------------------------------------------------
+
+TEST_CASE("A u16 field and a u16 array write as plain JSON numbers and round-trip")
+{
+    TypeRegistry registry;
+    registry.Register<Quantized>();
+    const JsonFieldHooks hooks = StubHooks();
+    const TypeInfo& info = registry.Info(registry.IdOf<Quantized>());
+
+    Quantized src;
+    src.Peak = 65535; // the widest u16 value
+    src.Samples = {0, 1, 40000, 65535};
+
+    const Json doc = JsonWriteFields(&src, info, registry, hooks);
+
+    // Each element is read at its own 2-byte width, so neighbours never bleed into a value.
+    REQUIRE(doc["Peak"].is_number_unsigned());
+    CHECK(doc["Peak"] == 65535);
+    REQUIRE(doc["Samples"].is_array());
+    CHECK(doc["Samples"] == Json::array({0, 1, 40000, 65535}));
+
+    Quantized dst;
+    dst.Peak = 7; // pre-populate, must be overwritten
+    REQUIRE(JsonReadFields(&dst, info, doc, registry, hooks));
+    CHECK(dst.Peak == src.Peak);
+    CHECK(dst.Samples == src.Samples);
 }
 
 // ---- Enum cases pinned ------------------------------------------------------

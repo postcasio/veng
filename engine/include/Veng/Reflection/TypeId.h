@@ -121,6 +121,7 @@ namespace Veng
 /// @cond DOXYGEN_EXCLUDE
 VE_LEAF(bool, 0x283EDB5B266A27EDULL, ::Veng::FieldClass::Scalar);
 VE_LEAF(::Veng::u8, 0xD4911823CF5DD95CULL, ::Veng::FieldClass::Scalar);
+VE_LEAF(::Veng::u16, 0x679C3AF930C55AD3ULL, ::Veng::FieldClass::Scalar);
 VE_LEAF(::Veng::f32, 0x4AF0D89664A476FBULL, ::Veng::FieldClass::Scalar);
 VE_LEAF(::Veng::i32, 0xE4A543818EB46182ULL, ::Veng::FieldClass::Scalar);
 VE_LEAF(::Veng::u32, 0x6AD25BC2BE1A5D65ULL, ::Veng::FieldClass::Scalar);
