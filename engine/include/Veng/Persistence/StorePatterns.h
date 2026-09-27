@@ -250,13 +250,89 @@ namespace Veng
         return ReadRecordComponent<T>(store, family, SingletonRecordKey, types);
     }
 
+    /// @brief What a component write does when its record is not stored.
+    enum class RecordAbsent : u8
+    {
+        /// @brief Write nothing and report the record absent.
+        Skip,
+        /// @brief Write a new record holding only the component, stamped with the wall clock.
+        Create,
+    };
+
+    namespace Detail
+    {
+        /// @brief Replaces T's blob in a record with value's, or appends it when the record has none.
+        /// @tparam T  The reflected type to write.
+        /// @param record  The record to update; every blob of another type is kept.
+        /// @param value   The value to encode.
+        /// @param types   The registry T is reflected in.
+        template <typename T>
+        void ReplaceComponentBlob(StoreRecord& record, const T& value, const TypeRegistry& types)
+        {
+            ComponentBlob blob{.Type = TypeIdOf<T>()};
+            WriteFields(blob.Bytes, &value, types.Info(TypeIdOf<T>()), types);
+
+            const auto existing =
+                std::ranges::find_if(record.Components, [](const ComponentBlob& component)
+                                     { return component.Type == TypeIdOf<T>(); });
+            if (existing != record.Components.end())
+            {
+                *existing = std::move(blob);
+            }
+            else
+            {
+                record.Components.push_back(std::move(blob));
+            }
+        }
+    }
+
+    /// @brief Writes T into one keyed record, preserving the record's other blobs and its stamp.
+    ///
+    /// For updating one component of a record whose entity is not in any scene: the record is
+    /// read back, T's blob replaced or inserted, and every other component blob kept. It is the
+    /// keyed counterpart of ReadRecordComponent, with two pinned edges:
+    /// - An existing record keeps its CapturedAtWall. Updating one component is not a capture,
+    ///   so a rehydrate deriving elapsed time from the stamp is not told the whole record is new.
+    /// - An absent record is never created unasked. With RecordAbsent::Skip the store is left
+    ///   untouched and false returned, so a write keyed on a stale or mistaken key cannot
+    ///   manufacture a record holding one component and nothing else.
+    ///
+    /// Like WriteSingleton it is blob-level, not field-level: writing a T replaces the whole T.
+    /// @tparam T  The reflected type to write.
+    /// @param store       The store holding the family.
+    /// @param family      The family's id.
+    /// @param key         The record's key.
+    /// @param value       The value to write.
+    /// @param types       The registry T is reflected in.
+    /// @param whenAbsent  Whether an absent record is created, stamped with the wall clock.
+    /// @return True when the record was written; false when it was absent and not created.
+    template <typename T>
+    bool WriteRecordComponent(Store& store, const StoreFamilyId family, const StoreKey key,
+                              const T& value, const TypeRegistry& types,
+                              const RecordAbsent whenAbsent = RecordAbsent::Skip)
+    {
+        optional<StoreRecord> record = store.Read(family, key);
+        if (!record.has_value())
+        {
+            if (whenAbsent == RecordAbsent::Skip)
+            {
+                return false;
+            }
+            record = StoreRecord{.CapturedAtWall = Store::WallClockSeconds()};
+        }
+        Detail::ReplaceComponentBlob(*record, value, types);
+        store.Write(family, key, std::move(*record));
+        return true;
+    }
+
     /// @brief Writes T into a singleton family's record, preserving the record's other blobs.
     ///
     /// Read-modify-write at the blob level: the stored record is read back, T's blob replaced
     /// or inserted, and every other component blob kept, so independent types sharing the record
     /// never clobber each other. It is not field-level — writing a T replaces the whole T — so
     /// a consumer holding several independently-updated fields inside one reflected type still
-    /// reads that type back and modifies it before calling.
+    /// reads that type back and modifies it before calling. The record is created when absent,
+    /// and restamped with the wall clock on every write, since the singleton is the whole record.
     /// @tparam T  The reflected type to write.
     /// @param store   The store holding the family.
     /// @param family  The singleton family's id.
@@ -268,21 +344,7 @@ namespace Veng
     {
         StoreRecord record = store.Read(family, SingletonRecordKey).value_or(StoreRecord{});
         record.CapturedAtWall = Store::WallClockSeconds();
-
-        ComponentBlob blob{.Type = TypeIdOf<T>()};
-        WriteFields(blob.Bytes, &value, types.Info(TypeIdOf<T>()), types);
-
-        const auto existing =
-            std::ranges::find_if(record.Components, [](const ComponentBlob& component)
-                                 { return component.Type == TypeIdOf<T>(); });
-        if (existing != record.Components.end())
-        {
-            *existing = std::move(blob);
-        }
-        else
-        {
-            record.Components.push_back(std::move(blob));
-        }
+        Detail::ReplaceComponentBlob(record, value, types);
         store.Write(family, SingletonRecordKey, std::move(record));
     }
 }

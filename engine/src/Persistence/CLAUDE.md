@@ -148,7 +148,7 @@ refusal matter, since a consumer may hand it any root at all.
 
 ## Store patterns
 
-`Veng/Persistence/StorePatterns.h` ships the two shapes a store consumer writes on day one, as
+`Veng/Persistence/StorePatterns.h` ships the shapes a store consumer writes on day one, as
 **constructors over the delivered surface** — they build ordinary `StoreFamily` values and call
 ordinary `Store` methods, and a registrar whose logic genuinely diverges keeps hand-written hooks.
 The reason they are public is not the line count they save: it is that their **edge semantics are
@@ -207,6 +207,24 @@ sharing the singleton never clobber each other. It is **not field-level** — wr
 the whole `T` — so a consumer holding several independently-updated fields inside one reflected type
 still reads that type back and modifies it before calling. Stating it the other way round would
 promise something the helper does not do.
+
+### The keyed component write
+
+`WriteRecordComponent<T>(store, family, key, value, types, whenAbsent)` is the keyed counterpart of
+`ReadRecordComponent<T>`: it updates one component of a record whose entity is in no scene — an
+owner that is not loaded, whose record another system must still change. It shares
+`WriteSingleton`'s blob-level replace-or-insert step, and pins two edges of its own:
+
+- **An existing record keeps its `CapturedAtWall`.** Updating one component is not a capture; a
+  restamp would tell the next rehydrate that the whole record, every other blob included, was taken
+  now, and any elapsed-time catch-up it derives from the stamp would be lost.
+- **An absent record is never created unasked.** With the default `RecordAbsent::Skip` the store is
+  untouched and the call returns `false`, so a write under a stale or mistaken key cannot
+  manufacture a record holding one component and nothing else. `RecordAbsent::Create` writes a new
+  record stamped with the wall clock.
+
+`WriteSingleton` differs on both counts by design: the singleton *is* the whole record, so it is
+created when absent and restamped on every write.
 
 ## The store checkpoint
 

@@ -1,7 +1,8 @@
 // Store-pattern tests: the edge semantics ComponentSetFamily and the singleton accessors pin, one
 // case per divergence point two hand-written registrars could reasonably differ at — the nullopt
 // key skip, the zero-component entity writing no record, rehydrate adding an absent component, an
-// unmatched blob logged rather than swallowed, first claimant wins, and the singleton's blob-level
+// unmatched blob logged rather than swallowed, first claimant wins, the keyed component write
+// keeping the record's stamp and never creating a record unasked, and the singleton's blob-level
 // read-modify-write.
 
 #include <doctest/doctest.h>
@@ -15,6 +16,7 @@
 
 #include <support/TempPath.h>
 
+#include <algorithm>
 #include <atomic>
 #include <filesystem>
 
@@ -403,6 +405,74 @@ TEST_CASE("a keyed record component reads by key and type, without a scene")
     CHECK_FALSE(
         ReadRecordComponent<PatternAlpha>(**store, PatternFamily, StoreKey{.Lo = 9, .Hi = 4}, types)
             .has_value());
+}
+
+TEST_CASE("writing one component of a keyed record keeps the record's other components and its "
+          "capture stamp")
+{
+    const TempSlot slot;
+    const TypeRegistry types = MakeRegistry();
+    Result<Unique<Store>> store = Store::Open(slot.Dir);
+    REQUIRE(store);
+    (*store)->RegisterFamily(MakePatternFamily(types));
+
+    // A stamp far from the wall clock, so a restamp could not pass for it.
+    constexpr i64 CapturedAt = 1'000;
+    const PatternAlpha alphaValue{.Value = 17};
+    const PatternStray strayValue{.Noise = 23};
+    StoreRecord record{.CapturedAtWall = CapturedAt};
+    ComponentBlob alpha{.Type = TypeIdOf<PatternAlpha>()};
+    WriteFields(alpha.Bytes, &alphaValue, types.Info(alpha.Type), types);
+    record.Components.push_back(std::move(alpha));
+    ComponentBlob stray{.Type = TypeIdOf<PatternStray>()};
+    WriteFields(stray.Bytes, &strayValue, types.Info(stray.Type), types);
+    record.Components.push_back(stray);
+    const StoreKey key{.Lo = 9, .Hi = 3};
+    (*store)->Write(PatternFamily, key, std::move(record));
+
+    // One write replaces a stored blob, one inserts a blob the record lacked.
+    CHECK(WriteRecordComponent(**store, PatternFamily, key, PatternAlpha{.Value = 41}, types));
+    CHECK(WriteRecordComponent(**store, PatternFamily, key, PatternBeta{.Weight = 8}, types));
+
+    const optional<StoreRecord> written = (*store)->Read(PatternFamily, key);
+    REQUIRE(written.has_value());
+    CHECK(written->CapturedAtWall == CapturedAt);
+    CHECK(written->Components.size() == 3);
+    const auto kept = std::ranges::find_if(written->Components, [](const ComponentBlob& blob)
+                                           { return blob.Type == TypeIdOf<PatternStray>(); });
+    REQUIRE(kept != written->Components.end());
+    CHECK(*kept == stray);
+
+    const optional<PatternAlpha> readAlpha =
+        ReadRecordComponent<PatternAlpha>(**store, PatternFamily, key, types);
+    const optional<PatternBeta> readBeta =
+        ReadRecordComponent<PatternBeta>(**store, PatternFamily, key, types);
+    REQUIRE(readAlpha.has_value());
+    REQUIRE(readBeta.has_value());
+    CHECK(readAlpha->Value == 41);
+    CHECK(readBeta->Weight == 8);
+}
+
+TEST_CASE("an absent record is written only when asked")
+{
+    const TempSlot slot;
+    const TypeRegistry types = MakeRegistry();
+    Result<Unique<Store>> store = Store::Open(slot.Dir);
+    REQUIRE(store);
+    (*store)->RegisterFamily(MakePatternFamily(types));
+
+    const StoreKey key{.Lo = 12, .Hi = 0};
+    CHECK_FALSE(WriteRecordComponent(**store, PatternFamily, key, PatternAlpha{.Value = 2}, types));
+    CHECK_FALSE((*store)->Read(PatternFamily, key).has_value());
+
+    const i64 before = Store::WallClockSeconds();
+    CHECK(WriteRecordComponent(**store, PatternFamily, key, PatternAlpha{.Value = 2}, types,
+                               RecordAbsent::Create));
+    const optional<StoreRecord> created = (*store)->Read(PatternFamily, key);
+    REQUIRE(created.has_value());
+    CHECK(created->Components.size() == 1);
+    CHECK(created->CapturedAtWall >= before);
+    CHECK(created->CapturedAtWall <= Store::WallClockSeconds());
 }
 
 TEST_CASE("the singleton reads nullopt when its record or blob is absent")
