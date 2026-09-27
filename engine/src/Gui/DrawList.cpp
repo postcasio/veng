@@ -245,6 +245,32 @@ namespace Veng::Gui
         PushQuad(corners, uvs, fill, half, center, params);
     }
 
+    void DrawList::Line(const vec2 from, const vec2 to, const f32 width, const vec4 color)
+    {
+        if (width <= 0.0f || color.a <= 0.0f)
+        {
+            return;
+        }
+
+        // The capsule is laid out along +x about the midpoint and turned onto the segment, so the
+        // SDF's local box stays axis-aligned and the rounded-rect path shapes it unchanged.
+        const vec2 delta = to - from;
+        const f32 length = glm::length(delta);
+        const vec2 mid = (from + to) * 0.5f;
+        const vec2 size(length + width, width);
+        const f32 angle = length > 0.0f ? std::atan2(delta.y, delta.x) : 0.0f;
+        const bool turned = angle != 0.0f;
+        if (turned)
+        {
+            PushTransform(mid, angle);
+        }
+        Quad(Rect{.Min = mid - size * 0.5f, .Size = size}, color, CornerRadii::All(width * 0.5f));
+        if (turned)
+        {
+            PopTransform();
+        }
+    }
+
     void DrawList::Shadow(const Rect& rect, const BoxShadow& shadow, const CornerRadii& radii)
     {
         if (rect.IsEmpty() || shadow.Color.a <= 0.0f)

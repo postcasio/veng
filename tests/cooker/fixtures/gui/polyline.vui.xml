@@ -1,0 +1,12 @@
+<Panel style="width: 256px; height: 192px; background: #1a1c24ff; padding: 8px;">
+  <Polyline id="chart" style="width: 240px; height: 80px; padding: 6px; background: #262a36ff; border-width: 1px; border-color: #3c4252ff; corner-radius: 4px; stroke: #4fc3f7ff; stroke-width: 2px;"
+            points="0,0.8 0.1,0.55 0.2,0.65 0.3,0.3 0.4,0.45 0.5,0.1 0.6,0.35 0.7,0.25 0.8,0.7 0.9,0.5 1,0.6"/>
+  <Panel style="flex-direction: row; margin: 12px 0 0 0;">
+    <Polyline id="thin" style="width: 72px; height: 72px; margin: 0 12px 0 0; stroke: #ffffffff; stroke-width: 1px;"
+              points="0.1,0.9 0.5,0.1 0.9,0.9 0.1,0.9"/>
+    <Polyline id="thick" style="width: 72px; height: 72px; margin: 0 12px 0 0; stroke: #81c784ff; stroke-width: 8px;"
+              points="0.1,0.8 0.5,0.2 0.9,0.8"/>
+    <Polyline id="trimmed" style="width: 72px; height: 72px; stroke: #ffb74dff; stroke-width: 4px; stroke-trim: 0.6;"
+              points="0.1,0.9 0.1,0.1 0.9,0.1 0.9,0.9 0.3,0.9 0.3,0.3 0.7,0.3 0.7,0.7"/>
+  </Panel>
+</Panel>

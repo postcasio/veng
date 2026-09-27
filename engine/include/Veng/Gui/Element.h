@@ -98,14 +98,22 @@ namespace Veng::Gui
         /// against the host document's single context, exactly as inline markup does. Appended last
         /// to keep every existing ordinal stable, since a cooked recipe stores the kind as an ordinal.
         Component,
+        /// @brief A box that strokes a line through a list of points — a sparkline, a line chart, a
+        ///        route.
+        ///
+        /// Lays out and paints as a Panel (a plain flex box, with its own background, border, and
+        /// shadow), then strokes Element::Points — normalized to its content box — in the style's
+        /// `stroke` color at `stroke-width`, drawing the `stroke-trim` fraction of the line's length.
+        /// The stroke is paint only: it neither sizes the box nor hit-tests. Points author as the
+        /// markup `points="x,y x,y …"` attribute or through Document::SetPolylinePoints.
+        Polyline,
     };
 
-    /// @brief Transient interaction-state bits an element carries for styling and events.
+    /// @brief The interaction-state bits an element carries, which a style variant can be scoped to.
     ///
     /// The bits are a bitmask (combine with the bitwise operators). They record the pointer
     /// and focus state an interaction layer sets and a styling layer reads; the layout and
     /// draw here do not consult them.
-    /// @brief The interaction states a style variant can be scoped to.
     ///
     /// Four of them reach **inside** the element that carries them when a variant is matched, since
     /// a control's state is a fact about the control and the labels inside it are part of what it
@@ -250,6 +258,16 @@ namespace Veng::Gui
         /// file list has.
         Extended,
     };
+
+    /// @brief Parses a Polyline's point list: whitespace-separated `x,y` pairs.
+    ///
+    /// The one decoder of the markup `points="0,1 0.5,0 1,1"` attribute, shared by the cook (which
+    /// rejects a malformed list) and the instantiate (which fills Element::Points). Coordinates are
+    /// normalized content-box fractions and may carry any sign; an empty or all-whitespace string
+    /// is an empty list.
+    /// @param text  The attribute value.
+    /// @return The points in order, or nullopt when a token is not two numbers joined by a comma.
+    [[nodiscard]] optional<vector<vec2>> ParsePolylinePoints(string_view text);
 
     /// @brief The per-element runtime state the widget layer maintains behind a control's kind.
     ///
@@ -429,6 +447,15 @@ namespace Veng::Gui
         vec4 ImageTint{1.0f};
         /// @brief The UV sub-rect an Image samples (an atlas region); the whole texture by default.
         Rect ImageUv{.Min = vec2(0.0f), .Size = vec2(1.0f)};
+
+        /// @brief A Polyline's points, in normalized content-box space; unused by other kinds.
+        ///
+        /// (0, 0) is the content box's top-left and (1, 1) its bottom-right, y down, so the line
+        /// scales with the box and a value outside [0, 1] reaches past it (a stroke is not clipped
+        /// unless an ancestor clips). Consecutive points are joined by one segment each; fewer than
+        /// two draw nothing. Write it through Document::SetPolylinePoints, which marks the paint
+        /// dirty without dirtying layout.
+        vector<vec2> Points;
 
         /// @brief Named bound-value slots a binding layer resolves against a context.
         map<string, string> Bindings;

@@ -509,6 +509,25 @@ namespace Veng::Gui
         /// Named ArcCapStyle rather than ArcCap only because the enum owns that name.
         ArcCap ArcCapStyle = ArcCap::Butt;
 
+        /// @brief A Polyline's line color, linear straight-alpha RGBA; a zero alpha (the default)
+        ///        draws no line.
+        ///
+        /// Inert on every kind but Polyline. A translucent stroke covers each join twice, since
+        /// the round-capped segments overlap there.
+        vec4 Stroke{0.0f};
+        /// @brief A Polyline's line width, in pixels.
+        ///
+        /// The line is centred on the points, so half of it lies to either side, and every segment
+        /// ends in a round cap of this diameter — which is what rounds the joins. Paint only: it
+        /// neither grows the element's box nor widens its hit area.
+        f32 StrokeWidth = 1.0f;
+        /// @brief The fraction of a Polyline's total length drawn, measured from its first point.
+        ///
+        /// Clamped to [0, 1] at paint: 1 (the default) draws the whole line, 0 none of it, and a
+        /// value between cuts the segment it lands in part-way — so a transition or keyframe clip on
+        /// it is a draw-on reveal.
+        f32 StrokeTrim = 1.0f;
+
         /// @brief How content overflowing the box is treated horizontally.
         Overflow OverflowX = Overflow::Visible;
         /// @brief How content overflowing the box is treated vertically.

@@ -352,10 +352,11 @@ TEST_CASE("gui style: a disabled container greys the controls inside it")
     CHECK(inner.ComputedStyle.Opacity == doctest::Approx(0.35f));
 }
 
-TEST_CASE("gui style: the arc angles and thickness animate; the shape and cap snap")
+TEST_CASE("gui style: the arc and stroke numbers animate; the shape and cap snap")
 {
     for (const StyleProperty property :
-         {StyleProperty::ArcStart, StyleProperty::ArcSweep, StyleProperty::ArcThickness})
+         {StyleProperty::ArcStart, StyleProperty::ArcSweep, StyleProperty::ArcThickness,
+          StyleProperty::Stroke, StyleProperty::StrokeWidth, StyleProperty::StrokeTrim})
     {
         CHECK(IsAnimatableProperty(property));
     }
@@ -365,7 +366,8 @@ TEST_CASE("gui style: the arc angles and thickness animate; the shape and cap sn
     // Every new name round-trips through the one table the cooker and the runtime share.
     for (const StyleProperty property :
          {StyleProperty::Shape, StyleProperty::ArcStart, StyleProperty::ArcSweep,
-          StyleProperty::ArcThickness, StyleProperty::ArcCap})
+          StyleProperty::ArcThickness, StyleProperty::ArcCap, StyleProperty::Stroke,
+          StyleProperty::StrokeWidth, StyleProperty::StrokeTrim})
     {
         CHECK(ParseStyleProperty(ToString(property)) == property);
     }

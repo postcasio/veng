@@ -167,6 +167,13 @@ namespace Veng::Gui
         /// @brief How an arc band's two ends terminate (Style::ArcCapStyle); Unit is an ArcCap
         /// ordinal.
         ArcCap,
+        /// @brief A Polyline's line color (Style::Stroke); value is a linear-space vec4.
+        Stroke,
+        /// @brief A Polyline's line width in pixels (Style::StrokeWidth); value is a scalar.
+        StrokeWidth,
+        /// @brief The drawn fraction of a Polyline's length from its first point
+        /// (Style::StrokeTrim); value is a scalar.
+        StrokeTrim,
     };
 
     /// @brief The kind of shadow a BoxShadow declaration's Unit selects.
@@ -183,7 +190,7 @@ namespace Veng::Gui
     /// @brief The number of StyleProperty enumerators — keep in step when appending one.
     ///
     /// The runtime's whole-style property sweeps iterate `[0, StylePropertyCount)`.
-    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::ArcCap) + 1;
+    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::StrokeTrim) + 1;
 
     /// @brief Canonical USS declaration name of a style property ("flex-direction", "background", …).
     ///

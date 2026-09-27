@@ -69,6 +69,8 @@ namespace VengEditor
                 return "DropdownArrow";
             case Gui::ElementKind::Component:
                 return "Component";
+            case Gui::ElementKind::Polyline:
+                return "Polyline";
             }
             return "Element";
         }

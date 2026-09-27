@@ -369,7 +369,7 @@ namespace Veng::Gui
 
     /// @brief A device-free command buffer of UI primitives resolving to one geometry stream.
     ///
-    /// Each primitive call (Quad / Texture / NineSlice / Text) appends geometry to a single
+    /// Each primitive call (Quad / Line / Texture / NineSlice / Text) appends geometry to a single
     /// interleaved vertex/index stream and extends or opens a run keyed by {pipeline, clip,
     /// texture}. PushClip / PopClip maintain a scissor stack whose entries intersect. A render
     /// pass consumes GetVertices() / GetIndices() / GetRuns() and replays each run. Colors are
@@ -390,6 +390,22 @@ namespace Veng::Gui
         /// @param border   Optional border; a positive width draws a ring in the border color.
         void Quad(const Rect& rect, vec4 color, const CornerRadii& radii = {},
                   const Border& border = {});
+
+        /// @brief Appends one round-capped line segment — a capsule — from one point to another.
+        ///
+        /// The segment is the rounded rectangle of a box `|to - from| + width` long and `width`
+        /// high, with a radius of `width / 2`, turned about the segment's midpoint through the
+        /// transform stack — so it is one quad on the ordinary shape run, batching with the fills
+        /// around it and rotating with any enclosing transform. The ends are semicircles centred on
+        /// the two points. Consecutive segments sharing an endpoint therefore meet in a round join
+        /// with no extra geometry; a translucent line covers each join twice, since the caps
+        /// overlap there. A zero-length segment is a dot of that diameter. Under PushArc it is
+        /// masked like any other shape quad.
+        /// @param from   The segment's start, in framebuffer pixels.
+        /// @param to     The segment's end, in framebuffer pixels.
+        /// @param width  The line width in pixels; a non-positive width draws nothing.
+        /// @param color  Line color, linear straight-alpha RGBA; a zero alpha draws nothing.
+        void Line(vec2 from, vec2 to, f32 width, vec4 color);
 
         /// @brief Appends a soft drop or inset shadow of a rounded rectangle.
         ///

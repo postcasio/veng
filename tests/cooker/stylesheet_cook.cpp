@@ -669,6 +669,30 @@ TEST_CASE("Cooker: the arc silhouette family parses into its cooked slots")
     }
 }
 
+TEST_CASE("Cooker: the stroke family parses into its cooked slots")
+{
+    const string located = "loc";
+
+    // The stroke is a color like any other, so it takes the rgb() linear form as readily as hex.
+    const Result<CookedStyleProperty> stroke =
+        ParseStyleDeclaration(Gui::StyleProperty::Stroke, "rgba(0.2, 0.4, 0.6, 0.5)", located);
+    REQUIRE(stroke.has_value());
+    CHECK(stroke->Values[2] == doctest::Approx(0.6f));
+    CHECK(stroke->Values[3] == doctest::Approx(0.5f));
+
+    const Result<CookedStyleProperty> width =
+        ParseStyleDeclaration(Gui::StyleProperty::StrokeWidth, "3px", located);
+    REQUIRE(width.has_value());
+    CHECK(width->Values[0] == doctest::Approx(3.0f));
+    const Result<CookedStyleProperty> trim =
+        ParseStyleDeclaration(Gui::StyleProperty::StrokeTrim, "0.4", located);
+    REQUIRE(trim.has_value());
+    CHECK(trim->Values[0] == doctest::Approx(0.4f));
+
+    CHECK_FALSE(ParseStyleDeclaration(Gui::StyleProperty::Stroke, "blue", located).has_value());
+    CHECK_FALSE(ParseStyleDeclaration(Gui::StyleProperty::StrokeTrim, "all", located).has_value());
+}
+
 TEST_CASE("Cooker: the box-shadow shorthand splits into a geometry and a color declaration")
 {
     const string located = "loc";

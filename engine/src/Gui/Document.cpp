@@ -22,6 +22,7 @@
 #include <fmt/format.h>
 
 #include <algorithm>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <unordered_map>
@@ -341,6 +342,8 @@ namespace Veng::Gui
                 return "DropdownArrow";
             case ElementKind::Component:
                 return "Component";
+            case ElementKind::Polyline:
+                return "Polyline";
             }
             return "Panel";
         }
@@ -1362,6 +1365,58 @@ namespace Veng::Gui
         m_PaintDirty = true;
     }
 
+    optional<vector<vec2>> ParsePolylinePoints(const string_view text)
+    {
+        vector<vec2> points;
+        usize i = 0;
+        const auto isSpace = [](char c)
+        { return std::isspace(static_cast<unsigned char>(c)) != 0; };
+        while (i < text.size())
+        {
+            while (i < text.size() && isSpace(text[i]))
+            {
+                ++i;
+            }
+            const usize start = i;
+            while (i < text.size() && !isSpace(text[i]))
+            {
+                ++i;
+            }
+            if (i == start)
+            {
+                break;
+            }
+            const string_view token = text.substr(start, i - start);
+            const usize comma = token.find(',');
+            if (comma == string_view::npos)
+            {
+                return std::nullopt;
+            }
+            vec2 point(0.0f);
+            const string_view x = token.substr(0, comma);
+            const string_view y = token.substr(comma + 1);
+            const auto parsedX = std::from_chars(x.data(), x.data() + x.size(), point.x);
+            const auto parsedY = std::from_chars(y.data(), y.data() + y.size(), point.y);
+            if (parsedX.ec != std::errc{} || parsedX.ptr != x.data() + x.size() ||
+                parsedY.ec != std::errc{} || parsedY.ptr != y.data() + y.size())
+            {
+                return std::nullopt;
+            }
+            points.push_back(point);
+        }
+        return points;
+    }
+
+    void Document::SetPolylinePoints(Element& element, const std::span<const vec2> points)
+    {
+        if (std::ranges::equal(element.Points, points))
+        {
+            return;
+        }
+        element.Points.assign(points.begin(), points.end());
+        m_PaintDirty = true;
+    }
+
     void Document::SetPlacement(Element& element, const vec2 topLeft, const vec2 size)
     {
         const Style& base = element.BaseStyle;
@@ -1480,6 +1535,9 @@ namespace Veng::Gui
             case StyleProperty::ArcSweep:
             case StyleProperty::ArcThickness:
             case StyleProperty::ArcCap:
+            case StyleProperty::Stroke:
+            case StyleProperty::StrokeWidth:
+            case StyleProperty::StrokeTrim:
                 return false;
             // A slice makes an Image's intrinsic size the sum of its corner insets, so authoring or
             // dropping one re-measures the leaf.
@@ -1574,6 +1632,12 @@ namespace Veng::Gui
                 return vec4(style.ArcSweep, 0.0f, 0.0f, 0.0f);
             case StyleProperty::ArcThickness:
                 return vec4(style.ArcThickness, 0.0f, 0.0f, 0.0f);
+            case StyleProperty::Stroke:
+                return style.Stroke;
+            case StyleProperty::StrokeWidth:
+                return vec4(style.StrokeWidth, 0.0f, 0.0f, 0.0f);
+            case StyleProperty::StrokeTrim:
+                return vec4(style.StrokeTrim, 0.0f, 0.0f, 0.0f);
             case StyleProperty::InsetLeft:
                 return vec4(style.Inset.Left, 0.0f, 0.0f, 0.0f);
             case StyleProperty::InsetTop:
@@ -1679,6 +1743,15 @@ namespace Veng::Gui
                 return;
             case StyleProperty::ArcThickness:
                 style.ArcThickness = value.x;
+                return;
+            case StyleProperty::Stroke:
+                style.Stroke = value;
+                return;
+            case StyleProperty::StrokeWidth:
+                style.StrokeWidth = value.x;
+                return;
+            case StyleProperty::StrokeTrim:
+                style.StrokeTrim = value.x;
                 return;
             case StyleProperty::InsetLeft:
                 style.Inset.Left = value.x;
@@ -2240,6 +2313,7 @@ namespace Veng::Gui
             case ElementKind::SliderThumb:
             case ElementKind::DropdownArrow:
             case ElementKind::Component:
+            case ElementKind::Polyline:
                 return false;
             }
             return false;
@@ -2760,6 +2834,19 @@ namespace Veng::Gui
             element.Widget.Max = 0.0f;
             element.Widget.Value =
                 std::max(0.0f, std::round(ReadConfigScalar(element, "value", 0.0f)));
+        }
+        else if (element.Kind == ElementKind::Polyline)
+        {
+            // The cook validated the list, so a parse failure here means an imperatively added
+            // literal, which leaves the points as they were rather than half-applied.
+            if (const auto points = element.Bindings.find("points");
+                points != element.Bindings.end())
+            {
+                if (optional<vector<vec2>> parsed = ParsePolylinePoints(points->second))
+                {
+                    element.Points = std::move(*parsed);
+                }
+            }
         }
         else if (IsSelectionHost(element.Kind))
         {
@@ -3425,6 +3512,49 @@ namespace Veng::Gui
         }
     }
 
+    namespace
+    {
+        // Strokes a Polyline's points across its content box, drawing the trimmed fraction of the
+        // line's length from the first point: whole segments up to the cut, then the one segment the
+        // cut lands in part-way, then nothing.
+        void BuildPolylineStroke(const Element& element, DrawList& list, const f32 opacity)
+        {
+            const Style& style = element.ComputedStyle;
+            const f32 trim = std::clamp(style.StrokeTrim, 0.0f, 1.0f);
+            if (element.Points.size() < 2 || style.Stroke.a <= 0.0f || style.StrokeWidth <= 0.0f ||
+                trim <= 0.0f)
+            {
+                return;
+            }
+
+            const Rect box = ToContentBox(element.Layout, style).Box;
+            const auto place = [&box](vec2 point) { return box.Min + point * box.Size; };
+            f32 total = 0.0f;
+            for (usize i = 1; i < element.Points.size(); ++i)
+            {
+                total += glm::distance(place(element.Points[i - 1]), place(element.Points[i]));
+            }
+
+            vec4 color = style.Stroke;
+            color.a *= opacity;
+            // A cut closer than this to a segment's start leaves nothing of it to draw; without the
+            // slack, rounding would put a cap-sized dot at the start of the segment after a cut that
+            // lands exactly on a joint.
+            constexpr f32 CutSlack = 1e-4f;
+            f32 remaining = trim * total;
+            for (usize i = 1; i < element.Points.size() && remaining > CutSlack; ++i)
+            {
+                const vec2 from = place(element.Points[i - 1]);
+                const vec2 to = place(element.Points[i]);
+                const f32 length = glm::distance(from, to);
+                const vec2 end =
+                    length > remaining ? from + (to - from) * (remaining / length) : to;
+                list.Line(from, end, style.StrokeWidth, color);
+                remaining -= length;
+            }
+        }
+    }
+
     void Document::BuildElement(const Element& element, DrawList& list, const f32 inherited) const
     {
         if (!element.Visible)
@@ -3616,6 +3746,21 @@ namespace Veng::Gui
                 }
             }
         }
+        // A Polyline's line is content drawn over its fill and under its frame. It is not part of
+        // the silhouette, so an arc-shaped Polyline strokes its whole line uncut.
+        if (element.Kind == ElementKind::Polyline)
+        {
+            if (arc)
+            {
+                list.PopArc();
+            }
+            BuildPolylineStroke(element, list, opacity);
+            if (arc)
+            {
+                list.PushArc(ArcShapeOf(rect, style));
+            }
+        }
+
         // An inset shadow paints *over* the fill instead of behind it, bounded by the box it
         // recesses — so it lands after every fill source and under the border ring.
         if (silhouette && style.Shadow.has_value() && style.Shadow->Inset)

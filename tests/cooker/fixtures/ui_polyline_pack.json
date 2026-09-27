@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "id": "0x4A9B7ADAAE212B21",
+      "type": "UIDocument",
+      "source": "gui/polyline.vui.xml"
+    }
+  ]
+}

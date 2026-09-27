@@ -4,7 +4,9 @@
 // replicated N times in pre-order; `${i}`/`${n}`/`${n:0W}` substitute into id/class/text and
 // binding-expression positions; the descendant of a repeated element inherits the repeat index;
 // `$${` escapes a literal `${`. Plus every located error: `count` on the root, a nested `count`,
-// an out-of-range N, a malformed `${…}`, and a stray `${` outside any repeat.
+// an out-of-range N, a malformed `${…}`, and a stray `${` outside any repeat. The same inline-markup
+// harness also covers the `<Polyline points="…">` literal, which rides the recipe's binding table
+// the way the widget config attributes do.
 
 #include <cstring>
 #include <filesystem>
@@ -234,4 +236,24 @@ TEST_CASE("ui document repeat: a ${ outside a count subtree is a located error")
     const Result<DecodedDocument> doc = CookMarkup(R"(<Panel><Text>${n}</Text></Panel>)");
     REQUIRE_FALSE(doc.has_value());
     CHECK(doc.error().find("outside") != string::npos);
+}
+
+TEST_CASE("ui document: a Polyline's points cook as a literal, and a malformed list is an error")
+{
+    const Result<DecodedDocument> doc =
+        CookMarkup(R"(<Panel><Polyline points="0,1 0.5,0.25 1,0"/></Panel>)");
+    REQUIRE_MESSAGE(doc.has_value(), "cook failed: ", doc ? string{} : doc.error());
+    REQUIRE(doc->Elements.size() == 2);
+    CHECK(doc->Elements[1].Kind == static_cast<u32>(Gui::ElementKind::Polyline));
+    REQUIRE(doc->Bindings.size() == 1);
+    CHECK(doc->Read(doc->Bindings[0].Property) == "points");
+    CHECK(doc->Read(doc->Bindings[0].Expression) == "0,1 0.5,0.25 1,0");
+
+    const Result<DecodedDocument> malformed =
+        CookMarkup(R"(<Panel><Polyline points="0,1 0.5"/></Panel>)");
+    REQUIRE_FALSE(malformed.has_value());
+    CHECK(malformed.error().find("points") != string::npos);
+
+    // `points` means nothing on another kind, so it stays an unrecognized attribute there.
+    CHECK_FALSE(CookMarkup(R"(<Panel points="0,1 1,0"/>)").has_value());
 }

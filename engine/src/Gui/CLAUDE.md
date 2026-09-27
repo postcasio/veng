@@ -362,8 +362,13 @@ each cell of the sub-rect, since the fragment wraps it arithmetically.
 ## The draw floor: a device-free draw list + a `GuiScenePass`
 
 `Gui::DrawList` (`Veng/Gui/DrawList.h`) is a device-free builder of **batched, clipped, textured
-quads** — rounded-rect / border SDF, 9-slice, tint/opacity, and MSDF text runs — that
-`Document::Build` appends into. A `GuiScenePass` records the draw list into an offscreen image
+quads** — rounded-rect / border SDF, 9-slice, tint/opacity, round-capped line segments, and MSDF
+text runs — that `Document::Build` appends into. **`DrawList::Line(from, to, width, color)` is the
+one primitive that is not an axis-aligned box**, and it is still one: a capsule — the rounded rect
+of a box `|to − from| + width` long and `width` high, radius `width / 2` — turned onto the segment
+through `PushTransform` about its midpoint, so a line rides the ordinary shape run and batches with
+the fills around it. Consecutive segments meet in round joins because their caps overlap, which is
+also why a translucent line covers each join twice. A `GuiScenePass` records the draw list into an offscreen image
 blended over the viewport's scene output. Its two fixed pipelines (the rounded-rect shape path and
 the MSDF text path) are built from **core-pack** Slang shaders a consumer reuses rather than
 authors; the **third** run kind, `GuiPipeline::Material`, is the seam where a consumer *does*
@@ -371,7 +376,7 @@ author a fragment — an authored `GuiFill` material, drawn on the same vertex s
 by the same silhouette (see [Material fills](#material-fills-an-authored-fill-source) above). The
 image goldens are the render floor every later change holds pixel-stable against: one **per feature**
 (`gui_overlay`, `gui_rotated`, `gui_image`, `gui_background`, `gui_sliced_tile`, `gui_shadow`,
-`gui_material`, `gui_arc`, `gui_popup`), kept separate on purpose so a moved pixel names the feature that moved it, plus **two**
+`gui_material`, `gui_arc`, `gui_polyline`, `gui_popup`), kept separate on purpose so a moved pixel names the feature that moved it, plus **two**
 **composition** captures for what only shows when two of them meet: `gui_composition` — a nine-slice
 frame around a tiled `Image`, a material fill inside a clipped scroller, and a shadowed card under an
 open popup — and `gui_box_composition`, where tiled nine-slice frames wrap bordered boxes whose size
@@ -697,6 +702,22 @@ cascade (`Dropdown`, `DropdownArrow`, and the `:hover`/`:focused`/`:selected` va
 `SliderFill`/`SliderThumb` are; the popup list carries the `dropdown-list` class and its root the
 `dropdown-popup` class for styling, and its options reuse `List` item styling.
 
+**A `Polyline` is a Panel that strokes a line through its points** — a sparkline, a line chart, a
+graph edge, a route. It lays out as a plain flex box (not a measured leaf) with its own background,
+border, and shadow, then draws `Element::Points` — **normalized to its content box**, `(0,0)` the
+top-left and `(1,1)` the bottom-right, y down, so the line scales with the box — as one
+`DrawList::Line` per visible segment, **over its fill and under its border**, in the `stroke` color at
+`stroke-width` (default 1px; `stroke` defaults transparent, which draws nothing). `stroke-trim`
+(default 1, clamped to [0, 1]) draws only that fraction of the line's total length from its first
+point, cutting the segment it lands in part-way — a transition or keyframe clip on it is a draw-on
+reveal. All three animate, and the stroke is **paint only**: it neither sizes the box nor hit-tests,
+and it is not part of an arc-shaped Polyline's silhouette, so the line is drawn uncut. Points author
+as the markup literal `points="x,y x,y …"` (validated at cook by `Gui::ParsePolylinePoints`, carried on
+the recipe's binding table exactly as the widget config attributes are, so the cooked format did not
+move) or at runtime through `Document::SetPolylinePoints(element, span<const vec2>)`, the paint-only,
+early-out-on-unchanged setter a chart driver calls each frame. A `{binding}` on `points` is not
+resolved.
+
 **The widget parts live in `Children`, as a trailing tail.** That buys the layout mirror, the
 cascade, paint order, and hit-testing with no parallel paths — a bar or thumb is drawn and hit like
 any element. The cost is that they are not *content*, so every content-shaped walk (item slots, the
@@ -763,9 +784,10 @@ keep-visible-until-settled sequencing the utility owns). `Viewport::WorldToDocum
 (`WorldToRegion` ÷ the UI scale — the logical-point space a document lays out in) and
 `Viewport::GetDocumentExtent` bridge a projected world point into HUD space, and the device-free
 `Gui::Placement` helpers (`ClampIntoBounds`, `AnchorBeside`, `Veng/Gui/Placement.h`) clamp a
-card/label into bounds; the projection policy and rejection margins stay the game's. Three drive
-paths support them: `SetText` early-outs on unchanged text, `SetImageUv` is a paint-only
-atlas-flipbook setter, and `SetRotation` a paint-only per-frame angle.
+card/label into bounds; the projection policy and rejection margins stay the game's. The drive
+paths that support them are paint-only where they can be: `SetText` early-outs on unchanged text,
+`SetImageUv` is an atlas-flipbook setter, `SetRotation` a per-frame angle, `SetArc` a gauge's
+angles, and `SetPolylinePoints` a chart's data.
 
 **Pinning comes in two forms, and only one of them names a size.** `SetPlacement(element, topLeft,
 size)` writes an absolute position *and* a fixed `Points` extent; `SetPinnedPosition(element,

@@ -814,3 +814,35 @@ TEST_CASE("gui draw list: the arc does not change batching and Clear empties its
     list.Quad(UnitRect, vec4(1.0f));
     CHECK(list.GetVertices()[0].Arc == vec4(0.0f));
 }
+
+TEST_CASE("gui draw list: a line is one capsule quad spanning the segment plus its caps")
+{
+    DrawList list;
+    const vec2 from(10.0f, 10.0f);
+    const vec2 to(40.0f, 50.0f);
+    list.Line(from, to, 4.0f, vec4(1.0f));
+
+    // One shape quad: a box the segment's length plus one width long (a half-width cap at each
+    // end) and one width high, fully rounded.
+    REQUIRE(list.GetRuns().size() == 1);
+    CHECK(list.GetRuns()[0].Pipeline == GuiPipeline::Shape);
+    const vector<GuiVertex>& vertices = list.GetVertices();
+    REQUIRE(vertices.size() == 4);
+    CHECK(vertices[0].RectHalf.x == doctest::Approx(27.0f));
+    CHECK(vertices[0].RectHalf.y == doctest::Approx(2.0f));
+    CHECK(vertices[0].Params.x == doctest::Approx(2.0f));
+
+    // The quad is turned onto the segment: centred on its midpoint, its long edge along it.
+    const vec2 center = (vertices[0].Position + vertices[2].Position) * 0.5f;
+    CheckVec2(center, (from + to) * 0.5f);
+    const vec2 longEdge = vertices[1].Position - vertices[0].Position;
+    CHECK(glm::length(longEdge) == doctest::Approx(54.0f));
+    CHECK(glm::dot(glm::normalize(longEdge), glm::normalize(to - from)) == doctest::Approx(1.0f));
+
+    // Consecutive lines share the shape run, and a non-positive width or a clear color draws nothing.
+    list.Line(to, vec2(80.0f, 50.0f), 4.0f, vec4(1.0f));
+    list.Line(from, to, 0.0f, vec4(1.0f));
+    list.Line(from, to, 4.0f, vec4(0.0f));
+    CHECK(list.GetRuns().size() == 1);
+    CHECK(vertices.size() == 8);
+}

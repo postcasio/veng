@@ -136,9 +136,10 @@ extern "C"
 /// that stride, so a stale module lays the struct out short and reads the fields after Size at a
 /// shifted offset.
 /// Version 29 grows Gui::Style with the arc silhouette fields (Shape, ArcStart, ArcSweep,
-/// ArcThickness, ArcCapStyle). A module reads and writes an element's style through Gui::Document
-/// and the Element it hands back, so a stale module lays Style out short and reads every field after
-/// Rotation at a shifted offset.
+/// ArcThickness, ArcCapStyle) and the stroke fields (Stroke, StrokeWidth, StrokeTrim), and
+/// Gui::Element with the Polyline's Points. A module reads and writes an element and its style
+/// through Gui::Document, so a stale module lays both out short and reads every field after the
+/// first addition at a shifted offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION

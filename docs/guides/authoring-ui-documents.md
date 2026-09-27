@@ -781,6 +781,33 @@ texture (that is what the sampler wraps over). The *measure*, though, reads the 
 texture — which is what keeps `Document::SetImageUv` a paint-only write that never re-runs
 layout, so a per-frame flipbook advance stays free.
 
+### `Polyline` — a line through points
+
+A `<Polyline>` is a Panel — it lays out, fills, borders, and shadows like one — that also strokes a
+line through a list of points: a sparkline, a line chart, a route. The points are **normalized to
+its content box** (`0,0` the top-left, `1,1` the bottom-right, y down), so the line scales with the
+box:
+
+```xml
+<Polyline class="spark" points="0,0.8 0.25,0.3 0.5,0.55 0.75,0.1 1,0.4"/>
+```
+
+```css
+.spark {
+    width: 120px; height: 32px; padding: 4px;
+    stroke: #4fc3f7;          /* transparent by default, which draws no line */
+    stroke-width: 2px;        /* centred on the points; round caps make round joins */
+    stroke-trim: 1;           /* the drawn fraction of the length, from the first point */
+    transition: stroke-trim 0.6s;
+}
+```
+
+`stroke`, `stroke-width`, and `stroke-trim` all animate, so easing `stroke-trim` from 0 to 1 draws
+the line on. The stroke is paint only — it neither sizes the box nor takes the pointer — and a
+translucent stroke darkens where its segments meet, since their round caps overlap. The markup list
+is a literal checked at cook time (`x,y` pairs separated by whitespace); to plot data at runtime,
+call `Document::SetPolylinePoints(element, points)`, a paint-only write that skips an unchanged list.
+
 ### Worked example: a framed panel with a tiled backdrop and a shader readout
 
 The three fills meet often enough to be worth seeing together — nine-slice art for the chrome, a

@@ -124,6 +124,12 @@ namespace Veng::Gui
             return "arc-thickness";
         case StyleProperty::ArcCap:
             return "arc-cap";
+        case StyleProperty::Stroke:
+            return "stroke";
+        case StyleProperty::StrokeWidth:
+            return "stroke-width";
+        case StyleProperty::StrokeTrim:
+            return "stroke-trim";
         }
         return "unknown";
     }
@@ -366,6 +372,18 @@ namespace Veng::Gui
         {
             return StyleProperty::ArcCap;
         }
+        if (name == "stroke")
+        {
+            return StyleProperty::Stroke;
+        }
+        if (name == "stroke-width")
+        {
+            return StyleProperty::StrokeWidth;
+        }
+        if (name == "stroke-trim")
+        {
+            return StyleProperty::StrokeTrim;
+        }
         return std::nullopt;
     }
 
@@ -401,6 +419,9 @@ namespace Veng::Gui
         case StyleProperty::ArcStart:
         case StyleProperty::ArcSweep:
         case StyleProperty::ArcThickness:
+        case StyleProperty::Stroke:
+        case StyleProperty::StrokeWidth:
+        case StyleProperty::StrokeTrim:
             return true;
         case StyleProperty::FlexDirection:
         case StyleProperty::JustifyContent:

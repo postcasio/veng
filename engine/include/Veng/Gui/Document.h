@@ -293,6 +293,16 @@ namespace Veng::Gui
         /// @param uv       The UV sub-rect to sample, in normalized 0..1 texture coordinates.
         void SetImageUv(Element& element, const Rect& uv);
 
+        /// @brief Sets a Polyline's points — a paint-only write, no layout re-solve.
+        ///
+        /// Replaces Element::Points, in normalized content-box space ((0, 0) the content box's
+        /// top-left, (1, 1) its bottom-right, y down), so a sparkline or a route re-plots each frame
+        /// without running the flexbox solve; writing the points it already holds is a no-op. The
+        /// points are inert on every kind but Polyline.
+        /// @param element  The Polyline whose points to set.
+        /// @param points   The new points, in order; fewer than two draw no line.
+        void SetPolylinePoints(Element& element, std::span<const vec2> points);
+
         /// @brief Pins an element absolutely at a rect, dirtying layout only on a real change.
         ///
         /// The one-call form of the pin-at-rect idiom: absolute position, Left/Top insets at
@@ -419,8 +429,8 @@ namespace Veng::Gui
 
         /// @brief Returns whether a paint-only write has landed since the last Drive.
         ///
-        /// The paint-only setters (opacity, rotation, background, background gradient, text color,
-        /// image UV) deliberately leave the layout undirtied so a per-frame fade or spin never
+        /// The paint-only setters (opacity, rotation, arc, background, background gradient, text
+        /// color, image UV, polyline points) deliberately leave the layout undirtied so a per-frame fade or spin never
         /// re-runs the flex solve. They still change *pixels*, so a consumer that caches rendered
         /// output must re-record on this in addition to IsDirty — gating a repaint on the layout
         /// flag alone holds a stale target for as long as the tree's boxes happen not to move.

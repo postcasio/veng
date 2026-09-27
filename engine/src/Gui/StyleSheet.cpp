@@ -232,6 +232,15 @@ namespace Veng::Gui
         case StyleProperty::ArcCap:
             style.ArcCapStyle = static_cast<ArcCap>(declaration.Unit);
             return;
+        case StyleProperty::Stroke:
+            style.Stroke = declaration.Values;
+            return;
+        case StyleProperty::StrokeWidth:
+            style.StrokeWidth = declaration.Values.x;
+            return;
+        case StyleProperty::StrokeTrim:
+            style.StrokeTrim = declaration.Values.x;
+            return;
         case StyleProperty::TextAlign:
             style.TextAlignment = static_cast<TextAlign>(declaration.Unit);
             return;

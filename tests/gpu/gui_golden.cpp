@@ -12,7 +12,8 @@
 // (VENG_GUI_ROTATED_GOLDEN_DUMP, VENG_GUI_IMAGE_GOLDEN_DUMP, VENG_GUI_BACKGROUND_GOLDEN_DUMP,
 // VENG_GUI_SHADOW_GOLDEN_DUMP, VENG_GUI_MATERIAL_GOLDEN_DUMP, VENG_GUI_POPUP_GOLDEN_DUMP,
 // VENG_GUI_SLICED_TILE_GOLDEN_DUMP, VENG_GUI_COMPOSITION_GOLDEN_DUMP,
-// VENG_GUI_BOX_COMPOSITION_GOLDEN_DUMP, VENG_GUI_ARC_GOLDEN_DUMP).
+// VENG_GUI_BOX_COMPOSITION_GOLDEN_DUMP, VENG_GUI_ARC_GOLDEN_DUMP,
+// VENG_GUI_POLYLINE_GOLDEN_DUMP).
 //
 // The same font fixture backs one non-rendering case here: a TextInput built with a resident font
 // emits its own value as a glyph run, which needs a real atlas and so cannot live in the
@@ -1018,6 +1019,93 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Veng::Test::CheckAgainstGolden("gui arc golden", actual, Extent, "VENG_GUI_ARC_GOLDEN_DUMP",
                                    path(GUI_GOLDEN_DIR) / "gui_arc.png");
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui polyline golden: authored Polylines stroke their points, one trimmed")
+{
+    // Cook a UI document of <Polyline points=…> elements — a bordered, padded sparkline, a thin
+    // closed triangle, a thick three-point line whose joins the round caps close, and a winding
+    // line trimmed to 60% of its length — instantiate + solve + build it, render through
+    // GuiScenePass, and pin the composite. The markup points reach the element through the cook,
+    // and a few probes check the trim cut the line where its length says it should.
+    const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
+    const path packJson = fixtureDir / "ui_polyline_pack.json";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_ui_polyline.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<Gui::UIDocument>> recipe =
+        assets.LoadSync<Gui::UIDocument>(AssetId{0x4A9B7ADAAE212B21ULL});
+    REQUIRE_MESSAGE(recipe.has_value(),
+                    "load failed: ", recipe ? "" : recipe.error().Detail.c_str());
+    REQUIRE(recipe->IsLoaded());
+
+    const Unique<Gui::Document> document = Gui::Document::Instantiate(*recipe->Get(), assets);
+    REQUIRE(document != nullptr);
+    const Gui::Element* const chart = document->FindById("chart");
+    REQUIRE(chart != nullptr);
+    CHECK(chart->Points.size() == 11);
+
+    const Ref<Image> sceneImage =
+        Image::Create(Context, {
+                                   .Name = "Gui Polyline Scene",
+                                   .Extent = {Extent.x, Extent.y, 1},
+                                   .Format = Format::RGBA16Sfloat,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled |
+                                            ImageUsage::TransferSrc,
+                               });
+    const Ref<ImageView> sceneView =
+        ImageView::Create(Context, {.Name = "Gui Polyline Scene View", .Image = sceneImage});
+    ClearImage(Context, sceneView, ClearColor{.R = 0.10f, .G = 0.12f, .B = 0.16f, .A = 1.0f});
+
+    document->Solve(vec2(static_cast<f32>(Extent.x), static_cast<f32>(Extent.y)));
+    Gui::DrawList list;
+    document->Build(list);
+
+    const Unique<GuiScenePass> pass = GuiScenePass::Create({
+        .Context = Context,
+        .Assets = assets,
+        .Extent = Extent,
+        .OutputFormat = Format::RGBA16Sfloat,
+    });
+    pass->SetDrawList(list);
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { pass->Render(cmd, sceneView); });
+
+    const vector<u8> raw = pass->GetOutput()->GetImage()->Download();
+    REQUIRE(raw.size() == static_cast<usize>(Extent.x) * Extent.y * 8);
+    const vector<u8> actual = DecodeHalfRgb(raw, Extent);
+
+    // A pixel at a normalized point of the trimmed line's 72x72 box, which has no fill of its own.
+    const Gui::Element* const trimmed = document->FindById("trimmed");
+    REQUIRE(trimmed != nullptr);
+    const auto probe = [&](vec2 point) -> ivec3
+    {
+        const vec2 at = trimmed->Layout.Min + point * trimmed->Layout.Size;
+        const usize i = (static_cast<usize>(at.y) * Extent.x + static_cast<usize>(at.x)) * 3;
+        return {actual[i], actual[i + 1], actual[i + 2]};
+    };
+    const ivec3 ground = probe(vec2(0.5f, 0.6f));
+    const auto isGround = [&](ivec3 pixel)
+    { return glm::all(glm::lessThanEqual(glm::abs(pixel - ground), ivec3(2))); };
+
+    // Of the 316.8px line, 60% is 190.1px: the first three sides (172.8px) and 17.3px of the
+    // fourth, which runs leftward from x = 0.9 and so stops near x = 0.66.
+    CHECK_FALSE(isGround(probe(vec2(0.5f, 0.1f))));
+    CHECK_FALSE(isGround(probe(vec2(0.78f, 0.9f))));
+    CHECK(isGround(probe(vec2(0.42f, 0.9f))));
+    CHECK(isGround(probe(vec2(0.3f, 0.6f))));
+
+    Veng::Test::CheckAgainstGolden("gui polyline golden", actual, Extent,
+                                   "VENG_GUI_POLYLINE_GOLDEN_DUMP",
+                                   path(GUI_GOLDEN_DIR) / "gui_polyline.png");
 
     std::filesystem::remove(outArchive);
 }

@@ -3,6 +3,7 @@
 // hit-test transparency, anchored absolute positioning through unset inset edges, style
 // animations, and style-property bindings. Device-free — a stub text measurer, no font resource.
 
+#include <array>
 #include <cmath>
 
 #include <doctest/doctest.h>
@@ -826,4 +827,102 @@ TEST_CASE("gui arc: SetArc is paint-only and masks the element's own quads, not 
     doc.Build(empty);
     CHECK(empty.GetVertices().size() == 4);
     CHECK(empty.GetVertices()[0].Arc == vec4(0.0f));
+}
+
+namespace
+{
+    // A 100x100 Polyline stroked in opaque white at width 2 — its content box is its whole box, so
+    // a normalized point maps to one pixel per hundredth.
+    Element& AddStrokedPolyline(Document& doc, f32 trim)
+    {
+        Element& line = doc.Add(doc.Root(), ElementKind::Polyline);
+        Style style;
+        style.Width = Length::Points(100.0f);
+        style.Height = Length::Points(100.0f);
+        style.Stroke = vec4(1.0f);
+        style.StrokeWidth = 2.0f;
+        style.StrokeTrim = trim;
+        doc.SetStyle(line, style);
+        return line;
+    }
+
+    // The emitted quads' long half-extents, one per stroked segment (the stroke is the only
+    // primitive the Polyline above draws).
+    vector<f32> SegmentHalfLengths(const Document& doc)
+    {
+        DrawList list;
+        doc.Build(list);
+        vector<f32> halves;
+        for (usize i = 0; i < list.GetVertices().size(); i += 4)
+        {
+            halves.push_back(list.GetVertices()[i].RectHalf.x);
+        }
+        return halves;
+    }
+}
+
+TEST_CASE("gui polyline: stroke-trim draws the leading fraction of the line's length")
+{
+    const std::array<vec2, 3> points = {vec2(0.0f, 0.0f), vec2(0.5f, 0.0f), vec2(1.0f, 0.0f)};
+    const auto halvesAt = [&](f32 trim)
+    {
+        Document doc;
+        Element& line = AddStrokedPolyline(doc, trim);
+        doc.SetPolylinePoints(line, points);
+        doc.Solve(vec2(200.0f, 200.0f));
+        return SegmentHalfLengths(doc);
+    };
+
+    // Two 50px segments. Nothing at 0; both whole at 1; exactly the first — and no stray dot at
+    // the joint the cut lands on — at 0.5; the first whole and half the second at 0.75. A segment
+    // quad's half-length is half its length plus the half-width cap.
+    CHECK(halvesAt(0.0f).empty());
+    const vector<f32> whole = halvesAt(1.0f);
+    REQUIRE(whole.size() == 2);
+    CHECK(whole[0] == doctest::Approx(26.0f));
+    CHECK(whole[1] == doctest::Approx(26.0f));
+    const vector<f32> half = halvesAt(0.5f);
+    REQUIRE(half.size() == 1);
+    CHECK(half[0] == doctest::Approx(26.0f));
+    const vector<f32> threeQuarters = halvesAt(0.75f);
+    REQUIRE(threeQuarters.size() == 2);
+    CHECK(threeQuarters[1] == doctest::Approx(13.5f));
+}
+
+TEST_CASE("gui polyline: SetPolylinePoints is a paint-only write that early-outs when unchanged")
+{
+    Document doc;
+    Element& line = AddStrokedPolyline(doc, 1.0f);
+    doc.Solve(vec2(200.0f, 200.0f));
+    DrawList list;
+    doc.Drive(vec2(200.0f, 200.0f), 0.0f, list);
+    REQUIRE_FALSE(doc.IsDirty());
+    REQUIRE_FALSE(doc.IsPaintDirty());
+
+    const std::array<vec2, 2> points = {vec2(0.0f, 1.0f), vec2(1.0f, 0.0f)};
+    doc.SetPolylinePoints(line, points);
+    CHECK_FALSE(doc.IsDirty());
+    CHECK(doc.IsPaintDirty());
+    CHECK(line.Points.size() == 2);
+
+    doc.Drive(vec2(200.0f, 200.0f), 0.0f, list);
+    doc.SetPolylinePoints(line, points);
+    CHECK_FALSE(doc.IsPaintDirty());
+
+    // The stroke lies over the box without sizing it: the element keeps its authored extent.
+    CHECK(line.Layout.Size.x == doctest::Approx(100.0f));
+}
+
+TEST_CASE("gui polyline: the point list parses x,y pairs and rejects anything else")
+{
+    const optional<vector<vec2>> points = ParsePolylinePoints("  0,1 0.5,0\t1,-0.25 ");
+    REQUIRE(points.has_value());
+    REQUIRE(points->size() == 3);
+    CHECK((*points)[2].y == doctest::Approx(-0.25f));
+    CHECK(ParsePolylinePoints("").value().empty());
+
+    for (const string_view bad : {"0 1", "0,1,2", "0,x", ",1", "0,"})
+    {
+        CHECK_FALSE(ParsePolylinePoints(bad).has_value());
+    }
 }

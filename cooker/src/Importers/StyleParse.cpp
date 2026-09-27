@@ -864,6 +864,8 @@ namespace Veng::Cook
         case StyleProperty::ArcStart:
         case StyleProperty::ArcSweep:
         case StyleProperty::ArcThickness:
+        case StyleProperty::StrokeWidth:
+        case StyleProperty::StrokeTrim:
             return ScalarProperty(property, v, located);
 
         case StyleProperty::FlexBasis:
@@ -887,6 +889,7 @@ namespace Veng::Cook
         case StyleProperty::BorderColor:
         case StyleProperty::TextColor:
         case StyleProperty::BoxShadowColor:
+        case StyleProperty::Stroke:
             return ColorProperty(property, v, located);
 
         case StyleProperty::BoxShadow:

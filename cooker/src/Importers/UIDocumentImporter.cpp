@@ -81,6 +81,10 @@ namespace Veng::Cook
             {
                 return Gui::ElementKind::Component;
             }
+            if (tag == "Polyline")
+            {
+                return Gui::ElementKind::Polyline;
+            }
             return std::nullopt;
         }
 
@@ -801,6 +805,24 @@ namespace Veng::Cook
                     name == "checked" || name == "items" || name == "orientation" ||
                     name == "selection")
                 {
+                    CookedUIBinding binding{};
+                    binding.Property = build.Strings.Add(name);
+                    binding.Expression = build.Strings.Add(value);
+                    build.Bindings.push_back(binding);
+                    continue;
+                }
+
+                // A Polyline's point list is a literal carried on the binding table like the widget
+                // config above, but checked here so a malformed list is a located cook error rather
+                // than a line that silently never draws.
+                if (*kind == Gui::ElementKind::Polyline && name == "points")
+                {
+                    if (!Gui::ParsePolylinePoints(value).has_value())
+                    {
+                        return std::unexpected(
+                            fmt::format("{}: 'points' value '{}' is not a list of 'x,y' pairs",
+                                        located, value));
+                    }
                     CookedUIBinding binding{};
                     binding.Property = build.Strings.Add(name);
                     binding.Expression = build.Strings.Add(value);
