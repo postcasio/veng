@@ -557,6 +557,32 @@ namespace Veng::Cook
             return std::nullopt;
         }
 
+        optional<u32> ParseElementShape(std::string_view v)
+        {
+            if (v == "box")
+            {
+                return static_cast<u32>(Gui::ElementShape::Box);
+            }
+            if (v == "arc")
+            {
+                return static_cast<u32>(Gui::ElementShape::Arc);
+            }
+            return std::nullopt;
+        }
+
+        optional<u32> ParseArcCap(std::string_view v)
+        {
+            if (v == "butt")
+            {
+                return static_cast<u32>(Gui::ArcCap::Butt);
+            }
+            if (v == "round")
+            {
+                return static_cast<u32>(Gui::ArcCap::Round);
+            }
+            return std::nullopt;
+        }
+
         // Builds a CookedStyleProperty for an enum-valued property, or a located error.
         Result<CookedStyleProperty> EnumProperty(StyleProperty property, optional<u32> ordinal,
                                                  std::string_view value, const string& located)
@@ -795,6 +821,10 @@ namespace Veng::Cook
             return EnumProperty(property, ParseImageFit(v), v, located);
         case StyleProperty::ImageRepeat:
             return EnumProperty(property, ParseImageRepeat(v), v, located);
+        case StyleProperty::Shape:
+            return EnumProperty(property, ParseElementShape(v), v, located);
+        case StyleProperty::ArcCap:
+            return EnumProperty(property, ParseArcCap(v), v, located);
 
         case StyleProperty::Overflow:
         {
@@ -831,6 +861,9 @@ namespace Veng::Cook
         case StyleProperty::InsetTop:
         case StyleProperty::InsetRight:
         case StyleProperty::InsetBottom:
+        case StyleProperty::ArcStart:
+        case StyleProperty::ArcSweep:
+        case StyleProperty::ArcThickness:
             return ScalarProperty(property, v, located);
 
         case StyleProperty::FlexBasis:

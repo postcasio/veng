@@ -12,7 +12,7 @@
 // (VENG_GUI_ROTATED_GOLDEN_DUMP, VENG_GUI_IMAGE_GOLDEN_DUMP, VENG_GUI_BACKGROUND_GOLDEN_DUMP,
 // VENG_GUI_SHADOW_GOLDEN_DUMP, VENG_GUI_MATERIAL_GOLDEN_DUMP, VENG_GUI_POPUP_GOLDEN_DUMP,
 // VENG_GUI_SLICED_TILE_GOLDEN_DUMP, VENG_GUI_COMPOSITION_GOLDEN_DUMP,
-// VENG_GUI_BOX_COMPOSITION_GOLDEN_DUMP).
+// VENG_GUI_BOX_COMPOSITION_GOLDEN_DUMP, VENG_GUI_ARC_GOLDEN_DUMP).
 //
 // The same font fixture backs one non-rendering case here: a TextInput built with a resident font
 // emits its own value as a glyph run, which needs a real atlas and so cannot live in the
@@ -895,6 +895,179 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     Veng::Test::CheckAgainstGolden("gui material golden", actual, Extent,
                                    "VENG_GUI_MATERIAL_GOLDEN_DUMP",
                                    path(GUI_GOLDEN_DIR) / "gui_material.png");
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui arc golden: the arc silhouette shapes every fill, border, and shadow")
+{
+    // Cook a UI document of `shape: arc` elements — butt- and round-capped bands, a pie wedge, a
+    // full disc, a conic-gradient gauge (from a stylesheet rule), a bordered band, a drop-shadowed
+    // band, an inset-shadowed disc, a material band, a bordered background-image wedge, and a band
+    // in a wide box — instantiate + solve + build it, render through GuiScenePass, and pin the
+    // composite. Beside the golden, a handful of probes check the geometry itself: the sweep's
+    // extent, the hole a thickness leaves, a round cap reaching past a butt cut, the ramp running
+    // in the arc's own direction, and the radius following the box's shorter side.
+    const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
+    const path packJson = fixtureDir / "ui_arc_pack.json";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_ui_arc.vengpack";
+    const std::array<path, 1> references{path(VENG_CORE_PACK_JSON)};
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    const VoidResult cooked = cooker.CookPack(packJson, outArchive, references, nullptr, nullptr,
+                                              nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    REQUIRE_MESSAGE(cooked.has_value(), cooked.error());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<Gui::UIDocument>> recipe =
+        assets.LoadSync<Gui::UIDocument>(AssetId{0x6930F1D95272D526ULL});
+    const string loadError = recipe.has_value() ? string{} : recipe.error().Detail;
+    REQUIRE_MESSAGE(recipe.has_value(), loadError);
+    REQUIRE(recipe->IsLoaded());
+
+    const Unique<Gui::Document> document = Gui::Document::Instantiate(*recipe->Get(), assets);
+    REQUIRE(document != nullptr);
+
+    const Ref<Image> sceneImage =
+        Image::Create(Context, {
+                                   .Name = "Gui Arc Scene",
+                                   .Extent = {Extent.x, Extent.y, 1},
+                                   .Format = Format::RGBA16Sfloat,
+                                   .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled |
+                                            ImageUsage::TransferSrc,
+                               });
+    const Ref<ImageView> sceneView =
+        ImageView::Create(Context, {.Name = "Gui Arc Scene View", .Image = sceneImage});
+    ClearImage(Context, sceneView, ClearColor{.R = 0.10f, .G = 0.12f, .B = 0.16f, .A = 1.0f});
+
+    document->Solve(vec2(static_cast<f32>(Extent.x), static_cast<f32>(Extent.y)));
+    Gui::DrawList list;
+    document->Build(list);
+
+    // The material band's fill is a material run, and the arc reaches it through the same lanes.
+    bool sawMaterial = false;
+    for (const Gui::DrawRun& run : list.GetRuns())
+    {
+        if (run.Pipeline != Gui::GuiPipeline::Material)
+        {
+            continue;
+        }
+        sawMaterial = true;
+        const u32 vertex = list.GetIndices()[run.FirstIndex];
+        CHECK(list.GetVertices()[vertex].Arc.w != 0.0f);
+    }
+    CHECK(sawMaterial);
+
+    const Unique<GuiScenePass> pass = GuiScenePass::Create({
+        .Context = Context,
+        .Assets = assets,
+        .Extent = Extent,
+        .OutputFormat = Format::RGBA16Sfloat,
+    });
+    pass->SetDrawList(list);
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { pass->Render(cmd, sceneView); });
+
+    const vector<u8> raw = pass->GetOutput()->GetImage()->Download();
+    REQUIRE(raw.size() == static_cast<usize>(Extent.x) * Extent.y * 8);
+    const vector<u8> actual = DecodeHalfRgb(raw, Extent);
+
+    // A pixel at an angle (degrees clockwise from 12 o'clock) and radius from an element's centre.
+    const auto probe = [&](string_view id, f32 degrees, f32 radius) -> ivec3
+    {
+        const Gui::Element* element = document->FindById(id);
+        REQUIRE(element != nullptr);
+        const f32 radians = glm::radians(degrees);
+        const vec2 at =
+            element->Layout.Center() + radius * vec2(std::sin(radians), -std::cos(radians));
+        const usize i = (static_cast<usize>(at.y) * Extent.x + static_cast<usize>(at.x)) * 3;
+        return {actual[i], actual[i + 1], actual[i + 2]};
+    };
+    const ivec3 ground = probe("butt", 0.0f, 0.0f);
+    const auto isGround = [&](ivec3 pixel)
+    { return glm::all(glm::lessThanEqual(glm::abs(pixel - ground), ivec3(2))); };
+
+    // A 26px band 10px thick swept -120..120: the hole and the unswept bottom show the ground.
+    CHECK_FALSE(isGround(probe("butt", 0.0f, 21.0f)));
+    CHECK(isGround(probe("butt", 180.0f, 21.0f)));
+    // Just past the end of the sweep, a round cap still covers what a butt cut leaves bare.
+    CHECK(isGround(probe("butt", 129.0f, 21.0f)));
+    CHECK_FALSE(isGround(probe("round", 129.0f, 21.0f)));
+    // A pie wedge from 30 to 130 degrees, filled to the centre.
+    CHECK_FALSE(isGround(probe("pie", 80.0f, 12.0f)));
+    CHECK(isGround(probe("pie", 200.0f, 12.0f)));
+    CHECK_FALSE(isGround(probe("disc", 0.0f, 0.0f)));
+    // The gauge's conic ramp runs with the arc: green where it starts, red where it ends.
+    const ivec3 gaugeStart = probe("gauge", -125.0f, 20.0f);
+    const ivec3 gaugeEnd = probe("gauge", 125.0f, 20.0f);
+    CHECK(gaugeStart.g > gaugeStart.r);
+    CHECK(gaugeEnd.r > gaugeEnd.g);
+    // The border runs along the rim of the band, inside its silhouette.
+    CHECK(probe("bordered", 10.0f, 24.5f).b > 200);
+    CHECK(probe("bordered", 10.0f, 24.5f).r > 200);
+    CHECK(probe("bordered", 10.0f, 18.0f).r < 60);
+    // The material band is cut by its sweep exactly as a flat fill is.
+    CHECK_FALSE(isGround(probe("material", 0.0f, 17.0f)));
+    CHECK(isGround(probe("material", 180.0f, 17.0f)));
+    // A wide box's arc takes the shorter side: 40px left of centre is outside its 26px radius.
+    CHECK(isGround(probe("wide", -90.0f, 40.0f)));
+    CHECK_FALSE(isGround(probe("wide", 0.0f, 22.0f)));
+
+    Veng::Test::CheckAgainstGolden("gui arc golden", actual, Extent, "VENG_GUI_ARC_GOLDEN_DUMP",
+                                   path(GUI_GOLDEN_DIR) / "gui_arc.png");
+
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui arc: a glyph run drawn under an arc carries no arc lane")
+{
+    // The arc masks silhouettes, not text: a run shaped while an arc is pushed keeps both arc
+    // lanes zero, while the shape quad beside it carries the arc. Needs a resident font atlas, so
+    // it lives beside the goldens rather than in the device-free draw-list suite.
+    const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_gui_arc_text.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker.CookPack(fixtureDir / "font_pack.json", outArchive).has_value());
+
+    Text::GlyphSource glyphSource;
+    Text::GlyphAtlas glyphAtlas(Context, glyphSource);
+    AssetManager assets(Context, Tasks, Types);
+    assets.SetGlyphSystems(&glyphSource, &glyphAtlas);
+    REQUIRE(assets.Mount(outArchive).has_value());
+    const AssetResult<AssetHandle<Font>> fontHandle = assets.LoadSync<Font>(FontId);
+    REQUIRE(fontHandle.has_value());
+
+    Gui::DrawList list;
+    list.PushArc(Gui::ArcShape{.Center = vec2(40.0f), .Radius = 30.0f, .SweepRadians = 3.0f});
+    list.Quad({.Min = vec2(10.0f), .Size = vec2(60.0f)}, vec4(1.0f));
+    list.Text(vec2(20.0f, 30.0f), *fontHandle->Get(), "AV", 16.0f, vec4(1.0f));
+    list.PopArc();
+
+    usize glyphVertices = 0;
+    for (const Gui::DrawRun& run : list.GetRuns())
+    {
+        for (u32 i = run.FirstIndex; i < run.FirstIndex + run.IndexCount; ++i)
+        {
+            const Gui::GuiVertex& vertex = list.GetVertices()[list.GetIndices()[i]];
+            if (run.Pipeline == Gui::GuiPipeline::Msdf)
+            {
+                ++glyphVertices;
+                CHECK(vertex.Arc == vec4(0.0f));
+                CHECK(vertex.ArcCoord == vec2(0.0f));
+            }
+            else
+            {
+                CHECK(vertex.Arc.w == doctest::Approx(30.0f));
+            }
+        }
+    }
+    CHECK(glyphVertices > 0);
 
     std::filesystem::remove(outArchive);
 }

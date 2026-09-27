@@ -1,5 +1,6 @@
 #include <Veng/Gui/DrawList.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <limits>
@@ -20,6 +21,12 @@ namespace Veng::Gui
         // blur narrower than one screen pixel to the anti-aliasing width, so this reads as a crisp
         // edge rather than an aliased one.
         constexpr f32 MinShadowBlur = 1.0f / 1024.0f;
+
+        // The smallest outer radius an arc lane transports, for the same reason: a zero radius
+        // lane means "no arc", so a degenerate arc still needs a non-zero magnitude to mask anything.
+        constexpr f32 MinArcRadius = 1.0f / 1024.0f;
+
+        constexpr f32 FullTurn = 6.28318530717958647692f;
 
         // Decodes a UTF-8 byte sequence into Unicode codepoints. A malformed byte is emitted as
         // U+FFFD and skipped, so a bad encoding degrades to replacement glyphs rather than reading
@@ -104,6 +111,7 @@ namespace Veng::Gui
         m_Gradients.clear();
         m_ClipStack.clear();
         m_TransformStack.clear();
+        m_ArcStack.clear();
     }
 
     vec2 DrawList::ApplyTransform(vec2 point) const
@@ -163,6 +171,21 @@ namespace Veng::Gui
                             vec4 color, vec2 rectHalf, vec2 center, vec4 params, u32 selector,
                             vec4 shadow, vec4 uvWrap)
     {
+        // An arc masks the silhouette paths only: a glyph's coverage is its own distance field, so
+        // text drawn inside an arc-shaped element is never cut by it.
+        const bool arcMasked = !m_ArcStack.empty() && m_Runs.back().Pipeline != GuiPipeline::Msdf;
+        vec4 arcLane(0.0f);
+        vec2 arcCenter(0.0f);
+        if (arcMasked)
+        {
+            const ArcShape& arc = m_ArcStack.back();
+            const f32 radius = std::max(arc.Radius, MinArcRadius);
+            arcLane =
+                vec4(arc.StartRadians, std::clamp(arc.SweepRadians, 0.0f, FullTurn),
+                     std::max(arc.Thickness, 0.0f), arc.Cap == ArcCap::Round ? -radius : radius);
+            arcCenter = arc.Center;
+        }
+
         const u32 base = static_cast<u32>(m_Vertices.size());
         for (usize i = 0; i < 4; ++i)
         {
@@ -179,6 +202,8 @@ namespace Veng::Gui
                 .GradientSelector = selector,
                 .Shadow = shadow,
                 .UvWrap = uvWrap,
+                .Arc = arcLane,
+                .ArcCoord = arcMasked ? corners[i] - arcCenter : vec2(0.0f),
             });
         }
 
@@ -561,6 +586,17 @@ namespace Veng::Gui
     {
         VE_ASSERT(!m_TransformStack.empty(), "DrawList::PopTransform on an empty transform stack");
         m_TransformStack.pop_back();
+    }
+
+    void DrawList::PushArc(const ArcShape& arc)
+    {
+        m_ArcStack.push_back(arc);
+    }
+
+    void DrawList::PopArc()
+    {
+        VE_ASSERT(!m_ArcStack.empty(), "DrawList::PopArc on an empty arc stack");
+        m_ArcStack.pop_back();
     }
 
     bool DrawList::AppendProjected(const DrawList& src,

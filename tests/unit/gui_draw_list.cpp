@@ -742,3 +742,75 @@ TEST_CASE("gui draw list: AppendProjected's scissor spans all four corners of a 
     CHECK(run.Clip.Min.x == doctest::Approx(keystone(vec2(UnitRect.Min.x, UnitRect.Max().y))->x));
     CHECK(run.Clip.Max().x == doctest::Approx(keystone(vec2(UnitRect.Max().x, UnitRect.Min.y))->x));
 }
+
+TEST_CASE("gui draw list: an arc stamps every silhouette quad under it and PopArc clears it")
+{
+    DrawList list;
+    const ArcShape arc{.Center = vec2(30.0f, 30.0f),
+                       .Radius = 20.0f,
+                       .StartRadians = 0.5f,
+                       .SweepRadians = 2.0f,
+                       .Thickness = 6.0f,
+                       .Cap = ArcCap::Round};
+    list.PushArc(arc);
+    list.Quad(UnitRect, vec4(1.0f));
+    list.Gradient(UnitRect, GradientFill{.Ramp = Texture(5), .Sampler = Sampler(2)});
+    list.Texture({.Min = {15.0f, 20.0f}, .Size = {10.0f, 10.0f}}, Texture(3), Sampler(1));
+    list.Shadow(UnitRect, BoxShadow{.Blur = 4.0f, .Color = vec4(1.0f)});
+    list.PopArc();
+    list.Quad(UnitRect, vec4(1.0f));
+
+    const vector<GuiVertex>& vertices = list.GetVertices();
+    REQUIRE(vertices.size() == 20);
+    for (usize i = 0; i < 16; ++i)
+    {
+        // The lane carries the sector as the fragment reads it — a round cap signs the radius.
+        CHECK(vertices[i].Arc.x == doctest::Approx(0.5f));
+        CHECK(vertices[i].Arc.y == doctest::Approx(2.0f));
+        CHECK(vertices[i].Arc.z == doctest::Approx(6.0f));
+        CHECK(vertices[i].Arc.w == doctest::Approx(-20.0f));
+    }
+    // The arc coordinate is measured from the arc's centre, not the quad's: the offset texture's
+    // top-left corner sits 15 left and 10 above it.
+    CheckVec2(vertices[8].ArcCoord, vec2(-15.0f, -10.0f));
+    // After the pop, a quad is the rounded box again.
+    for (usize i = 16; i < 20; ++i)
+    {
+        CHECK(vertices[i].Arc == vec4(0.0f));
+        CHECK(vertices[i].ArcCoord == vec2(0.0f));
+    }
+}
+
+TEST_CASE("gui draw list: an arc's lane is clamped to what the fragment can shape")
+{
+    DrawList list;
+    // A butt cap keeps the radius positive; a sweep past a turn is a whole ring, a negative one is
+    // nothing, and a degenerate radius still transports a non-zero magnitude so the lane is live.
+    list.PushArc(ArcShape{.Radius = 0.0f, .SweepRadians = 20.0f, .Thickness = -3.0f});
+    list.Quad(UnitRect, vec4(1.0f));
+    list.PopArc();
+    list.PushArc(ArcShape{.Radius = 5.0f, .SweepRadians = -1.0f});
+    list.Quad(UnitRect, vec4(1.0f));
+    list.PopArc();
+
+    const vector<GuiVertex>& vertices = list.GetVertices();
+    CHECK(vertices[0].Arc.y == doctest::Approx(6.2831853f));
+    CHECK(vertices[0].Arc.z == doctest::Approx(0.0f));
+    CHECK(vertices[0].Arc.w > 0.0f);
+    CHECK(vertices[4].Arc.y == doctest::Approx(0.0f));
+    CHECK(vertices[4].Arc.w == doctest::Approx(5.0f));
+}
+
+TEST_CASE("gui draw list: the arc does not change batching and Clear empties its stack")
+{
+    DrawList list;
+    list.Quad(UnitRect, vec4(1.0f));
+    list.PushArc(ArcShape{.Center = vec2(30.0f), .Radius = 10.0f, .SweepRadians = 1.0f});
+    list.Quad(UnitRect, vec4(1.0f));
+    CHECK(list.GetRuns().size() == 1);
+
+    // A cleared list starts with no arc, so the next frame's quads are boxes.
+    list.Clear();
+    list.Quad(UnitRect, vec4(1.0f));
+    CHECK(list.GetVertices()[0].Arc == vec4(0.0f));
+}

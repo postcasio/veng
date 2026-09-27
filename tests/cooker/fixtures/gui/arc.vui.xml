@@ -1,0 +1,19 @@
+<Panel stylesheets="0x862E65345673F8D1" style="width: 256px; height: 192px; background: #1a1c24ff; padding: 8px;">
+  <Panel style="flex-direction: row;">
+    <Panel id="butt" class="cell" style="arc-start: -120; arc-sweep: 240; arc-thickness: 10px; background: #4fc3f7ff;"/>
+    <Panel id="round" class="cell" style="arc-start: -120; arc-sweep: 240; arc-thickness: 10px; arc-cap: round; background: #81c784ff;"/>
+    <Panel id="pie" class="cell" style="arc-start: 30; arc-sweep: 100; background: #ffb74dff;"/>
+    <Panel id="disc" class="cell" style="background: #e57373ff;"/>
+  </Panel>
+  <Panel style="flex-direction: row; margin: 8px 0 0 0;">
+    <Panel id="gauge" class="cell gauge"/>
+    <Panel id="bordered" class="cell" style="arc-start: -90; arc-sweep: 200; arc-thickness: 16px; background: #3949abff; border-width: 3px; border-color: #ffffffff;"/>
+    <Panel id="dropped" class="cell" style="arc-sweep: 300; arc-thickness: 12px; background: #ce93d8ff; box-shadow: 3px 4px 4px 0 #000000cc;"/>
+    <Panel id="recessed" class="cell" style="background: #cfd8dcff; box-shadow: 2px 3px 5px 1px #000000e6 inset;"/>
+  </Panel>
+  <Panel style="flex-direction: row; margin: 8px 0 0 0;">
+    <Panel id="material" class="cell" style="arc-start: -120; arc-sweep: 240; arc-thickness: 18px; background-material: 0x38FECEB6EB6644F5;"/>
+    <Panel id="image" class="cell" style="arc-start: 45; arc-sweep: 270; background-image: 0x4B1583166B212C2A; border-width: 2px; border-color: #ffffffff;"/>
+    <Panel id="wide" class="cell" style="width: 100px; arc-start: -90; arc-sweep: 180; arc-thickness: 8px; arc-cap: round; background: #fff176ff;"/>
+  </Panel>
+</Panel>

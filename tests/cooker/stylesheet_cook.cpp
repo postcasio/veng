@@ -626,6 +626,49 @@ TEST_CASE("Cooker: the Image fill family parses into its cooked slots")
     CHECK(CheckExclusiveFillSources(beside, located).has_value());
 }
 
+TEST_CASE("Cooker: the arc silhouette family parses into its cooked slots")
+{
+    const string located = "loc";
+
+    const Result<CookedStyleProperty> shape =
+        ParseStyleDeclaration(Gui::StyleProperty::Shape, "arc", located);
+    REQUIRE(shape.has_value());
+    CHECK(shape->Unit == static_cast<u32>(Gui::ElementShape::Arc));
+    const Result<CookedStyleProperty> box =
+        ParseStyleDeclaration(Gui::StyleProperty::Shape, "box", located);
+    REQUIRE(box.has_value());
+    CHECK(box->Unit == static_cast<u32>(Gui::ElementShape::Box));
+
+    const Result<CookedStyleProperty> cap =
+        ParseStyleDeclaration(Gui::StyleProperty::ArcCap, "round", located);
+    REQUIRE(cap.has_value());
+    CHECK(cap->Unit == static_cast<u32>(Gui::ArcCap::Round));
+
+    // The angles are degrees and the thickness pixels, each a scalar in Values.x.
+    const Result<CookedStyleProperty> start =
+        ParseStyleDeclaration(Gui::StyleProperty::ArcStart, "-135", located);
+    REQUIRE(start.has_value());
+    CHECK(start->Values[0] == doctest::Approx(-135.0f));
+    const Result<CookedStyleProperty> sweep =
+        ParseStyleDeclaration(Gui::StyleProperty::ArcSweep, "270", located);
+    REQUIRE(sweep.has_value());
+    CHECK(sweep->Values[0] == doctest::Approx(270.0f));
+    const Result<CookedStyleProperty> thickness =
+        ParseStyleDeclaration(Gui::StyleProperty::ArcThickness, "12px", located);
+    REQUIRE(thickness.has_value());
+    CHECK(thickness->Values[0] == doctest::Approx(12.0f));
+
+    // An unknown keyword or a non-number is a located error rather than a silent default.
+    for (const auto& [property, value] : {std::pair{Gui::StyleProperty::Shape, "circle"},
+                                          std::pair{Gui::StyleProperty::ArcCap, "square"},
+                                          std::pair{Gui::StyleProperty::ArcSweep, "half"}})
+    {
+        const Result<CookedStyleProperty> bad = ParseStyleDeclaration(property, value, located);
+        REQUIRE_FALSE(bad.has_value());
+        CHECK(bad.error().find("loc") != string::npos);
+    }
+}
+
 TEST_CASE("Cooker: the box-shadow shorthand splits into a geometry and a color declaration")
 {
     const string located = "loc";

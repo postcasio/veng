@@ -351,3 +351,53 @@ TEST_CASE("gui style: a disabled container greys the controls inside it")
     doc.SetState(panel, ElementState::Disabled);
     CHECK(inner.ComputedStyle.Opacity == doctest::Approx(0.35f));
 }
+
+TEST_CASE("gui style: the arc angles and thickness animate; the shape and cap snap")
+{
+    for (const StyleProperty property :
+         {StyleProperty::ArcStart, StyleProperty::ArcSweep, StyleProperty::ArcThickness})
+    {
+        CHECK(IsAnimatableProperty(property));
+    }
+    CHECK_FALSE(IsAnimatableProperty(StyleProperty::Shape));
+    CHECK_FALSE(IsAnimatableProperty(StyleProperty::ArcCap));
+
+    // Every new name round-trips through the one table the cooker and the runtime share.
+    for (const StyleProperty property :
+         {StyleProperty::Shape, StyleProperty::ArcStart, StyleProperty::ArcSweep,
+          StyleProperty::ArcThickness, StyleProperty::ArcCap})
+    {
+        CHECK(ParseStyleProperty(ToString(property)) == property);
+    }
+}
+
+TEST_CASE("gui style: a transition on arc-sweep eases a gauge toward its target")
+{
+    Document doc;
+    Element& gauge = doc.Add(doc.Root(), ElementKind::Panel);
+
+    Style base;
+    base.Shape = ElementShape::Arc;
+    base.ArcSweep = 0.0f;
+    doc.SetStyle(gauge, base);
+
+    StyleDeclaration full;
+    full.Property = StyleProperty::ArcSweep;
+    full.Values = vec4(360.0f, 0.0f, 0.0f, 0.0f);
+    gauge.Variants = {StyleVariant{.State = ElementState::Hovered, .Declarations = {full}}};
+    doc.SetTransitions(gauge,
+                       {StyleTransition{.Property = StyleProperty::ArcSweep, .Duration = 1.0f}});
+
+    doc.SetState(gauge, ElementState::Hovered);
+    CHECK(gauge.ComputedStyle.ArcSweep == doctest::Approx(0.0f));
+
+    doc.Solve(vec2(100.0f, 100.0f));
+    doc.Update(0.5f);
+    CHECK(gauge.ComputedStyle.ArcSweep == doctest::Approx(180.0f));
+    // The sweep is paint-only, so easing it never re-dirties layout.
+    CHECK_FALSE(doc.IsDirty());
+
+    doc.Update(0.5f);
+    CHECK(gauge.ComputedStyle.ArcSweep == doctest::Approx(360.0f));
+    CHECK_FALSE(doc.IsAnimating());
+}

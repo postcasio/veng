@@ -114,6 +114,16 @@ namespace Veng::Gui
             return "material";
         case StyleProperty::Transition:
             return "transition";
+        case StyleProperty::Shape:
+            return "shape";
+        case StyleProperty::ArcStart:
+            return "arc-start";
+        case StyleProperty::ArcSweep:
+            return "arc-sweep";
+        case StyleProperty::ArcThickness:
+            return "arc-thickness";
+        case StyleProperty::ArcCap:
+            return "arc-cap";
         }
         return "unknown";
     }
@@ -336,6 +346,26 @@ namespace Veng::Gui
         {
             return StyleProperty::Transition;
         }
+        if (name == "shape")
+        {
+            return StyleProperty::Shape;
+        }
+        if (name == "arc-start")
+        {
+            return StyleProperty::ArcStart;
+        }
+        if (name == "arc-sweep")
+        {
+            return StyleProperty::ArcSweep;
+        }
+        if (name == "arc-thickness")
+        {
+            return StyleProperty::ArcThickness;
+        }
+        if (name == "arc-cap")
+        {
+            return StyleProperty::ArcCap;
+        }
         return std::nullopt;
     }
 
@@ -368,6 +398,9 @@ namespace Veng::Gui
         case StyleProperty::TextSize:
         case StyleProperty::Opacity:
         case StyleProperty::Rotation:
+        case StyleProperty::ArcStart:
+        case StyleProperty::ArcSweep:
+        case StyleProperty::ArcThickness:
             return true;
         case StyleProperty::FlexDirection:
         case StyleProperty::JustifyContent:
@@ -401,6 +434,8 @@ namespace Veng::Gui
         case StyleProperty::ImageMaterial:
         // The ease list is what selects the properties that tween; it is not one of them.
         case StyleProperty::Transition:
+        case StyleProperty::Shape:
+        case StyleProperty::ArcCap:
             return false;
         }
         return false;

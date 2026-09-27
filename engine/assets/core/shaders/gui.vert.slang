@@ -5,8 +5,10 @@
 // signed local coordinate (both in pixels, the fragment reconstructs the SDF from
 // their interpolation), and the packed params (corner radius, border width, and the
 // bindless texture/sampler indices), and the shadow parameters (signed blur, spread,
-// and offset) a shadow quad carries, and the UV sub-rect a nine-slice cell wraps its
-// sampling within. Vulkan clip space has Y pointing down, so a top-left pixel (y=0)
+// and offset) a shadow quad carries, the UV sub-rect a nine-slice cell wraps its
+// sampling within, and the arc silhouette a quad is masked to (its start, sweep,
+// thickness, and signed radius, plus the vertex's coordinate from the arc's centre).
+// Vulkan clip space has Y pointing down, so a top-left pixel (y=0)
 // maps to clip y=-1 with no extra flip.
 
 struct PushConstants
@@ -29,8 +31,13 @@ struct VSInput
     uint a_GradientSelector : TEXCOORD4;
     float4 a_Shadow : TEXCOORD5;
     float4 a_UvWrap : TEXCOORD6;
+    float4 a_Arc : TEXCOORD7;
+    float2 a_ArcCoord : TEXCOORD8;
 };
 
+// Varying locations follow declaration order, not the semantics, so a fragment may omit only a
+// trailing run of these: the lanes the GuiFill domain and the MSDF path read come first, and the
+// gradient selector, shadow, and UV wrap only the shape path reads come last.
 struct VSOutput
 {
     float4 sv_position : SV_Position;
@@ -39,6 +46,8 @@ struct VSOutput
     float2 v_RectHalf : TEXCOORD1;
     float2 v_RectCoord : TEXCOORD2;
     nointerpolation float4 v_Params : TEXCOORD3;
+    nointerpolation float4 v_Arc : TEXCOORD7;
+    float2 v_ArcCoord : TEXCOORD8;
     nointerpolation uint v_GradientSelector : TEXCOORD4;
     nointerpolation float4 v_Shadow : TEXCOORD5;
     nointerpolation float4 v_UvWrap : TEXCOORD6;
@@ -58,5 +67,7 @@ VSOutput vsMain(VSInput input)
     output.v_GradientSelector = input.a_GradientSelector;
     output.v_Shadow = input.a_Shadow;
     output.v_UvWrap = input.a_UvWrap;
+    output.v_Arc = input.a_Arc;
+    output.v_ArcCoord = input.a_ArcCoord;
     return output;
 }

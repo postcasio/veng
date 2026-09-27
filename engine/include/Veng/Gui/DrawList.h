@@ -116,6 +116,42 @@ namespace Veng::Gui
         bool Inset = false;
     };
 
+    /// @brief How an arc band's two ends terminate.
+    enum class ArcCap : u8
+    {
+        /// @brief Each end is a straight radial cut.
+        Butt,
+        /// @brief Each end is a semicircle the band's own thickness across — the gauge look.
+        Round,
+    };
+
+    /// @brief An annular-sector silhouette that replaces the rounded box of the quads drawn under it.
+    ///
+    /// The sector is centred at Center, bounded outside by Radius, and runs clockwise from
+    /// StartRadians through SweepRadians, angles measured clockwise from 12 o'clock in the y-down
+    /// space. A Thickness of zero — or one at least Radius — fills to the centre (a pie wedge, or a
+    /// disc at a full sweep); a smaller one leaves a band of that radial width, measured inward from
+    /// Radius, whose ends Cap shapes. A sweep of at least a full turn is a whole ring or disc with no
+    /// seam, and a sweep of zero covers nothing.
+    ///
+    /// Center is in the same space as the rects of the primitives it masks — the untransformed
+    /// space PushTransform rotates out of — so an arc turns rigidly with a rotated subtree.
+    struct ArcShape
+    {
+        /// @brief The sector's centre, in framebuffer pixels.
+        vec2 Center{0.0f};
+        /// @brief The outer radius, in pixels.
+        f32 Radius = 0.0f;
+        /// @brief Where the sector begins, in radians clockwise from 12 o'clock.
+        f32 StartRadians = 0.0f;
+        /// @brief The sector's clockwise extent, in radians; clamped to [0, 2π] at emission.
+        f32 SweepRadians = 0.0f;
+        /// @brief The band's radial thickness in pixels, inward from Radius; zero fills to the centre.
+        f32 Thickness = 0.0f;
+        /// @brief How a band's two ends terminate; irrelevant to a filled wedge or a full sweep.
+        ArcCap Cap = ArcCap::Butt;
+    };
+
     /// @brief Per-edge inset distances, in pixels: the 9-slice margins and the padding vocabulary.
     struct Insets
     {
@@ -288,8 +324,23 @@ namespace Veng::Gui
         /// unwrapped UV, so the seam frac() introduces does not collapse a mipped texture to its
         /// smallest level along a one-pixel line.
         vec4 UvWrap{0.0f};
+        /// @brief The arc silhouette this quad is masked to: start (x) and sweep (y) in radians,
+        ///        band thickness (z) and signed outer radius (w) in pixels.
+        ///
+        /// A zero w (the default) means the lane is inactive and the fragment takes the rounded-box
+        /// silhouette from RectHalf/RectCoord. A **positive** w is an arc with butt caps and a
+        /// **negative** w one with round caps, the magnitude being the outer radius — the sign is the
+        /// cap's only transport, as a shadow's blur sign is its inset flag's. See ArcShape.
+        vec4 Arc{0.0f};
+        /// @brief This vertex's position relative to the arc's centre, in unrotated pixels.
+        ///
+        /// The arc's counterpart to RectCoord, kept separate because the arc belongs to the element
+        /// rather than to the quad: a padding-box image, a letterboxed fit, or a nine-slice cell is
+        /// a quad whose own centre and half-extent are not the element's, and each is masked by the
+        /// one arc all the same. Zero when the Arc lane is inactive.
+        vec2 ArcCoord{0.0f};
     };
-    static_assert(sizeof(GuiVertex) == 100, "GuiVertex must stay packed with no padding");
+    static_assert(sizeof(GuiVertex) == 124, "GuiVertex must stay packed with no padding");
 
     /// @brief A contiguous slice of the index stream sharing one pipeline, clip, texture, and material.
     ///
@@ -329,7 +380,7 @@ namespace Veng::Gui
         /// @brief Constructs an empty draw list.
         DrawList() = default;
 
-        /// @brief Clears all geometry, runs, and the clip stack for reuse across frames.
+        /// @brief Clears all geometry, runs, and the clip, transform, and arc stacks for reuse across frames.
         void Clear();
 
         /// @brief Appends a filled or bordered rounded rectangle.
@@ -491,6 +542,27 @@ namespace Veng::Gui
         /// @pre A matching PushTransform was issued — popping an empty stack is a fatal assert.
         void PopTransform();
 
+        /// @brief Pushes an arc silhouette that masks every subsequent shape and material quad.
+        ///
+        /// Until the matching PopArc, each quad a shape-path or material primitive emits (Quad,
+        /// Shadow, Gradient, MaterialFill, Texture, NineSlice) carries the arc in its GuiVertex::Arc
+        /// and ArcCoord lanes, and the fragment takes the annular-sector signed distance in place of
+        /// the rounded-rect one — for the fill's coverage, a border's ring (inset along the arc), and
+        /// a shadow's silhouette (displaced by its offset, grown by its spread) alike. Every quad
+        /// under one arc is masked by that one arc, whatever its own rect: a background image in the
+        /// padding box, a fitted texture, and each cell of a nine-slice all cut to the same sector.
+        /// MSDF text quads never carry it.
+        ///
+        /// The top of the stack applies alone — a pushed arc replaces the enclosing one rather than
+        /// intersecting it, since two sectors do not compose into a sector. The arc does not narrow
+        /// the run's scissor and does not change batching.
+        /// @param arc  The sector, in the untransformed space of the primitives it masks.
+        void PushArc(const ArcShape& arc);
+
+        /// @brief Pops the top arc silhouette, restoring the enclosing one (or the rounded box).
+        /// @pre A matching PushArc was issued — popping an empty stack is a fatal assert.
+        void PopArc();
+
         /// @brief Returns the interleaved vertex stream.
         [[nodiscard]] const vector<GuiVertex>& GetVertices() const { return m_Vertices; }
 
@@ -575,6 +647,8 @@ namespace Veng::Gui
         vector<Rect> m_ClipStack;
         /// @brief The active transform stack; each entry is already composed with the one below it.
         vector<AffineTransform> m_TransformStack;
+        /// @brief The active arc silhouettes; only the top entry masks an emitted quad.
+        vector<ArcShape> m_ArcStack;
         /// @brief Bindless texture index keying the trailing run (Invalid for an untextured shape run).
         ///
         /// The run table stores no texture, so the merge test in EnsureRun compares this against the

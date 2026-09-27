@@ -8,6 +8,8 @@
     { "format": "RGBA32Sfloat", "name": "a_Params" },
     { "format": "R32Uint",      "name": "a_GradientSelector" },
     { "format": "RGBA32Sfloat", "name": "a_Shadow" },
-    { "format": "RGBA32Sfloat", "name": "a_UvWrap" }
+    { "format": "RGBA32Sfloat", "name": "a_UvWrap" },
+    { "format": "RGBA32Sfloat", "name": "a_Arc" },
+    { "format": "RG32Sfloat",   "name": "a_ArcCoord" }
   ]
 }

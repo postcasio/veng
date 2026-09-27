@@ -437,6 +437,39 @@ rect, and content clips stay axis-aligned scissors. For a per-frame angle from C
 tracking a value), `Document::SetRotation(element, degrees)` writes it paint-only, with no layout
 re-solve. `hello-triangle`'s HUD spins a conic-gradient loading arc this way.
 
+### Arc silhouettes: `shape: arc`
+
+`shape: arc` swaps an element's rounded box for an **annular sector** inscribed in its border box —
+the silhouette of a radial gauge, a cooldown ring, a donut or pie segment, a progress arc. Its fill
+(any source), border, and shadow all follow the sector; its children, text, layout, and hit-testing
+keep the box.
+
+| property | value | default | animates |
+|---|---|---|---|
+| `shape` | `box` \| `arc` | `box` | no |
+| `arc-start` | degrees, clockwise from 12 o'clock | `0` | yes |
+| `arc-sweep` | degrees, clockwise extent, clamped to 0..360 | `360` | yes |
+| `arc-thickness` | band width in px, inward from the rim; `0` fills to the centre | `0` | yes |
+| `arc-cap` | `butt` \| `round` | `butt` | no |
+
+The outer radius is half the box's shorter side, and `corner-radius` is ignored. A conic gradient
+inside a band is the classic gauge — note its zero turn is 3 o'clock, so a ramp that begins where the
+arc does is `from (arc-start - 90)deg`:
+
+```css
+.gauge {
+    width: 64px; height: 64px;
+    shape: arc;
+    arc-start: -135; arc-sweep: 270;          /* a 270-degree dial opening at the bottom */
+    arc-thickness: 10px; arc-cap: round;
+    background-gradient: conic from 135deg at 50% 50%, #33dd55 0%, #ffdd33 37.5%, #ff3322 75%;
+    transition: arc-sweep 0.25s;              /* ease a value change */
+}
+```
+
+Driving the value from C++ is `Document::SetArc(element, startDegrees, sweepDegrees)` — paint-only,
+no layout re-solve, a no-op when unchanged — so a gauge driver can write it every frame.
+
 ## 3. Author the document
 
 A `*.vui.xml` is a tree of elements. The **root** element carries a `stylesheets`

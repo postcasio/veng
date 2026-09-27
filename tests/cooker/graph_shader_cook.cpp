@@ -453,6 +453,8 @@ GuiFillInputs vsMain(VSInput input)
     output.v_RectHalf = input.a_RectHalf;
     output.v_RectCoord = input.a_RectCoord;
     output.v_Params = input.a_Params;
+    output.v_Arc = float4(0.0, 0.0, 0.0, 0.0);
+    output.v_ArcCoord = float2(0.0, 0.0);
     return output;
 }
 )";

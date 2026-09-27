@@ -769,3 +769,61 @@ TEST_CASE("gui drive: one call runs Update -> Solve -> Build at the target exten
     CHECK(root.ComputedStyle.Rotation == doctest::Approx(180.0f));
     CHECK(list.GetVertices().size() > firstVertices);
 }
+
+TEST_CASE("gui arc: SetArc is paint-only and masks the element's own quads, not its children")
+{
+    Document doc;
+    Element& gauge = doc.Add(doc.Root(), ElementKind::Panel);
+    doc.SetStyle(gauge,
+                 []
+                 {
+                     Style style;
+                     style.Background = vec4(0.2f, 0.6f, 0.9f, 1.0f);
+                     style.BorderStyle = Border{.Width = 2.0f, .Color = vec4(1.0f)};
+                     style.Width = Length::Points(80.0f);
+                     style.Height = Length::Points(40.0f);
+                     style.Shape = ElementShape::Arc;
+                     style.ArcThickness = 6.0f;
+                     style.ArcCapStyle = ArcCap::Round;
+                     return style;
+                 }());
+    Element& child = doc.Add(gauge, ElementKind::Panel);
+    doc.SetStyle(child,
+                 []
+                 {
+                     Style style;
+                     style.Background = vec4(1.0f);
+                     style.Width = Length::Points(10.0f);
+                     style.Height = Length::Points(10.0f);
+                     return style;
+                 }());
+
+    doc.Solve(vec2(200.0f, 200.0f));
+    REQUIRE_FALSE(doc.IsDirty());
+
+    doc.SetArc(gauge, -90.0f, 180.0f);
+    CHECK_FALSE(doc.IsDirty());
+    CHECK(gauge.ComputedStyle.ArcStart == doctest::Approx(-90.0f));
+    CHECK(gauge.BaseStyle.ArcSweep == doctest::Approx(180.0f));
+
+    DrawList list;
+    doc.Build(list);
+    const vector<GuiVertex>& vertices = list.GetVertices();
+    // The fill and the border ring carry the arc — inscribed in the 80x40 box, so its radius is
+    // the shorter half-side — and the child's quad after them is a plain box.
+    REQUIRE(vertices.size() == 12);
+    for (usize i = 0; i < 8; ++i)
+    {
+        CHECK(vertices[i].Arc.x == doctest::Approx(-3.14159265f * 0.5f));
+        CHECK(vertices[i].Arc.y == doctest::Approx(3.14159265f));
+        CHECK(vertices[i].Arc.w == doctest::Approx(-20.0f));
+    }
+    CHECK(vertices[8].Arc == vec4(0.0f));
+
+    // A zero sweep leaves no silhouette at all, while the children still draw.
+    doc.SetArc(gauge, 0.0f, 0.0f);
+    DrawList empty;
+    doc.Build(empty);
+    CHECK(empty.GetVertices().size() == 4);
+    CHECK(empty.GetVertices()[0].Arc == vec4(0.0f));
+}

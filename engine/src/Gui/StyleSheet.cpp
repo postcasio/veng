@@ -217,6 +217,21 @@ namespace Veng::Gui
         case StyleProperty::Rotation:
             style.Rotation = declaration.Values.x;
             return;
+        case StyleProperty::Shape:
+            style.Shape = static_cast<ElementShape>(declaration.Unit);
+            return;
+        case StyleProperty::ArcStart:
+            style.ArcStart = declaration.Values.x;
+            return;
+        case StyleProperty::ArcSweep:
+            style.ArcSweep = declaration.Values.x;
+            return;
+        case StyleProperty::ArcThickness:
+            style.ArcThickness = declaration.Values.x;
+            return;
+        case StyleProperty::ArcCap:
+            style.ArcCapStyle = static_cast<ArcCap>(declaration.Unit);
+            return;
         case StyleProperty::TextAlign:
             style.TextAlignment = static_cast<TextAlign>(declaration.Unit);
             return;

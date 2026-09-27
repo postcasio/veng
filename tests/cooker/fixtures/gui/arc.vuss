@@ -1,0 +1,18 @@
+/* The stylesheet half of the arc-silhouette fixture. The gauge's conic gradient can only be
+   authored in a rule, and the ramp starts where the arc does: the conic's zero turn is 3 o'clock,
+   so `from 135deg` puts it at 7:30 — an arc-start of -135 — and the 270-degree sweep ends at 75%. */
+
+.cell {
+    width: 52px;
+    height: 52px;
+    margin: 0 8px 0 0;
+    shape: arc;
+}
+
+.gauge {
+    arc-start: -135;
+    arc-sweep: 270;
+    arc-thickness: 12px;
+    arc-cap: round;
+    background-gradient: conic from 135deg at 50% 50%, #33dd55 0%, #ffdd33 37.5%, #ff3322 75%;
+}

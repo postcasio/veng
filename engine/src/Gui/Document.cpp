@@ -1319,6 +1319,22 @@ namespace Veng::Gui
         m_PaintDirty = true;
     }
 
+    void Document::SetArc(Element& element, const f32 startDegrees, const f32 sweepDegrees)
+    {
+        if (element.BaseStyle.ArcStart == startDegrees &&
+            element.BaseStyle.ArcSweep == sweepDegrees &&
+            element.ComputedStyle.ArcStart == startDegrees &&
+            element.ComputedStyle.ArcSweep == sweepDegrees)
+        {
+            return;
+        }
+        element.BaseStyle.ArcStart = startDegrees;
+        element.ComputedStyle.ArcStart = startDegrees;
+        element.BaseStyle.ArcSweep = sweepDegrees;
+        element.ComputedStyle.ArcSweep = sweepDegrees;
+        m_PaintDirty = true;
+    }
+
     void Document::SetBackground(Element& element, const vec4 color)
     {
         element.BaseStyle.Background = color;
@@ -1459,6 +1475,11 @@ namespace Veng::Gui
             case StyleProperty::BackgroundMaterial:
             case StyleProperty::ImageMaterial:
             case StyleProperty::Transition:
+            case StyleProperty::Shape:
+            case StyleProperty::ArcStart:
+            case StyleProperty::ArcSweep:
+            case StyleProperty::ArcThickness:
+            case StyleProperty::ArcCap:
                 return false;
             // A slice makes an Image's intrinsic size the sum of its corner insets, so authoring or
             // dropping one re-measures the leaf.
@@ -1547,6 +1568,12 @@ namespace Veng::Gui
                 return vec4(style.Opacity, 0.0f, 0.0f, 0.0f);
             case StyleProperty::Rotation:
                 return vec4(style.Rotation, 0.0f, 0.0f, 0.0f);
+            case StyleProperty::ArcStart:
+                return vec4(style.ArcStart, 0.0f, 0.0f, 0.0f);
+            case StyleProperty::ArcSweep:
+                return vec4(style.ArcSweep, 0.0f, 0.0f, 0.0f);
+            case StyleProperty::ArcThickness:
+                return vec4(style.ArcThickness, 0.0f, 0.0f, 0.0f);
             case StyleProperty::InsetLeft:
                 return vec4(style.Inset.Left, 0.0f, 0.0f, 0.0f);
             case StyleProperty::InsetTop:
@@ -1643,6 +1670,15 @@ namespace Veng::Gui
                 return;
             case StyleProperty::Rotation:
                 style.Rotation = value.x;
+                return;
+            case StyleProperty::ArcStart:
+                style.ArcStart = value.x;
+                return;
+            case StyleProperty::ArcSweep:
+                style.ArcSweep = value.x;
+                return;
+            case StyleProperty::ArcThickness:
+                style.ArcThickness = value.x;
                 return;
             case StyleProperty::InsetLeft:
                 style.Inset.Left = value.x;
@@ -3372,6 +3408,23 @@ namespace Veng::Gui
         arm(topRight, apex);
     }
 
+    namespace
+    {
+        // The arc an Arc-shaped element's own primitives are masked to: inscribed in the border box,
+        // its angles converted from the style's clockwise-from-12-o'clock degrees.
+        ArcShape ArcShapeOf(const Rect& rect, const Style& style)
+        {
+            return ArcShape{
+                .Center = rect.Center(),
+                .Radius = 0.5f * std::min(rect.Size.x, rect.Size.y),
+                .StartRadians = glm::radians(style.ArcStart),
+                .SweepRadians = glm::radians(std::clamp(style.ArcSweep, 0.0f, 360.0f)),
+                .Thickness = style.ArcThickness,
+                .Cap = style.ArcCapStyle,
+            };
+        }
+    }
+
     void Document::BuildElement(const Element& element, DrawList& list, const f32 inherited) const
     {
         if (!element.Visible)
@@ -3403,11 +3456,21 @@ namespace Veng::Gui
             list.PushTransform(pivot, glm::radians(style.Rotation));
         }
 
+        // An arc silhouette masks the element's own primitives — the shadows, the fill, the border —
+        // and nothing it contains, so it is pushed here and popped before the widget parts, the
+        // text, and the children. A zero sweep leaves no silhouette to draw at all.
+        const bool arc = style.Shape == ElementShape::Arc;
+        const bool silhouette = !arc || style.ArcSweep > 0.0f;
+        if (arc)
+        {
+            list.PushArc(ArcShapeOf(rect, style));
+        }
+
         // A drop shadow is one extra quad *behind* the fill — the element's own rounded box, its
         // silhouette displaced and grown, its edge softened across the blur. It is emitted inside
         // the element's draw, so it folds in the composited opacity and rides the transform and
         // clip stacks like every other primitive.
-        if (style.Shadow.has_value() && !style.Shadow->Inset)
+        if (silhouette && style.Shadow.has_value() && !style.Shadow->Inset)
         {
             BoxShadow shadow = *style.Shadow;
             shadow.Color.a *= opacity;
@@ -3418,6 +3481,10 @@ namespace Veng::Gui
         // at a point in its own fill color, and takes no background, border, or children.
         if (element.Kind == ElementKind::DropdownArrow)
         {
+            if (arc)
+            {
+                list.PopArc();
+            }
             BuildDropdownChevron(element, list, opacity);
             if (rotated)
             {
@@ -3426,138 +3493,146 @@ namespace Veng::Gui
             return;
         }
 
-        // Fill sources are exclusive and ranked BackgroundMaterial > BackgroundGradient >
-        // BackgroundImage > Background: the winning source is the fill, and they never layer. The
-        // border is drawn over whichever wins.
-        if (style.BackgroundMaterial.IsLoaded())
+        if (silhouette)
         {
-            // A material emits the RGBA inside the shape; the engine's SDF coverage, the border
-            // ring, and the composited opacity multiply into it, so the material never widens or
-            // replaces the silhouette. The opacity rides the vertex color the fragment reads.
-            list.MaterialFill(rect, style.BackgroundMaterial.Get(), style.Radii, {},
-                              vec4(1.0f, 1.0f, 1.0f, opacity));
-        }
-        else if (style.BackgroundGradient.has_value() && style.BackgroundGradient->Ramp.IsLoaded())
-        {
-            const ResolvedGradient& gradient = *style.BackgroundGradient;
-            const Texture& ramp = *gradient.Ramp.Get();
-            list.Gradient(rect,
-                          GradientFill{.Kind = gradient.Kind,
-                                       .P0 = gradient.P0,
-                                       .P1 = gradient.P1,
-                                       .AngleOffset = gradient.AngleOffset,
-                                       .Ramp = ramp.GetHandle(),
-                                       .Sampler = ramp.GetSamplerHandle()},
-                          style.Radii, {}, vec4(1.0f, 1.0f, 1.0f, opacity));
-        }
-        else if (style.BackgroundImage.IsLoaded())
-        {
-            const Texture& texture = *style.BackgroundImage.Get();
-            const FillBox box = ToPaddingBox(rect, style);
-            const vec2 source = vec2(texture.GetExtent());
-            const vec4 tint = vec4(1.0f, 1.0f, 1.0f, opacity);
-            if (IsSliced(style.BackgroundSlice))
+            // Fill sources are exclusive and ranked BackgroundMaterial > BackgroundGradient >
+            // BackgroundImage > Background: the winning source is the fill, and they never layer. The
+            // border is drawn over whichever wins.
+            if (style.BackgroundMaterial.IsLoaded())
             {
-                // The slice insets author source-texture pixels; the primitive takes the source
-                // split as UV fractions and keeps the destination corners at their source size.
-                // `tile` repeats each stretchable cell within its own sub-rect (the corners stay
-                // fixed), which the fragment wraps arithmetically rather than through the sampler.
-                const Insets& slice = style.BackgroundSlice;
-                list.NineSlice(box.Box, texture.GetHandle(), texture.GetSamplerHandle(),
-                               SliceToUv(slice, source), slice, tint,
-                               {.Min = {0.0f, 0.0f}, .Size = {1.0f, 1.0f}}, style.BackgroundRepeat,
-                               source);
+                // A material emits the RGBA inside the shape; the engine's SDF coverage, the border
+                // ring, and the composited opacity multiply into it, so the material never widens or
+                // replaces the silhouette. The opacity rides the vertex color the fragment reads.
+                list.MaterialFill(rect, style.BackgroundMaterial.Get(), style.Radii, {},
+                                  vec4(1.0f, 1.0f, 1.0f, opacity));
             }
-            else if (style.BackgroundRepeat == ImageRepeat::Tile)
+            else if (style.BackgroundGradient.has_value() &&
+                     style.BackgroundGradient->Ramp.IsLoaded())
             {
-                // One quad with the UV rect scaled by box / texture size, tiled by the texture's own
-                // wrapping sampler — never a quad per tile, which would be unbounded against the
-                // draw list's fixed geometry ring.
-                const Rect uv{.Min = vec2(0.0f),
-                              .Size = TileUvSize(box.Box.Size, source, vec2(1.0f))};
-                list.Texture(box.Box, texture.GetHandle(), texture.GetSamplerHandle(), uv, tint,
-                             box.Radii);
+                const ResolvedGradient& gradient = *style.BackgroundGradient;
+                const Texture& ramp = *gradient.Ramp.Get();
+                list.Gradient(rect,
+                              GradientFill{.Kind = gradient.Kind,
+                                           .P0 = gradient.P0,
+                                           .P1 = gradient.P1,
+                                           .AngleOffset = gradient.AngleOffset,
+                                           .Ramp = ramp.GetHandle(),
+                                           .Sampler = ramp.GetSamplerHandle()},
+                              style.Radii, {}, vec4(1.0f, 1.0f, 1.0f, opacity));
             }
-            else
+            else if (style.BackgroundImage.IsLoaded())
             {
-                const FittedFill fill = FitTexture(box.Box, source, style.BackgroundFit);
-                list.Texture(fill.Dest, texture.GetHandle(), texture.GetSamplerHandle(), fill.Uv,
-                             tint, box.Radii);
+                const Texture& texture = *style.BackgroundImage.Get();
+                const FillBox box = ToPaddingBox(rect, style);
+                const vec2 source = vec2(texture.GetExtent());
+                const vec4 tint = vec4(1.0f, 1.0f, 1.0f, opacity);
+                if (IsSliced(style.BackgroundSlice))
+                {
+                    // The slice insets author source-texture pixels; the primitive takes the source
+                    // split as UV fractions and keeps the destination corners at their source size.
+                    // `tile` repeats each stretchable cell within its own sub-rect (the corners stay
+                    // fixed), which the fragment wraps arithmetically rather than through the sampler.
+                    const Insets& slice = style.BackgroundSlice;
+                    list.NineSlice(box.Box, texture.GetHandle(), texture.GetSamplerHandle(),
+                                   SliceToUv(slice, source), slice, tint,
+                                   {.Min = {0.0f, 0.0f}, .Size = {1.0f, 1.0f}},
+                                   style.BackgroundRepeat, source);
+                }
+                else if (style.BackgroundRepeat == ImageRepeat::Tile)
+                {
+                    // One quad with the UV rect scaled by box / texture size, tiled by the texture's own
+                    // wrapping sampler — never a quad per tile, which would be unbounded against the
+                    // draw list's fixed geometry ring.
+                    const Rect uv{.Min = vec2(0.0f),
+                                  .Size = TileUvSize(box.Box.Size, source, vec2(1.0f))};
+                    list.Texture(box.Box, texture.GetHandle(), texture.GetSamplerHandle(), uv, tint,
+                                 box.Radii);
+                }
+                else
+                {
+                    const FittedFill fill = FitTexture(box.Box, source, style.BackgroundFit);
+                    list.Texture(fill.Dest, texture.GetHandle(), texture.GetSamplerHandle(),
+                                 fill.Uv, tint, box.Radii);
+                }
             }
-        }
-        else if (style.Background.a > 0.0f)
-        {
-            vec4 background = style.Background;
-            background.a *= opacity;
-            list.Quad(rect, background, style.Radii);
-        }
-        // An Image paints its resident texture into its *content* box — inside the border and the
-        // padding, the box its intrinsic measure sized and the box a Text leaf's run draws in —
-        // over any background and under the border. It composes with corner-radius through the
-        // shape SDF the same way a Panel background does; the border below draws over it as a
-        // frame. The tint folds in the composited opacity, so a faded Image fades its texture too.
-        //
-        // The three shapes are the background fill's, against the widget's own properties: sliced
-        // (nine-slice, unrounded), tiled (one quad, a wrapping sampler, a scaled UV), or fitted.
-        //
-        // An authored `material` supersedes the texture fill: the material shades the same content
-        // box, with the element's own texture reaching it as a declared parameter rather than as
-        // the fill itself, so a shader animates or recolors authored art instead of replacing it.
-        if (element.Kind == ElementKind::Image && style.ImageMaterial.IsLoaded())
-        {
-            vec4 tint = element.ImageTint;
-            tint.a *= opacity;
-            const FillBox content = ToContentBox(rect, style);
-            list.MaterialFill(content.Box, style.ImageMaterial.Get(), content.Radii, {}, tint,
-                              element.ImageUv);
-        }
-        else if (element.Kind == ElementKind::Image && element.ImageTexture.IsValid() &&
-                 element.ImageSampler.IsValid())
-        {
-            vec4 tint = element.ImageTint;
-            tint.a *= opacity;
-            const FillBox content = ToContentBox(rect, style);
-            // Fit and slice are computed against the *sampled* sub-rect, so an atlas flipbook frame
-            // fits and slices its own cell. An *unsliced* tile repeats the whole texture, which is
-            // what the sampler's wrap addresses; a sliced one repeats each cell within its own
-            // sub-rect, which only the fragment's arithmetic wrap can express.
-            const vec2 sampled = element.ImageSize * element.ImageUv.Size;
-            if (IsSliced(style.ImageSlice))
+            else if (style.Background.a > 0.0f)
             {
-                const Insets& slice = style.ImageSlice;
-                list.NineSlice(content.Box, element.ImageTexture, element.ImageSampler,
-                               SliceToUv(slice, sampled), slice, tint, element.ImageUv,
-                               style.ImageRepeatMode, sampled);
+                vec4 background = style.Background;
+                background.a *= opacity;
+                list.Quad(rect, background, style.Radii);
             }
-            else if (style.ImageRepeatMode == ImageRepeat::Tile)
+            // An Image paints its resident texture into its *content* box — inside the border and the
+            // padding, the box its intrinsic measure sized and the box a Text leaf's run draws in —
+            // over any background and under the border. It composes with corner-radius through the
+            // shape SDF the same way a Panel background does; the border below draws over it as a
+            // frame. The tint folds in the composited opacity, so a faded Image fades its texture too.
+            //
+            // The three shapes are the background fill's, against the widget's own properties: sliced
+            // (nine-slice, unrounded), tiled (one quad, a wrapping sampler, a scaled UV), or fitted.
+            //
+            // An authored `material` supersedes the texture fill: the material shades the same content
+            // box, with the element's own texture reaching it as a declared parameter rather than as
+            // the fill itself, so a shader animates or recolors authored art instead of replacing it.
+            if (element.Kind == ElementKind::Image && style.ImageMaterial.IsLoaded())
             {
-                const Rect uv{
-                    .Min = element.ImageUv.Min,
-                    .Size = TileUvSize(content.Box.Size, element.ImageSize, element.ImageUv.Size)};
-                list.Texture(content.Box, element.ImageTexture, element.ImageSampler, uv, tint,
-                             content.Radii);
+                vec4 tint = element.ImageTint;
+                tint.a *= opacity;
+                const FillBox content = ToContentBox(rect, style);
+                list.MaterialFill(content.Box, style.ImageMaterial.Get(), content.Radii, {}, tint,
+                                  element.ImageUv);
             }
-            else
+            else if (element.Kind == ElementKind::Image && element.ImageTexture.IsValid() &&
+                     element.ImageSampler.IsValid())
             {
-                const FittedFill fill =
-                    FitTexture(content.Box, sampled, style.ObjectFit, element.ImageUv);
-                list.Texture(fill.Dest, element.ImageTexture, element.ImageSampler, fill.Uv, tint,
-                             content.Radii);
+                vec4 tint = element.ImageTint;
+                tint.a *= opacity;
+                const FillBox content = ToContentBox(rect, style);
+                // Fit and slice are computed against the *sampled* sub-rect, so an atlas flipbook frame
+                // fits and slices its own cell. An *unsliced* tile repeats the whole texture, which is
+                // what the sampler's wrap addresses; a sliced one repeats each cell within its own
+                // sub-rect, which only the fragment's arithmetic wrap can express.
+                const vec2 sampled = element.ImageSize * element.ImageUv.Size;
+                if (IsSliced(style.ImageSlice))
+                {
+                    const Insets& slice = style.ImageSlice;
+                    list.NineSlice(content.Box, element.ImageTexture, element.ImageSampler,
+                                   SliceToUv(slice, sampled), slice, tint, element.ImageUv,
+                                   style.ImageRepeatMode, sampled);
+                }
+                else if (style.ImageRepeatMode == ImageRepeat::Tile)
+                {
+                    const Rect uv{.Min = element.ImageUv.Min,
+                                  .Size = TileUvSize(content.Box.Size, element.ImageSize,
+                                                     element.ImageUv.Size)};
+                    list.Texture(content.Box, element.ImageTexture, element.ImageSampler, uv, tint,
+                                 content.Radii);
+                }
+                else
+                {
+                    const FittedFill fill =
+                        FitTexture(content.Box, sampled, style.ObjectFit, element.ImageUv);
+                    list.Texture(fill.Dest, element.ImageTexture, element.ImageSampler, fill.Uv,
+                                 tint, content.Radii);
+                }
             }
         }
         // An inset shadow paints *over* the fill instead of behind it, bounded by the box it
         // recesses — so it lands after every fill source and under the border ring.
-        if (style.Shadow.has_value() && style.Shadow->Inset)
+        if (silhouette && style.Shadow.has_value() && style.Shadow->Inset)
         {
             BoxShadow shadow = *style.Shadow;
             shadow.Color.a *= opacity;
             list.Shadow(rect, shadow, style.Radii);
         }
-        if (style.BorderStyle.Width > 0.0f)
+        if (silhouette && style.BorderStyle.Width > 0.0f)
         {
             Border border = style.BorderStyle;
             border.Color.a *= opacity;
             list.Quad(rect, border.Color, style.Radii, border);
+        }
+        if (arc)
+        {
+            list.PopArc();
         }
 
         // An element clips when its overflow says so on either axis (a scrollable element always

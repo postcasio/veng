@@ -10,9 +10,15 @@
 // width ride the params, the blur/spread/offset of a shadow its own field; the texture
 // and sampler indices are bindless set-0 slots, a negative index meaning untextured. A
 // textured quad may also carry a UV sub-rect to wrap its sampling within, which is how a
-// nine-slice cell repeats without the sampler running into the neighbouring cell.
+// nine-slice cell repeats without the sampler running into the neighbouring cell. A quad
+// carrying an active arc lane swaps the rounded rectangle for an annular sector (see
+// Veng/guisilhouette.slang) in every one of those reads — the fill, the border ring, and
+// both shadows — so an arc-shaped element is the same fill, ring, and shadow on a different
+// silhouette.
 // Output is premultiplied linear RGBA so the pass blends it "over" the scene in linear
 // space.
+
+#include "Veng/guisilhouette.slang"
 
 struct VSOutput
 {
@@ -22,6 +28,8 @@ struct VSOutput
     float2 v_RectHalf : TEXCOORD1;
     float2 v_RectCoord : TEXCOORD2;
     nointerpolation float4 v_Params : TEXCOORD3;
+    nointerpolation float4 v_Arc : TEXCOORD7;
+    float2 v_ArcCoord : TEXCOORD8;
     nointerpolation uint v_GradientSelector : TEXCOORD4;
     nointerpolation float4 v_Shadow : TEXCOORD5;
     nointerpolation float4 v_UvWrap : TEXCOORD6;
@@ -62,14 +70,6 @@ static const uint GradientStride = 48;
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
 [[vk::binding(3, 0)]] ByteAddressBuffer g_Buffers[];
 
-// Signed distance to a rounded rectangle centered at the origin, half-extent b,
-// corner radius r (subtracted from the box so the corners round inward).
-float RoundedBoxSdf(float2 p, float2 b, float r)
-{
-    float2 q = abs(p) - b + r;
-    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
-}
-
 [shader("fragment")]
 float4 fsMain(VSOutput input) : SV_Target
 {
@@ -92,17 +92,28 @@ float4 fsMain(VSOutput input) : SV_Target
         float spread = inset ? -input.v_Shadow.y : input.v_Shadow.y;
         float2 offset = input.v_Shadow.zw;
 
-        float boxDist = RoundedBoxSdf(input.v_RectCoord, input.v_RectHalf, radius);
+        float boxDist = GuiSilhouetteSdf(input.v_RectCoord, input.v_RectHalf, radius,
+                                         input.v_ArcCoord, input.v_Arc);
         float shadowAa = max(fwidth(boxDist), 1e-4);
         // A ramp narrower than the pixel grid can resolve would alias, so a hard-edged shadow
         // degrades to the ordinary anti-aliased edge rather than to a stair-stepped one.
         float ramp = max(abs(shadowBlur), shadowAa);
 
-        float2 silhouetteHalf = max(input.v_RectHalf + spread, float2(0.0, 0.0));
-        float silhouetteRadius =
-            clamp(radius + spread, 0.0, min(silhouetteHalf.x, silhouetteHalf.y));
-        float silhouetteDist =
-            RoundedBoxSdf(input.v_RectCoord - offset, silhouetteHalf, silhouetteRadius);
+        // An arc grows by offsetting its own field; a box grows its half-extent and radius, which
+        // keeps a spread corner round rather than letting it bulge past the box's own curvature.
+        float silhouetteDist;
+        if (input.v_Arc.w != 0.0)
+        {
+            silhouetteDist = GuiArcSdf(input.v_ArcCoord - offset, input.v_Arc) - spread;
+        }
+        else
+        {
+            float2 silhouetteHalf = max(input.v_RectHalf + spread, float2(0.0, 0.0));
+            float silhouetteRadius =
+                clamp(radius + spread, 0.0, min(silhouetteHalf.x, silhouetteHalf.y));
+            silhouetteDist = GuiRoundedBoxSdf(input.v_RectCoord - offset, silhouetteHalf,
+                                              silhouetteRadius);
+        }
         float silhouette = 1.0 - smoothstep(-ramp, ramp, silhouetteDist);
 
         // An outer shadow *is* the softened silhouette. An inset shadow is the box minus it — the
@@ -172,15 +183,18 @@ float4 fsMain(VSOutput input) : SV_Target
     // Screen-space coverage from the SDF: a one-pixel-wide transition centered on
     // the edge, its width taken from the distance field's rate of change so the
     // anti-aliasing is resolution-independent.
-    float dist = RoundedBoxSdf(input.v_RectCoord, input.v_RectHalf, radius);
+    float dist = GuiSilhouetteSdf(input.v_RectCoord, input.v_RectHalf, radius, input.v_ArcCoord,
+                                  input.v_Arc);
     float aa = max(fwidth(dist), 1e-4);
     float coverage = 1.0 - smoothstep(-aa, aa, dist);
 
     // A positive border width fills only the ring within `border` pixels of the
-    // edge, leaving the interior transparent; zero border fills the whole shape.
+    // edge, leaving the interior transparent; zero border fills the whole shape. The
+    // ring is the silhouette's own field offset inward, so an arc's border runs along
+    // both rims and across both ends.
     if (border > 0.0)
     {
-        float inner = RoundedBoxSdf(input.v_RectCoord, input.v_RectHalf, radius) + border;
+        float inner = dist + border;
         float innerCoverage = 1.0 - smoothstep(-aa, aa, inner);
         coverage *= 1.0 - innerCoverage;
     }

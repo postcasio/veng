@@ -163,9 +163,9 @@ picks one source per element, and within the shape path `gui_shape.frag.slang` i
 *unresolved* source is not a conflict: it falls through to the next one, so a texture that failed to
 load leaves the flat color painting rather than a hole.
 
-Each source rides the identical silhouette — the rounded-rect SDF with its corner radius, border
-ring, clip, rotation, and composited opacity — which is the whole reason the set could grow without
-touching the shape path. The three that follow are the same idea at three distances from the engine:
+Each source rides the identical silhouette — the rounded-rect SDF with its corner radius (or the
+arc, below), border ring, clip, rotation, and composited opacity — which is the whole reason the set
+could grow without touching the shape path. The three that follow are the same idea at three distances from the engine:
 a **texture** (plain, tiled, or nine-sliced), the `Image` widget's content fill in that same
 vocabulary, and an authored **material** whose fragment computes the RGBA.
 
@@ -240,6 +240,40 @@ where a scissor could only bound it to the square box.
 - **One shadow per element** (no comma-separated list), and no separate blur pass — the
   smoothstep-over-SDF approximation is the whole mechanism. Text shadows are absent; the MSDF
   path is untouched.
+
+### `shape: arc` — the silhouette itself, swapped
+
+**An arc replaces the rounded box as the element's silhouette; it is not a fill source.** `shape: arc`
+(`Gui::ElementShape`, default `box`) turns the element's own primitives into an annular sector
+inscribed in its border box — centred there, outer radius half the box's **shorter** side, corner
+radii ignored. Four properties shape it: `arc-start` (degrees **clockwise from 12 o'clock** in the
+y-down space, default `0`), `arc-sweep` (the clockwise extent, default `360`, clamped to [0, 360] at
+paint — `0` draws no silhouette, `360` is a seamless ring or disc), `arc-thickness` (the band's radial
+width inward from the rim; `0`, the default, or anything ≥ the radius fills to the centre — a pie
+wedge or a disc), and `arc-cap` (`butt` | `round`; round ends are semicircles of the band's own
+thickness, the gauge look). The three numbers animate — transitions, keyframes, and
+`Document::SetArc(element, start, sweep)`, the paint-only per-frame setter a gauge driver calls — and
+`shape`/`arc-cap` snap.
+
+- **Everything that paints the silhouette follows it**, because every one of them reads one distance
+  function (`GuiSilhouetteSdf`, core-pack `Veng/guisilhouette.slang`): each fill source — flat,
+  gradient (a **conic gradient inside an arc is the gauge**), background image, material — plus the
+  border ring (the sector's own field inset by the width, so it runs along both rims and across both
+  ends) and both shadows (the field displaced by the offset and grown by the spread).
+- **Nothing it contains does.** `Document::BuildElement` pushes the arc (`DrawList::PushArc`) around
+  the element's own primitives and pops it before its widget parts, text, and children, and a glyph
+  quad never carries it even inside a push. Layout, hit-testing (the axis-aligned `Layout` rect, as
+  under `rotation`), and clipping are untouched.
+- **The arc is the element's, not the quad's.** The sector rides two vertex lanes — `Arc` (start,
+  sweep, thickness, and the outer radius **signed by the cap**: zero inactive, positive butt, negative
+  round, the shadow-blur trick again) and `ArcCoord`, the vertex's offset from the arc's centre — so a
+  quad whose own box is not the element's (a padding-box image, a letterboxed fit, each nine-slice
+  cell) is still cut by the one sector. A sliced background under an arc is therefore well defined:
+  the frame's cells are masked like any other fill.
+- **Two angle conventions meet here and differ.** The arc's zero is 12 o'clock; the conic gradient's
+  zero turn is **3 o'clock** (its `from` angle adds to that). A ramp that starts where the arc starts
+  is `from (arc-start - 90)deg` — `gui_arc.png`'s gauge is `arc-start: -135` over `conic from 135deg`
+  (−225° and 135° being the same turn).
 
 ### Material fills: an authored fill source
 
@@ -337,22 +371,26 @@ author a fragment — an authored `GuiFill` material, drawn on the same vertex s
 by the same silhouette (see [Material fills](#material-fills-an-authored-fill-source) above). The
 image goldens are the render floor every later change holds pixel-stable against: one **per feature**
 (`gui_overlay`, `gui_rotated`, `gui_image`, `gui_background`, `gui_sliced_tile`, `gui_shadow`,
-`gui_material`, `gui_popup`), kept separate on purpose so a moved pixel names the feature that moved it, plus **two**
+`gui_material`, `gui_arc`, `gui_popup`), kept separate on purpose so a moved pixel names the feature that moved it, plus **two**
 **composition** captures for what only shows when two of them meet: `gui_composition` — a nine-slice
 frame around a tiled `Image`, a material fill inside a clipped scroller, and a shadowed card under an
 open popup — and `gui_box_composition`, where tiled nine-slice frames wrap bordered boxes whose size
 comes from a measure, so the cells' repeat counts are decided by the box model rather than by an
 authored extent. **The vertex format is five files, not one**: the
-`GuiVertex` struct, the cooked `gui.vlayout.json` the pass loads, and the `VSInput`/`VSOutput` of
-`gui.vert.slang` — the shader importer hard-errors at cook time on a reflected-vs-declared
-mismatch, so a new field lands in all of them at once or nothing cooks. **A fragment declares only
-the interpolants it reads**, and the vertex stage may output more: semantics bind the two, not
-member order or count, so `gui_msdf.frag.slang`'s `VSOutput` and the `GuiFillInputs` a material
-reads both omit the **three** lanes they have no use for — the gradient selector, the shadow, and
-the per-cell UV wrap. That is the established shape here, not an oversight — the validation gate
-accepts the unread output (it logs the SPIR-V interface mismatch at `WARN`), and a fragment that
-*does* read a lane must declare it at the matching semantic. The convention is stated on
-`GuiFillInputs` itself, so a consumer authoring a fill meets it where it applies.
+`GuiVertex` struct (124 bytes, eleven attributes), the cooked `gui.vlayout.json` the pass loads, the
+`VSInput`/`VSOutput` of `gui.vert.slang`, and the fragments that read a lane —
+`gui_shape.frag.slang` reads all of them, `Veng/guifill.slang`'s `GuiFillInputs` reads the leading
+ones through the two arc lanes, and `gui_msdf.frag.slang` stops at `v_Params`. The shader importer
+hard-errors at cook time on a reflected-vs-declared input mismatch, so a new field lands in the
+struct, the layout, and `VSInput` at once or nothing cooks. **A fragment declares only the
+interpolants it reads, and may omit only a trailing run of them**: Slang assigns varying locations
+in **declaration order, not by semantic**, so the lanes a partial reader needs must precede the ones
+it drops. That is why `VSOutput` puts the two arc lanes directly after `v_Params` — the material
+domain reads them — while the gradient selector, the shadow, and the per-cell UV wrap, which only
+the shape path reads, trail. The validation gate accepts the unread trailing outputs (it logs the
+SPIR-V interface mismatch at `WARN`); a fragment that skips a lane *in the middle* shifts every
+later location and fails pipeline creation outright with a type mismatch. The convention is stated
+on `GuiFillInputs` itself, so a consumer authoring a fill meets it where it applies.
 `DrawList` carries a composing **transform stack** (`PushTransform(pivot, angle)` / `PopTransform`)
 applied to vertex positions at quad emission while `RectCoord`/`RectHalf`/UV stay in unrotated
 local space, so a `rotation` style property (scalar degrees, clockwise in the y-down document

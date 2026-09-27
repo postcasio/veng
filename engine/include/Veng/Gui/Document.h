@@ -248,6 +248,21 @@ namespace Veng::Gui
         ///          axis-aligned scissors.
         void SetRotation(Element& element, f32 degrees);
 
+        /// @brief Sets an element's arc silhouette angles — a paint-only write, no layout re-solve.
+        ///
+        /// Writes ArcStart and ArcSweep onto the element's base (and live) style directly, so a
+        /// driver can sweep a gauge, a cooldown ring, or a progress arc every frame without running
+        /// the flexbox solve; writing the angles it already holds is a no-op. An active variant or
+        /// in-flight transition on either property still resolves over the new base. The angles
+        /// shape the element only while its style's `shape` is Arc — set on a Box they are held,
+        /// and take effect when the shape changes.
+        /// @param element       The element whose arc to set.
+        /// @param startDegrees  Where the sector begins, in degrees clockwise from 12 o'clock.
+        /// @param sweepDegrees  The sector's clockwise extent in degrees; clamped to [0, 360] at paint.
+        /// @warning Paint only: layout keeps the box, and hit-testing stays the axis-aligned Layout
+        ///          rect rather than the sector.
+        void SetArc(Element& element, f32 startDegrees, f32 sweepDegrees);
+
         /// @brief Sets an element's background fill — a paint-only write, no layout re-solve.
         /// @param element  The element whose background to set.
         /// @param color    The fill color, linear straight-alpha RGBA.

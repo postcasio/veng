@@ -167,11 +167,6 @@ namespace Veng::Gui
         WrapReverse,
     };
 
-    /// @brief Horizontal alignment of a Text element's glyph run inside its solved box.
-    ///
-    /// Meaningful when the box is wider than the shaped run — a min-width-pinned table cell, a
-    /// stretched cross-axis child, a fixed-width label. Alignment is applied at paint; it never
-    /// feeds the layout solve, so a content-sized text box aligns identically under all three.
     /// @brief Whether a text run breaks across lines to fit the width it is given.
     ///
     /// **NoWrap is the default**, and it is what makes an element's measured box agree with what is
@@ -209,6 +204,11 @@ namespace Veng::Gui
         Lowercase
     };
 
+    /// @brief Horizontal alignment of a Text element's glyph run inside its solved box.
+    ///
+    /// Meaningful when the box is wider than the shaped run — a min-width-pinned table cell, a
+    /// stretched cross-axis child, a fixed-width label. Alignment is applied at paint; it never
+    /// feeds the layout solve, so a content-sized text box aligns identically under all three.
     enum class TextAlign : u8
     {
         /// @brief Glyphs start at the content box's left edge (the default).
@@ -217,6 +217,20 @@ namespace Veng::Gui
         Center,
         /// @brief Glyphs end at the content box's right edge.
         Right,
+    };
+
+    /// @brief The silhouette an element's own fill, border, and shadow are drawn in.
+    ///
+    /// Box is the rounded rectangle every element has by default. Arc replaces it with an annular
+    /// sector centred in the border box (see Style::ArcStart) — a radial gauge, a cooldown ring, a
+    /// donut or pie segment, a progress arc. The silhouette is paint-only either way: layout,
+    /// hit-testing, clipping, children, and text all keep the axis-aligned box.
+    enum class ElementShape : u8
+    {
+        /// @brief The rounded rectangle, shaped by the corner radii (the default).
+        Box,
+        /// @brief An annular sector inscribed in the border box.
+        Arc,
     };
 
     /// @brief Whether an element participates in normal flow or is absolutely positioned.
@@ -465,6 +479,35 @@ namespace Veng::Gui
         ///          hit-testing stays axis-aligned against the unrotated Layout rect, and content
         ///          clips remain axis-aligned scissors.
         f32 Rotation = 0.0f;
+
+        /// @brief The silhouette the element's own fill, border, and shadow are drawn in.
+        ///
+        /// Every fill source follows it — a flat background, a gradient (a conic gradient inside an
+        /// arc is the gauge), an unsliced or sliced background image, and a material — as do the
+        /// border ring and both shadow kinds. An Arc is centred in the border box with an outer
+        /// radius of half the box's shorter side, and ignores the corner radii.
+        /// @warning Paint only, like Rotation: layout keeps the box, hit-testing stays the
+        ///          axis-aligned Layout rect (a click on a box corner outside the arc still lands on
+        ///          the element), and the arc never masks children, text, or widget parts.
+        ElementShape Shape = ElementShape::Box;
+        /// @brief Where an Arc silhouette begins, in degrees clockwise from 12 o'clock.
+        ///
+        /// Measured in the y-down document space, so 90 is 3 o'clock. Inert on a Box.
+        f32 ArcStart = 0.0f;
+        /// @brief An Arc silhouette's clockwise angular extent, in degrees.
+        ///
+        /// Clamped to [0, 360] at paint: 0 draws nothing and 360 is a whole ring or disc with no
+        /// seam. Animating it is how a gauge fills. Inert on a Box.
+        f32 ArcSweep = 360.0f;
+        /// @brief An Arc silhouette's radial band thickness in pixels, measured inward from the rim.
+        ///
+        /// Zero (the default), or anything at least the outer radius, fills to the centre — a pie
+        /// wedge, or a disc at a full sweep. Inert on a Box.
+        f32 ArcThickness = 0.0f;
+        /// @brief How an Arc band's two ends terminate; irrelevant to a filled wedge or a full sweep.
+        ///
+        /// Named ArcCapStyle rather than ArcCap only because the enum owns that name.
+        ArcCap ArcCapStyle = ArcCap::Butt;
 
         /// @brief How content overflowing the box is treated horizontally.
         Overflow OverflowX = Overflow::Visible;

@@ -132,7 +132,7 @@ namespace Veng::Test
             if (const char* dump = std::getenv(dumpVariable))
             {
                 WritePpm(path(dump), actual, extent);
-                MESSAGE(string(label), ": wrote capture to ", dump);
+                MESSAGE(string(label), ": wrote capture to ", string(dump));
                 return true;
             }
         }

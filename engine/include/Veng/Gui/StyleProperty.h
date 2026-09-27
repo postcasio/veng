@@ -153,6 +153,20 @@ namespace Veng::Gui
         /// @brief A per-property ease list (not a Style field): Unit is the sheet's transition-table
         /// index the declaration's entries start at, Values.x is how many entries it holds.
         Transition,
+        /// @brief The element's silhouette (Style::Shape); Unit is an ElementShape ordinal.
+        Shape,
+        /// @brief Where an arc silhouette begins, in degrees clockwise from 12 o'clock
+        /// (Style::ArcStart); value is a scalar.
+        ArcStart,
+        /// @brief An arc silhouette's clockwise extent in degrees (Style::ArcSweep); value is a
+        /// scalar.
+        ArcSweep,
+        /// @brief An arc silhouette's radial band thickness in pixels, zero for a filled wedge
+        /// (Style::ArcThickness); value is a scalar.
+        ArcThickness,
+        /// @brief How an arc band's two ends terminate (Style::ArcCapStyle); Unit is an ArcCap
+        /// ordinal.
+        ArcCap,
     };
 
     /// @brief The kind of shadow a BoxShadow declaration's Unit selects.
@@ -169,7 +183,7 @@ namespace Veng::Gui
     /// @brief The number of StyleProperty enumerators — keep in step when appending one.
     ///
     /// The runtime's whole-style property sweeps iterate `[0, StylePropertyCount)`.
-    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::Transition) + 1;
+    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::ArcCap) + 1;
 
     /// @brief Canonical USS declaration name of a style property ("flex-direction", "background", …).
     ///
