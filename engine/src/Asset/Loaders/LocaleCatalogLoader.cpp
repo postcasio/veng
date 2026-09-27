@@ -62,14 +62,16 @@ namespace Veng
         }
 
         const usize entryBytes = static_cast<usize>(header.EntryCount) * sizeof(CookedLocaleEntry);
+        const usize ruleBytes =
+            static_cast<usize>(header.ElisionRuleCount) * sizeof(CookedLocaleElisionRule);
         usize cursor = sizeof(CookedLocaleCatalogHeader);
-        if (cooked.size() < cursor + entryBytes + header.StringPoolBytes)
+        if (cooked.size() < cursor + entryBytes + ruleBytes + header.StringPoolBytes)
         {
             return std::unexpected(Corrupt(id, "locale catalog: cooked blob truncated"));
         }
 
         const std::span<const u8> pool =
-            cooked.subspan(cursor + entryBytes, header.StringPoolBytes);
+            cooked.subspan(cursor + entryBytes + ruleBytes, header.StringPoolBytes);
 
         // Resolves a span into the string pool, rejecting one that runs past it.
         const auto readSpan = [&](const CookedLocaleStringSpan& span,
@@ -133,6 +135,30 @@ namespace Veng
             }
 
             contents.Entries.push_back(std::move(entry));
+        }
+
+        if (const optional<AssetLoadError> error =
+                readSpan(header.ElisionInitials, contents.Elision.Initials))
+        {
+            return std::unexpected(*error);
+        }
+        contents.Elision.Rules.reserve(header.ElisionRuleCount);
+        for (u32 i = 0; i < header.ElisionRuleCount; ++i)
+        {
+            CookedLocaleElisionRule cookedRule;
+            std::memcpy(&cookedRule, cooked.data() + cursor, sizeof(cookedRule));
+            cursor += sizeof(cookedRule);
+
+            Localization::ElisionRule rule;
+            if (const optional<AssetLoadError> error = readSpan(cookedRule.Word, rule.Word))
+            {
+                return std::unexpected(*error);
+            }
+            if (const optional<AssetLoadError> error = readSpan(cookedRule.Elided, rule.Elided))
+            {
+                return std::unexpected(*error);
+            }
+            contents.Elision.Rules.push_back(std::move(rule));
         }
 
         const Ref<Localization::LocaleCatalog> catalog =

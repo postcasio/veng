@@ -1,11 +1,13 @@
 // Locale cook test: a *.loc.json catalog round-trips through the LocaleCatalogImporter (its
-// messages and plural variants survive a cook → mount → load), and the LocaleIndexImporter's gates
-// fire — a dangling catalog reference, a pluralized message missing its 'other' variant, an invalid
-// fallback graph (source not self-terminal, a fallback to an absent locale, a cycle), and a
-// "coverage": "complete" index whose translated locale drops a source key. The importers reference
-// only engine builtins, so the cook runs with a builtin-only registry and no module load.
+// messages, plural variants and elision table survive a cook → mount → load), and the
+// LocaleIndexImporter's gates fire — a dangling catalog reference, a pluralized message missing its
+// 'other' variant, an invalid fallback graph (source not self-terminal, a fallback to an absent
+// locale, a cycle), and a "coverage": "complete" index whose translated locale drops a source key.
+// The importers reference only engine builtins, so the cook runs with a builtin-only registry and
+// no module load.
 
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -139,6 +141,56 @@ TEST_CASE("Locale cook: a catalog round-trips its messages and plural variants")
     CHECK(catalog.FindMessage("absent.key") == nullptr);
 
     std::filesystem::remove(*archive);
+}
+
+TEST_CASE("Locale cook: a catalog's elision table round-trips and formats")
+{
+    const path dir = Veng::TestSupport::TempDir();
+    WriteSource(dir, "fr_elision.loc.json",
+                json{{"locale", "fr"},
+                     {"elision", {{"initials", "aeioué"}, {"words", {{"de", "d'"}, {"le", "l'"}}}}},
+                     {"messages", {{"possession", "le livre de {name}"}}}});
+
+    const Result<path> archive =
+        CookEntries(dir, {{FrCatalogId, "LocaleCatalog", "fr_elision.loc.json"}});
+    REQUIRE_MESSAGE(archive.has_value(), ErrOf(archive));
+
+    Renderer::Context context;
+    TaskSystem tasks;
+    TypeRegistry types;
+    AssetManager manager(context, tasks, types);
+    REQUIRE(manager.Mount(*archive).has_value());
+
+    const AssetResult<AssetHandle<Localization::LocaleCatalog>> loaded =
+        manager.LoadSync<Localization::LocaleCatalog>(FrCatalogId);
+    REQUIRE_MESSAGE(loaded.has_value(), LoadDetail(loaded));
+    const Localization::LocaleCatalog& catalog = *(*loaded).Get();
+
+    const Localization::ElisionTable& elision = catalog.GetElision();
+    CHECK(elision.Initials == "aeioué");
+    REQUIRE(elision.Rules.size() == 2);
+
+    const Localization::Message* possession = catalog.FindMessage("possession");
+    REQUIRE(possession != nullptr);
+    const std::array<Localization::FormatArg, 1> args{
+        Localization::FormatArg{.Name = "name", .Value = std::string_view("Émile")}};
+    const Result<string> formatted = Localization::FormatMessage(
+        *possession, args, std::nullopt, Localization::PluralRuleFor("fr"), {}, elision);
+    REQUIRE(formatted.has_value());
+    CHECK(*formatted == "le livre d'Émile");
+
+    std::filesystem::remove(*archive);
+}
+
+TEST_CASE("Locale cook: elision words without initials are a cook error")
+{
+    const path dir = Veng::TestSupport::TempDir();
+    WriteSource(dir, "fr_no_initials.loc.json",
+                json{{"locale", "fr"}, {"elision", {{"words", {{"de", "d'"}}}}}});
+    const Result<path> archive =
+        CookEntries(dir, {{FrCatalogId, "LocaleCatalog", "fr_no_initials.loc.json"}});
+    REQUIRE_FALSE(archive.has_value());
+    CHECK(archive.error().find("elision.initials") != string::npos);
 }
 
 TEST_CASE("Locale cook: an index naming a missing catalog is a cook error")

@@ -9,7 +9,7 @@ namespace Veng::Localization
     LocaleCatalog::LocaleCatalog(Contents contents)
         : m_LocaleId(std::move(contents.LocaleId)), m_FallbackId(std::move(contents.FallbackId)),
           m_PluralRuleId(std::move(contents.PluralRuleId)), m_Numbers(contents.Numbers),
-          m_Entries(std::move(contents.Entries))
+          m_Elision(std::move(contents.Elision)), m_Entries(std::move(contents.Entries))
     {
     }
 

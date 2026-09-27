@@ -29,7 +29,22 @@ namespace Veng::Cook
         std::array<optional<string>, CookedLocalePluralCategoryCount> Variants;
     };
 
+    /// @brief One parsed rule of a catalog source's `elision.words` object: a word and its
+    ///        elided form.
+    struct ParsedElisionRule
+    {
+        /// @brief The word that elides (`"de"`).
+        string Word;
+        /// @brief The form replacing the word and the space after it (`"d'"`).
+        string Elided;
+    };
+
     /// @brief A parsed `*.loc.json` catalog source: locale metadata plus its messages.
+    ///
+    /// The optional `"elision"` object is the locale's elision table (Localization::ElisionTable
+    /// holds the runtime rule): `"initials"`, a string of the letters that make a value begin with
+    /// a vowel sound, and `"words"`, an object mapping each eliding word to its elided form —
+    /// `{"initials": "aeiouéè", "words": {"de": "d'", "le": "l'"}}`.
     struct ParsedLocaleCatalog
     {
         /// @brief This catalog's locale id.
@@ -42,6 +57,10 @@ namespace Veng::Cook
         char32_t Decimal = U'.';
         /// @brief The grouping separator codepoint (U'\0' disables grouping).
         char32_t Grouping = U',';
+        /// @brief The elision table's initial letters, UTF-8; empty when the source authors none.
+        string ElisionInitials;
+        /// @brief The elision table's words, in source order.
+        vector<ParsedElisionRule> ElisionRules;
         /// @brief The messages, in source order (the encoder sorts them).
         vector<ParsedLocaleMessage> Messages;
     };
@@ -74,7 +93,9 @@ namespace Veng::Cook
     ///
     /// Backs both the catalog importer (which encodes the result) and the index importer's
     /// translation-coverage check (which reads each catalog's key set), so the two cannot diverge on
-    /// what a catalog source means. A pluralized message missing its `other` variant is an error.
+    /// what a catalog source means. A pluralized message missing its `other` variant is an error,
+    /// as is a malformed `elision` object: `words` without `initials`, a word that is empty or
+    /// holds a space, or a non-string value.
     /// @param doc    The parsed catalog JSON.
     /// @param label  A source label for diagnostics.
     /// @return The parsed catalog, or a located error string.

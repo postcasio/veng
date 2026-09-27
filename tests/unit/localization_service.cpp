@@ -1,9 +1,10 @@
 // Localization service resolution: an active-locale hit, a fallback-chain hit, a missing key
 // resolving to itself, a SetLocale swap bumping the generation and changing what Get returns, and
-// Format selecting the active locale's plural rule and number separators. The catalog blobs are
-// assembled by hand here — through the same layout and key hash the cook writes — and mounted over
-// an in-memory archive, so the runtime service is tested independently of the cooker. The index is
-// built directly (LocaleIndex::Create), since the index blob round-trip is a cooker-side test.
+// Format selecting the active locale's plural rule, number separators and elision table. The
+// catalog blobs are assembled by hand here — through the same layout and key hash the cook writes —
+// and mounted over an in-memory archive, so the runtime service is tested independently of the
+// cooker. The index is built directly (LocaleIndex::Create), since the index blob round-trip is a
+// cooker-side test.
 
 #include <doctest/doctest.h>
 
@@ -71,7 +72,8 @@ namespace
 
     // Encodes a catalog blob byte-for-byte as the cooker does, so the runtime loader decodes it.
     vector<u8> EncodeCatalog(string locale, string fallback, string pluralRule, char32_t decimal,
-                             char32_t grouping, const vector<TestMessage>& messages)
+                             char32_t grouping, const vector<TestMessage>& messages,
+                             const Localization::ElisionTable& elision = {})
     {
         struct Built
         {
@@ -117,6 +119,13 @@ namespace
         header.Decimal = static_cast<u32>(decimal);
         header.Grouping = static_cast<u32>(grouping);
         header.EntryCount = static_cast<u32>(built.size());
+        header.ElisionInitials = append(elision.Initials);
+        vector<CookedLocaleElisionRule> rules;
+        for (const Localization::ElisionRule& rule : elision.Rules)
+        {
+            rules.push_back({.Word = append(rule.Word), .Elided = append(rule.Elided)});
+        }
+        header.ElisionRuleCount = static_cast<u32>(rules.size());
         header.StringPoolBytes = static_cast<u32>(pool.size());
 
         vector<u8> blob;
@@ -124,6 +133,10 @@ namespace
         for (const Built& entry : built)
         {
             Append(blob, entry.Entry);
+        }
+        for (const CookedLocaleElisionRule& rule : rules)
+        {
+            Append(blob, rule);
         }
         blob.insert(blob.end(), pool.begin(), pool.end());
         return blob;
@@ -146,9 +159,14 @@ namespace
                        EncodeCatalog("en", "en", "en", U'.', U',',
                                      {Plain("greeting", "Hello"), Plain("only_en", "English only"),
                                       Plural("count", "{#} item", "{#} items")}));
-            // fr: falls back to en, decimal comma + space grouping. Defines only 'greeting'.
-            writer.Add(FrCatalogId, AssetTypes::LocaleCatalog,
-                       EncodeCatalog("fr", "en", "fr", U',', U' ', {Plain("greeting", "Bonjour")}));
+            // fr: falls back to en, decimal comma + space grouping, and elides "de" before a
+            // vowel. Defines 'greeting' and 'possession'.
+            writer.Add(
+                FrCatalogId, AssetTypes::LocaleCatalog,
+                EncodeCatalog(
+                    "fr", "en", "fr", U',', U' ',
+                    {Plain("greeting", "Bonjour"), Plain("possession", "le livre de {name}")},
+                    {.Initials = "aeiouéè", .Rules = {{.Word = "de", .Elided = "d'"}}}));
 
             const path archive =
                 Veng::TestSupport::TempDir() / "veng_localization_service.vengpack";
@@ -225,6 +243,26 @@ TEST_CASE("Localization: Format selects the active plural rule and number separa
     CHECK(fr.Numbers().Grouping == U' ');
     CHECK(fr.Format("count", {}, 1) == "1 item");
     CHECK(fr.Format("count", {}, 12000) == "12 000 items");
+}
+
+TEST_CASE("Localization: Format applies the active locale's elision table")
+{
+    Host host;
+    host.MountCatalogs();
+    const Ref<Localization::LocaleIndex> index = BuildIndex();
+
+    const auto args = [](std::string_view name)
+    { return std::array<Localization::FormatArg, 1>{{{.Name = "name", .Value = name}}}; };
+
+    const Localization::Localization fr(*host.Manager, *index, "fr");
+    CHECK(fr.Elision().Rules.size() == 1);
+    CHECK(fr.Format("possession", args("Émile")) == "le livre d'Émile");
+    CHECK(fr.Format("possession", args("Paul")) == "le livre de Paul");
+    CHECK(fr.Format("possession", args("ABC 12")) == "le livre de ABC 12");
+
+    // en authors no table, so it elides nothing.
+    const Localization::Localization en(*host.Manager, *index, "en");
+    CHECK(en.Elision().Empty());
 }
 
 TEST_CASE("Localization: the null-object resolves every key to itself")

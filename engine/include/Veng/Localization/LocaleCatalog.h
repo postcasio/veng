@@ -50,6 +50,8 @@ namespace Veng::Localization
             string PluralRuleId;
             /// @brief The locale's number separators.
             NumberFormat Numbers;
+            /// @brief The locale's elision table; empty for a locale that elides nothing.
+            ElisionTable Elision;
             /// @brief The message entries, sorted ascending by KeyHash then Key.
             vector<LocaleCatalogEntry> Entries;
         };
@@ -79,6 +81,9 @@ namespace Veng::Localization
         /// @brief Returns the locale's number separators.
         [[nodiscard]] NumberFormat GetNumbers() const { return m_Numbers; }
 
+        /// @brief Returns the locale's elision table (empty when it elides nothing).
+        [[nodiscard]] const ElisionTable& GetElision() const { return m_Elision; }
+
         /// @brief Returns the number of message entries.
         [[nodiscard]] usize GetEntryCount() const { return m_Entries.size(); }
 
@@ -93,6 +98,8 @@ namespace Veng::Localization
         string m_PluralRuleId;
         /// @brief The locale's number separators.
         NumberFormat m_Numbers;
+        /// @brief The locale's elision table.
+        ElisionTable m_Elision;
         /// @brief The message entries, sorted ascending by KeyHash then Key.
         vector<LocaleCatalogEntry> m_Entries;
     };

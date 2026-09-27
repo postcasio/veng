@@ -49,6 +49,7 @@ namespace Veng::Localization
     {
         m_Chain.clear();
         m_Numbers = NumberFormat{};
+        m_Elision = ElisionTable{};
         m_PluralRule = PluralRuleFor(activeLocale);
 
         if (m_Assets == nullptr)
@@ -89,11 +90,12 @@ namespace Veng::Localization
             current = entry->Fallback;
         }
 
-        // The active locale's presentation drives plurals and number separators.
+        // The active locale's presentation drives plurals, number separators and elision.
         if (!m_Chain.empty() && m_Chain.front().Get() != nullptr)
         {
             const LocaleCatalog& active = *m_Chain.front().Get();
             m_Numbers = active.GetNumbers();
+            m_Elision = active.GetElision();
             const std::string_view rule = active.GetPluralRuleId();
             m_PluralRule = PluralRuleFor(rule.empty() ? activeLocale : rule);
         }
@@ -139,7 +141,7 @@ namespace Veng::Localization
         }
 
         const Result<string> formatted =
-            FormatMessage(*message, args, count, m_PluralRule, m_Numbers);
+            FormatMessage(*message, args, count, m_PluralRule, m_Numbers, m_Elision);
         if (formatted)
         {
             return *formatted;

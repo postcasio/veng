@@ -391,6 +391,269 @@ namespace Veng::Localization
             }
         }
 
+        /// @brief Decodes the UTF-8 codepoint starting at byte @p i and advances @p i past it.
+        ///
+        /// A malformed or truncated sequence decodes as its lead byte and advances one byte, so a
+        /// bad string is walked to its end rather than stalling.
+        char32_t DecodeUtf8(string_view text, usize& i)
+        {
+            const auto byte = [&](usize k) { return static_cast<u8>(text[k]); };
+            const u8 lead = byte(i);
+            usize length = 1;
+            u32 cp = lead;
+            if ((lead & 0xE0) == 0xC0)
+            {
+                length = 2;
+                cp = lead & 0x1Fu;
+            }
+            else if ((lead & 0xF0) == 0xE0)
+            {
+                length = 3;
+                cp = lead & 0x0Fu;
+            }
+            else if ((lead & 0xF8) == 0xF0)
+            {
+                length = 4;
+                cp = lead & 0x07u;
+            }
+            if (length == 1 || i + length > text.size())
+            {
+                ++i;
+                return static_cast<char32_t>(lead);
+            }
+            for (usize k = 1; k < length; ++k)
+            {
+                if ((byte(i + k) & 0xC0) != 0x80)
+                {
+                    ++i;
+                    return static_cast<char32_t>(lead);
+                }
+                cp = (cp << 6) | (byte(i + k) & 0x3Fu);
+            }
+            i += length;
+            return static_cast<char32_t>(cp);
+        }
+
+        /// @brief Lowercases a letter of ASCII, Latin-1 or Latin Extended-A; returns any other
+        /// codepoint unchanged.
+        char32_t LowerCase(char32_t c)
+        {
+            const u32 u = static_cast<u32>(c);
+            if (u >= 'A' && u <= 'Z')
+            {
+                return static_cast<char32_t>(u + 0x20);
+            }
+            if (u >= 0xC0 && u <= 0xDE && u != 0xD7)
+            {
+                return static_cast<char32_t>(u + 0x20);
+            }
+            if (u == 0x178)
+            {
+                return static_cast<char32_t>(0xFF);
+            }
+            // Latin Extended-A pairs each capital with the next codepoint; the parity of the
+            // capital flips at U+0139 and U+014A, and again at U+0179.
+            const bool evenCapital = (u >= 0x100 && u <= 0x137) || (u >= 0x14A && u <= 0x177);
+            const bool oddCapital = (u >= 0x139 && u <= 0x148) || (u >= 0x179 && u <= 0x17E);
+            if ((evenCapital && u % 2 == 0) || (oddCapital && u % 2 == 1))
+            {
+                return static_cast<char32_t>(u + 1);
+            }
+            return c;
+        }
+
+        /// @brief Capitalizes a letter of ASCII, Latin-1 or Latin Extended-A; returns any other
+        /// codepoint unchanged. The inverse of @ref LowerCase.
+        char32_t UpperCase(char32_t c)
+        {
+            const u32 u = static_cast<u32>(c);
+            if (u >= 'a' && u <= 'z')
+            {
+                return static_cast<char32_t>(u - 0x20);
+            }
+            if (u >= 0xE0 && u <= 0xFE && u != 0xF7)
+            {
+                return static_cast<char32_t>(u - 0x20);
+            }
+            if (u == 0xFF)
+            {
+                return static_cast<char32_t>(0x178);
+            }
+            const bool oddSmall = (u >= 0x101 && u <= 0x137) || (u >= 0x14B && u <= 0x177);
+            const bool evenSmall = (u >= 0x13A && u <= 0x148) || (u >= 0x17A && u <= 0x17E);
+            if ((oddSmall && u % 2 == 1) || (evenSmall && u % 2 == 0))
+            {
+                return static_cast<char32_t>(u - 1);
+            }
+            return c;
+        }
+
+        /// @brief True for a capital letter — one @ref LowerCase changes.
+        bool IsCapital(char32_t c)
+        {
+            return LowerCase(c) != c;
+        }
+
+        /// @brief True for a codepoint that belongs to a word: an ASCII letter, or anything from
+        /// U+00C0 up other than the Latin-1 operators and the general and CJK punctuation blocks.
+        bool IsWordLetter(char32_t c)
+        {
+            const u32 u = static_cast<u32>(c);
+            if ((u >= 'A' && u <= 'Z') || (u >= 'a' && u <= 'z'))
+            {
+                return true;
+            }
+            if (u < 0xC0 || u == 0xD7 || u == 0xF7)
+            {
+                return false;
+            }
+            return !(u >= 0x2000 && u <= 0x206F) && !(u >= 0x3000 && u <= 0x303F);
+        }
+
+        /// @brief Whether two words are equal ignoring case.
+        bool EqualIgnoringCase(string_view a, string_view b)
+        {
+            usize i = 0;
+            usize j = 0;
+            while (i < a.size() && j < b.size())
+            {
+                if (LowerCase(DecodeUtf8(a, i)) != LowerCase(DecodeUtf8(b, j)))
+                {
+                    return false;
+                }
+            }
+            return i == a.size() && j == b.size();
+        }
+
+        /// @brief Whether a rendered value begins with a vowel sound under a table: its first
+        /// letter is one of the table's initials and its first word is not an all-capital
+        /// initialism of two or more letters.
+        bool BeginsWithVowelSound(string_view value, const ElisionTable& table)
+        {
+            if (value.empty())
+            {
+                return false;
+            }
+            usize i = 0;
+            const char32_t first = DecodeUtf8(value, i);
+            if (!IsWordLetter(first))
+            {
+                return false;
+            }
+            const char32_t folded = LowerCase(first);
+            bool listed = false;
+            for (usize k = 0; k < table.Initials.size() && !listed;)
+            {
+                listed = LowerCase(DecodeUtf8(table.Initials, k)) == folded;
+            }
+            if (!listed)
+            {
+                return false;
+            }
+
+            usize letters = 1;
+            bool allCapitals = IsCapital(first);
+            while (i < value.size() && allCapitals)
+            {
+                const char32_t next = DecodeUtf8(value, i);
+                if (!IsWordLetter(next))
+                {
+                    break;
+                }
+                ++letters;
+                allCapitals = IsCapital(next);
+            }
+            return !(allCapitals && letters >= 2);
+        }
+
+        /// @brief The elided form as the written word's case asks: all capitals for a word of two
+        /// or more capitals, a leading capital for a capitalized word, and as authored otherwise.
+        string MatchCase(string_view written, string_view elided)
+        {
+            usize letters = 0;
+            usize capitals = 0;
+            bool firstCapital = false;
+            for (usize i = 0; i < written.size();)
+            {
+                const char32_t c = DecodeUtf8(written, i);
+                firstCapital = firstCapital || (letters == 0 && IsCapital(c));
+                ++letters;
+                capitals += IsCapital(c) ? 1 : 0;
+            }
+            const bool allCapitals = letters >= 2 && capitals == letters;
+            if (!allCapitals && !firstCapital)
+            {
+                return string(elided);
+            }
+
+            string out;
+            bool capitalized = false;
+            for (usize i = 0; i < elided.size();)
+            {
+                const char32_t c = DecodeUtf8(elided, i);
+                const bool hasCase = IsCapital(UpperCase(c));
+                const bool raise = allCapitals || (!capitalized && hasCase);
+                AppendUtf8(out, raise ? UpperCase(c) : c);
+                capitalized = capitalized || hasCase;
+            }
+            return out;
+        }
+
+        /// @brief Elides the word before a just-formatted field when the table says it elides.
+        ///
+        /// @p out holds the formatted text so far: the literal template text of this field's run
+        /// starts at @p literalBegin and the field's rendered value at @p valueBegin. The word must
+        /// lie wholly within that literal run, stand as a whole word, and be followed by exactly one
+        /// ASCII space; the value must begin with a vowel sound (@ref BeginsWithVowelSound).
+        void ApplyElision(string& out, usize literalBegin, usize valueBegin,
+                          const ElisionTable& table)
+        {
+            if (table.Empty() || valueBegin < literalBegin + 2 || out[valueBegin - 1] != ' ')
+            {
+                return;
+            }
+            if (!BeginsWithVowelSound(string_view(out).substr(valueBegin), table))
+            {
+                return;
+            }
+
+            // Walk back over the word's letters, codepoint by codepoint.
+            const usize wordEnd = valueBegin - 1;
+            usize wordBegin = wordEnd;
+            while (wordBegin > 0)
+            {
+                usize lead = wordBegin - 1;
+                while (lead > 0 && (static_cast<u8>(out[lead]) & 0xC0) == 0x80)
+                {
+                    --lead;
+                }
+                usize cursor = lead;
+                if (!IsWordLetter(DecodeUtf8(out, cursor)))
+                {
+                    break;
+                }
+                wordBegin = lead;
+            }
+            if (wordBegin == wordEnd || wordBegin < literalBegin)
+            {
+                return;
+            }
+
+            const string_view written = string_view(out).substr(wordBegin, wordEnd - wordBegin);
+            for (const ElisionRule& rule : table.Rules)
+            {
+                if (EqualIgnoringCase(written, rule.Word))
+                {
+                    const string value = out.substr(valueBegin);
+                    const string elided = MatchCase(written, rule.Elided);
+                    out.resize(wordBegin);
+                    out += elided;
+                    out += value;
+                    return;
+                }
+            }
+        }
+
         /// @brief Selects the template a formatting run will use — the sole template, or the plural
         /// variant for the count, falling back to the @ref PluralCategory::Other slot.
         const string& SelectTemplate(const Message& message, optional<i64> count, PluralRule rule)
@@ -434,12 +697,17 @@ namespace Veng::Localization
     }
 
     Result<string> FormatMessage(const Message& message, std::span<const FormatArg> args,
-                                 optional<i64> count, PluralRule rule, NumberFormat numbers)
+                                 optional<i64> count, PluralRule rule, NumberFormat numbers,
+                                 const ElisionTable& elision)
     {
         const string& tmpl = SelectTemplate(message, count, rule);
 
         string out;
         out.reserve(tmpl.size());
+
+        // Where the literal template text since the last field begins in `out`: an elided word
+        // must lie within it, so substituted text never elides.
+        usize literalBegin = 0;
 
         usize i = 0;
         const usize n = tmpl.size();
@@ -466,6 +734,7 @@ namespace Veng::Localization
                 const string_view spec =
                     colon == string_view::npos ? string_view{} : field.substr(colon + 1);
 
+                const usize valueBegin = out.size();
                 if (name == "#")
                 {
                     if (!count.has_value())
@@ -502,6 +771,8 @@ namespace Veng::Localization
                         return std::unexpected(formatted.error());
                     }
                 }
+                ApplyElision(out, literalBegin, valueBegin, elision);
+                literalBegin = out.size();
                 i = close + 1;
             }
             else if (c == '}')

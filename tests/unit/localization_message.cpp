@@ -1,8 +1,9 @@
 // The device-free message-format library: named-field substitution and reorder, locale number
-// separators, per-locale CLDR plural selection, within-message fallback to the Other variant, and
-// the load-bearing property that a malformed template returns an error rather than letting fmt
-// throw across veng's -fno-exceptions boundary. Property assertions over stratified inputs — no
-// swept population, no per-iteration asserts.
+// separators, per-locale CLDR plural selection, within-message fallback to the Other variant,
+// elision of a template's word before a vowel-initial value, and the load-bearing property that a
+// malformed template returns an error rather than letting fmt throw across veng's -fno-exceptions
+// boundary. Property assertions over stratified inputs — no swept population, no per-iteration
+// asserts.
 
 #include <doctest/doctest.h>
 
@@ -220,4 +221,121 @@ TEST_CASE("fmt specs and non-numeric arguments format through")
     const Result<string> r = Format(Template("{flag} {hex:x} {pad:>4}"), args);
     REQUIRE(r.has_value());
     CHECK(*r == "true ff   hi");
+}
+
+namespace
+{
+    // A French elision table as a catalog would author it: the vowels and their accented forms,
+    // with h left out, and the words that elide before them.
+    ElisionTable FrenchElision()
+    {
+        return ElisionTable{
+            .Initials = "aeiouàâäéèêëîïôöùûüæœ",
+            .Rules = {{.Word = "de", .Elided = "d'"},
+                      {.Word = "du", .Elided = "de l'"},
+                      {.Word = "le", .Elided = "l'"},
+                      {.Word = "la", .Elided = "l'"},
+                      {.Word = "que", .Elided = "qu'"}},
+        };
+    }
+
+    // Formats a template against one string field under the French table.
+    string Elided(string text, string_view value, string_view field = "name")
+    {
+        const std::array<FormatArg, 1> args{FormatArg{.Name = field, .Value = value}};
+        const Result<string> r = FormatMessage(Template(std::move(text)), args, std::nullopt,
+                                               PluralRuleFor("fr"), {}, FrenchElision());
+        REQUIRE(r.has_value());
+        return *r;
+    }
+}
+
+TEST_CASE("a listed word elides before a vowel and stays before a consonant")
+{
+    CHECK(Elided("le livre de {name}", "Anne") == "le livre d'Anne");
+    CHECK(Elided("le livre de {name}", "Paul") == "le livre de Paul");
+    CHECK(Elided("le prix du {name}", "orange") == "le prix de l'orange");
+    CHECK(Elided("le prix du {name}", "pain") == "le prix du pain");
+    CHECK(Elided("voici le {name}", "arbre") == "voici l'arbre");
+    CHECK(Elided("je crois que {name} viendra", "Isabelle") == "je crois qu'Isabelle viendra");
+    // h is not an eliding initial in this table, so the word stays as written before it.
+    CHECK(Elided("le livre de {name}", "Hugo") == "le livre de Hugo");
+}
+
+TEST_CASE("an all-capital initialism does not elide; a capitalized word or a lone capital does")
+{
+    CHECK(Elided("la carte de {name}", "ABC 1234") == "la carte de ABC 1234");
+    CHECK(Elided("la carte de {name}", "EU-7") == "la carte de EU-7");
+    CHECK(Elided("la carte de {name}", "Ontario") == "la carte d'Ontario");
+    CHECK(Elided("la carte de {name}", "A 12") == "la carte d'A 12");
+    CHECK(Elided("la carte de {name}", "Ohio Nord") == "la carte d'Ohio Nord");
+}
+
+TEST_CASE("accented initials elide in either case")
+{
+    CHECK(Elided("le livre de {name}", "Émile") == "le livre d'Émile");
+    CHECK(Elided("le livre de {name}", "élan") == "le livre d'élan");
+    CHECK(Elided("le livre de {name}", "Île verte") == "le livre d'Île verte");
+    CHECK(Elided("le livre de {name}", "Ôde") == "le livre d'Ôde");
+    CHECK(Elided("le livre de {name}", "Œuvre") == "le livre d'Œuvre");
+    CHECK(Elided("le livre de {name}", "Ça") == "le livre de Ça");
+}
+
+TEST_CASE("only a whole listed word of the template, one space before the field, elides")
+{
+    // No word before the field, or a word the table does not list.
+    CHECK(Elided("{name} de", "Anne") == "Anne de");
+    CHECK(Elided("{name}", "Anne") == "Anne");
+    CHECK(Elided("grande {name}", "Anne") == "grande Anne");
+    // A listed word must stand alone: "made" ends in "de" but is not "de".
+    CHECK(Elided("made {name}", "Anne") == "made Anne");
+    // Any separator but one ASCII space opts the field out.
+    CHECK(Elided("de {name}", "Anne") == "de Anne");
+    CHECK(Elided("de  {name}", "Anne") == "de  Anne");
+    CHECK(Elided("de{name}", "Anne") == "deAnne");
+
+    // Text an earlier field substituted never elides; only the template's own words do.
+    const std::array<FormatArg, 2> args{FormatArg{.Name = "a", .Value = string_view("livre de")},
+                                        FormatArg{.Name = "b", .Value = string_view("Anne")}};
+    const Result<string> substituted = FormatMessage(Template("{a} {b}"), args, std::nullopt,
+                                                     PluralRuleFor("fr"), {}, FrenchElision());
+    REQUIRE(substituted.has_value());
+    CHECK(*substituted == "livre de Anne");
+}
+
+TEST_CASE("the elided form takes the case the template wrote the word in")
+{
+    CHECK(Elided("De {name}", "Anne") == "D'Anne");
+    CHECK(Elided("DE {name}", "Anne") == "D'Anne");
+    CHECK(Elided("Du {name}", "orange") == "De l'orange");
+    CHECK(Elided("LE PRIX DU {name}", "Orange") == "LE PRIX DE L'Orange");
+}
+
+TEST_CASE("elision runs through every template path and an empty table elides nothing")
+{
+    // With no table the word is left as written.
+    const std::array<FormatArg, 1> anne{FormatArg{.Name = "name", .Value = string_view("Anne")}};
+    const Result<string> plain = Format(Template("le livre de {name}"), anne);
+    REQUIRE(plain.has_value());
+    CHECK(*plain == "le livre de Anne");
+
+    // Each plural variant elides, beside a numeric field and the {#} count.
+    const Message plural{.Plurals = std::array<string, PluralCategoryCount>{
+                             "", "{#} livre de {name}", "", "", "", "{#} livres de {name}"}};
+    const Result<string> one =
+        FormatMessage(plural, anne, 1, PluralRuleFor("fr"), {}, FrenchElision());
+    const Result<string> many =
+        FormatMessage(plural, anne, 3, PluralRuleFor("fr"), {}, FrenchElision());
+    REQUIRE(one.has_value());
+    REQUIRE(many.has_value());
+    CHECK(*one == "1 livre d'Anne");
+    CHECK(*many == "3 livres d'Anne");
+
+    // A value rendered with padding or as a number begins with no letter, so nothing elides.
+    CHECK(Elided("le livre de {name:>6}", "Anne") == "le livre de   Anne");
+    const std::array<FormatArg, 1> number{FormatArg{.Name = "n", .Value = static_cast<i64>(8)}};
+    const Result<string> numeric = FormatMessage(Template("le numéro de {n}"), number, std::nullopt,
+                                                 PluralRuleFor("fr"), {}, FrenchElision());
+    REQUIRE(numeric.has_value());
+    CHECK(*numeric == "le numéro de 8");
 }

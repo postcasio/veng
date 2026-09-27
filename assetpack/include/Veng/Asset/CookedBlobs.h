@@ -1563,7 +1563,7 @@ namespace Veng
     /// Bumped on any CookedLocaleCatalogHeader/CookedLocaleEntry layout change; the loader rejects
     /// a blob whose Magic or Version does not match. The header is read by a fixed-offset memcpy, so
     /// a field added without a version bump is misread as garbage rather than tolerated.
-    inline constexpr u32 CookedLocaleCatalogVersion = 1u;
+    inline constexpr u32 CookedLocaleCatalogVersion = 2u;
 
     /// @brief One message entry in a cooked locale catalog: its key hash and its variant spans.
     ///
@@ -1586,18 +1586,31 @@ namespace Veng
         CookedLocaleStringSpan Variants[CookedLocalePluralCategoryCount];
     };
 
+    /// @brief One rule of a cooked locale catalog's elision table: a word and its elided form.
+    ///
+    /// Both spans address the blob's pool. The runtime meaning is Localization::ElisionRule's.
+    struct CookedLocaleElisionRule
+    {
+        /// @brief The word that elides, as the source wrote it.
+        CookedLocaleStringSpan Word;
+        /// @brief The form replacing the word and the space after it.
+        CookedLocaleStringSpan Elided;
+    };
+
     /// @brief Cooked header for a locale-catalog asset.
     ///
     /// A locale catalog is one locale's translated strings plus its locale metadata. The blob is,
     /// in order:
     ///   CookedLocaleCatalogHeader
-    ///   CookedLocaleEntry[EntryCount]   — sorted ascending by KeyHash, then by key bytes
-    ///   string pool (StringPoolBytes)   — every key and message variant, UTF-8, indexed by span
+    ///   CookedLocaleEntry[EntryCount]                 — sorted ascending by KeyHash, then by key
+    ///   CookedLocaleElisionRule[ElisionRuleCount]     — in authored order
+    ///   string pool (StringPoolBytes)                 — every string, UTF-8, indexed by span
     ///
     /// LocaleId names the catalog's locale, FallbackId the locale consulted when a key is absent
     /// (itself for a terminal/source locale), and PluralRule the plural-rule selector the service
     /// resolves through Localization::PluralRuleFor. Decimal/Grouping are the locale's number
-    /// separators (char32_t codepoints; Grouping 0 disables grouping).
+    /// separators (char32_t codepoints; Grouping 0 disables grouping). ElisionInitials and the
+    /// elision rules are the locale's elision table, both empty for a locale that elides nothing.
     struct CookedLocaleCatalogHeader
     {
         /// @brief Must equal CookedLocaleCatalogMagic; the loader rejects a mismatch.
@@ -1618,6 +1631,10 @@ namespace Veng
         u32 EntryCount = 0;
         /// @brief Byte size of the trailing string pool.
         u32 StringPoolBytes = 0;
+        /// @brief The initial letters that make a value begin with a vowel sound, in the pool.
+        CookedLocaleStringSpan ElisionInitials;
+        /// @brief Number of CookedLocaleElisionRule entries following the message entries.
+        u32 ElisionRuleCount = 0;
     };
 
     /// @brief Magic tag opening a cooked locale-index blob; the loader rejects a mismatch.

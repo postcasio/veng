@@ -140,10 +140,14 @@ extern "C"
 /// Gui::Element with the Polyline's Points. A module reads and writes an element and its style
 /// through Gui::Document, so a stale module lays both out short and reads every field after the
 /// first addition at a shifted offset.
+/// Version 30 grows Localization::Localization and LocaleCatalog with the locale's elision table.
+/// A module reaches the service through SystemContext and reads its generation and number
+/// separators through inline accessors, so a stale module reads the members after the table at
+/// shifted offsets.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 29u
+#define VENG_MODULE_ABI_VERSION 30u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

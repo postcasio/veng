@@ -138,6 +138,58 @@ namespace Veng::Cook
                             LocaleIdCapacity - 1));
         }
 
+        if (doc.contains("elision"))
+        {
+            const json& elision = doc["elision"];
+            if (!elision.is_object())
+            {
+                return std::unexpected(fmt::format(
+                    "locale catalog importer: '{}': 'elision' is not a JSON object", label));
+            }
+            if (elision.contains("initials"))
+            {
+                if (!elision["initials"].is_string())
+                {
+                    return std::unexpected(fmt::format(
+                        "locale catalog importer: '{}': 'elision.initials' is not a string",
+                        label));
+                }
+                catalog.ElisionInitials = elision["initials"].get<string>();
+            }
+            if (elision.contains("words"))
+            {
+                if (!elision["words"].is_object())
+                {
+                    return std::unexpected(fmt::format(
+                        "locale catalog importer: '{}': 'elision.words' is not a JSON object",
+                        label));
+                }
+                for (const auto& [word, elided] : elision["words"].items())
+                {
+                    if (word.empty() || word.find(' ') != string::npos)
+                    {
+                        return std::unexpected(fmt::format(
+                            "locale catalog importer: '{}': elision word '{}' is empty or holds a "
+                            "space",
+                            label, word));
+                    }
+                    if (!elided.is_string())
+                    {
+                        return std::unexpected(fmt::format(
+                            "locale catalog importer: '{}': elision word '{}' maps to a non-string",
+                            label, word));
+                    }
+                    catalog.ElisionRules.push_back({.Word = word, .Elided = elided.get<string>()});
+                }
+            }
+            if (!catalog.ElisionRules.empty() && catalog.ElisionInitials.empty())
+            {
+                return std::unexpected(fmt::format(
+                    "locale catalog importer: '{}': 'elision.words' needs 'elision.initials'",
+                    label));
+            }
+        }
+
         if (doc.contains("messages"))
         {
             if (!doc["messages"].is_object())
@@ -249,6 +301,15 @@ namespace Veng::Cook
         header.Decimal = static_cast<u32>(catalog.Decimal);
         header.Grouping = static_cast<u32>(catalog.Grouping);
         header.EntryCount = static_cast<u32>(built.size());
+
+        header.ElisionInitials = Append(pool, catalog.ElisionInitials);
+        vector<CookedLocaleElisionRule> rules;
+        rules.reserve(catalog.ElisionRules.size());
+        for (const ParsedElisionRule& rule : catalog.ElisionRules)
+        {
+            rules.push_back({.Word = Append(pool, rule.Word), .Elided = Append(pool, rule.Elided)});
+        }
+        header.ElisionRuleCount = static_cast<u32>(rules.size());
         header.StringPoolBytes = static_cast<u32>(pool.size());
 
         vector<u8> blob;
@@ -256,6 +317,10 @@ namespace Veng::Cook
         for (const BuiltEntry& entry : built)
         {
             AppendPod(blob, entry.Entry);
+        }
+        for (const CookedLocaleElisionRule& rule : rules)
+        {
+            AppendPod(blob, rule);
         }
         blob.insert(blob.end(), pool.begin(), pool.end());
         return blob;

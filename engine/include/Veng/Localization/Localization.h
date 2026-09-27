@@ -59,7 +59,7 @@ namespace Veng::Localization
         /// @brief Formats a key's message against named arguments and a plural count.
         ///
         /// Resolves the message through the same chain as Get and hands it to FormatMessage with the
-        /// active locale's plural rule and number separators. A missing key formats the key string
+        /// active locale's plural rule, number separators and elision table. A missing key formats the key string
         /// itself; a format error (a malformed template or a bad spec) degrades to the raw template
         /// with its {name} markers left literal and logs once — never a crash and never a blank.
         /// @param key    The message key.
@@ -90,6 +90,12 @@ namespace Veng::Localization
         /// with Format. The English default for the null-object or a locale with no catalog.
         [[nodiscard]] NumberFormat Numbers() const { return m_Numbers; }
 
+        /// @brief Returns the active locale's elision table.
+        ///
+        /// Format already applies it; a game's own formatter reads it to hand FormatMessage the
+        /// same table. Empty for the null-object or a locale that authors none.
+        [[nodiscard]] const ElisionTable& Elision() const { return m_Elision; }
+
     private:
         /// @brief Finds a locale entry by id in the copied index, or nullptr.
         [[nodiscard]] const LocaleEntry* FindLocale(std::string_view id) const;
@@ -114,6 +120,8 @@ namespace Veng::Localization
         PluralRule m_PluralRule = nullptr;
         /// @brief The active locale's number separators.
         NumberFormat m_Numbers;
+        /// @brief The active locale's elision table.
+        ElisionTable m_Elision;
         /// @brief Bumped on every SetLocale so a consumer can re-resolve on a language change.
         u32 m_Generation = 0;
         /// @brief Whether a format error has already been logged (the log-once gate).
