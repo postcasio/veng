@@ -300,7 +300,9 @@ namespace Veng
         }
         case InjectedKind::MouseMove:
         {
-            MouseMovedEvent event(injected.Vector);
+            // In the window's current basis, so an injected move continues the real cursor's.
+            MouseMovedEvent event(injected.Vector,
+                                  m_Window != nullptr ? m_Window->GetCursorBasis() : 0);
             Dispatch(event);
             break;
         }

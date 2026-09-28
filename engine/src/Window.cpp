@@ -178,7 +178,8 @@ namespace Veng
                 auto window = static_cast<Window*>(glfwGetWindowUserPointer(glfwWindow));
                 const vec2 position{static_cast<f32>(xpos), static_cast<f32>(ypos)};
                 window->m_MousePosition = position;
-                window->m_Events.push_back(CreateUnique<MouseMovedEvent>(position));
+                window->m_Events.push_back(
+                    CreateUnique<MouseMovedEvent>(position, window->m_CursorBasis));
             });
 
         glfwSetCursorEnterCallback(
@@ -268,6 +269,10 @@ namespace Veng
     {
         m_MouseCaptured = true;
 
+        if (glfwGetInputMode(m_Handle, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
+        {
+            ++m_CursorBasis;
+        }
         glfwSetInputMode(m_Handle, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
         if (glfwRawMouseMotionSupported())
@@ -284,6 +289,10 @@ namespace Veng
         {
             glfwSetInputMode(m_Handle, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
         }
+        if (glfwGetInputMode(m_Handle, GLFW_CURSOR) == GLFW_CURSOR_DISABLED)
+        {
+            ++m_CursorBasis;
+        }
         glfwSetInputMode(m_Handle, GLFW_CURSOR,
                          m_CursorVisible ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_HIDDEN);
     }
@@ -291,6 +300,11 @@ namespace Veng
     bool Window::IsMouseCaptured() const
     {
         return m_MouseCaptured;
+    }
+
+    u32 Window::GetCursorBasis() const
+    {
+        return m_CursorBasis;
     }
 
     void Window::SetCursorVisible(const bool visible)

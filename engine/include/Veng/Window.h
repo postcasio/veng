@@ -112,6 +112,11 @@ namespace Veng
         void ReleaseMouse();
         /// @brief Returns true if the mouse cursor is currently captured.
         [[nodiscard]] bool IsMouseCaptured() const;
+        /// @brief Returns the coordinate basis cursor positions are currently reported in.
+        ///
+        /// Advanced each time CaptureMouse or ReleaseMouse actually switches the cursor mode, and
+        /// stamped on every MouseMovedEvent (see MouseMovedEvent::GetBasis).
+        [[nodiscard]] u32 GetCursorBasis() const;
 
         /// @brief Shows or hides the free (uncaptured) mouse cursor over this window.
         ///
@@ -261,6 +266,8 @@ namespace Veng
         bool m_CursorVisible = true;
         GLFWwindow* m_Handle = nullptr;
         vec2 m_MousePosition = {0, 0};
+        /// @brief The cursor's coordinate basis, advanced on each capture-mode switch.
+        u32 m_CursorBasis = 0;
         vec2 m_ScrollDelta = {0, 0};
 
         /// @brief This frame's queued events, filled by GLFW callbacks and drained by DrainEvents.

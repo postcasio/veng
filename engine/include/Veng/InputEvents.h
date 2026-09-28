@@ -194,7 +194,12 @@ namespace Veng
     {
     public:
         /// @brief Constructs the event with the new cursor position in window-space pixels.
-        explicit MouseMovedEvent(vec2 position) : m_Position(position) {}
+        /// @param position  The new cursor position.
+        /// @param basis     The coordinate basis @p position is measured in (see GetBasis).
+        explicit MouseMovedEvent(vec2 position, u32 basis = 0)
+            : m_Position(position), m_Basis(basis)
+        {
+        }
 
         /// @brief Injects this event's type-identity members (see the EVENT macro).
         EVENT(MouseMoved);
@@ -202,9 +207,21 @@ namespace Veng
         /// @brief Returns the new cursor position in window-space pixels.
         [[nodiscard]] vec2 GetPosition() const { return m_Position; }
 
+        /// @brief Returns the coordinate basis the position is measured in.
+        ///
+        /// Positions are only comparable within one basis. Capturing the cursor measures it in a
+        /// virtual coordinate that accumulates relative motion without bound, and releasing it puts
+        /// the OS cursor back where the capture began, so the positions either side of a capture
+        /// switch are unrelated and their difference is not motion. The window advances the basis
+        /// at each switch (Window::GetCursorBasis); a consumer deriving travel from successive
+        /// positions re-seeds when it changes.
+        [[nodiscard]] u32 GetBasis() const { return m_Basis; }
+
     private:
         /// @brief New cursor position in window-space pixels.
         const vec2 m_Position;
+        /// @brief The coordinate basis m_Position is measured in.
+        const u32 m_Basis;
     };
 
     /// @brief Fired when the scroll wheel moves.

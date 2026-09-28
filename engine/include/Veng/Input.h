@@ -409,6 +409,8 @@ namespace Veng
 
         /// @brief False until the first move event seeds m_MousePosition, so the opening move reports no delta.
         bool m_HavePosition = false;
+        /// @brief The coordinate basis m_MousePosition was reported in (MouseMovedEvent::GetBasis).
+        u32 m_MouseBasis = 0;
 
         /// @brief Per-slot pad state this frame, filled by IngestGamepadStates.
         std::array<GamepadState, MaxGamepads> m_Gamepads{};

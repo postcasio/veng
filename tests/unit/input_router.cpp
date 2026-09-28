@@ -367,6 +367,34 @@ TEST_CASE("InputRouter: injected moves feed the mouse-delta axis")
     CHECK(raw.GetAxis(InputDeviceType::MouseAxis, RawInput::MouseAxisX) == doctest::Approx(0.0f));
 }
 
+TEST_CASE("Input: a move in a new cursor basis reports no travel")
+{
+    // Across a capture switch the reported positions are unrelated — the captured virtual coordinate
+    // has drifted by the whole capture's travel while the freed OS cursor sits where the capture
+    // began — so the first move after the switch must seed, not arrive as one jump of that drift.
+    Input input(nullptr);
+    input.BeginFrame(true);
+    input.ApplyEvent(MouseMovedEvent(vec2(200.0f, 240.0f), 1));
+    input.BeginSimTick();
+
+    // A long captured sweep: the virtual coordinate runs far from where the capture began.
+    input.BeginFrame(true);
+    input.ApplyEvent(MouseMovedEvent(vec2(1440.0f, 300.0f), 1));
+    input.BeginSimTick();
+    CHECK(input.GetSimMouseDelta().x == doctest::Approx(1240.0f));
+
+    // Released and recaptured: the next move is back near the capture's start, in a new basis, and
+    // only the motion within that basis counts — in both the per-frame and the per-tick cadence.
+    input.BeginFrame(true);
+    input.ApplyEvent(MouseMovedEvent(vec2(197.0f, 240.0f), 2));
+    input.ApplyEvent(MouseMovedEvent(vec2(203.0f, 238.0f), 2));
+    input.BeginSimTick();
+    CHECK(input.GetMouseDelta().x == doctest::Approx(6.0f));
+    CHECK(input.GetMouseDelta().y == doctest::Approx(-2.0f));
+    CHECK(input.GetSimMouseDelta().x == doctest::Approx(6.0f));
+    CHECK(input.GetSimMouseDelta().y == doctest::Approx(-2.0f));
+}
+
 TEST_CASE("Input: a Sim tick reads the motion since the previous tick at any frame-to-tick ratio")
 {
     // The property a fixed-rate consumer needs, and the one a per-frame delta cannot give it. The

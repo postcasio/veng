@@ -143,17 +143,21 @@ namespace Veng
         }
         case EventType::MouseMoved:
         {
-            const vec2 position = static_cast<const MouseMovedEvent&>(event).GetPosition();
+            const auto& moved = static_cast<const MouseMovedEvent&>(event);
+            const vec2 position = moved.GetPosition();
             // Seed the first position with no delta, so the opening move reports no spurious
             // jump from the {0,0} initial value; later moves accumulate relative motion
-            // (correct under a captured cursor's virtual coordinate).
-            if (m_HavePosition)
+            // (correct under a captured cursor's virtual coordinate). A move in a new basis seeds
+            // too: across a capture switch the positions are unrelated, and their difference would
+            // arrive as one jump of the whole previous capture's travel.
+            if (m_HavePosition && moved.GetBasis() == m_MouseBasis)
             {
                 const vec2 travel = position - m_MousePosition;
                 m_MouseDelta += travel;
                 m_SimMouseAccumulator += travel;
             }
             m_MousePosition = position;
+            m_MouseBasis = moved.GetBasis();
             m_HavePosition = true;
             break;
         }
