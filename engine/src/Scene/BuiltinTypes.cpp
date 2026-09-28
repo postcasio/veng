@@ -261,6 +261,7 @@ namespace Veng
         registry.Register<i64>();
         registry.Register<u64>();
         registry.Register<f32>();
+        registry.Register<f64>();
         registry.Register<vec2>();
         registry.Register<vec3>();
         registry.Register<vec4>();

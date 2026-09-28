@@ -21,6 +21,13 @@ namespace Veng::UI
     /// @return True the frame the value changed.
     [[nodiscard]] bool Drag(string_view label, f32& v, DragOptions options = {});
 
+    /// @brief Drag-edits a double-precision value.
+    /// @param label    Widget label and ImGui id.
+    /// @param v        Value to edit in place, at full precision.
+    /// @param options  Speed, clamp bounds, and format string.
+    /// @return True the frame the value changed.
+    [[nodiscard]] bool Drag(string_view label, f64& v, DragOptions options = {});
+
     /// @brief Drag-edits a `vec2` value.
     /// @param label    Widget label and ImGui id.
     /// @param v        Value to edit in place.

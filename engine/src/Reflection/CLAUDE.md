@@ -147,6 +147,13 @@ reports a malformed field as a **dotted field path** ("`Settings.Bloom.Kernel`: 
 enumerator name"), which each caller prepends its own located prefix to (file/entity, document,
 request).
 
+**A scalar's JSON spelling follows its width.** The small integers and `f32` are bare numbers; `i64`
+and `u64` write as decimal strings (and read either), because a bare number past 2^53 truncates
+through the double-precision number pipeline. **`f64` is a bare number**, for the same reason in
+reverse: that pipeline *is* double precision, so the shortest spelling the writer emits reads back to
+the same bits. A scalar leaf that is none of the builtin widths is a 64-bit id-family enum and
+spells as a hex-id string.
+
 What differs per consumer is isolated into a small **`JsonFieldHooks`** policy struct —
 `ValidateAssetId` (a nonzero `AssetHandle` id against the caller's resolve context; unset accepts
 every id) and `ReadReference`/`WriteReference` (an `Entity` from/to JSON — prefab-local index, live

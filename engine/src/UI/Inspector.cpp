@@ -661,6 +661,10 @@ namespace Veng::UI
                         changed = UI::Drag(valueLabel, *static_cast<f32*>(fieldPtr), drag);
                     }
                 }
+                else if (field.Type == TypeIdOf<f64>())
+                {
+                    changed = UI::Drag(valueLabel, *static_cast<f64*>(fieldPtr), drag);
+                }
                 else if (field.Type == TypeIdOf<i32>())
                 {
                     changed = UI::Drag(valueLabel, *static_cast<i32*>(fieldPtr));

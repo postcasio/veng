@@ -127,6 +127,7 @@ VE_LEAF(::Veng::i32, 0xE4A543818EB46182ULL, ::Veng::FieldClass::Scalar);
 VE_LEAF(::Veng::u32, 0x6AD25BC2BE1A5D65ULL, ::Veng::FieldClass::Scalar);
 VE_LEAF(::Veng::i64, 0x37D5A668B87B8FECULL, ::Veng::FieldClass::Scalar);
 VE_LEAF(::Veng::u64, 0x94AB42FEF4E32D87ULL, ::Veng::FieldClass::Scalar);
+VE_LEAF(::Veng::f64, 0x78785906233A8130ULL, ::Veng::FieldClass::Scalar);
 VE_LEAF(::Veng::vec2, 0xB9A6A5F871901160ULL, ::Veng::FieldClass::Vector);
 VE_LEAF(::Veng::vec3, 0xA9A78263CAA293E7ULL, ::Veng::FieldClass::Vector);
 VE_LEAF(::Veng::vec4, 0xA936BFC80085F684ULL, ::Veng::FieldClass::Vector);

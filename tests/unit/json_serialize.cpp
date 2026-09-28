@@ -130,6 +130,19 @@ VE_REFLECT_END();
 
 namespace
 {
+    // A double-precision scalar: a value an f32 cannot hold, where the widening is the point.
+    struct Precise
+    {
+        f64 Value = 0.0;
+    };
+}
+
+VE_REFLECT(::Precise, 0x2F7A9F656F9B6B8AULL)
+VE_FIELD(Value)
+VE_REFLECT_END();
+
+namespace
+{
     TypeRegistry MakeRegistry()
     {
         TypeRegistry registry;
@@ -372,6 +385,36 @@ TEST_CASE("A u16 field and a u16 array write as plain JSON numbers and round-tri
     REQUIRE(JsonReadFields(&dst, info, doc, registry, hooks));
     CHECK(dst.Peak == src.Peak);
     CHECK(dst.Samples == src.Samples);
+}
+
+// ---- f64 scalar leaf pinned -------------------------------------------------
+
+TEST_CASE("An f64 field writes as a plain JSON number and round-trips bit-exactly")
+{
+    TypeRegistry registry;
+    registry.Register<Precise>();
+    const JsonFieldHooks hooks = StubHooks();
+    const TypeInfo& info = registry.Info(registry.IdOf<Precise>());
+    CHECK(info.Size == sizeof(f64));
+
+    // Past f32's reach twice over: a magnitude whose f32 grid is minutes, carrying a fraction whose
+    // last digits only a double keeps.
+    for (const f64 value : {1'770'000'123.456789012, -3.0e-300, 0.1, 42.0})
+    {
+        Precise src;
+        src.Value = value;
+        const Json doc = JsonWriteFields(&src, info, registry, hooks);
+        REQUIRE(doc["Value"].is_number_float());
+
+        Precise dst;
+        REQUIRE(JsonReadFields(&dst, info, doc, registry, hooks));
+        CHECK(std::memcmp(&dst.Value, &src.Value, sizeof(f64)) == 0);
+    }
+
+    // An integer spelling reads as the same double.
+    Precise whole;
+    REQUIRE(JsonReadFields(&whole, info, Json{{"Value", 7}}, registry, hooks));
+    CHECK(whole.Value == 7.0);
 }
 
 // ---- Enum cases pinned ------------------------------------------------------

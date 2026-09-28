@@ -59,6 +59,17 @@ namespace Veng::UI
                                 FloatFormat(options), DragClampFlags(options));
     }
 
+    bool Drag(string_view label, f64& v, DragOptions options)
+    {
+        const string id = AsCStr(label);
+        const f64 min =
+            options.Min ? static_cast<f64>(*options.Min) : std::numeric_limits<f64>::lowest();
+        const f64 max =
+            options.Max ? static_cast<f64>(*options.Max) : std::numeric_limits<f64>::max();
+        return ImGui::DragScalar(id.c_str(), ImGuiDataType_Double, &v, options.Speed, &min, &max,
+                                 FloatFormat(options), DragClampFlags(options));
+    }
+
     bool Drag(string_view label, vec2& v, DragOptions options)
     {
         const string id = AsCStr(label);

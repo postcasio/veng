@@ -752,6 +752,10 @@ namespace Veng::Gui
                 {
                     return fmt::format("{}", *static_cast<const f32*>(fieldPtr));
                 }
+                if (info.Id == TypeIdOf<f64>())
+                {
+                    return fmt::format("{}", *static_cast<const f64*>(fieldPtr));
+                }
                 if (info.Id == TypeIdOf<i32>())
                 {
                     return fmt::format("{}", *static_cast<const i32*>(fieldPtr));
@@ -941,6 +945,11 @@ namespace Veng::Gui
             if (info.Class == FieldClass::Scalar && info.Id == TypeIdOf<f32>())
             {
                 return vec4(*static_cast<const f32*>(field->Ptr), 0.0f, 0.0f, 0.0f);
+            }
+            if (info.Class == FieldClass::Scalar && info.Id == TypeIdOf<f64>())
+            {
+                return vec4(static_cast<f32>(*static_cast<const f64*>(field->Ptr)), 0.0f, 0.0f,
+                            0.0f);
             }
             if (info.Class == FieldClass::Vector)
             {

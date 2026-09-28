@@ -101,8 +101,9 @@ namespace Veng
             // A non-builtin scalar leaf is a 64-bit id-family enum (ActionId, GuiDriverId, …): read
             // it as a u64 (a string or number), so it authors as a hex-id string exactly like a
             // minted id. Handled before the number/boolean guard the narrower scalars require.
-            if (type != TypeIdOf<bool>() && type != TypeIdOf<f32>() && type != TypeIdOf<i32>() &&
-                type != TypeIdOf<u32>() && type != TypeIdOf<u16>() && type != TypeIdOf<u8>())
+            if (type != TypeIdOf<bool>() && type != TypeIdOf<f32>() && type != TypeIdOf<f64>() &&
+                type != TypeIdOf<i32>() && type != TypeIdOf<u32>() && type != TypeIdOf<u16>() &&
+                type != TypeIdOf<u8>())
             {
                 const Result<u64> v = ReadInteger64<u64>(value, path);
                 if (!v)
@@ -127,6 +128,12 @@ namespace Veng
             if (type == TypeIdOf<f32>())
             {
                 const f32 v = value.get<f32>();
+                std::memcpy(fieldPtr, &v, sizeof(v));
+                return {};
+            }
+            if (type == TypeIdOf<f64>())
+            {
+                const f64 v = value.get<f64>();
                 std::memcpy(fieldPtr, &v, sizeof(v));
                 return {};
             }
@@ -440,6 +447,14 @@ namespace Veng
             if (type == TypeIdOf<f32>())
             {
                 f32 v = 0.0f;
+                std::memcpy(&v, fieldPtr, sizeof(v));
+                return v;
+            }
+            // A double is a JSON number as it stands: the number pipeline *is* IEEE-754 double, and
+            // the writer emits the shortest spelling that reads back to the same bits.
+            if (type == TypeIdOf<f64>())
+            {
+                f64 v = 0.0;
                 std::memcpy(&v, fieldPtr, sizeof(v));
                 return v;
             }
