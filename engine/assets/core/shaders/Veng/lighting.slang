@@ -64,7 +64,7 @@ struct GpuLight
     float4 ColorIntensity;  // rgb linear color, a intensity
     float4 Cone;            // x cos(inner), y cos(outer), z punctual shadow slot, w LightFlag bits
     float4 Area;            // x sphere/point/spot source radius, y poly vertex base, z poly vertex count, w area-shadow slot
-    float4 AreaNormal;      // xyz world area normal (Rect/Polygon), w pad
+    float4 AreaNormal;      // xyz world area normal (Rect/Polygon), w shadow source radius
 };
 
 // The surface a lighting evaluation shades, in world space. Build it with MakeLightingSurface,
@@ -293,6 +293,47 @@ LightingResult EvaluateAreaLight(ViewConstants vc, LightingSurface s, GpuLight l
     return r;
 }
 
+// The distance from P to the nearest point of an area light's emitter — zero on or inside it — which
+// its range cutoff is measured from, so a long strip reaches as far from its ends as from its middle.
+float AreaLightSurfaceDistance(ViewConstants vc, GpuLight light, float3 P)
+{
+    float3 center = light.PositionRange.xyz;
+    if (light.DirectionType.w == LightTypeSphere)
+    {
+        return max(length(P - center) - light.Area.x, 0.0);
+    }
+
+    uint base = uint(light.Area.y);
+    uint count = uint(light.Area.z);
+    if (count < 3u)
+    {
+        return length(P - center);
+    }
+
+    // The polygon is convex and planar: P projects inside it when that projection sits on the same
+    // side of every edge, and otherwise the nearest point lies on an edge.
+    float3 n = light.AreaNormal.xyz;
+    float planeDist = dot(P - LtcAreaVertex(vc, base), n);
+    float3 Q = P - planeDist * n;
+    bool anyInside = false;
+    bool anyOutside = false;
+    float edgeDist2 = 3.4e38;
+    float3 prev = LtcAreaVertex(vc, base + count - 1u);
+    for (uint i = 0u; i < count; ++i)
+    {
+        float3 cur = LtcAreaVertex(vc, base + i);
+        float3 edge = cur - prev;
+        float side = dot(cross(edge, Q - prev), n);
+        anyInside = anyInside || side > 0.0;
+        anyOutside = anyOutside || side < 0.0;
+        float t = saturate(dot(P - prev, edge) / max(dot(edge, edge), 1e-8));
+        float3 d = P - (prev + t * edge);
+        edgeDist2 = min(edgeDist2, dot(d, d));
+        prev = cur;
+    }
+    return (anyInside && anyOutside) ? sqrt(edgeDist2) : abs(planeDist);
+}
+
 // Area-light visibility through the punctual shadow atlas with PCSS softening. An area light is
 // shadowed as a spot-style caster (its slot rides Cone.z, -1 = unshadowed); the penumbra widens
 // with how large the shadow source (AreaNormal.w) subtends from this fragment, so a large light
@@ -333,11 +374,12 @@ LightingResult EvaluateDirectLighting(ViewConstants vc, LightingSurface s)
 
         // Rect/Sphere/Polygon are area lights: shade analytically through the LTC path and fall
         // off with a smooth range cutoff only — the solid-angle integral already carries the
-        // inverse-square, so no separate distance term. (Area shadowing is applied below.)
+        // inverse-square, so no separate distance term. The cutoff is measured from the emitter's
+        // surface, not its center. (Area shadowing is applied below.)
         if (type > LightTypeSpot + 0.5)
         {
             LightingResult area = EvaluateAreaLight(vc, s, light);
-            float dist = length(light.PositionRange.xyz - worldPos);
+            float dist = AreaLightSurfaceDistance(vc, light, worldPos);
             float range = max(light.PositionRange.w, 1e-4);
             float rangeFactor = saturate(1.0 - pow(dist / range, 4.0));
             rangeFactor *= rangeFactor;

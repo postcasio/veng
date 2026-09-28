@@ -152,7 +152,43 @@ namespace Veng::Renderer
         // way even though its LTC integral carries the inverse square internally — the estimate
         // only has to order lights, and irradiance from a finite emitter falls the same way
         // past its own size.
-        f32 EstimateContribution(const Light& light, const vec3& worldPos, const AABB& sceneBounds)
+        // The world distance from an area light's position to the farthest point of its emitter;
+        // zero for a punctual light. Subtracted from the ranking distance, it measures the range
+        // cutoff from the emitter's surface as the shader does, without exceeding what it can reach.
+        f32 EmitterReach(const Light& light, const mat4& world)
+        {
+            const vec3 center = vec3(world[3]);
+            const auto farthest = [&](std::span<const vec3> localVerts)
+            {
+                f32 reach = 0.0f;
+                for (const vec3& local : localVerts)
+                {
+                    reach = std::max(reach, glm::length(vec3(world * vec4(local, 1.0f)) - center));
+                }
+                return reach;
+            };
+
+            switch (light.Type)
+            {
+            case LightType::Sphere:
+                return light.Radius * glm::length(vec3(world[0]));
+            case LightType::Rect:
+            {
+                const f32 hw = light.Width * 0.5f;
+                const f32 hh = light.Height * 0.5f;
+                const std::array<vec3, 4> corners{vec3(-hw, -hh, 0.0f), vec3(hw, -hh, 0.0f),
+                                                  vec3(hw, hh, 0.0f), vec3(-hw, hh, 0.0f)};
+                return farthest(corners);
+            }
+            case LightType::Polygon:
+                return farthest(light.PolygonVertices);
+            default:
+                return 0.0f;
+            }
+        }
+
+        f32 EstimateContribution(const Light& light, const mat4& world, const vec3& worldPos,
+                                 const AABB& sceneBounds)
         {
             const f32 radiance = IntensityToRadiance(light) * Luminance(light.Color);
             if (radiance <= 0.0f)
@@ -167,7 +203,8 @@ namespace Veng::Renderer
             const vec3 nearest = sceneBounds.IsEmpty()
                                      ? worldPos
                                      : glm::clamp(worldPos, sceneBounds.Min, sceneBounds.Max);
-            const f32 distance = glm::length(nearest - worldPos);
+            const f32 distance =
+                std::max(glm::length(nearest - worldPos) - EmitterReach(light, world), 0.0f);
             const f32 range = std::max(light.Range, 1e-4f);
             f32 rangeFactor = std::clamp(1.0f - std::pow(distance / range, 4.0f), 0.0f, 1.0f);
             rangeFactor *= rangeFactor;
@@ -259,8 +296,9 @@ namespace Veng::Renderer
             // aiming the scene's cascade at a light that then shades unshadowed would waste the
             // arm — which is the point of declining.
             candidate.Contribution =
-                light.CastsShadows ? EstimateContribution(light, candidate.WorldPos, sceneBounds)
-                                   : 0.0f;
+                light.CastsShadows
+                    ? EstimateContribution(light, candidate.World, candidate.WorldPos, sceneBounds)
+                    : 0.0f;
             ++candidateCount;
         }
 

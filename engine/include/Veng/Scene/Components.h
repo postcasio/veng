@@ -373,9 +373,11 @@ namespace Veng
     /// entity-local, rotated into world space by the entity's Transform, so a spot
     /// parented to a moving body aims with it — and a directional's world-space travel
     /// direction. Color is linear RGB; Intensity scales it.
-    /// Range is the falloff radius for every positioned light (point, spot, and the
-    /// area lights). InnerCone/OuterCone are the spot's half-angles in radians: full
-    /// intensity within InnerCone, zero beyond OuterCone, smooth between.
+    /// Range is the falloff radius for every positioned light: measured from the light's
+    /// position for a point or spot, and from the nearest point of the emitter for an area
+    /// light, so a long Rect reaches as far from its ends as from its middle.
+    /// InnerCone/OuterCone are the spot's half-angles in radians: full intensity within
+    /// InnerCone, zero beyond OuterCone, smooth between.
     ///
     /// The area shapes are placed and oriented by the entity's Transform: a Rect
     /// spans Width × Height in the local XY plane and emits along local +Z; a Sphere
@@ -410,6 +412,8 @@ namespace Veng
         /// solar illuminance carries an internal radiance of one (see Renderer::LuminousAnchor).
         f32 Intensity{1.0f};
         /// @brief Falloff radius for positioned lights (point, spot, and area).
+        ///
+        /// A point or spot measures it from its position; an area light from its emitter's surface.
         f32 Range{10.0f};
         /// @brief Spot inner half-angle in radians; full intensity within.
         f32 InnerCone{0.0f};
