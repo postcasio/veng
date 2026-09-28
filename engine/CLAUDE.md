@@ -207,10 +207,14 @@ documents from the viewport (`GuiOverlay::Detach`, the exact inverse of the per-
 runtime host survives, only what the engine attached is touched, hand-attached documents untouched),
 **re-resolves the seat** in the destination scene (the bound `Viewer` when it still resolves
 there, else the scene's sole/first `Viewer`, else cleared), re-pointing the `InputRouter` association
-and — when the departed association owned it — the cursor seat, and resetting `Info.Viewer`, and
+and — when the departed association owned it — **moving the cursor seat with the focus it holds**
+(`InputRouter::MoveCursorSeat`), and resetting `Info.Viewer`, and
 **re-seeds the viewport's render settings and per-frame view knobs** from the destination's authored
 `LevelRenderSettings` (the same seed the bootstrap world takes; a destination authoring none keeps
-the viewport's current settings); input *focus* is left to the game. `GetManagedViewportWorld(index)` returns the applied binding and
+the viewport's current settings). The carried focus is the user's, not the departed world's: a
+captured cursor stays captured across the swap rather than releasing until the destination
+re-requests it, and a UI layer above it comes along too. Beyond that carry, input focus is left to
+the game. `GetManagedViewportWorld(index)` returns the applied binding and
 `GetPendingManagedViewportWorld(index)` the destination of an in-flight rebind (so a pending world
 counts as presented and is not reaped in its own rebind gap). **`RebindManagedViewportWhenReady(index,
 world)`** is the front-door / world-jump path: it holds the viewport on its current world until the
@@ -231,8 +235,8 @@ rather than leaving a consumer to compare the queries above against a remembered
 present-on-ready — at the same frame-safe point the rebind applied on, *after* the seat association,
 the cursor seat and the unbound-seat resolution have settled, carrying the seat the viewport ended up
 adopting (`Entity::Null` when the destination seats none). It is where a consumer gives a presented
-seat its input posture, by stamping one `FocusRequest`; focus policy stays the consumer's and the
-engine writes none. **`OnWorldPresentAbandoned(index, destination)`** fires once when a
+seat its input posture, by stamping one `FocusRequest`; the seat arrives already holding whatever
+focus the cursor carried in, and beyond that carry focus policy stays the consumer's. **`OnWorldPresentAbandoned(index, destination)`** fires once when a
 present-on-ready request is abandoned, so a transition aborts on the frame it failed; the
 `GetAbandonedManagedPresentWorld` record stands afterwards for a reader that arrives late. Both run
 beside `OnWorldArrival` and after it, so arrival state is applied before the presentation moment is
@@ -462,7 +466,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 31** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 32** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the

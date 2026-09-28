@@ -151,8 +151,8 @@ namespace Veng::Gui
 
                 // A viewport bound to a seat routes pointer only for that seat, and only while its
                 // seat's focus top is UI; the all-devices seat (Entity::Null) always routes.
-                const Entity seat = viewport->GetSeat();
-                if (seat != Entity::Null && m_Router.GetFocus(seat) != InputFocus::UI)
+                const SeatRef seat = viewport->GetSeat();
+                if (!seat.IsImplicit() && m_Router.GetFocus(seat) != InputFocus::UI)
                 {
                     continue;
                 }

@@ -160,7 +160,7 @@ namespace Veng
             .Root = &document->Root(),
             .Scene = scene,
             .Owner = owner,
-            .Seat = viewport.GetSeat(),
+            .Seat = viewport.GetSeat().Viewer,
             .Delta = viewport.GetViewDelta(),
             .Alpha = viewport.GetViewAlpha(),
             .View = SystemViewInfo{.Camera = viewport.GetPresentedCamera(),
@@ -195,7 +195,7 @@ namespace Veng
                 runtime.Driver->OnInstantiate(GuiDriverContext{.Document = *document,
                                                                .Root = document->Root(),
                                                                .Scene = scene,
-                                                               .Seat = viewport.GetSeat(),
+                                                               .Seat = viewport.GetSeat().Viewer,
                                                                .Localization = strings});
                 runtime.DriverDocument = document;
             }
@@ -272,7 +272,7 @@ namespace Veng
             .Root = &document->Root(),
             .Scene = scene,
             .Owner = owner,
-            .Seat = viewport.GetSeat(),
+            .Seat = viewport.GetSeat().Viewer,
             .Delta = delta,
             .Alpha = viewport.GetViewAlpha(),
             .View = SystemViewInfo{.Camera = viewport.GetPresentedCamera(),
@@ -304,7 +304,7 @@ namespace Veng
                 runtime.Driver->OnInstantiate(GuiDriverContext{.Document = *document,
                                                                .Root = document->Root(),
                                                                .Scene = scene,
-                                                               .Seat = viewport.GetSeat(),
+                                                               .Seat = viewport.GetSeat().Viewer,
                                                                .Localization = strings});
                 runtime.DriverDocument = document;
             }

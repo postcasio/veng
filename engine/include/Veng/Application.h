@@ -2228,13 +2228,13 @@ namespace Veng
         /// so a pin is added/removed exactly once as a world enters/leaves presentation.
         std::unordered_set<u64> m_PinnedWorlds;
 
-        /// @brief The per-seat request-driven focus tokens the FocusRequest drain owns.
+        /// @brief The request-driven focus tokens the FocusRequest drain owns.
         ///
         /// One token per seat a system has captured gameplay focus for through a FocusRequest; the
         /// engine holds it across frames on the stampers' behalf (they cannot) and pops it when a
-        /// UI FocusRequest releases the seat. A FocusToken is a plain id, so dropping the map is inert;
-        /// the router owns the actual focus stack.
-        unordered_map<Entity, FocusToken> m_FocusRequestTokens;
+        /// UI FocusRequest releases the seat. A FocusToken is a plain id, so dropping the list is
+        /// inert; the router owns the actual focus stack, and says which seat each token is on.
+        vector<FocusToken> m_FocusRequestTokens;
 
         /// @brief A presenting travel awaiting its rebind, so OnWorldArrival can fire when it lands.
         ///

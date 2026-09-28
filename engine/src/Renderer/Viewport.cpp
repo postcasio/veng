@@ -666,7 +666,7 @@ namespace Veng::Renderer
                     .World = &world,
                     .Drivers = m_GuiDrivers,
                     .Owner = entity,
-                    .Seat = m_Seat,
+                    .Seat = m_Seat.Viewer,
                     .Alpha = m_ViewState.Alpha,
                     .View = SystemViewInfo{.Camera = m_ViewState.Camera,
                                            .Region = m_Region,
@@ -687,9 +687,9 @@ namespace Veng::Renderer
         // itself is the pure rule in SurfaceClaim.h, this gathers its inputs. The second walk runs
         // only for a seated surface seen by an unbound viewport — the single-player posture, where
         // this viewport reads every device and claims the surface unless a bound presenter owns it.
-        const bool bindsElsewhere =
-            !surface.Seat.IsNull() && m_Seat.IsNull() && AnyPresenterBindsSeat(world, surface.Seat);
-        return ClaimsSeatedSurface(surface.Seat, m_Seat, IsPrimaryPresenterOf(world),
+        const bool bindsElsewhere = !surface.Seat.IsNull() && m_Seat.IsImplicit() &&
+                                    AnyPresenterBindsSeat(world, surface.Seat);
+        return ClaimsSeatedSurface(surface.Seat, m_Seat.Viewer, IsPrimaryPresenterOf(world),
                                    bindsElsewhere);
     }
 
@@ -701,7 +701,7 @@ namespace Veng::Renderer
         }
         for (const Viewport* const viewport : *m_DriveList)
         {
-            if (viewport->m_ViewState.World == &world && viewport->m_Seat == seat)
+            if (viewport->m_ViewState.World == &world && viewport->m_Seat.Viewer == seat)
             {
                 return true;
             }
@@ -737,7 +737,7 @@ namespace Veng::Renderer
         const Entity target = world.Has<Viewer>(entity) ? entity : overlay.TargetSeat;
         if (!target.IsNull())
         {
-            return target == m_Seat;
+            return target == m_Seat.Viewer;
         }
         return IsPrimaryPresenterOf(world);
     }

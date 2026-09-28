@@ -1874,11 +1874,13 @@ namespace Veng
             return RequestResult::Handled;
         };
 
-        dispatch.Focus = [this](const WorldInstanceId, const FocusRequest& request, string& error)
+        dispatch.Focus =
+            [this](const WorldInstanceId world, const FocusRequest& request, string& error)
         {
             // The engine owns the per-seat token across frames so a stateless system can drive
             // input focus; the reconcile composes with overlay / SeatFocusScope tokens.
-            return ReconcileFocusRequest(*m_InputRouter, m_FocusRequestTokens, request, error);
+            return ReconcileFocusRequest(*m_InputRouter, m_FocusRequestTokens, world, request,
+                                         error);
         };
 
         DrainRequests(*m_WorldRunner, dispatch);

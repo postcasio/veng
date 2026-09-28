@@ -26,6 +26,9 @@ using namespace Veng::Renderer;
 
 namespace
 {
+    // The world every seat in this file lives in.
+    constexpr WorldInstanceId TestWorld{.Value = 1};
+
     Unique<Viewport> CreateViewport(Context& context, AssetManager& assets, uvec2 extent)
     {
         return Viewport::Create({
@@ -68,7 +71,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     {
         const Unique<Viewport> viewport = CreateViewport(Context, assets, {32, 32});
-        router.AssociateViewportSeat(*viewport, seat);
+        router.AssociateViewportSeat(*viewport, SeatRef{.World = TestWorld, .Viewer = seat});
 
         // A live association routes the pointer over its region to the seat.
         const PointerRouting live = router.ResolvePointer(inside, false, Entity::Null);
@@ -100,7 +103,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     {
         const Unique<Viewport> first = CreateViewport(Context, assets, {32, 32});
         deadId = first->GetId();
-        router.AssociateViewportSeat(*first, seatA);
+        router.AssociateViewportSeat(*first, SeatRef{.World = TestWorld, .Viewer = seatA});
         CHECK(router.ResolvePointer(inside, false, Entity::Null).Owner == seatA);
     }
 
@@ -112,7 +115,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(router.ResolvePointer(inside, false, Entity::Null).Owner == Entity::Null);
 
     // Associating the fresh viewport routes to its own seat, not the dead viewport's.
-    router.AssociateViewportSeat(*second, seatB);
+    router.AssociateViewportSeat(*second, SeatRef{.World = TestWorld, .Viewer = seatB});
     CHECK(router.ResolvePointer(inside, false, Entity::Null).Owner == seatB);
 }
 
@@ -133,11 +136,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // over the same region associated after it. The pointer routes to the overlay's seat — the
     // topmost viewport under the cursor — and the scene-scoping companion agrees.
     const Unique<Viewport> base = CreateViewport(Context, assets, {32, 32});
-    router.AssociateViewportSeat(*base, baseSeat);
+    router.AssociateViewportSeat(*base, SeatRef{.World = TestWorld, .Viewer = baseSeat});
 
     {
         const Unique<Viewport> overlay = CreateViewport(Context, assets, {32, 32});
-        router.AssociateViewportSeat(*overlay, overlaySeat);
+        router.AssociateViewportSeat(*overlay, SeatRef{.World = TestWorld, .Viewer = overlaySeat});
 
         CHECK(router.ResolvePointer(inside, false, Entity::Null).Owner == overlaySeat);
         CHECK(router.ResolvePointerViewport(inside, false) == overlay.get());
@@ -163,7 +166,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // This viewport is never handed to any drive-list — it is only minted in the Context registry.
     // The router resolves against construction lifetime, not drive-list membership, so it routes.
     const Unique<Viewport> viewport = CreateViewport(Context, assets, {40, 20});
-    router.AssociateViewportSeat(*viewport, seat);
+    router.AssociateViewportSeat(*viewport, SeatRef{.World = TestWorld, .Viewer = seat});
 
     const PointerRouting routing = router.ResolvePointer(inside, false, Entity::Null);
     CHECK(routing.Owner == seat);
@@ -187,7 +190,7 @@ TEST_CASE_FIXTURE(
     auto& stack = scene->Add<InputContextStack>(seatEntity);
     stack.Active.push_back(MakeContext(0xAA11));
 
-    const InputSeat seat = ResolveInputSeat(scene.get());
+    const InputSeat seat = ResolveInputSeat(scene.get(), TestWorld);
     REQUIRE(seat.Viewer == seatEntity);
 
     Input input(nullptr);
@@ -198,7 +201,7 @@ TEST_CASE_FIXTURE(
         const SeatFocusScope scope(router, seat, viewport.get(), MakeContext(0xBB22));
 
         // The takeover is live: UI focus, the swapped UI context, and a routing association.
-        CHECK(router.GetFocus(seatEntity) == InputFocus::UI);
+        CHECK(router.GetFocus(seat.GetRef()) == InputFocus::UI);
         CHECK(scene->Get<InputContextStack>(seatEntity).Active[0].Id().Value == 0xBB22);
         CHECK(router.ResolvePointer({16, 16}, false, Entity::Null).Owner == seatEntity);
 
@@ -209,7 +212,7 @@ TEST_CASE_FIXTURE(
 
     // Dropping the scope after the viewport died restores exactly as if the viewport survived: the
     // focus pops back to UI and the gameplay context is restored in place — no crash.
-    CHECK(router.GetFocus(seatEntity) == InputFocus::UI);
+    CHECK(router.GetFocus(seat.GetRef()) == InputFocus::UI);
     const InputContextStack& restored = scene->Get<InputContextStack>(seatEntity);
     REQUIRE(restored.Active.size() == 1);
     CHECK(restored.Active[0].Id().Value == 0xAA11);

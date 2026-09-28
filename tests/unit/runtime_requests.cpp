@@ -111,7 +111,7 @@ TEST_CASE("A failed request holds Status + Error for exactly one frame, then ret
 
     // Frame 1: the operation fails, and the component is held in place carrying the outcome.
     DrainRequests(runner, dispatch);
-    const HostRequest* held = Find<HostRequest>(runner, world);
+    const auto* held = Find<HostRequest>(runner, world);
     REQUIRE(held != nullptr);
     CHECK(held->Status == RequestStatus::Failed);
     CHECK(held->Error == "no transport available");
@@ -133,7 +133,7 @@ TEST_CASE("A pending request is retried and can be withdrawn before it is acted 
     const WorldInstanceId world = OpenEmpty(runner);
 
     int connectCalls = 0;
-    bool connected = false;
+    const bool connected = false;
     RequestDispatch dispatch;
     dispatch.Connect = [&](WorldInstanceId, const ConnectRequest&, std::string&)
     {
@@ -146,7 +146,7 @@ TEST_CASE("A pending request is retried and can be withdrawn before it is acted 
     // Frame 1: not yet handleable — left Pending in place.
     DrainRequests(runner, dispatch);
     CHECK(connectCalls == 1);
-    const ConnectRequest* pending = Find<ConnectRequest>(runner, world);
+    const auto* pending = Find<ConnectRequest>(runner, world);
     REQUIRE(pending != nullptr);
     CHECK(pending->Status == RequestStatus::Pending);
 
@@ -254,48 +254,50 @@ TEST_CASE("A FocusRequest drain reconciles the engine-owned per-seat focus token
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
     const WorldInstanceId world = OpenEmpty(runner);
 
-    // The reconcile is device-free: a headless router (no window, no ICD) over a bare token map.
+    // The reconcile is device-free: a headless router (no window, no ICD) over a bare token list.
     Input input(nullptr);
     const Renderer::ViewportRegistry viewportRegistry;
     InputRouter router(nullptr, input, viewportRegistry);
 
     FocusRequestTokens tokens;
     RequestDispatch dispatch;
-    dispatch.Focus = [&](WorldInstanceId, const FocusRequest& request, std::string& error)
-    { return ReconcileFocusRequest(router, tokens, request, error); };
+    dispatch.Focus =
+        [&](const WorldInstanceId from, const FocusRequest& request, std::string& error)
+    { return ReconcileFocusRequest(router, tokens, from, request, error); };
 
     // A Gameplay request captures the seat and stores one engine-held token; the component is
     // consumed the same frame (absence is the ack).
     Stamp<FocusRequest>(runner, world, FocusRequest{.Seat = SeatA, .Focus = InputFocus::Gameplay});
     DrainRequests(runner, dispatch);
-    CHECK(router.IsGameplayFocused(SeatA));
+    CHECK(router.IsGameplayFocused(SeatRef{.World = world, .Viewer = SeatA}));
     REQUIRE(tokens.size() == 1);
     CHECK(Find<FocusRequest>(runner, world) == nullptr);
-    const FocusToken firstToken = tokens.at(SeatA);
+    const FocusToken firstToken = tokens.front();
 
     // A second Gameplay request while already held is a no-op success: no extra push, the same token,
     // still consumed.
     Stamp<FocusRequest>(runner, world, FocusRequest{.Seat = SeatA, .Focus = InputFocus::Gameplay});
     DrainRequests(runner, dispatch);
-    CHECK(router.IsGameplayFocused(SeatA));
+    CHECK(router.IsGameplayFocused(SeatRef{.World = world, .Viewer = SeatA}));
     REQUIRE(tokens.size() == 1);
-    CHECK(tokens.at(SeatA) == firstToken);
+    CHECK(tokens.front() == firstToken);
     CHECK(Find<FocusRequest>(runner, world) == nullptr);
 
     // An interleaved SeatFocusScope-style token pushed ABOVE the engine's request token.
-    const FocusToken scopeToken = router.PushFocus(SeatA, InputFocus::Gameplay);
+    const FocusToken scopeToken =
+        router.PushFocus(SeatRef{.World = world, .Viewer = SeatA}, InputFocus::Gameplay);
 
     // A UI request pops only the engine's own token, wherever it sits, leaving the interleaved scope
     // token intact — so the seat stays gameplay-focused through the scope.
     Stamp<FocusRequest>(runner, world, FocusRequest{.Seat = SeatA, .Focus = InputFocus::UI});
     DrainRequests(runner, dispatch);
     CHECK(tokens.empty());
-    CHECK(router.IsGameplayFocused(SeatA));
+    CHECK(router.IsGameplayFocused(SeatRef{.World = world, .Viewer = SeatA}));
     CHECK(Find<FocusRequest>(runner, world) == nullptr);
 
     // The scope drops its own token, returning the seat to UI — proving the drain never touched it.
     router.PopFocus(scopeToken);
-    CHECK(router.GetFocus(SeatA) == InputFocus::UI);
+    CHECK(router.GetFocus(SeatRef{.World = world, .Viewer = SeatA}) == InputFocus::UI);
 
     // A UI request with nothing engine-held is a no-op success, still consumed.
     Stamp<FocusRequest>(runner, world, FocusRequest{.Seat = SeatA, .Focus = InputFocus::UI});
@@ -315,19 +317,61 @@ TEST_CASE("A FocusRequest with a null seat resolves to the router's cursor seat"
     Input input(nullptr);
     const Renderer::ViewportRegistry viewportRegistry;
     InputRouter router(nullptr, input, viewportRegistry);
-    router.SetCursorSeat(SeatB);
+    router.SetCursorSeat(SeatRef{.World = world, .Viewer = SeatB});
 
     FocusRequestTokens tokens;
     RequestDispatch dispatch;
-    dispatch.Focus = [&](WorldInstanceId, const FocusRequest& request, std::string& error)
-    { return ReconcileFocusRequest(router, tokens, request, error); };
+    dispatch.Focus =
+        [&](const WorldInstanceId from, const FocusRequest& request, std::string& error)
+    { return ReconcileFocusRequest(router, tokens, from, request, error); };
 
     // Seat left default (Entity::Null) resolves to the cursor seat, so the capture lands on SeatB.
     Stamp<FocusRequest>(runner, world, FocusRequest{.Focus = InputFocus::Gameplay});
     DrainRequests(runner, dispatch);
-    CHECK(router.IsGameplayFocused(SeatB));
-    CHECK(tokens.count(SeatB) == 1);
+    CHECK(router.IsGameplayFocused(SeatRef{.World = world, .Viewer = SeatB}));
+    REQUIRE(tokens.size() == 1);
+    CHECK(router.IsFocusTokenOn(SeatRef{.World = world, .Viewer = SeatB}, tokens.front()));
     CHECK(Find<FocusRequest>(runner, world) == nullptr);
+}
+
+TEST_CASE("A FocusRequest releases its capture after the cursor carried it to another world")
+{
+    TypeRegistry types;
+    RegisterRequests(types);
+    SystemRegistry systems;
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    const WorldInstanceId first = OpenEmpty(runner);
+    const WorldInstanceId second = OpenEmpty(runner);
+
+    Input input(nullptr);
+    const Renderer::ViewportRegistry viewportRegistry;
+    InputRouter router(nullptr, input, viewportRegistry);
+    router.SetCursorSeat(SeatRef{.World = first, .Viewer = SeatA});
+
+    FocusRequestTokens tokens;
+    RequestDispatch dispatch;
+    dispatch.Focus =
+        [&](const WorldInstanceId from, const FocusRequest& request, std::string& error)
+    { return ReconcileFocusRequest(router, tokens, from, request, error); };
+
+    Stamp<FocusRequest>(runner, first, FocusRequest{.Focus = InputFocus::Gameplay});
+    DrainRequests(runner, dispatch);
+
+    // The second world presents the same handle; the capture follows the user onto it.
+    const SeatRef arrived{.World = second, .Viewer = SeatA};
+    router.MoveCursorSeat(arrived);
+    REQUIRE(router.IsGameplayFocused(arrived));
+
+    // The arrived world's own capture request is already satisfied, and pushes nothing.
+    Stamp<FocusRequest>(runner, second, FocusRequest{.Seat = SeatA, .Focus = InputFocus::Gameplay});
+    DrainRequests(runner, dispatch);
+    CHECK(tokens.size() == 1);
+
+    // Its release finds the carried token on its seat, so the cursor is actually freed.
+    Stamp<FocusRequest>(runner, second, FocusRequest{.Seat = SeatA, .Focus = InputFocus::UI});
+    DrainRequests(runner, dispatch);
+    CHECK(tokens.empty());
+    CHECK(router.GetFocus() == InputFocus::UI);
 }
 
 TEST_CASE("A host request in a client-tier world fails without reaching server state")
@@ -338,7 +382,7 @@ TEST_CASE("A host request in a client-tier world fails without reaching server s
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
     const WorldInstanceId clientWorld = OpenEmpty(runner);
 
-    bool serverTouched = false;
+    const bool serverTouched = false;
     RequestDispatch dispatch;
     dispatch.Host = [&](WorldInstanceId, const HostRequest&, std::string& error)
     {
@@ -352,7 +396,7 @@ TEST_CASE("A host request in a client-tier world fails without reaching server s
     DrainRequests(runner, dispatch);
 
     CHECK_FALSE(serverTouched);
-    const HostRequest* held = Find<HostRequest>(runner, clientWorld);
+    const auto* held = Find<HostRequest>(runner, clientWorld);
     REQUIRE(held != nullptr);
     CHECK(held->Status == RequestStatus::Failed);
     CHECK(held->Error == "cannot start hosting from a client-tier world");

@@ -248,12 +248,14 @@ namespace Veng::Gui
     SurfaceInputConsumer::SurfaceInputConsumer(InputRouter& router) : m_Router(router) {}
 
     SurfaceInputConsumer::Registration
-    SurfaceInputConsumer::Register(GuiSurface& surface, function<SurfacePlacement()> placement,
+    SurfaceInputConsumer::Register(GuiSurface& surface, const WorldInstanceId world,
+                                   function<SurfacePlacement()> placement,
                                    function<optional<Ray>()> ray)
     {
         const RegistrationId id = m_NextId++;
         m_Entries.emplace_back(Entry{.Id = id,
                                      .Surface = &surface,
+                                     .World = world,
                                      .Placement = std::move(placement),
                                      .Ray = std::move(ray)});
         return Registration(*this, id);
@@ -274,7 +276,8 @@ namespace Veng::Gui
         // only while the seat's focus top is UI (the SeatFocusScope's takeover) and the document has
         // been opened interactive — the same gate the screen-space consumer applies.
         const Entity seat = entry.Surface->Seat;
-        if (seat == Entity::Null || m_Router.GetFocus(seat) != InputFocus::UI)
+        if (seat == Entity::Null ||
+            m_Router.GetFocus(SeatRef{.World = entry.World, .Viewer = seat}) != InputFocus::UI)
         {
             return false;
         }

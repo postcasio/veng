@@ -189,7 +189,8 @@ namespace Veng
             // needs no association — under capture the pointer routes to the keyboard seat directly.
             if (info.Viewer != Entity::Null)
             {
-                m_Router.AssociateViewportSeat(*viewport, info.Viewer);
+                m_Router.AssociateViewportSeat(*viewport,
+                                               SeatRef{.World = info.World, .Viewer = info.Viewer});
             }
 
             m_Viewports.push_back({.Viewport = std::move(viewport), .Info = info});
@@ -433,22 +434,22 @@ namespace Veng
         const bool cursorOwnedElsewhere =
             cursorViewport != nullptr && cursorViewport != managed.Viewport.get();
 
+        const SeatRef adopted{.World = managed.Info.World, .Viewer = seat};
         if (seat != Entity::Null)
         {
-            m_Router.AssociateViewportSeat(*managed.Viewport, seat);
+            m_Router.AssociateViewportSeat(*managed.Viewport, adopted);
         }
         else
         {
             m_Router.ClearViewportSeat(*managed.Viewport);
         }
-        // The cursor seat follows this viewport to its new seat unless a different viewport owns it. A
-        // scene-local seat handle cannot survive a scene change, so the presenting viewport must move
-        // the cursor seat to the seat it resolved — otherwise a captured pointer resolves no viewport
-        // for the stale seat and falls back to the managed world, and the presented world's seat never
-        // receives the look delta.
+        // The cursor seat follows this viewport to its new seat unless a different viewport owns it,
+        // or a captured pointer resolves no viewport for the stale seat and the presented world's seat
+        // never receives the look delta. It carries its focus along: the user holding the cursor has
+        // not changed, so a capture they hold must not lapse until the new world re-requests it.
         if (!cursorOwnedElsewhere)
         {
-            m_Router.SetCursorSeat(seat);
+            m_Router.MoveCursorSeat(adopted);
         }
         managed.Info.Viewer = seat;
     }

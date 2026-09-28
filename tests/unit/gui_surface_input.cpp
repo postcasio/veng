@@ -153,8 +153,9 @@ TEST_CASE("gui surface seat gate: a panel is display-only until a seat + SeatFoc
     SurfaceInputConsumer consumer(router);
     const SurfacePlacement placement = UnitPanel();
     const Ray ray = AimedRay();
+    constexpr WorldInstanceId world{.Value = 1};
     auto reg = consumer.Register(
-        panel.Surface, [&] { return placement; }, [&]() -> optional<Ray> { return ray; });
+        panel.Surface, world, [&] { return placement; }, [&]() -> optional<Ray> { return ray; });
 
     const auto press = [&]
     {
@@ -171,14 +172,16 @@ TEST_CASE("gui surface seat gate: a panel is display-only until a seat + SeatFoc
     // Assign a seat the game holds through gameplay focus: the pointer is not the UI's yet.
     const Entity seat{.Index = 3, .Generation = 1};
     panel.Surface.Seat = seat;
-    const FocusToken gameplay = router.PushFocus(seat, InputFocus::Gameplay);
+    const FocusToken gameplay =
+        router.PushFocus(SeatRef{.World = world, .Viewer = seat}, InputFocus::Gameplay);
     press();
     CHECK(panel.Clicks == 0);
 
     // Opening a SeatFocusScope flips the seat's focus top to UI — the panel becomes interactive and
     // the same ray now delivers its click.
     {
-        const SeatFocusScope scope(router, InputSeat{.Viewer = seat, .World = nullptr}, nullptr);
+        const SeatFocusScope scope(
+            router, InputSeat{.Viewer = seat, .World = nullptr, .WorldId = world}, nullptr);
         press();
         CHECK(panel.Clicks == 1);
     }
@@ -221,16 +224,19 @@ TEST_CASE(
     SurfaceInputConsumer consumer(router);
     const SurfacePlacement placement = UnitPanel();
     const Ray ray = AimedRay();
+    constexpr WorldInstanceId world{.Value = 1};
     auto reg = consumer.Register(
-        surface, [&] { return placement; }, [&]() -> optional<Ray> { return ray; });
+        surface, world, [&] { return placement; }, [&]() -> optional<Ray> { return ray; });
 
     // A gameplay-focused seat gates the keystroke out exactly as it gates a pointer.
-    const FocusToken gameplay = router.PushFocus(seat, InputFocus::Gameplay);
+    const FocusToken gameplay =
+        router.PushFocus(SeatRef{.World = world, .Viewer = seat}, InputFocus::Gameplay);
     CHECK_FALSE(consumer.ForwardEvent(KeyTypedEvent('X')));
     CHECK(input.Text.empty());
 
     // Opening a SeatFocusScope flips the seat's focus top to UI, so the field now receives input.
-    const SeatFocusScope scope(router, InputSeat{.Viewer = seat, .World = nullptr}, nullptr);
+    const SeatFocusScope scope(
+        router, InputSeat{.Viewer = seat, .World = nullptr, .WorldId = world}, nullptr);
 
     // Interactive document + UI-focused seat: a typed character routes into the focused field.
     CHECK(consumer.ForwardEvent(KeyTypedEvent('H')));

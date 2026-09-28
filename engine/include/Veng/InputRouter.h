@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Input.h>
+#include <Veng/Input/SeatRef.h>
 #include <Veng/Renderer/ViewportId.h>
 #include <Veng/Renderer/ViewportRegion.h>
 #include <Veng/Scene/Entity.h>
@@ -123,8 +124,8 @@ namespace Veng
     /// @brief Routes window events by per-seat focus stacks, so each seat's input has one owner.
     ///
     /// Each frame the application drains the Window's event queue through Dispatch. The router
-    /// holds one focus stack per seat, keyed by the seat's Viewer entity, whose top decides that
-    /// seat's routing. The cursor seat — the single keyboard/mouse seat — is the one whose focus
+    /// holds one focus stack per seat, keyed by the seat's world and Viewer entity (SeatRef), whose
+    /// top decides that seat's routing. The cursor seat — the single keyboard/mouse seat — is the one whose focus
     /// top gates the drained window events and drives the OS cursor capture: under UI focus an
     /// input event is offered to the consumer registry *and* folded into the Input snapshot (so
     /// the editor camera reads it); under Gameplay focus the event is folded into the Input
@@ -169,11 +170,25 @@ namespace Veng
         ///
         /// There is one OS cursor and one keyboard/mouse seat, so the drained window events route by
         /// that seat's focus and the cursor capture derives from it. The app sets it to its
-        /// keyboard/mouse seat's Viewer entity; the default (Entity::Null) is the implicit single
-        /// seat of a keyboardless or one-seat app. Recomputes the cursor capture from the new seat's
-        /// focus top.
-        /// @param seat  The keyboard/mouse seat's Viewer entity, or Entity::Null for the implicit seat.
-        void SetCursorSeat(Entity seat);
+        /// keyboard/mouse seat; the default (a null Viewer) is the implicit single seat of a
+        /// keyboardless or one-seat app. Recomputes the cursor capture from the new seat's own focus
+        /// top — each seat keeps its own stack, so an overlay seat taking the cursor and handing it
+        /// back leaves the seat beneath exactly as it was. Moving the same user to another world's
+        /// seat is MoveCursorSeat instead.
+        /// @param seat  The keyboard/mouse seat, or a null-Viewer ref for the implicit seat.
+        void SetCursorSeat(SeatRef seat);
+
+        /// @brief Moves the cursor seat to another seat, carrying its focus stack along.
+        ///
+        /// For a presentation change that hands the same user a different world's seat: the focus
+        /// they held — a captured cursor, a UI layer above it — is theirs, not the old world's, so it
+        /// follows them rather than lapsing until the new world re-requests it. The cursor seat's
+        /// entries move onto @p seat's stack, above any it already holds, keeping their tokens, so
+        /// each holder still pops its own entry wherever it now sits. The cursor capture is
+        /// recomputed once, after the move, so a held capture never releases across it. Moving to
+        /// the cursor seat itself is a no-op.
+        /// @param seat  The seat the cursor and its focus move to.
+        void MoveCursorSeat(SeatRef seat);
 
         /// @brief Sets whether a seat keeps its input focus when the window loses OS focus.
         ///
@@ -188,7 +203,7 @@ namespace Veng
         [[nodiscard]] bool IsBackgroundInput() const { return m_BackgroundInput; }
 
         /// @brief Returns the seat whose focus gates window events and drives the cursor capture.
-        [[nodiscard]] Entity GetCursorSeat() const { return m_CursorSeat; }
+        [[nodiscard]] SeatRef GetCursorSeat() const { return m_CursorSeat; }
 
         /// @brief Pushes a focus layer onto a seat's stack and returns its token.
         ///
@@ -198,7 +213,7 @@ namespace Veng
         /// @param seat   The seat whose stack the layer is pushed onto.
         /// @param focus  The layer to push.
         /// @return The token naming the pushed entry.
-        FocusToken PushFocus(Entity seat, InputFocus focus);
+        FocusToken PushFocus(SeatRef seat, InputFocus focus);
 
         /// @brief Pushes a focus layer onto the cursor seat's stack and returns its token.
         ///
@@ -233,16 +248,26 @@ namespace Veng
         /// @return True if the token names a live focus entry.
         [[nodiscard]] bool IsFocusTokenLive(FocusToken token) const;
 
+        /// @brief Returns whether a focus token names a live entry in one seat's stack.
+        ///
+        /// For a holder that pushes on behalf of whichever seat asks (the FocusRequest seam): its
+        /// entry may have moved with the cursor (MoveCursorSeat), so it finds its own entry by
+        /// asking each seat rather than remembering where it pushed.
+        /// @param seat   The seat whose stack to search.
+        /// @param token  The token to find; a default (invalid) token is never found.
+        /// @return True if the token names a live entry in @p seat's stack.
+        [[nodiscard]] bool IsFocusTokenOn(SeatRef seat, FocusToken token) const;
+
         /// @brief Returns the focus layer owning a seat's input (UI when its stack is empty).
         /// @param seat  The seat whose focus top to read.
-        [[nodiscard]] InputFocus GetFocus(Entity seat) const;
+        [[nodiscard]] InputFocus GetFocus(SeatRef seat) const;
 
         /// @brief Returns the focus layer owning the cursor seat's input (UI when empty).
         [[nodiscard]] InputFocus GetFocus() const { return GetFocus(m_CursorSeat); }
 
         /// @brief Returns true if the running game owns a seat's input exclusively.
         /// @param seat  The seat to test.
-        [[nodiscard]] bool IsGameplayFocused(Entity seat) const
+        [[nodiscard]] bool IsGameplayFocused(SeatRef seat) const
         {
             return GetFocus(seat) == InputFocus::Gameplay;
         }
@@ -299,8 +324,8 @@ namespace Veng
         /// must associate a viewport in the same step it registers it, leaving no live region without
         /// a seat.
         /// @param viewport  The Presented viewport whose region owns pointer input for the seat.
-        /// @param viewer    The seat entity the viewport's pointer input routes to.
-        void AssociateViewportSeat(const Renderer::Viewport& viewport, Entity viewer);
+        /// @param seat      The seat the viewport's pointer input routes to.
+        void AssociateViewportSeat(const Renderer::Viewport& viewport, SeatRef seat);
 
         /// @brief Drops a viewport's seat association, so its region routes no pointer.
         ///
@@ -363,6 +388,13 @@ namespace Veng
 
         /// @brief The cursor seat's current focus owner (UI when its stack is empty).
         [[nodiscard]] InputFocus CursorFocus() const { return GetFocus(m_CursorSeat); }
+
+        /// @brief The key a seat's stack is filed under: every null-Viewer ref is the one implicit seat.
+        /// @param seat  The seat to key.
+        [[nodiscard]] static SeatRef StackKey(SeatRef seat)
+        {
+            return seat.IsImplicit() ? SeatRef{} : seat;
+        }
 
         /// @brief Offers one UI-owned event to the consumers, stopping at the first that accepts it.
         /// @param event  The event to offer.
@@ -433,9 +465,9 @@ namespace Veng
         /// @brief Consumers offered each UI-owned event, in priority (registration) order.
         vector<InputConsumer*> m_Consumers;
         /// @brief Per-seat focus stacks; a seat's back is its current owner, absent/empty is UI.
-        unordered_map<Entity, vector<FocusEntry>> m_Stacks;
+        unordered_map<SeatRef, vector<FocusEntry>> m_Stacks;
         /// @brief The seat whose focus gates window events and drives the cursor capture.
-        Entity m_CursorSeat = Entity::Null;
+        SeatRef m_CursorSeat;
         /// @brief Whether a window-focus loss leaves a held gameplay focus in place.
         bool m_BackgroundInput = false;
         /// @brief Monotonic source of focus-token identities; never reuses a value, 0 stays invalid.
@@ -446,8 +478,8 @@ namespace Veng
         {
             /// @brief The associated viewport's id, resolved live for its region each resolve.
             Renderer::ViewportId Id;
-            /// @brief The seat entity the viewport's pointer input routes to.
-            Entity Viewer = Entity::Null;
+            /// @brief The seat the viewport's pointer input routes to.
+            SeatRef Seat;
         };
         /// @brief Viewport→seat associations in registration order (the hit-test priority order).
         vector<ViewportAssociation> m_Associations;

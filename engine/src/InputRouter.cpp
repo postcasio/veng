@@ -48,14 +48,37 @@ namespace Veng
         m_Consumers.push_back(&consumer);
     }
 
-    void InputRouter::SetCursorSeat(Entity seat)
+    void InputRouter::SetCursorSeat(SeatRef seat)
     {
-        m_CursorSeat = seat;
+        m_CursorSeat = StackKey(seat);
         SyncCursorState();
     }
 
-    FocusToken InputRouter::PushFocus(Entity seat, InputFocus focus)
+    void InputRouter::MoveCursorSeat(SeatRef seat)
     {
+        const SeatRef to = StackKey(seat);
+        if (to == m_CursorSeat)
+        {
+            return;
+        }
+
+        // Append rather than replace: an entry already on the destination has a holder that will pop
+        // it by token, so it stays live beneath the carried ones, which sit on top as the user's
+        // current state. The emptied source is dropped, so a seat left behind holds nothing.
+        if (const auto from = m_Stacks.find(m_CursorSeat); from != m_Stacks.end())
+        {
+            vector<FocusEntry> carried = std::move(from->second);
+            m_Stacks.erase(from);
+            vector<FocusEntry>& destination = m_Stacks[to];
+            destination.insert(destination.end(), carried.begin(), carried.end());
+        }
+        m_CursorSeat = to;
+        SyncCursorState();
+    }
+
+    FocusToken InputRouter::PushFocus(SeatRef seat, InputFocus focus)
+    {
+        seat = StackKey(seat);
         const FocusToken token{.Value = m_NextToken++};
         m_Stacks[seat].push_back(FocusEntry{.Token = token, .Focus = focus});
         if (seat == m_CursorSeat)
@@ -77,7 +100,15 @@ namespace Veng
             if (entry != stack.end())
             {
                 stack.erase(entry);
-                if (seat == m_CursorSeat)
+                const bool cursor = seat == m_CursorSeat;
+                if (stack.empty())
+                {
+                    // An empty stack reads as UI exactly as an absent one does; dropping it keeps the
+                    // map bounded by the seats holding focus rather than every seat that ever did.
+                    const SeatRef key = seat;
+                    m_Stacks.erase(key);
+                }
+                if (cursor)
                 {
                     SyncCursorState();
                 }
@@ -95,6 +126,10 @@ namespace Veng
         if (stack != m_Stacks.end() && !stack->second.empty())
         {
             stack->second.pop_back();
+            if (stack->second.empty())
+            {
+                m_Stacks.erase(stack);
+            }
         }
         SyncCursorState();
     }
@@ -114,9 +149,20 @@ namespace Veng
                                    });
     }
 
-    InputFocus InputRouter::GetFocus(Entity seat) const
+    bool InputRouter::IsFocusTokenOn(SeatRef seat, FocusToken token) const
     {
-        const auto stack = m_Stacks.find(seat);
+        if (!token.IsValid())
+        {
+            return false;
+        }
+        const auto stack = m_Stacks.find(StackKey(seat));
+        return stack != m_Stacks.end() &&
+               std::ranges::find(stack->second, token, &FocusEntry::Token) != stack->second.end();
+    }
+
+    InputFocus InputRouter::GetFocus(SeatRef seat) const
+    {
+        const auto stack = m_Stacks.find(StackKey(seat));
         if (stack == m_Stacks.end() || stack->second.empty())
         {
             return InputFocus::UI;
@@ -403,7 +449,7 @@ namespace Veng
         m_Associations.erase(dead.begin(), dead.end());
     }
 
-    void InputRouter::AssociateViewportSeat(const Renderer::Viewport& viewport, Entity viewer)
+    void InputRouter::AssociateViewportSeat(const Renderer::Viewport& viewport, SeatRef seat)
     {
         SweepDeadAssociations();
 
@@ -411,10 +457,10 @@ namespace Veng
         const auto existing = std::ranges::find(m_Associations, id, &ViewportAssociation::Id);
         if (existing != m_Associations.end())
         {
-            existing->Viewer = viewer;
+            existing->Seat = seat;
             return;
         }
-        m_Associations.emplace_back(ViewportAssociation{.Id = id, .Viewer = viewer});
+        m_Associations.emplace_back(ViewportAssociation{.Id = id, .Seat = seat});
     }
 
     void InputRouter::ClearViewportSeat(const Renderer::Viewport& viewport)
@@ -454,8 +500,8 @@ namespace Veng
             {
                 continue;
             }
-            regions.emplace_back(
-                PointerRegionSeat{.Region = viewport->GetRegion(), .Viewer = association.Viewer});
+            regions.emplace_back(PointerRegionSeat{.Region = viewport->GetRegion(),
+                                                   .Viewer = association.Seat.Viewer});
         }
         PointerRouting routing = SelectPointerOwner(regions, pointerWindowPoint);
 
@@ -482,7 +528,8 @@ namespace Veng
         if (captured)
         {
             const auto association =
-                std::ranges::find(m_Associations, m_CursorSeat, &ViewportAssociation::Viewer);
+                std::ranges::find(m_Associations, m_CursorSeat, [](const ViewportAssociation& entry)
+                                  { return StackKey(entry.Seat); });
             return association != m_Associations.end() ? m_ViewportRegistry.Resolve(association->Id)
                                                        : nullptr;
         }

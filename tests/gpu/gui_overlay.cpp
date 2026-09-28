@@ -233,8 +233,10 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     driveList.push_back(viewportB.get());
     viewportB->AttachToDriveList(driveList);
 
-    viewportA->SetSeat(seatA);
-    viewportB->SetSeat(seatB);
+    // Both seats live in the one scene the two viewports present; the world id only qualifies them.
+    constexpr WorldInstanceId world{.Value = 1};
+    viewportA->SetSeat(SeatRef{.World = world, .Viewer = seatA});
+    viewportB->SetSeat(SeatRef{.World = world, .Viewer = seatB});
     viewportA->SetViewState({.World = scene.get(), .Delta = 0.016f});
     viewportB->SetViewState({.World = scene.get(), .Delta = 0.016f});
 

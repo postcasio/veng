@@ -34,6 +34,11 @@ namespace Veng
         Entity Viewer = Entity::Null;
         /// @brief The scene the seat lives in, re-queried for its contexts; null for an empty seat.
         Scene* World = nullptr;
+        /// @brief The world that scene belongs to, which qualifies the Viewer handle for the router.
+        WorldInstanceId WorldId;
+
+        /// @brief Returns the seat's world-qualified identity, the key the router files it under.
+        [[nodiscard]] SeatRef GetRef() const { return SeatRef{.World = WorldId, .Viewer = Viewer}; }
 
         /// @brief Re-resolves the seat's active input contexts from the scene at the call site.
         ///
@@ -48,13 +53,14 @@ namespace Veng
     ///
     /// Walks the scene for the first entity holding (Viewer, InputContextStack, PlayerInput) that is
     /// locally owned — the seat a single-seat consumer drives — and returns it carrying the scene it
-    /// was found in (for the on-demand context re-resolve). A null scene, a scene with no such seat,
-    /// or a seat that is not locally owned yields an empty seat (Viewer == Entity::Null, World ==
-    /// nullptr), so a consumer resolving before its world spawns gets a safe empty result rather
-    /// than a crash.
+    /// was found in (for the on-demand context re-resolve) and that scene's world. A null scene, a
+    /// scene with no such seat, or a seat that is not locally owned yields an empty seat (Viewer ==
+    /// Entity::Null, World == nullptr), so a consumer resolving before its world spawns gets a safe
+    /// empty result rather than a crash.
     /// @param scene  The scene to resolve a seat from, or nullptr before the world exists.
+    /// @param world  The world @p scene belongs to, which qualifies the seat for the router.
     /// @return The first locally-owned seat, or an empty InputSeat when none resolves.
-    [[nodiscard]] VE_API InputSeat ResolveInputSeat(Scene* scene);
+    [[nodiscard]] VE_API InputSeat ResolveInputSeat(Scene* scene, WorldInstanceId world);
 
     /// @brief RAII takeover of a seat's input by a UI surface — a scoped state flip, no input flow.
     ///

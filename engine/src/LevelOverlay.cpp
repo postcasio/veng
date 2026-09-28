@@ -20,16 +20,6 @@ namespace Veng
 {
     namespace
     {
-        // The open overlays' (seat, scene) pairs, in open order — the layer stack a new overlay's
-        // SuspendSeat resolves its scene from, so a stacked overlay suspends the input contexts of
-        // the overlay directly beneath it. The base layer beneath the first overlay is the managed
-        // world, which no overlay owns and so is not in this list.
-        vector<std::pair<Entity, Scene*>>& OpenOverlays()
-        {
-            static vector<std::pair<Entity, Scene*>> overlays;
-            return overlays;
-        }
-
         // An engine-owned empty input-mapping context the suspend scope swaps the layer beneath's
         // input to. It carries a sentinel id so the focus scope treats it as a real swap-in (the
         // scope swaps only for a valid-id context) and resolves no actions, so the suspended seat
@@ -47,24 +37,16 @@ namespace Veng
             return handle;
         }
 
-        // The scene the seat lives in: a lower overlay's scene when the seat names one, else the
-        // managed world. Null when neither resolves (an overlay over a bare app with no managed
-        // world and no lower overlay), which makes the suspend scope's context swap an inert no-op.
-        Scene* SceneOfSeat(Application& app, const Entity seat)
+        // The scene the seat lives in, resolved through its world. Null for the implicit seat or a
+        // world that no longer resolves, which makes the suspend scope's context swap an inert no-op.
+        Scene* SceneOfSeat(Application& app, const SeatRef seat)
         {
-            if (seat == Entity::Null)
+            if (seat.IsImplicit())
             {
                 return nullptr;
             }
-            for (const auto& [overlaySeat, scene] : OpenOverlays())
-            {
-                if (overlaySeat == seat)
-                {
-                    return scene;
-                }
-            }
-            const World* managed = app.GetWorldRunner().ResolveWorld(app.GetManagedWorldId());
-            return managed != nullptr ? &managed->GetScene() : nullptr;
+            World* const world = app.GetWorldRunner().ResolveWorld(seat.World);
+            return world != nullptr ? &world->GetScene() : nullptr;
         }
 
         SystemContext OverlaySystemContext(Application& app)
@@ -167,25 +149,27 @@ namespace Veng
 
         // 3. Route input across the three seams, capturing what each must restore.
         InputRouter& router = app.GetInputRouter();
-        const InputSeat seat = ResolveInputSeat(&scene);
-        overlay.m_OverlaySeat = seat.Viewer;
+        const InputSeat seat = ResolveInputSeat(&scene, overlay.m_World);
+        overlay.m_OverlaySeat = seat.GetRef();
 
         // Pointer: a free pointer over the overlay's region routes to the overlay seat.
-        router.AssociateViewportSeat(*overlay.m_Viewport, seat.Viewer);
+        router.AssociateViewportSeat(*overlay.m_Viewport, seat.GetRef());
 
         // Cursor/keyboard: the captured cursor and keyboard/device window events follow the overlay
         // seat now; the prior cursor seat is restored on close.
         overlay.m_PriorCursorSeat = router.GetCursorSeat();
-        router.SetCursorSeat(seat.Viewer);
+        router.SetCursorSeat(seat.GetRef());
 
         // Suspend the layer beneath: a viewport-less focus scope over SuspendSeat (defaulting to the
         // seat that was the cursor seat) pushes a focus token and swaps that seat's input contexts to
         // an engine-owned empty context, so the suspended seat resolves no actions while the overlay
         // is up. The scope is the overlay's own seat association's counterpart, not the same seat.
-        const Entity suspendSeat =
-            info.SuspendSeat != Entity::Null ? info.SuspendSeat : overlay.m_PriorCursorSeat;
+        const SeatRef suspendSeat =
+            !info.SuspendSeat.IsImplicit() ? info.SuspendSeat : overlay.m_PriorCursorSeat;
         overlay.m_SuspendContext = MakeSuspendContext();
-        const InputSeat suspend{.Viewer = suspendSeat, .World = SceneOfSeat(app, suspendSeat)};
+        const InputSeat suspend{.Viewer = suspendSeat.Viewer,
+                                .World = SceneOfSeat(app, suspendSeat),
+                                .WorldId = suspendSeat.World};
         overlay.m_Suspend =
             CreateUnique<SeatFocusScope>(router, suspend, nullptr, overlay.m_SuspendContext);
 
@@ -200,7 +184,6 @@ namespace Veng
         scene.StartSimulation(OverlaySystemContext(app));
 
         // Join the overlay stack so a higher overlay can resolve this one's scene from its seat.
-        OpenOverlays().emplace_back(overlay.m_OverlaySeat, &scene);
 
         return overlay;
     }
@@ -252,11 +235,6 @@ namespace Veng
         WorldRunner& runner = app.GetWorldRunner();
         InputRouter& router = app.GetInputRouter();
         Scene& scene = runner.ResolveWorld(m_World)->GetScene();
-
-        // Leave the overlay stack before the lower layer's contexts are restored, so it no longer
-        // resolves as any seat's scene.
-        std::erase_if(OpenOverlays(),
-                      [&scene](const auto& entry) { return entry.second == &scene; });
 
         // Stop the simulation (each system's OnStop) while its scene is still live; CloseWorld below
         // only drops the world, it does not run OnStop.

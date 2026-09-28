@@ -3,6 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/Level.h>
+#include <Veng/Input/SeatRef.h>
 #include <Veng/Renderer/Viewport.h>
 #include <Veng/Renderer/ViewportRegion.h>
 #include <Veng/Scene/Components.h>
@@ -42,10 +43,10 @@ namespace Veng
         Renderer::ViewportRegion Region;
         /// @brief The seat whose input the overlay suspends beneath it.
         ///
-        /// Entity::Null (the default) resolves to the router's current cursor seat at open time —
+        /// A null Viewer (the default) resolves to the router's current cursor seat at open time —
         /// the covered world's seat, or a lower overlay whose own Open reassigned it, so a stack of
         /// overlays each suspends the one beneath.
-        Entity SuspendSeat = Entity::Null;
+        SeatRef SuspendSeat;
         /// @brief The world the overlay covers and pauses for its lifetime; invalid pauses nothing.
         ///
         /// When valid, the overlay holds a WorldRunner::PauseScope on this world while it lives, so
@@ -145,8 +146,8 @@ namespace Veng
         /// each per-frame push, so this getter reads the seed; retuning them takes a re-open.
         [[nodiscard]] const Renderer::ViewState& GetViewState() const { return m_ViewKnobs; }
 
-        /// @brief Returns the overlay's own input seat (its Viewer entity), or Entity::Null if none.
-        [[nodiscard]] Entity GetSeat() const { return m_OverlaySeat; }
+        /// @brief Returns the overlay's own input seat, or a null-Viewer ref if its level seats none.
+        [[nodiscard]] SeatRef GetSeat() const { return m_OverlaySeat; }
 
     private:
         LevelOverlay() = default;
@@ -168,8 +169,8 @@ namespace Veng
         /// @brief The per-frame view knobs the engine carries into each push, seeded at open.
         Renderer::ViewState m_ViewKnobs;
         /// @brief The overlay's own seat, taken as the cursor seat and the pointer-routing target.
-        Entity m_OverlaySeat = Entity::Null;
+        SeatRef m_OverlaySeat;
         /// @brief The cursor seat observed at open, restored on close.
-        Entity m_PriorCursorSeat = Entity::Null;
+        SeatRef m_PriorCursorSeat;
     };
 }

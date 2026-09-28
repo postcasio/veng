@@ -19,7 +19,7 @@ namespace Veng
         return World->TryGet<InputContextStack>(Viewer);
     }
 
-    InputSeat ResolveInputSeat(Scene* scene)
+    InputSeat ResolveInputSeat(Scene* scene, const WorldInstanceId world)
     {
         if (scene == nullptr)
         {
@@ -36,6 +36,7 @@ namespace Veng
                 }
                 resolved.Viewer = seat;
                 resolved.World = scene;
+                resolved.WorldId = world;
             });
         return resolved;
     }
@@ -55,7 +56,7 @@ namespace Veng
         }
 
         // (a) Push a token UI entry on the seat's focus stack — the routing owner of the takeover.
-        m_Token = m_Router.PushFocus(m_Seat.Viewer, InputFocus::UI);
+        m_Token = m_Router.PushFocus(m_Seat.GetRef(), InputFocus::UI);
 
         // (b) Swap the seat's context stack to the UI context, suspending the gameplay contexts.
         // A caller that supplies no context leaves the gameplay contexts active — a UI screen can
@@ -75,7 +76,7 @@ namespace Veng
         // is used here (alive at association time), so the router stores its id.
         if (viewport != nullptr)
         {
-            m_Router.AssociateViewportSeat(*viewport, m_Seat.Viewer);
+            m_Router.AssociateViewportSeat(*viewport, m_Seat.GetRef());
         }
     }
 

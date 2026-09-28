@@ -493,8 +493,10 @@ namespace Veng
         /// @brief Points a viewport's seat association — and the cursor seat when it follows — at a seat.
         ///
         /// The shared tail of every seat resolution: associates the viewport with @p seat in the router
-        /// (clearing the association when it is null), moves the cursor seat to follow unless a
-        /// different viewport currently owns it, and records the seat as the viewport's Info.Viewer.
+        /// (clearing the association when it is null), moves the cursor seat — with its focus — to
+        /// follow unless a different viewport currently owns it (InputRouter::MoveCursorSeat), and
+        /// records the seat as the viewport's Info.Viewer. The seat is taken to live in the viewport's
+        /// Info.World, so that must already name the destination.
         /// @param managed  The managed viewport whose seat association is re-pointed.
         /// @param seat     The resolved seat, or Entity::Null for none.
         void AdoptViewportSeat(ManagedViewport& managed, Entity seat);

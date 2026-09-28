@@ -147,10 +147,15 @@ extern "C"
 /// Version 31 grows MouseMovedEvent with the cursor basis its position is measured in, and Input
 /// with the basis of the position it last saw. A module reads both through the event and the
 /// Input it is handed, so a stale module reads the members after the additions at shifted offsets.
+/// Version 32 keys InputRouter's focus stacks, cursor seat and viewport associations by SeatRef (a
+/// world plus a Viewer entity) rather than by the entity alone, and changes Application's held
+/// focus-request tokens from a per-seat map to a list. A module subclasses Application and reads
+/// the router through inline accessors, so a stale module lays out its own members after a base of
+/// the wrong size and reads the cursor seat at a shifted offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 31u
+#define VENG_MODULE_ABI_VERSION 32u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

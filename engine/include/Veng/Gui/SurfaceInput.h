@@ -5,6 +5,7 @@
 #include <Veng/Input/InputConsumer.h>
 #include <Veng/Math/Ray.h>
 #include <Veng/Scene/Entity.h>
+#include <Veng/WorldInstanceId.h>
 
 namespace Veng
 {
@@ -161,10 +162,11 @@ namespace Veng::Gui
         /// The surface routes pointer input only while its seat's focus top is UI. Placement and ray
         /// are pulled through the callbacks each event, so per-frame motion resolves live.
         /// @param surface    The surface whose document receives routed pointers; must outlive the handle.
+        /// @param world      The world the surface's scene belongs to, which qualifies its Seat.
         /// @param placement  Yields the panel's current world placement.
         /// @param ray        Yields the panel's current pointer ray, or nullopt when the panel has none.
         /// @return A handle that keeps the surface registered until it is dropped.
-        [[nodiscard]] Registration Register(GuiSurface& surface,
+        [[nodiscard]] Registration Register(GuiSurface& surface, WorldInstanceId world,
                                             function<SurfacePlacement()> placement,
                                             function<optional<Ray>()> ray);
 
@@ -205,6 +207,8 @@ namespace Veng::Gui
             RegistrationId Id = 0;
             /// @brief The surface whose document receives routed pointers.
             GuiSurface* Surface = nullptr;
+            /// @brief The world the surface's scene belongs to, which qualifies its Seat.
+            WorldInstanceId World;
             /// @brief Yields the panel's current world placement.
             function<SurfacePlacement()> Placement;
             /// @brief Yields the panel's current pointer ray, or nullopt when it has none.

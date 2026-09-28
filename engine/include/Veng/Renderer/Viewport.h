@@ -11,6 +11,7 @@
 #include <Veng/Renderer/ViewportRegion.h>
 
 #include <Veng/Scene/Camera.h>
+#include <Veng/Input/SeatRef.h>
 #include <Veng/Scene/Entity.h>
 
 #include <span>
@@ -479,15 +480,16 @@ namespace Veng::Renderer
 
         /// @brief Sets the seat a hosted document inherits as its input identity.
         ///
-        /// A document attached to this viewport inherits this seat (its Viewer entity); an input
-        /// layer routes the document's input by that seat's devices. Entity::Null — the default —
-        /// is the single-player seat that reads every device. This records the identity only; the
-        /// documents drive no input until a later layer opens their interactivity.
-        /// @param seat  The seat's Viewer entity, or Entity::Null for the all-devices default.
-        void SetSeat(Entity seat) { m_Seat = seat; }
+        /// A document attached to this viewport inherits this seat; an input layer routes the
+        /// document's input by that seat's devices. A null Viewer — the default — is the
+        /// single-player seat that reads every device. This records the identity only; the documents
+        /// drive no input until a later layer opens their interactivity.
+        /// @param seat  The seat, in the world this viewport presents, or a null-Viewer ref for the
+        ///              all-devices default.
+        void SetSeat(SeatRef seat) { m_Seat = seat; }
 
-        /// @brief Returns the seat a hosted document inherits (Entity::Null for the default).
-        [[nodiscard]] Entity GetSeat() const { return m_Seat; }
+        /// @brief Returns the seat a hosted document inherits (a null Viewer for the default).
+        [[nodiscard]] SeatRef GetSeat() const { return m_Seat; }
 
         /// @brief Sets the driver catalog a claimed driven GuiOverlay resolves its Driver id against.
         ///
@@ -1012,7 +1014,7 @@ namespace Veng::Renderer
         vector<Gui::Document*> m_InputDocuments;
 
         /// @brief The seat a hosted document inherits as its input identity; Null reads every device.
-        Entity m_Seat = Entity::Null;
+        SeatRef m_Seat;
 
         /// @brief The driver catalog a claimed driven GuiOverlay resolves against; null drives none.
         GuiDriverRegistry* m_GuiDrivers = nullptr;

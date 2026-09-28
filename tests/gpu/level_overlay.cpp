@@ -211,11 +211,11 @@ namespace
                                        .Audio = audio->GetEngine(),
                                        .Localization = localization});
 
-        const InputSeat seat = ResolveInputSeat(&scene);
+        const InputSeat seat = ResolveInputSeat(&scene, {});
         return scene.Get<PlayerInput>(seat.Viewer).GetValue(Move).y;
     }
 
-    Entity SeatOf(const LevelOverlay& overlay)
+    SeatRef SeatOf(const LevelOverlay& overlay)
     {
         return overlay.GetSeat();
     }
@@ -230,8 +230,8 @@ TEST_CASE("LevelOverlay open/close leaves the router byte-restored, no per-frame
     OverlayApp app(HeadlessInfo(), types, systems);
     AssetHandle<Level> level;
 
-    Entity priorCursor = Entity::Null;
-    Entity overlaySeat = Entity::Null;
+    SeatRef priorCursor;
+    SeatRef overlaySeat;
 
     app.InitFn = [&](OverlayApp& a)
     { level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {}); };
@@ -251,9 +251,10 @@ TEST_CASE("LevelOverlay open/close leaves the router byte-restored, no per-frame
             overlaySeat = SeatOf(*a.A);
 
             // While open: the overlay owns the cursor seat and a free pointer over its region.
-            CHECK(overlaySeat != Entity::Null);
+            CHECK_FALSE(overlaySeat.IsImplicit());
             CHECK(router.GetCursorSeat() == overlaySeat);
-            CHECK(router.ResolvePointer(ivec2(100, 100), false, Entity::Null).Owner == overlaySeat);
+            CHECK(router.ResolvePointer(ivec2(100, 100), false, Entity::Null).Owner ==
+                  overlaySeat.Viewer);
         }
         else if (frame == 1)
         {
@@ -334,9 +335,9 @@ TEST_CASE("A stacked overlay suspends the layer beneath's input and restores it 
     AssetHandle<Level> levelB;
     AssetHandle<InputMappingContext> moveContext;
 
-    Entity seatA = Entity::Null;
-    Entity seatB = Entity::Null;
-    Entity priorCursor = Entity::Null;
+    SeatRef seatA;
+    SeatRef seatB;
+    SeatRef priorCursor;
 
     app.InitFn = [&](OverlayApp& a)
     {
@@ -357,7 +358,7 @@ TEST_CASE("A stacked overlay suspends the layer beneath's input and restores it 
             a.A->GetViewport().SetEnabled(false);
             seatA = SeatOf(*a.A);
             // Give A's seat a gameplay context so its suspension is observable.
-            a.A->GetScene().Get<InputContextStack>(seatA).Active = {moveContext};
+            a.A->GetScene().Get<InputContextStack>(seatA.Viewer).Active = {moveContext};
             CHECK(router.GetCursorSeat() == seatA);
             CHECK(ResolveMoveY(assets, a.A->GetScene()) == doctest::Approx(1.0f));
         }
@@ -366,7 +367,7 @@ TEST_CASE("A stacked overlay suspends the layer beneath's input and restores it 
             a.B = LevelOverlay::Open(a, LevelOverlayInfo{.Source = levelB});
             a.B->GetViewport().SetEnabled(false);
             seatB = SeatOf(*a.B);
-            a.B->GetScene().Get<InputContextStack>(seatB).Active = {moveContext};
+            a.B->GetScene().Get<InputContextStack>(seatB.Viewer).Active = {moveContext};
 
             CHECK(seatB != seatA); // the two overlays resolve distinct seats
             CHECK(router.GetCursorSeat() == seatB);
@@ -405,7 +406,7 @@ TEST_CASE("A structural change to the lower overlay's scene then a clean close (
     AssetHandle<Level> levelA;
     AssetHandle<Level> levelB;
     AssetHandle<InputMappingContext> moveContext;
-    Entity seatA = Entity::Null;
+    SeatRef seatA;
 
     app.InitFn = [&](OverlayApp& a)
     {
@@ -422,7 +423,7 @@ TEST_CASE("A structural change to the lower overlay's scene then a clean close (
             a.A = LevelOverlay::Open(a, LevelOverlayInfo{.Source = levelA});
             a.A->GetViewport().SetEnabled(false);
             seatA = SeatOf(*a.A);
-            a.A->GetScene().Get<InputContextStack>(seatA).Active = {moveContext};
+            a.A->GetScene().Get<InputContextStack>(seatA.Viewer).Active = {moveContext};
 
             a.B = LevelOverlay::Open(a, LevelOverlayInfo{.Source = levelB});
             a.B->GetViewport().SetEnabled(false);

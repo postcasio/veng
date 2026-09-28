@@ -28,9 +28,12 @@ using namespace Veng;
 
 namespace
 {
-    // Two distinct seat entities standing in for two Viewer seats.
-    constexpr Entity SeatA{.Index = 1, .Generation = 1};
-    constexpr Entity SeatB{.Index = 2, .Generation = 1};
+    // The world every seat in this file lives in.
+    constexpr WorldInstanceId TestWorld{.Value = 1};
+
+    // Two distinct seats standing in for two Viewer seats.
+    constexpr SeatRef SeatA{.World = TestWorld, .Viewer = Entity{.Index = 1, .Generation = 1}};
+    constexpr SeatRef SeatB{.World = TestWorld, .Viewer = Entity{.Index = 2, .Generation = 1}};
 
     // A consumer that records every forwarded event's type and every cursor-capture signal, and
     // optionally hard-consumes (stops fall-through) to prove registry priority order.
@@ -264,10 +267,100 @@ TEST_CASE("Cursor capture derivation follows the cursor seat's focus top")
     router.PopFocus(b);
 }
 
+TEST_CASE("Seats in two worlds sharing an entity handle hold independent focus")
+{
+    // Every world built from one level mints the same handles, so the handle alone names no seat.
+    Input input(nullptr);
+    const Renderer::ViewportRegistry viewportRegistry;
+    InputRouter router(nullptr, input, viewportRegistry);
+
+    const SeatRef first{.World = WorldInstanceId{.Value = 1}, .Viewer = SeatA.Viewer};
+    const SeatRef second{.World = WorldInstanceId{.Value = 2}, .Viewer = SeatA.Viewer};
+
+    const FocusToken held = router.PushFocus(first, InputFocus::Gameplay);
+    CHECK(router.IsGameplayFocused(first));
+    CHECK_FALSE(router.IsGameplayFocused(second));
+
+    // Cursor on the second world's seat: it reads its own (empty) stack, not the first's.
+    router.SetCursorSeat(second);
+    CHECK_FALSE(router.IsGameplayFocused());
+    router.PopFocus(held);
+}
+
+TEST_CASE("Every null-Viewer seat is the one implicit seat, whatever its world")
+{
+    Input input(nullptr);
+    const Renderer::ViewportRegistry viewportRegistry;
+    InputRouter router(nullptr, input, viewportRegistry);
+
+    const FocusToken held =
+        router.PushFocus(SeatRef{.World = WorldInstanceId{.Value = 7}}, InputFocus::Gameplay);
+    CHECK(router.IsGameplayFocused(SeatRef{}));
+    CHECK(router.IsGameplayFocused());
+    router.PopFocus(held);
+}
+
+TEST_CASE("MoveCursorSeat carries the cursor's focus to another world's seat without a release")
+{
+    Input input(nullptr);
+    const Renderer::ViewportRegistry viewportRegistry;
+    InputRouter router(nullptr, input, viewportRegistry);
+    RecordingConsumer consumer;
+    router.RegisterConsumer(consumer);
+
+    const SeatRef from{.World = WorldInstanceId{.Value = 1}, .Viewer = SeatA.Viewer};
+    const SeatRef to{.World = WorldInstanceId{.Value = 2}, .Viewer = SeatB.Viewer};
+
+    router.SetCursorSeat(from);
+    const FocusToken ui = router.PushFocus(from, InputFocus::UI);
+    const FocusToken gameplay = router.PushFocus(from, InputFocus::Gameplay);
+    REQUIRE(consumer.CaptureSignals.back());
+
+    // The move re-derives the capture once, from the carried top: captured throughout.
+    const usize before = consumer.CaptureSignals.size();
+    router.MoveCursorSeat(to);
+    REQUIRE(consumer.CaptureSignals.size() == before + 1);
+    CHECK(consumer.CaptureSignals.back());
+    CHECK(router.GetCursorSeat() == to);
+    CHECK(router.IsGameplayFocused(to));
+    CHECK(router.GetFocus(from) == InputFocus::UI);
+
+    // Each entry keeps its token on the new seat, in order: popping the top leaves the UI beneath.
+    CHECK(router.IsFocusTokenOn(to, gameplay));
+    CHECK_FALSE(router.IsFocusTokenOn(from, gameplay));
+    router.PopFocus(gameplay);
+    CHECK(router.GetFocus(to) == InputFocus::UI);
+    CHECK_FALSE(consumer.CaptureSignals.back());
+    router.PopFocus(ui);
+}
+
+TEST_CASE("MoveCursorSeat keeps an entry the destination seat already holds, beneath the carried")
+{
+    Input input(nullptr);
+    const Renderer::ViewportRegistry viewportRegistry;
+    InputRouter router(nullptr, input, viewportRegistry);
+
+    const SeatRef from{.World = WorldInstanceId{.Value = 1}, .Viewer = SeatA.Viewer};
+    const SeatRef to{.World = WorldInstanceId{.Value = 2}, .Viewer = SeatA.Viewer};
+
+    router.SetCursorSeat(from);
+    const FocusToken resident = router.PushFocus(to, InputFocus::UI);
+    const FocusToken carried = router.PushFocus(from, InputFocus::Gameplay);
+
+    router.MoveCursorSeat(to);
+    CHECK(router.IsGameplayFocused());
+    CHECK(router.IsFocusTokenLive(resident));
+
+    // Both holders still pop their own entries; a lost one would be a fatal mispaired pop.
+    router.PopFocus(carried);
+    CHECK(router.GetFocus() == InputFocus::UI);
+    router.PopFocus(resident);
+}
+
 TEST_CASE("ResolveInputSeat returns the first locally-owned seat, null-safe before the world")
 {
     // A null scene resolves an empty seat.
-    const InputSeat none = ResolveInputSeat(nullptr);
+    const InputSeat none = ResolveInputSeat(nullptr, {});
     CHECK(none.Viewer == Entity::Null);
     CHECK(none.World == nullptr);
     CHECK(none.ResolveContexts() == nullptr);
@@ -276,7 +369,7 @@ TEST_CASE("ResolveInputSeat returns the first locally-owned seat, null-safe befo
     const Unique<Scene> scene = Scene::Create(registry);
 
     // A scene with no seat resolves empty.
-    CHECK(ResolveInputSeat(scene.get()).Viewer == Entity::Null);
+    CHECK(ResolveInputSeat(scene.get(), TestWorld).Viewer == Entity::Null);
 
     // A full (Viewer, InputContextStack, PlayerInput) seat resolves with a borrowed context stack.
     const Entity seat = scene->CreateEntity();
@@ -284,7 +377,7 @@ TEST_CASE("ResolveInputSeat returns the first locally-owned seat, null-safe befo
     scene->Add<InputContextStack>(seat);
     scene->Add<PlayerInput>(seat);
 
-    const InputSeat resolved = ResolveInputSeat(scene.get());
+    const InputSeat resolved = ResolveInputSeat(scene.get(), TestWorld);
     CHECK(resolved.Viewer == seat);
     CHECK(resolved.World == scene.get());
     CHECK(resolved.ResolveContexts() == &scene->Get<InputContextStack>(seat));
@@ -308,7 +401,7 @@ TEST_CASE("SeatFocusScope round-trips push + swap + associate, restoring in inve
     auto& stack = scene->Add<InputContextStack>(seatEntity);
     stack.Active.push_back(gameplayContext);
 
-    const InputSeat seat = ResolveInputSeat(scene.get());
+    const InputSeat seat = ResolveInputSeat(scene.get(), TestWorld);
     REQUIRE(seat.Viewer == seatEntity);
 
     // A distinct non-zero UI context so the swap replaces the gameplay contexts.
@@ -320,7 +413,7 @@ TEST_CASE("SeatFocusScope round-trips push + swap + associate, restoring in inve
         const SeatFocusScope scope(router, seat, nullptr, uiContext);
 
         // (a) A UI focus entry is on the seat's stack.
-        CHECK(router.GetFocus(seatEntity) == InputFocus::UI);
+        CHECK(router.GetFocus(SeatRef{.World = TestWorld, .Viewer = seatEntity}) == InputFocus::UI);
 
         // (b) The seat's contexts are the UI context alone — the gameplay context is suspended.
         const InputContextStack& active = scene->Get<InputContextStack>(seatEntity);
@@ -329,14 +422,15 @@ TEST_CASE("SeatFocusScope round-trips push + swap + associate, restoring in inve
 
         // Push an unrelated entry ABOVE the scope's, so the scope's is not on top at destruction —
         // the token pop must still remove the scope's own entry.
-        const FocusToken above = router.PushFocus(seatEntity, InputFocus::Gameplay);
-        CHECK(router.IsGameplayFocused(seatEntity));
+        const FocusToken above = router.PushFocus(SeatRef{.World = TestWorld, .Viewer = seatEntity},
+                                                  InputFocus::Gameplay);
+        CHECK(router.IsGameplayFocused(SeatRef{.World = TestWorld, .Viewer = seatEntity}));
         router.PopFocus(above);
     }
 
     // After destruction the stack is back to UI (the scope popped its own token) and the seat's
     // gameplay context is restored in place.
-    CHECK(router.GetFocus(seatEntity) == InputFocus::UI);
+    CHECK(router.GetFocus(SeatRef{.World = TestWorld, .Viewer = seatEntity}) == InputFocus::UI);
     const InputContextStack& restored = scene->Get<InputContextStack>(seatEntity);
     REQUIRE(restored.Active.size() == 1);
     CHECK(restored.Active[0].Id().Value == 0xAA11);
@@ -382,7 +476,7 @@ TEST_CASE("A SeatFocusScope suspends its seat's gameplay resolution, the other s
     {
         // Open a UI takeover on seat A with no swap-in context: the scope pushes UI focus and
         // suspends A's gameplay contexts, so A resolves to neutral while B is unaffected.
-        const InputSeat seat{.Viewer = seatA, .World = scene.get()};
+        const InputSeat seat{.Viewer = seatA, .World = scene.get(), .WorldId = TestWorld};
         const SeatFocusScope scope(router, seat, nullptr, MakeContext(0xD001));
 
         input.BeginFrame();
@@ -392,7 +486,7 @@ TEST_CASE("A SeatFocusScope suspends its seat's gameplay resolution, the other s
         // Seat A swapped to the empty UI context, so its Move no longer resolves; seat B still does.
         CHECK(scene->Get<PlayerInput>(seatA).GetValue(Move).y == doctest::Approx(0.0f));
         CHECK(scene->Get<PlayerInput>(seatB).GetValue(Move).y == doctest::Approx(1.0f));
-        CHECK(router.IsGameplayFocused(seatB) == false);
+        CHECK(router.IsGameplayFocused(SeatRef{.World = TestWorld, .Viewer = seatB}) == false);
     }
 
     // The scope closed: seat A's gameplay context is restored, so it resolves Move again.
@@ -421,7 +515,7 @@ TEST_CASE("A SeatFocusScope restores through a re-resolve after a structural cha
     auto& stack = scene->Add<InputContextStack>(seatEntity);
     stack.Active.push_back(MakeContext(0xAA11));
 
-    const InputSeat seat = ResolveInputSeat(scene.get());
+    const InputSeat seat = ResolveInputSeat(scene.get(), TestWorld);
     REQUIRE(seat.Viewer == seatEntity);
 
     {
