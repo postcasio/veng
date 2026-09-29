@@ -180,22 +180,26 @@ float4 fsMain(VSOutput input) : SV_Target
         color *= texel;
     }
 
-    // Screen-space coverage from the SDF: a one-pixel-wide transition centered on
-    // the edge, its width taken from the distance field's rate of change so the
-    // anti-aliasing is resolution-independent.
+    // Screen-space coverage from the SDF: a transition one screen pixel wide, its width taken from
+    // the distance field's rate of change so the anti-aliasing is resolution-independent. The ramp
+    // lies wholly inside the silhouette, reaching zero exactly on it: the quad is the element's own
+    // rect and has no margin, so a ramp reaching outside would be cut off flat wherever the shape
+    // meets the rect — along the middle of each side of a circle, which then draws as a rounded
+    // square, and the squarer the fewer pixels it spans.
     float dist = GuiSilhouetteSdf(input.v_RectCoord, input.v_RectHalf, radius, input.v_ArcCoord,
                                   input.v_Arc);
     float aa = max(fwidth(dist), 1e-4);
-    float coverage = 1.0 - smoothstep(-aa, aa, dist);
+    float coverage = 1.0 - smoothstep(-aa, 0.0, dist);
 
     // A positive border width fills only the ring within `border` pixels of the
     // edge, leaving the interior transparent; zero border fills the whole shape. The
     // ring is the silhouette's own field offset inward, so an arc's border runs along
-    // both rims and across both ends.
+    // both rims and across both ends. Its inner edge takes the same inward ramp as the
+    // outer, so the ring keeps its width.
     if (border > 0.0)
     {
         float inner = dist + border;
-        float innerCoverage = 1.0 - smoothstep(-aa, aa, inner);
+        float innerCoverage = 1.0 - smoothstep(-aa, 0.0, inner);
         coverage *= 1.0 - innerCoverage;
     }
 

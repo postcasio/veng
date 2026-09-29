@@ -78,7 +78,8 @@ float GuiFillRoundedBoxSdf(float2 p, float2 b, float r)
 // Resolves an authored fill into the pass's premultiplied linear output: the fixed silhouette
 // coverage — the rounded rectangle, or the arc when the quad carries one — screen-derivative
 // anti-aliased, its width taken from the distance field's rate of change so the edge is
-// resolution-independent, times the fill's own alpha, with a positive border width restricting the
+// resolution-independent and its ramp wholly inside the silhouette (as gui_shape's, so the
+// margin-less quad never cuts it), times the fill's own alpha, with a positive border width restricting the
 // fill to the ring within `border` pixels of the edge. The silhouette is the engine's; a material
 // never widens or replaces it.
 float4 GuiFillResolve(GuiFillInputs input, float4 fill)
@@ -89,11 +90,11 @@ float4 GuiFillResolve(GuiFillInputs input, float4 fill)
     float dist = GuiSilhouetteSdf(input.v_RectCoord, input.v_RectHalf, radius, input.v_ArcCoord,
                                   input.v_Arc);
     float aa = max(fwidth(dist), 1e-4);
-    float coverage = 1.0 - smoothstep(-aa, aa, dist);
+    float coverage = 1.0 - smoothstep(-aa, 0.0, dist);
 
     if (border > 0.0)
     {
-        float innerCoverage = 1.0 - smoothstep(-aa, aa, dist + border);
+        float innerCoverage = 1.0 - smoothstep(-aa, 0.0, dist + border);
         coverage *= 1.0 - innerCoverage;
     }
 
