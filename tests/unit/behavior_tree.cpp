@@ -1,5 +1,6 @@
-// The behaviour runtime: the composites and decorators of a BehaviorTree, the seeded per-agent
-// slots two agents on one tree keep apart, and the AI arm of the control pipeline end to end — a
+// The behaviour runtime: the composites and decorators of a BehaviorTree, the reactive composites
+// and the abort contract they share with Parallel, the seeded per-agent slots two agents on one tree
+// keep apart, and the AI arm of the control pipeline end to end — a
 // BehaviorAgent whose leaf writes Intent driving a pawn through the real MovementSystem, identically
 // to a raw Intent write. Pure CPU — no Context, no Vulkan — in the control_movement.cpp mould: a
 // real Scene over RegisterBuiltinTypes and a headless SystemContext.
@@ -9,6 +10,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <string>
 
 #include <Veng/Behavior/BehaviorAgent.h>
 #include <Veng/Behavior/BehaviorSystem.h>
@@ -79,6 +81,56 @@ namespace
             LastExit = status;
         }
     };
+
+    // A leaf that returns a settable status and tallies all four callbacks, optionally journaling
+    // them in order, so an abort's timing against a sibling's OnEnter is observable.
+    struct RecordingTask final : BehaviorTask
+    {
+        Status Result = Status::Running;
+        int Enters = 0;
+        int Ticks = 0;
+        int Exits = 0;
+        int Aborts = 0;
+        vector<std::string>* Journal = nullptr;
+        std::string Name;
+
+        void OnEnter(BehaviorContext&) override
+        {
+            ++Enters;
+            Note("enter");
+        }
+        Status Tick(BehaviorContext&) override
+        {
+            ++Ticks;
+            return Result;
+        }
+        void OnExit(BehaviorContext&, Status) override
+        {
+            ++Exits;
+            Note("exit");
+        }
+        void OnAbort(BehaviorContext&) override
+        {
+            ++Aborts;
+            Note("abort");
+        }
+
+    private:
+        void Note(const char* event)
+        {
+            if (Journal != nullptr)
+            {
+                Journal->push_back(Name + "." + event);
+            }
+        }
+    };
+
+    Ref<RecordingTask> MakeRecording(const Status result)
+    {
+        auto task = CreateRef<RecordingTask>();
+        task->Result = result;
+        return task;
+    }
 
     // A leaf returning a scripted sequence of statuses (holding the last once exhausted), so a
     // running-then-finishing child can be staged tick by tick.
@@ -484,4 +536,238 @@ TEST_CASE("A Remote-tier agent is not ticked")
 
     // The authority filter skipped the agent, so its tree never ran and its Intent is untouched.
     CHECK(VecApprox(scene->Get<Intent>(agent).Move, vec3(0.0f)));
+}
+
+TEST_CASE("ReactiveSelector hands the tick to a higher branch the tick its guard passes")
+{
+    Harness harness;
+    bool flag = false;
+    vector<std::string> journal;
+    auto front = MakeRecording(Status::Running);
+    auto back = MakeRecording(Status::Running);
+    front->Journal = &journal;
+    front->Name = "front";
+    back->Journal = &journal;
+    back->Name = "back";
+
+    const Ref<BehaviorTree> tree = BehaviorTreeBuilder()
+                                       .ReactiveSelector()
+                                       .Sequence()
+                                       .Condition([&flag](BehaviorContext&) { return flag; })
+                                       .Leaf(front)
+                                       .End()
+                                       .Leaf(back)
+                                       .End()
+                                       .Build();
+
+    vector<NodeSlot> slots;
+    for (int i = 0; i < 3; ++i)
+    {
+        CHECK(harness.Tick(tree, slots, 0, 0.016f) == Status::Running);
+    }
+    CHECK(back->Enters == 1);
+    CHECK(back->Ticks == 3);
+    CHECK(front->Ticks == 0);
+
+    flag = true;
+    CHECK(harness.Tick(tree, slots, 0, 0.016f) == Status::Running);
+    CHECK(front->Enters == 1);
+    CHECK(front->Ticks == 1);
+    CHECK(back->Ticks == 3); // displaced before it could tick again
+    CHECK(back->Aborts == 1);
+    CHECK(back->Exits == 0);
+    // The winner entered while the displaced branch was still intact.
+    const auto enter = std::ranges::find(journal, std::string("front.enter"));
+    const auto abort = std::ranges::find(journal, std::string("back.abort"));
+    CHECK(enter < abort);
+
+    CHECK(harness.Tick(tree, slots, 0, 0.016f) == Status::Running);
+    CHECK(back->Aborts == 1); // aborted once, not once per tick the front branch holds
+
+    SUBCASE("the front branch succeeding succeeds the selector")
+    {
+        front->Result = Status::Success;
+        CHECK(harness.Tick(tree, slots, 0, 0.016f) == Status::Success);
+        CHECK(back->Enters == 1);
+        CHECK(back->Aborts == 1);
+    }
+
+    SUBCASE("the front branch failing re-enters the displaced branch from a clean slot")
+    {
+        front->Result = Status::Failure;
+        CHECK(harness.Tick(tree, slots, 0, 0.016f) == Status::Running);
+        CHECK(front->Exits == 1);
+        CHECK(front->Aborts == 0);
+        CHECK(back->Enters == 2);
+        CHECK(back->Aborts == 1);
+    }
+}
+
+TEST_CASE("ReactiveSelector fails when every child fails and leaves a failed child's state alone")
+{
+    Harness harness;
+    auto attack = MakeRecording(Status::Success);
+    auto idle = MakeRecording(Status::Running);
+    const Ref<BehaviorTree> tree = BehaviorTreeBuilder()
+                                       .ReactiveSelector()
+                                       .Cooldown(1.0f)
+                                       .Leaf(attack)
+                                       .Leaf(idle)
+                                       .End()
+                                       .Build();
+
+    vector<NodeSlot> slots;
+    CHECK(harness.Tick(tree, slots, 0, 0.5f) == Status::Success); // arms the cooldown
+    CHECK(harness.Tick(tree, slots, 0, 0.5f) == Status::Running); // blocked: the idle branch runs
+    CHECK(harness.Tick(tree, slots, 0, 0.5f) == Status::Running); // still blocked
+    CHECK(attack->Ticks == 1);
+    CHECK(harness.Tick(tree, slots, 0, 0.5f) == Status::Success); // elapsed: it takes over
+    CHECK(attack->Ticks == 2);
+    CHECK(idle->Aborts == 1);
+
+    auto never = MakeRecording(Status::Failure);
+    const Ref<BehaviorTree> failing =
+        BehaviorTreeBuilder().ReactiveSelector().Leaf(never).Leaf(never).End().Build();
+    vector<NodeSlot> failingSlots;
+    CHECK(harness.Tick(failing, failingSlots, 0, 0.016f) == Status::Failure);
+    CHECK(never->Ticks == 2);
+    CHECK(never->Aborts == 0);
+}
+
+TEST_CASE("ReactiveSequence aborts its running child the tick a guard stops holding")
+{
+    Harness harness;
+    bool flag = true;
+    auto action = MakeRecording(Status::Running);
+    const Ref<BehaviorTree> tree = BehaviorTreeBuilder()
+                                       .ReactiveSequence()
+                                       .Condition([&flag](BehaviorContext&) { return flag; })
+                                       .Leaf(action)
+                                       .End()
+                                       .Build();
+
+    vector<NodeSlot> slots;
+    for (int i = 0; i < 3; ++i)
+    {
+        CHECK(harness.Tick(tree, slots, 0, 0.016f) == Status::Running);
+    }
+    CHECK(action->Enters == 1);
+
+    flag = false;
+    CHECK(harness.Tick(tree, slots, 0, 0.016f) == Status::Failure);
+    CHECK(action->Ticks == 3);
+    CHECK(action->Aborts == 1);
+    CHECK(action->Exits == 0);
+    CHECK(harness.Tick(tree, slots, 0, 0.016f) == Status::Failure);
+    CHECK(action->Aborts == 1);
+
+    flag = true;
+    CHECK(harness.Tick(tree, slots, 0, 0.016f) == Status::Running);
+    CHECK(action->Enters == 2);
+}
+
+TEST_CASE("ReactiveSequence hands the run back to an earlier child that returns Running")
+{
+    Harness harness;
+    auto guard = MakeRecording(Status::Success);
+    auto action = MakeRecording(Status::Running);
+    const Ref<BehaviorTree> tree =
+        BehaviorTreeBuilder().ReactiveSequence().Leaf(guard).Leaf(action).End().Build();
+
+    vector<NodeSlot> slots;
+    CHECK(harness.Tick(tree, slots, 0, 0.016f) == Status::Running);
+    CHECK(harness.Tick(tree, slots, 0, 0.016f) == Status::Running);
+    CHECK(guard->Ticks == 2); // re-ticked every tick, not resumed past
+    CHECK(action->Enters == 1);
+
+    guard->Result = Status::Running;
+    CHECK(harness.Tick(tree, slots, 0, 0.016f) == Status::Running);
+    CHECK(action->Aborts == 1);
+    CHECK(action->Ticks == 2);
+
+    guard->Result = Status::Success;
+    CHECK(harness.Tick(tree, slots, 0, 0.016f) == Status::Running);
+    CHECK(action->Enters == 2);
+    CHECK(guard->Aborts == 0);
+}
+
+TEST_CASE("A failing Parallel aborts the siblings still running and no finished leaf")
+{
+    Harness harness;
+    auto runner = MakeRecording(Status::Running);
+    auto failer = MakeRecording(Status::Running);
+    auto done = MakeRecording(Status::Success);
+    auto midway = MakeRecording(Status::Running);
+    auto finishedA = MakeRecording(Status::Success);
+    auto finishedB = MakeRecording(Status::Success);
+
+    const Ref<BehaviorTree> tree = BehaviorTreeBuilder()
+                                       .Parallel()
+                                       .Leaf(runner)
+                                       .Leaf(failer)
+                                       .Sequence()
+                                       .Leaf(done)
+                                       .Leaf(midway)
+                                       .End()
+                                       .Sequence()
+                                       .Leaf(finishedA)
+                                       .Leaf(finishedB)
+                                       .End()
+                                       .End()
+                                       .Build();
+
+    vector<NodeSlot> slots;
+    CHECK(harness.Tick(tree, slots, 0, 0.016f) == Status::Running);
+    failer->Result = Status::Failure;
+    CHECK(harness.Tick(tree, slots, 0, 0.016f) == Status::Failure);
+
+    CHECK(runner->Aborts == 1);
+    CHECK(runner->Exits == 0);
+    CHECK(midway->Aborts == 1);
+    // The finished ones: the failing sibling and every leaf of a subtree that finished.
+    CHECK(failer->Exits == 1);
+    CHECK(failer->Aborts == 0);
+    CHECK(done->Aborts == 0);
+    CHECK(finishedA->Aborts == 0);
+    CHECK(finishedB->Aborts == 0);
+
+    // The aborted leaves restart from clean slots.
+    failer->Result = Status::Running;
+    CHECK(harness.Tick(tree, slots, 0, 0.016f) == Status::Running);
+    CHECK(runner->Enters == 2);
+    CHECK(midway->Enters == 2);
+}
+
+TEST_CASE("Aborting one agent's branch leaves another agent on the same tree running")
+{
+    Harness harness;
+    bool flag = false;
+    auto front = MakeRecording(Status::Running);
+    auto back = MakeRecording(Status::Running);
+    const Ref<BehaviorTree> tree = BehaviorTreeBuilder()
+                                       .ReactiveSelector()
+                                       .Sequence()
+                                       .Condition([&flag](BehaviorContext&) { return flag; })
+                                       .Leaf(front)
+                                       .End()
+                                       .Leaf(back)
+                                       .End()
+                                       .Build();
+
+    vector<NodeSlot> agentA;
+    vector<NodeSlot> agentB;
+    harness.Tick(tree, agentA, 1, 0.016f);
+    harness.Tick(tree, agentB, 2, 0.016f);
+    CHECK(back->Enters == 2);
+
+    flag = true;
+    harness.Tick(tree, agentA, 1, 0.016f);
+    CHECK(back->Aborts == 1);
+
+    // Agent B's back branch is still mid-run: it resumes without re-entering.
+    flag = false;
+    CHECK(harness.Tick(tree, agentB, 2, 0.016f) == Status::Running);
+    CHECK(back->Enters == 2);
+    CHECK(back->Aborts == 1);
+    CHECK(back->Ticks == 3);
 }

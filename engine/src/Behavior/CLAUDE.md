@@ -31,11 +31,12 @@ poolable.
 
 The node families: **composites** (`Sequence` stops at the first `Failure`, `Selector` at the first
 `Success`, both resuming a `Running` child next tick; `Parallel` ticks every child each tick,
-succeeding on all and failing on any), **decorators** wrapping one child (`Inverter`, `Succeeder`,
+succeeding on all and failing on any; `ReactiveSelector` and `ReactiveSequence`, which re-evaluate
+rather than resume — see [Priority and aborts](#priority-and-aborts)), **decorators** wrapping one child (`Inverter`, `Succeeder`,
 `Repeat(n | forever)`, `Until` — repeat while the child returns a given status —, `Cooldown`), and
 **leaves** (a consumer `Task`, a `Wait`/`WaitRandom` dwell timer, a `Condition` predicate over the
 ECS — the perception this phase needs). A `Task` is the one kind a consumer subclasses: `OnEnter`,
-`Tick → Status`, `OnExit(Status)`. One task instance is shared by every agent, so it holds no
+`Tick → Status`, `OnExit(Status)`, `OnAbort`. One task instance is shared by every agent, so it holds no
 per-agent state.
 
 ## Seeded, so an agent replays
@@ -64,13 +65,43 @@ consumed the same tick. It:
   **leaf's own** to guard on `IsReplay`: the engine owns the tick, the leaf owns its effects.
 
 `BehaviorAgent` is `VE_TYPE` (runtime-only) and `BehaviorSystem` is `VE_SYSTEM`; both register through
-the ordinary `RegisterBuiltinTypes` / `RegisterBuiltinSystems` path, so the module ABI is untouched.
+the ordinary `RegisterBuiltinTypes` / `RegisterBuiltinSystems` path. The runtime's one module-ABI
+surface is `BehaviorTask`'s vtable: a module subclasses it and the engine's walk dispatches through
+it, so a new virtual on it bumps `VENG_MODULE_ABI_VERSION`.
+
+## Priority and aborts
+
+`Sequence` and `Selector` **resume** their running child, so a branch before it is never
+reconsidered while it runs. Priority needs the other shape, and the two reactive composites
+**re-evaluate** instead:
+
+- **`ReactiveSelector`** ticks its children from the first on every tick. The first to return
+  `Running` or `Success` wins; a child that was running last tick and is no longer the winner is
+  aborted. A condition-guarded branch placed first ("flee when hurt", "stop when told") therefore
+  takes over the tick its guard passes. A child returning `Failure` finished, so it is neither
+  aborted nor reset — a `Cooldown` under it keeps its timer.
+- **`ReactiveSequence`** re-ticks every child before its running one on every tick, each of which
+  must return `Success` again. One returning `Failure` aborts the running child and fails the
+  sequence; one returning `Running` aborts the running child and becomes the running one. Then the
+  running child ticks and the sequence progresses as a `Sequence` does. The children before an
+  action are meant to be conditions or idempotent: re-ticking an action that already finished
+  restarts it.
+- **A failing `Parallel`** aborts the children still running.
+
+**The abort contract.** Aborting a subtree calls `BehaviorTask::OnAbort` on every leaf in it whose
+slot is active, with that leaf's own seeded stream, then resets the subtree's slots. `OnAbort` fires
+**once per abandoned run, before the reset, and never after `OnExit`** — a leaf that finished is
+inactive, so every run ends in exactly one of `OnExit` or `OnAbort`. A reactive selector aborts the
+displaced branch **after** the winner has ticked, so the winner's `OnEnter` still sees the state the
+displaced branch left. Per-agent state a task keeps in a component is therefore removed in `OnAbort`
+and `OnExit` alike; a task that cleans up in only one of them leaks on the other path.
 
 ## Two behaviours worth knowing
 
-- **A `Parallel` that completes abandons a still-`Running` sibling without an `OnExit`.** The status
-  has no "aborted" value, so the abandoned subtree is reset silently. A leaf that must clean up on
-  abandonment does it from its own component lifecycle, not from `OnExit`.
+- **Removing an agent mid-run aborts nothing.** Aborts come from the tree walk alone; a
+  `BehaviorAgent` removed, or an entity destroyed, while a leaf is running calls neither `OnExit` nor
+  `OnAbort`. State kept in a component on the agent entity goes when the entity does; a consumer
+  that strips only the `BehaviorAgent` removes the task components with it.
 - **The running-agent marker is a scene gizmo, not a `BehaviorSystem` draw.** A mark at the pawn of
   an agent whose tree is `Running` is the `SceneGizmo::Agents` family
   (`Veng/Renderer/SceneGizmos.h`), drawn only when a consumer selects that family — the debug-draw

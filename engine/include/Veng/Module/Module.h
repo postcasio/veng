@@ -152,10 +152,13 @@ extern "C"
 /// focus-request tokens from a per-seat map to a list. A module subclasses Application and reads
 /// the router through inline accessors, so a stale module lays out its own members after a base of
 /// the wrong size and reads the cursor seat at a shifted offset.
+/// Version 33 adds the BehaviorTask::OnAbort virtual after OnExit. A module subclasses
+/// BehaviorTask and the engine's tree walk dispatches through its vtable, so a stale module's task
+/// is short of the slot the host calls when it aborts a running leaf.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 32u
+#define VENG_MODULE_ABI_VERSION 33u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

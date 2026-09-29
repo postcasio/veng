@@ -88,7 +88,9 @@ private:
 - **`Failure`** — finished badly.
 
 `OnEnter(context)` runs on the tick the leaf first becomes active, `OnExit(context, status)` on the
-tick it finishes — use them to acquire and release whatever the run needs. One task instance is
+tick it finishes — use them to acquire and release whatever the run needs. A run that is interrupted
+instead of finishing — a higher-priority branch took over, or a `Parallel` sibling failed — ends in
+`OnAbort(context)` rather than `OnExit`, so release there too. One task instance is
 shared by every agent, so a task holds **no per-agent mutable state** in its own fields; per-agent
 memory lives in a component on the agent.
 
@@ -120,8 +122,8 @@ builder.Condition([](Veng::BehaviorContext& context)
 using namespace Veng;
 
 Ref<BehaviorTree> tree = BehaviorTreeBuilder()
-    .Selector()                                        // first child that succeeds wins
-        .Sequence()                                    // flee if threatened
+    .ReactiveSelector()                                // re-checked every tick: the first runnable child wins
+        .Sequence()                                    // flee if threatened, interrupting the patrol
             .Condition([](BehaviorContext& c) { return c.Scene.Has<Threat>(c.Agent); })
             .Leaf(CreateRef<FleeTask>())
         .End()
@@ -142,7 +144,9 @@ The vocabulary:
 |---|---|---|
 | **Sequence** | `Sequence() … End()` | Ticks children in order; stops at the first `Failure`; resumes a `Running` child next tick. Succeeds when all do. |
 | **Selector** | `Selector() … End()` | Ticks children in order; stops at the first `Success`; resumes a `Running` child next tick. Fails when all do. |
-| **Parallel** | `Parallel() … End()` | Ticks every child each tick; fails as soon as any child fails, succeeds once all have. |
+| **Parallel** | `Parallel() … End()` | Ticks every child each tick; fails as soon as any child fails (aborting those still running), succeeds once all have. |
+| **ReactiveSelector** | `ReactiveSelector() … End()` | Re-evaluates its children from the first every tick; the first to return `Running` or `Success` wins, and the child it displaces is aborted. Fails when all do. |
+| **ReactiveSequence** | `ReactiveSequence() … End()` | Re-ticks the children before its running one every tick; one failing aborts the running child and fails the sequence. Put conditions before the action. |
 | **Inverter** | `Inverter()` | Swaps its child's `Success` and `Failure`; passes `Running` through. |
 | **Succeeder** | `Succeeder()` | Maps its child's finish to `Success`; passes `Running` through. |
 | **Repeat** | `Repeat(n)` / `Repeat()` | Re-runs its child `n` times, then succeeds; `Repeat()` (or `0`) repeats forever. |

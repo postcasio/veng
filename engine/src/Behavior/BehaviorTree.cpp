@@ -36,6 +36,23 @@ namespace Veng
         }
     }
 
+    void BehaviorTree::AbortSubtree(const u32 index, vector<NodeSlot>& slots, const u64 seed,
+                                    const BehaviorContext& context) const
+    {
+        const Node& node = m_Nodes[index];
+        if (node.Kind == NodeKind::Leaf && slots[index].Active)
+        {
+            Rng stream(HashCombine(seed, index));
+            BehaviorContext leaf = LeafContext(context, stream);
+            node.Leaf->OnAbort(leaf);
+        }
+        for (const u32 child : node.Children)
+        {
+            AbortSubtree(child, slots, seed, context);
+        }
+        slots[index] = NodeSlot{};
+    }
+
     Status BehaviorTree::TickNode(const u32 index, vector<NodeSlot>& slots, const u64 seed,
                                   const BehaviorContext& context) const
     {
@@ -104,7 +121,7 @@ namespace Veng
         case NodeKind::Parallel:
         {
             // Tick every child each tick; fail as soon as any child has failed, succeed only once
-            // all have. A still-running child abandoned by a failing sibling is reset (no OnExit).
+            // all have. A still-running child abandoned by a failing sibling is aborted.
             bool anyRunning = false;
             bool anyFailure = false;
             for (const u32 child : node.Children)
@@ -124,12 +141,89 @@ namespace Veng
                 result = Status::Failure;
                 for (const u32 child : node.Children)
                 {
-                    ResetSubtree(child, slots);
+                    AbortSubtree(child, slots, seed, context);
                 }
             }
             else
             {
                 result = anyRunning ? Status::Running : Status::Success;
+            }
+            break;
+        }
+        case NodeKind::ReactiveSelector:
+        {
+            // Every child is reconsidered from the first; a failed child finished and holds no
+            // mid-run state, so it is left as it is (a Cooldown keeps its timer).
+            const auto count = static_cast<u32>(node.Children.size());
+            u32 winner = count;
+            result = Status::Failure;
+            for (u32 i = 0; i < count; ++i)
+            {
+                const Status child = TickNode(node.Children[i], slots, seed, context);
+                if (child != Status::Failure)
+                {
+                    winner = i;
+                    result = child;
+                    break;
+                }
+            }
+            // A previously running child before the winner was ticked this tick and failed, so only
+            // one after it is still mid-run.
+            if (slot.Active && slot.Counter > winner)
+            {
+                AbortSubtree(node.Children[slot.Counter], slots, seed, context);
+            }
+            slot.Active = result == Status::Running;
+            slot.Counter = slot.Active ? winner : 0;
+            break;
+        }
+        case NodeKind::ReactiveSequence:
+        {
+            const auto count = static_cast<u32>(node.Children.size());
+            const u32 running = slot.Active ? slot.Counter : 0;
+            u32 start = running;
+            result = Status::Success;
+            // Every child before the running one must hold again; one that stops holding takes the
+            // run from it, and the progression below is skipped.
+            for (u32 i = 0; i < running; ++i)
+            {
+                const Status guard = TickNode(node.Children[i], slots, seed, context);
+                if (guard == Status::Success)
+                {
+                    continue;
+                }
+                AbortSubtree(node.Children[running], slots, seed, context);
+                if (guard == Status::Failure)
+                {
+                    result = Status::Failure;
+                }
+                else
+                {
+                    slot.Counter = i;
+                    result = Status::Running;
+                }
+                start = count;
+                break;
+            }
+            for (u32 i = start; i < count; ++i)
+            {
+                const Status child = TickNode(node.Children[i], slots, seed, context);
+                if (child == Status::Running)
+                {
+                    slot.Counter = i;
+                    result = Status::Running;
+                    break;
+                }
+                if (child == Status::Failure)
+                {
+                    result = Status::Failure;
+                    break;
+                }
+            }
+            slot.Active = result == Status::Running;
+            if (!slot.Active)
+            {
+                slot.Counter = 0;
             }
             break;
         }

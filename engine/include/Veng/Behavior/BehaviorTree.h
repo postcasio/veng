@@ -64,8 +64,9 @@ namespace Veng
     /// that must persist across ticks for one agent is kept in a component on the agent entity.
     ///
     /// @ref OnEnter runs on the tick the leaf first becomes active, @ref OnExit on the tick it
-    /// finishes (returns a non-Running status); a leaf abandoned mid-run because a Parallel sibling
-    /// completed does not receive an OnExit.
+    /// finishes (returns a non-Running status). A leaf abandoned mid-run because an ancestor aborted
+    /// its subtree — a Parallel sibling failed, or a reactive composite switched to another branch —
+    /// receives @ref OnAbort instead of OnExit. Every run therefore ends in exactly one of the two.
     class BehaviorTask
     {
     public:
@@ -85,10 +86,18 @@ namespace Veng
 
         /// @brief Called on the tick the leaf finishes, with the status it returned.
         ///
-        /// The default does nothing. Not called for a leaf abandoned mid-run by a completing Parallel.
+        /// The default does nothing. Not called for a leaf abandoned mid-run; that gets @ref OnAbort.
         /// @param context  The per-tick blackboard and services.
         /// @param status   The finishing status (Success or Failure).
         virtual void OnExit(BehaviorContext& context, Status status) {}
+
+        /// @brief Called when the leaf is abandoned mid-run because an ancestor aborted its subtree.
+        ///
+        /// The default does nothing. Called exactly once per abandoned run, before the leaf's slots
+        /// reset, and never for a leaf that finished (that gets @ref OnExit). A task that keeps
+        /// per-agent state in a component removes it here.
+        /// @param context  The per-tick blackboard and services, carrying the leaf's own seeded stream.
+        virtual void OnAbort(BehaviorContext& context) {}
     };
 
     /// @brief One node's per-agent running state, indexed by the node's position in its tree.
@@ -102,14 +111,15 @@ namespace Veng
         Status Last = Status::Running;
         /// @brief Whether the node is currently mid-run (between becoming active and finishing).
         ///
-        /// A Sequence/Selector uses it to know whether to resume; a Wait/WaitRandom to know whether
-        /// its timer is already seeded; a BehaviorTask's active state drives its OnEnter/OnExit pairing.
+        /// A Sequence/Selector uses it to know whether to resume, and a reactive composite whether a
+        /// child was running last tick; a Wait/WaitRandom to know whether its timer is already seeded;
+        /// a BehaviorTask's active state drives its OnEnter/OnExit pairing and marks it for OnAbort.
         bool Active = false;
         /// @brief A countdown timer in seconds: a Wait/WaitRandom's remaining dwell, a Cooldown's remaining block.
         f32 Timer = 0.0f;
         /// @brief A WaitRandom's drawn dwell duration, held so the same seed yields the same wait.
         f32 Duration = 0.0f;
-        /// @brief A general counter: a Sequence/Selector's resumed child index, or a Repeat's completed-iteration count.
+        /// @brief A general counter: a composite's running child index, or a Repeat's completed-iteration count.
         u32 Counter = 0;
     };
 
@@ -123,7 +133,9 @@ namespace Veng
     ///
     /// The node kinds are three families: **composites** (Sequence stops at the first Failure,
     /// Selector at the first Success, Parallel ticks all children and succeeds on all / fails on
-    /// any), **decorators** wrapping one child (Inverter swaps Success and Failure, Succeeder maps
+    /// any, ReactiveSelector re-evaluates its children from the first every tick so a higher branch
+    /// takes over the tick it becomes runnable, ReactiveSequence re-ticks the children before its
+    /// running one every tick so a failing guard stops it), **decorators** wrapping one child (Inverter swaps Success and Failure, Succeeder maps
     /// any finish to Success, Repeat re-runs a child n times or forever, Until re-runs while the
     /// child returns a given status, Cooldown blocks a child for a time after it succeeds), and
     /// **leaves** (a consumer BehaviorTask, a Wait/WaitRandom dwell timer, a Condition predicate over the ECS).
@@ -166,6 +178,8 @@ namespace Veng
             Sequence,
             Selector,
             Parallel,
+            ReactiveSelector,
+            ReactiveSequence,
             Inverter,
             Succeeder,
             Repeat,
@@ -206,7 +220,22 @@ namespace Veng
                                       const BehaviorContext& context) const;
 
         /// @brief Resets a node's subtree to its default slots, so restarting it re-enters cleanly.
+        ///
+        /// For a subtree that finished, which has no active leaf; one abandoned mid-run goes through
+        /// @ref AbortSubtree instead.
         void ResetSubtree(u32 index, vector<NodeSlot>& slots) const;
+
+        /// @brief Abandons a node's subtree mid-run: calls OnAbort on every active Leaf, then resets it.
+        ///
+        /// Each aborted leaf sees its own seeded stream, exactly as a tick would build it, and its
+        /// slot is reset only after its OnAbort returns. A leaf that already finished is inactive and
+        /// is not called.
+        /// @param index    The root of the subtree to abandon.
+        /// @param slots    The agent's per-node running state.
+        /// @param seed     The agent's seed for its random streams.
+        /// @param context  The per-tick blackboard and services of the aborting ancestor.
+        void AbortSubtree(u32 index, vector<NodeSlot>& slots, u64 seed,
+                          const BehaviorContext& context) const;
 
         /// @brief The flat node array; index 0 is not special, @ref m_Root names the entry point.
         vector<Node> m_Nodes;
@@ -245,8 +274,35 @@ namespace Veng
         BehaviorTreeBuilder& Selector() { return OpenComposite(BehaviorTree::NodeKind::Selector); }
 
         /// @brief Opens a Parallel: ticks every child each tick; succeeds on all, fails on any.
+        ///
+        /// When it fails, the children still running are aborted (their active leaves get OnAbort).
         /// @return This builder.
         BehaviorTreeBuilder& Parallel() { return OpenComposite(BehaviorTree::NodeKind::Parallel); }
+
+        /// @brief Opens a ReactiveSelector: re-evaluates its children from the first on every tick.
+        ///
+        /// The first child to return Running or Success wins, and a child that was running last tick
+        /// but is no longer the winner has its subtree aborted — after the winner has ticked, so the
+        /// winner's OnEnter still sees the displaced branch's state. It fails when every child fails.
+        /// A condition-guarded branch placed first therefore takes over the tick its guard passes.
+        /// @return This builder.
+        BehaviorTreeBuilder& ReactiveSelector()
+        {
+            return OpenComposite(BehaviorTree::NodeKind::ReactiveSelector);
+        }
+
+        /// @brief Opens a ReactiveSequence: re-ticks the children before its running one on every tick.
+        ///
+        /// Each of those earlier children must return Success again. One returning Failure aborts the
+        /// running child and fails the sequence; one returning Running aborts the running child and
+        /// becomes the running one. Then the running child is ticked and the sequence progresses as a
+        /// Sequence does. The children before an action are expected to be conditions or idempotent:
+        /// re-ticking an action that already finished restarts it.
+        /// @return This builder.
+        BehaviorTreeBuilder& ReactiveSequence()
+        {
+            return OpenComposite(BehaviorTree::NodeKind::ReactiveSequence);
+        }
 
         /// @brief Closes the innermost open composite.
         /// @return This builder.
