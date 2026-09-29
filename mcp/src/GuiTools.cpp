@@ -136,8 +136,10 @@ namespace Veng::Mcp
         /// @brief One element as JSON: what names it, whether it draws, and the box it solved to.
         ///
         /// `rect` is the element's **border box** in document points, straight off the layout pass —
-        /// which is the reading these tools exist for. `text` is the run the element paints, elided
-        /// past a length no layout question needs.
+        /// which is the reading these tools exist for. `corner_radius` is the computed style's four
+        /// radii (top-left, top-right, bottom-right, bottom-left), present when any is non-zero, so a
+        /// shape that paints wrong can be told from one that was styled wrong. `text` is the run the
+        /// element paints, elided past a length no layout question needs.
         [[nodiscard]] Json DescribeElement(const Gui::Element& element)
         {
             Json node{{"kind", KindName(element.Kind)},
@@ -147,6 +149,13 @@ namespace Veng::Mcp
                         {"y", element.Layout.Min.y},
                         {"w", element.Layout.Size.x},
                         {"h", element.Layout.Size.y}}}};
+            if (const Gui::CornerRadii& radii = element.ComputedStyle.Radii;
+                radii.TopLeft != 0.0f || radii.TopRight != 0.0f || radii.BottomRight != 0.0f ||
+                radii.BottomLeft != 0.0f)
+            {
+                node["corner_radius"] = {radii.TopLeft, radii.TopRight, radii.BottomRight,
+                                         radii.BottomLeft};
+            }
             if (!element.Id.empty())
             {
                 node["id"] = element.Id;
