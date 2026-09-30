@@ -499,3 +499,24 @@ TEST_CASE("Boarding a vehicle whose seats are all taken fails and reports")
     CHECK(world.Get<VehicleSeat>(seat).Occupant == first);
     CHECK_FALSE(world.Has<Seated>(second));
 }
+
+TEST_CASE("A seat whose occupant was destroyed while seated boards the next character")
+{
+    VehicleScene fixture;
+    Scene& world = *fixture.World;
+    const auto [vehicle, seat] = fixture.AddVehicle(vec3(0.0f, 1.0f, 0.0f), vec3(0.0f, 0.5f, 0.0f),
+                                                    vec3(0.0f, -0.9f, 0.0f), true, false);
+    const Entity first = fixture.AddCharacter(vec3(5.0f, 0.1f, 0.0f));
+    fixture.AddControllingSeat(first);
+    fixture.Interact(vehicle, first);
+    REQUIRE(world.Get<VehicleSeat>(seat).Occupant == first);
+
+    // The occupant is removed with no exit, leaving the seat naming a dead entity.
+    world.DestroyEntity(first);
+    const Entity second = fixture.AddCharacter(vec3(-5.0f, 0.1f, 0.0f));
+    fixture.AddControllingSeat(second);
+    fixture.Interact(vehicle, second);
+
+    CHECK(world.Get<VehicleSeat>(seat).Occupant == second);
+    CHECK(world.Has<Seated>(second));
+}

@@ -21,8 +21,8 @@ namespace Veng
     {
         /// @brief The seat entities, each carrying a VehicleSeat, in boarding preference order.
         ///
-        /// Entering picks the first seat in this order whose Occupant is Null. The references remap on
-        /// prefab spawn like any intra-prefab Entity reference.
+        /// Entering picks the first seat in this order whose Occupant is Null or no longer alive. The
+        /// references remap on prefab spawn like any intra-prefab Entity reference.
         vector<Entity> Seats;
     };
 

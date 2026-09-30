@@ -58,6 +58,9 @@ namespace Veng
         }
 
         /// @brief The first empty seat of @p vehicle in preference order, or Null when all are taken.
+        ///
+        /// A seat whose occupant no longer exists is empty: an occupant destroyed while seated leaves
+        /// no exit behind to clear it, and must not strand the seat for the next character.
         [[nodiscard]] Entity FreeSeat(const Scene& scene, const Vehicle& vehicle)
         {
             for (const Entity seat : vehicle.Seats)
@@ -67,7 +70,7 @@ namespace Veng
                     continue;
                 }
                 const auto* data = scene.TryGet<VehicleSeat>(seat);
-                if (data != nullptr && data->Occupant.IsNull())
+                if (data != nullptr && (data->Occupant.IsNull() || !scene.IsAlive(data->Occupant)))
                 {
                     return seat;
                 }
