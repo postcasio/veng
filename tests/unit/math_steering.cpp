@@ -1,12 +1,18 @@
 // Veng::Steering: pure, device-free arithmetic turning a goal into rate commands. No Context.
 // The properties pinned here are the ones a mover relies on: the arrive braking curve is monotone,
 // bounded, and stops a Euler-integrated body inside its stop radius; a matched-frame approach to a
-// point on a moving circle arrives slow; and the facing law drives the forward error monotonically
-// to zero while never exceeding its per-axis rate caps.
+// point on a moving circle arrives slow; the facing law drives the forward error monotonically
+// to zero while never exceeding its per-axis rate caps; closest approach is exact for straight
+// lines; and avoidance leaves an unconflicted velocity untouched, keeps the combined radius over
+// the horizon when a clear direction exists, honours the preferred side, and never does worse than
+// the desired velocity when boxed in.
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <cmath>
+#include <limits>
+#include <vector>
 
 #include <Veng/Math/Steering.h>
 
@@ -22,6 +28,27 @@ namespace
                           glm::angleAxis(rates.y, vec3(1.0f, 0.0f, 0.0f)) *
                           glm::angleAxis(rates.z, vec3(0.0f, 0.0f, -1.0f));
         return glm::normalize(orientation * step);
+    }
+
+    // The least clearance a constant velocity keeps from the obstacles over [0, horizon], found by
+    // dense sampling rather than the closed form under test. Sampling can only overestimate the
+    // true minimum, by well under a millimetre at these speeds and step counts.
+    f32 SampledClearance(const vec3& position, const vec3& velocity, const f32 radius,
+                         const std::vector<SteeringObstacle>& obstacles, const f32 horizon)
+    {
+        constexpr int Samples = 1000;
+        f32 clearance = std::numeric_limits<f32>::infinity();
+        for (const SteeringObstacle& obstacle : obstacles)
+        {
+            for (int i = 0; i <= Samples; ++i)
+            {
+                const f32 t = horizon * static_cast<f32>(i) / static_cast<f32>(Samples);
+                const f32 separation = glm::length((obstacle.Position + obstacle.Velocity * t) -
+                                                   (position + velocity * t));
+                clearance = glm::min(clearance, separation - (radius + obstacle.Radius));
+            }
+        }
+        return clearance;
     }
 }
 
@@ -221,4 +248,186 @@ TEST_CASE("math_steering: FacingRates zeroes roll on an unset up and stays finit
     CHECK(glm::length(half) == doctest::Approx(1.0f));
     const vec3 turned = half * vec3(1.0f, 0.0f, 0.0f);
     CHECK(turned.x == doctest::Approx(-1.0f).epsilon(1e-4));
+}
+
+TEST_CASE("math_steering: ClosestApproach is exact for straight lines")
+{
+    // Crossing lines: A leaves the origin along +x at 10, B leaves (0, 0, -100) along +z at 10.
+    // At t = 5 they are at (50, 0, 0) and (0, 0, -50), 50·√2 apart, and nearer at no other time.
+    const vec3 aPosition(0.0f);
+    const vec3 aVelocity(10.0f, 0.0f, 0.0f);
+    const vec3 bPosition(0.0f, 0.0f, -100.0f);
+    const vec3 bVelocity(0.0f, 0.0f, 10.0f);
+    const ClosestApproachResult crossing =
+        ClosestApproach(bPosition - aPosition, bVelocity - aVelocity);
+    CHECK(crossing.Time == doctest::Approx(5.0f));
+    CHECK(crossing.Distance == doctest::Approx(50.0f * std::sqrt(2.0f)));
+
+    // Separating points are closest now.
+    const ClosestApproachResult separating =
+        ClosestApproach(vec3(10.0f, 0.0f, 0.0f), vec3(3.0f, 4.0f, 0.0f));
+    CHECK(separating.Time == 0.0f);
+    CHECK(separating.Distance == doctest::Approx(10.0f));
+
+    // No relative velocity: "now", at the current separation.
+    const ClosestApproachResult still = ClosestApproach(vec3(0.0f, 6.0f, 8.0f), vec3(0.0f));
+    CHECK(still.Time == 0.0f);
+    CHECK(still.Distance == doctest::Approx(10.0f));
+}
+
+TEST_CASE("math_steering: AvoidObstacles leaves an unconflicted velocity bit-exact")
+{
+    const vec3 position(0.0f);
+    const vec3 desired(0.0f, 0.0f, -100.0f);
+    const vec3 up(0.0f, 1.0f, 0.0f);
+    constexpr f32 radius = 50.0f;
+    constexpr f32 horizon = 4.0f;
+
+    CHECK(AvoidObstacles(position, desired, radius, up, {}, horizon) == desired);
+
+    // Stationary, 500 m off the track: it passes clear inside the horizon.
+    const std::array<SteeringObstacle, 1> offTrack{
+        {{.Position = vec3(500.0f, 0.0f, -200.0f), .Velocity = vec3(0.0f), .Radius = 100.0f}}};
+    CHECK(AvoidObstacles(position, desired, radius, up, offTrack, horizon) == desired);
+
+    // Dead ahead at 2 km, so contact is 18.5 s out: beyond the horizon, it does not count.
+    const std::array<SteeringObstacle, 1> farAhead{
+        {{.Position = vec3(0.0f, 0.0f, -2000.0f), .Velocity = vec3(0.0f), .Radius = 100.0f}}};
+    CHECK(AvoidObstacles(position, desired, radius, up, farAhead, horizon) == desired);
+}
+
+TEST_CASE("math_steering: AvoidObstacles keeps the combined radius when a clear direction exists")
+{
+    const vec3 position(0.0f);
+    const vec3 desired(0.0f, 0.0f, -100.0f);
+    const vec3 up(0.0f, 1.0f, 0.0f);
+    constexpr f32 radius = 50.0f;
+    const f32 widestCone = glm::radians(90.0f);
+
+    struct Scenario
+    {
+        std::vector<SteeringObstacle> Obstacles;
+        f32 Horizon;
+    };
+    const Scenario scenarios[] = {
+        // Head-on: an obstacle closing from ahead.
+        {.Obstacles = {{.Position = vec3(0.0f, 0.0f, -600.0f),
+                        .Velocity = vec3(0.0f, 0.0f, 50.0f),
+                        .Radius = 60.0f}},
+         .Horizon = 6.0f},
+        // Crossing: an obstacle from the right that would meet the mover at (0, 0, -300) at 3 s.
+        {.Obstacles = {{.Position = vec3(300.0f, 0.0f, -300.0f),
+                        .Velocity = vec3(-100.0f, 0.0f, 0.0f),
+                        .Radius = 50.0f}},
+         .Horizon = 6.0f},
+        // Both at once, plus a slower one drifting in from above.
+        {.Obstacles = {{.Position = vec3(0.0f, 0.0f, -600.0f),
+                        .Velocity = vec3(0.0f, 0.0f, 50.0f),
+                        .Radius = 60.0f},
+                       {.Position = vec3(300.0f, 0.0f, -300.0f),
+                        .Velocity = vec3(-100.0f, 0.0f, 0.0f),
+                        .Radius = 50.0f},
+                       {.Position = vec3(0.0f, 200.0f, -400.0f),
+                        .Velocity = vec3(0.0f, -30.0f, 0.0f),
+                        .Radius = 40.0f}},
+         .Horizon = 6.0f},
+        // Contact inside the horizon, closest approach after it: head-on from 500 m, closing at
+        // 100 m/s, combined radius 150 m. Contact is at 3.5 s, the closest approach at 5 s.
+        {.Obstacles = {{.Position = vec3(0.0f, 0.0f, -500.0f),
+                        .Velocity = vec3(0.0f),
+                        .Radius = 100.0f}},
+         .Horizon = 4.0f},
+    };
+
+    f32 worstClearance = std::numeric_limits<f32>::infinity();
+    f32 widestTurn = 0.0f;
+    f32 fastest = 0.0f;
+    bool everyDesiredConflicted = true;
+    bool anyReturnedUnchanged = false;
+    for (const Scenario& scenario : scenarios)
+    {
+        everyDesiredConflicted =
+            everyDesiredConflicted && SampledClearance(position, desired, radius,
+                                                       scenario.Obstacles, scenario.Horizon) < 0.0f;
+        const vec3 result =
+            AvoidObstacles(position, desired, radius, up, scenario.Obstacles, scenario.Horizon);
+        anyReturnedUnchanged = anyReturnedUnchanged || result == desired;
+        worstClearance =
+            glm::min(worstClearance, SampledClearance(position, result, radius, scenario.Obstacles,
+                                                      scenario.Horizon));
+        widestTurn = glm::max(widestTurn, AngleBetween(result, desired));
+        fastest = glm::max(fastest, glm::length(result));
+    }
+    CHECK(everyDesiredConflicted); // each scenario really does need avoiding
+    CHECK_FALSE(anyReturnedUnchanged);
+    CHECK(worstClearance >= -1e-3f);
+    CHECK(widestTurn <= widestCone + 1e-4f);
+    CHECK(fastest <= glm::length(desired) + 1e-3f);
+}
+
+TEST_CASE("math_steering: AvoidObstacles passes on the preferred side of up")
+{
+    const vec3 position(0.0f);
+    const vec3 desired(0.0f, 0.0f, -100.0f);
+    constexpr f32 radius = 50.0f;
+    constexpr f32 horizon = 6.0f;
+    const std::array<SteeringObstacle, 1> ahead{
+        {{.Position = vec3(0.0f, 0.0f, -400.0f), .Velocity = vec3(0.0f), .Radius = 60.0f}}};
+
+    // Right and left are defined by up: the same obstacle, two different ups.
+    for (const vec3& up : {vec3(0.0f, 1.0f, 0.0f), vec3(1.0f, 0.0f, 0.0f)})
+    {
+        const vec3 right = glm::cross(glm::normalize(desired), up);
+        const vec3 passRight =
+            AvoidObstacles(position, desired, radius, up, ahead, horizon, AvoidSide::Right);
+        const vec3 passLeft =
+            AvoidObstacles(position, desired, radius, up, ahead, horizon, AvoidSide::Left);
+        CHECK(glm::dot(passRight, right) > 0.0f);
+        CHECK(glm::dot(passLeft, right) < 0.0f);
+    }
+
+    // With no preference, it turns away from an obstacle sitting a little left of its track.
+    const vec3 up(0.0f, 1.0f, 0.0f);
+    const std::array<SteeringObstacle, 1> leftOfTrack{
+        {{.Position = vec3(-30.0f, 0.0f, -400.0f), .Velocity = vec3(0.0f), .Radius = 60.0f}}};
+    const vec3 either = AvoidObstacles(position, desired, radius, up, leftOfTrack, horizon);
+    CHECK(either.x > 0.0f);
+}
+
+TEST_CASE("math_steering: AvoidObstacles boxed in stays finite and no worse than the desired")
+{
+    // An obstacle on each of the 26 lattice directions around the mover, 150 m out: every
+    // direction runs into one within the horizon, even at the slowest candidate speed.
+    const vec3 position(10.0f, -20.0f, 5.0f);
+    const vec3 desired(0.0f, 0.0f, -50.0f);
+    const vec3 up(0.0f, 1.0f, 0.0f);
+    constexpr f32 radius = 20.0f;
+    constexpr f32 horizon = 20.0f;
+    std::vector<SteeringObstacle> obstacles;
+    for (int x = -1; x <= 1; ++x)
+    {
+        for (int y = -1; y <= 1; ++y)
+        {
+            for (int z = -1; z <= 1; ++z)
+            {
+                if (x == 0 && y == 0 && z == 0)
+                {
+                    continue;
+                }
+                const vec3 direction = glm::normalize(vec3(x, y, z));
+                obstacles.push_back({.Position = position + direction * 150.0f,
+                                     .Velocity = vec3(0.0f),
+                                     .Radius = 90.0f});
+            }
+        }
+    }
+
+    const vec3 result = AvoidObstacles(position, desired, radius, up, obstacles, horizon);
+    CHECK(std::isfinite(result.x));
+    CHECK(std::isfinite(result.y));
+    CHECK(std::isfinite(result.z));
+    const f32 desiredClearance = SampledClearance(position, desired, radius, obstacles, horizon);
+    const f32 resultClearance = SampledClearance(position, result, radius, obstacles, horizon);
+    CHECK(resultClearance < 0.0f); // really boxed in: nothing is clear
+    CHECK(resultClearance >= desiredClearance - 1e-3f);
 }

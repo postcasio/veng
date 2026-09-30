@@ -1,12 +1,16 @@
 #pragma once
 
+#include <array>
+#include <limits>
+#include <span>
+
 #include <Veng/Veng.h>
 
 /// @brief Pure, device-free steering arithmetic — turning a goal into rate commands.
 ///
 /// The functions here convert an autonomous mover's goal — a point to reach, a direction to
-/// face, a moving frame to match velocity with — into the commands a mover integrates: a desired
-/// velocity, and a per-axis body-frame rotation for this tick. They know nothing of vehicles,
+/// face, a moving frame to match velocity with, other movers to keep clear of — into the commands
+/// a mover integrates: a desired velocity, and a per-axis body-frame rotation for this tick. They know nothing of vehicles,
 /// components, or the scene; they are the arithmetic an `Intent`-writing controller composes.
 ///
 /// Conventions, stated once and shared by every function below:
@@ -236,5 +240,227 @@ namespace Veng
         const vec3 rate =
             glm::clamp(gain * vec3(yawError, pitchError, rollError), -maxRates, maxRates);
         return rate * delta;
+    }
+
+    /// @brief When and how near two constant-velocity points pass.
+    struct ClosestApproachResult
+    {
+        /// @brief Seconds from now to the closest approach; zero when they are already separating.
+        f32 Time = 0.0f;
+        /// @brief The separation at that time.
+        f32 Distance = 0.0f;
+    };
+
+    /// @brief The time and separation of the closest approach between two constant-velocity points.
+    ///
+    /// Minimizes `|p + v·t|` over `t >= 0`, so `Time = max(0, -dot(p, v) / dot(v, v))` and
+    /// `Distance` is the length of `p + v·Time`. Points that are already separating are closest
+    /// now; so are points with no relative velocity, which never get any nearer. Either way `Time`
+    /// is zero and `Distance` is the current separation.
+    /// @param relativePosition  The other point's position minus this one's.
+    /// @param relativeVelocity  The other point's velocity minus this one's.
+    /// @return The time until the closest approach and the separation then.
+    [[nodiscard]] inline ClosestApproachResult ClosestApproach(const vec3& relativePosition,
+                                                               const vec3& relativeVelocity)
+    {
+        const f32 speedSquared = glm::dot(relativeVelocity, relativeVelocity);
+        f32 time = 0.0f;
+        if (speedSquared > 1e-12f)
+        {
+            time = glm::max(0.0f, -glm::dot(relativePosition, relativeVelocity) / speedSquared);
+        }
+        return {.Time = time, .Distance = glm::length(relativePosition + relativeVelocity * time)};
+    }
+
+    /// @brief Something to keep clear of: where it is, how it moves, and how big it is.
+    ///
+    /// A sphere moving at constant velocity, in the same frame as the mover avoiding it.
+    struct SteeringObstacle
+    {
+        /// @brief The obstacle's centre.
+        vec3 Position{0.0f};
+        /// @brief The obstacle's velocity, assumed constant over the avoidance horizon.
+        vec3 Velocity{0.0f};
+        /// @brief The obstacle's bounding radius.
+        f32 Radius = 0.0f;
+    };
+
+    /// @brief Which way a mover prefers to pass an obstacle when both sides are clear.
+    enum class AvoidSide : u8
+    {
+        /// @brief No preference: the search starts on the side away from the worst conflict.
+        Either,
+        /// @brief The search starts on the mover's right, `cross(forward, up)`.
+        Right,
+        /// @brief The search starts on the mover's left, `-cross(forward, up)`.
+        Left,
+    };
+
+    namespace Detail
+    {
+        /// @brief The least margin a velocity keeps from a set of obstacles over a horizon.
+        ///
+        /// Per obstacle, the separation at `min(closest-approach time, horizon)` less the combined
+        /// radius: separation falls until the closest approach, so that is its minimum over
+        /// `[0, horizon]`. The smallest margin over every obstacle is returned; non-negative means
+        /// clear, and an empty `obstacles` is infinitely clear.
+        /// @param position    The mover's position.
+        /// @param velocity    The mover's velocity to test.
+        /// @param radius      The mover's own radius.
+        /// @param obstacles   What to keep clear of.
+        /// @param horizon     How far ahead, in seconds, a conflict counts; non-negative.
+        /// @return The smallest separation-minus-combined-radius over the horizon.
+        [[nodiscard]] inline f32
+        AvoidanceClearance(const vec3& position, const vec3& velocity, const f32 radius,
+                           const std::span<const SteeringObstacle> obstacles, const f32 horizon)
+        {
+            f32 clearance = std::numeric_limits<f32>::infinity();
+            for (const SteeringObstacle& obstacle : obstacles)
+            {
+                const vec3 relativePosition = obstacle.Position - position;
+                const vec3 relativeVelocity = obstacle.Velocity - velocity;
+                const ClosestApproachResult approach =
+                    ClosestApproach(relativePosition, relativeVelocity);
+                // A contact that starts inside the horizon counts even when the closest approach
+                // falls after it, so the separation is read at the horizon, not at the approach.
+                const f32 separation =
+                    approach.Time <= horizon
+                        ? approach.Distance
+                        : glm::length(relativePosition + relativeVelocity * horizon);
+                clearance = glm::min(clearance, separation - (radius + obstacle.Radius));
+            }
+            return clearance;
+        }
+    }
+
+    /// @brief The velocity nearest the desired one that keeps clear of every obstacle over a horizon.
+    ///
+    /// A velocity is **clear** when, against every obstacle, the minimum separation over
+    /// `[0, horizon]` keeps at least `radius + obstacle.Radius`. The desired velocity is tried
+    /// first and returned bit-exactly when clear, so a mover with nothing near it is untouched.
+    ///
+    /// Otherwise it tries at most 120 more candidates, in order: cones at 15°, 30°, 45°, 60° and
+    /// 90° from the desired direction; within a cone, every direction at the desired speed before
+    /// any at ½ and then ¼ of it; and within a speed, 8 azimuths 45° apart, starting on `side` and
+    /// alternating outward from it. The first clear candidate wins. So the work is at most
+    /// 121 × `obstacles.size()` closest-approach tests. The ladder is coarse enough to stay cheap
+    /// and fine enough that the first clear candidate turns little further than a clear velocity
+    /// must. Within a cone, turning to another azimuth is preferred to slowing down.
+    ///
+    /// `AvoidSide::Either` starts on the side away from the obstacle the desired velocity comes
+    /// nearest to hitting, measured across the desired direction at the moment of least
+    /// separation; an exact head-on conflict has no such side and starts on the right. So two
+    /// movers meeting head-on with the same `up` pass on opposite sides without coordinating.
+    ///
+    /// It is a pure function of its inputs: no random stream, no allocation.
+    /// @param position         The mover's position.
+    /// @param desiredVelocity  What the mover wants to fly.
+    /// @param radius           The mover's own radius.
+    /// @param up               The mover's up, which defines its right and left. When it is zero
+    ///                         or parallel to the desired velocity, an arbitrary perpendicular
+    ///                         stands in.
+    /// @param obstacles        What to keep clear of.
+    /// @param horizon          How far ahead, in seconds, a conflict counts; negative is taken as
+    ///                         zero, which counts only an overlap that already exists.
+    /// @param side             The side to try first.
+    /// @return `desiredVelocity` when nothing conflicts within the horizon, or when it is zero and
+    ///         so has no direction to turn from; otherwise the first clear candidate, or, when none
+    ///         is clear, the candidate (the desired velocity included) with the largest minimum
+    ///         clearance, the earliest in search order on a tie.
+    [[nodiscard]] inline vec3 AvoidObstacles(const vec3& position, const vec3& desiredVelocity,
+                                             const f32 radius, const vec3& up,
+                                             const std::span<const SteeringObstacle> obstacles,
+                                             const f32 horizon,
+                                             const AvoidSide side = AvoidSide::Either)
+    {
+        const f32 window = glm::max(horizon, 0.0f);
+        const f32 desiredClearance =
+            Detail::AvoidanceClearance(position, desiredVelocity, radius, obstacles, window);
+        if (desiredClearance >= 0.0f)
+        {
+            return desiredVelocity;
+        }
+        const f32 speed = glm::length(desiredVelocity);
+        if (speed <= 1e-6f)
+        {
+            return desiredVelocity;
+        }
+        const vec3 forward = desiredVelocity / speed;
+
+        vec3 right = glm::cross(forward, up);
+        if (glm::dot(right, right) < 1e-12f)
+        {
+            right = glm::cross(forward, glm::abs(forward.x) < 0.9f ? vec3(1.0f, 0.0f, 0.0f)
+                                                                   : vec3(0.0f, 1.0f, 0.0f));
+        }
+        right = glm::normalize(right);
+
+        vec3 start = side == AvoidSide::Left ? -right : right;
+        if (side == AvoidSide::Either)
+        {
+            // Away from the worst conflict: the mover's offset from that obstacle at their least
+            // separation, with its along-track part removed.
+            f32 worst = std::numeric_limits<f32>::infinity();
+            vec3 away(0.0f);
+            for (const SteeringObstacle& obstacle : obstacles)
+            {
+                const vec3 relativePosition = obstacle.Position - position;
+                const vec3 relativeVelocity = obstacle.Velocity - desiredVelocity;
+                const f32 time =
+                    glm::min(ClosestApproach(relativePosition, relativeVelocity).Time, window);
+                const vec3 offset = -(relativePosition + relativeVelocity * time);
+                const f32 margin = glm::length(offset) - (radius + obstacle.Radius);
+                if (margin < worst)
+                {
+                    worst = margin;
+                    away = offset - glm::dot(offset, forward) * forward;
+                }
+            }
+            if (glm::dot(away, away) > 1e-12f)
+            {
+                start = glm::normalize(away);
+            }
+        }
+        const vec3 turn = glm::cross(start, forward);
+
+        constexpr std::array<f32, 5> ConeDegrees{15.0f, 30.0f, 45.0f, 60.0f, 90.0f};
+        constexpr std::array<f32, 3> SpeedFractions{1.0f, 0.5f, 0.25f};
+        constexpr std::array<f32, 8> AzimuthDegrees{0.0f,   45.0f,  -45.0f,  90.0f,
+                                                    -90.0f, 135.0f, -135.0f, 180.0f};
+        std::array<vec3, AzimuthDegrees.size()> lateral{};
+        for (usize i = 0; i < AzimuthDegrees.size(); ++i)
+        {
+            const f32 azimuth = glm::radians(AzimuthDegrees[i]);
+            lateral[i] = glm::cos(azimuth) * start + glm::sin(azimuth) * turn;
+        }
+
+        vec3 best = desiredVelocity;
+        f32 bestClearance = desiredClearance;
+        for (const f32 coneDegrees : ConeDegrees)
+        {
+            const f32 cone = glm::radians(coneDegrees);
+            const f32 along = glm::cos(cone);
+            const f32 across = glm::sin(cone);
+            for (const f32 fraction : SpeedFractions)
+            {
+                for (const vec3& sideways : lateral)
+                {
+                    const vec3 candidate =
+                        (speed * fraction) * (along * forward + across * sideways);
+                    const f32 clearance =
+                        Detail::AvoidanceClearance(position, candidate, radius, obstacles, window);
+                    if (clearance >= 0.0f)
+                    {
+                        return candidate;
+                    }
+                    if (clearance > bestClearance)
+                    {
+                        best = candidate;
+                        bestClearance = clearance;
+                    }
+                }
+            }
+        }
+        return best;
     }
 }

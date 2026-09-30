@@ -571,3 +571,24 @@ The cooker's `ParseBuildConfiguration`/`ParseProject` (`Cooker.cpp`) and the edi
 in the tree not bound through the shared JSON walker. The cook resolution and CMake host-default
 selection are in [cooker/CLAUDE.md](../cooker/CLAUDE.md); the editor surface + host-capability
 preview gate in [editor/CLAUDE.md](../editor/CLAUDE.md).
+
+## Steering
+
+`Veng/Math/Steering.h` is the pure, device-free arithmetic an autonomous mover's controller composes
+into a desired velocity and a per-tick facing command. It knows nothing of components or the scene,
+allocates nothing, and every function is a pure function of its inputs; the frame conventions it
+shares (forward -Z, up +Y, right +X; all vectors in one caller-chosen frame) are stated once at the
+top of the header.
+
+- **Toward a goal:** `ArriveSpeed` (the capped braking curve), `Arrive`, `Seek`, and
+  `ApproachMovingPoint` (arrive in a moving target's frame).
+- **Facing:** `AngleBetween`, `ShortestArc`, and `FacingRates` (per-axis yaw/pitch/roll for this
+  tick, rate-capped).
+- **Keeping clear:** `ClosestApproach` (when and how near two constant-velocity points pass), and
+  `AvoidObstacles`, which predicts each `SteeringObstacle` (a moving sphere) over a horizon and
+  returns the velocity nearest the desired one that keeps the combined radius, searching a fixed,
+  bounded ladder of cones and speeds that starts on a preferred `AvoidSide`. It returns the desired
+  velocity bit-exactly when nothing conflicts. Finding the obstacles is the caller's, through the
+  physics queries; only spheres are avoided.
+
+The contracts, the candidate ladder, and its work bound are in the header's doc comments.
