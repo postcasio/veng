@@ -134,6 +134,12 @@ namespace Veng::Net
         /// conversion runs in the joined world's own ticks (a 1 Hz data world leads by whole slow
         /// ticks, never a shared 60 Hz default's).
         u32 SimTickRate = 60;
+        /// @brief The hosted world's snapshot interval, in its own sim ticks.
+        ///
+        /// Server-authoritative: the client's remote interpolation counts its delay in this spacing,
+        /// and the server's lag-compensation history reconstructs poses between samples on the same
+        /// ticks, so the two agree only when the client takes the server's value rather than its own.
+        u32 SnapshotInterval = 2;
         /// @brief The travel payload echoed back so the client's factory-parameterized reconstruction has its inputs.
         Blob Payload;
     };

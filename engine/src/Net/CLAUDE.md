@@ -51,8 +51,8 @@ on the main thread at frame boundaries** (receive → tick → send).
 
 `Server.h`/`Client.h` are the connection lifecycle. A `Net::Server` listens/accepts/denies; a
 `Net::Client` connects. The handshake is **two-tier** (`Handshake.h`): a **connection tier**
-establishes the process↔process link — the connect request carries `Net::ProtocolVersion` (**6**, the
-version that added the view delay to every input record) + the active pack's content digest,
+establishes the process↔process link — the connect request carries `Net::ProtocolVersion` (**7**, the
+version that added the hosted world's snapshot interval to the join reply) + the active pack's content digest,
 rejected loudly on a mismatch (the `VengModuleAbiVersion` discipline on the wire, so the wire
 carries only asset ids, never assets) — and a **per-world join tier** joins one world (below). The
 `ConnectAcceptMessage` carries **only the assigned connection id**: it no longer bakes in a single
@@ -182,6 +182,18 @@ for why the delta gate is nonetheless correct. `ReplicationClient`
 applies latest-wins, marks replicated entities **`Tier::Remote`**, and buffers each Transform
 snapshot for the **View-phase `RemoteInterpolationSystem`**, which renders a remote ~2 snapshot
 intervals in the past.
+
+**The snapshot interval is the server's.** Each hosted world's `ReplicationServer::Settings::SnapshotInterval`
+rides its join reply (`JoinAcceptMessage::SnapshotInterval`, beside `SimTickRate`), and on that reply
+`ClientHost` writes both into the joined scene's `RemoteInterpolationSystem` (reached through
+`SceneSimulation::FindSystem`), adds the interval to the join's tick-lead margin, and reports it as
+`ClientHost::GetSnapshotInterval(join)` — which the world drive's resync threshold reads. A client's
+own `GameNetInfo::SnapshotIntervalTicks` is never consulted for any of it. The reason is agreement:
+the client counts its view delay in snapshot intervals, and the server's lag-compensation history
+blends only between samples at multiples of the same interval, so a client assuming its own value
+would draw a moment the server cannot reconstruct. The delay *depth*
+(`InterpolationDelayIntervals`) stays the client's choice, since the view tick rides every input
+record and the server judges against whatever the client drew.
 
 ### The four faces of a null reference
 

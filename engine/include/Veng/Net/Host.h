@@ -590,8 +590,9 @@ namespace Veng
         ///
         /// The estimator converts RTT/jitter seconds into a tick lead at TickRate. Each join's
         /// controller is constructed at the tick rate its join reply carries (the hosted world's
-        /// SimTickRate), so TickRate here is only the default for a reply carrying none; MarginTicks
-        /// and the slew knobs apply to every joined world's controller as given.
+        /// SimTickRate), so TickRate here is only the default for a reply carrying none. MarginTicks
+        /// is the cushion beyond snapshot staleness: each join's controller adds the snapshot
+        /// interval its reply carried to it. The slew knobs apply to every join as given.
         Net::TickSyncSettings TickSync;
         /// @brief The spatial dequantization grid every joined world's replication client decodes with.
         ///
@@ -840,6 +841,15 @@ namespace Veng
         /// @brief The highest server sim tick a snapshot has carried for a specific join, or 0.
         /// @param join  The JoinId to resolve.
         [[nodiscard]] u64 LastServerTick(Net::JoinId join) const;
+
+        /// @brief The snapshot interval a join's server reported in its join reply, in server ticks.
+        ///
+        /// The interval is the server's: on the reply the host also writes it (with the reply's
+        /// SimTickRate) into the joined scene's RemoteInterpolationSystem, when the scene runs one,
+        /// so the client draws remotes on the same cadence the server's lag compensation rewinds on.
+        /// @param join  The JoinId to resolve.
+        /// @return The reported interval, or 0 for an unknown JoinId.
+        [[nodiscard]] u64 GetSnapshotInterval(Net::JoinId join) const;
 
         /// @brief The current join's tick-offset controller — smoothed RTT/jitter and the running estimate.
         [[nodiscard]] const Net::TickOffsetEstimator& TickSync() const;

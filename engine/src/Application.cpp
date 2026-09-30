@@ -1245,13 +1245,13 @@ namespace Veng
             // world in a non-metre unit supplies its own so its client does not reconcile unbounded
             // drift as "matched".
             .WorldTolerances = worldTolerances,
-            // The controller converts RTT/jitter to a tick lead at the sim rate; its margin carries
-            // the snapshot-cadence staleness plus the two-tick buffered-input cushion beyond the
-            // round-trip estimate. The world drive reads its target to seed and slew the sim clock.
+            // The two-tick buffered-input cushion beyond the round-trip estimate; each join adds its
+            // server's snapshot interval for the cadence staleness. The world drive reads the
+            // controller's target to seed and slew the sim clock.
             .TickSync =
                 Net::TickSyncSettings{
                     .TickRate = m_Info.World ? m_Info.World->SimTickRate : 60u,
-                    .MarginTicks = static_cast<f32>(net.SnapshotIntervalTicks) + 2.0f,
+                    .MarginTicks = 2.0f,
                 },
             // Match each joined world's decoder dequantization grid to the server's wire quantization,
             // with a per-key override for a world of a different spatial envelope.
@@ -2749,7 +2749,8 @@ namespace Veng
                 // recovers from a transient stall.
                 const bool seed = !state.ClockSeeded;
                 const bool largeDrift =
-                    std::llabs(drift) > static_cast<i64>(m_Net->Info.SnapshotIntervalTicks + 6);
+                    std::llabs(drift) >
+                    static_cast<i64>(m_Net->ClientHost->GetSnapshotInterval(join) + 6);
                 if (seed || largeDrift)
                 {
                     clock.SetTick(desired);

@@ -436,7 +436,7 @@ The knobs worth tuning per game, and what each trades:
 | `InterestRadius` | 0 (off) | Bandwidth vs. how far a player sees; the scale lever. |
 | `QuantizeSpatial` / `PositionQuantum` | on / 1 mm | Bandwidth vs. positional precision on the wire. |
 | `KeyframeIntervalSnapshots` | 16 | Re-base cost vs. recovery latency after baseline loss. |
-| `SnapshotIntervalTicks` | 2 (30 Hz) | Bandwidth vs. remote-interpolation freshness. |
+| `SnapshotIntervalTicks` | 2 (30 Hz) | Bandwidth vs. remote-interpolation freshness. The host's value is authoritative: a joining client adopts the interval its join reply carries. |
 | `MaxRewindSeconds` | 0.25 s | How far a lagging client is compensated vs. how long a target stays hittable after reaching cover. |
 | `ReconcileTolerances::Position` | 1 cm | Correction sensitivity; must stay ≥ `PositionQuantum`. |
 

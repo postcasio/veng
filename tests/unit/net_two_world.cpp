@@ -25,6 +25,7 @@
 #include <Veng/Net/WorldEnvelope.h>
 #include <Veng/Net/WorldKey.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Scene/BuiltinSystems.h>
 #include <Veng/Scene/BuiltinTypes.h>
 
 #include "support/TestComponents.h"
@@ -34,6 +35,7 @@
 #include <Veng/Scene/Movement.h>
 #include <Veng/Scene/RemoteInterpolationSystem.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/SystemRegistry.h>
 #include <Veng/World.h>
 #include <Veng/WorldDirectory.h>
@@ -6789,7 +6791,7 @@ TEST_CASE("The join reply carries each world's SimTickRate; each join's estimato
         const f32 fastTarget = client.Host->TickSync(fastJoin).TargetOffset();
         const f32 slowTarget = client.Host->TickSync(slowJoin).TargetOffset();
         CHECK(fastTarget > slowTarget + 1.0f);
-        CHECK(slowTarget < 2.5f);
+        CHECK(slowTarget < client.Host->TickSync(slowJoin).GetSettings().MarginTicks + 1.5f);
 
         client.Client->Disconnect();
         for (u64 step = 0; step < 40; ++step)
@@ -6834,6 +6836,77 @@ TEST_CASE("The join reply carries each world's SimTickRate; each join's estimato
     }
     CHECK(presenting == 1);
     CHECK(slowStanding == 1);
+}
+
+TEST_CASE("A joined client adopts its server's snapshot interval and tick rate, never its own")
+{
+    // The server hosts at a non-default cadence; the client scene's interpolation starts at the
+    // defaults. After the join, the client draws on the server's cadence while keeping its own delay.
+    constexpr u32 ServerInterval = 5;
+    constexpr u32 ServerRate = 30;
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+
+    TypeRegistry serverTypes;
+    RegisterBuiltinTypes(serverTypes);
+    Unique<Scene> serverScene = Scene::Create(serverTypes);
+    Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
+        .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
+        .World = *serverScene,
+        .Assets = FakeAssets(),
+        .LevelId = LevelId,
+        .SimTickRate = ServerRate,
+        .Replication = ReplicationServer::Settings{.SnapshotInterval = ServerInterval},
+    });
+    REQUIRE(hostR.has_value());
+    Unique<ServerHost> host = std::move(*hostR);
+
+    TypeRegistry clientTypes;
+    RegisterBuiltinTypes(clientTypes);
+    SystemRegistry systems;
+    RegisterBuiltinSystems(systems);
+    Unique<Scene> clientScene;
+    Unique<Net::Client> client = *Net::Client::Connect(
+        ClientInfo{.TransportOverride = clientT.get(), .Connection = FastConfig});
+    Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
+        .Client = *client,
+        .Assets = FakeAssets(),
+        .LoadLevel = [&](AssetId) -> Scene*
+        {
+            clientScene = Scene::Create(clientTypes);
+            clientScene->SetSimulation(CreateUnique<SceneSimulation>(
+                systems, vector<SystemId>{SystemIdOf<RemoteInterpolationSystem>()}));
+            auto* interpolation =
+                clientScene->GetSimulation()->FindSystem<RemoteInterpolationSystem>();
+            interpolation->SetSettings(RemoteInterpolationSystem::Settings{
+                .SnapshotInterval = 2, .InterpolationDelayIntervals = 3, .SimTickRate = 60.0});
+            return clientScene.get();
+        },
+        .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
+    });
+
+    f64 now = 0.0;
+    for (u64 tick = 1; tick <= 60 && !clientHost->IsJoined(); ++tick)
+    {
+        now += 1.0 / 60.0;
+        serverScene->SetChangeTick(tick);
+        host->Pump(now, tick);
+        clientHost->Pump(now);
+    }
+    REQUIRE(clientHost->IsJoined());
+    REQUIRE(clientScene != nullptr);
+
+    const JoinId join = clientHost->Joins().front();
+    CHECK(clientHost->GetSnapshotInterval(join) == ServerInterval);
+
+    const RemoteInterpolationSystem::Settings& settings =
+        clientScene->GetSimulation()->FindSystem<RemoteInterpolationSystem>()->GetSettings();
+    CHECK(settings.SnapshotInterval == ServerInterval);
+    CHECK(settings.SimTickRate == doctest::Approx(ServerRate));
+    CHECK(settings.InterpolationDelayIntervals == 3);
+
+    // The tick lead carries the server's cadence staleness on top of the client's cushion.
+    CHECK(clientHost->TickSync(join).GetSettings().MarginTicks ==
+          doctest::Approx(Net::TickSyncSettings{}.MarginTicks + ServerInterval));
 }
 
 TEST_CASE("A world below the host pump rate stamps cadence in its own tick space: its writes ride "

@@ -104,10 +104,15 @@ namespace Veng
         struct Settings
         {
             /// @brief Server ticks between snapshots — the sample spacing the delay is counted in.
+            ///
+            /// The server's value, not the client's: a ClientHost writes the interval its join reply
+            /// carried (see ClientHost::GetSnapshotInterval).
             u64 SnapshotInterval = 2;
             /// @brief How many snapshot intervals in the past to render, for smoothness under one lost snapshot.
             u64 InterpolationDelayIntervals = 2;
             /// @brief The simulation tick rate the playback clock advances real frame time in.
+            ///
+            /// The server world's rate; a ClientHost writes the one its join reply carried.
             f64 SimTickRate = 60.0;
         };
 

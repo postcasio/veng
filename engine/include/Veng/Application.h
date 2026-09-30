@@ -134,6 +134,9 @@ namespace Veng
         /// @brief Maximum simultaneously accepted connections; a further request is denied.
         u32 MaxConnections = 16;
         /// @brief Emit a snapshot every this many sim ticks (2 ⇒ 30 Hz at a 60 Hz sim).
+        ///
+        /// Read by a host only. A joining client adopts the interval its server's join reply
+        /// carries, so a client's own value never shapes its interpolation.
         u32 SnapshotIntervalTicks = 2;
         /// @brief How many recent input ticks each client input packet carries redundantly (the loss window).
         u32 InputRedundancyTicks = 3;

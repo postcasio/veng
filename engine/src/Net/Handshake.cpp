@@ -237,6 +237,7 @@ namespace Veng::Net
         WriteU64LE(out, message.WorldDigest.Hi);
         WriteU32LE(out, message.SeatNetId);
         WriteU32LE(out, message.SimTickRate);
+        WriteU32LE(out, message.SnapshotInterval);
         WriteBlob(out, message.Payload);
         return out;
     }
@@ -276,7 +277,7 @@ namespace Veng::Net
 
     optional<JoinAcceptMessage> DecodeJoinAccept(std::span<const u8> payload)
     {
-        constexpr usize size = TypeByteSize + 4 + 2 + 8 + 8 + 8 + 4 + 4;
+        constexpr usize size = TypeByteSize + 4 + 2 + 8 + 8 + 8 + 4 + 4 + 4;
         if (!HasJoinType(payload, JoinMessageType::JoinAccept, size))
         {
             return {};
@@ -289,8 +290,9 @@ namespace Veng::Net
                 ContentDigest{.Lo = ReadU64LE(payload, 15), .Hi = ReadU64LE(payload, 23)},
             .SeatNetId = ReadU32LE(payload, 31),
             .SimTickRate = ReadU32LE(payload, 35),
+            .SnapshotInterval = ReadU32LE(payload, 39),
         };
-        usize offset = 39;
+        usize offset = 43;
         if (!ReadBlob(payload, offset, message.Payload))
         {
             return {};

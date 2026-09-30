@@ -7,7 +7,9 @@
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/RemoteInterpolationSystem.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/SceneSimulation.h>
 #include "Handshake.h"
 #include <Veng/Net/WorldEnvelope.h>
 
@@ -468,14 +470,16 @@ namespace Veng
 
             const auto sendAccept = [&](Net::JoinId joinId, const HostedWorld& world, NetId seatNet)
             {
-                const vector<u8> payload = Net::EncodeJoinAccept(
-                    Net::JoinAcceptMessage{.RequestToken = request.RequestToken,
-                                           .Join = joinId,
-                                           .LevelId = world.LevelId.Value,
-                                           .WorldDigest = world.Digest,
-                                           .SeatNetId = seatNet,
-                                           .SimTickRate = world.SimTickRate,
-                                           .Payload = Directory->PayloadOf(world.Id)});
+                const vector<u8> payload = Net::EncodeJoinAccept(Net::JoinAcceptMessage{
+                    .RequestToken = request.RequestToken,
+                    .Join = joinId,
+                    .LevelId = world.LevelId.Value,
+                    .WorldDigest = world.Digest,
+                    .SeatNetId = seatNet,
+                    .SimTickRate = world.SimTickRate,
+                    .SnapshotInterval =
+                        static_cast<u32>(world.Replication.GetSettings().SnapshotInterval),
+                    .Payload = Directory->PayloadOf(world.Id)});
                 (void)Server->Get(id).Send(Net::Channel::ReliableOrdered,
                                            Net::EncodeWorldEnvelope(Net::ControlJoinId, payload));
             };
@@ -1399,6 +1403,8 @@ namespace Veng
             Net::PredictionHistory History;
             vector<Entity> Predicted;
             u64 LastServerTick = 0;
+            // The hosted world's snapshot interval, as the join reply carried it.
+            u64 SnapshotInterval = 2;
             Net::TickOffsetEstimator TickSync;
             // Resolved per key at join from WorldTolerances (or the shared value): a world whose linear
             // unit is not the metre reconciles against its own scale, not the shared metre grid.
@@ -1615,6 +1621,29 @@ namespace Veng
             }
         }
 
+        // The server's cadence is authoritative: the client draws remotes a whole number of snapshot
+        // intervals in the past, and a server judging a query against that view rewinds between
+        // samples on the same ticks. The delay depth stays the client's own choice.
+        static void ConfigureRemoteInterpolation(Scene& scene, const u64 snapshotInterval,
+                                                 const u32 simTickRate)
+        {
+            SceneSimulation* const simulation = scene.GetSimulation();
+            RemoteInterpolationSystem* const interpolation =
+                simulation != nullptr ? simulation->FindSystem<RemoteInterpolationSystem>()
+                                      : nullptr;
+            if (interpolation == nullptr)
+            {
+                return;
+            }
+            RemoteInterpolationSystem::Settings settings = interpolation->GetSettings();
+            settings.SnapshotInterval = snapshotInterval;
+            if (simTickRate > 0)
+            {
+                settings.SimTickRate = static_cast<f64>(simTickRate);
+            }
+            interpolation->SetSettings(settings);
+        }
+
         // Validates the reply's echoed world digest against the client's own reconstruction, loads the
         // join's scene, and — on success — installs the JoinClient and acks its per-world ClientReady.
         // A digest mismatch is rejected loudly: no JoinClient is installed, so no stream ever applies.
@@ -1690,7 +1719,14 @@ namespace Veng
             {
                 tickSync.TickRate = accept.SimTickRate;
             }
+            if (accept.SnapshotInterval > 0)
+            {
+                jc.SnapshotInterval = accept.SnapshotInterval;
+            }
+            // A snapshot is up to one of the server's intervals stale on arrival, so the lead carries it.
+            tickSync.MarginTicks += static_cast<f32>(jc.SnapshotInterval);
             jc.TickSync = Net::TickOffsetEstimator(tickSync);
+            ConfigureRemoteInterpolation(*scene, jc.SnapshotInterval, accept.SimTickRate);
             jc.Replication = CreateUnique<ReplicationClient>(ResolvePrefab);
             // The per-key spatial envelope: WorldQuantization, when set, yields this key's grid so two
             // hosted worlds with different envelopes each decode correctly on one client; unset threads
@@ -2191,6 +2227,12 @@ namespace Veng
     {
         const State::JoinClient* jc = m_State->JoinClientOf(join);
         return jc != nullptr ? jc->LastServerTick : 0;
+    }
+
+    u64 ClientHost::GetSnapshotInterval(const Net::JoinId join) const
+    {
+        const State::JoinClient* jc = m_State->JoinClientOf(join);
+        return jc != nullptr ? jc->SnapshotInterval : 0;
     }
 
     const Net::TickOffsetEstimator& ClientHost::TickSync() const

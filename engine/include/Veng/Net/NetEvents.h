@@ -31,8 +31,9 @@ namespace Veng::Net
     /// account-tier deny reasons. Version 5 grew the connect request an opaque account profile blob
     /// (the admission profile) and the over-budget deny reason. Version 6 grew every input record
     /// with the view delay (the tick the sender's view was drawn at, behind its input tick), which a
-    /// server judges hit queries against.
-    inline constexpr u32 ProtocolVersion = 6;
+    /// server judges hit queries against. Version 7 grew the join reply with the hosted world's
+    /// snapshot interval, which a client's remote interpolation adopts in place of its own setting.
+    inline constexpr u32 ProtocolVersion = 7;
 
     /// @brief Wire overhead of a connect request, in bytes, ahead of its account profile blob.
     ///
