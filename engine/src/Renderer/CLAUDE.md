@@ -52,7 +52,7 @@ The renderer is split along three conventions, and a new battery follows all of 
 - **A pass lives in its own file under `Passes/`.** Every `ScenePass` — the g-buffer, deferred
   lighting, translucent, picking, TAA, the non-temporal scene upscale, scene-color copy, the
   directional and punctual shadow
-  passes, SSAO, the skybox, the sky/point-field/volume/sprite passes, the depth-of-field composite,
+  passes, SSAO, the skybox, the sky/point-field/volume/ribbon/sprite passes, the depth-of-field composite,
   the debug draw (and its companion
   billboard pick), and the debug blits — is a `.h/.cpp` pair in `src/Renderer/Passes/`. The
   renderer holds them in `m_Passes` and wires them in `Rebuild`; each pass owns its own sizing,
@@ -112,8 +112,9 @@ separates *deciding* from *wiring*:
   with more than two meaningful states is a **named enum field**, not a boolean pair:
   `DofStages { None, CocOnly, Full }` makes "composited without the stages wired" unrepresentable
   rather than merely unreachable.
-- **The per-frame content-active flags are not topology.** The sprite pass's (`SpriteActive`,
-  with its idle counter) lives in `SceneRenderer::Internal` beside the sprite plan it gates.
+- **The per-frame content-active flags are not topology.** The sprite and ribbon passes'
+  (`SpriteActive` and `RibbonActive`, each with its idle counter) live in `SceneRenderer::Internal`
+  beside the plans they gate.
 - **The three per-frame field-active flags are not topology and stay loose members.**
   `m_PointFieldActive`, `m_ScenePointFieldActive`, and `m_VolumeFieldActive` are resolved from
   *scene content* each frame (`ResolvePointFields` / `ResolveVolumeFields`), not from settings — so
@@ -648,9 +649,9 @@ adds it onto the scene.
 **A `FlipbookSprite` component draws a flipbook as a camera-facing HDR quad** (the component and the
 `Flipbook` asset are in [../Scene/CLAUDE.md](../Scene/CLAUDE.md) and
 [../Asset/CLAUDE.md](../Asset/CLAUDE.md)). `SpriteScenePass` (`Passes/SpriteScenePass.h`) is wired
-**immediately after the full-resolution translucent pass**, in both compositing arms, into the same
-lit target and bloom mask — so sprites composite over translucent surfaces, resolve under TAA with
-the scene, bloom, and tonemap.
+**after the full-resolution translucent pass and the ribbon pass that follows it**, in both
+compositing arms, into the same lit target and bloom mask — so sprites composite over translucent
+surfaces and ribbons, resolve under TAA with the scene, bloom, and tonemap.
 
 - **Content-driven with deactivation hysteresis.** `GatherSprites` walks `View<FlipbookSprite>` each
   `Execute` (skipping a sprite whose flipbook or atlas is not resident, whose opacity is zero, or
@@ -679,6 +680,51 @@ the scene, bloom, and tonemap.
 
 `tests/gpu/sprite_pass.cpp` renders a white premultiplied flipbook through each blend and checks the
 composited centre pixel against the tint, the additive sum, and the bloom-masked path.
+
+### Ribbons and trails
+
+**`Ribbon` and `Trail` components draw as camera-facing HDR bands** (the components, `RibbonSystem`
+and `SpawnTransientBeam` are in [../Scene/CLAUDE.md](../Scene/CLAUDE.md), "Ribbons and trails").
+`RibbonScenePass` (`Passes/RibbonScenePass.h`) is wired **after the full-resolution translucent pass
+and immediately ahead of the sprite pass**, in both compositing arms, into the same lit target and
+bloom mask. **Why ahead of sprites:** a beam or a trail is a long element that sprite effects stand
+on — a flash at a muzzle, a burst at an impact, a puff at a trail's head — so an alpha sprite
+composites over a ribbon rather than under it; additive content is order-free either way. Neither
+pass writes depth, so neither occludes the other.
+
+- **Content-driven with deactivation hysteresis**, exactly the sprite pass's shape: `GatherRibbons`
+  runs every `Execute` into a `RibbonDrawPlan`, the pass is wired on the first non-empty gather and
+  unwired after `RibbonIdleFrameLimit` consecutive empty ones, and a scene that never carries one has
+  no pass (the smoke golden is unaffected).
+- **One record per segment, no vertex input.** A `Ribbon` is one segment; a `Trail` is a segment per
+  consecutive pair of its samples plus one to its entity's interpolated position while `Emitting`,
+  with coincident points merged — so a trail contributes **at most `MaxSamples` segments** and a
+  frame's buffer is bounded by ribbons plus trail samples. Each 96-byte `GpuRibbonSegment` carries
+  both ends' positions, widths, colours and opacities, and a tangent per end taken across that
+  point's neighbours, so the two segments meeting at a joint share its edge and a curved trail draws
+  without gaps. The records sit in a host-mapped ring, one region per frame in flight at set 3, as
+  the sprite pass's do.
+- **Positions are rebased to the eye on the CPU, in double.** The gather subtracts the camera's
+  position from every point before upload and the vertex stage rotates the eye-relative point by the
+  View matrix's rotation alone, so no large world coordinate is pushed through the view translation
+  — the far-from-origin precision loss `InvViewRotProj` exists to avoid for rays.
+- **Camera-facing about its own axis, floored at a pixel.** Each end is pushed out along the
+  direction perpendicular to both the ribbon's tangent and the eye ray, so the band turns about its
+  axis to face the camera. An end narrower than `MinPixelWidth` (1.5 px) widens to it and scales its
+  opacity by the ratio, so a distant thin beam keeps its energy instead of breaking into a
+  shimmering dotted line. The cross-section falls off as `(1 − v²)²`, full on the centre line.
+- **Two draws, the translucent pass's presets.** The fragment returns straight colour and coverage;
+  the alpha set, sorted back to front on each segment's midpoint view depth, draws through
+  `BlendState::AlphaBlend()`, and the additive set through `BlendState::AlphaAdditive()` (coverage-
+  weighted, destination alpha kept) — no blend of its own.
+- **The bloom mask is written by luminance** of the contributed light (`colour × coverage`) when the
+  frame wires one, so an HDR beam glows whatever the threshold.
+- **Budget: `MaxRibbonSegmentsPerFrame` (8192).** Past it the rest are dropped for the frame and the
+  renderer warns once for its lifetime. Depth-tested against the opaque depth, never written.
+
+`tests/gpu/ribbon_pass.cpp` checks a ribbon's centre-line colour through each blend, a trail
+lighting its path, and the bloom-masked path; `tests/unit/ribbon.cpp` checks the trail ring's
+bounds, the stationary trail's empty gather, the packing bound, and a pooled beam's fade and return.
 
 ### Forward lighting for translucent surfaces
 

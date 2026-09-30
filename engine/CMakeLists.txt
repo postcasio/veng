@@ -233,6 +233,7 @@ add_library(veng SHARED
         src/Scene/DeviceAssignmentSystem.cpp
         src/Scene/EffectPool.cpp
         src/Scene/FlipbookSystem.cpp
+        src/Scene/RibbonSystem.cpp
         src/Scene/FocusRequestReconcile.cpp
         src/Scene/InputMappingSystem.cpp
         src/Scene/InteractionSystem.cpp
@@ -277,6 +278,7 @@ add_library(veng SHARED
         src/Renderer/Passes/GuiHdrOverlayScenePass.cpp
         src/Renderer/Passes/GBufferScenePass.cpp
         src/Renderer/Passes/PickingScenePass.cpp
+        src/Renderer/Passes/RibbonScenePass.cpp
         src/Renderer/Passes/SpriteScenePass.cpp
         src/Renderer/Passes/TranslucentScenePass.cpp
         src/Renderer/Passes/HalfResCompositeScenePass.cpp

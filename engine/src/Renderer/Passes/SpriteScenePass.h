@@ -84,8 +84,8 @@ namespace Veng::Renderer
 
     /// @brief Draws the frame's flipbook sprites into the lit scene color.
     ///
-    /// Wired immediately after the full-resolution translucent pass, so sprites composite over
-    /// translucent surfaces and ahead of TAA, bloom, and tonemap. Each sprite is a camera-facing quad
+    /// Wired after the full-resolution translucent pass and the ribbon pass, so sprites composite
+    /// over translucent surfaces and ribbons, and ahead of TAA, bloom, and tonemap. Each sprite is a camera-facing quad
     /// expanded in the vertex stage from a per-frame record buffer (no vertex input), depth-tested
     /// against the opaque depth with depth writes off. The alpha set draws first, premultiplied-over;
     /// the additive set follows. Both write the bloom mask by the sprite's luminance when the frame

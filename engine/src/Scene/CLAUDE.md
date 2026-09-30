@@ -193,14 +193,44 @@ interpolation), and `FlipbookSprite` (plays an `AssetHandle<Flipbook>` as a came
 — size, HDR tint, opacity, a playback rate or a duration override, a screen-plane roll, and a
 `SpriteBlend` of `Asset`, `Alpha` or `Additive`; the View-phase `FlipbookSystem` advances its `Time`
 and sets its runtime-only `Finished` once a one-shot sequence has played, and a finished sprite
-draws nothing — see [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Flipbook sprites").
+draws nothing — see [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Flipbook sprites"), and
+`Ribbon` and `Trail` (see [Ribbons and trails](#ribbons-and-trails) below).
+
+## Ribbons and trails
+
+**A `Ribbon` is a straight camera-facing band between two world points; a `Trail` is a band through
+the recent positions of the entity it sits on.** Both are presentation (never replicated, drawn by
+the renderer's ribbon pass — [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Ribbons and trails"),
+carry HDR colour that feeds bloom, and choose `Additive` (order-free light) or alpha-over.
+
+- **`Ribbon`** — `From`/`To` are **world space and ignore the entity's `Transform`**, so the owner
+  moves the endpoints directly (a beam from a muzzle to an impact, a streak advanced along a path).
+  Width, colour and opacity run linearly `From` → `To`. A positive `Lifetime` fades it linearly to
+  nothing as `Age` advances; `Lifetime` 0 holds it.
+- **`Trail`** — the View-phase **`RibbonSystem`** calls `AdvanceTrail` each frame with the entity's
+  world position at the frame's render fraction: samples age, those at `Lifetime` drop, the head is
+  recorded when the trail is empty or has moved more than `MinSampleDistance`, and the ring is
+  trimmed to `MaxSamples`. The runtime `Samples` carry no `VE_FIELD`. The drawn band is full at the
+  head and fades (opacity to 0, width to `Width × TailWidthScale`) by each sample's age, so a trail
+  that stops moving empties within `Lifetime`. Clearing `Emitting` stops recording and detaches the
+  head, so the trail drains where it lies; destroying the entity takes the trail with it.
+  **`AttachTrail(scene, entity, trail)`** adds or replaces one with its samples cleared, so a reused
+  or teleported entity starts fresh instead of streaking from where it stood. A prefab may carry a
+  `Trail`; it stands on every peer that instantiates the prefab.
+- **`RibbonSystem`** (`Veng/Scene/RibbonSystem.h`) also advances every `Ribbon`'s `Age`, so a level
+  lists it for its trails to record and its ribbons to fade.
 
 ## Transient effects — a bounded pool, spawned and forgotten
 
 **`SpawnTransientEffect(scene, desc, pose, lifetime) → Entity`** (`Veng/Scene/EffectPool.h`) stands
-a short-lived effect — an `EffectDesc` of a `FlipbookSprite` and an optional `Light` — at a pose, and
-the caller forgets it: the scene's **`EffectPool`** returns the entity to a free list when its sprite
-finishes or its lifetime ends. The pool is **scene-owned** (`Scene::SetEffectPool` /
+a short-lived effect — an `EffectDesc` of an optional `FlipbookSprite`, an optional `Ribbon` and an
+optional `Light` — at a pose, and the caller forgets it: the scene's **`EffectPool`** returns the
+entity to a free list when its lifetime ends, or once every visual it carries has ended (its sprite
+finished and its ribbon faded; a ribbon with no `Lifetime` and a looping sprite never end by
+themselves). **`SpawnTransientBeam(scene, ribbon, lifetime)`** is the beam front door: the ribbon
+alone, its `Lifetime` set to `lifetime` so it fades out as it goes, posed at its `From` end; the
+entity may be moved or its ribbon edited while `IsLive`, which is how a moving streak is advanced,
+and the level must run `RibbonSystem` (the fade) beside `FlipbookSystem` (the retire). The pool is **scene-owned** (`Scene::SetEffectPool` /
 `GetEffectPool`, a `Unique` like the pose history; `Clone()` does not copy it), so its bound is per
 scene, and the first `SpawnTransientEffect` on a scene installs one of `DefaultEffectPoolCapacity`
 (64) — a consumer wanting a different bound installs a sized `EffectPool` first. `FlipbookSystem`
@@ -211,7 +241,7 @@ updates it each frame after advancing the sprites, so the level must run `Flipbo
 - **Pooled entities are `Tier::Local` roots carrying `ViewPose`.** An effect is each peer's own
   presentation and never replicates; `ViewPose` makes a reused entity resolve its new pose live
   rather than blending from where its previous effect stood. A free entity keeps its `Transform`
-  and carries no sprite and no light, so it draws and lights nothing.
+  and carries no sprite, ribbon or light, so it draws and lights nothing.
 - **An `Entity` from `Spawn` is only this effect's until it ends.** Entities are reused, so a kept
   handle names a later effect afterwards; `IsLive` answers until then, and a caller wanting to follow
   an effect copies what it needs at spawn. `Retire` ends one early. A lifetime of 0 or less lets the
@@ -596,7 +626,8 @@ rejects a duplicate id. The builtins register in this order (`BuiltinSystems.cpp
 `DeviceAssignmentSystem`, `InputMappingSystem`, `BehaviorSystem`, `MovementSystem`, `CharacterMovementSystem`,
 `RootMotionDriveSystem`, `InteractionSystem`, `VehicleSystem`, `CameraRigSystem`,
 `CharacterAnimationSystem`, `AnimationSystem`, `ConstantMotionSystem`, `RemoteCharacterBodySystem`,
-`PhysicsSystem`, `PoseHistorySystem`, `RemoteInterpolationSystem`, `FlipbookSystem` (View-phase —
+`PhysicsSystem`, `PoseHistorySystem`, `RemoteInterpolationSystem`, `RibbonSystem` (View-phase —
+ribbon ages and trail samples, ahead of the pool's retire), `FlipbookSystem` (View-phase —
 sprite playback and the effect pool), `TimeOfDaySystem`, `AudioSystem` (View-phase — it
 places, spatializes, and publishes the scene's `AudioSource`s against the `AudioListener` at the
 interpolated poses the frame draws; see [../Audio/CLAUDE.md](../Audio/CLAUDE.md)). Registration is GPU-free (building a system touches no `Context`/device), so

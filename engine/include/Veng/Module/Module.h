@@ -171,10 +171,13 @@ extern "C"
 /// Version 37 grows ReplicationServer's per-connection state with the set of entities whose spawn
 /// was refused. A module that holds a ReplicationServer destroys it through the inline destructor
 /// it instantiates, so a stale module would tear down the connection map at the old element layout.
+/// Version 38 makes EffectDesc's sprite optional and grows it with an optional ribbon. A module
+/// builds the EffectDesc it hands SpawnTransientEffect, so a stale module would pass a struct of
+/// the old layout that the engine reads its sprite, ribbon and light from at shifted offsets.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 37u
+#define VENG_MODULE_ABI_VERSION 38u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

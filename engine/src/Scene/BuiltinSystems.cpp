@@ -17,6 +17,7 @@
 #include <Veng/Scene/Movement.h>
 #include <Veng/Scene/RemoteInterpolationSystem.h>
 #include <Veng/Scene/FlipbookSystem.h>
+#include <Veng/Scene/RibbonSystem.h>
 #include <Veng/Scene/RootMotion.h>
 #include <Veng/Scene/SystemRegistry.h>
 #include <Veng/Scene/TimeOfDay.h>
@@ -87,6 +88,10 @@ namespace Veng
         // Writes each Remote-tier entity's displayed Transform from its snapshot buffer, in the past.
         // View-phase — presentation only. Idles with no remote entities, so single-player is untouched.
         registry.Register<RemoteInterpolationSystem>();
+
+        // Ages every Ribbon and records every Trail's head. View-phase — presentation only, on every
+        // peer; ahead of FlipbookSystem so a pooled beam's fade is current when the pool retires it.
+        registry.Register<RibbonSystem>();
 
         // Plays every FlipbookSprite and retires the scene's finished transient effects. View-phase
         // — presentation only, on every peer. Idles with no sprites.

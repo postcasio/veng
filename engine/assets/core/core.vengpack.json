@@ -502,6 +502,21 @@
       "source": "shaders/sprite_masked.frag.shader.json"
     },
     {
+      "id": "0xF6BFB05FF0406BA1",
+      "type": "Shader",
+      "source": "shaders/ribbon.vert.shader.json"
+    },
+    {
+      "id": "0x53221CEA8AE17B58",
+      "type": "Shader",
+      "source": "shaders/ribbon.frag.shader.json"
+    },
+    {
+      "id": "0x27AC55CDC4A9B5EF",
+      "type": "Shader",
+      "source": "shaders/ribbon_masked.frag.shader.json"
+    },
+    {
       "id": "0x21CF1A41D3AA8650",
       "type": "Shader",
       "source": "shaders/pointfield/point_sprite.vert.shader.json"

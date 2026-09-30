@@ -253,6 +253,11 @@ namespace Veng
         registry.Register<SpriteBlend>();
         registry.Register<FlipbookSprite>();
 
+        // World-space ribbons and point trails, gathered by the renderer's ribbon pass per Execute
+        // and advanced by RibbonSystem. A trail's runtime samples carry no reflected field.
+        registry.Register<Ribbon>();
+        registry.Register<Trail>();
+
         // A document mapped onto a world mesh, driven into an HDR target and glowing through the
         // scene's bloom. GuiSurfaceDomain and the AssetHandle<Gui::UIDocument> recipe leaf register
         // transitively through its fields.

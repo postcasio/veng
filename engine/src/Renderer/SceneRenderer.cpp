@@ -40,6 +40,7 @@
 #include "SkyResolver.h"
 #include "DofChain.h"
 #include "Passes/DofCompositeScenePass.h"
+#include "Passes/RibbonScenePass.h"
 #include "Passes/SpriteScenePass.h"
 #include "SsrChain.h"
 #include "AaResolve.h"
@@ -150,6 +151,10 @@ namespace Veng::Renderer
         // nothing and costs only its record ring.
         constexpr u32 SpriteIdleFrameLimit = 256;
 
+        // How many consecutive ribbon-less gathers a wired ribbon pass survives before it is
+        // unwired, for the sprite pass's reason: transient beams come and go in bursts.
+        constexpr u32 RibbonIdleFrameLimit = 256;
+
         // Executes at the full allocation before the non-temporal resolve-anchor promotion is
         // unwired. Deactivation hysteresis, the half-res-translucency reason: a dynamic-resolution
         // controller sitting on its ceiling dips below it and recovers within a few frames, and
@@ -183,6 +188,15 @@ namespace Veng::Renderer
         u32 SpriteIdleFrames = 0;
         // Whether the over-budget warning has been logged; once per renderer.
         bool SpriteBudgetWarned = false;
+        // The frame's gathered ribbon and trail segments, which the ribbon pass uploads and draws.
+        RibbonDrawPlan RibbonPlan;
+        // Whether the pass set carries the ribbon pass, with the sprite pass's hysteresis
+        // (RibbonIdleFrameLimit).
+        bool RibbonActive = false;
+        // Consecutive Executes the ribbon gather has come back empty while the pass is wired.
+        u32 RibbonIdleFrames = 0;
+        // Whether the ribbon over-budget warning has been logged; once per renderer.
+        bool RibbonBudgetWarned = false;
     };
 
     Unique<SceneRenderer> SceneRenderer::Create(const SceneRendererInfo& info)
@@ -786,8 +800,14 @@ namespace Veng::Renderer
                 m_Context, renderExtent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
                 m_RefractionSceneId, m_RefractionDepthId, HdrFormat, m_BloomMaskId, BloomMaskFormat,
                 /*halfResolution=*/false, forwardSets));
-            // Flipbook sprites composite over the translucent surfaces, into the same target and
-            // bloom mask, while the scene carries any.
+            // Ribbons and trails composite over the translucent surfaces, and flipbook sprites over
+            // those, into the same target and bloom mask, while the scene carries any.
+            if (m_Internal->RibbonActive)
+            {
+                m_Passes.push_back(CreateUnique<RibbonScenePass>(
+                    m_Context, m_Assets, &m_Internal->RibbonPlan, lightingTargetId, depthId,
+                    m_BloomMaskId, HdrFormat, BloomMaskFormat, m_Context.GetMaxFramesInFlight()));
+            }
             if (m_Internal->SpriteActive)
             {
                 m_Passes.push_back(CreateUnique<SpriteScenePass>(
@@ -1065,8 +1085,14 @@ namespace Veng::Renderer
                 m_Context, renderExtent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
                 m_RefractionSceneId, m_RefractionDepthId, HdrFormat, m_BloomMaskId, BloomMaskFormat,
                 /*halfResolution=*/false, forwardSets));
-            // Flipbook sprites composite over the translucent surfaces, into the same target and
-            // bloom mask, while the scene carries any.
+            // Ribbons and trails composite over the translucent surfaces, and flipbook sprites over
+            // those, into the same target and bloom mask, while the scene carries any.
+            if (m_Internal->RibbonActive)
+            {
+                m_Passes.push_back(CreateUnique<RibbonScenePass>(
+                    m_Context, m_Assets, &m_Internal->RibbonPlan, lightingTargetId, depthId,
+                    m_BloomMaskId, HdrFormat, BloomMaskFormat, m_Context.GetMaxFramesInFlight()));
+            }
             if (m_Internal->SpriteActive)
             {
                 m_Passes.push_back(CreateUnique<SpriteScenePass>(
@@ -2492,14 +2518,32 @@ namespace Veng::Renderer
                 m_Internal->SpritePlan.Dropped, MaxSpritesPerFrame);
             m_Internal->SpriteBudgetWarned = true;
         }
+        // The same for ribbons and trails, with their own hysteresis.
+        GatherRibbons(resolvedView.World, resolvedView.Camera, resolvedView.Alpha,
+                      m_Internal->RibbonPlan);
+        if (m_Internal->RibbonPlan.Dropped > 0 && !m_Internal->RibbonBudgetWarned)
+        {
+            Log::Warn(
+                "SceneRenderer: {} ribbon segments exceed the per-frame budget of {} and were "
+                "not drawn; later frames clamp without warning again.",
+                m_Internal->RibbonPlan.Dropped, MaxRibbonSegmentsPerFrame);
+            m_Internal->RibbonBudgetWarned = true;
+        }
+        const bool ribbonsPresent = !m_Internal->RibbonPlan.IsEmpty();
+        m_Internal->RibbonIdleFrames = ribbonsPresent ? 0 : m_Internal->RibbonIdleFrames + 1;
+        const bool ribbonsWanted =
+            ribbonsPresent ||
+            (m_Internal->RibbonActive && m_Internal->RibbonIdleFrames < RibbonIdleFrameLimit);
+
         const bool spritesPresent = !m_Internal->SpritePlan.IsEmpty();
         m_Internal->SpriteIdleFrames = spritesPresent ? 0 : m_Internal->SpriteIdleFrames + 1;
         const bool spritesWanted =
             spritesPresent ||
             (m_Internal->SpriteActive && m_Internal->SpriteIdleFrames < SpriteIdleFrameLimit);
-        if (spritesWanted != m_Internal->SpriteActive)
+        if (spritesWanted != m_Internal->SpriteActive || ribbonsWanted != m_Internal->RibbonActive)
         {
             m_Internal->SpriteActive = spritesWanted;
+            m_Internal->RibbonActive = ribbonsWanted;
             Rebuild();
         }
 

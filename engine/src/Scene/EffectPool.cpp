@@ -55,11 +55,20 @@ namespace Veng
             RetireSlot(scene, *slot);
         }
 
-        FlipbookSprite sprite = desc.Sprite;
-        sprite.Time = 0.0f;
-        sprite.Finished = false;
         Put(scene, slot->Id, pose);
-        Put(scene, slot->Id, sprite);
+        if (desc.Sprite)
+        {
+            FlipbookSprite sprite = *desc.Sprite;
+            sprite.Time = 0.0f;
+            sprite.Finished = false;
+            Put(scene, slot->Id, sprite);
+        }
+        if (desc.Ribbon)
+        {
+            Ribbon ribbon = *desc.Ribbon;
+            ribbon.Age = 0.0f;
+            Put(scene, slot->Id, ribbon);
+        }
         if (desc.Light)
         {
             Put(scene, slot->Id, *desc.Light);
@@ -83,8 +92,12 @@ namespace Veng
             }
             slot.Age += delta;
             const FlipbookSprite* sprite = scene.TryGet<FlipbookSprite>(slot.Id);
+            const Ribbon* ribbon = scene.TryGet<Ribbon>(slot.Id);
             const bool expired = slot.Lifetime > 0.0f && slot.Age >= slot.Lifetime;
-            if (expired || sprite == nullptr || sprite->Finished)
+            const bool spriteDone = sprite == nullptr || sprite->Finished;
+            const bool ribbonDone =
+                ribbon == nullptr || (ribbon->Lifetime > 0.0f && ribbon->Age >= ribbon->Lifetime);
+            if (expired || (spriteDone && ribbonDone))
             {
                 RetireSlot(scene, slot);
             }
@@ -123,6 +136,10 @@ namespace Veng
         {
             (void)scene.Remove<FlipbookSprite>(slot.Id);
         }
+        if (scene.Has<Ribbon>(slot.Id))
+        {
+            (void)scene.Remove<Ribbon>(slot.Id);
+        }
         if (scene.Has<Light>(slot.Id))
         {
             (void)scene.Remove<Light>(slot.Id);
@@ -144,5 +161,14 @@ namespace Veng
                 CreateUnique<EffectPool>(EffectPoolInfo{.Capacity = DefaultEffectPoolCapacity}));
         }
         return scene.GetEffectPool()->Spawn(scene, desc, pose, lifetime);
+    }
+
+    Entity SpawnTransientBeam(Scene& scene, const Ribbon& beam, const f32 lifetime)
+    {
+        Ribbon fading = beam;
+        fading.Lifetime = std::max(lifetime, 0.0f);
+        fading.Age = 0.0f;
+        return SpawnTransientEffect(scene, EffectDesc{.Ribbon = fading},
+                                    Transform{.Position = beam.From}, lifetime);
     }
 }

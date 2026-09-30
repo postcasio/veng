@@ -1322,6 +1322,94 @@ namespace Veng
         bool Finished = false;
     };
 
+    /// @brief A straight camera-facing ribbon between two world points: a beam, a streak, a tether.
+    ///
+    /// Drawn by the renderer's ribbon pass in the translucent layer, just ahead of the sprite pass,
+    /// as an HDR quad from From to To that turns about its own axis to face the camera. Width,
+    /// colour and opacity run linearly from the From end to the To end, and the quad falls off
+    /// softly across its width. The endpoints are world space and ignore the entity's Transform, so
+    /// the owner moves them directly. The pass depth-tests against the opaque scene without writing
+    /// depth, sorts alpha ribbons back to front, and writes the bloom mask by luminance so an HDR
+    /// ribbon glows. With a positive Lifetime the ribbon fades out over it as RibbonSystem advances
+    /// Age, which is how a short-lived beam fades (see SpawnTransientBeam). A ribbon narrower than
+    /// about a pixel draws a pixel wide at proportionally lower opacity, so a distant thin beam
+    /// neither vanishes nor shimmers. Presentation only, never replicated.
+    struct Ribbon
+    {
+        /// @brief The world position the ribbon starts at.
+        vec3 From{0.0f};
+        /// @brief The world position the ribbon ends at.
+        vec3 To{0.0f};
+        /// @brief The ribbon's world width at From.
+        f32 WidthFrom = 0.1f;
+        /// @brief The ribbon's world width at To.
+        f32 WidthTo = 0.1f;
+        /// @brief The linear HDR colour at From; above 1 drives bloom.
+        vec3 ColorFrom{1.0f};
+        /// @brief The linear HDR colour at To.
+        vec3 ColorTo{1.0f};
+        /// @brief The opacity at From (for an additive ribbon, its brightness scale).
+        f32 OpacityFrom = 1.0f;
+        /// @brief The opacity at To.
+        f32 OpacityTo = 1.0f;
+        /// @brief Adds light onto the scene (order-free) rather than compositing over it by coverage.
+        bool Additive = true;
+        /// @brief When positive, seconds over which the ribbon fades linearly to nothing; 0 holds
+        ///        it at full opacity.
+        f32 Lifetime = 0.0f;
+        /// @brief Seconds of life so far; advanced by RibbonSystem. Authoring it starts the fade
+        ///        part-way through.
+        f32 Age = 0.0f;
+    };
+
+    /// @brief One recorded position of a Trail's head, and how long ago it was recorded.
+    struct TrailSample
+    {
+        /// @brief The world position the trail's entity stood at.
+        vec3 Position{0.0f};
+        /// @brief Seconds since the sample was recorded.
+        f32 Age = 0.0f;
+    };
+
+    /// @brief A ribbon through the recent positions of its entity: a projectile's tracer, a
+    ///        vehicle's wake, a missile's exhaust.
+    ///
+    /// RibbonSystem records the entity's world position each frame it has moved, into a bounded
+    /// ring of samples, and ages them out after Lifetime; the ribbon pass draws a camera-facing
+    /// strip through them to the entity's current position. Width, colour and opacity are full at
+    /// the head and run down the length by each sample's age, opacity reaching nothing at Lifetime
+    /// and width reaching Width × TailWidthScale, so the trail fades along its length and a trail
+    /// that stops moving empties within Lifetime. Clearing Emitting stops recording and detaches
+    /// the head, so the trail drains away behind a stopped or finished emitter; the trail goes with
+    /// its entity when the entity is destroyed. Presentation only, never replicated: a prefab's
+    /// Trail stands on every peer that instantiates it. See AttachTrail.
+    struct Trail
+    {
+        /// @brief Seconds a sample lives; a trail with none draws nothing.
+        f32 Lifetime = 0.5f;
+        /// @brief The world width at the head.
+        f32 Width = 0.2f;
+        /// @brief The width at the tail as a fraction of Width; 1 keeps the trail even, 0 tapers it.
+        f32 TailWidthScale = 1.0f;
+        /// @brief The linear HDR colour; above 1 drives bloom.
+        vec3 Color{1.0f};
+        /// @brief The opacity at the head (for an additive trail, its brightness scale).
+        f32 Opacity = 1.0f;
+        /// @brief The most samples the trail holds; past it the oldest is dropped.
+        u32 MaxSamples = 32;
+        /// @brief How far, in world units, the head must move past the newest sample before
+        ///        another is recorded; 0 records every frame the head moves at all.
+        f32 MinSampleDistance = 0.0f;
+        /// @brief Adds light onto the scene (order-free) rather than compositing over it by coverage.
+        bool Additive = true;
+        /// @brief Whether the trail records new samples and joins them to the entity; clearing it
+        ///        lets the recorded trail fade out where it lies.
+        bool Emitting = true;
+        /// @brief The recorded samples, oldest first; advanced by RibbonSystem. Runtime-only: it
+        ///        carries no VE_FIELD and never serializes.
+        vector<TrailSample> Samples;
+    };
+
     /// @brief A scene-authored fullscreen post-process effect the renderer runs over scene color.
     ///
     /// Resolved by the renderer via View<PostProcessEffect> each Execute — the lights model: every
@@ -1892,6 +1980,38 @@ VE_FIELD(DurationOverride, .DisplayName = "Duration Override",
 VE_FIELD(Time, .DisplayName = "Time", .Display = {.Min = 0.0})
 VE_FIELD(Blend, .DisplayName = "Blend")
 VE_FIELD(Rotation, .DisplayName = "Rotation", .Display = {.Step = 0.01})
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::Ribbon, 0xA8DF9582C85E18F2ULL)
+VE_FIELD(From, .DisplayName = "From", .Tooltip = "World-space start point")
+VE_FIELD(To, .DisplayName = "To", .Tooltip = "World-space end point")
+VE_FIELD(WidthFrom, .DisplayName = "Width From", .Display = {.Min = 0.0, .Step = 0.01})
+VE_FIELD(WidthTo, .DisplayName = "Width To", .Display = {.Min = 0.0, .Step = 0.01})
+VE_FIELD(ColorFrom, .DisplayName = "Color From", .Tooltip = "Linear HDR colour at the start")
+VE_FIELD(ColorTo, .DisplayName = "Color To", .Tooltip = "Linear HDR colour at the end")
+VE_FIELD(OpacityFrom, .DisplayName = "Opacity From", .Display = {.Min = 0.0, .Max = 1.0})
+VE_FIELD(OpacityTo, .DisplayName = "Opacity To", .Display = {.Min = 0.0, .Max = 1.0})
+VE_FIELD(Additive, .DisplayName = "Additive")
+VE_FIELD(Lifetime, .DisplayName = "Lifetime",
+         .Tooltip = "When positive, seconds over which the ribbon fades out",
+         .Display = {.Min = 0.0, .Step = 0.01})
+VE_FIELD(Age, .DisplayName = "Age", .Display = {.Min = 0.0})
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::Trail, 0xCA5518C6D69E6858ULL)
+VE_FIELD(Lifetime, .DisplayName = "Lifetime", .Tooltip = "Seconds a sample lives",
+         .Display = {.Min = 0.0, .Step = 0.01})
+VE_FIELD(Width, .DisplayName = "Width", .Display = {.Min = 0.0, .Step = 0.01})
+VE_FIELD(TailWidthScale, .DisplayName = "Tail Width Scale",
+         .Tooltip = "Width at the tail as a fraction of the head's", .Display = {.Min = 0.0})
+VE_FIELD(Color, .DisplayName = "Color", .Tooltip = "Linear HDR colour")
+VE_FIELD(Opacity, .DisplayName = "Opacity", .Display = {.Min = 0.0, .Max = 1.0})
+VE_FIELD(MaxSamples, .DisplayName = "Max Samples", .Display = {.Min = 1.0})
+VE_FIELD(MinSampleDistance, .DisplayName = "Min Sample Distance",
+         .Tooltip = "World distance the head moves before another sample is recorded",
+         .Display = {.Min = 0.0, .Step = 0.01})
+VE_FIELD(Additive, .DisplayName = "Additive")
+VE_FIELD(Emitting, .DisplayName = "Emitting")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::PostProcessEffect, 0xE760A6F6C3F08F48ULL)

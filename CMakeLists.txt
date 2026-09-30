@@ -1038,6 +1038,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/net_packed_input.cpp
             tests/unit/net_lag_compensation.cpp
             tests/unit/flipbook.cpp
+            tests/unit/ribbon.cpp
             tests/unit/net_interest.cpp
             tests/unit/reflection.cpp
             tests/unit/reflection_variant.cpp
@@ -1766,6 +1767,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/volume_field.cpp
             tests/gpu/volume_scene_pass.cpp
             tests/gpu/sprite_pass.cpp
+            tests/gpu/ribbon_pass.cpp
             tests/gpu/dof_battery.cpp
             tests/gpu/occlusion_test.cpp
             tests/gpu/prefab_spawn.cpp
