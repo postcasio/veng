@@ -3,7 +3,7 @@
 // scenes and no GPU.
 //
 //  - ResolvePresentationSeat: the seat a viewport re-points to on a rebind — the bound Viewer when it
-//    still resolves in the destination scene, else the scene's sole/first Viewer, else none;
+//    still resolves in the destination scene, else the scene's first locally-owned Viewer, else none;
 //  - IsWorldPresentable: the present-on-ready gate — a world is presentable only once it resolves, its
 //    simulation has started, its residency batch is resident, and its clock has ticked at least once,
 //    plus the composition of a consumer's own WorldPresentReadyGate onto that answer;

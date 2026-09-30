@@ -26,26 +26,23 @@ namespace Veng
     Entity ResolvePresentationSeat(const Scene& scene, const Entity boundViewer)
     {
         // The bound seat survives the rebind only when its scene-local handle still names a live Viewer
-        // in the destination scene; otherwise prefer a locally-owned Viewer, then fall to the scene's
-        // first, then to no seat. The locally-owned preference is what picks this peer's own seat when
-        // a scene holds one per peer; with a single Viewer the first is that one, so nothing regresses.
+        // in the destination scene; otherwise the first locally-owned Viewer, else no seat. A viewport
+        // presents this peer's own seat: a host scene whose only seats belong to remote peers resolves
+        // none, and the viewport is seated once its own seat exists (ResolveUnboundSeats). With no
+        // marker and no remote owner every seat is locally owned, so a single-seat scene resolves its
+        // one Viewer.
         if (!boundViewer.IsNull() && scene.IsAlive(boundViewer) && scene.Has<Viewer>(boundViewer))
         {
             return boundViewer;
         }
-        Entity firstViewer = Entity::Null;
         for (auto [entity, viewer] : scene.View<Viewer>())
         {
             if (IsLocallyOwned(scene, entity))
             {
                 return entity;
             }
-            if (firstViewer.IsNull())
-            {
-                firstViewer = entity;
-            }
         }
-        return firstViewer;
+        return Entity::Null;
     }
 
     namespace

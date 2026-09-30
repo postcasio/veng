@@ -352,8 +352,9 @@ which a game-specific control system reads to produce the abstract `Intent` game
   (a seat a remote connection owns, `Owner != 0`, is that peer's); with nothing published — single
   player, headless, a host's own seat — every seat resolves locally, the pre-replication default. The
   three first-match seat scans (`ResolvePresentationSeat`, `StampLocalSeatInput`, `FirstKeyboardSeat`)
-  prefer the locally-owned seat through it, falling back to the first so a single-seat scene is
-  unchanged.
+  prefer the locally-owned seat through it. The last two fall back to the first seat; a presenting
+  viewport does not, so a host scene seating only remote peers leaves the viewport unseated until its
+  own seat exists, rather than presenting another peer's.
     **A context can be gated on gameplay focus as authored data.** An `InputMapData`
   (`Veng/Asset/InputMappingContext.h`) carries a reflected **`RequiresGameplayFocus`** flag
   (authored `"requiresGameplayFocus"`, tolerant-read so existing cooked maps are unchanged); when

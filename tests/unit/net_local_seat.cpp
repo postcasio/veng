@@ -134,6 +134,22 @@ TEST_CASE("ResolvePresentationSeat prefers the locally-owned Viewer, else the fi
     CHECK(ResolvePresentationSeat(*scene, first) == first);
 }
 
+TEST_CASE("ResolvePresentationSeat never adopts a seat a remote peer owns")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    const Unique<Scene> scene = Scene::Create(types);
+
+    // A host scene seating only a remote peer: its seat is that peer's, so the viewport stays unseated.
+    const Entity peer = MakeViewerSeat(*scene);
+    scene->Add<Authority>(peer, Authority{.Tier = Tier::Server, .Owner = 7});
+    CHECK(ResolvePresentationSeat(*scene, Entity::Null) == Entity::Null);
+
+    // This peer's own seat appears beside it and is the one resolved.
+    const Entity mine = MakeViewerSeat(*scene);
+    CHECK(ResolvePresentationSeat(*scene, Entity::Null) == mine);
+}
+
 TEST_CASE("StampLocalSeatInput stamps the locally-owned seat, else the first")
 {
     TypeRegistry types;
