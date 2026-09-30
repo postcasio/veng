@@ -167,7 +167,7 @@ namespace Veng
         ///
         /// When positive, a connection hears only about the entities within this radius of its pawn,
         /// plus the always-relevant marks (the seats, a game's global state) and the InterestPolicy hook — the
-        /// scale lever that stops bandwidth growing with world size. Zero is the planset-54 behavior,
+        /// scale lever that stops bandwidth growing with world size. Zero disables interest (every entity relevant),
         /// so interest is opt-in per game.
         f32 InterestRadius = 0.0f;
         /// @brief The interest boundary hysteresis: the leave radius is InterestRadius times this.

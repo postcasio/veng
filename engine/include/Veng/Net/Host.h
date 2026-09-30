@@ -434,8 +434,8 @@ namespace Veng
         ///
         /// Reliable-ordered within the live connection, at-most-once across its lifetime: a message
         /// accepted here either arrives in order or the connection has died. Fails with the reason
-        /// when the connection is unknown, the payload exceeds Net::MaxMessagePayloadSize (no
-        /// fragmentation), or the connection's outbound queue is at its cap
+        /// when the connection is unknown, the payload exceeds Net::MaxMessagePayloadSize (one
+        /// larger than a packet but within it is fragmented), or the outbound queue is at its cap
         /// (Net::MaxOutboundMessages / Net::MaxOutboundMessageBytes, whichever first). Queued
         /// messages flush on the next Pump.
         /// @param to       The connection to deliver to.
@@ -575,7 +575,7 @@ namespace Veng
         /// this for each recorded input C+1..now (see Net::ReplayTick): the implementer sets the local
         /// seat's PlayerInput and advances the scene's Sim phase for that tick with
         /// SystemContext::IsReplay set. Unset disables rollback — a mispredict hard-snaps to the
-        /// authoritative state (planset-54 behaviour).
+        /// authoritative state.
         Net::ReplayTick Replay;
         /// @brief The reconciliation compare tolerances and smoothing knobs (defaulted when unset).
         Net::ReconcileTolerances Tolerances;
@@ -725,7 +725,8 @@ namespace Veng
         /// client's state-affecting request rides a channel the owning service validates and
         /// applies. Reliable-ordered within the live connection, at-most-once across its lifetime.
         /// Fails with the reason when the client is not connected, the payload exceeds
-        /// Net::MaxMessagePayloadSize (no fragmentation), or the outbound queue is at its cap
+        /// Net::MaxMessagePayloadSize (one larger than a packet but within it is fragmented), or
+        /// the outbound queue is at its cap
         /// (Net::MaxOutboundMessages / Net::MaxOutboundMessageBytes, whichever first). Queued
         /// messages flush on the next Pump.
         /// @param channel  The channel the server's handler is registered on.

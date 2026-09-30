@@ -45,14 +45,34 @@ ENet/GameNetworkingSockets buy surface the replication model doesn't use.
 
 `Connection.h` is the per-peer reliability layer. Two channel disciplines over the transport:
 **unreliable-sequenced** (latest-wins, never retransmitted — snapshots, input) and
-**reliable-ordered** (resent until acked, MTU-capped — handshake, spawn/despawn). Time is injected
-through `Update(now)` (no wall clock, fully deterministic under test). **Sockets pump non-blocking
-on the main thread at frame boundaries** (receive → tick → send).
+**reliable-ordered** (resent until acked, delivered in order exactly once — handshake,
+spawn/despawn, game messages). Time is injected through `Update(now)` (no wall clock, fully
+deterministic under test). **Sockets pump non-blocking on the main thread at frame boundaries**
+(receive → tick → send).
+
+**A reliable message larger than one packet is fragmented, bounded at `MaxReliableMessageSize`
+(32 KiB).** Datagrams are capped at `MaxDatagramSize` (1200). A message up to
+`MaxUnfragmentedReliableMessageSize` (1185) travels as one packet framed `u16 message id + body`,
+the framing every protocol version shares. A larger one is split into ordered fragments of up to
+`MaxReliableFragmentSize` (1183), each framed `u16 id + u8 index + u8 count + slice` and flagged by
+the high bit of the packet's channel byte. Each fragment takes its own id in the reliable id space,
+so it is resent, acked, reorder-buffered and deduplicated exactly as a whole message is; the
+receiver appends in-order fragments to one reassembly buffer and delivers the message when its last
+fragment lands. Because units deliver strictly in id order, one message's fragments are contiguous,
+and small and large messages keep their send order. A unit that breaks that shape (a fragment out of
+place, a count past `MaxReliableFragmentCount`, a reassembly past the bound) can only come from a
+malformed peer and discards the partial message with a warning. **Why 32 KiB:** its 28 fragments fit
+one ack window (the acked sequence plus the 32-bit bitfield, 33 packets — a `static_assert`), so a
+message sent in one burst is acknowledged by a single returning header instead of having its early
+fragments resent; it also bounds what a peer can make the receiver buffer. A message past it is
+refused at `Send` with an error. **Why an unfragmented message keeps the shared framing:** the connect
+request carries the protocol version, so it must stay readable by a peer of any version — see
+`MaxProfileBytes` below.
 
 `Server.h`/`Client.h` are the connection lifecycle. A `Net::Server` listens/accepts/denies; a
 `Net::Client` connects. The handshake is **two-tier** (`Handshake.h`): a **connection tier**
-establishes the process↔process link — the connect request carries `Net::ProtocolVersion` (**7**, the
-version that added the hosted world's snapshot interval to the join reply) + the active pack's content digest,
+establishes the process↔process link — the connect request carries `Net::ProtocolVersion` (**8**, the
+version that added reliable-message fragmentation) + the active pack's content digest,
 rejected loudly on a mismatch (the `VengModuleAbiVersion` discipline on the wire, so the wire
 carries only asset ids, never assets) — and a **per-world join tier** joins one world (below). The
 `ConnectAcceptMessage` carries **only the assigned connection id**: it no longer bakes in a single
@@ -178,7 +198,19 @@ change-tick filtering at all**; and unreliable **snapshots** on a snapshot-inter
 **deltas** over `Authority::Server` entities, gated per component on the change tick and sent until
 acked. A spawn is what makes a peer whole for an entity it has never seen, so it asks *what is
 there*, not *what changed* — see [the tick-zero floor](#the-tick-zero-floor) for the full account and
-for why the delta gate is nonetheless correct. `ReplicationClient`
+for why the delta gate is nonetheless correct.
+
+**What a connection holds follows what its transport accepted.** The host drives
+`Generate(id, scene, tick, interest, sink)`, handing each message to the connection as it is made;
+an entity joins the connection's spawned set only when its Spawn is accepted and leaves it only when
+its Despawn is, and a snapshot packet's values join the sent state an ack adopts only when the packet
+is. A refused Spawn (one past the reliable bound) is therefore generated again next time and logged
+once per entity until accepted, never silently lost; snapshot records cover only entities already
+spawned. An entity whose dirty state outgrows one snapshot packet is **split by component** across
+consecutive packets, each part a self-contained record; only a single component record larger than
+a packet cannot ride a snapshot, and that refusal is logged. The returning
+`Generate(id, scene, tick, interest)` overload records every message as accepted — the device-free
+test convenience. `ReplicationClient`
 applies latest-wins, marks replicated entities **`Tier::Remote`**, and buffers each Transform
 snapshot for the **View-phase `RemoteInterpolationSystem`**, which renders a remote ~2 snapshot
 intervals in the past.
@@ -701,8 +733,8 @@ a one-shot log), `ServerHost::Send` by connection or by **account** (via `Connec
 listen host's own local account, `ServerHostInfo::LocalAccount`, loops back to the local handler
 connection-free), `SendToWorldMembers` (fan-out over the directory's `MembersOf`), and
 `ClientHost::Send`. Bounds fail loudly, never silently: max payload is
-`Net::MaxMessagePayloadSize` (the reliable message bound minus the framing, ~1.1 KiB — no
-fragmentation), a per-connection **outbound** queue cap (256 messages / 64 KiB, whichever first)
+`Net::MaxMessagePayloadSize` (the reliable message bound minus the framing, just under 32 KiB — a
+payload larger than a packet is fragmented by the connection), a per-connection **outbound** queue cap (256 messages / 64 KiB, whichever first)
 fails further sends, a per-connection **inbound** per-pump budget (256 messages / 64 KiB) drops
 the flooding connection with a logged reason, and a send to an unknown or disconnected account
 fails immediately. **Receipt is frame-safe**: the pumps only queue inbound messages;
@@ -893,9 +925,12 @@ The posture is three properties:
 - **Host-terminal.** The profile is never replicated, never forwarded to a peer, and never enters
   world state by engine action. A game wanting peer-visible identity replicates its own component —
   the documented pattern, the same one the non-replicated `SeatAccount` establishes.
-- **Bounded.** `Net::MaxProfileBytes` (`MaxReliableMessageSize` minus `ConnectRequestOverhead`) is
-  published and documented on the hook. The connect request is a single reliable message with no
-  fragmentation, so an over-budget profile cannot be split: it **refuses the connect with
+- **Bounded.** `Net::MaxProfileBytes` (`MaxUnfragmentedReliableMessageSize` minus
+  `ConnectRequestOverhead`) is published and documented on the hook. It stays one packet while other
+  reliable messages fragment because the connect request carries the protocol version: in the
+  framing every version shares, a peer of another version still decodes it and is denied
+  `ProtocolMismatch` rather than dropping fragments it cannot parse and timing out. So an
+  over-budget profile is not split: it **refuses the connect with
   `DenyReason::ProfileTooLarge`** rather than truncating, because a silently shortened opaque payload
   is a corruption the consumer that authored it cannot detect. The refusal happens at both ends — a
   client whose own profile is over budget refuses locally and sends nothing, and a host refuses an

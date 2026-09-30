@@ -100,8 +100,12 @@ namespace
         {
             RegisterBuiltinTypes(ServerTypes);
             ServerTypes.Register<VengTest::TestScore>();
+            ServerTypes.Register<VengTest::TestText>();
+            ServerTypes.Register<VengTest::TestCaption>();
             RegisterBuiltinTypes(ClientTypes);
             ClientTypes.Register<VengTest::TestScore>();
+            ClientTypes.Register<VengTest::TestText>();
+            ClientTypes.Register<VengTest::TestCaption>();
             HostScene = Scene::Create(ServerTypes);
             Pawn = MakePawnPrefab(ServerTypes, PawnPrefabId);
 
@@ -174,6 +178,79 @@ namespace
 
         [[nodiscard]] Scene& ClientWorld() const { return *Joiner->World(); }
     };
+}
+
+// ---- A spawn larger than one packet --------------------------------------------------------------
+
+TEST_CASE(
+    "A replicated entity whose spawn outgrows one packet reaches a joiner, and keeps updating")
+{
+    Peers fx;
+    fx.Join();
+
+    // Two records near a packet each: the spawn carrying both is well past one packet, and a
+    // snapshot carrying both dirty at once is too.
+    const string text(900, 't');
+    const string caption(900, 'c');
+    const Entity rich = fx.HostScene->CreateEntity();
+    fx.HostScene->Add<Transform>(rich, Transform{.Position = vec3(5.0f, 0.0f, 0.0f)});
+    fx.HostScene->Add<VengTest::TestText>(rich, VengTest::TestText{.Value = text});
+    fx.HostScene->Add<VengTest::TestCaption>(rich, VengTest::TestCaption{.Value = caption});
+
+    fx.Step(20);
+
+    const Entity mirror = fx.MirrorOf(rich);
+    REQUIRE_FALSE(mirror.IsNull());
+    REQUIRE(fx.ClientWorld().Has<VengTest::TestText>(mirror));
+    REQUIRE(fx.ClientWorld().Has<VengTest::TestCaption>(mirror));
+    CHECK(fx.ClientWorld().Get<VengTest::TestText>(mirror).Value == text);
+    CHECK(fx.ClientWorld().Get<VengTest::TestCaption>(mirror).Value == caption);
+
+    // Both rewritten in one tick: the snapshot splits the entity across packets and both land.
+    const string text2(950, 'T');
+    const string caption2(950, 'C');
+    // Stamped as the next sim tick's writes, the way a system running inside that tick would.
+    fx.HostScene->SetChangeTick(fx.Tick + 1);
+    fx.HostScene->Get<VengTest::TestText>(rich).Value = text2;
+    fx.HostScene->Get<VengTest::TestCaption>(rich).Value = caption2;
+    fx.Step(20);
+    CHECK(fx.ClientWorld().Get<VengTest::TestText>(mirror).Value == text2);
+    CHECK(fx.ClientWorld().Get<VengTest::TestCaption>(mirror).Value == caption2);
+}
+
+TEST_CASE("A spawn the sink refuses is not marked spawned, and is generated again")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    const Unique<Scene> scene = Scene::Create(types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity, Transform{});
+    NetIdAllocator allocator;
+    AssignServerNetIds(*scene, allocator);
+
+    ReplicationServer server(ReplicationServer::Settings{.SnapshotInterval = 0});
+    server.AddConnection(1);
+
+    const auto countSpawns = [&](bool accept)
+    {
+        u32 spawns = 0;
+        server.Generate(1, *scene, 1, nullptr,
+                        [&](const ReplicationMessage& message) -> VoidResult
+                        {
+                            spawns += message.Channel == Channel::ReliableOrdered ? 1 : 0;
+                            if (accept)
+                            {
+                                return {};
+                            }
+                            return std::unexpected(string("refused"));
+                        });
+        return spawns;
+    };
+
+    CHECK(countSpawns(false) == 1);
+    CHECK(countSpawns(false) == 1);
+    CHECK(countSpawns(true) == 1);
+    CHECK(countSpawns(true) == 0);
 }
 
 // ---- The pre-tick population reaches the joiner -------------------------------------------------
@@ -284,8 +361,12 @@ namespace
         {
             RegisterBuiltinTypes(ServerTypes);
             ServerTypes.Register<VengTest::TestScore>();
+            ServerTypes.Register<VengTest::TestText>();
+            ServerTypes.Register<VengTest::TestCaption>();
             RegisterBuiltinTypes(ClientTypes);
             ClientTypes.Register<VengTest::TestScore>();
+            ClientTypes.Register<VengTest::TestText>();
+            ClientTypes.Register<VengTest::TestCaption>();
             Server = Scene::Create(ServerTypes);
             Client = Scene::Create(ClientTypes);
         }

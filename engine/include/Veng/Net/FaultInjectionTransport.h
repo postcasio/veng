@@ -64,7 +64,7 @@ namespace Veng::Net
         ///
         /// The harness (or Server/Client::Pump) advances this each frame; a datagram surfaces once
         /// the clock reaches its release time. With zero latency and jitter it is inert (every
-        /// datagram is ready immediately), so a caller that never sets it keeps the v1 behavior.
+        /// datagram is ready immediately), so a caller that never sets it sees no delay.
         /// @param nowSeconds  The current injected time in seconds.
         void SetTime(f64 nowSeconds) { m_Now = nowSeconds; }
 

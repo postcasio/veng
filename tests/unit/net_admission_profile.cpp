@@ -161,10 +161,10 @@ TEST_CASE("An absent profile costs only the empty blob header, and the budget ma
     CHECK(decoded->Profile.Bytes.empty());
     CHECK(decoded->Profile.Type == InvalidTypeId);
 
-    // A profile filling the budget exactly still fits one reliable message; one byte more does not.
+    // A profile filling the budget exactly still fits one unfragmented packet.
     const ConnectRequestMessage full{.ProtocolVersion = ProtocolVersion,
                                      .Profile = MakeProfile(0x20, MaxProfileBytes)};
-    CHECK(EncodeConnectRequest(full).size() == MaxReliableMessageSize);
+    CHECK(EncodeConnectRequest(full).size() == MaxUnfragmentedReliableMessageSize);
 }
 
 TEST_CASE("A presented profile reaches ProfileOf and the join request the Authorize hook reads")
@@ -433,7 +433,7 @@ TEST_CASE("An over-budget profile refuses the connect at the client rather than 
     CHECK(server->Connections().empty());
 }
 
-TEST_CASE("A profile filling the budget exactly still connects, and one byte more cannot be sent")
+TEST_CASE("A profile filling the budget exactly still connects, and one byte more is denied")
 {
     auto [serverT, clientT] = LoopbackTransport::CreatePair();
 
@@ -459,16 +459,32 @@ TEST_CASE("A profile filling the budget exactly still connects, and one byte mor
     REQUIRE(held != nullptr);
     CHECK(held->Bytes == full.Bytes);
 
-    // The budget is exactly the reliable channel's per-message bound minus the request framing, so
-    // one byte past it no longer fits a single reliable message and Send refuses it outright — the
-    // host's own door check covers a peer whose framing disagrees, which no in-process peer can be.
-    const Result<EndpointId> peer = clientT->Resolve("", 0);
+    // One byte past the budget no longer fits one unfragmented packet. A raw peer that sends it
+    // anyway (fragmented) reaches the host's own door check, which denies it rather than truncating.
+    auto [doorServerT, doorClientT] = LoopbackTransport::CreatePair();
+    Unique<Server> door =
+        *Server::Create(ServerInfo{.TransportOverride = doorServerT.get(), .Connection = Config});
+    const Result<EndpointId> peer = doorClientT->Resolve("", 0);
     REQUIRE(peer.has_value());
-    Connection raw(*clientT, *peer, Config);
+    Connection raw(*doorClientT, *peer, Config);
     const vector<u8> oversize = EncodeConnectRequest(ConnectRequestMessage{
         .ProtocolVersion = ProtocolVersion, .Profile = MakeProfile(0x90, MaxProfileBytes + 1)});
-    CHECK(oversize.size() > MaxReliableMessageSize);
-    CHECK_FALSE(raw.Send(Channel::ReliableOrdered, oversize).has_value());
+    CHECK(oversize.size() > MaxUnfragmentedReliableMessageSize);
+    REQUIRE(raw.Send(Channel::ReliableOrdered, oversize).has_value());
+
+    optional<ConnectDenyMessage> deny;
+    for (int tick = 0; tick < 40 && !deny.has_value(); ++tick)
+    {
+        now += 0.02;
+        raw.Update(now);
+        door->Pump(now);
+        while (const optional<vector<u8>> message = raw.Receive(Channel::ReliableOrdered))
+        {
+            deny = DecodeConnectDeny(*message);
+        }
+    }
+    REQUIRE(deny.has_value());
+    CHECK(deny->Reason == DenyReason::ProfileTooLarge);
 }
 
 TEST_CASE("No peer's datagrams ever carry another account's profile")

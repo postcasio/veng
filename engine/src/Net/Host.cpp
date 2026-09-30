@@ -56,6 +56,24 @@ namespace Veng
         {
             return payload.size() == 1 && payload[0] == ClientReadyMessageId;
         }
+
+        // Sends a reliable control or game frame, logging a refusal (a frame past the reliable
+        // bound) with what it was and where it was going rather than dropping it unseen.
+        VoidResult SendReliable(Net::Connection& connection, std::span<const u8> frame,
+                                string_view what, Net::ConnectionId to)
+        {
+            VoidResult sent = connection.Send(Net::Channel::ReliableOrdered, frame);
+            if (!sent.has_value())
+            {
+                // A client's one connection is to the server, which the reserved id names.
+                const string peer = to == Net::ServerConnectionId
+                                        ? string("the server")
+                                        : fmt::format("connection {}", to);
+                Log::Error("Net: {} ({} bytes) to {} was refused: {}", what, frame.size(), peer,
+                           sent.error());
+            }
+            return sent;
+        }
     }
 
     // ---- ServerHost ----------------------------------------------------------------------------
@@ -462,8 +480,9 @@ namespace Veng
             {
                 const vector<u8> payload = Net::EncodeJoinDeny(
                     Net::JoinDenyMessage{.RequestToken = request.RequestToken, .Reason = reason});
-                (void)Server->Get(id).Send(Net::Channel::ReliableOrdered,
-                                           Net::EncodeWorldEnvelope(Net::ControlJoinId, payload));
+                (void)SendReliable(Server->Get(id),
+                                   Net::EncodeWorldEnvelope(Net::ControlJoinId, payload),
+                                   "join deny", id);
                 Log::Warn("ServerHost denying join for connection {}: reason {}", id,
                           static_cast<u32>(reason));
             };
@@ -480,8 +499,9 @@ namespace Veng
                     .SnapshotInterval =
                         static_cast<u32>(world.Replication.GetSettings().SnapshotInterval),
                     .Payload = Directory->PayloadOf(world.Id)});
-                (void)Server->Get(id).Send(Net::Channel::ReliableOrdered,
-                                           Net::EncodeWorldEnvelope(Net::ControlJoinId, payload));
+                (void)SendReliable(Server->Get(id),
+                                   Net::EncodeWorldEnvelope(Net::ControlJoinId, payload),
+                                   "join accept", id);
             };
 
             // Idempotent: a repeat join of the same key re-accepts with the existing JoinId.
@@ -646,8 +666,9 @@ namespace Veng
                                                                      .Pose = pose,
                                                                      .Present = present,
                                                                      .Durability = durability});
-            (void)Server->Get(id).Send(Net::Channel::ReliableOrdered,
-                                       Net::EncodeWorldEnvelope(Net::ControlJoinId, message));
+            (void)SendReliable(Server->Get(id),
+                               Net::EncodeWorldEnvelope(Net::ControlJoinId, message),
+                               "directed travel", id);
         }
 
         // Restores an admitted account's session on reconnect: the policy transform rewrites the
@@ -783,7 +804,7 @@ namespace Veng
                 }
                 for (const vector<u8>& frame : conn.OutboundMessages)
                 {
-                    (void)Server->Get(id).Send(Net::Channel::ReliableOrdered, frame);
+                    (void)SendReliable(Server->Get(id), frame, "game message", id);
                 }
                 conn.OutboundMessages.clear();
                 conn.OutboundBytes = 0;
@@ -931,13 +952,19 @@ namespace Veng
                 State::HostedWorld& world = s.WorldOf(join.World);
                 const u64 worldTick = world.World->GetChangeTick();
                 const optional<set<NetId>> interest = s.ComputeInterest(world, id, join);
-                for (const ReplicationMessage& message : world.Replication.Generate(
-                         id, *world.World, worldTick, interest ? &*interest : nullptr))
-                {
-                    world.ReplicationBytes += message.Bytes.size();
-                    (void)s.Server->Get(id).Send(message.Channel,
-                                                 Net::EncodeWorldEnvelope(joinId, message.Bytes));
-                }
+                Net::Connection& connection = s.Server->Get(id);
+                world.Replication.Generate(
+                    id, *world.World, worldTick, interest ? &*interest : nullptr,
+                    [&](const ReplicationMessage& message) -> VoidResult
+                    {
+                        VoidResult sent = connection.Send(
+                            message.Channel, Net::EncodeWorldEnvelope(joinId, message.Bytes));
+                        if (sent.has_value())
+                        {
+                            world.ReplicationBytes += message.Bytes.size();
+                        }
+                        return sent;
+                    });
             }
         }
 
@@ -1606,8 +1633,9 @@ namespace Veng
             {
                 const vector<u8> notice =
                     Net::EncodeLeaveNotice(Net::LeaveNoticeMessage{.Join = join});
-                (void)Client->Server().Send(Net::Channel::ReliableOrdered,
-                                            Net::EncodeWorldEnvelope(Net::ControlJoinId, notice));
+                (void)SendReliable(Client->Server(),
+                                   Net::EncodeWorldEnvelope(Net::ControlJoinId, notice),
+                                   "leave notice", Net::ServerConnectionId);
             }
 
             Joins.erase(it);
@@ -1748,8 +1776,9 @@ namespace Veng
             }
 
             // Ack this world's ClientReady, enveloped with its JoinId, opening its stream.
-            (void)Client->Server().Send(Net::Channel::ReliableOrdered,
-                                        Net::EncodeWorldEnvelope(accept.Join, EncodeClientReady()));
+            (void)SendReliable(Client->Server(),
+                               Net::EncodeWorldEnvelope(accept.Join, EncodeClientReady()),
+                               "client ready", Net::ServerConnectionId);
 
             // Make-before-break: the destination is ready, so leave the departed join now — the old
             // world stayed live until this moment, and a denied join would have skipped this entirely.
@@ -1826,8 +1855,9 @@ namespace Veng
             .Payload = payload,
             .Present = present,
             .Durability = Net::ResolveSessionDurability(present, standing)});
-        (void)s.Client->Server().Send(Net::Channel::ReliableOrdered,
-                                      Net::EncodeWorldEnvelope(Net::ControlJoinId, message));
+        (void)SendReliable(s.Client->Server(),
+                           Net::EncodeWorldEnvelope(Net::ControlJoinId, message), "travel request",
+                           Net::ServerConnectionId);
     }
 
     void ClientHost::Leave(const Net::JoinId join)
@@ -1921,9 +1951,9 @@ namespace Veng
                                             .RequestToken = pending.Token,
                                             .Payload = pending.Payload,
                                             .Durability = pending.Durability});
-                (void)s.Client->Server().Send(
-                    Net::Channel::ReliableOrdered,
-                    Net::EncodeWorldEnvelope(Net::ControlJoinId, payload));
+                (void)SendReliable(s.Client->Server(),
+                                   Net::EncodeWorldEnvelope(Net::ControlJoinId, payload),
+                                   "join request", Net::ServerConnectionId);
                 pending.Sent = true;
             }
         }
@@ -1931,7 +1961,7 @@ namespace Veng
         // Flush queued game messages into the reliable stream, in send order.
         for (const vector<u8>& frame : s.OutboundMessages)
         {
-            (void)s.Client->Server().Send(Net::Channel::ReliableOrdered, frame);
+            (void)SendReliable(s.Client->Server(), frame, "game message", Net::ServerConnectionId);
         }
         s.OutboundMessages.clear();
         s.OutboundBytes = 0;

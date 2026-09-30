@@ -4,7 +4,7 @@
 // spec, exercised over every section, every record type, all three counter encodings, chunk framing
 // with a non-zero first sequence, string-table deltas and a full ring-dump table, truncation, an
 // unknown section, and an unknown version. The committed reference fixture is round-tripped here and
-// is the shared conformance input plan 04's converter and planset-78's JS decoder are tested against.
+// is the shared conformance input the trace converter and the JS decoder are tested against.
 //
 // The whole file is independent of VE_PROFILE: the format has no recording state, and the sink is
 // driven with synthetic chunks. One case that runs a live profiler is gated on the macro.

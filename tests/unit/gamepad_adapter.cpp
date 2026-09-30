@@ -1,6 +1,6 @@
 // The live gamepad resolve path: a polled GamepadState folded into Veng::Input, read
 // through the RawInput adapter, resolves a GamepadButton / GamepadAxis binding to the
-// right action value — where planset-42's inert arms resolved zero. Headless (Input over
+// right action value rather than zero. Headless (Input over
 // a null window), so it runs with no ICD; the adapter and the enum→control mapping are
 // what is under test.
 

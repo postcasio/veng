@@ -339,7 +339,7 @@ TEST_CASE("Delta + quantization shrink the steady-state stream well below the fu
                 vec3(static_cast<f32>(tick) * 0.05f + static_cast<f32>(i), 1.0f, 0.0f);
         }
 
-        // The full self-describing snapshot is the planset-54 baseline (every dirty field, name-keyed).
+        // The full self-describing snapshot is the baseline (every dirty field, name-keyed).
         baselineBytes += EncodeSnapshot(*server, tick, /*sinceTick=*/0).size();
 
         u64 appliedTick = 0;

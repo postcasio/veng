@@ -12,7 +12,7 @@
 // game state every client needs) and a game policy hook. Set enter/leave rides the spawn/despawn
 // machinery as connection-scoped visibility. This is the scale lever — bandwidth stops growing with
 // world size and grows with what each player can see. Radius 0 disables interest entirely (every
-// entity relevant, the planset-54 behavior). The set math is pure and device-free; the scene scans
+// entity relevant). The set math is pure and device-free; the scene scans
 // are headless-safe (no renderer/broadphase dependency — the server's own relevancy query over
 // scene state), so a dedicated server filters interest with no graphics stack.
 

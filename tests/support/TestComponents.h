@@ -9,7 +9,8 @@
 // replicated guinea pig that is independent of any gameplay builtin. TestScore is that component:
 // a one-field replicated (and always-relevant, for the interest exemption cases) value a fixture
 // registers into its own TypeRegistry beside the builtins. TestHealth is its server-owned sibling:
-// replicated state a predicting peer takes as authoritative and never reconciles.
+// replicated state a predicting peer takes as authoritative and never reconciles. TestText and
+// TestCaption carry replicated strings, so a fixture can size an entity's replicated state freely.
 
 namespace VengTest
 {
@@ -26,6 +27,20 @@ namespace VengTest
         /// @brief The server-written value.
         Veng::i32 Value = 0;
     };
+
+    /// @brief A test-local replicated string, for sizing an entity's replicated state.
+    struct TestText
+    {
+        /// @brief The replicated text.
+        Veng::string Value;
+    };
+
+    /// @brief A second test-local replicated string, so one entity can carry two sized records.
+    struct TestCaption
+    {
+        /// @brief The replicated text.
+        Veng::string Value;
+    };
 }
 
 VE_REFLECT(::VengTest::TestScore, 0x5415808682D2C1D7ULL)
@@ -39,3 +54,13 @@ VE_FIELD(Value, .DisplayName = "Value")
 VE_REFLECT_END();
 VE_REPLICATED(::VengTest::TestHealth);
 VE_SERVER_OWNED(::VengTest::TestHealth);
+
+VE_REFLECT(::VengTest::TestText, 0xD61505EE8498B4A1ULL)
+VE_FIELD(Value, .DisplayName = "Value")
+VE_REFLECT_END();
+VE_REPLICATED(::VengTest::TestText);
+
+VE_REFLECT(::VengTest::TestCaption, 0x7D8FD559AE01B1A6ULL)
+VE_FIELD(Value, .DisplayName = "Value")
+VE_REFLECT_END();
+VE_REPLICATED(::VengTest::TestCaption);

@@ -706,11 +706,22 @@ namespace Veng
                                                            u64 tick, const set<NetId>* interest)
     {
         vector<ReplicationMessage> messages;
+        Generate(id, scene, tick, interest,
+                 [&messages](const ReplicationMessage& message) -> VoidResult
+                 {
+                     messages.push_back(message);
+                     return {};
+                 });
+        return messages;
+    }
 
+    void ReplicationServer::Generate(Net::ConnectionId id, const Scene& scene, u64 tick,
+                                     const set<NetId>* interest, const ReplicationSink& send)
+    {
         const auto it = m_Connections.find(id);
         if (it == m_Connections.end())
         {
-            return messages;
+            return;
         }
         ConnectionState& state = it->second;
 
@@ -739,7 +750,6 @@ namespace Veng
             {
                 continue;
             }
-            state.Spawned.insert(identity.Id);
 
             const auto* authority =
                 static_cast<const Authority*>(scene.TryGetComponent(entity, authorityId));
@@ -775,8 +785,23 @@ namespace Veng
             }
             AppendU32(spawn, encoded.Count);
             spawn.insert(spawn.end(), encoded.Bytes.begin(), encoded.Bytes.end());
-            messages.push_back(ReplicationMessage{.Channel = Net::Channel::ReliableOrdered,
-                                                  .Bytes = std::move(spawn)});
+
+            // The entity counts as spawned only once its spawn is accepted, so a refused spawn is
+            // generated again next time rather than leaving the entity silently absent.
+            const usize spawnBytes = spawn.size();
+            const VoidResult sent = send(ReplicationMessage{
+                .Channel = Net::Channel::ReliableOrdered, .Bytes = std::move(spawn)});
+            if (sent.has_value())
+            {
+                state.Spawned.insert(identity.Id);
+                state.RefusedSpawns.erase(identity.Id);
+            }
+            else if (state.RefusedSpawns.insert(identity.Id).second)
+            {
+                Log::Error("Replication: spawn of NetId {} ({} bytes, {} components) to connection "
+                           "{} was refused, and is retried each generate: {}",
+                           identity.Id, spawnBytes, encoded.Count, id, sent.error());
+            }
         }
 
         // Despawns: a spawned NetId no longer live is destroyed; one still live but no longer relevant
@@ -795,15 +820,22 @@ namespace Veng
         }
         for (const auto& [netId, reason] : gone)
         {
-            state.Spawned.erase(netId);
-            // Drop the connection's delta baseline for the entity; a re-spawn re-bases from its spawn.
-            state.Baseline.erase(netId);
             vector<u8> despawn;
             AppendU8(despawn, static_cast<u8>(ReplicationMessageId::Despawn));
             AppendU32(despawn, netId);
             AppendU8(despawn, static_cast<u8>(reason));
-            messages.push_back(ReplicationMessage{.Channel = Net::Channel::ReliableOrdered,
-                                                  .Bytes = std::move(despawn)});
+            const VoidResult sent = send(ReplicationMessage{
+                .Channel = Net::Channel::ReliableOrdered, .Bytes = std::move(despawn)});
+            if (!sent.has_value())
+            {
+                // Still spawned, so the despawn is generated again next time.
+                Log::Error("Replication: despawn of NetId {} to connection {} was refused: {}",
+                           netId, id, sent.error());
+                continue;
+            }
+            state.Spawned.erase(netId);
+            // Drop the connection's delta baseline for the entity; a re-spawn re-bases from its spawn.
+            state.Baseline.erase(netId);
         }
 
         // Snapshot on the interval tick: pack each connection's dirty state as ack-keyed field deltas
@@ -863,15 +895,52 @@ namespace Veng
 
             vector<u8> current = startPacket();
             bool currentHasRecords = false;
+            // The component values the packet being built carries: they join the snapshot's sent
+            // state (the baseline an ack adopts) only once the packet is accepted, so a refused
+            // packet's values are never taken as held by the client.
+            unordered_map<NetId, unordered_map<TypeId, vector<u8>>> packetComponents;
+            const auto flush = [&]()
+            {
+                const usize packetBytes = current.size();
+                const VoidResult accepted = send(ReplicationMessage{
+                    .Channel = Net::Channel::UnreliableSequenced, .Bytes = std::move(current)});
+                if (accepted.has_value())
+                {
+                    for (auto& [nid, comps] : packetComponents)
+                    {
+                        for (auto& [tid, bytes] : comps)
+                        {
+                            sent.Components[nid][tid] = std::move(bytes);
+                        }
+                    }
+                }
+                else
+                {
+                    Log::Error("Replication: snapshot packet ({} bytes) to connection {} was "
+                               "refused: {}",
+                               packetBytes, id, accepted.error());
+                }
+                packetComponents.clear();
+                current = startPacket();
+                currentHasRecords = false;
+            };
 
             for (auto [entity, identity] : scene.View<NetIdentity>())
             {
-                if (!relevant(identity.Id))
+                // An entity whose spawn has not been accepted has nothing on the client to apply a
+                // snapshot record to.
+                if (!relevant(identity.Id) || !state.Spawned.contains(identity.Id))
                 {
                     continue;
                 }
-                vector<u8> comps;
-                u32 count = 0;
+                // Each dirty component's record, encoded against the connection's baseline.
+                struct DirtyComponent
+                {
+                    TypeId Type = InvalidTypeId;
+                    vector<u8> Record;
+                    vector<u8> Wire;
+                };
+                vector<DirtyComponent> dirty;
                 for (const TypeId typeId : replicated)
                 {
                     if (scene.TryGetComponent(entity, typeId) == nullptr)
@@ -883,8 +952,8 @@ namespace Veng
                         continue;
                     }
                     const TypeInfo& info = registry.Info(typeId);
-                    const vector<u8> wire = EncodeComponentWireBytes(
-                        scene, entity, typeId, info, registry, encodeRef, &m_RefReporter);
+                    vector<u8> wire = EncodeComponentWireBytes(scene, entity, typeId, info,
+                                                               registry, encodeRef, &m_RefReporter);
 
                     std::span<const u8> baseline;
                     if (const auto entIt = state.Baseline.find(identity.Id);
@@ -897,38 +966,53 @@ namespace Veng
                         }
                     }
 
-                    AppendComponentRecord(comps, typeId, wire, baseline, keyframe, transformType,
-                                          registry, m_Settings.Quantization);
-                    sent.Components[identity.Id][typeId] = wire;
-                    ++count;
+                    vector<u8> componentRecord;
+                    AppendComponentRecord(componentRecord, typeId, wire, baseline, keyframe,
+                                          transformType, registry, m_Settings.Quantization);
+                    dirty.push_back(DirtyComponent{.Type = typeId,
+                                                   .Record = std::move(componentRecord),
+                                                   .Wire = std::move(wire)});
                 }
-                if (count == 0)
+
+                // Pack the entity's records into as few entity records as fit: an entity whose dirty
+                // state outgrows one packet is split by component across consecutive packets, each
+                // part a self-contained record the client applies on its own.
+                constexpr usize EntityRecordHeaderSize = sizeof(u32) + sizeof(u32);
+                usize next = 0;
+                while (next < dirty.size())
                 {
-                    continue;
+                    if (currentHasRecords &&
+                        current.size() + EntityRecordHeaderSize + dirty[next].Record.size() >
+                            Net::MaxEnvelopedUnreliablePayload)
+                    {
+                        flush();
+                    }
+
+                    vector<u8> comps;
+                    u32 count = 0;
+                    unordered_map<TypeId, vector<u8>>& carried = packetComponents[identity.Id];
+                    while (next < dirty.size() &&
+                           (count == 0 || current.size() + EntityRecordHeaderSize + comps.size() +
+                                                  dirty[next].Record.size() <=
+                                              Net::MaxEnvelopedUnreliablePayload))
+                    {
+                        comps.insert(comps.end(), dirty[next].Record.begin(),
+                                     dirty[next].Record.end());
+                        carried[dirty[next].Type] = std::move(dirty[next].Wire);
+                        ++count;
+                        ++next;
+                    }
+
+                    AppendU32(current, identity.Id);
+                    AppendU32(current, count);
+                    current.insert(current.end(), comps.begin(), comps.end());
+                    currentHasRecords = true;
                 }
-
-                vector<u8> record;
-                AppendU32(record, identity.Id);
-                AppendU32(record, count);
-                record.insert(record.end(), comps.begin(), comps.end());
-
-                if (currentHasRecords &&
-                    current.size() + record.size() > Net::MaxEnvelopedUnreliablePayload)
-                {
-                    messages.push_back(ReplicationMessage{
-                        .Channel = Net::Channel::UnreliableSequenced, .Bytes = std::move(current)});
-                    current = startPacket();
-                    currentHasRecords = false;
-                }
-
-                current.insert(current.end(), record.begin(), record.end());
-                currentHasRecords = true;
             }
 
             if (currentHasRecords)
             {
-                messages.push_back(ReplicationMessage{.Channel = Net::Channel::UnreliableSequenced,
-                                                      .Bytes = std::move(current)});
+                flush();
             }
 
             // Retain this snapshot's sent state until acked, bounded by the unacked window.
@@ -939,8 +1023,6 @@ namespace Veng
                 state.InFlight.erase(state.InFlight.begin());
             }
         }
-
-        return messages;
     }
 
     Net::JoinId AnchorBindings::OwnerOf(u64 lo, u64 hi) const

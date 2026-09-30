@@ -305,6 +305,13 @@ namespace Veng
         vector<u8> Bytes;
     };
 
+    /// @brief Hands one generated replication message to the transport, reporting whether it was accepted.
+    ///
+    /// Returns empty when the message was accepted for delivery, or the refusal reason. The
+    /// replication server records an entity as spawned (and a snapshot's values as sent) only on
+    /// acceptance, so a refused message is generated again rather than silently lost.
+    using ReplicationSink = function<VoidResult(const ReplicationMessage&)>;
+
     /// @brief The server end of state replication: per-connection spawn/despawn + dirty snapshots.
     ///
     /// Tracks, per connection, which replicated entities it has already spawned and the highest tick it
@@ -403,17 +410,34 @@ namespace Veng
         /// Emits a reliable Spawn for each replicated entity new to the connection, a reliable Despawn
         /// for each it had that is now gone, and — when @p tick is a snapshot-interval tick — the dirty
         /// state (since the connection's acked tick) as MTU-sized unreliable snapshot packets. Updates
-        /// the connection's spawned set. A no-op returning empty for an untracked connection.
+        /// the connection's spawned set as though every message were accepted. A no-op returning
+        /// empty for an untracked connection.
         /// @param id     The connection to generate for (must be AddConnection'd).
         /// @param scene  The authoritative server scene.
         /// @param tick   The current server tick.
         /// @param interest  The connection's interest set gating which entities it hears about; null
-        ///                  means every live entity is relevant (interest off — planset-54 behavior).
+        ///                  means every live entity is relevant (interest off).
         ///                  An entity that was spawned but has left the set gets a visibility despawn.
         /// @return The messages to Send on this connection, each tagged with its channel.
         [[nodiscard]] vector<ReplicationMessage> Generate(Net::ConnectionId id, const Scene& scene,
                                                           u64 tick,
                                                           const set<NetId>* interest = nullptr);
+
+        /// @brief Diffs the scene against a connection's state, handing each message to a sink as it is made.
+        ///
+        /// The same messages as the returning overload, in the same order, but the connection's
+        /// state follows what the sink accepted: an entity joins the spawned set only when its Spawn
+        /// is accepted, leaves it only when its Despawn is, and a snapshot packet's values join the
+        /// sent state an ack adopts only when the packet is. A refused Spawn is therefore generated
+        /// again on the next call, and is logged once per entity until it is accepted. Snapshot
+        /// records cover only entities already spawned to the connection.
+        /// @param id        The connection to generate for (must be AddConnection'd).
+        /// @param scene     The authoritative server scene.
+        /// @param tick      The current server tick.
+        /// @param interest  The connection's interest set; null means every live entity is relevant.
+        /// @param send      Receives each message; its result decides what the connection holds.
+        void Generate(Net::ConnectionId id, const Scene& scene, u64 tick,
+                      const set<NetId>* interest, const ReplicationSink& send);
 
     private:
         /// @brief One snapshot's sent component values, kept until acked so the baseline can advance.
@@ -432,8 +456,10 @@ namespace Veng
         /// @brief Per-connection replication bookkeeping.
         struct ConnectionState
         {
-            /// @brief NetIds already spawned to this connection.
+            /// @brief NetIds already spawned to this connection (their Spawn was accepted).
             set<NetId> Spawned;
+            /// @brief NetIds whose Spawn was refused and not yet accepted, so the refusal logs once.
+            set<NetId> RefusedSpawns;
             /// @brief Highest tick this connection has acked; snapshots gate against it.
             u64 AckedTick = 0;
             /// @brief Input-timing feedback ridden in this connection's next snapshot header.

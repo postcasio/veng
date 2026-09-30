@@ -152,7 +152,7 @@ namespace Veng::Cook
         /// texture's compression role through its role table, the archive is written at its
         /// `CompressionLevel`, and `configFile` (its source) is recorded as one central depfile
         /// input — a configuration edit re-cooks the pack. A null `config` is the zero-config cook
-        /// (planset-33's hardcoded ASTC default, the archive's own default level).
+        /// (the hardcoded ASTC default, the archive's own default level).
         /// @param packJson        Path to the pack JSON to cook.
         /// @param outArchive      Destination .vengpack path.
         /// @param referencePacks  Additional packs available for cross-asset AssetId resolution.

@@ -168,10 +168,13 @@ extern "C"
 /// runtime material and reads a material's pipeline and a scene's services through inline
 /// accessors, so a stale module lays both structs out short and reads the members after the
 /// additions at shifted offsets.
+/// Version 37 grows ReplicationServer's per-connection state with the set of entities whose spawn
+/// was refused. A module that holds a ReplicationServer destroys it through the inline destructor
+/// it instantiates, so a stale module would tear down the connection map at the old element layout.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 36u
+#define VENG_MODULE_ABI_VERSION 37u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

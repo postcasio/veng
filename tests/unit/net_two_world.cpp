@@ -6168,7 +6168,7 @@ TEST_CASE("An oversized payload fails at send; the exact bound transmits")
     }
     REQUIRE(client.Client->State() == ClientState::Connected);
 
-    // One byte past the stated bound fails at send — no fragmentation, no silent truncation.
+    // One byte past the stated bound fails at send — no silent truncation.
     Blob oversize;
     oversize.Type = 0x61;
     oversize.Bytes.assign(MaxMessagePayloadSize + 1, 0xCD);
@@ -6176,7 +6176,7 @@ TEST_CASE("An oversized payload fails at send; the exact bound transmits")
     REQUIRE_FALSE(tooBig.has_value());
     CHECK(tooBig.error().find("exceeds") != string::npos);
 
-    // A payload at exactly the bound is accepted and arrives whole through the datagram budget.
+    // A payload at exactly the bound is accepted and arrives whole, fragmented across packets.
     Blob maximal;
     maximal.Type = 0x61;
     maximal.Bytes.assign(MaxMessagePayloadSize, 0xEF);

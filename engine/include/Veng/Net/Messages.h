@@ -63,8 +63,8 @@ namespace Veng::Net
     /// @brief Largest message payload (Blob::Bytes) a send accepts, in bytes.
     ///
     /// The reliable channel's per-message bound (MaxReliableMessageSize) minus the message framing
-    /// (MessageWireOverhead) — 1163 bytes, ~1.1 KiB. Design blob shapes within it: there is no
-    /// fragmentation, so a payload past this bound fails at send rather than being split.
+    /// (MessageWireOverhead), just under 32 KiB. A payload larger than one packet is fragmented by
+    /// the connection and delivered whole; a payload past this bound fails at send.
     inline constexpr usize MaxMessagePayloadSize = MaxReliableMessageSize - MessageWireOverhead;
 
     /// @brief Most messages one connection's outbound queue holds between pumps; the next send fails.

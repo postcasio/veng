@@ -14,7 +14,15 @@ namespace Veng::Net
     namespace
     {
         constexpr usize ChannelCount = 2;
-        constexpr usize ReliableMessageHeaderSize = 2; // u16 message id
+        constexpr usize ReliableMessageHeaderSize = 2;  // u16 message id
+        constexpr usize ReliableFragmentHeaderSize = 4; // u16 message id, u8 index, u8 count
+
+        // Set on a reliable packet's channel byte when its payload is one fragment of a larger
+        // message. Unfragmented packets keep the plain channel byte, so their framing is the same
+        // in every protocol version and a peer of another version can still read the handshake.
+        constexpr u8 FragmentChannelFlag = 0x80;
+
+        static_assert(MaxReliableFragmentCount <= 255, "a fragment's index and count are one byte");
 
         // Smoothing weight for the round-trip-time estimate (an EWMA).
         constexpr f64 RttSmoothing = 0.1;
@@ -30,13 +38,26 @@ namespace Veng::Net
             AckState Acks;
         };
 
-        // An unacked reliable message awaiting delivery confirmation.
+        // An unacked reliable unit awaiting delivery confirmation: a whole message, or one
+        // fragment of a larger one. Each unit takes its own id, so fragments are resent, acked and
+        // ordered exactly like whole messages.
         struct OutgoingMessage
         {
             u16 Id = 0;
             vector<u8> Bytes;
             f64 LastSentTime = 0.0;
             u32 SendCount = 0;
+            // Zero for a whole message; otherwise the fragment count, with Index this unit's slot.
+            u8 FragmentCount = 0;
+            u8 FragmentIndex = 0;
+        };
+
+        // A received reliable unit held until the units ahead of it arrive.
+        struct IncomingUnit
+        {
+            vector<u8> Bytes;
+            u8 FragmentCount = 0;
+            u8 FragmentIndex = 0;
         };
 
         // A reliable packet we transmitted, so an incoming ack of its sequence can
@@ -71,10 +92,14 @@ namespace Veng::Net
         std::unordered_map<u16, SentPacket> ReliableSentPackets;
         bool ReliableAckPending = false;
 
-        // Reliable receive: in-order delivery with a reorder buffer.
+        // Reliable receive: in-order delivery with a reorder buffer, and the fragments of the
+        // message being reassembled.
         u16 ReliableExpectedId = 0;
-        std::unordered_map<u16, vector<u8>> ReliableReorder;
+        std::unordered_map<u16, IncomingUnit> ReliableReorder;
         std::deque<vector<u8>> ReliableInbox;
+        vector<u8> Reassembly;
+        u8 ReassemblyCount = 0;
+        u8 ReassemblyNext = 0;
 
         vector<u8> SendScratch;
 
@@ -82,13 +107,14 @@ namespace Veng::Net
 
         // Builds a packet header for the channel and transmits header + payload.
         // Returns the sequence the packet was sent under.
-        u16 SendPacket(Channel channel, std::span<const u8> payload)
+        u16 SendPacket(Channel channel, std::span<const u8> payload, bool fragment = false)
         {
             ChannelState& cs = ChannelFor(channel);
 
             const PacketHeader header{
                 .Magic = ProtocolMagic,
-                .Channel = static_cast<u8>(channel),
+                .Channel = static_cast<u8>(static_cast<u8>(channel) |
+                                           (fragment ? FragmentChannelFlag : u8{0})),
                 .Sequence = cs.LocalSequence,
                 .Ack = cs.Acks.HasRemote ? cs.Acks.RemoteSequence : static_cast<u16>(0),
                 .AckBits = cs.Acks.AckBits,
@@ -128,12 +154,18 @@ namespace Veng::Net
 
         void TransmitReliable(OutgoingMessage& message)
         {
+            const bool fragment = message.FragmentCount != 0;
             vector<u8> payload;
-            payload.reserve(ReliableMessageHeaderSize + message.Bytes.size());
+            payload.reserve(ReliableFragmentHeaderSize + message.Bytes.size());
             WriteU16LE(payload, message.Id);
+            if (fragment)
+            {
+                payload.push_back(message.FragmentIndex);
+                payload.push_back(message.FragmentCount);
+            }
             payload.insert(payload.end(), message.Bytes.begin(), message.Bytes.end());
 
-            const u16 sequence = SendPacket(Channel::ReliableOrdered, payload);
+            const u16 sequence = SendPacket(Channel::ReliableOrdered, payload, fragment);
             ReliableSentPackets[sequence] = SentPacket{.MessageId = message.Id, .SendTime = Now};
 
             message.LastSentTime = Now;
@@ -182,11 +214,68 @@ namespace Veng::Net
             }
         }
 
-        void DeliverReliable(u16 id, std::span<const u8> body)
+        void DropReassembly()
+        {
+            Reassembly.clear();
+            ReassemblyCount = 0;
+            ReassemblyNext = 0;
+        }
+
+        // Takes the next in-order unit: a whole message is delivered as-is, and a fragment joins
+        // the message being reassembled, which is delivered once its last fragment lands. Units
+        // arrive strictly in id order, so the fragments of one message are contiguous; a unit that
+        // breaks that shape can only come from a malformed peer, and discards the partial message.
+        void AcceptUnit(IncomingUnit unit)
+        {
+            if (unit.FragmentCount == 0)
+            {
+                if (ReassemblyCount != 0)
+                {
+                    Log::Warn("Net::Connection dropping a partial reliable message: a whole "
+                              "message arrived before its last fragment");
+                    DropReassembly();
+                }
+                ReliableInbox.push_back(std::move(unit.Bytes));
+                return;
+            }
+
+            const bool wellFormed = unit.FragmentIndex < unit.FragmentCount &&
+                                    unit.FragmentCount <= MaxReliableFragmentCount;
+            const bool starts = wellFormed && unit.FragmentIndex == 0 && ReassemblyCount == 0;
+            const bool continues = wellFormed && ReassemblyCount != 0 &&
+                                   unit.FragmentCount == ReassemblyCount &&
+                                   unit.FragmentIndex == ReassemblyNext;
+            if (!starts && !continues)
+            {
+                Log::Warn("Net::Connection dropping a malformed reliable fragment ({} of {})",
+                          unit.FragmentIndex, unit.FragmentCount);
+                DropReassembly();
+                return;
+            }
+            if (Reassembly.size() + unit.Bytes.size() > MaxReliableMessageSize)
+            {
+                Log::Warn("Net::Connection dropping a reliable message reassembling past the {} "
+                          "byte bound",
+                          MaxReliableMessageSize);
+                DropReassembly();
+                return;
+            }
+
+            ReassemblyCount = unit.FragmentCount;
+            Reassembly.insert(Reassembly.end(), unit.Bytes.begin(), unit.Bytes.end());
+            ReassemblyNext = static_cast<u8>(unit.FragmentIndex + 1);
+            if (ReassemblyNext == ReassemblyCount)
+            {
+                ReliableInbox.push_back(std::move(Reassembly));
+                DropReassembly();
+            }
+        }
+
+        void DeliverReliable(u16 id, IncomingUnit unit)
         {
             if (id == ReliableExpectedId)
             {
-                ReliableInbox.push_back(vector<u8>(body.begin(), body.end()));
+                AcceptUnit(std::move(unit));
                 ReliableExpectedId = static_cast<u16>(ReliableExpectedId + 1);
 
                 // Drain any buffered successors now made contiguous.
@@ -197,18 +286,18 @@ namespace Veng::Net
                     {
                         break;
                     }
-                    ReliableInbox.push_back(std::move(it->second));
+                    AcceptUnit(std::move(it->second));
                     ReliableReorder.erase(it);
                     ReliableExpectedId = static_cast<u16>(ReliableExpectedId + 1);
                 }
             }
             else if (SequenceGreaterThan(id, ReliableExpectedId))
             {
-                // A future message: buffer it until the gap ahead fills in. A
+                // A future unit: buffer it until the gap ahead fills in. A
                 // duplicate of an already-buffered id is ignored.
                 if (!ReliableReorder.contains(id))
                 {
-                    ReliableReorder[id] = vector<u8>(body.begin(), body.end());
+                    ReliableReorder.emplace(id, std::move(unit));
                 }
             }
             // Otherwise the id is older than expected — already delivered; drop it.
@@ -221,12 +310,15 @@ namespace Veng::Net
             {
                 return;
             }
-            if (header->Channel >= ChannelCount)
+            const bool fragment = (header->Channel & FragmentChannelFlag) != 0;
+            const u8 channelBits = static_cast<u8>(header->Channel & ~FragmentChannelFlag);
+            if (channelBits >= ChannelCount ||
+                (fragment && channelBits != static_cast<u8>(Channel::ReliableOrdered)))
             {
                 return;
             }
 
-            const auto channel = static_cast<Channel>(header->Channel);
+            const auto channel = static_cast<Channel>(channelBits);
             ChannelState& cs = ChannelFor(channel);
             cs.Acks.Receive(header->Sequence);
 
@@ -243,7 +335,7 @@ namespace Veng::Net
                 {
                     HasUnreliableDelivered = true;
                     UnreliableDelivered = header->Sequence;
-                    UnreliableInbox.push_back(vector<u8>(payload.begin(), payload.end()));
+                    UnreliableInbox.emplace_back(payload.begin(), payload.end());
                 }
                 return;
             }
@@ -251,11 +343,23 @@ namespace Veng::Net
             // ReliableOrdered: the peer's ack fields resolve our outstanding
             // messages; a non-empty payload carries one message to deliver.
             ProcessAcks(*header);
-            if (payload.size() >= ReliableMessageHeaderSize)
+            if (fragment)
+            {
+                if (payload.size() > ReliableFragmentHeaderSize)
+                {
+                    const u16 id = ReadU16LE(payload, 0);
+                    const std::span<const u8> body = payload.subspan(ReliableFragmentHeaderSize);
+                    DeliverReliable(id, IncomingUnit{.Bytes = vector<u8>(body.begin(), body.end()),
+                                                     .FragmentCount = payload[3],
+                                                     .FragmentIndex = payload[2]});
+                    ReliableAckPending = true;
+                }
+            }
+            else if (payload.size() >= ReliableMessageHeaderSize)
             {
                 const u16 id = ReadU16LE(payload, 0);
                 const std::span<const u8> body = payload.subspan(ReliableMessageHeaderSize);
-                DeliverReliable(id, body);
+                DeliverReliable(id, IncomingUnit{.Bytes = vector<u8>(body.begin(), body.end())});
                 ReliableAckPending = true;
             }
         }
@@ -314,18 +418,36 @@ namespace Veng::Net
         if (message.size() > MaxReliableMessageSize)
         {
             return std::unexpected(
-                fmt::format("reliable message of {} bytes exceeds the {}-byte MTU budget "
-                            "(fragmentation is a named follow-on)",
+                fmt::format("reliable message of {} bytes exceeds the {}-byte reliable bound",
                             message.size(), MaxReliableMessageSize));
         }
 
-        s.ReliableOutbox.push_back(State::OutgoingMessage{
-            .Id = s.NextMessageId,
-            .Bytes = vector<u8>(message.begin(), message.end()),
-            .LastSentTime = 0.0,
-            .SendCount = 0,
-        });
-        s.NextMessageId = static_cast<u16>(s.NextMessageId + 1);
+        if (message.size() <= MaxUnfragmentedReliableMessageSize)
+        {
+            s.ReliableOutbox.push_back(State::OutgoingMessage{
+                .Id = s.NextMessageId,
+                .Bytes = vector<u8>(message.begin(), message.end()),
+            });
+            s.NextMessageId = static_cast<u16>(s.NextMessageId + 1);
+            return {};
+        }
+
+        const usize count =
+            (message.size() + MaxReliableFragmentSize - 1) / MaxReliableFragmentSize;
+        for (usize index = 0; index < count; ++index)
+        {
+            const std::span<const u8> slice =
+                message.subspan(index * MaxReliableFragmentSize,
+                                std::min(MaxReliableFragmentSize,
+                                         message.size() - (index * MaxReliableFragmentSize)));
+            s.ReliableOutbox.push_back(State::OutgoingMessage{
+                .Id = s.NextMessageId,
+                .Bytes = vector<u8>(slice.begin(), slice.end()),
+                .FragmentCount = static_cast<u8>(count),
+                .FragmentIndex = static_cast<u8>(index),
+            });
+            s.NextMessageId = static_cast<u16>(s.NextMessageId + 1);
+        }
         return {};
     }
 

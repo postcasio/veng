@@ -4,7 +4,7 @@
 // auto-assigns a connected pad to the first opted-in seat and clears it on disconnect. Headless
 // (Input over a null window), so it runs with no ICD; the view's device gating, the pointer
 // point→seat selection (SelectPointerOwner over quadrant regions), and the assignment policy are
-// what is under test. The pointer hit-test math is planset-31's already-tested WindowToViewport;
+// what is under test. The pointer hit-test math is the separately tested WindowToViewport;
 // this drives the selection + arm gating over regions directly, since a real Viewport needs a
 // Context.
 

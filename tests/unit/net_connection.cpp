@@ -4,8 +4,10 @@
 // scripts its own clock, so all of this is deterministic with no wall clock and no
 // device. Covered: unreliable latest-wins stale drop and u16 wraparound; reliable
 // exactly-once in-order delivery under seeded drop / reorder / duplicate; resend
-// backoff; keepalive emission, suppression under traffic, and timeout; and the
-// MTU-cap rejection.
+// backoff; keepalive emission, suppression under traffic, and timeout; reliable
+// fragmentation (a multi-packet message whole and in order under faults, interleaved
+// with small ones, and the one-packet framing of an unfragmented message); and the
+// per-channel bound's rejection.
 
 #include <doctest/doctest.h>
 
@@ -33,6 +35,49 @@ namespace
     {
         return ReadU32LE(bytes, 0);
     }
+
+    // A message of `size` bytes led by its index, the rest a pattern derived from both, so a
+    // reassembly that misplaces, drops or duplicates any slice fails the comparison.
+    vector<u8> SizedPayload(u32 index, usize size)
+    {
+        vector<u8> bytes;
+        WriteU32LE(bytes, index);
+        while (bytes.size() < size)
+        {
+            bytes.push_back(static_cast<u8>((bytes.size() * 31u) ^ (index * 7u)));
+        }
+        return bytes;
+    }
+
+    // A pass-through transport recording the channel byte of every datagram it sends.
+    class ChannelByteTransport final : public Transport
+    {
+    public:
+        explicit ChannelByteTransport(Transport& inner) : m_Inner(&inner) {}
+
+        VoidResult Send(EndpointId to, std::span<const u8> bytes) override
+        {
+            if (bytes.size() > PacketHeaderSize)
+            {
+                ChannelBytes.push_back(bytes[4]);
+                Sizes.push_back(bytes.size());
+            }
+            return m_Inner->Send(to, bytes);
+        }
+
+        optional<Datagram> Receive() override { return m_Inner->Receive(); }
+
+        Result<EndpointId> Resolve(string_view host, u16 port) override
+        {
+            return m_Inner->Resolve(host, port);
+        }
+
+        vector<u8> ChannelBytes;
+        vector<usize> Sizes;
+
+    private:
+        Transport* m_Inner;
+    };
 
     // A pass-through transport that counts the reliable ack-only / keepalive
     // packets (empty-payload reliable datagrams) it sends. Used to prove keepalive
@@ -215,7 +260,140 @@ TEST_CASE("unreliable sequencing survives the u16 sequence wraparound")
     CHECK(expected == messageCount);
 }
 
-TEST_CASE("an oversized message is rejected loudly, not fragmented")
+TEST_CASE("a reliable message several packets long arrives whole and in order under faults")
+{
+    const auto run = [](const FaultInjectionConfig& faults)
+    {
+        auto [la, lb] = LoopbackTransport::CreatePair();
+        FaultInjectionTransport clientLink(*la, faults);
+        FaultInjectionTransport serverLink(*lb, faults);
+
+        Connection client(clientLink, *la->Resolve("", 0));
+        Connection server(serverLink, EndpointId::None);
+
+        // Two, several and the most fragments a message may take, plus one exactly one byte into
+        // a second fragment.
+        const vector<usize> sizes{MaxUnfragmentedReliableMessageSize + 1,
+                                  MaxReliableFragmentSize * 5 + 17, MaxReliableMessageSize,
+                                  MaxReliableFragmentSize * 2};
+        for (u32 i = 0; i < sizes.size(); ++i)
+        {
+            REQUIRE(client.Send(Channel::ReliableOrdered, SizedPayload(i, sizes[i])).has_value());
+        }
+
+        vector<vector<u8>> delivered;
+        f64 now = 0.0;
+        for (int tick = 0; tick < 2000 && delivered.size() < sizes.size(); ++tick)
+        {
+            now += 0.02;
+            client.Update(now);
+            server.Update(now);
+            while (optional<vector<u8>> message = server.Receive(Channel::ReliableOrdered))
+            {
+                delivered.push_back(std::move(*message));
+            }
+        }
+
+        REQUIRE(delivered.size() == sizes.size());
+        u32 mismatched = 0;
+        for (u32 i = 0; i < sizes.size(); ++i)
+        {
+            mismatched += delivered[i] == SizedPayload(i, sizes[i]) ? 0 : 1;
+        }
+        CHECK(mismatched == 0);
+
+        // Exactly once: nothing further surfaces however long the link keeps running.
+        for (int tick = 0; tick < 50; ++tick)
+        {
+            now += 0.02;
+            client.Update(now);
+            server.Update(now);
+        }
+        CHECK_FALSE(server.Receive(Channel::ReliableOrdered).has_value());
+    };
+
+    SUBCASE("heavy drop")
+    {
+        run(FaultInjectionConfig{.DropRate = 0.4f, .Seed = 404});
+    }
+    SUBCASE("drop, reorder, and duplicate together")
+    {
+        run(FaultInjectionConfig{
+            .DropRate = 0.2f, .DuplicateRate = 0.3f, .ReorderRate = 0.5f, .Seed = 505});
+    }
+}
+
+TEST_CASE("small and large reliable messages interleave in send order")
+{
+    auto [la, lb] = LoopbackTransport::CreatePair();
+    FaultInjectionTransport serverLink(*lb, FaultInjectionConfig{.ReorderRate = 0.5f, .Seed = 606});
+    Connection client(*la, *la->Resolve("", 0));
+    Connection server(serverLink, EndpointId::None);
+
+    constexpr u32 messageCount = 12;
+    const auto sizeOf = [](u32 i) { return i % 3 == 1 ? MaxReliableFragmentSize * 3 + i : 8u + i; };
+    for (u32 i = 0; i < messageCount; ++i)
+    {
+        REQUIRE(client.Send(Channel::ReliableOrdered, SizedPayload(i, sizeOf(i))).has_value());
+    }
+
+    vector<vector<u8>> delivered;
+    f64 now = 0.0;
+    for (int tick = 0; tick < 400 && delivered.size() < messageCount; ++tick)
+    {
+        now += 0.02;
+        client.Update(now);
+        server.Update(now);
+        while (optional<vector<u8>> message = server.Receive(Channel::ReliableOrdered))
+        {
+            delivered.push_back(std::move(*message));
+        }
+    }
+
+    REQUIRE(delivered.size() == messageCount);
+    u32 mismatched = 0;
+    for (u32 i = 0; i < messageCount; ++i)
+    {
+        mismatched += delivered[i] == SizedPayload(i, sizeOf(i)) ? 0 : 1;
+    }
+    CHECK(mismatched == 0);
+}
+
+TEST_CASE("a reliable message within one packet keeps the unfragmented framing")
+{
+    auto [la, lb] = LoopbackTransport::CreatePair();
+    ChannelByteTransport recorder(*la);
+    Connection client(recorder, *la->Resolve("", 0));
+
+    const u8 plain = static_cast<u8>(Channel::ReliableOrdered);
+
+    // At the unfragmented bound: one datagram, a plain channel byte, and a full-size datagram.
+    REQUIRE(
+        client.Send(Channel::ReliableOrdered, SizedPayload(0, MaxUnfragmentedReliableMessageSize))
+            .has_value());
+    client.Update(0.0);
+    REQUIRE(recorder.ChannelBytes.size() == 1);
+    CHECK(recorder.ChannelBytes[0] == plain);
+    CHECK(recorder.Sizes[0] == MaxDatagramSize);
+
+    // One byte past it: two datagrams, both flagged as fragments, neither past the datagram size.
+    recorder.ChannelBytes.clear();
+    recorder.Sizes.clear();
+    REQUIRE(
+        client
+            .Send(Channel::ReliableOrdered, SizedPayload(1, MaxUnfragmentedReliableMessageSize + 1))
+            .has_value());
+    client.Update(0.001);
+    REQUIRE(recorder.ChannelBytes.size() == 2);
+    for (usize i = 0; i < recorder.ChannelBytes.size(); ++i)
+    {
+        CHECK(recorder.ChannelBytes[i] != plain);
+        CHECK((recorder.ChannelBytes[i] & 0x7Fu) == plain);
+        CHECK(recorder.Sizes[i] <= MaxDatagramSize);
+    }
+}
+
+TEST_CASE("a message past its channel's bound is refused with an error")
 {
     auto [la, lb] = LoopbackTransport::CreatePair();
     Connection client(*la, *la->Resolve("", 0));

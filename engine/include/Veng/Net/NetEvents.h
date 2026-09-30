@@ -33,7 +33,10 @@ namespace Veng::Net
     /// with the view delay (the tick the sender's view was drawn at, behind its input tick), which a
     /// server judges hit queries against. Version 7 grew the join reply with the hosted world's
     /// snapshot interval, which a client's remote interpolation adopts in place of its own setting.
-    inline constexpr u32 ProtocolVersion = 7;
+    /// Version 8 added reliable-message fragmentation: a reliable message larger than one packet
+    /// travels as ordered fragments flagged on the packet's channel byte, while an unfragmented
+    /// message keeps the framing every version shares.
+    inline constexpr u32 ProtocolVersion = 8;
 
     /// @brief Wire overhead of a connect request, in bytes, ahead of its account profile blob.
     ///
@@ -44,11 +47,14 @@ namespace Veng::Net
 
     /// @brief Largest account profile (Blob::Bytes) the connect handshake carries, in bytes.
     ///
-    /// The reliable channel's per-message bound (MaxReliableMessageSize) minus the connect
-    /// request's own framing (ConnectRequestOverhead). The connect request is a single reliable
-    /// message with no fragmentation, so a profile past this bound cannot be split: the connect is
-    /// refused with DenyReason::ProfileTooLarge rather than the payload being truncated.
-    inline constexpr usize MaxProfileBytes = MaxReliableMessageSize - ConnectRequestOverhead;
+    /// The unfragmented reliable bound (MaxUnfragmentedReliableMessageSize) minus the connect
+    /// request's own framing (ConnectRequestOverhead). The connect request carries the protocol
+    /// version, so it must stay in the one-packet framing every protocol version reads: a peer of
+    /// another version then still decodes it and is refused ProtocolMismatch, rather than dropping
+    /// fragments it cannot parse and timing out. A profile past this bound is refused with
+    /// DenyReason::ProfileTooLarge rather than the payload being truncated.
+    inline constexpr usize MaxProfileBytes =
+        MaxUnfragmentedReliableMessageSize - ConnectRequestOverhead;
 
     /// @brief A server-assigned connection identifier: a per-session u32, never reused.
     ///
@@ -131,8 +137,8 @@ namespace Veng::Net
         AccountAlreadyConnected = 5,
         /// @brief The presented account profile exceeded Net::MaxProfileBytes.
         ///
-        /// The connect request is one unfragmented reliable message, so an over-budget profile
-        /// cannot be split. It is refused rather than truncated: a silently shortened opaque
+        /// The connect request stays one unfragmented reliable message (see MaxProfileBytes), so an
+        /// over-budget profile is not split. It is refused rather than truncated: a silently shortened opaque
         /// payload is a corruption the consumer that authored it cannot detect. A client whose own
         /// presented profile is over budget refuses locally with this reason and sends nothing.
         ProfileTooLarge = 6,

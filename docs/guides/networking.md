@@ -384,8 +384,9 @@ client.RegisterChannel(ChatChannel, [&](const Net::Blob& blob) { ... });
 ```
 
 - A payload packs a reflected value through the field serializer (`WriteFields`/`ReadFields`),
-  its type id named on the blob; the bound is `Net::MaxMessagePayloadSize` (~1.1 KiB — no
-  fragmentation, an oversized payload fails at send).
+  its type id named on the blob; the bound is `Net::MaxMessagePayloadSize` (just under 32 KiB — a
+  payload larger than one packet is fragmented and delivered whole; an oversized payload fails at
+  send).
 - Delivery is **reliable-ordered within a live connection, at-most-once across its lifetime**;
   every failure is loud (a `VoidResult` reason): disconnected account, outbound queue cap,
   oversize. There is no offline queue — persistence is state, not messaging.
