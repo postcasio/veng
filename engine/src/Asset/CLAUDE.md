@@ -300,8 +300,8 @@ level from the resolve seam's global facet (`GraphicsGlobalFacet::TextureQuality
   and **+Y is up**. Which authored nodes become sockets is the cook's decision
   ([cooker/CLAUDE.md](../../../cooker/CLAUDE.md)); the runtime consumes the table as given.
   Attaching an entity to one is `AttachToSocket` — see [../Scene/CLAUDE.md](../Scene/CLAUDE.md).
-  A socket is **mesh-space and static**: it does not follow a skinned mesh's animated skeleton, and
-  a joint anchor is a different mechanism.
+  A socket is **mesh-space and static**: it does not follow a skinned mesh's animated skeleton; a
+  posed joint is placed through `Skeleton::JointModelTransform` (below).
 - **Sockets can be read without making the mesh resident.** `AssetManager::ReadMeshSockets(id) →
   AssetResult<vector<MeshSocket>>` decodes the socket table of the mounted cooked blob and nothing
   else — no vertex/index buffer, no material dependency, no render context, nothing cached — for a
@@ -340,7 +340,24 @@ level from the resolve seam's global facet (`GraphicsGlobalFacet::TextureQuality
   tracks, valid because the palette is ring-buffered) so a skinned mesh's deformation writes its
   motion vector into the g-buffer velocity channel. An entity with no `SkinnedPose` (e.g. the
   editor with systems paused) renders at the skeleton's bind pose. The core pack ships the
-  `skinned` vertex layout and the skinned surface/shadow vertex shaders.
+  `skinned` vertex layout and the skinned surface/shadow vertex shaders. Code turns named joints
+  without a clip through the `JointOverrides` component, which the same system poses — see
+  [../Scene/CLAUDE.md](../Scene/CLAUDE.md).
+- **A joint's pose is readable on the CPU, and so is the skeleton, without residency.**
+  `Skeleton::JointModelTransform(localPose, joint)` is a joint's frame in **mesh space** —
+  `GlobalInverse · modelBone`, the composition `ComputeSkinningMatrices` performs, so it times the
+  joint's `InverseBind` equals that pose's palette entry — and `JointWorldTransform(entityWorld, …)`
+  composes it with the drawing entity's world matrix. The local pose they take is the one the
+  palette takes: `ComputeBindLocalPose` for the rest pose, `ComputeLocalPose(rotations)` for the
+  bind pose with `JointRotation`s post-multiplied onto named joints (the exact pose a clip-less
+  `JointOverrides` entity is drawn in), or a sampled clip. `FindBone(name)` resolves a joint name
+  to its index. `AssetManager::ReadSkeleton(id) → AssetResult<Skeleton>` decodes a mounted cooked
+  skeleton by value, and `ReadMeshSkeleton(meshId)` follows a cooked mesh's skeleton reference —
+  both like `ReadMeshSockets`: nothing resident, nothing cached, no render context. Both decode
+  through `ParseCookedSkeleton` (`Veng/Asset/Skeleton.h`), the function `SkeletonLoader` runs, so a
+  CPU read and the resident skeleton cannot disagree. A headless process therefore places a posed
+  joint of a model it never draws. `ReadMeshSkeleton` reports a static mesh as `LoadFailed` and an
+  unmounted skeleton as `MissingDependency`.
 
 ## Prefabs
 

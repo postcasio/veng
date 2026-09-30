@@ -2,7 +2,9 @@
 // and SampleAnimationPose are glm-only functions of a bone table + keyframes, so these run
 // with no ICD (the bvh.cpp / punctual_shadows.cpp pattern). The properties: a bind-pose
 // skeleton skins to identity, a bone without an animation channel holds its bind pose, and a
-// keyed bone's pose changes over time.
+// keyed bone's pose changes over time. The procedural joint cases run the pure pose helpers, then
+// AnimationSystem itself over a skinned mesh whose skeleton loads from a memory mount through a
+// manager whose Context is never initialized.
 
 #include <doctest/doctest.h>
 
@@ -12,8 +14,21 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <Veng/Asset/Animation.h>
+#include <Veng/Asset/Archive.h>
+#include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Skeleton.h>
+#include <Veng/Input.h>
+#include <Veng/Log.h>
+#include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Renderer/Context.h>
 #include <Veng/Scene/AnimationSystem.h>
+#include <Veng/Scene/BuiltinTypes.h>
+#include <Veng/Scene/Components.h>
+#include <Veng/Scene/Scene.h>
+#include <Veng/Task/TaskSystem.h>
+
+#include "support/CookedSkeleton.h"
 
 using namespace Veng;
 
@@ -372,4 +387,272 @@ TEST_CASE("crossfade weight ramps monotonically to one with no overshoot")
 
     // A zero fade completes in a single tick.
     CHECK(AdvanceCrossfade(0.0f, 0.0f, Delta) == doctest::Approx(1.0f));
+}
+
+namespace
+{
+    constexpr usize RigRoot = 0;
+    constexpr usize RigArm = 1;
+    constexpr usize RigHand = 2;
+    constexpr usize RigSide = 3;
+
+    quat QuarterTurn(const vec3& axis)
+    {
+        return glm::angleAxis(glm::radians(90.0f), axis);
+    }
+
+    // Where a joint sits in mesh space under a pose: the translation of its model transform.
+    vec3 JointPosition(const Skeleton& skeleton, const vector<mat4>& localPose, const usize joint)
+    {
+        return vec3(skeleton.JointModelTransform(localPose, joint)[3]);
+    }
+
+    // Where a joint's rest position lands under a skinning palette, as a vertex bound to it would.
+    vec3 SkinnedRestPosition(const vector<mat4>& skinning, const usize joint)
+    {
+        return vec3(skinning[joint] * vec4(TestSupport::ArmRigRestPosition(joint), 1.0f));
+    }
+
+    bool ApproxEqual(const mat4& a, const mat4& b)
+    {
+        for (int c = 0; c < 4; ++c)
+        {
+            for (int r = 0; r < 4; ++r)
+            {
+                if (a[c][r] != doctest::Approx(b[c][r]).epsilon(1e-4))
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // A clip turning the rig's Arm a quarter about +Z over one second.
+    Animation ArmClip()
+    {
+        Animation animation;
+        animation.Duration = 1.0f;
+        AnimationChannel channel;
+        channel.BoneIndex = static_cast<u32>(RigArm);
+        channel.Rotation = {
+            QuatKey{.Time = 0.0f, .Value = quat(1.0f, 0.0f, 0.0f, 0.0f)},
+            QuatKey{.Time = 1.0f, .Value = QuarterTurn(vec3(0.0f, 0.0f, 1.0f))},
+        };
+        animation.Channels = {channel};
+        return animation;
+    }
+}
+
+TEST_CASE("a joint rotation turns exactly that joint's subtree")
+{
+    const Skeleton rig = TestSupport::MakeArmRig();
+    vector<mat4> bind;
+    rig.ComputeBindLocalPose(bind);
+
+    const JointRotation turn[] = {{.Joint = RigArm, .Rotation = QuarterTurn(vec3(0, 0, 1))}};
+    vector<mat4> posed;
+    rig.ComputeLocalPose(turn, posed);
+    REQUIRE(posed.size() == rig.GetBoneCount());
+
+    // Above and beside the turned joint nothing moves: the root and the sibling keep their frames.
+    CHECK(ApproxEqual(rig.JointModelTransform(posed, RigRoot),
+                      rig.JointModelTransform(bind, RigRoot)));
+    CHECK(ApproxEqual(rig.JointModelTransform(posed, RigSide),
+                      rig.JointModelTransform(bind, RigSide)));
+
+    // The joint turns about its own origin, so it stays put; its child swings with it.
+    CHECK(ApproxEqual(JointPosition(rig, posed, RigArm), TestSupport::ArmRigRestPosition(RigArm)));
+    CHECK(ApproxEqual(JointPosition(rig, posed, RigHand),
+                      TestSupport::ArmRigRestPosition(RigArm) + vec3(0.0f, 1.0f, 0.0f)));
+
+    // In the palette only the subtree departs from identity.
+    vector<mat4> skinning;
+    rig.ComputeSkinningMatrices(posed, skinning);
+    CHECK(IsApproxIdentity(skinning[RigRoot]));
+    CHECK(IsApproxIdentity(skinning[RigSide]));
+    CHECK_FALSE(IsApproxIdentity(skinning[RigArm]));
+    CHECK_FALSE(IsApproxIdentity(skinning[RigHand]));
+}
+
+TEST_CASE("a joint's model transform is the frame the skinning palette uses")
+{
+    const Skeleton rig = TestSupport::MakeArmRig();
+
+    // At rest a joint sits at its authored mesh-space position, global inverse included.
+    vector<mat4> bind;
+    rig.ComputeBindLocalPose(bind);
+    CHECK(ApproxEqual(JointPosition(rig, bind, RigHand), TestSupport::ArmRigRestPosition(RigHand)));
+
+    const JointRotation turns[] = {
+        {.Joint = RigRoot, .Rotation = QuarterTurn(vec3(0, 1, 0))},
+        {.Joint = RigArm, .Rotation = QuarterTurn(vec3(1, 0, 0))},
+    };
+    vector<mat4> posed;
+    rig.ComputeLocalPose(turns, posed);
+    vector<mat4> skinning;
+    rig.ComputeSkinningMatrices(posed, skinning);
+    for (usize joint = 0; joint < rig.GetBoneCount(); ++joint)
+    {
+        CHECK(ApproxEqual(rig.JointModelTransform(posed, joint) * rig.Bones[joint].InverseBind,
+                          skinning[joint]));
+    }
+    // So the leaf joint is where a vertex skinned to it at its rest position is drawn.
+    CHECK(ApproxEqual(JointPosition(rig, posed, RigHand), SkinnedRestPosition(skinning, RigHand)));
+
+    const mat4 world = glm::translate(mat4(1.0f), vec3(10.0f, 0.0f, -3.0f)) *
+                       glm::mat4_cast(QuarterTurn(vec3(0, 1, 0)));
+    CHECK(ApproxEqual(rig.JointWorldTransform(world, posed, RigHand),
+                      world * rig.JointModelTransform(posed, RigHand)));
+}
+
+TEST_CASE("a joint rotation composes onto a sampled clip pose")
+{
+    const Skeleton rig = TestSupport::MakeArmRig();
+    const Animation clip = ArmClip();
+
+    vector<JointPose> sampled;
+    SampleAnimationLocalPose(rig, clip, 1.0f, false, sampled);
+    vector<JointPose> overridden = sampled;
+    const quat spin = QuarterTurn(vec3(0, 0, 1));
+    const JointRotation turn[] = {{.Joint = RigArm, .Rotation = spin}};
+    ApplyJointRotations(turn, overridden);
+
+    CHECK(SameRotation(overridden[RigArm].Rotation, sampled[RigArm].Rotation * spin));
+    CHECK(ApproxEqual(overridden[RigArm].Translation, sampled[RigArm].Translation));
+    for (const usize joint : {RigRoot, RigHand, RigSide})
+    {
+        CHECK(SameRotation(overridden[joint].Rotation, sampled[joint].Rotation));
+    }
+
+    // The clip's quarter turn and the override's quarter turn add: the hand ends up behind the arm.
+    vector<mat4> local;
+    ComposeLocalPose(overridden, local);
+    CHECK(ApproxEqual(JointPosition(rig, local, RigHand),
+                      TestSupport::ArmRigRestPosition(RigArm) + vec3(-1.0f, 0.0f, 0.0f)));
+}
+
+namespace
+{
+    constexpr AssetId RigSkeletonId{0x3E5C9BDAC94837A0ULL};
+
+    // A scene drawing a skinned mesh over the arm rig, with the system and its context at hand.
+    struct PosingScene
+    {
+        Renderer::Context Context;
+        TaskSystem Tasks;
+        TypeRegistry Types;
+        Unique<AssetManager> Assets;
+        MountHandle Mount;
+        Unique<Scene> World;
+        AssetHandle<Mesh> RigMesh;
+        Input HeadlessInput{nullptr};
+        alignas(16) unsigned char Unused[64]{};
+        AnimationSystem System;
+
+        PosingScene()
+        {
+            RegisterBuiltinTypes(Types);
+            Assets = CreateUnique<AssetManager>(Context, Tasks, Types);
+            ArchiveWriter writer;
+            writer.Add(RigSkeletonId, AssetTypes::Skeleton,
+                       TestSupport::CookSkeleton(TestSupport::MakeArmRig()));
+            Mount = Assets->MountMemory(writer.Build(), "arm_rig");
+            const AssetResult<AssetHandle<Skeleton>> skeleton =
+                Assets->LoadSync<Skeleton>(RigSkeletonId);
+            REQUIRE(skeleton.has_value());
+            RigMesh =
+                Assets->Adopt<Mesh>(Mesh::Create(MeshInfo{.Name = "rig", .Skeleton = *skeleton}));
+            World = Scene::Create(Types);
+        }
+
+        Entity Spawn()
+        {
+            const Entity entity = World->CreateEntity();
+            World->Add<Transform>(entity, Transform{});
+            World->Add<MeshRenderer>(entity, MeshRenderer{.Mesh = RigMesh});
+            return entity;
+        }
+
+        void Tick()
+        {
+            const SystemContext context{
+                .Assets = *Assets,
+                .Input = HeadlessInput,
+                .Tasks = Tasks,
+                .Audio = *reinterpret_cast<Audio::AudioEngine*>(Unused),
+                .Localization = *reinterpret_cast<Localization::Localization*>(Unused),
+            };
+            System.OnUpdate(*World, 1.0f / 60.0f, context);
+        }
+
+        [[nodiscard]] const vector<mat4>& Skinning(const Entity entity) const
+        {
+            return World->Get<SkinnedPose>(entity).Skinning;
+        }
+    };
+}
+
+TEST_CASE("AnimationSystem poses a clip-less entity's joint overrides from the bind pose")
+{
+    PosingScene posing;
+    const Entity entity = posing.Spawn();
+    posing.World->Add<JointOverrides>(
+        entity,
+        JointOverrides{.Entries = {
+                           {.Joint = "Missing", .LocalRotation = QuarterTurn(vec3(1, 0, 0))},
+                           {.Joint = "Arm", .LocalRotation = QuarterTurn(vec3(0, 0, 1))},
+                       }});
+
+    usize warnings = 0;
+    Log::SetSink(
+        [&](const Log::Level level, std::string_view)
+        {
+            if (level == Log::Level::Warn)
+            {
+                ++warnings;
+            }
+        });
+    posing.Tick();
+    REQUIRE(posing.World->Has<SkinnedPose>(entity));
+    const vector<mat4> first = posing.Skinning(entity);
+
+    // Only the named, known joint's subtree moves; the unknown name is ignored.
+    CHECK(IsApproxIdentity(first[RigRoot]));
+    CHECK(IsApproxIdentity(first[RigSide]));
+    CHECK(ApproxEqual(SkinnedRestPosition(first, RigHand),
+                      TestSupport::ArmRigRestPosition(RigArm) + vec3(0.0f, 1.0f, 0.0f)));
+
+    // Rewriting a rotation re-poses without re-resolving, so the unknown name warns once.
+    posing.World->Get<JointOverrides>(entity).Entries[1].LocalRotation = quat(1, 0, 0, 0);
+    posing.Tick();
+    Log::SetSink(nullptr);
+    CHECK(warnings == 1);
+    for (const mat4& skin : posing.Skinning(entity))
+    {
+        CHECK(IsApproxIdentity(skin));
+    }
+}
+
+TEST_CASE("AnimationSystem composes joint overrides onto an Animator's clip")
+{
+    PosingScene posing;
+    const Entity entity = posing.Spawn();
+    posing.World->Add<Animator>(
+        entity, Animator{.Clip = posing.Assets->Adopt<Animation>(CreateRef<Animation>(ArmClip())),
+                         .Time = 1.0f,
+                         .Loop = false,
+                         .Playing = false});
+    posing.World->Add<JointOverrides>(
+        entity,
+        JointOverrides{.Entries = {{.Joint = "Arm", .LocalRotation = QuarterTurn(vec3(0, 0, 1))}}});
+
+    posing.Tick();
+    REQUIRE(posing.World->Has<SkinnedPose>(entity));
+    const vector<mat4>& skinning = posing.Skinning(entity);
+
+    // The clip's quarter turn and the override's add to a half turn; the sibling is untouched.
+    CHECK(ApproxEqual(SkinnedRestPosition(skinning, RigHand),
+                      TestSupport::ArmRigRestPosition(RigArm) + vec3(-1.0f, 0.0f, 0.0f)));
+    CHECK(IsApproxIdentity(skinning[RigSide]));
 }

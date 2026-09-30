@@ -1,8 +1,12 @@
 #include <Veng/Asset/AssetManager.h>
 
+#include <cstring>
+
 #include <Veng/Assert.h>
 #include <Veng/Asset/HexId.h>
+#include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Asset/Mesh.h>
+#include <Veng/Asset/Skeleton.h>
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Log.h>
 #include <Veng/Task/TaskSystem.h>
@@ -314,6 +318,67 @@ namespace Veng
                 .Kind = AssetError::Corrupt, .Id = mesh, .Detail = std::move(sockets.error())});
         }
         return std::move(*sockets);
+    }
+
+    AssetResult<Skeleton> AssetManager::ReadSkeleton(AssetId skeleton) const
+    {
+        const AssetResult<std::span<const u8>> cooked = ReadCooked(AssetTypes::Skeleton, skeleton);
+        if (!cooked)
+        {
+            return std::unexpected(cooked.error());
+        }
+
+        Result<Skeleton> decoded = ParseCookedSkeleton(*cooked);
+        if (!decoded)
+        {
+            return std::unexpected(AssetLoadError{
+                .Kind = AssetError::Corrupt, .Id = skeleton, .Detail = std::move(decoded.error())});
+        }
+        return std::move(*decoded);
+    }
+
+    AssetResult<Skeleton> AssetManager::ReadMeshSkeleton(AssetId mesh) const
+    {
+        const AssetResult<std::span<const u8>> cooked = ReadCooked(AssetTypes::Mesh, mesh);
+        if (!cooked)
+        {
+            return std::unexpected(cooked.error());
+        }
+        if (cooked->size() < sizeof(CookedMeshHeader))
+        {
+            return std::unexpected(
+                AssetLoadError{.Kind = AssetError::Corrupt,
+                               .Id = mesh,
+                               .Detail = "mesh: cooked blob smaller than CookedMeshHeader"});
+        }
+
+        CookedMeshHeader header;
+        std::memcpy(&header, cooked->data(), sizeof(header));
+        if (header.Version != CookedMeshVersion)
+        {
+            return std::unexpected(AssetLoadError{
+                .Kind = AssetError::Corrupt,
+                .Id = mesh,
+                .Detail = fmt::format("mesh: cooked version {} does not match expected {}",
+                                      header.Version, CookedMeshVersion)});
+        }
+        if (header.SkeletonId == 0)
+        {
+            return std::unexpected(AssetLoadError{.Kind = AssetError::LoadFailed,
+                                                  .Id = mesh,
+                                                  .Detail = "mesh is static: no skeleton"});
+        }
+
+        const AssetId skeleton{header.SkeletonId};
+        AssetResult<Skeleton> read = ReadSkeleton(skeleton);
+        if (!read && read.error().Kind == AssetError::NotFound)
+        {
+            return std::unexpected(AssetLoadError{
+                .Kind = AssetError::MissingDependency,
+                .Id = skeleton,
+                .Detail = fmt::format("mesh {}'s skeleton is not mounted", mesh.Value)});
+        }
+        return read;
     }
 
     AssetResult<std::pair<AssetLoader*, ArchiveEntry>> AssetManager::Resolve(AssetTypeId type,

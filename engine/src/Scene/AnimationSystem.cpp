@@ -1,5 +1,6 @@
 #include <Veng/Scene/AnimationSystem.h>
 
+#include <algorithm>
 #include <cmath>
 
 #include <glm/common.hpp>
@@ -9,6 +10,7 @@
 #include <Veng/Asset/Animation.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Skeleton.h>
+#include <Veng/Log.h>
 #include <Veng/Scene/AnimationBlend.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
@@ -325,6 +327,56 @@ namespace Veng
         }
     }
 
+    void ApplyJointRotations(const std::span<const JointRotation> rotations,
+                             vector<JointPose>& pose)
+    {
+        for (const JointRotation& applied : rotations)
+        {
+            if (applied.Joint < pose.size())
+            {
+                pose[applied.Joint].Rotation = pose[applied.Joint].Rotation * applied.Rotation;
+            }
+        }
+    }
+
+    void ResolveJointOverrides(const Skeleton& skeleton, JointOverrides& overrides,
+                               vector<JointRotation>& out)
+    {
+        const bool stale =
+            overrides.ResolvedSkeleton != &skeleton ||
+            overrides.Resolved.size() != overrides.Entries.size() ||
+            !std::ranges::equal(overrides.Resolved, overrides.Entries, {},
+                                &ResolvedJointOverride::Joint, &JointOverride::Joint);
+        if (stale)
+        {
+            overrides.Resolved.clear();
+            overrides.Resolved.reserve(overrides.Entries.size());
+            for (const JointOverride& entry : overrides.Entries)
+            {
+                const i32 index = skeleton.FindBone(entry.Joint);
+                if (index < 0)
+                {
+                    Log::Warn("JointOverrides: skeleton has no joint named '{}'; ignored",
+                              entry.Joint);
+                }
+                overrides.Resolved.push_back(
+                    ResolvedJointOverride{.Joint = entry.Joint, .Index = index});
+            }
+            overrides.ResolvedSkeleton = &skeleton;
+        }
+
+        out.clear();
+        for (usize i = 0; i < overrides.Entries.size(); ++i)
+        {
+            const i32 index = overrides.Resolved[i].Index;
+            if (index >= 0)
+            {
+                out.push_back(JointRotation{.Joint = static_cast<usize>(index),
+                                            .Rotation = overrides.Entries[i].LocalRotation});
+            }
+        }
+    }
+
     namespace
     {
         // Fills out with the skeleton's bind-pose local TRS — the base an empty blend falls back to.
@@ -499,7 +551,9 @@ namespace Veng
         // the phase-synced blend as the base, an optional named state crossfaded over it, and the
         // baked root translation stripped (the controller owns position).
         void PoseBlended(const Skeleton& skeleton, const Animator& animator, AnimationBlend* blend,
-                         AnimationStateSet* stateSet, const f32 delta, SkinnedPose& pose)
+                         AnimationStateSet* stateSet,
+                         const std::span<const JointRotation> rotations, const f32 delta,
+                         SkinnedPose& pose)
         {
             const bool playing = animator.Playing;
 
@@ -560,9 +614,22 @@ namespace Veng
                     skeleton.Bones[static_cast<usize>(rootBone)].LocalPosition;
             }
 
+            ApplyJointRotations(rotations, finalPose);
             vector<mat4> localPose;
             ComposeLocalPose(finalPose, localPose);
             skeleton.ComputeSkinningMatrices(localPose, pose.Skinning);
+        }
+
+        // Whether an entity draws a resident skinned mesh whose skeleton is loaded.
+        const Skeleton* ResidentSkeleton(const Scene& scene, const Entity entity)
+        {
+            const auto* renderer = scene.TryGet<MeshRenderer>(entity);
+            if (renderer == nullptr || !renderer->Mesh.IsLoaded() || !renderer->Mesh->IsSkinned())
+            {
+                return nullptr;
+            }
+            const AssetHandle<Skeleton>& skeleton = renderer->Mesh->GetSkeleton();
+            return skeleton.IsLoaded() ? skeleton.Get() : nullptr;
         }
     }
 
@@ -573,16 +640,27 @@ namespace Veng
         // Add a SkinnedPose to any animated, resident, skinned-mesh entity that lacks one.
         // Collected first so the structural add never happens mid-iteration.
         vector<Entity> needPose;
-        for (auto [entity, animator] : readScene.View<Animator>())
+        const auto collect = [&](const Entity entity)
         {
             if (scene.Has<SkinnedPose>(entity))
             {
-                continue;
+                return;
             }
             const auto* renderer = readScene.TryGet<MeshRenderer>(entity);
             if (renderer != nullptr && renderer->Mesh.IsLoaded() && renderer->Mesh->IsSkinned())
             {
                 needPose.push_back(entity);
+            }
+        };
+        for (auto [entity, animator] : readScene.View<Animator>())
+        {
+            collect(entity);
+        }
+        for (auto [entity, overrides] : readScene.View<JointOverrides>())
+        {
+            if (!scene.Has<Animator>(entity))
+            {
+                collect(entity);
             }
         }
         for (const Entity entity : needPose)
@@ -596,6 +674,7 @@ namespace Veng
         // RootMotionDelta add never happens mid-iteration.
         vector<Entity> driveEntities;
         vector<vec3> driveDeltas;
+        vector<JointRotation> rotations;
         for (auto [entity, animator] : scene.View<Animator>())
         {
             auto* pose = scene.TryGet<SkinnedPose>(entity);
@@ -604,15 +683,17 @@ namespace Veng
                 continue;
             }
 
-            const auto* renderer = readScene.TryGet<MeshRenderer>(entity);
-            if (renderer == nullptr || !renderer->Mesh.IsLoaded() || !renderer->Mesh->IsSkinned())
+            const Skeleton* resident = ResidentSkeleton(readScene, entity);
+            if (resident == nullptr)
             {
                 continue;
             }
-            const AssetHandle<Skeleton>& skeletonHandle = renderer->Mesh->GetSkeleton();
-            if (!skeletonHandle.IsLoaded())
+            const Skeleton& skeleton = *resident;
+
+            rotations.clear();
+            if (auto* overrides = scene.TryGet<JointOverrides>(entity))
             {
-                continue;
+                ResolveJointOverrides(skeleton, *overrides, rotations);
             }
 
             // A blend space or state set replaces the single-clip play: pose in blend/state space
@@ -622,7 +703,7 @@ namespace Veng
             auto* stateSet = scene.TryGet<AnimationStateSet>(entity);
             if (blend != nullptr || stateSet != nullptr)
             {
-                PoseBlended(*skeletonHandle.Get(), animator, blend, stateSet, delta, *pose);
+                PoseBlended(skeleton, animator, blend, stateSet, rotations, delta, *pose);
                 continue;
             }
 
@@ -632,17 +713,28 @@ namespace Veng
                 animator.Time += delta * animator.Speed;
             }
 
+            vector<mat4> localPose;
             if (!animator.Clip.IsLoaded())
             {
-                skeletonHandle->ComputeBindPoseMatrices(pose->Skinning);
+                skeleton.ComputeLocalPose(rotations, localPose);
+                skeleton.ComputeSkinningMatrices(localPose, pose->Skinning);
                 continue;
             }
 
-            const Skeleton& skeleton = *skeletonHandle.Get();
             const Animation& clip = *animator.Clip.Get();
 
-            vector<mat4> localPose;
-            SampleAnimationPose(skeleton, clip, animator.Time, animator.Loop, localPose);
+            if (rotations.empty())
+            {
+                SampleAnimationPose(skeleton, clip, animator.Time, animator.Loop, localPose);
+            }
+            else
+            {
+                // The rotation composes in TRS form so it lands before the joint's scale.
+                vector<JointPose> sampled;
+                SampleAnimationLocalPose(skeleton, clip, animator.Time, animator.Loop, sampled);
+                ApplyJointRotations(rotations, sampled);
+                ComposeLocalPose(sampled, localPose);
+            }
 
             const i32 rootBone = FindRootMotionBone(skeleton, clip);
             if (rootBone >= 0 && static_cast<usize>(rootBone) < localPose.size())
@@ -680,6 +772,25 @@ namespace Veng
             }
 
             skeleton.ComputeSkinningMatrices(localPose, pose->Skinning);
+        }
+
+        // A clip-less entity's JointOverrides pose its skeleton from the bind pose.
+        for (auto [entity, overrides] : scene.View<JointOverrides>())
+        {
+            if (scene.Has<Animator>(entity))
+            {
+                continue;
+            }
+            auto* pose = scene.TryGet<SkinnedPose>(entity);
+            const Skeleton* skeleton = ResidentSkeleton(readScene, entity);
+            if (pose == nullptr || skeleton == nullptr)
+            {
+                continue;
+            }
+            ResolveJointOverrides(*skeleton, overrides, rotations);
+            vector<mat4> localPose;
+            skeleton->ComputeLocalPose(rotations, localPose);
+            skeleton->ComputeSkinningMatrices(localPose, pose->Skinning);
         }
 
         // Publish Drive-mode deltas now that iteration is done; add a RootMotionDelta on first run.

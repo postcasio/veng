@@ -5,6 +5,8 @@
 // including the orientation contract (a socket's local -Z is forward, +Y is up). The CPU reads —
 // ParseCookedMeshSockets, AssetManager::ReadMeshSockets and ReadPrefabSockets — run against
 // hand-built cooked blobs in a memory mount, through a manager whose Context is never initialized.
+// The CPU skeleton reads — ReadSkeleton and ReadMeshSkeleton — run the same way, against the resident
+// load of the same blob.
 
 #include <doctest/doctest.h>
 
@@ -16,6 +18,7 @@
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Prefab.h>
+#include <Veng/Asset/Skeleton.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/Context.h>
@@ -25,6 +28,8 @@
 #include <Veng/Scene/Sockets.h>
 #include <Veng/Scene/Transforms.h>
 #include <Veng/Task/TaskSystem.h>
+
+#include "support/CookedSkeleton.h"
 
 using namespace Veng;
 
@@ -200,10 +205,11 @@ namespace
     // A cooked mesh blob up to and including its socket table. The attribute and submesh tables
     // are present (zeroed) so the socket table sits where a real cook puts it; no geometry
     // follows, which a socket read never reaches.
-    vector<u8> MeshBlob(std::span<const CookedMeshSocket> sockets)
+    vector<u8> MeshBlob(std::span<const CookedMeshSocket> sockets, const u64 skeletonId = 0)
     {
         CookedMeshHeader header;
         header.Version = CookedMeshVersion;
+        header.SkeletonId = skeletonId;
         header.AttributeCount = 4;
         header.SubMeshCount = 2;
         header.SocketCount = static_cast<u32>(sockets.size());
@@ -433,4 +439,97 @@ TEST_CASE("ReadPrefabSockets composes a child mesh's sockets into prefab-root sp
     CHECK(headless.Assets->CachedEntry(TwoLevelPrefabId) == nullptr);
     CHECK(headless.Assets->CachedEntry(BaseMeshId) == nullptr);
     CHECK(headless.Assets->CachedEntry(LimbMeshId) == nullptr);
+}
+
+namespace
+{
+    constexpr AssetId RigSkeletonId{0xE55A90A681976209ULL};
+    constexpr AssetId SkinnedMeshId{0xDABED6E940731D56ULL};
+    constexpr AssetId OrphanMeshId{0x68A19273BEBBB3D9ULL};
+
+    bool SameMatrix(const mat4& a, const mat4& b)
+    {
+        for (int c = 0; c < 4; ++c)
+        {
+            for (int r = 0; r < 4; ++r)
+            {
+                if (a[c][r] != doctest::Approx(b[c][r]).epsilon(1e-6))
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    void CheckSameSkeleton(const Skeleton& read, const Skeleton& resident)
+    {
+        CHECK(SameMatrix(read.GlobalInverse, resident.GlobalInverse));
+        REQUIRE(read.GetBoneCount() == resident.GetBoneCount());
+        for (usize i = 0; i < read.GetBoneCount(); ++i)
+        {
+            const Bone& a = read.Bones[i];
+            const Bone& b = resident.Bones[i];
+            CHECK(a.Name == b.Name);
+            CHECK(a.Parent == b.Parent);
+            CheckVec(a.LocalPosition, b.LocalPosition);
+            CheckVec(a.LocalScale, b.LocalScale);
+            CHECK(std::abs(glm::dot(a.LocalRotation, b.LocalRotation)) ==
+                  doctest::Approx(1.0f).epsilon(1e-6));
+            CHECK(SameMatrix(a.InverseBind, b.InverseBind));
+        }
+    }
+}
+
+TEST_CASE("ReadSkeleton decodes a mounted skeleton exactly as the resident load does")
+{
+    HeadlessAssets headless;
+    Skeleton authored = TestSupport::MakeArmRig();
+    authored.Bones[1].LocalRotation = glm::angleAxis(glm::radians(30.0f), vec3(1.0f, 0.0f, 0.0f));
+    authored.Bones[2].LocalScale = vec3(1.0f, 2.0f, 0.5f);
+    ArchiveWriter writer;
+    writer.Add(RigSkeletonId, AssetTypes::Skeleton, TestSupport::CookSkeleton(authored));
+    const MountHandle mount = headless.Assets->MountMemory(writer.Build(), "skeleton");
+
+    const AssetResult<Skeleton> read = headless.Assets->ReadSkeleton(RigSkeletonId);
+    REQUIRE(read.has_value());
+    CHECK(headless.Assets->CachedEntry(RigSkeletonId) == nullptr);
+    CHECK(read->FindBone("Hand") == 2);
+    CHECK(read->FindBone("Missing") == -1);
+
+    const AssetResult<AssetHandle<Skeleton>> resident =
+        headless.Assets->LoadSync<Skeleton>(RigSkeletonId);
+    REQUIRE(resident.has_value());
+    CheckSameSkeleton(*read, *resident->Get());
+
+    const AssetResult<Skeleton> wrongType = headless.Assets->ReadMeshSkeleton(RigSkeletonId);
+    REQUIRE_FALSE(wrongType.has_value());
+    CHECK(wrongType.error().Kind == AssetError::WrongType);
+}
+
+TEST_CASE("ReadMeshSkeleton follows a mesh's skeleton reference and reports a static mesh")
+{
+    HeadlessAssets headless;
+    const Skeleton authored = TestSupport::MakeArmRig();
+    ArchiveWriter writer;
+    writer.Add(RigSkeletonId, AssetTypes::Skeleton, TestSupport::CookSkeleton(authored));
+    writer.Add(SkinnedMeshId, AssetTypes::Mesh, MeshBlob({}, RigSkeletonId.Value));
+    writer.Add(BaseMeshId, AssetTypes::Mesh, MeshBlob({}));
+    writer.Add(OrphanMeshId, AssetTypes::Mesh, MeshBlob({}, LimbMeshId.Value));
+    const MountHandle mount = headless.Assets->MountMemory(writer.Build(), "skinned_mesh");
+
+    const AssetResult<Skeleton> read = headless.Assets->ReadMeshSkeleton(SkinnedMeshId);
+    REQUIRE(read.has_value());
+    CheckSameSkeleton(*read, authored);
+    CHECK(headless.Assets->CachedEntry(SkinnedMeshId) == nullptr);
+    CHECK(headless.Assets->CachedEntry(RigSkeletonId) == nullptr);
+
+    const AssetResult<Skeleton> unskinned = headless.Assets->ReadMeshSkeleton(BaseMeshId);
+    REQUIRE_FALSE(unskinned.has_value());
+    CHECK(unskinned.error().Kind == AssetError::LoadFailed);
+
+    const AssetResult<Skeleton> orphan = headless.Assets->ReadMeshSkeleton(OrphanMeshId);
+    REQUIRE_FALSE(orphan.has_value());
+    CHECK(orphan.error().Kind == AssetError::MissingDependency);
+    CHECK(orphan.error().Id == LimbMeshId);
 }

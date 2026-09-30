@@ -26,6 +26,7 @@ namespace Veng
     class EnvironmentMap;
     class InputMappingContext;
     struct Animation;
+    struct Skeleton;
 
     namespace Renderer
     {
@@ -327,6 +328,51 @@ namespace Veng
     {
         /// @brief Per-bone skinning matrices (GlobalInverse * modelBone * InverseBind).
         vector<mat4> Skinning;
+    };
+
+    /// @brief One procedural joint rotation: a joint named as authored, and the local turn it takes.
+    struct JointOverride
+    {
+        /// @brief The joint (bone) name, matched exactly against the mesh's skeleton.
+        string Joint;
+        /// @brief Rotation post-multiplied onto the joint's local rotation, about its own axes.
+        quat LocalRotation{1.0f, 0.0f, 0.0f, 0.0f};
+    };
+
+    /// @brief The resolution of one JointOverride name against a skeleton, cached on the component.
+    struct ResolvedJointOverride
+    {
+        /// @brief The name this entry was resolved from.
+        string Joint;
+        /// @brief The joint's bone index, or -1 when the skeleton has no joint by that name.
+        i32 Index = -1;
+    };
+
+    /// @brief Local rotations applied by joint name to a skinned mesh's pose, with or without a clip.
+    ///
+    /// Sits on an entity whose MeshRenderer draws a skinned mesh, and turns named joints — a
+    /// swivelling mount, a spinning part, a head tracking a target — from code, without an
+    /// animation clip. The animation system (the one writer of SkinnedPose) applies it:
+    /// - **Without an Animator**, the pose is the skeleton's bind pose with each named joint's
+    ///   rotation post-multiplied onto its bind rotation (Skeleton::ComputeLocalPose).
+    /// - **With an Animator**, each rotation is post-multiplied onto the joint's sampled rotation
+    ///   (single clip, blend or state), so a clip and a procedural turn compose.
+    ///
+    /// A joint turns about its own local axes and carries its whole subtree; joints above and
+    /// beside it are untouched. Entries are applied in order, so two naming one joint compose.
+    /// Names are resolved against the skeleton once and cached (Resolved); the cache re-resolves
+    /// only when the skeleton or the set of names changes, so rewriting LocalRotation every frame
+    /// costs no lookup. A name the skeleton lacks is ignored, with one warning per resolution.
+    /// Clearing Entries returns a clip-less entity to its bind pose; removing the component leaves
+    /// its last SkinnedPose standing. There are no limits and no blending: the caller clamps.
+    struct JointOverrides
+    {
+        /// @brief The joint rotations, applied in order.
+        vector<JointOverride> Entries;
+        /// @brief Runtime cache of Entries' names resolved to bone indices; never authored.
+        vector<ResolvedJointOverride> Resolved;
+        /// @brief The skeleton Resolved was computed against; compared, never dereferenced.
+        const Skeleton* ResolvedSkeleton = nullptr;
     };
 
     /// @brief This tick's root-motion displacement, published by an Animator in Drive mode.
@@ -1498,6 +1544,16 @@ VE_REFLECT_END();
 VE_TYPE(::Veng::SkinnedPose, 0x063C1245B8912FC3ULL);
 
 VE_TYPE(::Veng::RootMotionDelta, 0x10C7034D936A12CEULL);
+
+VE_REFLECT(::Veng::JointOverride, 0x496BFCBF59AF8418ULL)
+VE_FIELD(Joint, .DisplayName = "Joint", .Tooltip = "Joint (bone) name in the mesh's skeleton")
+VE_FIELD(LocalRotation, .DisplayName = "Local Rotation",
+         .Tooltip = "Applied after the joint's own local rotation")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::JointOverrides, 0xE7C932E50B8041B4ULL)
+VE_ARRAY_FIELD(Entries, .DisplayName = "Entries")
+VE_REFLECT_END();
 
 VE_REFLECT(::Veng::Light, 0xECF6442708DF7C00ULL)
 VE_FIELD(Type, .DisplayName = "Type")

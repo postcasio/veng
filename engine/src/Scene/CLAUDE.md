@@ -175,7 +175,14 @@ or `AnimationStateSet` (`Veng/Scene/AnimationBlend.h`), the phase-synced 1-D ble
 locomotion clips with a named state crossfaded over it, composed in pose space into the same
 `SkinnedPose`; an Animator with neither is the single-clip path unchanged, and the builtin
 `CharacterAnimationSystem` maps a `CharacterState` onto the blend's `Parameter` and requested
-state), `Light` (a directional light —
+state), `JointOverrides` (local rotations by joint name on a skinned-mesh entity — a swivelling
+mount, a spinning part — posed by the same `AnimationSystem`, the one writer of `SkinnedPose`: with
+no `Animator` the pose is the bind pose with each rotation post-multiplied onto its joint's bind
+rotation, and with one each rotation is post-multiplied onto the sampled or blended local rotation,
+so a clip and a procedural turn compose; a joint turns about its own axes and carries exactly its
+subtree. Names resolve once per skeleton into a cache on the component, an unknown name is ignored
+with one warning, and there are no limits — the caller clamps. The CPU read of a posed joint,
+`Skeleton::JointModelTransform`, is in [../Asset/CLAUDE.md](../Asset/CLAUDE.md)), `Light` (a directional light —
 `Direction`/`Color`/`Intensity`; `SceneRenderer::Execute` selects the first `Light` entity into
 the `SceneView`, or a zero-intensity default → flat ambient when the scene has none), and
 `ViewPose` (a fieldless runtime-only tag marking an entity whose `Transform` is authored per

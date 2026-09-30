@@ -45,6 +45,9 @@ namespace Veng
         registry.Register<Animator>();
         registry.Register<SkinnedPose>();
         registry.Register<RootMotionDelta>();
+        // Procedural joint rotations posed by AnimationSystem; JointOverride registers
+        // transitively as its array-element type.
+        registry.Register<JointOverrides>();
 
         // The 1-D locomotion blend space and the discrete states over it, both posed by
         // AnimationSystem beside a plain Animator. BlendSample and AnimationState register

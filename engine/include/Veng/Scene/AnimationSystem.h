@@ -3,12 +3,13 @@
 #include <span>
 
 #include <Veng/Veng.h>
+#include <Veng/Asset/Skeleton.h>
 #include <Veng/Scene/SceneSystem.h>
 
 namespace Veng
 {
-    struct Skeleton;
     struct Animation;
+    struct JointOverrides;
 
     /// @brief One bone's local transform as decomposed TRS — the poseable form used for blending.
     ///
@@ -97,6 +98,26 @@ namespace Veng
     /// @param out   Receives one local matrix per pose entry.
     void ComposeLocalPose(const vector<JointPose>& pose, vector<mat4>& out);
 
+    /// @brief Post-multiplies joint rotations onto a per-bone local TRS pose.
+    ///
+    /// pose[j].Rotation becomes pose[j].Rotation * rotation for each entry, leaving translation and
+    /// scale alone — the TRS form of Skeleton::ComputeLocalPose, applied to a sampled or blended
+    /// pose so a clip and a procedural turn compose. An entry beyond the pose is ignored. Pure.
+    /// @param rotations  The joint rotations to apply, in order.
+    /// @param pose       The pose to modify in place.
+    void ApplyJointRotations(std::span<const JointRotation> rotations, vector<JointPose>& pose);
+
+    /// @brief Resolves a JointOverrides' names against a skeleton into joint rotations.
+    ///
+    /// Reuses the component's cached resolution while the skeleton and the entries' names are the
+    /// ones it was computed for, and otherwise re-resolves (Skeleton::FindBone per entry) and
+    /// warns once for each name the skeleton lacks. Unknown names are left out of the output.
+    /// @param skeleton   The skeleton the overrides pose.
+    /// @param overrides  The component; its Resolved cache is refreshed when stale.
+    /// @param out        Receives one rotation per resolved entry, in entry order.
+    void ResolveJointOverrides(const Skeleton& skeleton, JointOverrides& overrides,
+                               vector<JointRotation>& out);
+
     /// @brief Samples an animation into per-bone local pose matrices at a given time.
     ///
     /// Each bone starts at its skeleton bind-pose local transform; a bone with an animation
@@ -140,8 +161,13 @@ namespace Veng
     /// advances the Animator's time (when Playing), samples the clip against the mesh's skeleton,
     /// computes the skinning palette, and stores it in the entity's SkinnedPose (added on first
     /// run). Runs in the View phase so it poses against finalized Sim state; the renderer uploads
-    /// the resulting palette. A skinned mesh with no Animator is posed at its bind pose by the
-    /// renderer, so it needs no SkinnedPose.
+    /// the resulting palette. A skinned mesh with no Animator and no JointOverrides is posed at its
+    /// bind pose by the renderer, so it needs no SkinnedPose.
+    ///
+    /// A JointOverrides on the entity turns its named joints on top of whatever pose is computed:
+    /// with no Animator the pose is the bind pose with the rotations applied
+    /// (Skeleton::ComputeLocalPose), and with one each rotation is post-multiplied onto the sampled
+    /// or blended local rotation before the palette is composed.
     ///
     /// An Animator with no AnimationBlend and no AnimationStateSet plays its single Clip exactly as
     /// described above. An entity carrying an AnimationBlend (Veng/Scene/AnimationBlend.h) instead

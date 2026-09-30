@@ -27,6 +27,7 @@ namespace Veng
     class TaskSystem;
     class TypeRegistry;
     struct MeshSocket;
+    struct Skeleton;
 
     /// @brief Construction parameters for AssetManager.
     struct AssetManagerInfo
@@ -367,6 +368,29 @@ namespace Veng
         /// @param mesh  The AssetTypes::Mesh asset to read.
         /// @return The sockets, sorted by name, or NotFound / WrongType / Corrupt.
         [[nodiscard]] AssetResult<vector<MeshSocket>> ReadMeshSockets(AssetId mesh) const;
+
+        /// @brief Reads a cooked skeleton without making it resident.
+        ///
+        /// Decodes the skeleton's cooked blob through ParseCookedSkeleton — the decoder the
+        /// skeleton loader runs, so the result equals the resident Skeleton of the same id — into
+        /// a Skeleton by value: bone names, parents, bind-local transforms, inverse-binds and the
+        /// global inverse. Nothing is cached or registered and no render context is touched, so a
+        /// headless process can place a joint (Skeleton::JointModelTransform) of a model it never
+        /// draws. A caller reading the same skeleton repeatedly caches the result itself.
+        /// @param skeleton  The AssetTypes::Skeleton asset to read.
+        /// @return The skeleton, or NotFound / WrongType / Corrupt.
+        [[nodiscard]] AssetResult<Skeleton> ReadSkeleton(AssetId skeleton) const;
+
+        /// @brief Reads the skeleton a cooked skinned mesh references, making neither resident.
+        ///
+        /// Decodes only the mesh blob's header to find its skeleton reference, then reads that
+        /// skeleton as ReadSkeleton does. It is the CPU counterpart of Mesh::GetSkeleton() on the
+        /// resident mesh, for a process that holds a mesh id but never presents the model.
+        /// @param mesh  The AssetTypes::Mesh asset whose skeleton is read.
+        /// @return The skeleton; NotFound / WrongType / Corrupt for the mesh; LoadFailed when the
+        ///         mesh is static (references no skeleton); MissingDependency when its skeleton is
+        ///         not mounted.
+        [[nodiscard]] AssetResult<Skeleton> ReadMeshSkeleton(AssetId mesh) const;
 
         /// @brief Returns the cache entry for an id, or null if it is not cached.
         ///
