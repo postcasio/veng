@@ -40,6 +40,7 @@
 #include "SkyResolver.h"
 #include "DofChain.h"
 #include "Passes/DofCompositeScenePass.h"
+#include "Passes/SpriteScenePass.h"
 #include "SsrChain.h"
 #include "AaResolve.h"
 #include "Passes/AaScenePasses.h"
@@ -144,6 +145,11 @@ namespace Veng::Renderer
         // cost is the two half-res targets' memory, nothing per-frame.
         constexpr u32 HalfResTranslucentIdleFrameLimit = 256;
 
+        // How many consecutive sprite-less gathers a wired sprite pass survives before it is
+        // unwired. Transient effects leave a scene empty between bursts; an idle wired pass records
+        // nothing and costs only its record ring.
+        constexpr u32 SpriteIdleFrameLimit = 256;
+
         // Executes at the full allocation before the non-temporal resolve-anchor promotion is
         // unwired. Deactivation hysteresis, the half-res-translucency reason: a dynamic-resolution
         // controller sitting on its ceiling dips below it and recovers within a few frames, and
@@ -166,6 +172,17 @@ namespace Veng::Renderer
         // half-resolution rendering, sorted back-to-front on their own (the layer composites as a
         // whole under the full-resolution draws).
         TranslucentDrawPlan HalfResTranslucentPlan;
+        // The frame's gathered flipbook sprites, which the sprite pass uploads and draws.
+        SpriteDrawPlan SpritePlan;
+        // Whether the pass set carries the sprite pass. Content-driven with deactivation
+        // hysteresis: wired the first Execute that gathers a sprite, dropped only after
+        // SpriteIdleFrameLimit consecutive empty ones, so transient effects coming and going do
+        // not recompile the graph each time the scene momentarily has none.
+        bool SpriteActive = false;
+        // Consecutive Executes the gather has come back empty while the pass is wired.
+        u32 SpriteIdleFrames = 0;
+        // Whether the over-budget warning has been logged; once per renderer.
+        bool SpriteBudgetWarned = false;
     };
 
     Unique<SceneRenderer> SceneRenderer::Create(const SceneRendererInfo& info)
@@ -769,6 +786,14 @@ namespace Veng::Renderer
                 m_Context, renderExtent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
                 m_RefractionSceneId, m_RefractionDepthId, HdrFormat, m_BloomMaskId, BloomMaskFormat,
                 /*halfResolution=*/false, forwardSets));
+            // Flipbook sprites composite over the translucent surfaces, into the same target and
+            // bloom mask, while the scene carries any.
+            if (m_Internal->SpriteActive)
+            {
+                m_Passes.push_back(CreateUnique<SpriteScenePass>(
+                    m_Context, m_Assets, &m_Internal->SpritePlan, lightingTargetId, depthId,
+                    m_BloomMaskId, HdrFormat, BloomMaskFormat, m_Context.GetMaxFramesInFlight()));
+            }
 
             // TAA resolves the lit target into the HDR target the tail samples, so it sits
             // between lighting and the bloom/tonemap tail.
@@ -1040,6 +1065,14 @@ namespace Veng::Renderer
                 m_Context, renderExtent, &m_Internal->TranslucentPlan, lightingTargetId, depthId,
                 m_RefractionSceneId, m_RefractionDepthId, HdrFormat, m_BloomMaskId, BloomMaskFormat,
                 /*halfResolution=*/false, forwardSets));
+            // Flipbook sprites composite over the translucent surfaces, into the same target and
+            // bloom mask, while the scene carries any.
+            if (m_Internal->SpriteActive)
+            {
+                m_Passes.push_back(CreateUnique<SpriteScenePass>(
+                    m_Context, m_Assets, &m_Internal->SpritePlan, lightingTargetId, depthId,
+                    m_BloomMaskId, HdrFormat, BloomMaskFormat, m_Context.GetMaxFramesInFlight()));
+            }
             m_Passes.push_back(
                 CreateUnique<FullscreenBlitScenePass>(m_Context, m_DebugBlits->Albedo, tailExtent,
                                                       FullscreenBlitScenePass::Source::Bloom));
@@ -2446,6 +2479,29 @@ namespace Veng::Renderer
         // Resolve the scene's volume-field components the same way — the volume march pass inserts on
         // the first live field and drops when the last one goes.
         ResolveVolumeFields(resolvedView);
+
+        // Gather the scene's flipbook sprites. The pass inserts on the first sprite and drops only
+        // after the gather has stayed empty for SpriteIdleFrameLimit Executes.
+        GatherSprites(resolvedView.World, resolvedView.Camera, resolvedView.Alpha,
+                      m_Internal->SpritePlan);
+        if (m_Internal->SpritePlan.Dropped > 0 && !m_Internal->SpriteBudgetWarned)
+        {
+            Log::Warn(
+                "SceneRenderer: {} flipbook sprites exceed the per-frame budget of {} and were "
+                "not drawn; later frames clamp without warning again.",
+                m_Internal->SpritePlan.Dropped, MaxSpritesPerFrame);
+            m_Internal->SpriteBudgetWarned = true;
+        }
+        const bool spritesPresent = !m_Internal->SpritePlan.IsEmpty();
+        m_Internal->SpriteIdleFrames = spritesPresent ? 0 : m_Internal->SpriteIdleFrames + 1;
+        const bool spritesWanted =
+            spritesPresent ||
+            (m_Internal->SpriteActive && m_Internal->SpriteIdleFrames < SpriteIdleFrameLimit);
+        if (spritesWanted != m_Internal->SpriteActive)
+        {
+            m_Internal->SpriteActive = spritesWanted;
+            Rebuild();
+        }
 
         // Resolve the scene's post-process effect components the same way — the tail effect passes
         // insert/drop/reorder on an active-set change, and each active effect's material is forwarded

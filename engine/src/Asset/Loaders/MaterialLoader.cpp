@@ -321,6 +321,11 @@ namespace Veng
                   header.CullMode);
         const auto cullMode = static_cast<Renderer::CullMode>(header.CullMode);
 
+        // The translucent blend rides the header the same way.
+        VE_ASSERT(header.Blend <= static_cast<u32>(TranslucentBlend::Additive),
+                  "material: header Blend {} is out of range for TranslucentBlend", header.Blend);
+        const auto blend = static_cast<TranslucentBlend>(header.Blend);
+
         // The single block must fit the registry's per-material bound.
         if (header.BlockBytes > Renderer::BindlessRegistry::MaxMaterialBlockBytes)
         {
@@ -552,6 +557,7 @@ namespace Veng
             .SortPriority = header.SortPriority,
             .WritesBloomMask = header.BloomMask != 0,
             .HalfResolution = header.HalfResolution != 0,
+            .Blend = blend,
             .Pipeline = nullptr,
             .VertexShader = vsHandle,
             .FragmentShader = fsHandle,

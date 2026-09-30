@@ -97,6 +97,7 @@ add_library(veng SHARED
         src/Asset/MaterialInstance.cpp
         src/Asset/Mesh.cpp
         src/Asset/Environment.cpp
+        src/Asset/Flipbook.cpp
         src/Asset/Font.cpp
         src/Text/GlyphSource.cpp
         src/Text/GlyphPacker.cpp
@@ -113,6 +114,7 @@ add_library(veng SHARED
         src/Asset/Loaders/DataTableLoader.cpp
         src/Asset/Loaders/SettingsSchemaLoader.cpp
         src/Asset/Loaders/CollisionShapeLoader.cpp
+        src/Asset/Loaders/FlipbookLoader.cpp
         src/Asset/Loaders/TableSchemaLoader.cpp
         src/Asset/Loaders/EnvironmentLoader.cpp
         src/Asset/Loaders/FontLoader.cpp
@@ -229,6 +231,8 @@ add_library(veng SHARED
         src/Scene/CharacterAnimationSystem.cpp
         src/Scene/ComponentPool.cpp
         src/Scene/DeviceAssignmentSystem.cpp
+        src/Scene/EffectPool.cpp
+        src/Scene/FlipbookSystem.cpp
         src/Scene/FocusRequestReconcile.cpp
         src/Scene/InputMappingSystem.cpp
         src/Scene/InteractionSystem.cpp
@@ -273,6 +277,7 @@ add_library(veng SHARED
         src/Renderer/Passes/GuiHdrOverlayScenePass.cpp
         src/Renderer/Passes/GBufferScenePass.cpp
         src/Renderer/Passes/PickingScenePass.cpp
+        src/Renderer/Passes/SpriteScenePass.cpp
         src/Renderer/Passes/TranslucentScenePass.cpp
         src/Renderer/Passes/HalfResCompositeScenePass.cpp
         src/Renderer/Passes/HalfResDepthReduceScenePass.cpp

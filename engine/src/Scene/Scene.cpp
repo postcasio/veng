@@ -7,6 +7,7 @@
 #include <Veng/Physics/PoseResolver.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/EffectPool.h>
 #include <Veng/Scene/SceneClone.h>
 #include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/Transforms.h>
@@ -147,6 +148,11 @@ namespace Veng
     void Scene::SetPoseHistory(Unique<PoseHistory> history)
     {
         m_PoseHistory = std::move(history);
+    }
+
+    void Scene::SetEffectPool(Unique<EffectPool> pool)
+    {
+        m_EffectPool = std::move(pool);
     }
 
     void Scene::StartSimulation(const SystemContext& context)

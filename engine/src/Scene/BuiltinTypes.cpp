@@ -248,6 +248,11 @@ namespace Veng
         // bloom.
         registry.Register<PostProcessEffect>();
 
+        // A camera-facing flipbook sprite, gathered by the renderer's sprite pass per Execute and
+        // advanced by FlipbookSystem. The runtime-only Finished flag carries no reflected field.
+        registry.Register<SpriteBlend>();
+        registry.Register<FlipbookSprite>();
+
         // A document mapped onto a world mesh, driven into an HDR target and glowing through the
         // scene's bloom. GuiSurfaceDomain and the AssetHandle<Gui::UIDocument> recipe leaf register
         // transitively through its fields.
@@ -297,6 +302,7 @@ namespace Veng
         registry.Register<AssetHandle<EnvironmentMap>>();
         registry.Register<AssetHandle<InputMappingContext>>();
         registry.Register<AssetHandle<Audio::AudioClip>>();
+        registry.Register<AssetHandle<Flipbook>>();
         registry.Register<AssetHandle<Font>>();
         registry.Register<AssetHandle<Gui::StyleSheet>>();
         registry.Register<AssetHandle<Gui::UIDocument>>();

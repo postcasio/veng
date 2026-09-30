@@ -140,7 +140,10 @@ namespace Veng::Renderer
             forwardLit ? ForwardLitLayoutFor(*parent) : material.GetPipelineLayout();
 
         vector<PipelineAttachmentInfo> attachments = {
-            {.Format = m_TargetFormat, .Blend = BlendState::AlphaBlend()}};
+            {.Format = m_TargetFormat,
+             .Blend = parent->GetTranslucentBlend() == TranslucentBlend::Additive
+                          ? BlendState::AlphaAdditive()
+                          : BlendState::AlphaBlend()}};
         if (m_MaskId.IsValid())
         {
             // The mask accumulates additively, so two declaring surfaces over one pixel glow by

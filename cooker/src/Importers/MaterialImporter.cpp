@@ -242,6 +242,40 @@ namespace Veng::Cook
             }
         }
 
+        // --- 1g. Parse the optional translucent blend (default alpha) ---
+
+        // "additive" composites a Translucent material's colour onto the scene rather than over it
+        // — an emissive glow. Only the translucent pass has a blend to choose, so the key is a
+        // located cook error on any other domain rather than silently inert.
+        u32 blend = 0;
+        if (vmat.contains("blend"))
+        {
+            if (!vmat["blend"].is_string())
+            {
+                return std::unexpected(
+                    fmt::format("material importer: '{}': 'blend' must be a string "
+                                "(\"alpha\" or \"additive\")",
+                                vmatPath.string()));
+            }
+            const string blendStr = vmat["blend"].get<string>();
+            if (blendStr == "additive")
+            {
+                blend = 1;
+            }
+            else if (blendStr != "alpha")
+            {
+                return std::unexpected(fmt::format("material importer: '{}': unknown blend '{}' "
+                                                   "(expected \"alpha\" or \"additive\")",
+                                                   vmatPath.string(), blendStr));
+            }
+            if (domainValue != MaterialDomain::Translucent)
+            {
+                return std::unexpected(
+                    fmt::format("material importer: '{}': 'blend' requires the Translucent domain",
+                                vmatPath.string()));
+            }
+        }
+
         // --- 2. Validate and resolve shader references ---
 
         if (!vmat.contains("shaders") || !vmat["shaders"].is_object())
@@ -941,6 +975,7 @@ namespace Veng::Cook
         header.SortPriority = sortPriority;
         header.BloomMask = bloomMask ? 1u : 0u;
         header.HalfResolution = halfResolution ? 1u : 0u;
+        header.Blend = blend;
         header.FieldCount = static_cast<u32>(fields.size());
         header.BlockBytes = blockReflected->Size;
 

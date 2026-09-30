@@ -27,6 +27,7 @@ namespace Veng
     class InputMappingContext;
     struct Animation;
     struct Skeleton;
+    class Flipbook;
 
     namespace Renderer
     {
@@ -1271,6 +1272,56 @@ namespace Veng
         Ref<Renderer::VolumeField> Field;
     };
 
+    /// @brief How a FlipbookSprite composites into the scene.
+    enum class SpriteBlend : u8
+    {
+        /// @brief Takes the flipbook's own recommended compositing (FlipbookBlend).
+        Asset = 0,
+        /// @brief Composited over the scene by coverage, sorted back to front.
+        Alpha = 1,
+        /// @brief Added onto the scene, in no particular order.
+        Additive = 2,
+    };
+
+    /// @brief Plays a flipbook as a camera-facing sprite in the world.
+    ///
+    /// Drawn by the renderer's sprite pass in the translucent layer — after the opaque scene and
+    /// its translucent surfaces, before the bloom and tonemap tail — as an HDR quad facing the
+    /// camera, centred on the entity so the flipbook's anchor sits on its world position. The
+    /// pass depth-tests against the opaque scene without writing depth, sorts Alpha sprites back
+    /// to front and leaves Additive ones unsorted, and writes the bloom mask by each sprite's
+    /// luminance so a bright sprite glows. FlipbookSystem advances Time; a one-shot sprite sets
+    /// Finished once its last frame has played. The component is presentation, never replicated.
+    struct FlipbookSprite
+    {
+        /// @brief The flipbook played; a sprite whose flipbook is not resident draws nothing and
+        ///        does not advance.
+        AssetHandle<Flipbook> Flipbook;
+        /// @brief The quad's width in world units at unit scale; 0 takes the flipbook's world
+        ///        extent (or 1 when it records none). The entity's world scale multiplies it.
+        f32 Size = 1.0f;
+        /// @brief Multiplies the sampled colour, in linear HDR — above 1 drives bloom.
+        vec3 Tint{1.0f};
+        /// @brief Multiplies the sprite's coverage (and, for an additive sprite, its brightness).
+        f32 Opacity = 1.0f;
+        /// @brief Multiplies the flipbook's authored frame rate.
+        f32 PlaybackRate = 1.0f;
+        /// @brief When positive, plays the whole sequence over this many seconds instead, and
+        ///        PlaybackRate is ignored — a long bake can serve a short burst.
+        f32 DurationOverride = 0.0f;
+        /// @brief Seconds of playback so far; advanced by FlipbookSystem. Authoring it starts the
+        ///        sprite part-way through.
+        f32 Time = 0.0f;
+        /// @brief The compositing; Asset takes the flipbook's recommendation.
+        SpriteBlend Blend = SpriteBlend::Asset;
+        /// @brief Roll in the screen plane, in radians, counter-clockwise.
+        f32 Rotation = 0.0f;
+        /// @brief Set by FlipbookSystem once a one-shot sequence has played its last frame; never
+        ///        set for a looping one. A finished sprite draws nothing. Runtime-only: it carries
+        ///        no VE_FIELD and never serializes.
+        bool Finished = false;
+    };
+
     /// @brief A scene-authored fullscreen post-process effect the renderer runs over scene color.
     ///
     /// Resolved by the renderer via View<PostProcessEffect> each Execute — the lights model: every
@@ -1819,6 +1870,28 @@ VE_FIELD(Opacity, .DisplayName = "Opacity", .Tooltip = "Fades emission and extin
 VE_FIELD(EmissionScale, .DisplayName = "Emission Scale", .Display = {.Min = 0.0})
 VE_FIELD(ExtinctionScale, .DisplayName = "Extinction Scale", .Display = {.Min = 0.0})
 VE_FIELD(Steps, .DisplayName = "Steps", .Tooltip = "Ray-march step count", .Display = {.Min = 1.0})
+VE_REFLECT_END();
+
+VE_ENUM(::Veng::SpriteBlend, 0xE291125B259E4EC5ULL)
+VE_ENUMERATOR(Asset)
+VE_ENUMERATOR(Alpha)
+VE_ENUMERATOR(Additive)
+VE_ENUM_END();
+
+VE_REFLECT(::Veng::FlipbookSprite, 0x36AE315773D9D391ULL)
+VE_FIELD(Flipbook, .DisplayName = "Flipbook")
+VE_FIELD(Size, .DisplayName = "Size",
+         .Tooltip = "Width in world units at unit scale; 0 takes the flipbook's world extent",
+         .Display = {.Min = 0.0, .Step = 0.05})
+VE_FIELD(Tint, .DisplayName = "Tint", .Tooltip = "Linear HDR colour multiplier")
+VE_FIELD(Opacity, .DisplayName = "Opacity", .Display = {.Min = 0.0, .Max = 1.0})
+VE_FIELD(PlaybackRate, .DisplayName = "Playback Rate", .Display = {.Min = 0.0, .Step = 0.05})
+VE_FIELD(DurationOverride, .DisplayName = "Duration Override",
+         .Tooltip = "When positive, plays the whole sequence over this many seconds",
+         .Display = {.Min = 0.0, .Step = 0.05})
+VE_FIELD(Time, .DisplayName = "Time", .Display = {.Min = 0.0})
+VE_FIELD(Blend, .DisplayName = "Blend")
+VE_FIELD(Rotation, .DisplayName = "Rotation", .Display = {.Step = 0.01})
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::PostProcessEffect, 0xE760A6F6C3F08F48ULL)

@@ -189,7 +189,33 @@ the `SceneView`, or a zero-intensity default → flat ambient when the scene has
 frame in the View phase — a camera-anchored impostor, a billboard: the render gather resolves
 its own local transform live instead of blending the scene's two-tick history, which holds
 earlier frames' writes and would render it a frame stale; ancestor levels keep their own
-interpolation).
+interpolation), and `FlipbookSprite` (plays an `AssetHandle<Flipbook>` as a camera-facing sprite
+— size, HDR tint, opacity, a playback rate or a duration override, a screen-plane roll, and a
+`SpriteBlend` of `Asset`, `Alpha` or `Additive`; the View-phase `FlipbookSystem` advances its `Time`
+and sets its runtime-only `Finished` once a one-shot sequence has played, and a finished sprite
+draws nothing — see [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Flipbook sprites").
+
+## Transient effects — a bounded pool, spawned and forgotten
+
+**`SpawnTransientEffect(scene, desc, pose, lifetime) → Entity`** (`Veng/Scene/EffectPool.h`) stands
+a short-lived effect — an `EffectDesc` of a `FlipbookSprite` and an optional `Light` — at a pose, and
+the caller forgets it: the scene's **`EffectPool`** returns the entity to a free list when its sprite
+finishes or its lifetime ends. The pool is **scene-owned** (`Scene::SetEffectPool` /
+`GetEffectPool`, a `Unique` like the pose history; `Clone()` does not copy it), so its bound is per
+scene, and the first `SpawnTransientEffect` on a scene installs one of `DefaultEffectPoolCapacity`
+(64) — a consumer wanting a different bound installs a sized `EffectPool` first. `FlipbookSystem`
+updates it each frame after advancing the sprites, so the level must run `FlipbookSystem`.
+
+- **The bound is hard.** A spawn reuses a free entity, creates one while under capacity, and
+  otherwise recycles the **oldest** live effect — the pool never grows past its cap.
+- **Pooled entities are `Tier::Local` roots carrying `ViewPose`.** An effect is each peer's own
+  presentation and never replicates; `ViewPose` makes a reused entity resolve its new pose live
+  rather than blending from where its previous effect stood. A free entity keeps its `Transform`
+  and carries no sprite and no light, so it draws and lights nothing.
+- **An `Entity` from `Spawn` is only this effect's until it ends.** Entities are reused, so a kept
+  handle names a later effect afterwards; `IsLive` answers until then, and a caller wanting to follow
+  an effect copies what it needs at spawn. `Retire` ends one early. A lifetime of 0 or less lets the
+  sprite alone decide, so a looping sprite with no lifetime lives until recycled or retired.
 
 ## Bounds & broadphase inputs
 
@@ -570,7 +596,8 @@ rejects a duplicate id. The builtins register in this order (`BuiltinSystems.cpp
 `DeviceAssignmentSystem`, `InputMappingSystem`, `BehaviorSystem`, `MovementSystem`, `CharacterMovementSystem`,
 `RootMotionDriveSystem`, `InteractionSystem`, `VehicleSystem`, `CameraRigSystem`,
 `CharacterAnimationSystem`, `AnimationSystem`, `ConstantMotionSystem`, `RemoteCharacterBodySystem`,
-`PhysicsSystem`, `PoseHistorySystem`, `RemoteInterpolationSystem`, `TimeOfDaySystem`, `AudioSystem` (View-phase — it
+`PhysicsSystem`, `PoseHistorySystem`, `RemoteInterpolationSystem`, `FlipbookSystem` (View-phase —
+sprite playback and the effect pool), `TimeOfDaySystem`, `AudioSystem` (View-phase — it
 places, spatializes, and publishes the scene's `AudioSource`s against the `AudioListener` at the
 interpolated poses the frame draws; see [../Audio/CLAUDE.md](../Audio/CLAUDE.md)). Registration is GPU-free (building a system touches no `Context`/device), so
 `RegisterBuiltinSystems` is callable in the headless cooker with no ICD — the cook reflects a

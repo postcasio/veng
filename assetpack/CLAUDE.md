@@ -22,14 +22,14 @@ the format and its serialization — neither importer nor loader.
 - **An asset *type* is a minted `AssetTypeId`, not an enum.** `AssetTypeId` is the `AssetId`
   discipline applied to types: an author-owned non-zero `u64`, hex-spelled, collision-fatal, and
   a **separate space from the reflection `TypeId`** (not every asset type has a reflected runtime
-  struct, and assetpack stays reflection-free). The engine's twenty types are minted constants in
+  struct, and assetpack stays reflection-free). The engine's own types are minted constants in
   the **`Veng::AssetTypes`** namespace (`AssetTypes::Texture`, `AssetTypes::Prefab`, …); anything
   else mints its own with `vengc generate-asset-type`. Dispatch tables key on the id value and
   consult nothing; the **`AssetTypeRegistry`** carries name ↔ id ↔ display metadata for the two
   jobs that need it — decoding a pack manifest's `"type"` string and naming a type for a human.
   It is a **host-owned instance threaded by reference**, never a global: assetpack is static and
   linked into libveng, the cooker, the bootstrap cooker, and the editor, so a global would give
-  each image its own divergent copy. `RegisterBuiltinAssetTypes` pre-fills the twenty-four builtins.
+  each image its own divergent copy. `RegisterBuiltinAssetTypes` pre-fills the twenty-five builtins.
   Its `std::unordered_map` storage lives in an `Impl` struct defined in the registry's own
   implementation TU rather than in the public class definition, so a TU that merely parses the
   class instantiates no map; every accessor keeps its exact signature (including the `All()`
@@ -138,6 +138,14 @@ the format and its serialization — neither importer nor loader.
   vertices, not the source model's. The loader rejects a `Version` mismatch, an unknown `Mode` or
   child kind, an index count that is not a multiple of three, a child slice out of range, and an
   index addressing past its points.
+- **`AssetTypes::Flipbook` carries a sprite-sheet atlas and an embedded texture.** A
+  **`CookedFlipbookHeader`** (`CookedFlipbookVersion`, currently **1**) — the grid (`Columns`,
+  `Rows`, `FrameCount`, `FrameWidth`/`FrameHeight`), the timing (`Fps`, `Loop`), the `Blend` and
+  `AlphaMode` ordinals, and the optional `WorldExtent`/`Pivot` triples behind `Has*` flags — is
+  followed by `TextureBytes` of a **complete cooked texture blob** (its own `CookedTextureHeader`
+  and mips), so the runtime hands that span to the texture loader unchanged. Frame `f` is the tile at
+  `(f % Columns, f / Columns)` from the top-left. The loader rejects a `Version` mismatch, an empty or
+  overfull grid, an unknown ordinal, and a blob shorter than its declared texture.
 - **`AssetTypes::Environment` carries an equirectangular HDR panorama for image-based lighting.**
   A **`CookedEnvironmentHeader`** (`CookedEnvironmentVersion`) is a `Format` (always the
   `RGBA16Sfloat` ordinal), `Width`, and `Height`, followed by `Width * Height` half-float texels

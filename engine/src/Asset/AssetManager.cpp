@@ -18,6 +18,7 @@
 #include "Loaders/AudioBusGraphLoader.h"
 #include "Loaders/SettingsSchemaLoader.h"
 #include "Loaders/EnvironmentLoader.h"
+#include "Loaders/FlipbookLoader.h"
 #include "Loaders/FontLoader.h"
 #include "Loaders/InputMapLoader.h"
 #include "Loaders/LevelLoader.h"
@@ -89,6 +90,7 @@ namespace Veng
         RegisterLoader(CreateUnique<AudioClipLoader>());
         RegisterLoader(CreateUnique<SettingsSchemaLoader>());
         RegisterLoader(CreateUnique<AudioBusGraphLoader>());
+        RegisterLoader(CreateUnique<FlipbookLoader>());
 
         // Module-registered loaders come last, so a factory claiming a type the engine already
         // handles is caught rather than silently shadowing the builtin — override semantics for

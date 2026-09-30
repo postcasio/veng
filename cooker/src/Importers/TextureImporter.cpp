@@ -738,8 +738,12 @@ namespace Veng::Cook
         {
             return std::unexpected(texJsonResult.error());
         }
-        const json& texJson = *texJsonResult;
+        return CookTextureDescriptor(context, *texJsonResult, sourcePath);
+    }
 
+    Result<vector<u8>> CookTextureDescriptor(const CookContext& context, const json& texJson,
+                                             const path& sourcePath)
+    {
         if (!texJson.contains("image") || !texJson["image"].is_string())
         {
             return std::unexpected(fmt::format("texture importer: '{}': missing or invalid 'image'",
@@ -786,7 +790,7 @@ namespace Veng::Cook
             {
                 return std::unexpected(
                     fmt::format("texture importer: '{}': invalid role '{}' (expected "
-                                "'Color', 'Normal', 'Mask', 'HDR', or 'UI')",
+                                "'Color', 'Normal', 'Mask', 'HDR', 'UI', or 'Packed')",
                                 sourcePath.string(), roleName));
             }
             role = *parsed;

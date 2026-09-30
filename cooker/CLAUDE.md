@@ -110,7 +110,9 @@ at cook time:
   count the same way. The fragment
   outputs are validated against the material domain's contract (Surface →
   the five-target g-buffer MRT `SV_Target0`..`SV_Target4` — albedo/normal/ORM, velocity, and
-  emissive; PostProcess, Sky, Translucent, and GuiFill → a single `SV_Target0`). Because the
+  emissive; PostProcess, Sky, Translucent, and GuiFill → a single `SV_Target0`). A Translucent
+  material may declare `"blend": "additive"` (default `"alpha"`), a located cook error on any other
+  domain. Because the
   Surface contract's output set is part of what a cooked material *means*, a change to it bumps
   `CookedMaterialVersion`
   (`assetpack`'s `CookedBlobs.h`), so a stale blob cooked against an older output set rejects
@@ -311,6 +313,20 @@ at cook time:
   than a silently expensive asset. The blob layout is in
   [assetpack/CLAUDE.md](../assetpack/CLAUDE.md); the runtime half in
   [engine/src/Physics/CLAUDE.md](../engine/src/Physics/CLAUDE.md).
+- **Flipbooks** cook a sprite-sheet tool's own export: the pack entry's `"source"` names a
+  flipbook-atlas manifest (schema v1, `*.atlas.json`) directly, and the **`FlipbookImporter`** reads
+  its core fields — the grid (`columns`, `rows`, `frames`, `frame.width`/`height`, checked against
+  `atlas.width`/`height` and against the image), the timing (`fps`, `loop`), the recommended `blend`
+  (`alpha` | `additive`) and `alpha` convention (`premultiplied` | `coverage` | `luminance` |
+  `opaque`), `colorSpace` (`srgb` | `linear`) — plus the optional `worldExtent` and `pivot`, and
+  ignores every other field (`source`, `technique`, `name`, `provenance`). The image named by
+  `atlas.file` cooks through the texture cook in memory (`CookTextureDescriptor`, the body of
+  `TextureImporter::Cook` over a descriptor object) at the **Color** role for an sRGB atlas and the
+  **Packed** role for a linear one — not Mask, which a desktop configuration maps to single-channel
+  BC4 — mipped, with a linear clamp-to-edge sampler, and is embedded whole behind the
+  `CookedFlipbookHeader`. A **frame-sequence export** (no `atlas.file`) is refused with a message
+  saying so, as is a wrong schema version or type, an unknown enumerated value, and a grid that does
+  not tile the atlas. The importer is `Parallel`: its only library is the texture cook.
 - **Environments** (`*.env.json`) are equirectangular HDR panoramas: the `EnvironmentImporter`
   decodes an OpenEXR `"image"` with **tinyexr** (linked into the cooker, the one runtime-staged
   vendor lib the cooker also uses), optionally downscales by `"max_size"` (linear), and packs

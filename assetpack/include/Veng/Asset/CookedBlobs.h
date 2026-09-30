@@ -110,6 +110,55 @@ namespace Veng
         u32 Version = 0;
     };
 
+    /// @brief The current flipbook-format version.
+    ///
+    /// Bumped on any CookedFlipbookHeader layout change; the loader rejects a blob whose
+    /// Version != this.
+    inline constexpr u32 CookedFlipbookVersion = 1u;
+
+    /// @brief Cooked header for a flipbook asset: a grid-packed sprite-sheet atlas and its timing.
+    ///
+    /// The blob is, in order:
+    ///   CookedFlipbookHeader
+    ///   a complete cooked texture blob (TextureBytes bytes: a CookedTextureHeader and its mips)
+    ///
+    /// Frame f sits at tile (f % Columns, f / Columns), counted from the atlas's top-left, and the
+    /// populated frames run row-major. Blend and AlphaMode are the underlying integers of the
+    /// engine's FlipbookBlend and FlipbookAlpha enums (cycle-avoidance rule above).
+    struct CookedFlipbookHeader
+    {
+        /// @brief Must equal CookedFlipbookVersion; the loader rejects a mismatch.
+        u32 Version = 0;
+        /// @brief Tiles across the atlas.
+        u32 Columns = 0;
+        /// @brief Tiles down the atlas.
+        u32 Rows = 0;
+        /// @brief Populated frames, row-major from the top-left; at most Columns * Rows.
+        u32 FrameCount = 0;
+        /// @brief One tile's width in source pixels.
+        u32 FrameWidth = 0;
+        /// @brief One tile's height in source pixels.
+        u32 FrameHeight = 0;
+        /// @brief The authored playback rate, in frames per second.
+        f32 Fps = 0.0f;
+        /// @brief Whether the sequence is authored to loop (stored as u32 bool).
+        u32 Loop = 0;
+        /// @brief Recommended compositing; 0 = alpha over, 1 = additive.
+        u32 Blend = 0;
+        /// @brief How alpha relates to colour; 0 = premultiplied, 1 = coverage, 2 = luminance, 3 = opaque.
+        u32 AlphaMode = 0;
+        /// @brief Whether WorldExtent carries an authored value (stored as u32 bool).
+        u32 HasWorldExtent = 0;
+        /// @brief World-space size one frame represents, in world units (x, y, z).
+        f32 WorldExtent[3] = {};
+        /// @brief Whether Pivot carries an authored value (stored as u32 bool).
+        u32 HasPivot = 0;
+        /// @brief The effect's anchor inside WorldExtent, in world units from its minimum corner.
+        f32 Pivot[3] = {};
+        /// @brief Byte count of the embedded cooked texture blob following this header.
+        u32 TextureBytes = 0;
+    };
+
     /// @brief The current mesh-format version.
     ///
     /// Bumped on any CookedMeshHeader/CookedMeshSocket layout change; the loader rejects a
@@ -304,7 +353,7 @@ namespace Veng
     /// @brief The current material-format version.
     ///
     /// Bumped on any layout change; the loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedMaterialVersion = 11u;
+    inline constexpr u32 CookedMaterialVersion = 12u;
 
     /// @brief Cooked header for a material asset.
     ///
@@ -331,7 +380,8 @@ namespace Veng
     ///
     /// Domain is the underlying integer of Veng::MaterialDomain (cycle-avoidance rule above):
     /// 0 = Surface (the default — a material with no "domain" key cooks as Surface),
-    /// 1 = PostProcess, 2 = Sky. The loader casts it to the engine enum, guarded by a VE_ASSERT
+    /// 1 = PostProcess, 2 = Sky, 3 = Translucent, 4 = GuiFill. The loader casts it to the engine
+    /// enum, guarded by a VE_ASSERT
     /// on an out-of-range value. CullMode is the underlying integer of Renderer::CullMode,
     /// carried the same way.
     struct CookedMaterialHeader
@@ -342,7 +392,7 @@ namespace Veng
         u64 FragmentShaderId = 0;
         /// @brief Must equal CookedMaterialVersion; the loader rejects mismatches.
         u32 Version = 0;
-        /// @brief Underlying MaterialDomain integer (0 = Surface, 1 = PostProcess).
+        /// @brief Underlying MaterialDomain integer (0 = Surface ... 4 = GuiFill).
         u32 Domain = 0;
         /// @brief Underlying Renderer::CullMode integer (0 = None, 1 = Front, 2 = Back).
         ///
@@ -369,6 +419,13 @@ namespace Veng
         /// through a depth-aware upsample. Translucent domain only, and exclusive with the bloom
         /// mask, both enforced at cook.
         u32 HalfResolution = 0;
+        /// @brief How the material's colour composites into the scene (the "blend" key; 0 = alpha
+        ///        over, 1 = additive).
+        ///
+        /// The underlying Veng::TranslucentBlend integer. Additive adds the fragment's colour,
+        /// weighted by its returned alpha, and leaves the destination alone otherwise — the blend an
+        /// emissive glow wants. Translucent domain only, enforced at cook.
+        u32 Blend = 0;
         /// @brief Number of CookedMaterialField entries following this header.
         u32 FieldCount = 0;
         /// @brief Byte size of the single parameter block; <= the per-material param stride.

@@ -4,6 +4,7 @@
 #include "Importers/AudioImporter.h"
 #include "Importers/CollisionShapeImporter.h"
 #include "Importers/EnvironmentImporter.h"
+#include "Importers/FlipbookImporter.h"
 #include "Importers/FontImporter.h"
 #include "Importers/LocaleCatalogImporter.h"
 #include "Importers/LocaleIndexImporter.h"
@@ -32,6 +33,7 @@ namespace Veng::Cook
         cooker.Register(CreateUnique<CollisionShapeImporter>());
         cooker.Register(CreateUnique<AudioImporter>());
         cooker.Register(CreateUnique<EnvironmentImporter>());
+        cooker.Register(CreateUnique<FlipbookImporter>());
         cooker.Register(CreateUnique<FontImporter>());
         cooker.Register(CreateUnique<LocaleCatalogImporter>());
         cooker.Register(CreateUnique<LocaleIndexImporter>());

@@ -50,6 +50,20 @@ namespace Veng
         GuiFill = 4,
     };
 
+    /// @brief How a Translucent material's colour composites into the lit scene.
+    ///
+    /// Alpha is the default over-blend; Additive adds the fragment's colour, weighted by the alpha it
+    /// returns, and leaves the destination otherwise untouched — the blend an emissive glow, a flare,
+    /// or a beam wants, and one that needs no back-to-front order among its own kind. Alpha is 0 so a
+    /// zero-initialized header defaults to it.
+    enum class TranslucentBlend : u32
+    {
+        /// @brief Straight alpha over the scene: src·a + dst·(1 − a).
+        Alpha = 0,
+        /// @brief Additive: src·a + dst.
+        Additive = 1,
+    };
+
     /// @brief Push-constant offset of a GuiFill material's per-draw selector.
     ///
     /// A GuiFill pipeline reserves the GUI pass's own push block — the inverse screen size the gui
@@ -171,6 +185,10 @@ namespace Veng
         /// Translucent domain only, and exclusive with the bloom mask (both cook-enforced).
         bool HalfResolution = false;
 
+        /// @brief How the translucent pass composites the material's colour. Ignored outside the
+        ///        Translucent domain.
+        TranslucentBlend Blend = TranslucentBlend::Alpha;
+
         /// @brief Null for PostProcess materials (built by the pass).
         Ref<Renderer::GraphicsPipeline> Pipeline;
 
@@ -244,6 +262,9 @@ namespace Veng
 
         /// @brief Whether the material draws in the reduced-resolution translucent layer.
         [[nodiscard]] bool IsHalfResolution() const { return m_HalfResolution; }
+
+        /// @brief Returns how the translucent pass composites the material's colour.
+        [[nodiscard]] TranslucentBlend GetTranslucentBlend() const { return m_Blend; }
 
         /// @brief Returns the built graphics pipeline, or null for a pass-built domain (PostProcess, Sky, Translucent, GuiFill).
         [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetPipeline() const
@@ -382,6 +403,7 @@ namespace Veng
         i32 m_SortPriority = 0;
         bool m_WritesBloomMask = false;
         bool m_HalfResolution = false;
+        TranslucentBlend m_Blend = TranslucentBlend::Alpha;
         Ref<Renderer::GraphicsPipeline> m_Pipeline;
         Ref<Renderer::GraphicsPipeline> m_SkinnedPipeline;
         Ref<Renderer::PipelineLayout> m_PipelineLayout;

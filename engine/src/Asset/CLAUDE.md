@@ -79,6 +79,22 @@ engine *mounts* archives and resolves assets against them.
   Tables are sized for full residency — 10 MB is a normal large table, 100 MB the working extreme
   — so an asset-handle cell yields a bare `AssetId` (`GetAssetIdColumn`) and the table **never**
   loads what it references; the consumer decides.
+- **`AssetTypes::Flipbook` — a grid-packed sprite-sheet atlas with its timing** (`Veng/Asset/Flipbook.h`).
+  Its source is a flipbook-atlas manifest (schema v1) as a sprite-sheet tool exports it — the pack
+  entry's `"source"` names the `*.atlas.json` directly, no wrapper file — and the cook embeds the
+  atlas image as a complete cooked texture (see [cooker/CLAUDE.md](../../../cooker/CLAUDE.md)).
+  `FlipbookLoader` decodes the grid and timing and hands the embedded texture to `TextureLoader`, so
+  the atlas takes exactly a standalone texture's path — codec gate, texture-quality mip cap, async
+  upload — and the flipbook's finalize is the texture's. The asset is data with no playback state:
+  `GetClip()` is its `FlipbookClip` (frame count, fps, loop), `GetFrameRect(frame)` the frame's atlas
+  rectangle (inset half a texel so bilinear taps never read a neighbour), `GetAnchor()` where the
+  authored pivot sits within a frame, and `GetBlend()` / `GetAlphaMode()` the recommended compositing
+  and alpha convention. The timing is pure and device-free — `ResolveFlipbookRate` (the authored rate
+  times a playback rate, or a duration override fitting the whole sequence to a length of its own),
+  `FlipbookFrameAt` (`floor(t · rate)` wrapped or clamped), `IsFlipbookFinished` — and
+  `Flipbook::Create` builds one over a runtime texture. `FlipbookSprite` plays one
+  ([../Scene/CLAUDE.md](../Scene/CLAUDE.md)); the renderer draws it
+  ([../Renderer/CLAUDE.md](../Renderer/CLAUDE.md)).
 - **Load is by opaque `u64` `AssetId`** through mounted archives.
   `AssetManager::Load<T>(AssetId)` is **async by default**: it returns a not-yet-resident
   `AssetHandle<T>` immediately and runs the decode + GPU upload on the task system (transfer
@@ -144,7 +160,7 @@ engine *mounts* archives and resolves assets against them.
   component: `VE_LEAF` the handle leaf with a minted `TypeId`, register the component type that
   holds it, and set `HandleFieldType` to that same leaf id on the `AssetTypeInfo` it registers.
   A leaf no registered type claims is an **error** at both load and cook — never a skipped check.
-  Eighteen of the twenty-four builtins claim a leaf. `Shader` and
+  Nineteen of the twenty-five builtins claim a leaf. `Shader` and
   `VertexLayout` are wiring inside the material system: a draw binds a `MaterialInstance`, and
   nothing outside that system can consume a bare shader or vertex layout, so a reference to one
   would be authorable but unusable. `GraphicsSchema` and `AudioBusGraph` are the other two: each is
@@ -567,6 +583,11 @@ fullscreen domain has an equivalent of. A material in this domain is a **fill so
 silhouette**: the generated entry point wraps the authored graph in the engine's fixed rounded-rect
 SDF coverage and border ring (`GuiFillResolve`), so corner radius, border, clip, and rotation
 compose with it for free and a material can never widen or replace the shape.
+
+**A Translucent material also carries its compositing**, `TranslucentBlend` (`Alpha` by default,
+`Additive` from the `.vmat.json` `"blend"` key), read by the translucent pass as
+`Material::GetTranslucentBlend()` — see [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Additive
+translucent materials".
 
 The per-draw selector push offset is domain-keyed — Surface and Translucent read their material
 index from the per-draw `DrawData` SSBO and push no selector (`Material::NoSelectorPush`);

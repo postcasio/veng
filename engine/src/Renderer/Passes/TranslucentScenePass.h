@@ -60,7 +60,8 @@ namespace Veng::Renderer
     /// target after deferred lighting and the sky composite and before the bloom/tonemap tail,
     /// so translucents bloom and tonemap with the scene. Depth-TESTs against the opaque depth
     /// buffer with depth writes OFF, and STRAIGHT-alpha-blends each fragment's returned final
-    /// HDR color. Each translucent material's pipeline is built per parent (against the HDR
+    /// HDR color — or, for a material whose TranslucentBlend is Additive, adds it weighted by its
+    /// alpha (BlendState::AlphaAdditive). Each translucent material's pipeline is built per parent (against the HDR
     /// format, which the material loader does not know) and cached here; a draw binds its
     /// parent's pipeline, the set-0 bindless registry, and the shared set-3 DrawData SSBO, then
     /// reads its per-draw record and material selector from DrawData by the instance-rate
@@ -123,13 +124,14 @@ namespace Veng::Renderer
         /// @brief A cached per-parent pipeline and whether its draws bind the forward-lighting sets.
         struct CachedPipeline
         {
-            /// @brief The alpha-blend pipeline.
+            /// @brief The pipeline, blended per the material's TranslucentBlend.
             Ref<GraphicsPipeline> Pipeline;
             /// @brief True when the pipeline's layout carries the forward-lighting sets.
             bool ForwardLit = false;
         };
 
-        /// @brief Returns the per-parent alpha-blend pipeline, building and caching it on first use.
+        /// @brief Returns the per-parent pipeline (blended per the material's TranslucentBlend),
+        ///        building and caching it on first use.
         const CachedPipeline& PipelineFor(const MaterialInstance& material) const;
 
         /// @brief Builds a forward-lit material's layout: its own DrawData set, then the renderer's

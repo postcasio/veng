@@ -36,4 +36,18 @@ namespace Veng::Cook
         [[nodiscard]] Result<vector<u8>> Cook(const CookContext& context,
                                               const json& entry) const override;
     };
+
+    /// @brief Cooks a texture descriptor held in memory into a texture blob.
+    ///
+    /// The body of TextureImporter::Cook, for an importer that embeds a texture it describes
+    /// itself rather than one a *.tex.json on disk names. @p descriptor carries the *.tex.json
+    /// keys ("image", "role", "srgb", "generate_mips", "sampler", ...).
+    /// @param context         The cook context (configuration, thread budget, dependency recorder).
+    /// @param descriptor      The texture descriptor object.
+    /// @param descriptorPath  The path the descriptor stands for: its directory resolves "image",
+    ///                        and it names the texture in every error.
+    /// @return The cooked texture blob (CookedTextureHeader plus mips), or a located error.
+    [[nodiscard]] Result<vector<u8>> CookTextureDescriptor(const CookContext& context,
+                                                           const json& descriptor,
+                                                           const path& descriptorPath);
 }

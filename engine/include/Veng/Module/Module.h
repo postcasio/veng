@@ -163,10 +163,15 @@ extern "C"
 /// system it holds. A module constructs the ApplicationInfo that carries a GameNetInfo and reads a
 /// SceneSimulation's pause and start state through inline accessors, so a stale module lays the
 /// info struct out short and reads those flags at shifted offsets.
+/// Version 36 grows Material and MaterialInfo with the translucent blend, ahead of the pipeline and
+/// shader handles, and Scene with the effect pool it owns. A module builds a MaterialInfo for a
+/// runtime material and reads a material's pipeline and a scene's services through inline
+/// accessors, so a stale module lays both structs out short and reads the members after the
+/// additions at shifted offsets.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 35u
+#define VENG_MODULE_ABI_VERSION 36u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

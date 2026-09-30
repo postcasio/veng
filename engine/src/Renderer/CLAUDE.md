@@ -52,8 +52,8 @@ The renderer is split along three conventions, and a new battery follows all of 
 - **A pass lives in its own file under `Passes/`.** Every `ScenePass` — the g-buffer, deferred
   lighting, translucent, picking, TAA, the non-temporal scene upscale, scene-color copy, the
   directional and punctual shadow
-  passes, SSAO, the skybox, the sky/point-field/volume passes, the depth-of-field composite, the
-  debug draw (and its companion
+  passes, SSAO, the skybox, the sky/point-field/volume/sprite passes, the depth-of-field composite,
+  the debug draw (and its companion
   billboard pick), and the debug blits — is a `.h/.cpp` pair in `src/Renderer/Passes/`. The
   renderer holds them in `m_Passes` and wires them in `Rebuild`; each pass owns its own sizing,
   declared reads/writes, and recording. `PostProcessScenePass` is the one split case: its class
@@ -112,6 +112,8 @@ separates *deciding* from *wiring*:
   with more than two meaningful states is a **named enum field**, not a boolean pair:
   `DofStages { None, CocOnly, Full }` makes "composited without the stages wired" unrepresentable
   rather than merely unreachable.
+- **The per-frame content-active flags are not topology.** The sprite pass's (`SpriteActive`,
+  with its idle counter) lives in `SceneRenderer::Internal` beside the sprite plan it gates.
 - **The three per-frame field-active flags are not topology and stay loose members.**
   `m_PointFieldActive`, `m_ScenePointFieldActive`, and `m_VolumeFieldActive` are resolved from
   *scene content* each frame (`ResolvePointFields` / `ResolveVolumeFields`), not from settings — so
@@ -627,6 +629,56 @@ reads like `SampleSceneColor` work unchanged. The region is claimed **before** t
 slot, because every pass reading `GetCurrentViewConstantsIndex()` at record time must land on the
 full region; a frame whose view budget refuses the extra claim folds the layer's draws back into
 the full-res plan for that frame, the same fallback as the activation edge.
+
+### Additive translucent materials
+
+**A Translucent material chooses how its colour composites: `"blend": "alpha"` (the default) or
+`"additive"`** in its `.vmat.json` (Translucent-domain only, a cook error elsewhere), carried to
+`Material::GetTranslucentBlend()` as a `TranslucentBlend`. `TranslucentScenePass` builds an additive
+material's pipeline with `BlendState::AlphaAdditive()` — `src·a + dst`, destination alpha kept — so
+the fragment still returns straight colour and coverage and the coverage scales how much light it
+adds. An additive surface needs no order among its own kind, but it still draws in the one
+back-to-front sort the pass keeps, since it shares the pass with alpha surfaces it may sit behind.
+In the half-resolution layer the kept alpha is what matters: an additive draw adds colour into the
+transparent-cleared layer without claiming coverage, so the composite's `(One, OneMinusSrcAlpha)`
+adds it onto the scene.
+
+### Flipbook sprites
+
+**A `FlipbookSprite` component draws a flipbook as a camera-facing HDR quad** (the component and the
+`Flipbook` asset are in [../Scene/CLAUDE.md](../Scene/CLAUDE.md) and
+[../Asset/CLAUDE.md](../Asset/CLAUDE.md)). `SpriteScenePass` (`Passes/SpriteScenePass.h`) is wired
+**immediately after the full-resolution translucent pass**, in both compositing arms, into the same
+lit target and bloom mask — so sprites composite over translucent surfaces, resolve under TAA with
+the scene, bloom, and tonemap.
+
+- **Content-driven with deactivation hysteresis.** `GatherSprites` walks `View<FlipbookSprite>` each
+  `Execute` (skipping a sprite whose flipbook or atlas is not resident, whose opacity is zero, or
+  which has finished) into a `SpriteDrawPlan`; the pass is wired the first `Execute` that gathers
+  one and unwired only after `SpriteIdleFrameLimit` consecutive empty gathers, because transient
+  effects leave a scene momentarily empty between bursts and a recompile per burst is the cost the
+  hysteresis avoids. A scene that never carries a sprite has no pass, so the smoke golden is
+  unaffected.
+- **One record per sprite, no vertex input.** Each gathered sprite is an 80-byte `GpuSprite` (anchor
+  position and width, tint and opacity, the frame's atlas rectangle, the anchor fraction, height,
+  roll, the atlas's bindless texture and sampler, its alpha mode) in a host-mapped ring, one region
+  per frame in flight bound through a per-frame set at set 3. The vertex stage indexes the record by
+  `VertexIndex / 6` and places the quad corners about the anchor along the camera's right and up
+  axes, rolled in the screen plane, projected through the jittered `Proj`.
+- **Two draws.** The alpha set, sorted back to front on view-space depth, draws first through
+  `BlendState::PremultipliedAlpha()`; the additive set follows, unsorted, through a `One, One` blend
+  that keeps destination alpha. The fragment brings each atlas alpha convention (premultiplied,
+  coverage, luminance, opaque) to premultiplied colour before the tint and opacity apply, so one
+  stage serves both blends.
+- **The bloom mask is written by luminance.** When the frame wires a mask (bloom on), the masked
+  fragment variant adds `saturate(luma(colour))` into it, so a bright sprite glows whatever the
+  bloom threshold; the translucent pass ahead of it cleared the mask, and this pass loads it.
+- **Budget: `MaxSpritesPerFrame` (4096).** Past it the rest are dropped for that frame and the
+  renderer warns once for its lifetime. Depth is tested against the opaque depth without being
+  written, and there is no soft-particle depth fade.
+
+`tests/gpu/sprite_pass.cpp` renders a white premultiplied flipbook through each blend and checks the
+composited centre pixel against the tint, the additive sum, and the bloom-masked path.
 
 ### Forward lighting for translucent surfaces
 

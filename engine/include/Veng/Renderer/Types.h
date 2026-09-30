@@ -554,7 +554,7 @@ namespace Veng::Renderer
         /// @brief Returns an opaque (no-blend) state.
         static BlendState Opaque() { return {}; }
 
-        /// @brief Returns a standard pre-multiplied alpha-blend state.
+        /// @brief Returns a straight (non-premultiplied) alpha-blend state: src·a + dst·(1 − a).
         static BlendState AlphaBlend()
         {
             return {
@@ -564,6 +564,39 @@ namespace Veng::Renderer
                 .ColorOp = BlendOp::Add,
                 .SrcAlphaFactor = BlendFactor::One,
                 .DstAlphaFactor = BlendFactor::OneMinusSrcAlpha,
+                .AlphaOp = BlendOp::Add,
+            };
+        }
+
+        /// @brief Returns a premultiplied-alpha over state: src + dst·(1 − a).
+        ///
+        /// For a source whose colour is already weighted by its coverage.
+        static BlendState PremultipliedAlpha()
+        {
+            return {
+                .Enable = true,
+                .SrcColorFactor = BlendFactor::One,
+                .DstColorFactor = BlendFactor::OneMinusSrcAlpha,
+                .ColorOp = BlendOp::Add,
+                .SrcAlphaFactor = BlendFactor::One,
+                .DstAlphaFactor = BlendFactor::OneMinusSrcAlpha,
+                .AlphaOp = BlendOp::Add,
+            };
+        }
+
+        /// @brief Returns a coverage-weighted additive state: src·a + dst, destination alpha kept.
+        ///
+        /// For a straight-alpha source that adds light rather than covering what is behind it, so
+        /// the target's alpha — a coverage a later composite reads — is left alone.
+        static BlendState AlphaAdditive()
+        {
+            return {
+                .Enable = true,
+                .SrcColorFactor = BlendFactor::SrcAlpha,
+                .DstColorFactor = BlendFactor::One,
+                .ColorOp = BlendOp::Add,
+                .SrcAlphaFactor = BlendFactor::Zero,
+                .DstAlphaFactor = BlendFactor::One,
                 .AlphaOp = BlendOp::Add,
             };
         }

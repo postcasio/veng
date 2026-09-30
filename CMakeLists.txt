@@ -1037,6 +1037,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/net_delta.cpp
             tests/unit/net_packed_input.cpp
             tests/unit/net_lag_compensation.cpp
+            tests/unit/flipbook.cpp
             tests/unit/net_interest.cpp
             tests/unit/reflection.cpp
             tests/unit/reflection_variant.cpp
@@ -1764,6 +1765,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/storage_image_range.cpp
             tests/gpu/volume_field.cpp
             tests/gpu/volume_scene_pass.cpp
+            tests/gpu/sprite_pass.cpp
             tests/gpu/dof_battery.cpp
             tests/gpu/occlusion_test.cpp
             tests/gpu/prefab_spawn.cpp
@@ -2133,6 +2135,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/cook_cache.cpp
             tests/cooker/cook_timing.cpp
             tests/cooker/texture_cook.cpp
+            tests/cooker/flipbook_cook.cpp
             tests/cooker/font_variations.cpp
             tests/cooker/font_charset.cpp
             tests/cooker/font_asset.cpp

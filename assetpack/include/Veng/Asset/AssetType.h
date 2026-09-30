@@ -110,6 +110,8 @@ namespace Veng
         /// fallback — plus the source locale. Boot-loaded by id by the localization service, never
         /// referenced from a component (no handle-field leaf).
         inline constexpr AssetTypeId LocaleIndex{0x3563062346011D01ULL};
+        /// @brief A grid-packed sprite-sheet atlas with its playback timing (see CookedFlipbookHeader).
+        inline constexpr AssetTypeId Flipbook{0x8C7D7B602345DDC6ULL};
     }
 
     /// @brief The reflection TypeIds of the AssetHandle\<T\> leaves that reference a builtin type.
@@ -159,6 +161,8 @@ namespace Veng
         inline constexpr u64 CollisionShape = 0x65CD07D328B875D1ULL;
         /// @brief TypeId of AssetHandle\<Audio::AudioClip\>.
         inline constexpr u64 AudioClip = 0x8E4CE12FC2D9A1B1ULL;
+        /// @brief TypeId of AssetHandle\<Flipbook\>.
+        inline constexpr u64 Flipbook = 0x8F6C1BD21BCB5A56ULL;
     }
 
     /// @brief What a registry records about one asset type.

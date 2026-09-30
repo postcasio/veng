@@ -19,6 +19,7 @@ namespace Veng
     class SceneSimulation;
     class PhysicsWorld;
     class PoseHistory;
+    class EffectPool;
     struct PhysicsPoseResolver;
     struct SystemContext;
     struct AABB;
@@ -274,6 +275,19 @@ namespace Veng
 
         /// @brief Returns the installed pose history, or null when the scene has none.
         [[nodiscard]] PoseHistory* GetPoseHistory() const { return m_PoseHistory.get(); }
+
+        /// @brief Installs (or replaces) the pool this scene's short-lived effects are drawn from.
+        ///
+        /// Scene-owned so its bound is per scene, and so FlipbookSystem can retire the pool's
+        /// finished effects without a caller driving it; SpawnTransientEffect installs a default
+        /// one on first use. Replacing or detaching a pool leaves the entities it stood in the
+        /// scene, no longer pooled. Passing null detaches and destroys the held one; Clone() does
+        /// not copy it.
+        /// @param pool  The pool to own, or null to detach.
+        void SetEffectPool(Unique<EffectPool> pool);
+
+        /// @brief Returns the installed effect pool, or null when the scene has none.
+        [[nodiscard]] EffectPool* GetEffectPool() const { return m_EffectPool.get(); }
 
         /// @brief Starts the attached simulation over this scene; a no-op when none is attached.
         ///
@@ -765,6 +779,9 @@ namespace Veng
 
         /// @brief The recent body poses a lag-compensated query rewinds through, or null when none.
         Unique<PoseHistory> m_PoseHistory;
+
+        /// @brief The pool this scene's short-lived effects are drawn from, or null when none.
+        Unique<EffectPool> m_EffectPool;
 
         template <class...>
         friend class SceneView;
