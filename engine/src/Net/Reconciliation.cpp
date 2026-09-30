@@ -8,6 +8,7 @@
 #include <glm/geometric.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <new>
@@ -153,6 +154,32 @@ namespace Veng::Net
             }
         }
 
+        // True when a record component takes part in reconciliation: a registered type the predicting
+        // peer simulates. Server-owned state is the snapshot apply's alone, never the reconciler's.
+        bool IsReconciled(const TypeRegistry& registry, const TypeId type)
+        {
+            return registry.IsRegistered(type) && !registry.Info(type).ServerOwned;
+        }
+
+        // Writes a decoded @p bytes value of @p info onto @p entity, adding the component when absent;
+        // a malformed value leaves the live component untouched.
+        void WriteComponent(Scene& scene, const Entity entity, const TypeInfo& info,
+                            std::span<const u8> bytes, const TypeRegistry& registry)
+        {
+            const ScratchComponent scratch(info);
+            if (const VoidResult read = ReadFields(bytes, scratch.Ptr, info, registry); !read)
+            {
+                return;
+            }
+            void* dest = scene.TryGetComponent(entity, info.Id);
+            if (dest == nullptr)
+            {
+                dest = scene.AddComponent(entity, info.Id);
+            }
+            info.Destruct(dest);
+            info.MoveConstruct(dest, scratch.Ptr);
+        }
+
         // Restores the predicted set's live components to the authoritative snapshot records — the
         // "server is right" rewind, from the record rather than the recorded prediction.
         void ApplyAuthoritative(Scene& scene, std::span<const PredictedRecord> records,
@@ -166,24 +193,90 @@ namespace Veng::Net
                 }
                 for (const PredictedRecord::Component& component : record.Components)
                 {
-                    if (!registry.IsRegistered(component.Type))
+                    if (!IsReconciled(registry, component.Type))
                     {
                         continue;
                     }
-                    const TypeInfo& info = registry.Info(component.Type);
-                    ScratchComponent scratch(info);
-                    if (VoidResult read = ReadFields(component.Bytes, scratch.Ptr, info, registry);
-                        !read)
+                    WriteComponent(scene, record.Entity, registry.Info(component.Type),
+                                   component.Bytes, registry);
+                }
+            }
+        }
+
+        // One tracked entity's server-owned component, held across a replay.
+        struct HeldComponent
+        {
+            Entity Entity;
+            TypeId Type = InvalidTypeId;
+            vector<u8> Bytes;
+        };
+
+        // The registered server-owned component types.
+        vector<TypeId> ServerOwnedTypeIds(const TypeRegistry& registry)
+        {
+            vector<TypeId> ids;
+            for (const auto& [id, info] : registry.All())
+            {
+                if (info.ServerOwned)
+                {
+                    ids.push_back(id);
+                }
+            }
+            return ids;
+        }
+
+        // Captures the tracked entities' server-owned components, so a replay cannot rewrite them.
+        vector<HeldComponent> HoldServerOwned(const Scene& scene, std::span<const Entity> tracked,
+                                              std::span<const TypeId> serverOwned,
+                                              const TypeRegistry& registry)
+        {
+            vector<HeldComponent> held;
+            for (const Entity entity : tracked)
+            {
+                if (entity.IsNull() || !scene.IsAlive(entity))
+                {
+                    continue;
+                }
+                for (const TypeId type : serverOwned)
+                {
+                    const void* component = scene.TryGetComponent(entity, type);
+                    if (component == nullptr)
                     {
                         continue;
                     }
-                    void* dest = scene.TryGetComponent(record.Entity, component.Type);
-                    if (dest == nullptr)
+                    HeldComponent& slot =
+                        held.emplace_back(HeldComponent{.Entity = entity, .Type = type});
+                    WriteFields(slot.Bytes, component, registry.Info(type), registry);
+                }
+            }
+            return held;
+        }
+
+        // Puts the held server-owned state back after a replay — values and presence — so a system
+        // that wrote one during the replay leaves no trace of it.
+        void ReleaseServerOwned(Scene& scene, std::span<const Entity> tracked,
+                                std::span<const TypeId> serverOwned,
+                                std::span<const HeldComponent> held, const TypeRegistry& registry)
+        {
+            for (const Entity entity : tracked)
+            {
+                if (entity.IsNull() || !scene.IsAlive(entity))
+                {
+                    continue;
+                }
+                for (const TypeId type : serverOwned)
+                {
+                    const auto it =
+                        std::ranges::find_if(held, [&](const HeldComponent& h)
+                                             { return h.Entity == entity && h.Type == type; });
+                    if (it != held.end())
                     {
-                        dest = scene.AddComponent(record.Entity, component.Type);
+                        WriteComponent(scene, entity, registry.Info(type), it->Bytes, registry);
                     }
-                    info.Destruct(dest);
-                    info.MoveConstruct(dest, scratch.Ptr);
+                    else if (scene.TryGetComponent(entity, type) != nullptr)
+                    {
+                        (void)scene.RemoveComponent(entity, type);
+                    }
                 }
             }
         }
@@ -197,7 +290,9 @@ namespace Veng::Net
             {
                 for (const PredictedRecord::Component& component : record.Components)
                 {
-                    if (!registry.IsRegistered(component.Type))
+                    // Server-owned state is neither value- nor presence-compared: the history never
+                    // captures it, so its arrival is never read as a mismatch.
+                    if (!IsReconciled(registry, component.Type))
                     {
                         continue;
                     }
@@ -209,15 +304,16 @@ namespace Veng::Net
                         return false;
                     }
                     const TypeInfo& info = registry.Info(component.Type);
-                    ScratchComponent authoritativeValue(info);
-                    ScratchComponent predictedValue(info);
-                    if (VoidResult read =
+                    const ScratchComponent authoritativeValue(info);
+                    const ScratchComponent predictedValue(info);
+                    if (const VoidResult read =
                             ReadFields(component.Bytes, authoritativeValue.Ptr, info, registry);
                         !read)
                     {
                         continue; // undecodable authoritative record: leave the prediction be
                     }
-                    if (VoidResult read = ReadFields(predicted, predictedValue.Ptr, info, registry);
+                    if (const VoidResult read =
+                            ReadFields(predicted, predictedValue.Ptr, info, registry);
                         !read)
                     {
                         return false;
@@ -259,8 +355,7 @@ namespace Veng::Net
         // input the server is confirming (join/possession warm-up), or an extreme spike aged it out of
         // the ring. There is nothing to compare or roll back to: leave the prediction to stand and the
         // history to grow, so reconciliation resumes once the history covers the confirmed tick. Never
-        // a crash; the ring's own capacity bounds the growth (planset-54's interpolation-only stance
-        // until the window catches up).
+        // a crash; the ring's own capacity bounds the growth.
         if (!history.Contains(consumedTick))
         {
             return result; // Compared, not corrected
@@ -316,9 +411,18 @@ namespace Veng::Net
             const vector<StoredInput> inputs(tape.begin(), tape.end());
             ApplyAuthoritative(scene, authoritative, registry);
             history.Clear();
+            // Server-owned state is held across the replay: every replayed tick reads its latest
+            // authoritative value, and nothing a replayed tick writes to it survives.
+            const vector<TypeId> serverOwned = ServerOwnedTypeIds(registry);
+            const vector<HeldComponent> held =
+                HoldServerOwned(scene, history.Tracked(), serverOwned, registry);
             for (const StoredInput& input : inputs)
             {
                 replay(scene, input.Tick, input.Input);
+                if (!serverOwned.empty())
+                {
+                    ReleaseServerOwned(scene, history.Tracked(), serverOwned, held, registry);
+                }
                 history.Record(input.Tick, input.Input, scene);
                 ++result.ReplayedTicks;
             }
@@ -326,7 +430,7 @@ namespace Veng::Net
         else
         {
             // Rollback disabled (no replay driver): snap to the authoritative state, clear history,
-            // and re-predict forward from live input — the planset-54 hard-snap fallback.
+            // and re-predict forward from live input — the hard-snap fallback.
             ApplyAuthoritative(scene, authoritative, registry);
             history.Clear();
             result.Snapped = true;

@@ -290,9 +290,10 @@ namespace Veng
         // delta patches @p baselines[netId][type], and a quantized Transform dequantizes — all out of
         // line, so a malformed record leaves prior state intact. When the record is for a known
         // (bound, alive) entity, each decoded component either buffers a Transform sample
-        // (bufferTransform), collects the authoritative state into @p collect (a predicted entity,
-        // handed to the reconciler rather than applied), or overwrites the live component; an unknown
-        // entity's records are parsed only to keep the cursor aligned. Stops on a truncated record.
+        // (bufferTransform), collects the authoritative state into @p collect (a predicted entity's
+        // non-server-owned state, handed to the reconciler rather than applied), or overwrites the
+        // live component; an unknown entity's records are parsed only to keep the cursor aligned.
+        // Stops on a truncated record.
         void ApplyComponentRecords(std::span<const u8> packet, usize& cursor, u32 componentCount,
                                    Scene& scene, Entity entity, NetId netId, bool known,
                                    const TypeRegistry& registry, const EntityRemap& decodeRef,
@@ -372,7 +373,9 @@ namespace Veng
                 }
                 RemapComponentReferences(scratch.Ptr, info, registry, decodeRef, keepAsset);
 
-                if (collect != nullptr)
+                // A server-owned component is never predicted, so even on a predicted entity it skips
+                // the reconciler and is written live below.
+                if (collect != nullptr && !info.ServerOwned)
                 {
                     // A predicted entity: hand the decoded authoritative state (local-form, references
                     // remapped) to the reconciler instead of writing it onto the client-simulated pose.
@@ -1289,7 +1292,8 @@ namespace Veng
             // A predicted entity is simulated locally, so its authoritative state is neither buffered
             // (as a remote mirror's Transform is) nor applied latest-wins over the client-driven pose.
             // Its records are collected for the reconciler, which compares them against the recorded
-            // prediction at the header's consumed-input tick and restores/replays on a mismatch.
+            // prediction at the header's consumed-input tick and restores/replays on a mismatch —
+            // except its server-owned components, which apply live as on any other entity.
             const Authority* authority = known ? scene.TryGet<Authority>(entity) : nullptr;
             const bool predicted = authority != nullptr && authority->Tier == Tier::Predicted;
 

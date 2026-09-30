@@ -38,13 +38,21 @@ namespace Veng::Net
             ScratchComponent& operator=(const ScratchComponent&) = delete;
         };
 
-        // The replicated component TypeIds, sorted so a capture's per-entity component order is stable.
-        vector<TypeId> ReplicatedTypeIds(const TypeRegistry& registry)
+        // True for the component types prediction captures and restores: replicated state the
+        // predicting peer simulates. A server-owned type is authoritative as it arrives, so a restore
+        // must never bring back a stale value of it.
+        bool IsPredictedType(const TypeInfo& info)
+        {
+            return info.Replicated && !info.ServerOwned;
+        }
+
+        // The predicted component TypeIds, sorted so a capture's per-entity component order is stable.
+        vector<TypeId> PredictedTypeIds(const TypeRegistry& registry)
         {
             vector<TypeId> ids;
             for (const auto& [id, info] : registry.All())
             {
-                if (info.Replicated)
+                if (IsPredictedType(info))
                 {
                     ids.push_back(id);
                 }
@@ -70,7 +78,7 @@ namespace Veng::Net
     void PredictionHistory::CaptureInto(Frame& frame, const Scene& scene) const
     {
         const TypeRegistry& registry = scene.GetTypeRegistry();
-        const vector<TypeId> replicated = ReplicatedTypeIds(registry);
+        const vector<TypeId> predicted = PredictedTypeIds(registry);
 
         usize entityCount = 0;
         for (const Entity entity : m_Tracked)
@@ -88,7 +96,7 @@ namespace Veng::Net
             captured.Entity = entity;
 
             usize componentCount = 0;
-            for (const TypeId typeId : replicated)
+            for (const TypeId typeId : predicted)
             {
                 const void* component = scene.TryGetComponent(entity, typeId);
                 if (component == nullptr)
@@ -200,13 +208,13 @@ namespace Veng::Net
                 info.MoveConstruct(dest, scratch.Ptr);
             }
 
-            // Remove any replicated component the entity holds now that the capture did not, so its
-            // replicated state matches the recorded tick exactly (a component added since is undone).
+            // Remove any predicted component the entity holds now that the capture did not, so its
+            // predicted state matches the recorded tick exactly (a component added since is undone).
             vector<TypeId> stale;
             scene.ForEachComponent(captured.Entity,
                                    [&](const TypeId id, void*)
                                    {
-                                       if (!registry.Info(id).Replicated)
+                                       if (!IsPredictedType(registry.Info(id)))
                                        {
                                            return;
                                        }
@@ -297,17 +305,10 @@ namespace Veng
             return set;
         }
 
-        vector<TypeId> replicated;
-        for (const auto& [id, info] : scene.GetTypeRegistry().All())
+        const vector<TypeId> predicted = Net::PredictedTypeIds(scene.GetTypeRegistry());
+        const auto carriesPredicted = [&](const Entity entity)
         {
-            if (info.Replicated)
-            {
-                replicated.push_back(id);
-            }
-        }
-        const auto carriesReplicated = [&](const Entity entity)
-        {
-            for (const TypeId id : replicated)
+            for (const TypeId id : predicted)
             {
                 if (scene.TryGetComponent(entity, id) != nullptr)
                 {
@@ -317,10 +318,10 @@ namespace Veng
             return false;
         };
 
-        // The pawn always predicts; a descendant joins only when it carries replicated state. A
-        // Local-tier descendant is derived on this peer and has no authoritative record to reconcile
-        // against, even when it carries a replicated type (a Transform), so it and its subtree stay
-        // out.
+        // The pawn always predicts; a descendant joins only when it carries replicated state it can
+        // predict (server-owned state alone gives it nothing to reconcile). A Local-tier descendant is
+        // derived on this peer and has no authoritative record to reconcile against, even when it
+        // carries a replicated type (a Transform), so it and its subtree stay out.
         set.push_back(pawn);
         vector<Entity> stack;
         scene.ForEachChild(pawn, [&](const Entity child) { stack.push_back(child); });
@@ -337,7 +338,7 @@ namespace Veng
             {
                 continue;
             }
-            if (carriesReplicated(entity))
+            if (carriesPredicted(entity))
             {
                 set.push_back(entity);
             }

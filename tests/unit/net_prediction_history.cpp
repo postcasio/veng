@@ -2,18 +2,23 @@
 // set's replicated component state per client tick (WriteFields into pooled scratch) alongside that
 // tick's seat input, restores a recorded tick over the live scene (ReadFields), yields the ascending
 // input run for a replay, and trims confirmed history. These exercise it over an in-process Scene —
-// field-exact capture/restore, replicated-only capture, the input run, ring trim and overflow, and a
-// component added or removed across the ring — with no socket and no device.
+// field-exact capture/restore, replicated-only capture, the input run, ring trim and overflow, a
+// component added or removed across the ring, and server-owned state left out of all of it — with no
+// socket and no device.
 
 #include <doctest/doctest.h>
 
 #include <glm/geometric.hpp>
+
+#include <algorithm>
 
 #include <Veng/Net/PredictionHistory.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
+
+#include "support/TestComponents.h"
 
 using namespace Veng;
 using namespace Veng::Net;
@@ -39,6 +44,7 @@ namespace
         World()
         {
             RegisterBuiltinTypes(Types);
+            Types.Register<VengTest::TestHealth>();
             Scene = Scene::Create(Types);
         }
     };
@@ -221,4 +227,53 @@ TEST_CASE("prediction history: restoring an unrecorded tick fails and the tracke
     history.Clear();
     CHECK(history.Size() == 0);
     CHECK_FALSE(history.Restore(1, *world.Scene));
+}
+
+TEST_CASE("prediction history: server-owned state is never captured, restored or removed")
+{
+    World world;
+    const Entity pawn = world.Scene->CreateEntity();
+    world.Scene->Add<Transform>(pawn, Transform{.Position = vec3(1.0f, 0.0f, 0.0f)});
+    world.Scene->Add<VengTest::TestHealth>(pawn, VengTest::TestHealth{.Value = 5});
+
+    PredictionHistory history;
+    history.Track(pawn);
+    history.Record(1, PlayerInput{}, *world.Scene);
+    CHECK(history.Captured(1, pawn, TypeIdOf<VengTest::TestHealth>()).empty());
+
+    // The value moved on after the capture: a restore rewinds the pose and leaves the value current.
+    world.Scene->Get<Transform>(pawn).Position = vec3(2.0f, 0.0f, 0.0f);
+    world.Scene->Get<VengTest::TestHealth>(pawn).Value = 9;
+    CHECK(history.Restore(1, *world.Scene));
+    CHECK(world.Scene->Get<Transform>(pawn).Position.x == doctest::Approx(1.0f));
+    CHECK(world.Scene->Get<VengTest::TestHealth>(pawn).Value == 9);
+
+    // Presence likewise: removed since the capture, a restore does not bring it back ...
+    (void)world.Scene->Remove<VengTest::TestHealth>(pawn);
+    history.Record(2, PlayerInput{}, *world.Scene);
+    CHECK(history.Restore(1, *world.Scene));
+    CHECK_FALSE(world.Scene->Has<VengTest::TestHealth>(pawn));
+
+    // ... and added since the capture, a restore does not undo it.
+    world.Scene->Add<VengTest::TestHealth>(pawn, VengTest::TestHealth{.Value = 3});
+    CHECK(history.Restore(2, *world.Scene));
+    REQUIRE(world.Scene->Has<VengTest::TestHealth>(pawn));
+    CHECK(world.Scene->Get<VengTest::TestHealth>(pawn).Value == 3);
+}
+
+TEST_CASE("prediction history: the default predicted set passes over server-owned-only descendants")
+{
+    World world;
+    const Entity pawn = world.Scene->CreateEntity();
+    world.Scene->Add<Transform>(pawn);
+    const Entity posed = world.Scene->CreateEntity();
+    world.Scene->Add<Transform>(posed);
+    world.Scene->SetParent(posed, pawn);
+    const Entity owned = world.Scene->CreateEntity();
+    world.Scene->Add<VengTest::TestHealth>(owned);
+    world.Scene->SetParent(owned, pawn);
+
+    const vector<Entity> set = DefaultPredictedEntities(*world.Scene, pawn);
+    CHECK(std::ranges::find(set, posed) != set.end());
+    CHECK(std::ranges::find(set, owned) == set.end());
 }

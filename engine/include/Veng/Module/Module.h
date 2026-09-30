@@ -155,10 +155,14 @@ extern "C"
 /// Version 33 adds the BehaviorTask::OnAbort virtual after OnExit. A module subclasses
 /// BehaviorTask and the engine's tree walk dispatches through its vtable, so a stale module's task
 /// is short of the slot the host calls when it aborts a running leaf.
+/// Version 34 grows TypeInfo with ServerOwned. A module registers its component types through
+/// TypeRegistry::Register<T>(), which it instantiates and so builds the record at its own layout, so
+/// a stale module would insert a short record the host reads the new flag and every later member of
+/// at shifted offsets.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 33u
+#define VENG_MODULE_ABI_VERSION 34u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

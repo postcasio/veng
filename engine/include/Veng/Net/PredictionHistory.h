@@ -13,12 +13,13 @@
 // then reconciles against the authoritative snapshot: on a mismatch it restores the recorded state
 // at the acknowledged tick and replays the recorded inputs forward. PredictionHistory is the store
 // that makes that possible — a bounded ring keyed by client tick, each entry holding the seat input
-// sampled that tick and a capture of every tracked entity's replicated component state. Capture is
-// the reflection serializer (WriteFields) into pooled scratch, restore is ReadFields back over the
-// live components, so no TypeInfo surface is added and the store is drift-proof against a component
-// added or removed between ticks. It touches no socket and no time source; it is exercised entirely
-// over an in-process Scene, the two-world-test idiom. Nothing here predicts — this is the machinery
-// the prediction and reconciliation systems record into and roll back from.
+// sampled that tick and a capture of every tracked entity's predicted component state — every
+// replicated component except a server-owned one (VE_SERVER_OWNED), which the peer never predicts
+// and so never records or rolls back. Capture is the reflection serializer (WriteFields) into pooled
+// scratch, restore is ReadFields back over the live components, so the store is drift-proof against
+// a component added or removed between ticks. It touches no socket and no time source; it is
+// exercised entirely over an in-process Scene, the two-world-test idiom. Nothing here predicts —
+// this is the machinery the prediction and reconciliation systems record into and roll back from.
 
 namespace Veng
 {
@@ -30,7 +31,8 @@ namespace Veng
     /// local seat now controls, it returns the entities to promote to Tier::Predicted and track in the
     /// PredictionHistory (the prior set is demoted back to Remote and untracked). Unset falls back to
     /// the engine default — the pawn plus every descendant in its Hierarchy subtree that carries
-    /// replicated state — which a game widens (a driven vehicle) or narrows through this hook.
+    /// predictable replicated state — which a game widens (a driven vehicle) or narrows through this
+    /// hook.
     /// @param scene  The client scene the pawn and its subtree live in.
     /// @param pawn   The pawn the local seat now possesses (never null when invoked).
     /// @return The entities to predict; the pawn should generally be among them.
@@ -38,7 +40,8 @@ namespace Veng
 
     /// @brief The engine's default predicted set — what an unset PredictionPolicy falls back to.
     ///
-    /// The pawn, plus every entity in its Hierarchy subtree that carries replicated state. A
+    /// The pawn, plus every entity in its Hierarchy subtree that carries replicated state other than
+    /// server-owned state (which is never predicted, so gives an entity nothing to reconcile). A
     /// Tier::Local descendant — a view child this peer derives, whatever components it carries — is
     /// left out with its whole subtree, since nothing authoritative exists to reconcile it against.
     /// Exposed so a game that narrows
@@ -105,8 +108,9 @@ namespace Veng
             /// @brief Captures the tracked set's replicated state and this tick's input for @p tick.
             ///
             /// For each tracked entity alive in @p scene, serializes every Replicated-marked component
-            /// present on it (WriteFields into pooled scratch); Local/View state is never captured. The
-            /// tick must exceed the newest recorded tick (append), or equal it (overwrite the newest).
+            /// present on it (WriteFields into pooled scratch); Local/View state and server-owned
+            /// state are never captured. The tick must exceed the newest recorded tick (append), or
+            /// equal it (overwrite the newest).
             /// Recording past the capacity trims the oldest entry first and logs a warning.
             /// @param tick   The client sim tick being recorded (ascending across calls).
             /// @param input  The seat input resolved for this tick.
@@ -116,10 +120,11 @@ namespace Veng
             /// @brief Restores the tracked entities' captured state at @p tick over the live scene.
             ///
             /// For each captured entity still alive in @p scene, ReadFields each captured component back
-            /// over the live component (adding an absent one), and removes any Replicated component now
-            /// on the entity that the capture did not hold — so the entity's replicated state matches
+            /// over the live component (adding an absent one), and removes any predicted component now
+            /// on the entity that the capture did not hold — so the entity's predicted state matches
             /// the recorded tick exactly, tolerant of a component added or removed since. A captured
-            /// entity no longer alive is skipped. Non-replicated (Local/View) state is untouched.
+            /// entity no longer alive is skipped. Non-replicated (Local/View) state and server-owned
+            /// state — its value and its presence — are untouched.
             /// @param tick   The recorded tick to rewind to.
             /// @param scene  The scene to restore into.
             /// @return True if @p tick was recorded and restored, false if it was not in the ring.

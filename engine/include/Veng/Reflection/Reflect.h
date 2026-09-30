@@ -295,6 +295,22 @@ namespace Veng::Detail
         static constexpr bool Replicated = true;                                                   \
     }
 
+/// @brief Declares a replicated type server-owned: authoritative on every peer, never predicted.
+///
+/// A peer predicting an entity that carries it applies the snapshot's value directly, excludes it
+/// from the reconciliation compare, and leaves it untouched across a replay. For state only the
+/// server writes (a health value, a granted status) — where a local prediction could only ever be
+/// stale and every change would otherwise force a rollback. Placed beside the type's describe block
+/// and its VE_REPLICATED mark, which it requires (a static assertion at registration);
+/// TypeRegistry::Register<T>() reads it into TypeInfo::ServerOwned. The type is named fully
+/// qualified from global scope.
+#define VE_SERVER_OWNED(Type)                                                                      \
+    template <>                                                                                    \
+    struct ::Veng::VengServerOwned<Type>                                                           \
+    {                                                                                              \
+        static constexpr bool ServerOwned = true;                                                  \
+    }
+
 /// @brief Marks a reflected type as a view/presentation output by specialising VengViewOutput\<T\>.
 ///
 /// Placed beside the type's describe block (like VE_REPLICATED), it declares the component a

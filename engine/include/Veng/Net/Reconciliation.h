@@ -17,6 +17,8 @@
 // is eased out through a decaying render offset (never written into sim Transform). Device-free: it
 // drives the replay through a caller-supplied callback (which runs the scene's Sim phase with
 // SystemContext::IsReplay set), so it unit-tests over an in-process Scene the two-world-test way.
+// Server-owned state (VE_SERVER_OWNED) is outside all of this: the snapshot apply writes it live as
+// it arrives, and the reconciler never compares, restores or lets a replay rewrite it.
 
 namespace Veng
 {
@@ -91,6 +93,11 @@ namespace Veng
         /// @p tol.SnapDistance, when it snaps). A history underflow (@p consumedTick older than the
         /// ring, or no @p replay) restores the authoritative present, clears history, and re-predicts
         /// from live input — never a crash.
+        ///
+        /// A server-owned component (TypeInfo::ServerOwned) takes no part: one in @p authoritative is
+        /// ignored — neither compared (by value or by presence) nor applied — and the tracked
+        /// entities' server-owned components are held across a replay, so every replayed tick reads
+        /// the latest authoritative value and nothing a replayed tick writes to one survives.
         /// @param scene          The client scene the predicted set lives in.
         /// @param history        The prediction history to compare, restore, and re-record through.
         /// @param authoritative  The snapshot's authoritative records for the predicted entities.

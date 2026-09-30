@@ -227,6 +227,32 @@ systems and eases the visual residual through a decaying `PredictionError` rende
 lies; only the render pose eases). So the local pawn responds on the tick its input is sampled;
 remotes stay interpolated.
 
+**State the predicting peer does not simulate is declared server-owned.** Reconciliation is right
+for what the client re-runs (a pose, a velocity, a throttle) and wrong for what only the server
+writes (a health value, a score, a granted status): the client's "prediction" of that is just the
+last value it received, so every server-side change would be a guaranteed mismatch and a full
+rollback for a value no replay can change. **`VE_SERVER_OWNED(T)`** beside `VE_REPLICATED(T)` (which
+it requires, statically asserted at registration; `TypeInfo::ServerOwned`) takes the type out of
+prediction entirely. It still replicates exactly like any other type, and on a predicted entity:
+
+- **The snapshot applies it live.** `ReplicationClient::ApplySnapshot` writes a server-owned
+  component straight onto the entity — adding it when absent — rather than collecting it into
+  `PredictedRecords`, so it lands whether or not that snapshot is reconciled.
+- **The reconciler never touches it.** `Reconcile` skips server-owned types in the compare, by value
+  and by presence (an arrival is never a mismatch), and in the rollback's authoritative apply.
+- **History skips it.** `PredictionHistory` neither captures nor restores it, and a restore never
+  removes one, so a rewind cannot bring back a stale value or undo an arrival.
+  `DefaultPredictedEntities` likewise does not count it as state worth predicting.
+- **A replay holds it.** The tracked entities' server-owned components are captured before a replay
+  and put back — value and presence — after every replayed tick, so each replayed tick reads the
+  latest authoritative value and nothing a system writes to one during the replay survives.
+
+Reach for it whenever the local Sim systems never write the state. A live (non-replay) tick is not
+guarded: a predicting peer's systems must leave a server-owned component alone, since the delta
+stream resends it only when the server's value changes. **The wire carries no component removal** —
+for any entity, server-owned or not — so a server-side removal never reaches a peer until the entity
+despawns; model "gone" as a value (a flag, a zero) when a peer must see it.
+
 **A predicted body carries physics through the rollback.** A character's motion runs through a
 kinematic capsule against the collision world, so re-running it means restoring the capsule's state
 and re-driving the world it collides against. The `Predicted` marker (`Veng/Physics/Components.h`)
@@ -651,7 +677,9 @@ sparing the peer connection, the truncated-frame drop, the one-shot unregistered
 frame-safe receipt under a tick guard, and the local-account loopback + members fan-out). The consolidated
 convergence suite (`net_reconciliation.cpp`) runs prediction + rollback + delta + quantization +
 interest under combined loss + latency and asserts byte-equal convergence (lossless wire) or
-within-quantum convergence after quiescence, with bounded history/baseline. Prediction/rollback,
+within-quantum convergence after quiescence, with bounded history/baseline, and pins that a
+server-owned component arriving, changing every tick and leaving under a predicted pawn costs zero
+rollbacks where an ordinary replicated one does not. Prediction/rollback,
 delta compression + quantization + packed input, and interest management all sit behind the stable
 `ActionState`/component shapes and the extensible `Tier` enum. There is no lag compensation, no
 transport security, no spectator/replay/host-migration support, and the editor's Play mode is not a

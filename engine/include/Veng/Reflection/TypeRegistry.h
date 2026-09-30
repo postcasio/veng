@@ -48,6 +48,22 @@ namespace Veng
         static constexpr bool Replicated = false;
     };
 
+    /// @brief Primary template authoring whether a replicated type is server-owned; false unless VE_SERVER_OWNED marks it.
+    ///
+    /// TypeRegistry::Register<T>() reads VengServerOwned<T>::ServerOwned into TypeInfo::ServerOwned.
+    /// A server-owned type replicates like any other but is authoritative on every peer: a peer
+    /// predicting an entity that carries it applies the snapshot's value directly and never compares,
+    /// records, restores or replays it. A separate specialisation point from VengReflect<T>, like
+    /// VengReplication<T>, so it composes with every reflection macro. Only meaningful on a
+    /// replicated type, which registration asserts.
+    /// @tparam T  The type whose server-owned default is authored.
+    template <class T>
+    struct VengServerOwned
+    {
+        /// @brief Whether the type is server-owned; false for the primary template.
+        static constexpr bool ServerOwned = false;
+    };
+
     /// @brief Primary template authoring whether an entity carrying this type is always network-relevant.
     ///
     /// TypeRegistry::Register<T>() reads VengAlwaysRelevant<T>::AlwaysRelevant into
@@ -140,9 +156,16 @@ namespace Veng
         /// @brief Whether the type replicates over the wire, authored via VE_REPLICATED.
         ///
         /// The net layer's snapshot encoder walks only the pools of Replicated types; a type
-        /// replicates whole (v1 has no per-field filtering — a type with a client-local field
+        /// replicates whole (there is no per-field filtering — a type with a client-local field
         /// splits it out). False for every unmarked type. Set from VengReplication<T>::Replicated.
         bool Replicated = false;
+        /// @brief Whether the replicated type is server-owned — authoritative on every peer, never predicted — via VE_SERVER_OWNED.
+        ///
+        /// A peer predicting an entity that carries it applies the snapshot's value (and presence)
+        /// directly, excludes it from the reconciliation compare, leaves it out of the prediction
+        /// history, and holds it across a replay. Always false when Replicated is false. Set from
+        /// VengServerOwned<T>::ServerOwned.
+        bool ServerOwned = false;
         /// @brief Whether an entity carrying this component is always network-relevant, via VE_ALWAYS_RELEVANT.
         ///
         /// Interest management skips the spatial cull for an entity with any always-relevant
@@ -328,7 +351,10 @@ namespace Veng
             info.Fields = std::move(fields);
             info.Display = VengDisplay<T>::Get();
             info.Requires = VengRequires<T>::Required();
+            static_assert(!VengServerOwned<T>::ServerOwned || VengReplication<T>::Replicated,
+                          "VE_SERVER_OWNED requires VE_REPLICATED on the same type");
             info.Replicated = VengReplication<T>::Replicated;
+            info.ServerOwned = VengServerOwned<T>::ServerOwned;
             info.AlwaysRelevant = VengAlwaysRelevant<T>::AlwaysRelevant;
             info.ViewOutput = VengViewOutput<T>::ViewOutput;
 

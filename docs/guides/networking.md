@@ -302,6 +302,26 @@ present (remote entities hold their current interpolated pose, no View systems r
 predicted-vs-world interaction in the replay window uses present-world context — the server
 remains the arbiter of what actually happened.
 
+### State the client never simulates: `VE_SERVER_OWNED`
+
+Reconciliation compares every replicated component of a predicted entity. That is right for
+what the client re-runs — the pose, the velocity — and wrong for what only the server writes:
+a health value, a score, a status the server grants. The client's "prediction" of those is
+just the last value it received, so every change on the server would read as a mispredict and
+roll the pawn back for a value the replay cannot change. Declare such a type **server-owned**
+beside its `VE_REPLICATED` mark (which it requires):
+
+```cpp
+VE_REPLICATED(::MyGame::Health);
+VE_SERVER_OWNED(::MyGame::Health);   // authoritative on every peer, never predicted
+```
+
+It still replicates like any other component. On the predicted pawn the snapshot writes it
+live as it arrives (adding it if the pawn lacked it), it is never compared, recorded or
+restored, and a replay holds it at its latest authoritative value — so a server-side change costs
+no rollback. Your client-side Sim systems may read it but must not write it. The wire carries
+no component *removal*, so model "gone" as a value when a client must see it.
+
 ## Wire compression — automatic, behind the codec
 
 The snapshot wire shrinks three ways, all behind the stable packet shapes, so the game code

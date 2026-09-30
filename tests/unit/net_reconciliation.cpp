@@ -1,11 +1,12 @@
 // Client-side reconciliation: the compare/restore/replay/smooth that converges prediction to
 // authoritative truth. The unit slices pin the field-aware compare (spatial leaves within epsilon,
 // discrete state exact), the render-residual decay + snap threshold, and the Reconcile arms in
-// isolation (match trims, mismatch restores + replays, history underflow hard-snaps). The two-world
-// slices are the planset's convergence gate: with the server-scheduled ahead-of-client tick model
-// and a seeded lossy/reordering/duplicating link as the adversity — the latency knob is Plan 05's
-// consolidated job — predicted state converges byte-equal to the authoritative state after
-// quiescence, and a forced server displacement corrects with one smoothed correction. Deterministic
+// isolation (match trims, mismatch restores + replays, history underflow hard-snaps), and server-owned
+// state's exemption from all of it. The two-world slices are the convergence gate: with the
+// server-scheduled ahead-of-client tick model and a seeded lossy/reordering/duplicating (and, in the
+// consolidated cases, latent) link as the adversity, predicted state converges byte-equal to the
+// authoritative state after quiescence, a forced server displacement corrects with one smoothed
+// correction, and server-owned state changing under a predicted pawn costs no rollback. Deterministic
 // (fixed tick, injected time, seeded faults), device-free.
 
 #include <doctest/doctest.h>
@@ -34,6 +35,7 @@
 #include <Veng/Scene/RemoteInterpolationSystem.h>
 #include <Veng/Scene/Scene.h>
 
+#include <algorithm>
 #include <unordered_map>
 #include <utility>
 
@@ -157,6 +159,8 @@ namespace
         SoloWorld()
         {
             RegisterBuiltinTypes(Types);
+            Types.Register<VengTest::TestScore>();
+            Types.Register<VengTest::TestHealth>();
             World = Scene::Create(Types);
             Pawn = World->CreateEntity();
             World->Add<Transform>(Pawn);
@@ -207,6 +211,29 @@ namespace
             record.Entity = Pawn;
             record.Components.push_back(PredictedRecord::Component{
                 .Type = TypeIdOf<Transform>(), .Bytes = SerializeTransform(Types, transform)});
+            return record;
+        }
+
+        // Appends @p value of reflected type T to @p record as an authoritative component.
+        template <class T>
+        void AppendAuthoritative(PredictedRecord& record, const T& value) const
+        {
+            vector<u8> bytes;
+            WriteFields(bytes, &value, Types.Info(TypeIdOf<T>()), Types);
+            record.Components.push_back(
+                PredictedRecord::Component{.Type = TypeIdOf<T>(), .Bytes = std::move(bytes)});
+        }
+
+        // The recorded prediction of the pawn's Transform at @p tick, as an authoritative record — a
+        // record that matches the prediction exactly.
+        PredictedRecord MatchingRecord(const u64 tick) const
+        {
+            const std::span<const u8> captured =
+                History.Captured(tick, Pawn, TypeIdOf<Transform>());
+            PredictedRecord record;
+            record.Entity = Pawn;
+            record.Components.push_back(PredictedRecord::Component{
+                .Type = TypeIdOf<Transform>(), .Bytes = {captured.begin(), captured.end()}});
             return record;
         }
     };
@@ -328,6 +355,102 @@ namespace
         CHECK_FALSE(w.World->Has<PredictionError>(w.Pawn));
     }
 
+    TEST_CASE("Reconcile: a differing server-owned value is no mismatch; an ordinary one still is")
+    {
+        SoloWorld w;
+        w.World->Add<VengTest::TestHealth>(w.Pawn, VengTest::TestHealth{.Value = 7});
+        w.World->Add<VengTest::TestScore>(w.Pawn, VengTest::TestScore{.Value = 3});
+        for (u64 tick = 1; tick <= 6; ++tick)
+        {
+            w.PredictTick(tick, vec2(1.0f, 0.0f));
+        }
+
+        // The pose matches and the server-owned value differs: the prediction stands, and the
+        // reconciler leaves the server-owned value to the snapshot apply.
+        PredictedRecord serverOwned = w.MatchingRecord(3);
+        w.AppendAuthoritative(serverOwned, VengTest::TestHealth{.Value = 99});
+        w.AppendAuthoritative(serverOwned, VengTest::TestScore{.Value = 3});
+        const ReconcileResult held = Reconcile(*w.World, w.History, std::span(&serverOwned, 1), 3,
+                                               w.Replay(), ReconcileTolerances{});
+        CHECK(held.Compared);
+        CHECK_FALSE(held.Corrected);
+        CHECK(held.ReplayedTicks == 0);
+        CHECK(w.World->Get<VengTest::TestHealth>(w.Pawn).Value == 7);
+
+        // The same record with an ordinary replicated value differing rolls back and replays.
+        PredictedRecord ordinary = w.MatchingRecord(4);
+        w.AppendAuthoritative(ordinary, VengTest::TestScore{.Value = 4});
+        const ReconcileResult corrected = Reconcile(*w.World, w.History, std::span(&ordinary, 1), 4,
+                                                    w.Replay(), ReconcileTolerances{});
+        CHECK(corrected.Corrected);
+        CHECK(corrected.ReplayedTicks == 2);
+        CHECK(w.World->Get<VengTest::TestScore>(w.Pawn).Value == 4);
+    }
+
+    TEST_CASE("Reconcile: a server-owned component arriving on a predicted entity is no mismatch")
+    {
+        SoloWorld w;
+        for (u64 tick = 1; tick <= 4; ++tick)
+        {
+            w.PredictTick(tick, vec2(1.0f, 0.0f));
+        }
+
+        // The prediction never held the component; its presence in the record is not compared.
+        PredictedRecord record = w.MatchingRecord(2);
+        w.AppendAuthoritative(record, VengTest::TestHealth{.Value = 1});
+        const ReconcileResult result = Reconcile(*w.World, w.History, std::span(&record, 1), 2,
+                                                 w.Replay(), ReconcileTolerances{});
+        CHECK_FALSE(result.Corrected);
+    }
+
+    TEST_CASE("Reconcile: a replay holds server-owned state at its latest authoritative value")
+    {
+        SoloWorld w;
+        w.World->Add<VengTest::TestHealth>(w.Pawn, VengTest::TestHealth{.Value = 1});
+        for (u64 tick = 1; tick <= 6; ++tick)
+        {
+            w.PredictTick(tick, vec2(1.0f, 0.0f));
+        }
+        // The latest snapshot set the value after every recorded tick.
+        w.World->Get<VengTest::TestHealth>(w.Pawn).Value = 40;
+
+        // A replay driver that reads the value, then overwrites or removes it — neither may survive,
+        // and every replayed tick must read 40.
+        vector<i32> seen;
+        const ReplayTick base = w.Replay();
+        const ReplayTick replay = [&](Scene& scene, const u64 tick, const PlayerInput& input)
+        {
+            const auto* health = scene.TryGet<VengTest::TestHealth>(w.Pawn);
+            seen.push_back(health != nullptr ? health->Value : 0);
+            if (tick % 2 == 0)
+            {
+                (void)scene.Remove<VengTest::TestHealth>(w.Pawn);
+            }
+            else
+            {
+                scene.Get<VengTest::TestHealth>(w.Pawn).Value = -1;
+            }
+            base(scene, tick, input);
+        };
+
+        Transform displaced;
+        {
+            const std::span<const u8> captured =
+                w.History.Captured(3, w.Pawn, TypeIdOf<Transform>());
+            REQUIRE(ReadFields(captured, &displaced, w.Types.Info(TypeIdOf<Transform>()), w.Types)
+                        .has_value());
+        }
+        displaced.Position.x += 1.0f;
+        const std::vector<PredictedRecord> records{w.AuthoritativeTransform(displaced)};
+        const ReconcileResult result =
+            Reconcile(*w.World, w.History, records, 3, replay, ReconcileTolerances{});
+
+        REQUIRE(result.ReplayedTicks == 3);
+        CHECK(seen == vector<i32>{40, 40, 40});
+        REQUIRE(w.World->Has<VengTest::TestHealth>(w.Pawn));
+        CHECK(w.World->Get<VengTest::TestHealth>(w.Pawn).Value == 40);
+    }
+
     // ---- Two-world convergence gate --------------------------------------------------------------
 
     const ConnectionConfig FastConfig{
@@ -399,6 +522,8 @@ namespace
                              f32 interestRadius = 0.0f)
         {
             RegisterBuiltinTypes(Types);
+            Types.Register<VengTest::TestScore>();
+            Types.Register<VengTest::TestHealth>();
             World = Scene::Create(Types);
             PawnPrefab = MakePawnPrefab(Types);
             Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
@@ -493,10 +618,13 @@ namespace
         Entity LocalSeat = Entity::Null;
         Entity LocalCamera = Entity::Null;
         Entity OwnPawn = Entity::Null;
+        u32 ReplayedTicks = 0;
 
         explicit ClientWorld(Transport& transport)
         {
             RegisterBuiltinTypes(Types);
+            Types.Register<VengTest::TestScore>();
+            Types.Register<VengTest::TestHealth>();
             PawnPrefab = MakePawnPrefab(Types);
             Client = *Net::Client::Connect(
                 ClientInfo{.TransportOverride = &transport, .Connection = FastConfig});
@@ -539,6 +667,7 @@ namespace
                     [this](Scene& world, const u64, const PlayerInput& input)
                 {
                     constexpr f32 Delta = 1.0f / 60.0f;
+                    ++ReplayedTicks;
                     if (!LocalSeat.IsNull() && world.IsAlive(LocalSeat) &&
                         world.Has<PlayerInput>(LocalSeat))
                     {
@@ -599,13 +728,20 @@ namespace
 
     // Steps both worlds one iteration with the client leading the server by Lead ticks (the
     // ahead-of-server tick model that makes the input for server tick T arrive by T).
+    // @p afterSim runs between the server's Sim step and its net pump, so a server-side write stamps
+    // the tick being simulated and rides that tick's snapshot.
     void StepAhead(ServerWorld& server, ClientWorld& client, u64 serverTick, u64 lead, f64& now,
-                   const optional<ActionState>& scripted, ConnectionId& id)
+                   const optional<ActionState>& scripted, ConnectionId& id,
+                   const function<void()>& afterSim = {})
     {
         constexpr f32 Delta = 1.0f / 60.0f;
         now += Delta;
         client.Frame(now, serverTick + lead, Delta, scripted);
         server.SimStep(serverTick, Delta);
+        if (afterSim)
+        {
+            afterSim();
+        }
         server.NetPump(now, serverTick);
         if (!server.Host->Server().Connections().empty())
         {
@@ -836,4 +972,100 @@ TEST_CASE("Convergence: prediction with quantization + interest converges within
     CHECK(glm::length(clientPos - serverPos) < 0.01f); // within the 1 cm reconcile epsilon
     CHECK_FALSE(client.Host->World()->Has<PredictionError>(clientPawn)); // residual eased out
     CHECK(client.Host->History().Size() <= Lead + 6);
+}
+
+namespace
+{
+    // Server-side writes a predicted pawn's owner never simulates: a counter the server adds, bumps
+    // every tick, and then removes. Returns the client's replayed-tick count over that window.
+    template <class Counter>
+    u32 ReplaysUnderServerCounter(vector<i32>* clientSeen = nullptr, i32* serverFinal = nullptr,
+                                  i32* clientFinal = nullptr)
+    {
+        auto [serverT, clientT] = LoopbackTransport::CreatePair();
+        ServerWorld server(*serverT);
+        ClientWorld client(*clientT);
+
+        constexpr u64 Lead = 4;
+        const ActionState stop = MoveState(vec2(0.0f, 0.0f));
+        f64 now = 0.0;
+        ConnectionId id = ServerConnectionId;
+        for (u64 tick = 1; tick <= 60; ++tick)
+        {
+            StepAhead(server, client, tick, Lead, now, stop, id);
+        }
+        REQUIRE(client.Host->IsJoined());
+        const Entity serverPawn = server.PawnFor(id);
+        const Entity clientPawn = client.OwnPawn;
+        REQUIRE_FALSE(serverPawn.IsNull());
+        REQUIRE_FALSE(clientPawn.IsNull());
+        Scene& clientWorld = *client.Host->World();
+
+        // Join and settle at rest first, so only the counter can disagree from here.
+        const u32 settled = client.ReplayedTicks;
+        for (u64 tick = 61; tick <= 160; ++tick)
+        {
+            const auto write = [&]
+            {
+                if (tick == 61)
+                {
+                    server.World->Add<Counter>(serverPawn, Counter{.Value = 1});
+                }
+                else if (tick <= 120)
+                {
+                    ++server.World->Get<Counter>(serverPawn).Value;
+                }
+                else if (tick == 140)
+                {
+                    (void)server.World->Remove<Counter>(serverPawn);
+                }
+            };
+            StepAhead(server, client, tick, Lead, now, stop, id, write);
+            if (clientSeen != nullptr && tick <= 130)
+            {
+                const auto* seen = clientWorld.TryGet<Counter>(clientPawn);
+                if (seen != nullptr && (clientSeen->empty() || clientSeen->back() != seen->Value))
+                {
+                    clientSeen->push_back(seen->Value);
+                }
+            }
+            if (tick == 130)
+            {
+                if (serverFinal != nullptr)
+                {
+                    *serverFinal = server.World->Get<Counter>(serverPawn).Value;
+                }
+                if (clientFinal != nullptr)
+                {
+                    const auto* seen = clientWorld.TryGet<Counter>(clientPawn);
+                    *clientFinal = seen != nullptr ? seen->Value : -1;
+                }
+            }
+        }
+        return client.ReplayedTicks - settled;
+    }
+}
+
+TEST_CASE("Convergence: a server-owned counter changing under a predicted pawn costs no rollback")
+{
+    vector<i32> seen;
+    i32 serverFinal = 0;
+    i32 clientFinal = 0;
+    const u32 replays =
+        ReplaysUnderServerCounter<VengTest::TestHealth>(&seen, &serverFinal, &clientFinal);
+
+    // Its arrival, sixty bumps, and its removal on the server: zero rollbacks.
+    CHECK(replays == 0);
+    // The client took the value as it arrived — a rising run of snapshot values ending on the
+    // server's own.
+    CHECK(seen.size() >= 20);
+    CHECK(std::ranges::is_sorted(seen));
+    CHECK(clientFinal == serverFinal);
+}
+
+TEST_CASE("Convergence: an ordinary replicated counter changing under a predicted pawn rolls back")
+{
+    // The same server-side writes to a replicated type that is not server-owned: every change is a
+    // mismatch against the prediction.
+    CHECK(ReplaysUnderServerCounter<VengTest::TestScore>() > 0);
 }

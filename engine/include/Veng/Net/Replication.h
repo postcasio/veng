@@ -131,7 +131,9 @@ namespace Veng
     /// applied to the live pose the way a Remote mirror's Transform is buffered — it is handed to the
     /// reconciler, which compares it against the recorded prediction and restores/replays on a
     /// mismatch. ReplicationClient::ApplySnapshot decodes these (references remapped to local handles)
-    /// for every predicted entity in the packet and exposes them for that pump's reconciliation.
+    /// for every predicted entity in the packet and exposes them for that pump's reconciliation. A
+    /// server-owned component (VE_SERVER_OWNED) is never among them: it is written onto the live
+    /// entity as the snapshot arrives, the same as on a remote entity.
     struct PredictedRecord
     {
         /// @brief One authoritative component's reflected type and its local-form WriteFields bytes.
@@ -532,7 +534,9 @@ namespace Veng
         ///
         /// Non-Transform components write straight onto the resolved entity; each Transform record
         /// appends a sample (keyed by the packet's server tick) to the entity's RemoteInterpolation
-        /// buffer. An unbound NetId drops its record.
+        /// buffer. A Tier::Predicted entity's records are collected for the reconciler instead (see
+        /// PredictedRecords), apart from its server-owned components, which write straight on. An
+        /// unbound NetId drops its record.
         /// @param packet  The snapshot packet bytes.
         /// @param scene   The client scene to apply into.
         /// @return A summary of what applied (see SnapshotApplyResult).
@@ -541,7 +545,8 @@ namespace Veng
         /// @brief The predicted entities' authoritative records decoded by the last ApplySnapshot.
         ///
         /// A Tier::Predicted entity's snapshot state is collected here rather than applied to the live
-        /// pose (which is client-simulated); the reconciler consumes it against the header's
+        /// pose (which is client-simulated), apart from its server-owned components, which
+        /// ApplySnapshot writes live; the reconciler consumes it against the header's
         /// LastConsumedInputTick. Cleared and refilled by each ApplySnapshot, so it is read
         /// immediately after that call, for that snapshot only.
         /// @return A view valid until the next ApplySnapshot.
