@@ -232,6 +232,12 @@ carry HDR colour that feeds bloom, and choose `Additive` (order-free light) or a
   `Trail`; it stands on every peer that instantiates the prefab.
 - **`RibbonSystem`** (`Veng/Scene/RibbonSystem.h`) also advances every `Ribbon`'s `Age`, so a level
   lists it for its trails to record and its ribbons to fade.
+- **A floating origin re-bases them with `OffsetRibbons(scene, offset)`.** A scene drawn about a
+  moving origin moves every world position by one displacement each time the origin moves; a
+  ribbon's endpoints and a trail's recorded samples are world positions written on earlier frames,
+  so they do not follow by themselves, and a trail left alone streams off along its viewer's own
+  motion. The origin's owner calls it with the displacement before `RibbonSystem` records the frame;
+  entity `Transform`s stay the owner's to re-base.
 
 ## Transient effects — a bounded pool, spawned and forgotten
 

@@ -1,6 +1,7 @@
 // Ribbons and trails, device-free: a trail's sample ring stays within MaxSamples and Lifetime and
-// empties when its entity stops, the frame's packed segments stay bounded by the ribbons plus the
-// trails' samples, and a pooled beam fades over its lifetime and returns to the pool.
+// empties when its entity stops, a re-base of the origin carries every ribbon and sample with it,
+// the frame's packed segments stay bounded by the ribbons plus the trails' samples, and a pooled
+// beam fades over its lifetime and returns to the pool.
 
 #include <doctest/doctest.h>
 
@@ -115,6 +116,38 @@ TEST_CASE(
     fixture.Step(mover, rest + vec3(5.0f, 0.0f, 0.0f));
     AttachTrail(*fixture.World, mover, Trail{.Lifetime = 0.5f});
     CHECK(fixture.World->Get<Trail>(mover).Samples.empty());
+}
+
+TEST_CASE("A re-based origin carries every ribbon and trail sample with it, and their shape too")
+{
+    RibbonScene scene;
+    const Entity streak = scene.World->CreateEntity();
+    scene.World->Add<Transform>(streak);
+    scene.World->Add<Trail>(streak, Trail{.Lifetime = 1.0f, .MaxSamples = 16});
+    for (u32 frame = 0; frame < 8; ++frame)
+    {
+        scene.Step(streak, vec3(static_cast<f32>(frame), 0.5f * static_cast<f32>(frame), 0.0f));
+    }
+    const Entity beam = scene.World->CreateEntity();
+    scene.World->Add<Ribbon>(beam, Ribbon{.From = vec3(1.0f, 2.0f, 3.0f), .To = vec3(-4.0f)});
+
+    const vector<TrailSample> before = scene.World->Get<Trail>(streak).Samples;
+    const Ribbon ribbonBefore = scene.World->Get<Ribbon>(beam);
+    const vec3 offset(-120.0f, 3.5f, 42.0f);
+    OffsetRibbons(*scene.World, offset);
+
+    const vector<TrailSample>& after = scene.World->Get<Trail>(streak).Samples;
+    REQUIRE(after.size() == before.size());
+    f32 worst = 0.0f;
+    for (usize i = 0; i < after.size(); ++i)
+    {
+        worst = std::max(worst, glm::length(after[i].Position - (before[i].Position + offset)));
+        CHECK(after[i].Age == before[i].Age);
+    }
+    CHECK(worst < 1e-4f);
+    const Ribbon& ribbonAfter = scene.World->Get<Ribbon>(beam);
+    CHECK(glm::length(ribbonAfter.From - (ribbonBefore.From + offset)) < 1e-5f);
+    CHECK(glm::length(ribbonAfter.To - (ribbonBefore.To + offset)) < 1e-5f);
 }
 
 TEST_CASE("A frame's packed segments are bounded by its ribbons plus its trails' samples")

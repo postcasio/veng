@@ -32,6 +32,18 @@ namespace Veng
     /// @return The entity's trail component.
     VE_API Trail& AttachTrail(Scene& scene, Entity entity, const Trail& trail);
 
+    /// @brief Moves every ribbon's endpoints and every trail's recorded samples by one offset.
+    ///
+    /// The re-base a scene drawn about a floating origin needs. Moving the origin moves every world
+    /// position by the same displacement, but a ribbon's endpoints are world positions its owner
+    /// wrote and a trail's samples are world positions recorded on earlier frames, so neither
+    /// follows by itself: left alone, a trail streams off along its viewer's own motion. Call it
+    /// with the displacement each time the origin moves, before RibbonSystem records the frame's
+    /// heads. An entity's Transform is not touched; re-basing it is the owner's, as it always is.
+    /// @param scene   The scene whose ribbons and trails are re-based.
+    /// @param offset  The displacement every world position moved by.
+    VE_API void OffsetRibbons(Scene& scene, const vec3& offset);
+
     /// @brief View-phase system that ages every Ribbon and advances every Trail.
     ///
     /// Each frame it adds the frame delta to every Ribbon's Age (the fade a positive Lifetime runs),

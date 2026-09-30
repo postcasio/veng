@@ -44,6 +44,22 @@ namespace Veng
         return scene.Add<Trail>(entity, std::move(fresh));
     }
 
+    void OffsetRibbons(Scene& scene, const vec3& offset)
+    {
+        for (auto [entity, ribbon] : scene.View<Ribbon>())
+        {
+            ribbon.From += offset;
+            ribbon.To += offset;
+        }
+        for (auto [entity, trail] : scene.View<Trail>())
+        {
+            for (TrailSample& sample : trail.Samples)
+            {
+                sample.Position += offset;
+            }
+        }
+    }
+
     void RibbonSystem::OnUpdate(Scene& scene, const f32 delta, const SystemContext& context)
     {
         for (auto [entity, ribbon] : scene.View<Ribbon>())
