@@ -25,6 +25,10 @@ namespace Veng
             // several presences — a join and a pin, say). Only valid accounts are recorded.
             std::unordered_map<Net::AccountId, u32> Members;
             bool Reapable = true;
+            // Whether the bucket has ever held presence. Until it has, the presence that resolved
+            // it is still on its way — a presentation pin lands at the next pin sync, a directed
+            // join a round trip later — so its per-world dwell does not apply yet (see ReapIdle).
+            bool Claimed = false;
             optional<f64> IdleSince;
             // The per-world idle-dwell override the opening resolution named; unset inherits the
             // directory's IdleKeepWarmDwell.
@@ -138,6 +142,7 @@ namespace Veng
                 return;
             }
             bucket->Presence += 1;
+            bucket->Claimed = true;
             bucket->IdleSince.reset();
             if (account.IsValid())
             {
@@ -338,7 +343,13 @@ namespace Veng
             {
                 bucket.IdleSince = now;
             }
-            if (now - *bucket.IdleSince >= bucket.Dwell.value_or(s.IdleKeepWarmDwell))
+            // A per-world dwell measures how long a world outlives its last occupant, so it governs
+            // only a bucket that has had one. An unclaimed open waits at least the directory
+            // default, or a zero dwell would reap a destination in the frame it was resolved,
+            // before the pin or join that resolved it could land.
+            const f64 dwell = bucket.Dwell.value_or(s.IdleKeepWarmDwell);
+            const f64 hold = bucket.Claimed ? dwell : std::max(dwell, s.IdleKeepWarmDwell);
+            if (now - *bucket.IdleSince >= hold)
             {
                 reaped.push_back(bucket.World);
             }

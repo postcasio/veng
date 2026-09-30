@@ -516,8 +516,13 @@ account, a pin the local player's (`Application::GetLocalAccount`, resolved thro
 hook at bootstrap; a headless `--dedicated` host resolves none — the host is nobody), so
 **`MembersOf(WorldKey)`** unions the accounts present across a key's buckets — the membership
 primitive — with the listen host's own player a first-class member beside connected ones. A bucket at zero presence starts its dwell; past it the directory invokes the consumer
-**`CloseWorld` hook first, then `WorldRunner::CloseWorld`** — the hook-before-teardown ordering is the
-persistence capture point, guaranteed in every role.
+**`CloseWorld` hook first, then `WorldRunner::CloseWorld`**. A bucket's own `IdleDwell` governs it
+only **once it has held presence**: a freshly resolved bucket is still waiting for the presence that
+asked for it (a presentation pin lands at the next pin sync, a listen host's reap runs in its pump
+before that, a directed join lands a round trip later), so until its first presence it waits at least
+`IdleKeepWarmDwell` — which is what lets a world opt into a zero dwell, closing as soon as its last
+occupant leaves. The hook-before-teardown ordering is the persistence capture point, guaranteed in
+every role.
 
 **A non-presenting *local* standing travel counts as directory presence.** A remote join calls
 `AddJoin`, so the directory counts it; the connectionless local player has no join to report, so a

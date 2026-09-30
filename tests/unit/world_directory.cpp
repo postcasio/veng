@@ -32,6 +32,8 @@ namespace
         // The ids CloseWorld reaped, in reap order.
         vector<u64> Closed;
         u64 NextWorld = 1;
+        // The per-world idle dwell every factory open names; unset inherits the directory default.
+        optional<f64> ResolutionDwell;
 
         Unique<WorldDirectory> Directory;
 
@@ -44,7 +46,8 @@ namespace
                 {
                     OpenAccounts.push_back(request.Account);
                     return ServerWorldResolution{.WorldId = WorldInstanceId{.Value = NextWorld++},
-                                                 .World = WorldScene.get()};
+                                                 .World = WorldScene.get(),
+                                                 .IdleDwell = ResolutionDwell};
                 },
                 .CloseWorld = [this](WorldInstanceId id) { Closed.push_back(id.Value); },
             });
@@ -207,6 +210,37 @@ TEST_CASE("A world pinned before its first reap sighting is never reaped by the 
     CHECK(fx.Directory->ReapIdle(/*now=*/1000.0).empty());
     CHECK(fx.Directory->Contains(resolve.World));
     CHECK(fx.Closed.empty());
+}
+
+TEST_CASE("A zero-dwell world reaps on the first pass after its last presence, never before one")
+{
+    // A world naming a zero dwell closes as soon as it is empty, but a fresh open has not been
+    // empty of anyone yet: the presence that resolved it lands after the resolve (a presentation
+    // pin at the next pin sync, a directed join a round trip later), and a reap may run in between.
+    // So until it has held presence it waits out the directory default, exactly as a never-pinned
+    // open does.
+    DirectoryFixture fx(/*dwell=*/5.0);
+    fx.ResolutionDwell = 0.0;
+
+    const WorldResolveResult occupied = fx.Open(WorldKey::FromU64(0x7), AccountId{});
+    REQUIRE(occupied.Outcome == WorldResolveOutcome::Opened);
+    CHECK(fx.Directory->ReapIdle(/*now=*/100.0).empty());
+    fx.Directory->Pin(occupied.World);
+    CHECK(fx.Directory->ReapIdle(/*now=*/1000.0).empty());
+
+    // Its last presence leaves, and the very next pass reaps it.
+    fx.Directory->Unpin(occupied.World, /*now=*/1000.0);
+    const vector<WorldInstanceId> reaped = fx.Directory->ReapIdle(/*now=*/1000.0);
+    REQUIRE(reaped.size() == 1);
+    CHECK(reaped[0] == occupied.World);
+
+    // An open nobody ever claims is still reaped, after the default rather than never.
+    const WorldResolveResult unclaimed = fx.Open(WorldKey::FromU64(0x8), AccountId{});
+    REQUIRE(unclaimed.Outcome == WorldResolveOutcome::Opened);
+    CHECK(fx.Directory->ReapIdle(/*now=*/2000.0).empty());
+    CHECK(fx.Directory->ReapIdle(/*now=*/2004.0).empty());
+    CHECK(fx.Directory->ReapIdle(/*now=*/2005.0).size() == 1);
+    CHECK_FALSE(fx.Directory->Contains(unclaimed.World));
 }
 
 TEST_CASE("Close tears a factory-opened world down on demand, pins and dwell notwithstanding")

@@ -72,7 +72,10 @@ namespace Veng
         ///
         /// The per-world override of WorldDirectoryInfo::IdleKeepWarmDwell: a gameplay bubble wants
         /// seconds, a long-lived data world whose members may all blip offline together wants
-        /// minutes. Applies only to this factory-opened bucket.
+        /// minutes, and a world with no reason to outlive its occupants wants 0, reaping on the
+        /// first reap pass after its last presence leaves. Applies only to this factory-opened
+        /// bucket, and only once it has held presence: until then it waits at least
+        /// IdleKeepWarmDwell, so the pin or join that resolved it lands first.
         optional<f64> IdleDwell;
     };
 
@@ -138,7 +141,9 @@ namespace Veng
         /// @brief Seconds a bucket with no presence is held warm before it is reaped.
         ///
         /// The directory-wide default; a factory-opened bucket whose resolution set
-        /// ServerWorldResolution::IdleDwell dwells by that value instead.
+        /// ServerWorldResolution::IdleDwell dwells by that value instead once it has held presence.
+        /// It is also the least a bucket that has never held presence waits, which is the grace a
+        /// resolved destination has for its pin or join to land.
         f64 IdleKeepWarmDwell = 5.0;
         /// @brief The optional runner the reap tears the closed world down through, after the close hook.
         ///
