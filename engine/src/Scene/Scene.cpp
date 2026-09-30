@@ -3,6 +3,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Net/LagCompensation.h>
+#include <Veng/Net/SeatRelease.h>
 #include <Veng/Physics/PhysicsWorld.h>
 #include <Veng/Physics/PoseResolver.h>
 #include <Veng/Reflection/Serialize.h>
@@ -150,6 +151,11 @@ namespace Veng
         m_PoseHistory = std::move(history);
     }
 
+    void Scene::SetSeatReleaseLog(Unique<SeatReleaseLog> log)
+    {
+        m_SeatReleaseLog = std::move(log);
+    }
+
     void Scene::SetEffectPool(Unique<EffectPool> pool)
     {
         m_EffectPool = std::move(pool);
@@ -172,6 +178,11 @@ namespace Veng
         {
             m_Simulation->Update(*this, delta, context);
         }
+        // This tick's Sim systems have read the releases recorded before it.
+        if (m_SeatReleaseLog)
+        {
+            m_SeatReleaseLog->Clear();
+        }
     }
 
     void Scene::TickSimulationPhase(const SceneSystem::Phase phase, const f32 delta,
@@ -189,6 +200,11 @@ namespace Veng
         if (phase == SceneSystem::Phase::Sim)
         {
             SnapshotTransformHistory();
+            // This tick's Sim systems have read the releases recorded before it.
+            if (m_SeatReleaseLog)
+            {
+                m_SeatReleaseLog->Clear();
+            }
         }
     }
 

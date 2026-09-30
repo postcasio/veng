@@ -20,6 +20,7 @@
 #include <Veng/Net/LoopbackTransport.h>
 #include <Veng/Net/Messages.h>
 #include <Veng/Net/Replication.h>
+#include <Veng/Net/SeatRelease.h>
 #include <Veng/Net/Server.h>
 #include <Veng/Net/Transport.h>
 #include <Veng/Net/WorldEnvelope.h>
@@ -7443,5 +7444,206 @@ TEST_CASE("A travel a client asks for is the server's to judge, and a refusal di
         // The travel was granted and directed, so the client acted on it — it asked to join the
         // named world, whatever the directory then made of a key nothing hosts.
         CHECK(calls == 1);
+    }
+}
+
+namespace
+{
+    // A Sim system that copies every seat release its world shows it, tick by tick.
+    struct SeatReleaseProbe final : SceneSystem
+    {
+        vector<vector<SeatRelease>> Ticks;
+
+        void OnUpdate(Scene& scene, f32, const SystemContext&) override
+        {
+            const std::span<const SeatRelease> releases = SeatReleasesOf(scene);
+            Ticks.emplace_back(releases.begin(), releases.end());
+        }
+    };
+}
+
+VE_SYSTEM(SeatReleaseProbe, 0x7F5A103B5ED141FEULL, "Seat Release Probe");
+
+namespace
+{
+    // Two pre-registered worlds on one host, each scene running the release probe.
+    struct SeatReleaseServer
+    {
+        inline static const WorldKey KeyA = WorldKey::FromU64(0x5EA7A);
+        inline static const WorldKey KeyB = WorldKey::FromU64(0x5EA7B);
+
+        TypeRegistry Types;
+        SystemRegistry Systems;
+        Unique<Scene> SceneA;
+        Unique<Scene> SceneB;
+        Unique<ServerHost> Host;
+        FakeContext Context;
+
+        explicit SeatReleaseServer(Transport& transport)
+        {
+            RegisterBuiltinTypes(Types);
+            Systems.Register<SeatReleaseProbe>();
+            SceneA = Scene::Create(Types);
+            SceneB = Scene::Create(Types);
+            SceneA->SetSimulation(CreateUnique<SceneSimulation>(Systems));
+            SceneB->SetSimulation(CreateUnique<SceneSimulation>(Systems));
+            Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
+                .Server = ServerInfo{.TransportOverride = &transport, .Connection = FastConfig},
+                .WorldId = WorldInstanceId{.Value = 1},
+                .Key = KeyA,
+                .World = *SceneA,
+                .Assets = FakeAssets(),
+                .LevelId = AssetId{0x00000000000000A1ULL},
+                .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+                .Interest = InterestSettings{.Radius = 0.0f},
+            });
+            REQUIRE(host.has_value());
+            Host = std::move(*host);
+            Host->AddWorld(
+                ServerWorldInfo{.WorldId = WorldInstanceId{.Value = 2},
+                                .Key = KeyB,
+                                .World = *SceneB,
+                                .LevelId = AssetId{0x00000000000000B2ULL},
+                                .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
+                                .Interest = InterestSettings{.Radius = 0.0f}});
+        }
+
+        // Steps one world's Sim phase, which is when its systems read the releases.
+        static void Tick(Scene& scene, FakeContext& context)
+        {
+            scene.TickSimulationPhase(SceneSystem::Phase::Sim, 1.0f / 60.0f, context.Make());
+        }
+
+        static const vector<vector<SeatRelease>>& Seen(Scene& scene)
+        {
+            return scene.GetSimulation()->FindSystem<SeatReleaseProbe>()->Ticks;
+        }
+    };
+
+    // The seat an account holds in a scene (Entity::Null when it holds none).
+    Entity SeatOfAccount(Scene& scene, const AccountId& account)
+    {
+        Entity found = Entity::Null;
+        scene.Each<SeatAccount>(
+            [&](const Entity seat, const SeatAccount& owner)
+            {
+                if (owner.Account == account)
+                {
+                    found = seat;
+                }
+            });
+        return found;
+    }
+}
+
+TEST_CASE("A travel releases the seat left behind as Left, read once on the world's next Sim tick")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    SeatReleaseServer server(*serverT);
+    const AccountId account{.Lo = 0x5EA7, .Hi = 0x1};
+    IdentityClient client(*clientT, account);
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    bool requested = false;
+    bool travelled = false;
+    Entity seatA = Entity::Null;
+    for (u64 tick = 1; tick <= 120; ++tick)
+    {
+        now += Delta;
+        server.SceneA->SetChangeTick(tick);
+        server.SceneB->SetChangeTick(tick);
+        server.Host->Pump(now, tick);
+        client.Pump(now);
+        if (!requested && client.Client->State() == ClientState::Connected)
+        {
+            client.Host->Join(SeatReleaseServer::KeyA);
+            requested = true;
+        }
+        if (requested && !travelled && client.Host->IsJoined())
+        {
+            seatA = SeatOfAccount(*server.SceneA, account);
+            client.Host->Travel(SeatReleaseServer::KeyB);
+            travelled = true;
+        }
+    }
+    REQUIRE_FALSE(seatA.IsNull());
+    REQUIRE_FALSE(SeatOfAccount(*server.SceneB, account).IsNull());
+
+    // The seat was destroyed before anything read the record, which still names it.
+    CHECK_FALSE(server.SceneA->IsAlive(seatA));
+    SeatReleaseServer::Tick(*server.SceneA, server.Context);
+    SeatReleaseServer::Tick(*server.SceneA, server.Context);
+    SeatReleaseServer::Tick(*server.SceneB, server.Context);
+
+    const vector<vector<SeatRelease>>& seenA = SeatReleaseServer::Seen(*server.SceneA);
+    REQUIRE(seenA.size() == 2);
+    REQUIRE(seenA[0].size() == 1);
+    CHECK(seenA[0][0].Seat == seatA);
+    CHECK(seenA[0][0].Account == account);
+    CHECK(seenA[0][0].Reason == SeatReleaseReason::Left);
+    // Read once: the tick after, and outside a tick, the release is gone.
+    CHECK(seenA[1].empty());
+    CHECK(SeatReleasesOf(*server.SceneA).empty());
+    // The world travelled into released nothing.
+    REQUIRE(SeatReleaseServer::Seen(*server.SceneB).size() == 1);
+    CHECK(SeatReleaseServer::Seen(*server.SceneB)[0].empty());
+}
+
+TEST_CASE("A lost connection releases its seat in every joined world as ConnectionLost")
+{
+    auto [serverT, clientT] = LoopbackTransport::CreatePair();
+    SeatReleaseServer server(*serverT);
+    const AccountId account{.Lo = 0x10C7, .Hi = 0x2};
+    IdentityClient client(*clientT, account);
+
+    f64 now = 0.0;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    bool requested = false;
+    for (u64 tick = 1; tick <= 120 && client.Host->Joins().size() < 2; ++tick)
+    {
+        now += Delta;
+        server.SceneA->SetChangeTick(tick);
+        server.SceneB->SetChangeTick(tick);
+        server.Host->Pump(now, tick);
+        client.Pump(now);
+        if (!requested && client.Client->State() == ClientState::Connected)
+        {
+            client.Host->Join(SeatReleaseServer::KeyA);
+            client.Host->Join(SeatReleaseServer::KeyB);
+            requested = true;
+        }
+    }
+    REQUIRE(client.Host->Joins().size() == 2);
+    const Entity seatA = SeatOfAccount(*server.SceneA, account);
+    const Entity seatB = SeatOfAccount(*server.SceneB, account);
+    REQUIRE_FALSE(seatA.IsNull());
+    REQUIRE_FALSE(seatB.IsNull());
+
+    client.Client->Disconnect();
+    bool disconnected = false;
+    for (u64 tick = 121; tick <= 180 && !disconnected; ++tick)
+    {
+        now += Delta;
+        server.Host->Pump(now, tick);
+        for (const NetEvent& event : server.Host->Events())
+        {
+            disconnected = disconnected || event.Type == NetEventType::Disconnected;
+        }
+        client.Client->Pump(now);
+    }
+    REQUIRE(disconnected);
+
+    for (Scene* const scene : {server.SceneA.get(), server.SceneB.get()})
+    {
+        const Entity seat = scene == server.SceneA.get() ? seatA : seatB;
+        CHECK_FALSE(scene->IsAlive(seat));
+        SeatReleaseServer::Tick(*scene, server.Context);
+        const vector<vector<SeatRelease>>& seen = SeatReleaseServer::Seen(*scene);
+        REQUIRE(seen.size() == 1);
+        REQUIRE(seen[0].size() == 1);
+        CHECK(seen[0][0].Seat == seat);
+        CHECK(seen[0][0].Account == account);
+        CHECK(seen[0][0].Reason == SeatReleaseReason::ConnectionLost);
     }
 }

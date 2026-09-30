@@ -621,6 +621,19 @@ the destination's promoted in one pump — exactly one predicted set across the 
 snap-back). Two joins over one scene keep **disjoint wire-id spaces** (each `ReplicationClient` its own
 map); a fresh-world join left then closed reproduces the old teardown.
 
+**A released seat carries its reason** (`Veng/Net/SeatRelease.h`). `ReleaseJoin` takes a
+`SeatReleaseReason` — `Left` from the leave notice (which a travel's leave arm also sends), and
+`ConnectionLost` from the disconnect path, for every join the connection held — so no release site can
+omit one. Before destroying the seat it records a `SeatRelease{Seat, Account, Reason}` into the world
+scene's **`SeatReleaseLog`** (`Scene::SetSeatReleaseLog`, installed on first use), and `Scene` clears
+the log at the end of every Sim tick, so a Sim system reading `SeatReleasesOf(scene)` sees each
+release exactly once, on the world's next tick, with the (now dead) seat's id and the account. **Why
+a scene-owned list rather than a component on a per-world entity:** the release is server-local
+bookkeeping about an entity that no longer exists, so it has nothing to replicate or serialize, and a
+clear-after-tick list needs no per-reader cursor to be read once — the `PoseHistory` precedent. A world
+the directory no longer holds is closed, and records nothing. `WorldLeft` and `Disconnected` are
+still pushed as before; the listen host's own seats are not joins and never appear.
+
 **Stable-anchor adoption.** A builtin reflected `NetAnchor { u64 Lo; u64 Hi }` (opaque; the game mints
 it, not `VE_REPLICATED`) names content **derived on both peers that also carries server-authoritative
 state**. An authoritative entity carrying one replicates its anchor in its **spawn record** (a field

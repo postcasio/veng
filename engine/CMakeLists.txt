@@ -170,6 +170,7 @@ add_library(veng SHARED
         src/Net/Interest.cpp
         src/Net/PredictionHistory.cpp
         src/Net/Reconciliation.cpp
+        src/Net/SeatRelease.cpp
         src/Net/InputFeed.cpp
         src/Net/LagCompensation.cpp
         src/Net/LoopbackTransport.cpp

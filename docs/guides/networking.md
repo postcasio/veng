@@ -132,7 +132,12 @@ Two details make the pawn render on the *client*:
   of that Pump.
 
 On disconnect the host tears the seat down; the rule reaps the orphaned pawn
-(destroy the pawn whose owner no longer has a live seat). The wire input the server
+(destroy the pawn whose owner no longer has a live seat). When the rule needs to know
+*why* the seat went — keeping a pawn a while for a peer whose connection dropped, but
+removing it at once for one that left the world — it reads the world's seat releases
+(`SeatReleasesOf(scene)`, `Veng/Net/SeatRelease.h`) in its next Sim tick: one
+`SeatRelease{Seat, Account, Reason}` per released seat, `Left` or `ConnectionLost`,
+each seen once. The wire input the server
 buffers for that connection then feeds the seat's `PlayerInput`, and the **unchanged**
 control system re-derives `Intent` from it — exactly as for a local seat.
 

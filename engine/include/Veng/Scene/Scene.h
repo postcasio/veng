@@ -19,6 +19,7 @@ namespace Veng
     class SceneSimulation;
     class PhysicsWorld;
     class PoseHistory;
+    class SeatReleaseLog;
     class EffectPool;
     struct PhysicsPoseResolver;
     struct SystemContext;
@@ -276,6 +277,18 @@ namespace Veng
         /// @brief Returns the installed pose history, or null when the scene has none.
         [[nodiscard]] PoseHistory* GetPoseHistory() const { return m_PoseHistory.get(); }
 
+        /// @brief Installs (or replaces) the record of seats the host released from this scene.
+        ///
+        /// The host records into it before destroying a released seat, and this scene clears it at
+        /// the end of every Sim tick (see Veng/Net/SeatRelease.h), so a Sim system reads each release
+        /// on the tick after it happened, once. Passing null detaches and destroys the held one;
+        /// Clone() does not copy it.
+        /// @param log  The log to own, or null to detach.
+        void SetSeatReleaseLog(Unique<SeatReleaseLog> log);
+
+        /// @brief Returns the installed seat release log, or null when the scene has none.
+        [[nodiscard]] SeatReleaseLog* GetSeatReleaseLog() const { return m_SeatReleaseLog.get(); }
+
         /// @brief Installs (or replaces) the pool this scene's short-lived effects are drawn from.
         ///
         /// Scene-owned so its bound is per scene, and so FlipbookSystem can retire the pool's
@@ -297,7 +310,8 @@ namespace Veng
 
         /// @brief Advances the attached simulation one tick over this scene; a no-op when none.
         ///
-        /// Forwards to SceneSimulation::Update(*this, delta, context) — the Sim-then-View phase pass.
+        /// Forwards to SceneSimulation::Update(*this, delta, context) — the Sim-then-View phase pass —
+        /// then clears the seat release log the tick has read.
         /// @param delta    Time in seconds since the previous tick.
         /// @param context  Per-tick services forwarded to each system.
         void TickSimulation(f32 delta, const SystemContext& context);
@@ -307,8 +321,9 @@ namespace Veng
         /// The fixed-timestep drive calls this once per fixed step for Phase::Sim (advancing the tick)
         /// and once per frame for Phase::View (carrying the interpolation alpha). After a Sim phase it
         /// snapshots the scene's spatial state into the transform-history ring, so the render gather
-        /// and View systems can interpolate between the last two ticks. A no-op when no simulation is
-        /// attached (the snapshot still runs, capturing the static pose).
+        /// and View systems can interpolate between the last two ticks, and clears the seat release log
+        /// the tick has read. A no-op when no simulation is attached (the snapshot and the clear still
+        /// run, capturing the static pose).
         /// @param phase    The phase whose systems run.
         /// @param delta    Time in seconds forwarded to each system's OnUpdate.
         /// @param context  Per-tick services forwarded to each system.
@@ -779,6 +794,9 @@ namespace Veng
 
         /// @brief The recent body poses a lag-compensated query rewinds through, or null when none.
         Unique<PoseHistory> m_PoseHistory;
+
+        /// @brief The seats released from this scene since its last Sim tick, or null when none.
+        Unique<SeatReleaseLog> m_SeatReleaseLog;
 
         /// @brief The pool this scene's short-lived effects are drawn from, or null when none.
         Unique<EffectPool> m_EffectPool;

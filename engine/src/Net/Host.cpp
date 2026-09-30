@@ -11,6 +11,7 @@
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSimulation.h>
 #include "Handshake.h"
+#include <Veng/Net/SeatRelease.h>
 #include <Veng/Net/WorldEnvelope.h>
 
 #include <algorithm>
@@ -603,25 +604,31 @@ namespace Veng
                       worldId.Value, joinId);
         }
 
-        // Releases a join from its world: destroys the seat and reports the presence drop (and the
-        // account's membership drop) to the directory, which starts the idle dwell for a bucket that
-        // just emptied.
-        void ReleaseJoin(Net::ConnectionId id, JoinState& join, f64 now)
+        // Releases a join from its world: records the release and its reason in the world's scene,
+        // destroys the seat, and reports the presence drop (and the account's membership drop) to the
+        // directory, which starts the idle dwell for a bucket that just emptied. A world the directory
+        // no longer holds has been closed, so its scene is neither recorded into nor touched.
+        void ReleaseJoin(Net::ConnectionId id, JoinState& join, f64 now, SeatReleaseReason reason)
         {
             HostedWorld* world = TryWorldOf(join.World);
             if (world == nullptr)
             {
                 return;
             }
-            if (!join.Seat.IsNull() && world->World->IsAlive(join.Seat))
+            const auto conn = Connections.find(id);
+            const Net::AccountId account =
+                conn != Connections.end() ? conn->second.Account : Net::AccountId{};
+            if (Directory->Contains(join.World))
             {
-                world->World->DestroyEntity(join.Seat);
+                EnsureSeatReleaseLog(*world->World)
+                    .Record(SeatRelease{.Seat = join.Seat, .Account = account, .Reason = reason});
+                if (!join.Seat.IsNull() && world->World->IsAlive(join.Seat))
+                {
+                    world->World->DestroyEntity(join.Seat);
+                }
             }
             world->Replication.RemoveConnection(id);
-            const auto conn = Connections.find(id);
-            Directory->RemoveJoin(join.World, now,
-                                  conn != Connections.end() ? conn->second.Account
-                                                            : Net::AccountId{});
+            Directory->RemoveJoin(join.World, now, account);
         }
 
         // Handles a client's leave notice: releases the named join's seat + presence and surfaces a
@@ -645,7 +652,7 @@ namespace Veng
             {
                 Sessions->RemoveStandingJoin(conn.Account, joinIt->second.Key);
             }
-            ReleaseJoin(id, joinIt->second, now);
+            ReleaseJoin(id, joinIt->second, now, SeatReleaseReason::Left);
             conn.Joins.erase(joinIt);
             std::erase_if(conn.KeyToJoin,
                           [join](const auto& entry) { return entry.second == join; });
@@ -1007,7 +1014,7 @@ namespace Veng
                     s.Sessions->Save(it->second.Account);
                     for (auto& [joinId, join] : it->second.Joins)
                     {
-                        s.ReleaseJoin(event.Id, join, now);
+                        s.ReleaseJoin(event.Id, join, now, SeatReleaseReason::ConnectionLost);
                     }
                     s.ReleaseProfile(event.Id, it->second.Account);
                     s.Connections.erase(it);

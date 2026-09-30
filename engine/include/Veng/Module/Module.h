@@ -174,10 +174,13 @@ extern "C"
 /// Version 38 makes EffectDesc's sprite optional and grows it with an optional ribbon. A module
 /// builds the EffectDesc it hands SpawnTransientEffect, so a stale module would pass a struct of
 /// the old layout that the engine reads its sprite, ribbon and light from at shifted offsets.
+/// Version 39 grows Scene with the seat release log it owns. A module reads a scene's services
+/// through inline accessors, so a stale module reads the members after the addition at shifted
+/// offsets.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 38u
+#define VENG_MODULE_ABI_VERSION 39u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

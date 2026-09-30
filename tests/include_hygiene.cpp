@@ -130,6 +130,7 @@
 #include <Veng/Net/LoopbackTransport.h>
 #include <Veng/Net/Messages.h>
 #include <Veng/Net/PredictionHistory.h>
+#include <Veng/Net/SeatRelease.h>
 #include <Veng/Net/Session.h>
 #include <Veng/Net/Social.h>
 #include <Veng/Net/Transport.h>
