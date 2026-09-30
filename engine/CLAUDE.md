@@ -242,6 +242,18 @@ present-on-ready request is abandoned, so a transition aborts on the frame it fa
 beside `OnWorldArrival` and after it, so arrival state is applied before the presentation moment is
 reported.
 
+**Leaving presentation is delivered too.** **`OnWorldDeparted(world)`** fires once when the last
+managed viewport presenting a world stops presenting it (typically a rebind to another world) while
+the world stays open. It fires from `SyncPresentationPins`, *before* the world is unpinned — so the
+world is alive, still pinned, and has not ticked since the last frame that presented it — which is
+where a consumer tidies what its local player left there before anything else sees it. The frame
+order is `FireWorldArrivals` → `FirePresentationHooks` → `SyncPresentationPins`, so in the frame of a
+switch `OnWorldPresented` for the destination precedes `OnWorldDeparted` for the source. Departure is
+judged on the applied bindings only, never a pending destination, so an abandoned present-on-ready
+destination does not depart (`OnWorldPresentAbandoned` covers it); a world the runner no longer
+resolves closed while presented and does not depart either (`OnWorldClosing` covers a factory-opened
+one); and nothing fires at shutdown.
+
 **The OS cursor hides where a presented document already draws one.** `GuiOverlay::DrawsCursor` (a
 reflected field, default false) declares that an overlay's document renders a pointer of its own;
 nothing draws two pointers on purpose, so the engine hides the OS cursor while such an overlay is
@@ -466,7 +478,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 39** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 40** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the

@@ -177,10 +177,13 @@ extern "C"
 /// Version 39 grows Scene with the seat release log it owns. A module reads a scene's services
 /// through inline accessors, so a stale module reads the members after the addition at shifted
 /// offsets.
+/// Version 40 adds the Application::OnWorldDeparted virtual after OnWorldPresentAbandoned. A module
+/// subclasses Application, so a stale module carries a vtable short of the slot the host dispatches
+/// through when a world leaves presentation.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 39u
+#define VENG_MODULE_ABI_VERSION 40u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

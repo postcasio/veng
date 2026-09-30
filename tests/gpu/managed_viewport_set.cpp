@@ -26,6 +26,7 @@
 #include <Veng/InputRouter.h>
 #include <Veng/ManagedViewports.h>
 #include <Veng/World.h>
+#include <Veng/WorldDirectory.h>
 #include <Veng/WorldRunner.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -39,6 +40,8 @@
 #include <Veng/Scene/SystemRegistry.h>
 
 #include <gpu/fixture.h>
+
+#include "support/BootstrapFixture.h"
 
 using namespace Veng;
 
@@ -138,12 +141,25 @@ namespace
             WorldInstanceId BindingAtCall;
         };
 
+        // One OnWorldDeparted call, plus what held at the moment the hook ran: the world's tick, and
+        // the presentation pins the directory still counted on it (zero with no directory).
+        struct DepartedCall
+        {
+            WorldInstanceId World;
+            u64 TickAtCall = 0;
+            u32 PresenceAtCall = 0;
+        };
+
         vector<PresentedCall> Presented;
         vector<std::pair<usize, WorldInstanceId>> Abandoned;
+        vector<DepartedCall> Departed;
+        // Every presented ('P') and departed ('D') call in the order the hooks ran.
+        vector<std::pair<char, WorldInstanceId>> Hooks;
 
     protected:
         void OnWorldPresented(usize index, WorldInstanceId world, Entity seat) override
         {
+            Hooks.emplace_back('P', world);
             Presented.push_back({
                 .Index = index,
                 .World = world,
@@ -156,6 +172,17 @@ namespace
         void OnWorldPresentAbandoned(usize index, WorldInstanceId destination) override
         {
             Abandoned.emplace_back(index, destination);
+        }
+
+        void OnWorldDeparted(World& world) override
+        {
+            Hooks.emplace_back('D', world.Id);
+            const WorldDirectory* const directory = GetWorldDirectory();
+            Departed.push_back({
+                .World = world.Id,
+                .TickAtCall = world.Clock.GetTick(),
+                .PresenceAtCall = directory != nullptr ? directory->PresenceOf(world.Id) : 0,
+            });
         }
 
         void OnInitialize() override
@@ -652,6 +679,138 @@ TEST_CASE("An abandoned present-on-ready is reported once, and a later rebind do
     };
 
     app.Frames = 6;
+    app.Run({});
+}
+
+TEST_CASE("A world the viewport leaves departs once, untouched by a tick, after the destination "
+          "presents")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    MvApp app(HeadlessInfo({ManagedViewportInfo{}}), types, systems);
+
+    MvApp::WorldSeat a{};
+    MvApp::WorldSeat b{};
+    u64 tickOfA = 0;
+
+    app.InitFn = [&](MvApp& app)
+    {
+        a = app.OpenReadyCameraWorld(vec3(0.0f, 0.0f, 5.0f));
+        b = app.OpenReadyCameraWorld(vec3(20.0f, 3.0f, 5.0f));
+        app.GetManagedViewports().SetViewportWorld(0, a.World);
+    };
+
+    app.StepFn = [&](MvApp& app, int frame)
+    {
+        if (frame == 1)
+        {
+            // The last frame A presents: the rebind applies at the next frame's top.
+            CHECK(app.Departed.empty());
+            app.RebindManagedViewport(0, b.World);
+            tickOfA = app.GetWorldRunner().ResolveWorld(a.World)->Clock.GetTick();
+        }
+        else if (frame == 4)
+        {
+            REQUIRE(app.Departed.size() == 1);
+            CHECK(app.Departed[0].World == a.World);
+            // A had not ticked again when the hook ran, and it stays open afterwards.
+            CHECK(app.Departed[0].TickAtCall == tickOfA);
+            CHECK(app.GetWorldRunner().ResolveWorld(a.World) != nullptr);
+            // The destination's presentation was reported before the source's departure.
+            REQUIRE(app.Hooks.size() == 2);
+            CHECK(app.Hooks[0] == std::pair{'P', b.World});
+            CHECK(app.Hooks[1] == std::pair{'D', a.World});
+        }
+    };
+
+    app.Frames = 6;
+    app.Run({});
+}
+
+TEST_CASE("A world closed while presented, and an abandoned destination, never depart")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    MvApp app(HeadlessInfo({ManagedViewportInfo{}}), types, systems);
+
+    MvApp::WorldSeat closing{};
+    MvApp::WorldSeat base{};
+    MvApp::WorldSeat neverReady{};
+
+    app.InitFn = [&](MvApp& app)
+    {
+        closing = app.OpenReadyCameraWorld(vec3(0.0f, 0.0f, 5.0f));
+        base = app.OpenReadyCameraWorld(vec3(20.0f, 3.0f, 5.0f));
+        neverReady = app.OpenCameraWorld(vec3(-10.0f, 1.0f, 5.0f));
+        app.GetManagedViewports().SetViewportWorld(0, closing.World);
+    };
+
+    app.StepFn = [&](MvApp& app, int frame)
+    {
+        if (frame == 1)
+        {
+            // Close the presented world, then move the viewport off it.
+            app.GetWorldRunner().CloseWorld(closing.World);
+            app.RebindManagedViewport(0, base.World);
+        }
+        else if (frame == 3)
+        {
+            CHECK(app.GetManagedViewportWorld(0) == base.World);
+            // A destination that never readies is abandoned once it vanishes mid-wait.
+            app.RebindManagedViewportWhenReady(0, neverReady.World);
+        }
+        else if (frame == 4)
+        {
+            app.GetWorldRunner().CloseWorld(neverReady.World);
+        }
+        else if (frame == 6)
+        {
+            REQUIRE(app.Abandoned.size() == 1);
+            CHECK(app.Departed.empty());
+        }
+    };
+
+    app.Frames = 8;
+    app.Run({});
+}
+
+TEST_CASE("A departing world still holds its presentation pin in the hook, and loses it after")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    // A managed world, so the application builds its world directory and pins what it presents.
+    ApplicationInfo info = HeadlessInfo({ManagedViewportInfo{}});
+    info.World = GameWorldInfo{.Project = TestSupport::WriteBootstrapFixture(types, "departed")};
+    MvApp app(std::move(info), types, systems);
+
+    MvApp::WorldSeat destination{};
+    WorldInstanceId start;
+
+    app.StepFn = [&](MvApp& app, int frame)
+    {
+        if (frame == 0)
+        {
+            start = app.GetManagedViewportWorld(0);
+            REQUIRE(start.IsValid());
+            destination = app.OpenReadyCameraWorld(vec3(0.0f, 0.0f, 5.0f));
+            app.RebindManagedViewport(0, destination.World);
+        }
+        else if (frame == 3)
+        {
+            REQUIRE(app.Departed.size() == 1);
+            CHECK(app.Departed[0].World == start);
+            CHECK(app.Departed[0].PresenceAtCall == 1);
+            CHECK(app.GetWorldDirectory()->PresenceOf(start) == 0);
+        }
+    };
+
+    app.Frames = 5;
     app.Run({});
 }
 

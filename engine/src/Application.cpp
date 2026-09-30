@@ -1474,6 +1474,38 @@ namespace Veng
 
     void Application::SyncPresentationPins()
     {
+        const usize count = m_ManagedViewports->GetCount();
+
+        // A world no viewport's applied binding presents any more departs, while it is still pinned
+        // and untouched by a tick. A pending destination never presented, so it cannot depart; a world
+        // the runner no longer resolves closed while presented.
+        std::unordered_set<u64> applied;
+        for (usize i = 0; i < count; ++i)
+        {
+            if (const WorldInstanceId world = m_ManagedViewports->GetViewportWorld(i);
+                world.IsValid())
+            {
+                applied.insert(world.Value);
+            }
+        }
+        vector<WorldInstanceId> departed;
+        for (const u64 value : m_PresentedWorlds)
+        {
+            if (!applied.contains(value))
+            {
+                departed.push_back(WorldInstanceId{.Value = value});
+            }
+        }
+        m_PresentedWorlds = std::move(applied);
+        for (const WorldInstanceId id : departed)
+        {
+            if (World* const world = m_WorldRunner->ResolveWorld(id);
+                world != nullptr && world->LiveScene != nullptr)
+            {
+                OnWorldDeparted(*world);
+            }
+        }
+
         if (!m_Directory)
         {
             return;
@@ -1483,7 +1515,6 @@ namespace Veng
         // pending rebind destination (a pending destination counts, so a presented world is never reaped
         // in its own rebind gap).
         std::unordered_set<u64> present;
-        const usize count = m_ManagedViewports->GetCount();
         for (usize i = 0; i < count; ++i)
         {
             const WorldInstanceId world = m_ManagedViewports->GetViewportWorld(i);

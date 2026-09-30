@@ -1503,6 +1503,21 @@ namespace Veng
         /// @param destination  The world the request never presented.
         virtual void OnWorldPresentAbandoned(usize index, WorldInstanceId destination) {}
 
+        /// @brief Called once when the managed viewports stop presenting a world that stays open.
+        ///
+        /// Fires on the frame the last managed viewport presenting @p world stops presenting it —
+        /// typically because the viewport moved to another world — while the world is still alive,
+        /// still holds its presentation pin in the world directory (for a world the directory
+        /// tracks), and has not ticked since the last frame that presented it, so a consumer
+        /// tidies what its local player left there (a pawn, a claim) before anything else sees it. It
+        /// runs after OnWorldPresented, so in the frame of a switch the destination's presentation is
+        /// reported before the departure from the source. It does not fire for a world that closes
+        /// while presented (OnWorldClosing covers that), for a pending destination that was abandoned
+        /// before it presented (OnWorldPresentAbandoned), or at shutdown. The world is unpinned after
+        /// the hook returns. Default is a no-op.
+        /// @param world  The world the managed viewports stopped presenting, still live.
+        virtual void OnWorldDeparted(World& world) {}
+
         /// @brief Composes the player's chosen graphics quality with a scene's authored look.
         ///
         /// The resolve seam ApplyGraphicsSettings invokes once per apply: given the user's chosen
@@ -1715,7 +1730,8 @@ namespace Veng
         /// presented world — pending destination included, so never reaped in its own rebind gap — is
         /// held warm, and a departed world is unpinned so the dwell owns its fate. Run once per frame at
         /// the rebind apply point. The directory never reaches into presentation; Application translates
-        /// bindings into pins here.
+        /// bindings into pins here. A world that has left every viewport's applied binding and is still
+        /// open reaches OnWorldDeparted first, before it is unpinned.
         void SyncPresentationPins();
 
         /// @brief Fires OnWorldArrival for any pending travel whose rebind has now landed.
@@ -2238,6 +2254,12 @@ namespace Veng
         /// The pin set SyncPresentationPins reconciles each frame against the managed viewports' bindings,
         /// so a pin is added/removed exactly once as a world enters/leaves presentation.
         std::unordered_set<u64> m_PinnedWorlds;
+
+        /// @brief The worlds the managed viewports' applied bindings presented at the last SyncPresentationPins.
+        ///
+        /// Pending rebind destinations are excluded, so a world leaving this set is a departure from
+        /// a world that was actually presented, never an abandoned destination.
+        std::unordered_set<u64> m_PresentedWorlds;
 
         /// @brief The request-driven focus tokens the FocusRequest drain owns.
         ///
