@@ -1036,6 +1036,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/net_quantize.cpp
             tests/unit/net_delta.cpp
             tests/unit/net_packed_input.cpp
+            tests/unit/net_lag_compensation.cpp
             tests/unit/net_interest.cpp
             tests/unit/reflection.cpp
             tests/unit/reflection_variant.cpp
@@ -1242,6 +1243,10 @@ if (VENG_BUILD_TESTS)
     add_test(NAME death.physics_dynamic_triangle_mesh COMMAND veng_test_death physics_dynamic_triangle_mesh)
     set_tests_properties(death.physics_dynamic_triangle_mesh PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "triangle-mesh CollisionShape on a Dynamic RigidBody")
+
+    add_test(NAME death.rewind_scope_across_step COMMAND veng_test_death rewind_scope_across_step)
+    set_tests_properties(death.rewind_scope_across_step PROPERTIES LABELS "death;fast"
+            PASS_REGULAR_EXPRESSION "RewindScope held across a physics step")
 
     add_test(NAME death.scene_get_stale_entity COMMAND veng_test_death scene_get_stale_entity)
     set_tests_properties(death.scene_get_stale_entity PROPERTIES LABELS "death;fast"

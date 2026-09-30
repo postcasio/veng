@@ -1,5 +1,5 @@
-// Plan 07's world-drive input feed, exercised device-free over two in-process scenes on
-// LoopbackTransport. The Application world loop threads Plan 05's buffers through the hosts: the
+// The world-drive input feed, exercised device-free over two in-process scenes on
+// LoopbackTransport. The Application world loop threads the input buffers through the hosts: the
 // client stamps its local seat's resolved input and sends the redundant window, the server ingests
 // each connection's packet into a jitter buffer and feeds the buffered input into the seat at the
 // matching tick. These are the InputFeed helpers Application drives — tested here with no window, no
@@ -126,7 +126,9 @@ TEST_CASE("The world-drive input feed carries a client's input into the server s
     // tagged with its JoinId — the client half of the world-drive input feed.
     InputSendBuffer send(InputSendBuffer::Settings{.Redundancy = 3});
     const vec2 move(0.5f, -0.25f);
-    send.Stamp(/*clientTick=*/1, MoveState(move));
+    constexpr u64 inputTick = 20;
+    constexpr f64 viewTick = 13.75;
+    send.Stamp(inputTick, MoveState(move), viewTick);
     (void)client->Server().Send(Channel::UnreliableSequenced,
                                 EncodeWorldEnvelope(join, send.Encode(0, serverTypes)));
 
@@ -159,4 +161,7 @@ TEST_CASE("The world-drive input feed carries a client's input into the server s
     const vec2 result = serverScene->Get<PlayerInput>(seat).GetValue(MoveAction);
     CHECK(result.x == doctest::Approx(move.x));
     CHECK(result.y == doctest::Approx(move.y));
+
+    // The view the input was issued against rides beside it, readable where the input is judged.
+    CHECK(SeatViewTick(*serverScene, seat, inputTick) == doctest::Approx(viewTick));
 }

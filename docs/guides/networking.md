@@ -395,6 +395,27 @@ client.RegisterChannel(ChatChannel, [&](const Net::Blob& blob) { ... });
 - An account-addressed send to the listen host's own player (no connection) loops back to the
   local handler; hello-triangle's demo channel (a ping/notify round-trip) is the exemplar.
 
+## Lag compensation — judging a query as the client saw it
+
+A client draws remote entities in the past, so a ray it aims at what it sees misses the server's
+present. Mark what such a query should hit `LagCompensated`, name `PoseHistorySystem` right after
+`PhysicsSystem` in the level's systems, and judge the query inside a `RewindScope` at the tick the
+seat was viewing:
+
+```cpp
+const f64 viewTick = SeatViewTick(scene, seat, context.Tick);
+{
+    const RewindScope rewind(scene, *scene.GetPhysicsWorld(), viewTick, /*exclude=*/shooter);
+    const optional<RayHit> hit = Raycast(scene.GetPhysicsWorld(), origin, aim, range, filter);
+    // ... judge the hit; every rewound body is restored when the scope ends
+}
+```
+
+The client stamps its view tick on every input automatically; a listen host's own seat views the
+present, so its scope moves nothing. The rewind favours the shooter — a target that just reached
+cover stays hittable for up to `MaxRewindSeconds` — and that cap bounds it. A scope must not be held
+across a physics step. See `Veng/Net/LagCompensation.h`.
+
 ## Playing under adversity — `--netsim` and the tuning knobs
 
 The launcher ships a network-simulation flag in every build (a dev/QA tool, inert unless set):
@@ -416,13 +437,13 @@ The knobs worth tuning per game, and what each trades:
 | `QuantizeSpatial` / `PositionQuantum` | on / 1 mm | Bandwidth vs. positional precision on the wire. |
 | `KeyframeIntervalSnapshots` | 16 | Re-base cost vs. recovery latency after baseline loss. |
 | `SnapshotIntervalTicks` | 2 (30 Hz) | Bandwidth vs. remote-interpolation freshness. |
+| `MaxRewindSeconds` | 0.25 s | How far a lagging client is compensated vs. how long a target stays hittable after reaching cover. |
 | `ReconcileTolerances::Position` | 1 cm | Correction sensitivity; must stay ≥ `PositionQuantum`. |
 
 ## What remains future
 
 Deliberately deferred — do not reach for these yet:
 
-- **Lag compensation** (server-side historical rewind for authoritative hit tests).
 - **Encryption / authentication.** The current scope is loopback/LAN/trusted-transport.
 - **Spectators, replays, host migration**, and **editor Play as a network client** — each a
   consumer of the snapshot stream, each its own scope when earned.

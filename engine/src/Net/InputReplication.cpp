@@ -1,5 +1,6 @@
 #include <Veng/Net/Replication.h>
 
+#include <Veng/Assert.h>
 #include <Veng/Net/BitStream.h>
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -15,6 +16,12 @@ namespace Veng
         // Framing is written field-by-field little-endian (never a memcpy of a padded struct); the
         // ActionState payloads between the framing are the reflection serializer's WriteFields bytes.
 
+        void AppendU16(vector<u8>& out, u16 value)
+        {
+            out.push_back(static_cast<u8>(value));
+            out.push_back(static_cast<u8>(value >> 8));
+        }
+
         void AppendU32(vector<u8>& out, u32 value)
         {
             for (u32 i = 0; i < 4; ++i)
@@ -29,6 +36,18 @@ namespace Veng
             {
                 out.push_back(static_cast<u8>(value >> (8 * i)));
             }
+        }
+
+        Result<u16> ReadU16(std::span<const u8> in, usize& cursor)
+        {
+            if (cursor + sizeof(u16) > in.size())
+            {
+                return std::unexpected("input packet: truncated u16");
+            }
+            const auto value = static_cast<u16>(static_cast<u16>(in[cursor]) |
+                                                (static_cast<u16>(in[cursor + 1]) << 8));
+            cursor += sizeof(u16);
+            return value;
         }
 
         Result<u32> ReadU32(std::span<const u8> in, usize& cursor)
@@ -65,6 +84,30 @@ namespace Veng
         {
             return registry.Info(TypeIdOf<ActionState>());
         }
+
+        f32 DequantizeInputViewDelay(u16 steps)
+        {
+            return static_cast<f32>(steps) / static_cast<f32>(InputViewDelayStepsPerTick);
+        }
+
+        // The wire's tick run is implicit (FirstClientTick + index), so a gap in the records would
+        // silently relabel every later tick.
+        void AssertContiguous(std::span<const TickedInput> records)
+        {
+            for (usize i = 1; i < records.size(); ++i)
+            {
+                VE_ASSERT(records[i].ClientTick == records[i - 1].ClientTick + 1,
+                          "input packet records must cover contiguous client ticks ({} follows {})",
+                          records[i].ClientTick, records[i - 1].ClientTick);
+            }
+        }
+    }
+
+    u16 QuantizeInputViewDelay(const f32 ticks)
+    {
+        const f32 clamped = std::clamp(ticks, 0.0f, MaxInputViewDelayTicks);
+        return static_cast<u16>(
+            std::lround(clamped * static_cast<f32>(InputViewDelayStepsPerTick)));
     }
 
     namespace
@@ -171,18 +214,20 @@ namespace Veng
         return state;
     }
 
-    vector<u8> EncodePackedInputPacket(u64 ackedServerTick, u64 contextHash, u64 firstClientTick,
-                                       std::span<const ActionState> records,
+    vector<u8> EncodePackedInputPacket(u64 ackedServerTick, u64 contextHash,
+                                       std::span<const TickedInput> records,
                                        std::span<const PackedInputAction> schema)
     {
+        AssertContiguous(records);
         vector<u8> out;
         AppendU64(out, ackedServerTick);
         AppendU64(out, contextHash);
-        AppendU64(out, firstClientTick);
+        AppendU64(out, records.empty() ? 0 : records.front().ClientTick);
         AppendU32(out, static_cast<u32>(records.size()));
-        for (const ActionState& state : records)
+        for (const TickedInput& record : records)
         {
-            const vector<u8> packed = EncodePackedActionState(state, schema);
+            const vector<u8> packed = EncodePackedActionState(record.State, schema);
+            AppendU16(out, QuantizeInputViewDelay(record.ViewDelayTicks));
             AppendU32(out, static_cast<u32>(packed.size()));
             out.insert(out.end(), packed.begin(), packed.end());
         }
@@ -210,15 +255,18 @@ namespace Veng
         result.AckedServerTick = *ackedServerTick;
         for (u32 i = 0; i < *count; ++i)
         {
+            const Result<u16> viewDelay = ReadU16(packet, cursor);
             const Result<u32> byteLength = ReadU32(packet, cursor);
-            if (!byteLength || cursor + *byteLength > packet.size())
+            if (!viewDelay || !byteLength || cursor + *byteLength > packet.size())
             {
                 break; // truncated trailing record
             }
             const std::span<const u8> payload = packet.subspan(cursor, *byteLength);
             cursor += *byteLength;
-            result.Inputs.push_back(TickedInput{.ClientTick = *firstClientTick + i,
-                                                .State = DecodePackedActionState(payload, schema)});
+            result.Inputs.push_back(
+                TickedInput{.ClientTick = *firstClientTick + i,
+                            .State = DecodePackedActionState(payload, schema),
+                            .ViewDelayTicks = DequantizeInputViewDelay(*viewDelay)});
         }
         return result;
     }
@@ -240,20 +288,22 @@ namespace Veng
         return decayed;
     }
 
-    vector<u8> EncodeInputPacket(u64 ackedServerTick, u64 firstClientTick,
-                                 std::span<const ActionState> records, const TypeRegistry& registry)
+    vector<u8> EncodeInputPacket(u64 ackedServerTick, std::span<const TickedInput> records,
+                                 const TypeRegistry& registry)
     {
+        AssertContiguous(records);
         const TypeInfo& info = ActionStateInfo(registry);
 
         vector<u8> out;
         AppendU64(out, ackedServerTick);
-        AppendU64(out, firstClientTick);
+        AppendU64(out, records.empty() ? 0 : records.front().ClientTick);
         AppendU32(out, static_cast<u32>(records.size()));
 
-        for (const ActionState& state : records)
+        for (const TickedInput& record : records)
         {
             vector<u8> payload;
-            WriteFields(payload, &state, info, registry);
+            WriteFields(payload, &record.State, info, registry);
+            AppendU16(out, QuantizeInputViewDelay(record.ViewDelayTicks));
             AppendU32(out, static_cast<u32>(payload.size()));
             out.insert(out.end(), payload.begin(), payload.end());
         }
@@ -286,8 +336,9 @@ namespace Veng
         const TypeInfo& info = ActionStateInfo(registry);
         for (u32 i = 0; i < *count; ++i)
         {
+            const Result<u16> viewDelay = ReadU16(packet, cursor);
             const Result<u32> byteLength = ReadU32(packet, cursor);
-            if (!byteLength)
+            if (!viewDelay || !byteLength)
             {
                 break; // truncated trailing record
             }
@@ -299,20 +350,33 @@ namespace Veng
             cursor += *byteLength;
 
             ActionState state;
-            if (VoidResult read = ReadFields(payload, &state, info, registry); !read)
+            if (const VoidResult read = ReadFields(payload, &state, info, registry); !read)
             {
                 continue; // malformed record drops; its tick is skipped
             }
             result.Inputs.push_back(
-                TickedInput{.ClientTick = *firstClientTick + i, .State = std::move(state)});
+                TickedInput{.ClientTick = *firstClientTick + i,
+                            .State = std::move(state),
+                            .ViewDelayTicks = DequantizeInputViewDelay(*viewDelay)});
         }
 
         return result;
     }
 
-    void InputSendBuffer::Stamp(u64 clientTick, const ActionState& state)
+    void InputSendBuffer::Stamp(u64 clientTick, const ActionState& state,
+                                const optional<f64> viewTick)
     {
-        m_Window.push_back(TickedInput{.ClientTick = clientTick, .State = state});
+        // The packet labels its records FirstClientTick + index, so a tick that does not follow the
+        // window (a clock re-seed, a resync) starts a fresh one rather than relabelling the old.
+        if (!m_Window.empty() && clientTick != m_Window.back().ClientTick + 1)
+        {
+            m_Window.clear();
+        }
+        const f64 delay = viewTick ? static_cast<f64>(clientTick) - *viewTick : 0.0;
+        m_Window.push_back(TickedInput{.ClientTick = clientTick,
+                                       .State = state,
+                                       .ViewDelayTicks = static_cast<f32>(std::clamp(
+                                           delay, 0.0, static_cast<f64>(MaxInputViewDelayTicks)))});
         if (m_Window.size() > m_Settings.Redundancy)
         {
             m_Window.erase(m_Window.begin(),
@@ -323,18 +387,7 @@ namespace Veng
 
     vector<u8> InputSendBuffer::Encode(u64 ackedServerTick, const TypeRegistry& registry) const
     {
-        if (m_Window.empty())
-        {
-            return EncodeInputPacket(ackedServerTick, 0, {}, registry);
-        }
-
-        vector<ActionState> states;
-        states.reserve(m_Window.size());
-        for (const TickedInput& input : m_Window)
-        {
-            states.push_back(input.State);
-        }
-        return EncodeInputPacket(ackedServerTick, m_Window.front().ClientTick, states, registry);
+        return EncodeInputPacket(ackedServerTick, m_Window, registry);
     }
 
     void InputJitterBuffer::Ingest(const InputPacket& packet)
@@ -345,7 +398,7 @@ namespace Veng
             {
                 continue; // already consumed (or dropped) past this tick
             }
-            m_Buffer[input.ClientTick] = input.State; // redundant duplicates collapse latest-wins
+            m_Buffer[input.ClientTick] = input; // redundant duplicates collapse latest-wins
         }
     }
 
@@ -366,9 +419,10 @@ namespace Veng
             ++m_ConsumeCount;
             auto oldest = m_Buffer.extract(m_Buffer.begin());
             m_LastConsumedTick = oldest.key();
-            m_Last = oldest.mapped();
+            m_LastViewDelayTicks = oldest.mapped().ViewDelayTicks;
+            m_Last = oldest.mapped().State;
             m_Started = true;
-            return std::move(oldest.mapped());
+            return std::move(oldest.mapped().State);
         }
 
         // Underrun: coast on the last input with edge phases decayed (a held action persists, an edge
@@ -399,9 +453,10 @@ namespace Veng
             ++m_ConsumeCount;
             auto node = m_Buffer.extract(it);
             m_LastConsumedTick = tick;
-            m_Last = node.mapped();
+            m_LastViewDelayTicks = node.mapped().ViewDelayTicks;
+            m_Last = node.mapped().State;
             m_Started = true;
-            return std::move(node.mapped());
+            return std::move(node.mapped().State);
         }
 
         // Underrun: the input for this tick has not arrived (the client is not far enough ahead, or the

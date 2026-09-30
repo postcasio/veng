@@ -4,6 +4,7 @@
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/InputMappingSystem.h>
+#include <Veng/Scene/RemoteInterpolationSystem.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Net/WorldEnvelope.h>
 
@@ -13,6 +14,31 @@
 
 namespace Veng
 {
+    namespace
+    {
+        // The wire input fills the seat's PlayerInput; the control system re-derives Intent from it
+        // unchanged. A remote seat carries no SeatInput, so nothing else writes it.
+        void WriteSeatInput(Scene& scene, const Entity seat, const ActionState& state,
+                            const f32 viewDelayTicks)
+        {
+            PlayerInput& input = scene.Has<PlayerInput>(seat) ? scene.Get<PlayerInput>(seat)
+                                                              : scene.Add<PlayerInput>(seat);
+            input.State = state;
+            InputViewDelay& delay = scene.Has<InputViewDelay>(seat)
+                                        ? scene.Get<InputViewDelay>(seat)
+                                        : scene.Add<InputViewDelay>(seat);
+            delay.Ticks = viewDelayTicks;
+        }
+    }
+
+    f64 SeatViewTick(const Scene& scene, const Entity seat, const u64 inputTick)
+    {
+        const InputViewDelay* delay =
+            scene.IsAlive(seat) ? scene.TryGet<InputViewDelay>(seat) : nullptr;
+        const f64 ticks = delay != nullptr ? static_cast<f64>(std::max(delay->Ticks, 0.0f)) : 0.0;
+        return static_cast<f64>(inputTick) - ticks;
+    }
+
     void IngestConnectionInputs(ServerHost& host, unordered_map<u64, InputJitterBuffer>& buffers,
                                 const InputJitterBuffer::Settings& settings,
                                 const TypeRegistry& registry)
@@ -85,11 +111,7 @@ namespace Veng
                     continue;
                 }
 
-                // The wire input fills the seat's PlayerInput; the control system re-derives Intent
-                // from it unchanged. A remote seat carries no SeatInput, so nothing else writes it.
-                PlayerInput& input = scene.Has<PlayerInput>(seat) ? scene.Get<PlayerInput>(seat)
-                                                                  : scene.Add<PlayerInput>(seat);
-                input.State = *consumed;
+                WriteSeatInput(scene, seat, *consumed, it->second.GetLastViewDelayTicks());
             }
         }
     }
@@ -140,9 +162,7 @@ namespace Veng
                     continue;
                 }
 
-                PlayerInput& input = scene.Has<PlayerInput>(seat) ? scene.Get<PlayerInput>(seat)
-                                                                  : scene.Add<PlayerInput>(seat);
-                input.State = *consumed;
+                WriteSeatInput(scene, seat, *consumed, it->second.GetLastViewDelayTicks());
             }
         }
     }
@@ -153,6 +173,7 @@ namespace Veng
         // resolves from local devices. Prefer the locally-owned one when a peer holds several, and
         // fall back to the first so a single-seat client is unchanged. A client with none (a
         // spectator) stamps nothing.
+        const optional<f64> viewTick = RemotePlaybackTick(world);
         bool stamped = false;
         const PlayerInput* firstInput = nullptr;
         world.Each<SeatInput, PlayerInput>(
@@ -164,7 +185,7 @@ namespace Veng
                 }
                 if (IsLocallyOwned(world, seat))
                 {
-                    send.Stamp(clientTick, input.State);
+                    send.Stamp(clientTick, input.State, viewTick);
                     stamped = true;
                     return;
                 }
@@ -175,7 +196,7 @@ namespace Veng
             });
         if (!stamped && firstInput != nullptr)
         {
-            send.Stamp(clientTick, firstInput->State);
+            send.Stamp(clientTick, firstInput->State, viewTick);
         }
     }
 }

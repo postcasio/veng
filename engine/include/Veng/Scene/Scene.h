@@ -18,6 +18,7 @@ namespace Veng
     class Scene;
     class SceneSimulation;
     class PhysicsWorld;
+    class PoseHistory;
     struct PhysicsPoseResolver;
     struct SystemContext;
     struct AABB;
@@ -261,6 +262,18 @@ namespace Veng
         {
             return m_PhysicsPoseResolver.get();
         }
+
+        /// @brief Installs (or replaces) the record of this scene's recent body poses.
+        ///
+        /// The server-side history a lag-compensated query rewinds through (see
+        /// Veng/Net/LagCompensation.h): it is scene-owned rather than held on the entities it
+        /// records, so it never serializes and never replicates. Passing null detaches and destroys
+        /// the held one; Clone() does not copy it.
+        /// @param history  The history to own, or null to detach.
+        void SetPoseHistory(Unique<PoseHistory> history);
+
+        /// @brief Returns the installed pose history, or null when the scene has none.
+        [[nodiscard]] PoseHistory* GetPoseHistory() const { return m_PoseHistory.get(); }
 
         /// @brief Starts the attached simulation over this scene; a no-op when none is attached.
         ///
@@ -749,6 +762,9 @@ namespace Veng
 
         /// @brief The Transform-chain-to-solver-frame mapping, or null when the two share an origin.
         Unique<PhysicsPoseResolver> m_PhysicsPoseResolver;
+
+        /// @brief The recent body poses a lag-compensated query rewinds through, or null when none.
+        Unique<PoseHistory> m_PoseHistory;
 
         template <class...>
         friend class SceneView;

@@ -2,6 +2,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetHandle.h>
+#include <Veng/Net/LagCompensation.h>
 #include <Veng/Physics/PhysicsWorld.h>
 #include <Veng/Physics/PoseResolver.h>
 #include <Veng/Reflection/Serialize.h>
@@ -117,9 +118,9 @@ namespace Veng
 
     Scene::Scene(TypeRegistry& registry) : m_Registry(&registry) {}
 
-    // Out-of-line so the SceneSimulation, PhysicsWorld and PhysicsPoseResolver types are complete
-    // at their Unique<T> destruction sites; the scene owns nothing else needing a hand-written
-    // teardown.
+    // Out-of-line so the SceneSimulation, PhysicsWorld, PhysicsPoseResolver and PoseHistory types
+    // are complete at their Unique<T> destruction sites; the scene owns nothing else needing a
+    // hand-written teardown.
     Scene::~Scene() = default;
 
     Unique<Scene> Scene::Create(TypeRegistry& registry)
@@ -141,6 +142,11 @@ namespace Veng
     void Scene::SetPhysicsPoseResolver(Unique<PhysicsPoseResolver> resolver)
     {
         m_PhysicsPoseResolver = std::move(resolver);
+    }
+
+    void Scene::SetPoseHistory(Unique<PoseHistory> history)
+    {
+        m_PoseHistory = std::move(history);
     }
 
     void Scene::StartSimulation(const SystemContext& context)

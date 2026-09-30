@@ -2,6 +2,7 @@
 
 #include <Veng/Audio/AudioSystem.h>
 #include <Veng/Behavior/BehaviorSystem.h>
+#include <Veng/Net/LagCompensation.h>
 #include <Veng/Scene/AnimationSystem.h>
 #include <Veng/Scene/CameraRig.h>
 #include <Veng/Scene/CharacterAnimationSystem.h>
@@ -77,6 +78,10 @@ namespace Veng
         // produce motion, so a kinematic body's target pose for the tick is already written; a level
         // that does not name it runs no solver.
         registry.Register<PhysicsSystem>();
+
+        // Records each LagCompensated body's post-step pose, server-side, for a rewound query. A
+        // level names it immediately after PhysicsSystem; one that does not keeps no history.
+        registry.Register<PoseHistorySystem>();
 
         // Writes each Remote-tier entity's displayed Transform from its snapshot buffer, in the past.
         // View-phase — presentation only. Idles with no remote entities, so single-player is untouched.

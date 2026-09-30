@@ -614,19 +614,62 @@ namespace Veng
         std::ranges::sort(out, [](const Entity a, const Entity b) { return a.Index < b.Index; });
     }
 
-    void PhysicsWorld::SetBodyPose(const Entity entity, const PhysicsPose& pose)
+    void PhysicsWorld::SetBodyPose(const Entity entity, const PhysicsPose& pose,
+                                   const BodyActivation activation)
     {
         const auto found = m_Native->Bodies.find(entity);
         if (found == m_Native->Bodies.end())
         {
             return;
         }
-        const JPH::EActivation activation = found->second.Body.Motion == MotionType::Static
-                                                ? JPH::EActivation::DontActivate
-                                                : JPH::EActivation::Activate;
+        const bool wake =
+            activation == BodyActivation::Wake && found->second.Body.Motion != MotionType::Static;
         m_Native->System.GetBodyInterface().SetPositionAndRotationWhenChanged(
             found->second.Id, Detail::ToJolt(pose.Position), Detail::ToJolt(pose.Rotation),
-            activation);
+            wake ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+    }
+
+    vector<u8> PhysicsWorld::SaveBodyState(const Entity entity) const
+    {
+        const auto found = m_Native->Bodies.find(entity);
+        if (found == m_Native->Bodies.end())
+        {
+            return {};
+        }
+        const JPH::BodyLockRead lock(m_Native->System.GetBodyLockInterface(), found->second.Id);
+        if (!lock.Succeeded())
+        {
+            return {};
+        }
+        JPH::StateRecorderImpl recorder;
+        m_Native->System.SaveBodyState(lock.GetBody(), recorder);
+        const std::string data = recorder.GetData();
+        const auto* bytes = reinterpret_cast<const u8*>(data.data());
+        return {bytes, bytes + data.size()};
+    }
+
+    VoidResult PhysicsWorld::RestoreBodyState(const Entity entity, const std::span<const u8> state)
+    {
+        const auto found = m_Native->Bodies.find(entity);
+        if (found == m_Native->Bodies.end())
+        {
+            return std::unexpected("PhysicsWorld::RestoreBodyState: the entity has no body");
+        }
+        const JPH::BodyLockWrite lock(m_Native->System.GetBodyLockInterface(), found->second.Id);
+        if (!lock.Succeeded())
+        {
+            return std::unexpected("PhysicsWorld::RestoreBodyState: the body could not be locked");
+        }
+        JPH::StateRecorderImpl recorder;
+        recorder.WriteBytes(state.data(), state.size());
+        recorder.Rewind();
+        m_Native->System.RestoreBodyState(lock.GetBody(), recorder);
+        if (recorder.IsFailed())
+        {
+            return std::unexpected(
+                "PhysicsWorld::RestoreBodyState: the bytes are not a readable state");
+        }
+        return {};
     }
 
     void PhysicsWorld::MoveKinematicBody(const Entity entity, const PhysicsPose& target,

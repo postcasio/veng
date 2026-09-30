@@ -560,10 +560,10 @@ constructs it, **pre-registers the engine's reusable systems with `RegisterBuilt
 its own through `VengModuleRegister`, `Application` borrows it) stores `{ SystemId, Name,
 factory }`, **enumerates the catalog** without instantiating anything, resolves an id, and fatally
 rejects a duplicate id. The builtins register in this order (`BuiltinSystems.cpp`):
-`DeviceAssignmentSystem`, `InputMappingSystem`, `MovementSystem`, `CharacterMovementSystem`,
+`DeviceAssignmentSystem`, `InputMappingSystem`, `BehaviorSystem`, `MovementSystem`, `CharacterMovementSystem`,
 `RootMotionDriveSystem`, `InteractionSystem`, `VehicleSystem`, `CameraRigSystem`,
 `CharacterAnimationSystem`, `AnimationSystem`, `ConstantMotionSystem`, `RemoteCharacterBodySystem`,
-`PhysicsSystem`, `RemoteInterpolationSystem`, `TimeOfDaySystem`, `AudioSystem` (View-phase — it
+`PhysicsSystem`, `PoseHistorySystem`, `RemoteInterpolationSystem`, `TimeOfDaySystem`, `AudioSystem` (View-phase — it
 places, spatializes, and publishes the scene's `AudioSource`s against the `AudioListener` at the
 interpolated poses the frame draws; see [../Audio/CLAUDE.md](../Audio/CLAUDE.md)). Registration is GPU-free (building a system touches no `Context`/device), so
 `RegisterBuiltinSystems` is callable in the headless cooker with no ICD — the cook reflects a
@@ -572,7 +572,10 @@ level's named systems against the same builtins + module catalog the runtime res
 (run in that order, honoring the phase split) or from the whole registry as the "all registered"
 convenience. A system's **parameters are authored as components** — a settings entity the system
 reads — reusing the entire reflection inspector and keeping systems pure logic; there is no
-reflected-system-config mechanism.
+reflected-system-config mechanism. `SceneSimulation::FindSystem<T>()` returns the running instance
+of a system the simulation holds (null when it holds none), the read-out seam for state a system
+keeps between ticks — the remote-interpolation playback clock a client stamps on its input is read
+this way (`RemotePlaybackTick`).
 
 ## Levels
 

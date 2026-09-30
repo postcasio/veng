@@ -22,9 +22,11 @@ namespace Veng
         const vector<SystemEntry>& entries = registry.Entries();
         m_Systems.reserve(entries.size());
         m_SystemProfileNames.reserve(entries.size());
+        m_SystemIds.reserve(entries.size());
         for (const SystemEntry& entry : entries)
         {
             m_Systems.emplace_back(entry.Factory());
+            m_SystemIds.push_back(entry.Id);
             m_SystemProfileNames.push_back(InternSystemName(entry.Name));
         }
     }
@@ -33,6 +35,7 @@ namespace Veng
                                      const vector<SystemId>& systemIds)
     {
         m_Systems.reserve(systemIds.size());
+        m_SystemIds.reserve(systemIds.size());
         m_SystemProfileNames.reserve(systemIds.size());
         for (const SystemId id : systemIds)
         {
@@ -42,6 +45,7 @@ namespace Veng
                 continue;
             }
             m_Systems.emplace_back(std::move(system));
+            m_SystemIds.push_back(id);
 
             // Resolve the system's name against the catalog for the interned profile name; both
             // constructors have the name in hand, and neither used to keep it.
@@ -56,6 +60,18 @@ namespace Veng
             }
             m_SystemProfileNames.push_back(InternSystemName(name));
         }
+    }
+
+    SceneSystem* SceneSimulation::FindSystemById(const SystemId id) const
+    {
+        for (usize i = 0; i < m_SystemIds.size(); ++i)
+        {
+            if (m_SystemIds[i] == id)
+            {
+                return m_Systems[i].get();
+            }
+        }
+        return nullptr;
     }
 
     void SceneSimulation::Start(Scene& scene, const SystemContext& context)

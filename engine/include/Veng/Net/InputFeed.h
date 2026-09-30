@@ -23,6 +23,31 @@ namespace Veng
     class ServerHost;
     class TypeRegistry;
 
+    /// @brief How far behind its own tick the view a seat's current input was issued against was drawn.
+    ///
+    /// Written onto a connection's seat by FeedSeatInputs beside the PlayerInput it feeds, from the
+    /// view delay the client stamped on that input (TickedInput::ViewDelayTicks), and read back
+    /// through SeatViewTick. A seat fed locally carries none, since its view is the present.
+    /// Runtime-only: it carries no reflected field, so it never serializes and never rides the wire.
+    struct InputViewDelay
+    {
+        /// @brief The delay in (fractional) ticks; never negative.
+        f32 Ticks = 0.0f;
+    };
+
+    /// @brief Returns the (fractional) tick a seat's view was drawn at when it issued its input for @p inputTick.
+    ///
+    /// The server-side read of the client's view tick: @p inputTick minus the seat's InputViewDelay,
+    /// or @p inputTick itself for a seat carrying none (a listen host's own seat, which draws the
+    /// present). Meaningful for the tick being fed — the scheduled feed consumes the client's input
+    /// for tick T at server tick T, so a Sim system passes its own tick. Hand the result to a
+    /// RewindScope to judge that input against the world as the seat saw it.
+    /// @param scene      The scene holding the seat.
+    /// @param seat       The seat whose input is being judged.
+    /// @param inputTick  The tick whose input is being judged.
+    /// @return The view tick, at most @p inputTick.
+    [[nodiscard]] VE_API f64 SeatViewTick(const Scene& scene, Entity seat, u64 inputTick);
+
     /// @brief Packs a (connection, join) pair into the key the per-world jitter buffers are stored by.
     ///
     /// The two id spaces are disjoint on the wire but share a process, so the jitter buffers key on
@@ -58,8 +83,9 @@ namespace Veng
     /// For every (connection, join) bound to @p worldId, consumes the next input from its jitter
     /// buffer (slewing toward the target depth) and writes it into that join's seat PlayerInput —
     /// adding the component if the seat lacks one — so the control system re-derives Intent from the
-    /// wire input at this tick. A join whose buffer has never received input feeds nothing. Called
-    /// once per Sim step of @p worldId, ahead of the systems.
+    /// wire input at this tick, and writes the input's view delay into the seat's InputViewDelay. A
+    /// join whose buffer has never received input feeds nothing. Called once per Sim step of
+    /// @p worldId, ahead of the systems.
     /// @param host     The server host resolving each join's seat and replication server.
     /// @param buffers  The per-(connection, join) jitter buffers to consume from.
     /// @param worldId  The hosted world whose joins are fed.
@@ -72,10 +98,11 @@ namespace Veng
     /// The ahead-of-server variant: for every (connection, join) bound to @p worldId it consumes the
     /// input the client stamped at @p serverTick (InputJitterBuffer::ConsumeForTick, falling back to
     /// the underrun coast when the client's input for that tick has not arrived), writes it into the
-    /// seat's PlayerInput, and rides the buffer's remaining depth back as that connection's
-    /// input-timing feedback on that world's next snapshot header (ReplicationServer::SetInputFeedback)
-    /// — the closed loop the client's per-JoinId tick-offset controller trims its lead against. Called
-    /// once per Sim step of @p worldId at its tick.
+    /// seat's PlayerInput and its view delay into the seat's InputViewDelay, and rides the buffer's
+    /// remaining depth back as that connection's input-timing feedback on that world's next snapshot
+    /// header (ReplicationServer::SetInputFeedback) — the closed loop the client's per-JoinId
+    /// tick-offset controller trims its lead against. Called once per Sim step of @p worldId at its
+    /// tick.
     /// @param host        The server host resolving each join's seat and replication server.
     /// @param buffers     The per-(connection, join) jitter buffers to consume from.
     /// @param worldId     The hosted world whose joins are fed.
@@ -88,10 +115,14 @@ namespace Veng
     ///
     /// Records the first (SeatInput, PlayerInput) entity's resolved PlayerInput — the locally-owned
     /// seat InputMappingSystem fills — into @p send at @p clientTick, so the redundant send window
-    /// carries it. A scene with no local input seat stamps nothing (a spectator/observer client), so
-    /// the window stays empty and the send is a header-only ack.
+    /// carries it, together with the tick the scene's remote entities were last drawn at
+    /// (RemotePlaybackTick; the present when the scene draws nothing in the past). A scene with no
+    /// local input seat stamps nothing (a spectator/observer client), so the window stays empty and
+    /// the send is a header-only ack.
     /// @param send        The client's input send window.
     /// @param world       The client scene holding the local input seat.
     /// @param clientTick  The client sim tick being stamped.
     VE_API void StampLocalSeatInput(InputSendBuffer& send, const Scene& world, u64 clientTick);
 }
+
+VE_TYPE(::Veng::InputViewDelay, 0xA9C8B5ADD5402283ULL);

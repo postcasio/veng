@@ -159,10 +159,14 @@ extern "C"
 /// TypeRegistry::Register<T>(), which it instantiates and so builds the record at its own layout, so
 /// a stale module would insert a short record the host reads the new flag and every later member of
 /// at shifted offsets.
+/// Version 35 grows GameNetInfo with MaxRewindSeconds and SceneSimulation with the SystemId of each
+/// system it holds. A module constructs the ApplicationInfo that carries a GameNetInfo and reads a
+/// SceneSimulation's pause and start state through inline accessors, so a stale module lays the
+/// info struct out short and reads those flags at shifted offsets.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 34u
+#define VENG_MODULE_ABI_VERSION 35u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

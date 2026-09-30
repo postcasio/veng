@@ -2,6 +2,7 @@
 
 #include <Veng/Math/Ease.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/Transforms.h>
 
 #include <glm/gtc/quaternion.hpp>
@@ -16,7 +17,7 @@ namespace Veng
         // it so a buffered past sample never overwrites the live, client-driven pose.
         bool IsPredicted(const Scene& scene, const Entity entity)
         {
-            const Authority* authority = scene.TryGet<Authority>(entity);
+            const auto* authority = scene.TryGet<Authority>(entity);
             return authority != nullptr && authority->Tier == Tier::Predicted;
         }
 
@@ -92,6 +93,17 @@ namespace Veng
 
         // Unreachable given the newest-hold above, but keep the newest pose as a total fallback.
         return poseOf(samples.back());
+    }
+
+    optional<f64> RemotePlaybackTick(const Scene& scene)
+    {
+        const SceneSimulation* simulation = scene.GetSimulation();
+        if (simulation == nullptr)
+        {
+            return std::nullopt;
+        }
+        const auto* interpolation = simulation->FindSystem<RemoteInterpolationSystem>();
+        return interpolation != nullptr ? interpolation->GetPlaybackTick() : std::nullopt;
     }
 
     void RemoteInterpolationSystem::OnUpdate(Scene& scene, const f32 delta, const SystemContext&)

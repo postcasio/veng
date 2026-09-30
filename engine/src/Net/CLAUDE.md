@@ -51,8 +51,8 @@ on the main thread at frame boundaries** (receive → tick → send).
 
 `Server.h`/`Client.h` are the connection lifecycle. A `Net::Server` listens/accepts/denies; a
 `Net::Client` connects. The handshake is **two-tier** (`Handshake.h`): a **connection tier**
-establishes the process↔process link — the connect request carries `Net::ProtocolVersion` (**5**, the
-version that added the opaque account profile to the connect request) + the active pack's content digest,
+establishes the process↔process link — the connect request carries `Net::ProtocolVersion` (**6**, the
+version that added the view delay to every input record) + the active pack's content digest,
 rejected loudly on a mismatch (the `VengModuleAbiVersion` discipline on the wire, so the wire
 carries only asset ids, never assets) — and a **per-world join tier** joins one world (below). The
 `ConnectAcceptMessage` carries **only the assigned connection id**: it no longer bakes in a single
@@ -324,6 +324,57 @@ world drive threads. The **authority filter** (`HasAuthority(context, scene, ent
 `Server`-tier entity runs only on a `Server` peer, `Local` always locally, `Remote` never — so a
 client's Sim never fights the snapshot stream while AI/server `Intent` producers still write
 directly.
+
+**Each stamped tick also carries the tick the client's view was drawn at.** `StampLocalSeatInput`
+reads the scene's remote-interpolation playback clock (`RemotePlaybackTick`, through
+`SceneSimulation::FindSystem<RemoteInterpolationSystem>`) and stores it on the record as
+`TickedInput::ViewDelayTicks` — how far behind its own input tick the view was. The wire carries it
+as a `u16` of 1/256-tick steps ahead of each record (two bytes per stamped tick, clamped to
+`[0, MaxInputViewDelayTicks]`), which grew every input record and so bumped `Net::ProtocolVersion`
+to 6. The jitter buffer keeps each tick's delay beside its input (a coasted underrun keeps the
+duplicated input's), and `FeedSeatInputs` writes it onto the seat as the runtime-only
+`InputViewDelay` beside `PlayerInput`; `SeatViewTick(scene, seat, inputTick)` reads it back as an
+absolute tick, and a seat with none — a listen host's own, fed locally — views the present. The send
+window holds one contiguous run of ticks, so a stamp that does not follow the newest retained tick
+(a clock re-seed or resync) starts a fresh window rather than relabelling the old records.
+
+## Lag compensation — judging a query against the world as a client saw it
+
+A client draws remote entities about two snapshot intervals in the past, so a query the server
+evaluates against its present — a ray a client aimed at what it saw — misses what the client hit.
+`Veng/Net/LagCompensation.h` closes the gap in three parts, all server-side and all opt-in:
+
+- **The view tick** rides with the input (above), so the server knows, per seat and per tick, which
+  moment that client was looking at.
+- **The pose history.** An entity carrying the fieldless, authorable **`LagCompensated`** mark has its
+  body's post-step pose and velocities recorded every tick by **`PoseHistorySystem`** (server-only, a
+  no-op on a client and during a replay; a level names it immediately after `PhysicsSystem`). The
+  rings live in a **scene-owned `PoseHistory`** (`Scene::SetPoseHistory`), never on the entity, so
+  they never serialize and never replicate. Each ring covers `GetMaxRewindTicks()` —
+  `MaxRewindSeconds` (default 0.25 s, `GameNetInfo::MaxRewindSeconds`) at the world's own tick rate,
+  rounded down — and an entity not recorded on a tick (destroyed, unmarked, bodiless) loses its ring
+  when the tick closes. `Application` installs each server-hosted world's history from
+  `GameNetInfo::MaxRewindSeconds` and that world's own snapshot interval, before its Sim step.
+  **`RewoundPose(entity, viewTick)`** reconstructs a pose at a fractional tick by the blend
+  `SampleRemoteInterpolation` uses — linear position and velocity, spherical rotation — but only
+  between the samples at **snapshot ticks** (multiples of the interval, plus the ring's two ends), so
+  it reproduces the blend the client drew rather than a finer one. A snapshot a frame skipped (a
+  multi-tick frame whose last tick was not a multiple) widens the client's bracket and not the
+  history's, a sub-snapshot mismatch the reconstruction accepts.
+- **The rewind scope.** A **`RewindScope(scene, world, viewTick, exclude)`** clamps the tick into the
+  history's reach and moves every recorded, still-marked body except `exclude` (the querying client's
+  own entity, whose own view of itself is its prediction) to its reconstructed pose with a set-pose
+  that wakes nothing; queries made while it lives see that moment. Its destructor restores each moved
+  body bit for bit through `PhysicsWorld::SaveBodyState`/`RestoreBodyState` — pose, velocities, sleep
+  state — and asserts no physics step ran in between. A view at or past the newest recorded tick moves
+  nothing, so the listen host's own seat pays nothing. It costs one capture and set-pose per moved
+  body on entry and one restore on exit; a caller judging several queries from one client groups them
+  under one scope per distinct view tick.
+
+**It favours the querying client, and the cap is the whole bound.** A target that has just moved
+behind cover can still be hit for up to `MaxRewindSeconds` after it did, and a client lagging further
+than the cap is compensated only that far — less, never more. Only physics poses rewind: animation
+and component state stay in the present, and the server still decides every hit.
 
 ## The multiplexed transport: three id spaces, one connection
 
@@ -681,9 +732,8 @@ within-quantum convergence after quiescence, with bounded history/baseline, and 
 server-owned component arriving, changing every tick and leaving under a predicted pawn costs zero
 rollbacks where an ordinary replicated one does not. Prediction/rollback,
 delta compression + quantization + packed input, and interest management all sit behind the stable
-`ActionState`/component shapes and the extensible `Tier` enum. There is no lag compensation, no
-transport security, no spectator/replay/host-migration support, and the editor's Play mode is not a
-network client.
+`ActionState`/component shapes and the extensible `Tier` enum. There is no transport security, no
+spectator/replay/host-migration support, and the editor's Play mode is not a network client.
 
 ## Resolving a world: which instances, which join, which host
 
@@ -850,7 +900,7 @@ admitted connection's profile wins, and a teardown clears the entry only while t
 connection still owns it.
 
 Carrying the blob grew `ConnectRequestMessage`, whose decoder requires an exact fixed prefix, so
-`Net::ProtocolVersion` is **5**.
+the profile bumped `Net::ProtocolVersion` to 5.
 
 ## Putting a value into a blob
 

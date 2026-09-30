@@ -100,7 +100,7 @@ namespace Veng
     class RemoteInterpolationSystem final : public SceneSystem
     {
     public:
-        /// @brief Client-side interpolation knobs (Plan 07 threads these from ApplicationInfo).
+        /// @brief Client-side interpolation knobs.
         struct Settings
         {
             /// @brief Server ticks between snapshots — the sample spacing the delay is counted in.
@@ -121,6 +121,16 @@ namespace Veng
         /// @brief Returns the current interpolation settings.
         [[nodiscard]] const Settings& GetSettings() const { return m_Settings; }
 
+        /// @brief Returns the (fractional) server tick remote entities were last drawn at.
+        ///
+        /// The playback clock as of the last View pass: the tick this peer's view of the world
+        /// shows, which a client stamps onto its input so a server can judge that input against the
+        /// same moment. nullopt until the first frame with remote samples seeds the clock.
+        [[nodiscard]] optional<f64> GetPlaybackTick() const
+        {
+            return m_Initialized ? optional<f64>(m_PlaybackTick) : std::nullopt;
+        }
+
         /// @brief Advances the playback clock and writes each remote entity's interpolated Transform.
         /// @param scene    The client scene whose remote mirrors are updated.
         /// @param delta    Time in seconds since the previous frame.
@@ -135,6 +145,19 @@ namespace Veng
         /// @brief False until the first frame with samples seeds the playback clock.
         bool m_Initialized = false;
     };
+}
+
+namespace Veng
+{
+    /// @brief Returns the server tick a scene draws its remote entities at, when it draws any.
+    ///
+    /// Reads the playback clock of the RemoteInterpolationSystem the scene's simulation runs (see
+    /// RemoteInterpolationSystem::GetPlaybackTick). nullopt when the scene has no simulation, the
+    /// simulation runs no RemoteInterpolationSystem, or the clock has not seeded — every case in
+    /// which the scene draws nothing in the past.
+    /// @param scene  The scene whose view clock to read.
+    /// @return The playback tick, or nullopt.
+    [[nodiscard]] VE_API optional<f64> RemotePlaybackTick(const Scene& scene);
 }
 
 VE_TYPE(::Veng::RemoteInterpolation, 0x4DB6B8EC5D0385AAULL);

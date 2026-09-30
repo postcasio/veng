@@ -378,7 +378,7 @@ honest guarantee is per-world **convergence, not independent streams**. The join
 **content digest** the client validates its reconstructed world against (fail-loud carried into the
 join tier); worlds are **server-owned** — refcounted by live joins, idle-reaped after a keep-warm
 dwell, and bounded by a server-wide cap (with a per-connection join cap); and clock/tick-sync scopes
-**per `JoinId`**. The wire break **fails loudly**: `Net::ProtocolVersion` is **5** and the
+**per `JoinId`**. The wire break **fails loudly**: `Net::ProtocolVersion` is **6** and the
 `ConnectAcceptMessage` carries only the connection id (the level/seat moved to the per-world join
 reply). Who a connection *is* is a consumer-minted, opaque **`Net::AccountId`** presented at the
 handshake (the `GameNetInfo::Identity` / `AdmitAccount` hooks) and threaded through seats,
@@ -466,7 +466,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 34** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 35** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the

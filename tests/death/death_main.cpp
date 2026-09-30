@@ -54,6 +54,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CollisionShape.h>
 
+#include <Veng/Net/LagCompensation.h>
 #include <Veng/Net/Replication.h>
 
 #include <Veng/Physics/Components.h>
@@ -211,6 +212,18 @@ namespace
 
         // A triangle mesh has no interior and no inertia: Static and Kinematic are the motion
         // types it may back, and the step refuses the Dynamic one at body creation.
+        StepPhysics(*scene, 1.0f / 60.0f);
+    }
+
+    void RunRewindScopeAcrossStep()
+    {
+        TypeRegistry registry;
+        RegisterBuiltinTypes(registry);
+        const Unique<Scene> scene = Scene::Create(registry);
+        scene->SetPhysicsWorld(PhysicsWorld::Create(PhysicsWorldInfo{}));
+
+        // A step taken while a scope holds bodies at rewound poses would simulate the past.
+        const RewindScope scope(*scene, *scene->GetPhysicsWorld(), 0.0, Entity::Null);
         StepPhysics(*scene, 1.0f / 60.0f);
     }
 
@@ -601,6 +614,10 @@ int main(int argc, char** argv)
     else if (name == "physics_dynamic_triangle_mesh")
     {
         RunPhysicsDynamicTriangleMesh();
+    }
+    else if (name == "rewind_scope_across_step")
+    {
+        RunRewindScopeAcrossStep();
     }
     else if (name == "scene_get_stale_entity")
     {

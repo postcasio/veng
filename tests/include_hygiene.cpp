@@ -126,6 +126,7 @@
 #include <Veng/Net/Connection.h>
 #include <Veng/Net/FaultInjectionTransport.h>
 #include <Veng/Net/JoinRequest.h>
+#include <Veng/Net/LagCompensation.h>
 #include <Veng/Net/LoopbackTransport.h>
 #include <Veng/Net/Messages.h>
 #include <Veng/Net/PredictionHistory.h>

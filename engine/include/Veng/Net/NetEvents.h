@@ -29,8 +29,10 @@ namespace Veng::Net
     /// the reliable spawn record an optional anchor field (the stable-anchor binding). Version 4 added
     /// the presented AccountId to the connect request (the account-identity handshake) and the
     /// account-tier deny reasons. Version 5 grew the connect request an opaque account profile blob
-    /// (the admission profile) and the over-budget deny reason.
-    inline constexpr u32 ProtocolVersion = 5;
+    /// (the admission profile) and the over-budget deny reason. Version 6 grew every input record
+    /// with the view delay (the tick the sender's view was drawn at, behind its input tick), which a
+    /// server judges hit queries against.
+    inline constexpr u32 ProtocolVersion = 6;
 
     /// @brief Wire overhead of a connect request, in bytes, ahead of its account profile blob.
     ///

@@ -102,13 +102,12 @@ TEST_CASE("EncodeInputPacket round-trips the ack and a contiguous tick run")
 {
     const TypeRegistry registry = MakeRegistry();
 
-    const vector<ActionState> records = {
-        MakeState(vec2(1.0f, 0.0f)),
-        MakeState(vec2(0.0f, 1.0f), ActionPhase::Started),
-        MakeState(vec2(-1.0f, 0.0f)),
+    const vector<TickedInput> records = {
+        TickedInput{.ClientTick = 5, .State = MakeState(vec2(1.0f, 0.0f))},
+        TickedInput{.ClientTick = 6, .State = MakeState(vec2(0.0f, 1.0f), ActionPhase::Started)},
+        TickedInput{.ClientTick = 7, .State = MakeState(vec2(-1.0f, 0.0f))},
     };
-    const vector<u8> bytes =
-        EncodeInputPacket(/*acked=*/7, /*firstClientTick=*/5, records, registry);
+    const vector<u8> bytes = EncodeInputPacket(/*acked=*/7, records, registry);
 
     const Result<InputPacket> decoded = DecodeInputPacket(bytes, registry);
     REQUIRE(decoded.has_value());
@@ -117,9 +116,9 @@ TEST_CASE("EncodeInputPacket round-trips the ack and a contiguous tick run")
     CHECK(decoded->Inputs[0].ClientTick == 5);
     CHECK(decoded->Inputs[1].ClientTick == 6);
     CHECK(decoded->Inputs[2].ClientTick == 7);
-    CHECK(SameState(decoded->Inputs[0].State, records[0]));
-    CHECK(SameState(decoded->Inputs[1].State, records[1]));
-    CHECK(SameState(decoded->Inputs[2].State, records[2]));
+    CHECK(SameState(decoded->Inputs[0].State, records[0].State));
+    CHECK(SameState(decoded->Inputs[1].State, records[1].State));
+    CHECK(SameState(decoded->Inputs[2].State, records[2].State));
 }
 
 TEST_CASE("InputSendBuffer keeps the last N ticks and encodes them redundantly")
@@ -142,6 +141,22 @@ TEST_CASE("InputSendBuffer keeps the last N ticks and encodes them redundantly")
     CHECK(decoded->Inputs[2].State.Actions[0].Value.x == doctest::Approx(4.0f));
 }
 
+TEST_CASE("A send window restarts at a tick discontinuity rather than relabelling its records")
+{
+    const TypeRegistry registry = MakeRegistry();
+
+    InputSendBuffer send(InputSendBuffer::Settings{.Redundancy = 3});
+    send.Stamp(30, MakeState(vec2(0.0f, 0.0f)));
+    send.Stamp(31, MakeState(vec2(0.0f, 0.0f)));
+    send.Stamp(71, MakeState(vec2(1.0f, 0.0f)));
+
+    const Result<InputPacket> decoded = DecodeInputPacket(send.Encode(0, registry), registry);
+    REQUIRE(decoded.has_value());
+    REQUIRE(decoded->Inputs.size() == 1);
+    CHECK(decoded->Inputs[0].ClientTick == 71);
+    CHECK(decoded->Inputs[0].State.Actions[0].Value.x == doctest::Approx(1.0f));
+}
+
 TEST_CASE("An input-idle send buffer still carries its ack")
 {
     const TypeRegistry registry = MakeRegistry();
@@ -162,12 +177,12 @@ TEST_CASE("DecodeInputPacket rejects a truncated header but recovers a truncated
     CHECK_FALSE(DecodeInputPacket(stub, registry).has_value());
 
     // A full packet truncated mid-run recovers the intact records and stops at the tear.
-    const vector<ActionState> records = {
-        MakeState(vec2(1.0f, 0.0f)),
-        MakeState(vec2(0.0f, 1.0f)),
-        MakeState(vec2(-1.0f, 0.0f)),
+    const vector<TickedInput> records = {
+        TickedInput{.ClientTick = 10, .State = MakeState(vec2(1.0f, 0.0f))},
+        TickedInput{.ClientTick = 11, .State = MakeState(vec2(0.0f, 1.0f))},
+        TickedInput{.ClientTick = 12, .State = MakeState(vec2(-1.0f, 0.0f))},
     };
-    vector<u8> bytes = EncodeInputPacket(0, 10, records, registry);
+    vector<u8> bytes = EncodeInputPacket(0, records, registry);
     bytes.resize(bytes.size() - 4); // lop the tail off the last record
 
     const Result<InputPacket> decoded = DecodeInputPacket(bytes, registry);

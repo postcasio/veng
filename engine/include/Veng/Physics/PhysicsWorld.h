@@ -71,6 +71,15 @@ namespace Veng
         bool operator==(const ConstraintSettings&) const = default;
     };
 
+    /// @brief Whether placing a body wakes it.
+    enum class BodyActivation : u32
+    {
+        /// @brief Wake a sleeping non-static body, so the next step simulates it from its new pose.
+        Wake = 0,
+        /// @brief Leave the body's sleep state as it is: a sleeping body stays asleep.
+        Keep = 1,
+    };
+
     /// @brief One tick's drive for a kinematic character capsule.
     ///
     /// The gameplay side resolves these — the up from the gravity field, the desired planar
@@ -230,10 +239,29 @@ namespace Veng
         /// @brief Teleports @p entity's body to @p pose, clearing nothing else.
         ///
         /// A teleport, not a move: it does not sweep, so a body placed inside geometry is resolved
-        /// by the next step's penetration recovery. MoveKinematicBody is the swept alternative.
-        /// @param entity  The entity whose body to place; a no-op when it has none.
-        /// @param pose    The world-space pose to place it at.
-        void SetBodyPose(Entity entity, const PhysicsPose& pose);
+        /// by the next step's penetration recovery. MoveKinematicBody is the swept alternative. Its
+        /// velocities are untouched, and queries see it at @p pose at once.
+        /// @param entity      The entity whose body to place; a no-op when it has none.
+        /// @param pose        The world-space pose to place it at.
+        /// @param activation  Whether a sleeping non-static body is woken by the move.
+        void SetBodyPose(Entity entity, const PhysicsPose& pose,
+                         BodyActivation activation = BodyActivation::Wake);
+
+        /// @brief Captures one body's dynamic state — pose, velocities, sleep state — as bytes.
+        ///
+        /// The per-body save side of a temporary move: a caller that relocates a body between steps
+        /// (to query the world as it stood at another moment) captures it here first and puts it
+        /// back with RestoreBodyState, bit for bit, before the next step. The bytes are opaque and
+        /// version-locked to the solver build that produced them. Empty when @p entity has no body.
+        /// @param entity  The entity whose body to capture.
+        /// @return The captured state, or an empty vector when @p entity has no body.
+        [[nodiscard]] vector<u8> SaveBodyState(Entity entity) const;
+
+        /// @brief Restores a body exactly from bytes SaveBodyState produced, without re-creating it.
+        /// @param entity  The entity whose body to restore.
+        /// @param state   Bytes from SaveBodyState on the same body.
+        /// @return Success, or an error when @p entity has no body or the bytes are not readable.
+        VoidResult RestoreBodyState(Entity entity, std::span<const u8> state);
 
         /// @brief Drives a kinematic body toward @p target over one step, so it sweeps.
         ///

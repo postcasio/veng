@@ -34,6 +34,7 @@
 #include <Veng/Net/Client.h>
 #include <Veng/Net/Host.h>
 #include <Veng/Net/InputFeed.h>
+#include <Veng/Net/LagCompensation.h>
 #include <Veng/Net/WorldEnvelope.h>
 #include <Veng/WorldRunner.h>
 
@@ -2233,6 +2234,15 @@ namespace Veng
             // Scheduled consume: the client runs its tick ahead of the server (the tick-offset slew),
             // so the input it stamped at this tick has arrived by the time the server reaches it.
             FeedSeatInputs(*m_Net->Server, m_Net->Jitter, world, resolved->GetScene(), tick);
+
+            // The history reconstructs what a client drew, so it follows this world's own snapshot
+            // cadence rather than the shared default.
+            EnsurePoseHistory(
+                resolved->GetScene(),
+                PoseHistory::Settings{
+                    .MaxRewindSeconds = m_Net->Info.MaxRewindSeconds,
+                    .SnapshotInterval =
+                        m_Net->Server->ReplicationForWorld(world).GetSettings().SnapshotInterval});
         }
     }
 

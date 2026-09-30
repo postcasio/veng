@@ -235,6 +235,13 @@ is wrong in exactly the same split-frame case. A scene optionally installs a res
 (`Scene::SetPhysicsPoseResolver`) mapping entity → solver-space pose and back, and the whole model is
 documented with its consumers in [../Scene/CLAUDE.md](../Scene/CLAUDE.md).
 
+**A rewind scope moves bodies between steps and puts them back.** A server judging a client's query
+against the past (`RewindScope`, [../Net/CLAUDE.md](../Net/CLAUDE.md), "Lag compensation") places
+its `LagCompensated` bodies at recorded poses with `SetBodyPose(…, BodyActivation::Keep)` — a teleport
+that wakes nothing — runs pure queries against them, and restores each exactly with
+`SaveBodyState`/`RestoreBodyState`, the per-body counterpart of the whole-world `SaveState`. The move
+is invisible to the simulation only because it never spans a step, which the scope asserts.
+
 ## The character controller — a kinematic capsule with per-body up
 
 A **`CharacterController`** (`Veng/Physics/CharacterController.h`) is a walking character: a kinematic

@@ -77,6 +77,29 @@ namespace Veng
         /// @brief Returns true when no systems were registered.
         [[nodiscard]] bool IsEmpty() const { return m_Systems.empty(); }
 
+        /// @brief Returns this simulation's instance of system @p T, or null when it runs none.
+        ///
+        /// The read-out seam for state a system keeps between ticks and a host needs to see (a
+        /// playback clock, a tuning a caller pushes in): the instance is found by T's SystemId, so it
+        /// is the one this simulation ticks, not a fresh copy. The first match wins when an id is
+        /// named twice.
+        /// @tparam T  The concrete SceneSystem subclass, declared with VE_SYSTEM.
+        /// @return The running instance, or nullptr.
+        template <class T>
+        [[nodiscard]] T* FindSystem()
+        {
+            return static_cast<T*>(FindSystemById(SystemIdOf<T>()));
+        }
+
+        /// @brief Returns this simulation's instance of system @p T, or null when it runs none.
+        /// @tparam T  The concrete SceneSystem subclass, declared with VE_SYSTEM.
+        /// @return The running instance, or nullptr.
+        template <class T>
+        [[nodiscard]] const T* FindSystem() const
+        {
+            return static_cast<const T*>(FindSystemById(SystemIdOf<T>()));
+        }
+
         /// @brief Pauses or resumes this simulation's per-frame tick.
         ///
         /// Paused, the engine's simulation drive-list skips this simulation's Update while still
@@ -97,8 +120,15 @@ namespace Veng
         [[nodiscard]] bool IsStarted() const { return m_Started; }
 
     private:
+        /// @brief Returns the first held system whose SystemId is @p id, or nullptr.
+        /// @param id  The SystemId to find.
+        [[nodiscard]] SceneSystem* FindSystemById(SystemId id) const;
+
         /// @brief The instantiated systems, in registration (run) order.
         vector<Unique<SceneSystem>> m_Systems;
+
+        /// @brief Each system's SystemId, parallel to m_Systems.
+        vector<SystemId> m_SystemIds;
 
         /// @brief Each system's registered name, interned once at construction, parallel to m_Systems.
         ///

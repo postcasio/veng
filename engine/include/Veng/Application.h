@@ -137,6 +137,14 @@ namespace Veng
         u32 SnapshotIntervalTicks = 2;
         /// @brief How many recent input ticks each client input packet carries redundantly (the loss window).
         u32 InputRedundancyTicks = 3;
+        /// @brief The longest a hosted world rewinds a client's query to judge it as the client saw it, in seconds.
+        ///
+        /// Each server-hosted world's pose history (Veng/Net/LagCompensation.h) holds this much of
+        /// its LagCompensated bodies' past, and a RewindScope clamps a client's view tick to it. It
+        /// is also the whole bound on how far lag compensation favours the querying client: a target
+        /// that has just moved behind cover can still be hit for up to this long. Inert for a world
+        /// that marks nothing LagCompensated or runs no PoseHistorySystem.
+        f64 MaxRewindSeconds = 0.25;
         /// @brief Whether the server quantizes Transform's spatial leaves on the wire (lossy, wire-only).
         ///
         /// On by default: a displayed pose does not need full f32 precision, so the snapshot wire

@@ -8,6 +8,8 @@
 #include <Veng/Gui/Overlay.h>
 #include <Veng/Gui/Surface.h>
 #include <Veng/Localization/LocKey.h>
+#include <Veng/Net/InputFeed.h>
+#include <Veng/Net/LagCompensation.h>
 #include <Veng/Net/Session.h>
 #include <Veng/Physics/CharacterController.h>
 #include <Veng/Physics/Components.h>
@@ -182,6 +184,14 @@ namespace Veng
         // The decaying render residual a reconciliation correction leaves on a predicted entity,
         // eased to zero by the View-phase decay and applied only at the gather. Runtime-only.
         registry.Register<PredictionError>();
+
+        // The opt-in mark a server records a body's recent poses for, so a client's query can be
+        // judged against the world as that client saw it. Authorable and fieldless; not replicated.
+        registry.Register<LagCompensated>();
+
+        // How far behind its own tick the view a seat's current input was drawn, written server-side
+        // beside the fed PlayerInput. Runtime-only: it carries no reflected field.
+        registry.Register<InputViewDelay>();
 
         // Game mode as data: the per-scene config a spawn rule reads. A game authors whatever
         // further mode-state components its own rule systems read.

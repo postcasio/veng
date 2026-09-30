@@ -169,6 +169,7 @@ add_library(veng SHARED
         src/Net/PredictionHistory.cpp
         src/Net/Reconciliation.cpp
         src/Net/InputFeed.cpp
+        src/Net/LagCompensation.cpp
         src/Net/LoopbackTransport.cpp
         src/Net/Server.cpp
         src/Net/Session.cpp

@@ -345,6 +345,9 @@ namespace Veng
         /// @param settings  The snapshot cadence.
         explicit ReplicationServer(const Settings& settings) : m_Settings(settings) {}
 
+        /// @brief Returns the cadence this server replicates at.
+        [[nodiscard]] const Settings& GetSettings() const { return m_Settings; }
+
         /// @brief Registers a connection to replicate to, with a fresh (empty) baseline.
         ///
         /// Its first Generate streams every current replicated entity as a Spawn (the baseline spawn
@@ -612,7 +615,22 @@ namespace Veng
     // and sends the last N ticks redundantly over the unreliable channel; the server buffers them per
     // connection in a jitter buffer and feeds the seat's PlayerInput at the matching tick, from which
     // the control system re-derives Intent unchanged. The ActionState is encoded through the reflection
-    // serializer (its name-keyed FieldClass::Array form) — the v1 input wire format, no bespoke codec.
+    // serializer (its name-keyed FieldClass::Array form), beside the view delay each tick carries.
+
+    /// @brief The wire resolution of an input's view delay: steps per tick.
+    ///
+    /// The delay travels as a u16 count of these steps, so it is exact to 1/256 of a tick and costs
+    /// two bytes per stamped tick.
+    inline constexpr u32 InputViewDelayStepsPerTick = 256;
+
+    /// @brief The largest view delay the input wire carries, in ticks; a longer delay is clamped to it.
+    inline constexpr f32 MaxInputViewDelayTicks =
+        65535.0f / static_cast<f32>(InputViewDelayStepsPerTick);
+
+    /// @brief Rounds a view delay onto the wire's grid, clamped to [0, MaxInputViewDelayTicks].
+    /// @param ticks  The delay in ticks.
+    /// @return The delay in wire steps (1/InputViewDelayStepsPerTick of a tick each).
+    [[nodiscard]] VE_API u16 QuantizeInputViewDelay(f32 ticks);
 
     /// @brief One seat input sample keyed by the client sim tick it was resolved on.
     struct TickedInput
@@ -621,6 +639,13 @@ namespace Veng
         u64 ClientTick = 0;
         /// @brief The resolved action state for that tick (the PlayerInput wire payload).
         ActionState State;
+        /// @brief How far behind ClientTick, in (fractional) ticks, the sender's view was drawn.
+        ///
+        /// The sender's view tick is ClientTick minus this: the server tick its remote-interpolation
+        /// clock was rendering when the input was resolved, so a server can judge the input against
+        /// the world as the sender saw it. Zero means the view was the present. Never negative, and
+        /// carried on the wire to 1/InputViewDelayStepsPerTick of a tick.
+        f32 ViewDelayTicks = 0.0f;
     };
 
     /// @brief A decoded input packet: the piggybacked snapshot ack plus the client-tick-keyed input run.
@@ -643,24 +668,25 @@ namespace Veng
 
     /// @brief Encodes an input packet: the piggybacked ack + a redundant run of recent input ticks.
     ///
-    /// The records cover the contiguous client ticks [firstClientTick, firstClientTick + records.size()),
-    /// each the reflection encoding (WriteFields) of that tick's ActionState. Sending the last N ticks
-    /// every packet makes the stream loss-tolerant without retransmission: a lost packet's ticks ride
-    /// the next packet's overlap. An empty run encodes a header-only packet, so an input-idle client
-    /// still carries its ack.
+    /// The records cover a contiguous run of client ticks starting at the first record's ClientTick,
+    /// each its view delay followed by the reflection encoding (WriteFields) of that tick's
+    /// ActionState. Sending the last N ticks every packet makes the stream loss-tolerant without
+    /// retransmission: a lost packet's ticks ride the next packet's overlap. An empty run encodes a
+    /// header-only packet, so an input-idle client still carries its ack.
     ///
     /// Packet layout (framing little-endian; each record payload is the WriteFields bytes):
     ///
     ///     InputPacket := AckedServerTick:u64  FirstClientTick:u64  Count:u32  Record*
-    ///     Record      := ByteLength:u32  WriteFields(ActionState)
+    ///     Record      := ViewDelay:u16  ByteLength:u32  WriteFields(ActionState)
     ///
+    /// ViewDelay is TickedInput::ViewDelayTicks in 1/InputViewDelayStepsPerTick steps.
     /// @param ackedServerTick  The highest server snapshot tick to acknowledge.
-    /// @param firstClientTick  The client tick of the first record.
-    /// @param records          The input states for the contiguous tick run, oldest first.
+    /// @param records          The inputs for the tick run, oldest first.
     /// @param registry         The type registry the ActionState encodes through.
+    /// @pre @p records' ClientTicks ascend by exactly one.
     /// @return The encoded packet bytes.
-    [[nodiscard]] VE_API vector<u8> EncodeInputPacket(u64 ackedServerTick, u64 firstClientTick,
-                                                      std::span<const ActionState> records,
+    [[nodiscard]] VE_API vector<u8> EncodeInputPacket(u64 ackedServerTick,
+                                                      std::span<const TickedInput> records,
                                                       const TypeRegistry& registry);
 
     // ---- Packed input encoding (the context-keyed wire form) --------------------------------------
@@ -711,24 +737,24 @@ namespace Veng
 
     /// @brief Encodes an input packet in the packed form, carrying the context-stack hash.
     ///
-    /// The packed sibling of EncodeInputPacket: the same ack + redundant tick run, each record the
-    /// bit-packed form against @p schema, prefixed by @p contextHash so the receiver can verify its
-    /// own resolved list matches before decoding.
+    /// The packed sibling of EncodeInputPacket: the same ack + redundant tick run, each record its
+    /// view delay then the bit-packed form against @p schema, prefixed by @p contextHash so the
+    /// receiver can verify its own resolved list matches before decoding.
     ///
     /// Packet layout (framing little-endian):
     ///
     ///     PackedInputPacket := AckedServerTick:u64  ContextHash:u64  FirstClientTick:u64  Count:u32  Record*
-    ///     Record            := ByteLength:u32  EncodePackedActionState-bytes
+    ///     Record            := ViewDelay:u16  ByteLength:u32  EncodePackedActionState-bytes
     ///
     /// @param ackedServerTick  The highest server snapshot tick to acknowledge.
     /// @param contextHash      The sender's context-stack hash (see HashContextStack).
-    /// @param firstClientTick  The client tick of the first record.
-    /// @param records          The action states for the contiguous tick run, oldest first.
+    /// @param records          The inputs for the tick run, oldest first.
     /// @param schema           The seat's ordered resolved action list.
+    /// @pre @p records' ClientTicks ascend by exactly one.
     /// @return The encoded packet bytes.
     [[nodiscard]] VE_API vector<u8>
-    EncodePackedInputPacket(u64 ackedServerTick, u64 contextHash, u64 firstClientTick,
-                            std::span<const ActionState> records,
+    EncodePackedInputPacket(u64 ackedServerTick, u64 contextHash,
+                            std::span<const TickedInput> records,
                             std::span<const PackedInputAction> schema);
 
     /// @brief Decodes a packed input packet, verifying the context hash before decoding records.
@@ -782,9 +808,16 @@ namespace Veng
         explicit InputSendBuffer(const Settings& settings) : m_Settings(settings) {}
 
         /// @brief Records this tick's resolved input, evicting the oldest beyond the redundancy window.
+        ///
+        /// A tick that does not directly follow the newest retained one (the client's clock was
+        /// re-seeded or resynced) discards the window first, since a packet's records cover one
+        /// contiguous run. @p viewTick is stored as its delay behind @p clientTick, clamped to
+        /// [0, MaxInputViewDelayTicks], so a view at or ahead of the input tick reads as the present.
         /// @param clientTick  The client sim tick being stamped (monotonic, +1 per tick).
         /// @param state       The seat's resolved ActionState for this tick.
-        void Stamp(u64 clientTick, const ActionState& state);
+        /// @param viewTick    The (fractional) server tick the sender's view was drawn at when the
+        ///                    input was resolved; nullopt means the present (nothing drawn in the past).
+        void Stamp(u64 clientTick, const ActionState& state, optional<f64> viewTick = std::nullopt);
 
         /// @brief Encodes the retained window into a packet acknowledging @p ackedServerTick.
         ///
@@ -796,6 +829,9 @@ namespace Veng
 
         /// @brief The number of ticks currently retained (at most Redundancy).
         [[nodiscard]] usize Size() const { return m_Window.size(); }
+
+        /// @brief The retained window, oldest first.
+        [[nodiscard]] std::span<const TickedInput> GetWindow() const { return m_Window; }
 
     private:
         Settings m_Settings;
@@ -866,10 +902,17 @@ namespace Veng
         /// @brief Consume calls that underran — coasted on the last input rather than a fresh one.
         [[nodiscard]] u64 UnderrunCount() const { return m_UnderrunCount; }
 
+        /// @brief The view delay, in ticks, of the input the last consume returned.
+        ///
+        /// A coasted underrun keeps the delay of the input it duplicates, since the sender's view
+        /// trails its own tick by about as much from one tick to the next. Zero before the first input.
+        [[nodiscard]] f32 GetLastViewDelayTicks() const { return m_LastViewDelayTicks; }
+
     private:
         Settings m_Settings;
-        map<u64, ActionState> m_Buffer;
+        map<u64, TickedInput> m_Buffer;
         optional<ActionState> m_Last;
+        f32 m_LastViewDelayTicks = 0.0f;
         u64 m_LastConsumedTick = 0;
         u64 m_ConsumeCount = 0;
         u64 m_UnderrunCount = 0;
