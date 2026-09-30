@@ -324,7 +324,8 @@ level from the resolve seam's global facet (`GraphicsGlobalFacet::TextureQuality
   process that needs *where things attach* but never draws the model. It decodes through
   `ParseCookedMeshSockets` (`Veng/Asset/Mesh.h`), the one function `MeshLoader` decodes a resident
   mesh's table with, so a CPU read and `Mesh::GetSockets()` cannot disagree. The prefab-level read,
-  in prefab-root space, is `ReadPrefabSockets` — see [../Scene/CLAUDE.md](../Scene/CLAUDE.md). Both
+  in prefab-root space, is `ReadPrefabSockets`, and `ReadPrefabMeshes` names the meshes a prefab
+  renders with no mesh read at all — see [../Scene/CLAUDE.md](../Scene/CLAUDE.md). Both
   sit on **`AssetManager::ReadCooked(type, id)`**, which resolves an id exactly as a load does
   (memory mounts first, type-checked) and returns the cooked bytes without running a loader; a zstd
   entry is inflated into the archive reader's cache on first read, the same cost a load pays. Use
@@ -432,7 +433,7 @@ Two properties fall out of expanding at spawn rather than flattening at cook:
 
 **One decoder reads a cooked prefab's tables.** `DecodeCookedPrefab` (in the loader's own header)
 validates the header and every table and record range and returns the entities with their records
-verbatim; `PrefabLoader` and the CPU-only `ReadPrefabSockets` both decode through it, so neither
+verbatim; `PrefabLoader` and the CPU-only `ReadPrefabSockets` / `ReadPrefabMeshes` all decode through it, so neither
 accepts a blob the other rejects.
 
 **Entity references stay prefab-local.** A `Reference` field cooks to an index into its *own*

@@ -58,7 +58,7 @@ namespace Veng
     {
         constexpr u32 NoParent = ~0u;
 
-        // One spawned entity as a prefab walk sees it: only the parts that place a socket.
+        // One spawned entity as a prefab walk sees it: only the parts that place a mesh or a socket.
         struct FlatEntity
         {
             string Name;
@@ -244,6 +244,57 @@ namespace Veng
             return roots;
         }
 
+        // A prefab flattened as a spawn lays it out.
+        struct FlatPrefab
+        {
+            vector<FlatEntity> Nodes;
+            // Each entity's frame relative to its root, the root's own Transform excluded; filled
+            // lazily by RootFrame.
+            vector<optional<mat4>> Frames;
+        };
+
+        AssetResult<FlatPrefab> ReadFlatPrefab(const AssetManager& assets, const AssetId prefab)
+        {
+            FlatPrefab flat;
+            vector<AssetId> chain;
+            const AssetResult<vector<u32>> roots = Flatten(assets, prefab, chain, flat.Nodes);
+            if (!roots)
+            {
+                return std::unexpected(roots.error());
+            }
+            flat.Frames.resize(flat.Nodes.size());
+            return flat;
+        }
+
+        // Composes `start`'s frame up the chain, caching every frame it passes; a walk longer than
+        // the entity count is a parent cycle.
+        Result<mat4> RootFrame(FlatPrefab& flat, const u32 start)
+        {
+            const vector<FlatEntity>& nodes = flat.Nodes;
+            vector<optional<mat4>>& frames = flat.Frames;
+            vector<u32> chainUp;
+            u32 current = start;
+            while (!frames[current] && nodes[current].Parent != NoParent)
+            {
+                if (chainUp.size() > nodes.size())
+                {
+                    return std::unexpected(string("entity hierarchy forms a cycle"));
+                }
+                chainUp.push_back(current);
+                current = nodes[current].Parent;
+            }
+            if (!frames[current])
+            {
+                frames[current] = mat4(1.0f);
+            }
+            for (usize i = chainUp.size(); i-- > 0;)
+            {
+                const u32 entity = chainUp[i];
+                frames[entity] = *frames[nodes[entity].Parent] * LocalMatrix(nodes[entity].Local);
+            }
+            return *frames[start];
+        }
+
         // Splits an affine matrix with no shear back into a Transform.
         Transform ToTransform(const mat4& matrix)
         {
@@ -274,41 +325,12 @@ namespace Veng
     AssetResult<vector<PrefabSocket>> ReadPrefabSockets(const AssetManager& assets,
                                                         const AssetId prefab)
     {
-        vector<FlatEntity> nodes;
-        vector<AssetId> chain;
-        const AssetResult<vector<u32>> roots = Flatten(assets, prefab, chain, nodes);
-        if (!roots)
+        AssetResult<FlatPrefab> flat = ReadFlatPrefab(assets, prefab);
+        if (!flat)
         {
-            return std::unexpected(roots.error());
+            return std::unexpected(flat.error());
         }
-
-        // Each entity's frame relative to its root, the root's own Transform excluded. Composed
-        // lazily up the chain; a walk longer than the entity count is a parent cycle.
-        vector<optional<mat4>> frames(nodes.size());
-        const auto frameOf = [&](const u32 start) -> Result<mat4>
-        {
-            vector<u32> chainUp;
-            u32 current = start;
-            while (!frames[current] && nodes[current].Parent != NoParent)
-            {
-                if (chainUp.size() > nodes.size())
-                {
-                    return std::unexpected(string("entity hierarchy forms a cycle"));
-                }
-                chainUp.push_back(current);
-                current = nodes[current].Parent;
-            }
-            if (!frames[current])
-            {
-                frames[current] = mat4(1.0f);
-            }
-            for (usize i = chainUp.size(); i-- > 0;)
-            {
-                const u32 entity = chainUp[i];
-                frames[entity] = *frames[nodes[entity].Parent] * LocalMatrix(nodes[entity].Local);
-            }
-            return *frames[start];
-        };
+        const vector<FlatEntity>& nodes = flat->Nodes;
 
         map<u64, vector<MeshSocket>> meshSockets;
         vector<PrefabSocket> sockets;
@@ -335,7 +357,7 @@ namespace Veng
                 continue;
             }
 
-            const Result<mat4> frame = frameOf(i);
+            const Result<mat4> frame = RootFrame(*flat, i);
             if (!frame)
             {
                 return std::unexpected(Corrupt(prefab, frame.error()));
@@ -365,5 +387,39 @@ namespace Veng
                                      return a.Local.Name < b.Local.Name;
                                  });
         return sockets;
+    }
+
+    AssetResult<vector<PrefabMesh>> ReadPrefabMeshes(const AssetManager& assets,
+                                                     const AssetId prefab)
+    {
+        AssetResult<FlatPrefab> flat = ReadFlatPrefab(assets, prefab);
+        if (!flat)
+        {
+            return std::unexpected(flat.error());
+        }
+
+        vector<PrefabMesh> meshes;
+        for (u32 i = 0; i < flat->Nodes.size(); ++i)
+        {
+            const FlatEntity& node = flat->Nodes[i];
+            if (!node.Mesh.IsValid())
+            {
+                continue;
+            }
+
+            const Result<mat4> frame = RootFrame(*flat, i);
+            if (!frame)
+            {
+                return std::unexpected(Corrupt(prefab, frame.error()));
+            }
+            meshes.push_back(PrefabMesh{
+                .EntityName = node.Name,
+                .Mesh = node.Mesh,
+                .RootSpace = ToTransform(*frame),
+            });
+        }
+
+        std::ranges::stable_sort(meshes, {}, &PrefabMesh::EntityName);
+        return meshes;
     }
 }

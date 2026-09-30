@@ -89,6 +89,19 @@ root, so the root's own `Transform` is left out and a root placed at world trans
 socket at `W · RootSpace` — exactly where `AttachToSocket` onto the entity named `EntityName` lands.
 Results sort by entity name then socket name. Nothing is cached; the caller caches.
 
+**Which meshes a prefab renders, without spawning it.** `ReadPrefabMeshes(assets, prefab) →
+AssetResult<vector<PrefabMesh>>` (same header) is the same walk asked a different question: it
+reports every entity whose `MeshRenderer` names a cooked mesh (a recipe `Source` has no id, so it is
+skipped), each as a `PrefabMesh { EntityName; Mesh; RootSpace }` with `RootSpace` composed exactly
+as `PrefabSocket::RootSpace` is — the root's own `Transform` left out, so a root entity reports the
+identity. It shares `ReadPrefabSockets`' flatten and compose code, so the two cannot disagree about
+where an entity sits. It reads **no** mesh: the ids it returns are the input to the per-mesh CPU
+reads, which is the point — a headless server finds a prefab's skinned mesh here, reads its skeleton
+through `AssetManager::ReadMeshSkeleton`, and places joints by `W · RootSpace ·
+Skeleton::JointModelTransform` with nothing made resident (see [../Asset/CLAUDE.md](../Asset/CLAUDE.md)).
+Results sort by entity name, flattened authored order breaking a tie; an entity sharing another's
+mesh is still reported on its own. Nothing is cached.
+
 ## Spatial version
 
 A `Scene` carries a monotonic **spatial version counter** (`GetSpatialVersion()`): it bumps on any

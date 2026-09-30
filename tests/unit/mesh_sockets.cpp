@@ -3,8 +3,9 @@
 // Mesh::FindSocket and AttachToSocket read. Covers the sorted binary search, the miss paths that
 // must return rather than assert, and the composed world transform an attached child ends up at —
 // including the orientation contract (a socket's local -Z is forward, +Y is up). The CPU reads —
-// ParseCookedMeshSockets, AssetManager::ReadMeshSockets and ReadPrefabSockets — run against
-// hand-built cooked blobs in a memory mount, through a manager whose Context is never initialized.
+// ParseCookedMeshSockets, AssetManager::ReadMeshSockets, ReadPrefabSockets and ReadPrefabMeshes —
+// run against hand-built cooked blobs in a memory mount, through a manager whose Context is never
+// initialized.
 // The CPU skeleton reads — ReadSkeleton and ReadMeshSkeleton — run the same way, against the resident
 // load of the same blob.
 
@@ -248,17 +249,20 @@ namespace
         return Record(types, renderer);
     }
 
-    // A cooked prefab blob over plain (non-nesting) entities.
-    vector<u8> PrefabBlob(std::span<const vector<Prefab::Component>> entities)
+    // A cooked prefab blob; entity i nests `nested[i]` when that is valid, and is plain otherwise.
+    vector<u8> PrefabBlob(std::span<const vector<Prefab::Component>> entities,
+                          std::span<const AssetId> nested = {})
     {
         vector<CookedPrefabEntity> entityTable;
         vector<CookedPrefabComponent> componentTable;
         vector<u8> records;
-        for (const vector<Prefab::Component>& components : entities)
+        for (usize i = 0; i < entities.size(); ++i)
         {
+            const vector<Prefab::Component>& components = entities[i];
             entityTable.push_back(
                 CookedPrefabEntity{.FirstComponent = static_cast<u32>(componentTable.size()),
-                                   .ComponentCount = static_cast<u32>(components.size())});
+                                   .ComponentCount = static_cast<u32>(components.size()),
+                                   .NestedPrefab = i < nested.size() ? nested[i].Value : 0});
             for (const Prefab::Component& component : components)
             {
                 componentTable.push_back(
@@ -439,6 +443,121 @@ TEST_CASE("ReadPrefabSockets composes a child mesh's sockets into prefab-root sp
     CHECK(headless.Assets->CachedEntry(TwoLevelPrefabId) == nullptr);
     CHECK(headless.Assets->CachedEntry(BaseMeshId) == nullptr);
     CHECK(headless.Assets->CachedEntry(LimbMeshId) == nullptr);
+}
+
+namespace
+{
+    constexpr AssetId MeshPrefabId{0x35909A1570FD0A49ULL};
+    constexpr AssetId NestedBodyPrefabId{0x8E7D9662F732984CULL};
+    constexpr AssetId NestingPrefabId{0xFA1011BA97C0BD1CULL};
+    constexpr AssetId BarePrefabId{0x10FF07C5DC9B75B1ULL};
+}
+
+TEST_CASE("ReadPrefabMeshes reports the mesh a prefab renders and leaves nothing resident")
+{
+    HeadlessAssets headless;
+    const TypeRegistry& types = headless.Types;
+
+    // The root's own placement is left out of root space, so its mesh sits at the identity.
+    const vector<Prefab::Component> entities[] = {
+        {Record(types, Name{"body"}), Record(types, Transform{.Position = vec3(10.0f, 0.0f, 0.0f)}),
+         MeshRecord(types, BaseMeshId)},
+    };
+    ArchiveWriter writer;
+    writer.Add(BaseMeshId, AssetTypes::Mesh, MeshBlob({}));
+    writer.Add(MeshPrefabId, AssetTypes::Prefab, PrefabBlob(entities));
+    const MountHandle mount = headless.Assets->MountMemory(writer.Build(), "mesh_prefab");
+
+    const AssetResult<vector<PrefabMesh>> meshes = ReadPrefabMeshes(*headless.Assets, MeshPrefabId);
+    REQUIRE(meshes.has_value());
+    REQUIRE(meshes->size() == 1);
+    CHECK((*meshes)[0].Mesh == BaseMeshId);
+    CHECK((*meshes)[0].EntityName == "body");
+    CheckVec((*meshes)[0].RootSpace.Position, vec3(0.0f));
+
+    CHECK(headless.Assets->CachedEntry(MeshPrefabId) == nullptr);
+    CHECK(headless.Assets->CachedEntry(BaseMeshId) == nullptr);
+}
+
+TEST_CASE("ReadPrefabMeshes composes a nested prefab's child transform into prefab-root space")
+{
+    HeadlessAssets headless;
+    const TypeRegistry& types = headless.Types;
+
+    // The body: a root drawing the base mesh, and a child turned a quarter about +Y drawing the
+    // limb. The nesting entity's Transform replaces the body root's whole, so the body root's
+    // own placement never reaches the result.
+    const Transform childLocal{.Position = vec3(0.0f, 0.0f, -2.0f), .Rotation = QuarterTurnY()};
+    const vector<Prefab::Component> body[] = {
+        {Record(types, Name{"pivot"}),
+         Record(types, Transform{.Position = vec3(100.0f, 0.0f, 0.0f)}),
+         MeshRecord(types, BaseMeshId)},
+        {Record(types, Name{"arm"}), Record(types, childLocal),
+         Record(types, Hierarchy{.Parent = Entity{.Index = 0, .Generation = 0}}),
+         MeshRecord(types, LimbMeshId)},
+    };
+
+    // The outer prefab: a mesh-less root, and a nesting entity under it that expands the body.
+    const Transform mountLocal{.Position = vec3(1.0f, 2.0f, 3.0f)};
+    const vector<Prefab::Component> outer[] = {
+        {Record(types, Name{"frame"}),
+         Record(types, Transform{.Position = vec3(5.0f, 0.0f, 0.0f)})},
+        {Record(types, Name{"mount"}), Record(types, mountLocal),
+         Record(types, Hierarchy{.Parent = Entity{.Index = 0, .Generation = 0}})},
+    };
+    const AssetId nesting[] = {AssetId{}, NestedBodyPrefabId};
+
+    ArchiveWriter writer;
+    writer.Add(BaseMeshId, AssetTypes::Mesh, MeshBlob({}));
+    writer.Add(LimbMeshId, AssetTypes::Mesh, MeshBlob({}));
+    writer.Add(NestedBodyPrefabId, AssetTypes::Prefab, PrefabBlob(body));
+    writer.Add(NestingPrefabId, AssetTypes::Prefab, PrefabBlob(outer, nesting));
+    const MountHandle mount = headless.Assets->MountMemory(writer.Build(), "nested_mesh_prefab");
+
+    const AssetResult<vector<PrefabMesh>> meshes =
+        ReadPrefabMeshes(*headless.Assets, NestingPrefabId);
+    REQUIRE(meshes.has_value());
+    REQUIRE(meshes->size() == 2);
+
+    // Sorted by entity name; the body root reports under the nesting entity's name.
+    const PrefabMesh& arm = (*meshes)[0];
+    const PrefabMesh& mounted = (*meshes)[1];
+    CHECK(arm.EntityName == "arm");
+    CHECK(arm.Mesh == LimbMeshId);
+    CHECK(mounted.EntityName == "mount");
+    CHECK(mounted.Mesh == BaseMeshId);
+
+    CheckVec(mounted.RootSpace.Position, mountLocal.Position);
+    const mat4 composed = LocalMatrix(mountLocal) * LocalMatrix(childLocal);
+    CheckVec(arm.RootSpace.Position, vec3(composed[3]));
+    CheckVec(arm.RootSpace.Rotation * vec3(0.0f, 0.0f, -1.0f), vec3(-1.0f, 0.0f, 0.0f));
+
+    for (const AssetId id : {NestingPrefabId, NestedBodyPrefabId, BaseMeshId, LimbMeshId})
+    {
+        CHECK(headless.Assets->CachedEntry(id) == nullptr);
+    }
+}
+
+TEST_CASE("ReadPrefabMeshes reports nothing for a mesh-less prefab and an error for a missing one")
+{
+    HeadlessAssets headless;
+    const TypeRegistry& types = headless.Types;
+
+    const vector<Prefab::Component> entities[] = {
+        {Record(types, Name{"empty"}), Record(types, Transform{})},
+    };
+    ArchiveWriter writer;
+    writer.Add(BarePrefabId, AssetTypes::Prefab, PrefabBlob(entities));
+    const MountHandle mount = headless.Assets->MountMemory(writer.Build(), "bare_prefab");
+
+    const AssetResult<vector<PrefabMesh>> none = ReadPrefabMeshes(*headless.Assets, BarePrefabId);
+    REQUIRE(none.has_value());
+    CHECK(none->empty());
+
+    const AssetResult<vector<PrefabMesh>> missing =
+        ReadPrefabMeshes(*headless.Assets, MeshPrefabId);
+    REQUIRE_FALSE(missing.has_value());
+    CHECK(missing.error().Kind == AssetError::NotFound);
 }
 
 namespace

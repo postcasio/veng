@@ -14,10 +14,10 @@
 ///
 /// The **resident** reads — FindMeshSocket and AttachToSocket — resolve a live entity's loaded
 /// mesh, and are what places something in a presented scene. The **CPU** reads —
-/// AssetManager::ReadMeshSockets and ReadPrefabSockets — decode the cooked data directly and make
-/// nothing resident, for a process that reasons about where things attach without presenting the
-/// model (a headless process, a planner, a tool). Both decode the same cooked socket table, so
-/// they cannot disagree.
+/// AssetManager::ReadMeshSockets, ReadPrefabSockets and ReadPrefabMeshes — decode the cooked data
+/// directly and make nothing resident, for a process that reasons about where things attach
+/// without presenting the model (a headless process, a planner, a tool). Both decode the same
+/// cooked socket table, so they cannot disagree.
 
 namespace Veng
 {
@@ -102,4 +102,45 @@ namespace Veng
     ///         prefab, or a mesh.
     [[nodiscard]] AssetResult<vector<PrefabSocket>> ReadPrefabSockets(const AssetManager& assets,
                                                                       AssetId prefab);
+
+    /// @brief One cooked mesh a prefab renders, placed in prefab-root space.
+    struct PrefabMesh
+    {
+        /// @brief The Name component of the prefab entity drawing the mesh.
+        ///
+        /// Empty when that entity carries no Name. It is how the drawing entity is reached once the
+        /// prefab is spawned.
+        string EntityName;
+        /// @brief The cooked mesh the entity's MeshRenderer names.
+        AssetId Mesh;
+        /// @brief The drawing entity's transform relative to its prefab root.
+        ///
+        /// Composed exactly as PrefabSocket::RootSpace is: up the entity chain to — but not
+        /// including — the root the entity descends from, so the root's own Transform is left out
+        /// and a root entity reports the identity. An entity placing that root at world transform W
+        /// draws the mesh at W · RootSpace.
+        Transform RootSpace;
+    };
+
+    /// @brief Reads which cooked meshes a prefab renders, in prefab-root space, making nothing resident.
+    ///
+    /// Walks the cooked prefab the way ReadPrefabSockets does — never loading it, expanding nested
+    /// prefabs exactly as Prefab::SpawnInto expands them — and reports one entry per entity whose
+    /// MeshRenderer names a cooked Mesh and carries an empty inline recipe Source (a recipe
+    /// replaces the cooked mesh at spawn, so it has no AssetId to report). MeshRenderer::Visible is
+    /// not consulted, and an entity rendering the same mesh as another is reported on its own.
+    ///
+    /// The meshes themselves are not read: the result names them, and a caller reads what it needs
+    /// through the CPU reads on AssetManager — AssetManager::ReadMeshSkeleton for a skinned mesh's
+    /// joints, AssetManager::ReadMeshSockets for its sockets — so a headless process places a
+    /// prefab's skinned-mesh joints with no GPU residency at all. No render context is used and
+    /// nothing is cached (the caller caches).
+    /// @param assets  The manager whose mounted archives hold the prefab; its TypeRegistry must
+    ///                know the builtin component types.
+    /// @param prefab  The AssetTypes::Prefab asset to read.
+    /// @return The rendered meshes, sorted by EntityName (flattened authored order breaks a tie) —
+    ///         empty for a prefab that renders nothing — or the first NotFound / WrongType / Corrupt
+    ///         error met reading the prefab or a nested prefab.
+    [[nodiscard]] AssetResult<vector<PrefabMesh>> ReadPrefabMeshes(const AssetManager& assets,
+                                                                   AssetId prefab);
 }
