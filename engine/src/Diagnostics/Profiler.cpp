@@ -67,6 +67,7 @@ namespace Veng::Diagnostics
 
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <cstring>
 #include <filesystem>
 #include <mutex>
@@ -84,10 +85,14 @@ namespace Veng::Diagnostics
     {
         namespace
         {
-            /// @brief One entry on a thread's open-scope stack, holding child ticks for self-time.
+            /// @brief One entry on a thread's open-scope stack: child ticks for self-time, and its begin.
             struct ScopeStackEntry
             {
+                /// @brief Inclusive ticks of the nested scopes committed so far.
                 u64 ChildTicks = 0;
+                /// @brief The scope's begin, in NowTicks() ticks; a chunk armed while it is open
+                /// starts no later than this.
+                u64 Begin = 0;
             };
 
             /// @brief A thread's monotonic running totals for one scope name, drained by the frame fold.
@@ -206,10 +211,14 @@ namespace Veng::Diagnostics
                 // release store to WriteOffset and the collector's acquire load of it order the pair.
                 std::atomic<u64> TimestampBase{0};
                 std::atomic<u64> SequenceNumber{0};
+                /// @brief When the chunk was last armed, for the ring's age test; owner-only. Distinct
+                /// from TimestampBase, which may be back-dated to a record measured earlier.
+                u64 ArmTicks = 0;
 
                 /// @brief Re-arms the chunk for reuse with a fresh base and sequence, writing its header.
                 void Arm(u64 base, u64 sequence)
                 {
+                    ArmTicks = NowTicks();
                     TimestampBase.store(base, std::memory_order_relaxed);
                     SequenceNumber.store(sequence, std::memory_order_relaxed);
                     ChunkHeader header;
@@ -219,6 +228,14 @@ namespace Veng::Diagnostics
                     header.RecordBytes = 0;
                     std::memcpy(Data.get(), &header, sizeof(header));
                     WriteOffset.store(sizeof(ChunkHeader), std::memory_order_release);
+                }
+
+                /// @brief Moves an empty chunk's base earlier, keeping its sequence number.
+                void Rebase(u64 base)
+                {
+                    TimestampBase.store(base, std::memory_order_relaxed);
+                    std::memcpy(Data.get() + offsetof(ChunkHeader, TimestampBase), &base,
+                                sizeof(base));
                 }
 
                 /// @brief Writes the sealed record byte count into the header before hand-off.
@@ -252,6 +269,8 @@ namespace Veng::Diagnostics
             ThreadId Id = 0;
             string Name;
 
+            /// @brief The thread's ring, in ring order. The owner reads it unlocked and changes it (a
+            /// ring growing) only under the registry lock, which every collector walking it holds.
             vector<Unique<Chunk>> Chunks;
             usize CurrentChunk = 0;
             u64 NextSequence = 0;
@@ -277,6 +296,8 @@ namespace Veng::Diagnostics
             // last-active frame) while BeginFrame advances it, so it is atomic. Frame indexing is
             // approximate to within a frame at the hot path, which is all a record needs.
             std::atomic<u64> FrameIndex{0};
+            /// @brief Config.RingDurationSeconds in trace-clock ticks; 0 keeps every ring fixed.
+            u64 RingDurationTicks = 0;
 
             std::mutex RegistryMutex;
             vector<Unique<ThreadState>> Threads;
@@ -385,16 +406,93 @@ namespace Veng::Diagnostics
                 (void)&t_ExitGuard;
             }
 
+            /// @brief The base a chunk armed now takes: @p earliest, or the outermost open scope's
+            /// begin if that is earlier.
+            ///
+            /// A scope's record is written when it commits, so a chunk armed while it is open must
+            /// start no later than it began, or the record would precede its own chunk's base.
+            u64 ArmBase(const ThreadState& state, u64 earliest)
+            {
+                return state.Stack.empty() ? earliest
+                                           : std::min(earliest, state.Stack.front().Begin);
+            }
+
             /// @brief Re-arms every chunk of a thread that last recorded under an earlier capture epoch,
             /// discarding what it held.
-            void AdoptEpoch(ThreadState& state, u64 epoch)
+            void AdoptEpoch(ThreadState& state, u64 epoch, u64 earliest)
             {
+                const u64 base = ArmBase(state, earliest);
                 for (auto& chunk : state.Chunks)
                 {
-                    chunk->Arm(NowTicks(), state.NextSequence++);
+                    chunk->Arm(base, state.NextSequence++);
                 }
                 state.CurrentChunk = 0;
                 state.Epoch.store(epoch, std::memory_order_relaxed);
+            }
+
+            /// @brief True when discarding the ring's oldest chunk would leave less history than the
+            /// ring keeps, and one more chunk stays within the thread's byte cap.
+            bool ShouldGrowRing(const ThreadState& state, usize oldest)
+            {
+                const ProfilerState& profiler = *state.Owner;
+                if (profiler.RingDurationTicks == 0)
+                {
+                    return false;
+                }
+                const u64 grownBytes =
+                    (static_cast<u64>(state.Chunks.size()) + 1) * profiler.Config.ChunkBytes;
+                if (grownBytes > profiler.Config.RingMaxBytesPerThread)
+                {
+                    return false;
+                }
+                // What survives a discard starts where the chunk after the oldest began.
+                const Chunk& survivor = *state.Chunks[(oldest + 1) % state.Chunks.size()];
+                return NowTicks() - survivor.ArmTicks < profiler.RingDurationTicks;
+            }
+
+            /// @brief Seals the current chunk and returns the chunk now current, armed at @p base.
+            ///
+            /// Streaming hands the chunk to the sink and reuses it in place. Ringing advances to the
+            /// oldest chunk, discarding it whole if it still holds records, unless the ring is
+            /// younger than its duration, in which case a new chunk is inserted ahead of it instead.
+            Chunk* AdvanceChunk(ThreadState& state, u64 base)
+            {
+                ProfilerState& profiler = *state.Owner;
+                Chunk* current = state.Chunks[state.CurrentChunk].get();
+                if (profiler.Sink)
+                {
+                    profiler.HandChunkToSink(state, *current);
+                    current->Arm(base, state.NextSequence++);
+                    return current;
+                }
+
+                const usize oldest = (state.CurrentChunk + 1) % state.Chunks.size();
+                Chunk* target = state.Chunks[oldest].get();
+                if (!target->IsEmpty())
+                {
+                    if (ShouldGrowRing(state, oldest))
+                    {
+                        auto grown = CreateUnique<Chunk>();
+                        grown->Capacity = profiler.Config.ChunkBytes;
+                        grown->Data = Unique<u8[]>(new u8[profiler.Config.ChunkBytes]);
+                        grown->Arm(base, state.NextSequence++);
+                        Chunk* raw = grown.get();
+                        const usize at = state.CurrentChunk + 1;
+                        {
+                            const std::scoped_lock lock(profiler.RegistryMutex);
+                            state.Chunks.insert(state.Chunks.begin() +
+                                                    static_cast<std::ptrdiff_t>(at),
+                                                std::move(grown));
+                        }
+                        state.CurrentChunk = at;
+                        return raw;
+                    }
+                    profiler.DroppedEvents.fetch_add(target->RecordCount(),
+                                                     std::memory_order_relaxed);
+                }
+                target->Arm(base, state.NextSequence++);
+                state.CurrentChunk = oldest;
+                return target;
             }
 
             /// @brief Appends one built record, streaming or ring-wrapping when the current chunk fills.
@@ -404,40 +502,35 @@ namespace Veng::Diagnostics
             void EmitEvent(ThreadState& state, RecordType type, u32 track, NameId name,
                            u64 beginAbs, u64 endAbs, u64 valueBits, u64 frame)
             {
-                ProfilerState& profiler = *state.Owner;
+                const ProfilerState& profiler = *state.Owner;
                 if (const u64 epoch = profiler.CaptureEpoch.load(std::memory_order_acquire);
                     state.Epoch.load(std::memory_order_relaxed) != epoch)
                 {
-                    AdoptEpoch(state, epoch);
+                    AdoptEpoch(state, epoch, std::min(NowTicks(), beginAbs));
                 }
                 Chunk* chunk = state.Chunks[state.CurrentChunk].get();
-                u32 offset = chunk->WriteOffset.load(std::memory_order_relaxed);
 
-                if (offset + RecordStride > chunk->Capacity)
+                if (beginAbs < chunk->TimestampBase.load(std::memory_order_relaxed))
                 {
-                    if (profiler.Sink)
+                    // A back-dated record — a span measured elsewhere, such as on the GPU — predates
+                    // this chunk. Deltas are unsigned, so rather than clamp it the chunk is sealed and
+                    // the next one starts at the record's begin.
+                    const u64 base = ArmBase(state, beginAbs);
+                    if (chunk->IsEmpty())
                     {
-                        // Streaming drain: seal and hand the full chunk over, then reuse it in place.
-                        profiler.HandChunkToSink(state, *chunk);
-                        chunk->Arm(NowTicks(), state.NextSequence++);
+                        chunk->Rebase(base);
                     }
                     else
                     {
-                        // Ring drain: advance to the next chunk, discarding it whole if it still holds
-                        // un-drained records (the ring wrapping onto live data).
-                        const usize next = (state.CurrentChunk + 1) % state.Chunks.size();
-                        Chunk* target = state.Chunks[next].get();
-                        if (!target->IsEmpty())
-                        {
-                            profiler.DroppedEvents.fetch_add(target->RecordCount(),
-                                                             std::memory_order_relaxed);
-                        }
-                        target->Arm(NowTicks(), state.NextSequence++);
-                        state.CurrentChunk = next;
-                        chunk = target;
+                        chunk = AdvanceChunk(state, base);
                     }
-                    offset = chunk->WriteOffset.load(std::memory_order_relaxed);
                 }
+                else if (chunk->WriteOffset.load(std::memory_order_relaxed) + RecordStride >
+                         chunk->Capacity)
+                {
+                    chunk = AdvanceChunk(state, ArmBase(state, beginAbs));
+                }
+                const u32 offset = chunk->WriteOffset.load(std::memory_order_relaxed);
 
                 EventRecord record;
                 record.Type = static_cast<u8>(type);
@@ -445,10 +538,10 @@ namespace Veng::Diagnostics
                 record.Name = name;
                 record.Frame = static_cast<u32>(frame);
                 const u64 base = chunk->TimestampBase.load(std::memory_order_relaxed);
-                record.BeginDelta = beginAbs >= base ? beginAbs - base : 0;
+                record.BeginDelta = beginAbs - base;
                 if (type == RecordType::ScopeComplete)
                 {
-                    record.EndOrValue = endAbs >= base ? endAbs - base : 0;
+                    record.EndOrValue = std::max(endAbs, beginAbs) - base;
                 }
                 else if (type == RecordType::Counter)
                 {
@@ -1018,9 +1111,12 @@ namespace Veng::Diagnostics
             return state->Owner->Intern(name);
         }
 
-        void EnterScope(ThreadState* state) noexcept
+        u64 EnterScope(ThreadState* state) noexcept
         {
             state->Stack.push_back(ScopeStackEntry{});
+            const u64 begin = NowTicks();
+            state->Stack.back().Begin = begin;
+            return begin;
         }
 
         void CommitScope(ThreadState* state, NameId name, u64 beginTicks, u64 endTicks) noexcept
@@ -1127,6 +1223,10 @@ namespace Veng::Diagnostics
     {
         m_State->Config = config;
         m_State->Mode = config.InitialMode;
+        m_State->RingDurationTicks = config.RingDurationSeconds > 0.0
+                                         ? static_cast<u64>(config.RingDurationSeconds *
+                                                            static_cast<f64>(TraceTickFrequency()))
+                                         : 0;
         m_State->IdToString.reserve(config.StringTableCapacity);
         m_State->StringToId.reserve(config.StringTableCapacity);
 

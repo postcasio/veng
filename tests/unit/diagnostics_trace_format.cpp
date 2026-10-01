@@ -11,12 +11,14 @@
 
 #include <doctest/doctest.h>
 
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <limits>
 #include <span>
+#include <thread>
 
 #include <Veng/Diagnostics/FileTraceSink.h>
 #include <Veng/Diagnostics/Profiler.h>
@@ -992,5 +994,52 @@ TEST_CASE("FileTraceSink: a live profiler capture writes a decodable file")
         }
     }
     CHECK(sawScope);
+}
+
+TEST_CASE("FileTraceSink: a back-dated span keeps its timestamps through a capture")
+{
+    const std::filesystem::path out =
+        Veng::TestSupport::TempDir() / "captures" / "back-dated.vtrace";
+
+    ProfilerConfig config;
+    config.ChunkBytes = sizeof(TraceFormat::ChunkHeader) + 4 * TraceFormat::RecordStride;
+    Profiler profiler(config);
+    profiler.SetRingEnabled(true);
+    const TrackId gpu = profiler.CreateTrack("GPU", TrackRole::Gpu);
+    const NameId pass = profiler.InternName("BackDatedPass");
+
+    // A span measured before the capture began, and so before every chunk the capture streams.
+    const u64 before = NowTicks();
+    const u64 spanBegin = before - 2000;
+    const u64 spanEnd = before - 1000;
+    REQUIRE(profiler.BeginCapture(out));
+    for (int i = 0; i < 5; ++i)
+    {
+        VE_PROFILE_INSTANT("FillsAChunk");
+    }
+    profiler.EmitScope(gpu, pass, spanBegin, spanEnd, profiler.GetFrameIndex());
+    REQUIRE(profiler.EndCapture());
+    for (int i = 0; i < 500 && profiler.GetState().WriterDraining; ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+
+    const DecodedTrace t = Decode(ReadFile(out));
+    CHECK(t.Complete);
+    optional<DecodedEvent> span;
+    for (const DecodedChunk& chunk : t.Chunks)
+    {
+        for (const DecodedEvent& e : chunk.Events)
+        {
+            if (t.Resolve(e.Name) == "BackDatedPass")
+            {
+                span = e;
+            }
+        }
+    }
+    REQUIRE(span.has_value());
+    CHECK(span->Track == gpu);
+    CHECK(span->BeginTicks == spanBegin);
+    CHECK(span->EndTicks - span->BeginTicks == spanEnd - spanBegin);
 }
 #endif

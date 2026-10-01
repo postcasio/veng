@@ -58,22 +58,33 @@ namespace Veng::Diagnostics
 
     /// @brief Construction parameters for a Profiler; every field is a tuning knob with a memory cost.
     ///
-    /// Per-thread buffer memory is ChunkBytes * ChunksPerThread, reserved lazily as
-    /// each thread first records. The whole-buffer ceiling is that times MaxThreads.
+    /// Per-thread buffer memory starts at ChunkBytes * ChunksPerThread, reserved as each
+    /// thread first records, and a ring grows from there toward RingDurationSeconds of
+    /// history, never past RingMaxBytesPerThread. The whole-buffer ceiling is the larger
+    /// of the two per-thread figures times MaxThreads.
     struct ProfilerConfig
     {
         /// @brief Bytes in one buffer chunk. A chunk is the granularity handed to the sink and the
         /// unit discarded on ring wrap. Cost: this many bytes per live chunk.
         u32 ChunkBytes = 64 * 1024;
 
-        /// @brief Chunks retained per thread. The per-thread ring depth. Cost: ChunkBytes * this per
-        /// recording thread.
+        /// @brief Chunks each thread starts with: the ring's initial depth, and its whole depth when
+        /// RingDurationSeconds is zero. Cost: ChunkBytes * this per recording thread.
         u32 ChunksPerThread = 4;
 
-        /// @brief Seconds of history the ring aims to retain; a buffer-sizing input honoured only to
-        /// within one chunk, since wrapping discards a whole chunk at a time. Consumed by capture
-        /// policy, not by this core.
+        /// @brief Seconds of history the ring retains per thread before it discards anything.
+        ///
+        /// When a ring wraps onto its oldest chunk and discarding it would leave less than this
+        /// much history, the ring grows by a chunk instead, so a dense thread keeps the same span
+        /// a sparse one does. Growth stops at RingMaxBytesPerThread, past which the ring discards
+        /// as a fixed ring would. Zero keeps the ring at ChunksPerThread.
         f64 RingDurationSeconds = 5.0;
+
+        /// @brief Ceiling on one thread's ring, in bytes, however short of RingDurationSeconds it is.
+        ///
+        /// The bound on what a growing ring may cost; a ring already at or past it at
+        /// ChunksPerThread never grows. Cost: up to this many bytes per densely recording thread.
+        u64 RingMaxBytesPerThread = 32ull * 1024ull * 1024ull;
 
         /// @brief Maximum threads that may register concurrently. A further registration is accounted
         /// as an overflow rather than growing the registry. Cost: bounds the buffer ceiling above.
@@ -263,6 +274,8 @@ namespace Veng::Diagnostics
         /// frames after it executed is stamped with the frame that ran it, not the
         /// current one. The trace format encodes a frame earlier than a chunk's base as
         /// a small negative delta, so a back-dated span reads on the frame it belongs to.
+        /// A span beginning before the calling thread's current chunk does keeps its
+        /// timestamps: the thread seals that chunk and starts the next at the span's begin.
         /// @param track       The track to emit onto; 0 emits onto the caller's thread track.
         /// @param name        The span's interned name id.
         /// @param beginTicks  Span start, in the NowTicks() trace-clock domain.
@@ -336,12 +349,12 @@ namespace Veng::Diagnostics
 
         /// @brief Dumps the retained ring to @p path — the reaction to a hitch that already happened.
         ///
-        /// Freezes the ring, walks each thread's live chunks in sequence order from the oldest, and
-        /// writes them (with the full string table, since there is no earlier delta to build on)
-        /// through the off-thread writer, then resumes. Because a wrap discards a whole chunk, the
-        /// dump honours the configured duration only to within one chunk — it may carry rather more
-        /// than N seconds, never reliably less. Fails if a capture is running (the buffers are serving
-        /// it, and there is no ring to dump).
+        /// Walks each thread's live chunks in sequence order from the oldest and writes them (with
+        /// the full string table, since there is no earlier delta to build on) through the
+        /// off-thread writer, while recording continues. A ring discards only history older than
+        /// RingDurationSeconds, so the dump carries at least that much of each thread — rather
+        /// more, by up to a chunk — unless RingMaxBytesPerThread bound first. Fails if a capture is
+        /// running (the buffers are serving it, and there is no ring to dump).
         /// @param path  Destination file; its parent directory is created if absent.
         /// @return The written path on success; a located error if a capture is running.
         Result<path> DumpRing(const path& path);
@@ -479,11 +492,17 @@ namespace Veng::Diagnostics::Detail
     /// @return The interned id.
     [[nodiscard]] NameId InternDynamic(ThreadState* state, string_view name) noexcept;
 
-    /// @brief Pushes an open-scope frame for self-time accounting; paired with CommitScope.
-    void EnterScope(ThreadState* state) noexcept;
+    /// @brief Pushes an open-scope frame for self-time accounting and stamps its begin; paired with
+    /// CommitScope.
+    ///
+    /// The begin is kept on the thread's stack so a chunk armed while the scope is open takes a
+    /// base no later than it, and the scope's record fits that chunk when it commits.
+    /// @param state  The calling thread's state.
+    /// @return The scope's begin, in NowTicks() ticks.
+    [[nodiscard]] u64 EnterScope(ThreadState* state) noexcept;
 
     /// @brief Records a completed scope: aggregates it always, and buffers it while recording.
-    void CommitScope(ThreadState* state, NameId name, u64 beginNanos, u64 endNanos) noexcept;
+    void CommitScope(ThreadState* state, NameId name, u64 beginTicks, u64 endTicks) noexcept;
 
     /// @brief Records a sampled counter value.
     void CommitCounter(ThreadState* state, NameId name, f64 value) noexcept;
@@ -522,8 +541,7 @@ namespace Veng::Diagnostics::Detail
             if (m_State)
             {
                 m_Name = ResolveLiteralName(m_State, name);
-                EnterScope(m_State);
-                m_Begin = NowTicks();
+                m_Begin = EnterScope(m_State);
             }
         }
 
@@ -534,8 +552,7 @@ namespace Veng::Diagnostics::Detail
             if (m_State)
             {
                 m_Name = InternDynamic(m_State, name);
-                EnterScope(m_State);
-                m_Begin = NowTicks();
+                m_Begin = EnterScope(m_State);
             }
         }
 
@@ -550,8 +567,7 @@ namespace Veng::Diagnostics::Detail
             if (m_State)
             {
                 m_Name = name;
-                EnterScope(m_State);
-                m_Begin = NowTicks();
+                m_Begin = EnterScope(m_State);
             }
         }
 

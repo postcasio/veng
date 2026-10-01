@@ -180,10 +180,15 @@ extern "C"
 /// Version 40 adds the Application::OnWorldDeparted virtual after OnWorldPresentAbandoned. A module
 /// subclasses Application, so a stale module carries a vtable short of the slot the host dispatches
 /// through when a world leaves presentation.
+/// Version 41 grows ApplicationInfo with the profiler's construction parameters, World with its
+/// interned profiler scope names, and the profiler's inline scope timer with the begin it now takes
+/// from EnterScope. A module constructs the ApplicationInfo it hands back, reads a world through
+/// inline accessors, and instantiates the scope macros, so a stale module lays the info struct out
+/// short and calls the scope entry point under its old signature.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 40u
+#define VENG_MODULE_ABI_VERSION 41u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

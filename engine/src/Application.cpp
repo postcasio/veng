@@ -162,7 +162,7 @@ namespace Veng
 
     Application::Application(ApplicationInfo info, TypeRegistry& types, SystemRegistry& systems)
         : m_Info(std::move(info)), m_TypeRegistry(types), m_SystemRegistry(systems),
-          m_Compositor(m_RenderContext)
+          m_Profiler(m_Info.Profiler), m_Compositor(m_RenderContext)
     {
     }
 
@@ -3138,6 +3138,7 @@ namespace Veng
             if (m_GpuTrack == 0)
             {
                 m_GpuTrack = m_Profiler.CreateTrack("GPU", Diagnostics::TrackRole::Gpu);
+                m_GpuFrameName = m_Profiler.InternName("GPU Frame");
             }
 
             const u64 frequency = Diagnostics::TraceTickFrequency();
@@ -3149,14 +3150,20 @@ namespace Veng
 
             // The enclosing whole-frame GPU scope, so the track flamegraphs like a CPU one.
             const u64 frameNanos = static_cast<u64>(context.GetLastGpuFrameTimeMs() * 1.0e6f);
-            m_Profiler.EmitScope(m_GpuTrack, m_Profiler.InternName("GPU Frame"), anchorTicks,
+            m_Profiler.EmitScope(m_GpuTrack, m_GpuFrameName, anchorTicks,
                                  anchorTicks + nanosToTicks(frameNanos), readbackFrame);
 
             // Each pass placed by its begin/end ticks; nesting falls out of tick containment (the
             // depth the accessor now carries reconstructs the same tree).
             for (const Renderer::Context::GpuPassTiming& pass : timings)
             {
-                m_Profiler.EmitScope(m_GpuTrack, m_Profiler.InternName(pass.Name),
+                auto name = m_GpuPassNames.find(pass.Name);
+                if (name == m_GpuPassNames.end())
+                {
+                    name =
+                        m_GpuPassNames.emplace(pass.Name, m_Profiler.InternName(pass.Name)).first;
+                }
+                m_Profiler.EmitScope(m_GpuTrack, name->second,
                                      anchorTicks + nanosToTicks(pass.BeginNanos),
                                      anchorTicks + nanosToTicks(pass.EndNanos), readbackFrame);
             }

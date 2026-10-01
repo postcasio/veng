@@ -78,6 +78,13 @@ namespace Veng
         auto world = CreateUnique<World>();
         world->Id = MintId();
         world->Clock = SimClock(SimClockInfo{.TickRate = info.SimTickRate});
+        if (Diagnostics::Profiler* profiler = Diagnostics::GetActiveProfiler(); profiler != nullptr)
+        {
+            // Named with the world's identity so several worlds read side by side rather than summed.
+            const string prefix = "World " + std::to_string(world->Id.Value);
+            world->SimScopeName = profiler->InternName(prefix + " Sim");
+            world->ViewScopeName = profiler->InternName(prefix + " View");
+        }
 
         if (info.Source.IsLoaded())
         {
@@ -287,11 +294,9 @@ namespace Veng
             }
 
             {
-                // Per-world Sim scope, named with the world's identity so several worlds read side
-                // by side rather than summed. The step counter distinguishes a heavy simulation from
-                // a frame that spiralled into multiple fixed-step catch-up steps.
-                const string simLabel = "World " + std::to_string(world->Id.Value) + " Sim";
-                VE_PROFILE_SCOPE_DYNAMIC(simLabel);
+                // The step counter distinguishes a heavy simulation from a frame that spiralled into
+                // multiple fixed-step catch-up steps.
+                VE_PROFILE_SCOPE_ID(world->SimScopeName);
                 VE_PROFILE_COUNTER("WorldRunner/SimSteps", static_cast<f64>(step.Steps));
 
                 for (u32 tickIndex = 0; tickIndex < step.Steps; ++tickIndex)
@@ -318,8 +323,7 @@ namespace Veng
 
             if (info.RunViewPhase && !IsCloseQueued(world->Id))
             {
-                const string viewLabel = "World " + std::to_string(world->Id.Value) + " View";
-                VE_PROFILE_SCOPE_DYNAMIC(viewLabel);
+                VE_PROFILE_SCOPE_ID(world->ViewScopeName);
                 scene.TickSimulationPhase(
                     SceneSystem::Phase::View, info.Delta,
                     info.BuildContext(world->Id, scene, world->Clock.GetTick(), step.Alpha, false));

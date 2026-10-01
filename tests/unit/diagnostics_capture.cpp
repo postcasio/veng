@@ -344,8 +344,9 @@ TEST_CASE(
     const std::filesystem::path dir = FreshDir("ringdump");
 
     ProfilerConfig config;
-    config.ChunkBytes = 256;    // ~7 records per chunk
-    config.ChunksPerThread = 2; // a shallow ring, so wrapping discards early
+    config.ChunkBytes = 256;          // ~7 records per chunk
+    config.ChunksPerThread = 2;       // a shallow ring, so wrapping discards early
+    config.RingDurationSeconds = 0.0; // and a fixed one, so the wrap discards rather than grows
     Profiler profiler(config);
     profiler.SetRingEnabled(true);
 
@@ -403,8 +404,9 @@ TEST_CASE("capture: a capture over a standing ring carries nothing recorded befo
     const std::filesystem::path dir = FreshDir("overring");
 
     ProfilerConfig config;
-    config.ChunkBytes = 256;    // ~7 records per chunk
-    config.ChunksPerThread = 4; // retained chunks a capture could wrongly sweep up
+    config.ChunkBytes = 256;          // ~7 records per chunk
+    config.ChunksPerThread = 4;       // retained chunks a capture could wrongly sweep up
+    config.RingDurationSeconds = 0.0; // a fixed ring, so the wrap discards rather than grows
     Profiler profiler(config);
     profiler.SetRingEnabled(true);
 

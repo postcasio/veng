@@ -6,7 +6,9 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <thread>
 
@@ -294,6 +296,7 @@ TEST_CASE("Ring wrap discards a whole chunk, counts the drop, and leaves survivo
     ProfilerConfig config;
     config.ChunkBytes = sizeof(ChunkHeader) + 4 * TraceFormat::RecordStride; // 4 records per chunk
     config.ChunksPerThread = 2;
+    config.RingDurationSeconds = 0.0; // a fixed ring, so the wrap discards rather than grows
 
     CapturingTestSink sink;
     {
@@ -326,6 +329,115 @@ TEST_CASE("Ring wrap discards a whole chunk, counts the drop, and leaves survivo
     }
     // Nine emitted, four discarded: five survive.
     CHECK(survivors == 5);
+}
+
+TEST_CASE("A ring keeps its duration of history, growing until its byte cap binds")
+{
+    constexpr u32 PerChunk = 4;
+    ProfilerConfig config;
+    config.ChunkBytes = sizeof(ChunkHeader) + PerChunk * TraceFormat::RecordStride;
+    config.ChunksPerThread = 2;
+
+    SUBCASE("the duration binds: nothing younger than it is discarded")
+    {
+        constexpr f64 DurationSeconds = 0.2;
+        config.RingDurationSeconds = DurationSeconds;
+        config.RingMaxBytesPerThread = 64ull * config.ChunkBytes;
+
+        CapturingTestSink sink;
+        {
+            Profiler profiler(config);
+            profiler.SetMode(ProfilerMode::Ring);
+
+            // Five times the initial ring, recorded well inside the duration: the ring grows.
+            for (u32 i = 0; i < 10 * PerChunk; ++i)
+            {
+                VE_PROFILE_INSTANT("Early");
+            }
+            CHECK(profiler.GetDroppedEventCount() == 0);
+
+            // Once that history is older than the duration, wrapping onto it discards it — one
+            // chunk per wrap, two wraps here — and nothing recorded since.
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            for (u32 i = 0; i < PerChunk + 1; ++i)
+            {
+                VE_PROFILE_INSTANT("Late");
+            }
+            CHECK(profiler.GetDroppedEventCount() == 2 * PerChunk);
+
+            profiler.SetSink(&sink); // destruction drains the surviving ring
+        }
+
+        u64 oldest = ~0ull;
+        u64 newest = 0;
+        usize survivors = 0;
+        for (const DecodedRecord& record : DecodeAll(sink))
+        {
+            oldest = std::min(oldest, record.BeginAbs);
+            newest = std::max(newest, record.BeginAbs);
+            ++survivors;
+        }
+        CHECK(survivors == 10 * PerChunk - 2 * PerChunk + PerChunk + 1);
+        const auto durationTicks =
+            static_cast<u64>(DurationSeconds * static_cast<f64>(TraceTickFrequency()));
+        CHECK(newest - oldest >= durationTicks);
+    }
+
+    SUBCASE("the byte cap binds before the duration")
+    {
+        config.RingDurationSeconds = 10.0;
+        config.RingMaxBytesPerThread = 4ull * config.ChunkBytes;
+
+        Profiler profiler(config);
+        profiler.SetMode(ProfilerMode::Ring);
+        for (u32 i = 0; i < 10 * PerChunk; ++i)
+        {
+            VE_PROFILE_INSTANT("Capped");
+        }
+        // The ring grew to four chunks and then discarded whole chunks as a fixed ring would.
+        CHECK(profiler.GetDroppedEventCount() == 10 * PerChunk - 4 * PerChunk);
+    }
+}
+
+TEST_CASE("A scope open across a chunk fill keeps its begin")
+{
+    CapturingTestSink sink;
+    ProfilerConfig config;
+    config.ChunkBytes = sizeof(ChunkHeader) + 4 * TraceFormat::RecordStride; // 4 records per chunk
+    {
+        Profiler profiler(config);
+        profiler.SetSink(&sink);
+        profiler.SetMode(ProfilerMode::Ring);
+        {
+            VE_PROFILE_SCOPE("Enclosing");
+            CHECK(Spin(1000) != 1);
+            // Five records fill the chunk the scope began in; the scope commits into the next one.
+            for (u32 i = 0; i < 5; ++i)
+            {
+                VE_PROFILE_INSTANT("Inside");
+            }
+        }
+    }
+
+    optional<DecodedRecord> enclosing;
+    u64 firstInside = ~0ull;
+    u64 lastInside = 0;
+    for (const DecodedRecord& record : DecodeAll(sink))
+    {
+        if (sink.GetString(record.Name) == "Enclosing")
+        {
+            enclosing = record;
+        }
+        else if (sink.GetString(record.Name) == "Inside")
+        {
+            firstInside = std::min(firstInside, record.BeginAbs);
+            lastInside = std::max(lastInside, record.BeginAbs);
+        }
+    }
+    REQUIRE(enclosing.has_value());
+    // The scope still contains everything recorded inside it.
+    CHECK(enclosing->BeginAbs <= firstInside);
+    CHECK(enclosing->EndAbs >= lastInside);
 }
 
 TEST_CASE("Two threads produce separable tracks")

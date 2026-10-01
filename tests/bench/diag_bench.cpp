@@ -85,6 +85,8 @@ int main()
     ProfilerConfig config;
     config.ChunkBytes = 8u * 1024u * 1024u;
     config.ChunksPerThread = 2;
+    // A fixed ring: growing toward a duration allocates, and the steady state never grows.
+    config.RingDurationSeconds = 0.0;
 
     // --- Recording-on per-scope cost (append + release store + aggregation) ------------------
     f64 recordingNs = 0.0;

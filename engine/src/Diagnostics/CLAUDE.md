@@ -55,7 +55,8 @@ The design constraint is that a scope costs **≤ 40 ns and allocates nothing**,
   re-resolves. The id is a profiler-global value, so one thread's resolve serves the rest — steady
   state is a cached read, not a hash lookup. The dynamic form (`VE_PROFILE_SCOPE_DYNAMIC`) hashes
   contents through the shared, mutex-guarded string table on every call and is the costlier path;
-  the engine's own high-cardinality call sites resolve those once at construction. New strings are published to the sink as
+  the engine's own runtime-named sites (systems, worlds, viewports, GPU passes) intern once, ahead of
+  the frame, and scope through `VE_PROFILE_SCOPE_ID`. New strings are published to the sink as
   `StringTableDelta`s.
 
 ### The trace clock
@@ -79,19 +80,32 @@ deltas, the values `EmitScope` takes — is in this **raw tick domain**; nanosec
 
 ### Buffers are rings of chunks, never rings of bytes
 
-Each thread holds `ChunksPerThread` fixed-size chunks in a circular array. Every chunk is
-**self-contained**: its own absolute timestamp base, the offset of its first record, and a monotonic
-sequence number (`TraceFormat.h`, the internal provisional encoding — the normative on-disk format is
-[docs/trace-format.md](../../../docs/trace-format.md)). A byte ring would overwrite the base its surviving deltas are relative to and leave
-variable-width records torn at an unlocatable boundary; a chunk ring cannot. The cost, documented
-rather than hidden, is that the ring's configured duration is honoured only **to within one chunk**.
+Each thread holds a circular array of fixed-size chunks, starting at `ChunksPerThread`. Every chunk
+is **self-contained**: its own absolute timestamp base, the offset of its first record, and a
+monotonic sequence number (`TraceFormat.h`, the internal provisional encoding — the normative on-disk
+format is [docs/trace-format.md](../../../docs/trace-format.md)). A byte ring would overwrite the
+base its surviving deltas are relative to and leave variable-width records torn at an unlocatable
+boundary; a chunk ring cannot.
+
+**A chunk's base is no later than any record in it, not the moment it was armed.** Record deltas are
+unsigned, so a record beginning before its chunk's base would clamp to it. Two cases would: a scope
+still open when a chunk is armed, and a span emitted back-dated (the GPU bridge's, a few frames old).
+So a chunk is armed at the earlier of the record that needed it and the outermost scope open on the
+thread (each open scope's begin rides its stack entry), and a back-dated record that still precedes
+the current chunk seals it and arms the next at the record's begin. Back-dated spans arrive in a burst
+per frame and each lands after the last, so this costs at most one extra chunk per readback.
 
 Two drain behaviours; the *policy* that selects between them is [Capture control](#capture-control):
 
 - **Streaming** (a non-null sink attached): when a chunk fills it is sealed, handed to the sink whole
   via `OnChunk`, and reused in place. No loss.
-- **Ring** (null sink): a filled chunk is retained; when the ring wraps onto a chunk that still holds
-  un-drained records, that whole chunk is **discarded** and the drop counter incremented.
+- **Ring** (null sink): a filled chunk is retained. When the ring wraps onto its oldest chunk and
+  discarding it would leave less than `RingDurationSeconds` of history (measured from when the next
+  chunk was armed), the ring **grows** by a chunk instead, under the registry lock every collector
+  walking the ring holds — one allocation per chunk filled while growing, none at steady state. At
+  `RingMaxBytesPerThread`, or once the history is long enough, the oldest chunk is **discarded** whole
+  and the drop counter incremented. A dense thread therefore keeps as many seconds as a sparse one,
+  until the byte cap binds; `RingDurationSeconds = 0` keeps the ring at `ChunksPerThread`.
 
 ### Recording, aggregation, and the two gates
 
@@ -229,7 +243,8 @@ The call sites that make a capture worth taking, plus the seam and bridge that p
   query, collider shape build and solver step, and `Scene/*` the transform snapshot and world-matrix
   pass — the work a crowded scene multiplies.
 - **Simulation, per world and per system.** `WorldRunner::Tick` carries an outer scope; each world's
-  Sim and View phases get a dynamic scope named by the world's identity, and the Sim phase records
+  Sim and View phases get a scope named by the world's identity, interned when the world opens
+  (`World::SimScopeName`/`ViewScopeName`), and the Sim phase records
   a `WorldRunner/SimSteps` counter (the fixed-step catch-up count). `SceneSimulation` **retains each
   system's registered name, interned once at construction** (`SystemNameOf` returns a `string` by
   value, so resolving it per frame would allocate on the hottest instrumentation path), and scopes
@@ -268,7 +283,8 @@ The call sites that make a capture worth taking, plus the seam and bridge that p
 - **The bridge back-dates.** `Application::BridgeGpuTimings()` runs once per frame after
   `Context::EndFrame()`, reads the timings **through the public `Context` accessors only**, and
   emits each pass as a scope-shaped event onto a virtual GPU track (`CreateTrack` once, then the
-  five-argument `EmitScope` that stamps an explicit frame index). The readback is N frames late, so
+  five-argument `EmitScope` that stamps an explicit frame index), each pass name interned once and
+  cached by name. The readback is N frames late, so
   each event is stamped with the frame that executed it — tracked per frame-in-flight slot
   (`m_GpuSlotFrame`/`m_GpuSlotAnchorTicks`), never the current frame. `EmitScope(track, name, begin,
   end, frameIndex)` is the frame-indexing primitive the format's negative-frame-delta encoding
@@ -313,15 +329,16 @@ continuous ring is the same buffers under a different policy, dumped after the f
   write offset, hands the capture to the off-thread writer to trailer and commit, restores the
   standing ring policy, and returns the written path. Fails if no capture is running (a located
   error, never an assert — it is reachable from an agent and a keypress).
-- **`SetRingEnabled(bool)`** — the standing continuous-ring policy (size = `RingDurationSeconds`). A
+- **`SetRingEnabled(bool)`** — the standing continuous-ring policy (at least `RingDurationSeconds`
+  of history per thread, up to `RingMaxBytesPerThread`; an application sets both, with the rest of
+  its `ProfilerConfig`, through `ApplicationInfo::Profiler`). A
   capture temporarily overrides the active mode; the ring is re-derived from this flag when the
   capture ends, so enabling it mid-capture takes effect on `EndCapture`.
 - **`DumpRing(path) -> Result<path>`** — walks each thread's live chunks in sequence order from the
   oldest, copying each up to its acquire-loaded write offset, and writes them with the **full**
   string table (a ring dump has no earlier delta to build on). **Recording is not suspended** —
-  producers keep appending throughout — so the dump is honoured to within one chunk, and a wrap
-  landing on a chunk mid-copy can tear that chunk (see [Verification](#verification)). Fails if a
-  capture is running.
+  producers keep appending throughout — and a wrap landing on a chunk mid-copy can tear that chunk
+  (see [Verification](#verification)). Fails if a capture is running.
 - **`GetState() -> CaptureState`** — off / ring / capturing, the frame budget and frames elapsed, the
   running capture's path, and `WriterDraining`.
 

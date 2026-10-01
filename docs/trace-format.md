@@ -171,7 +171,7 @@ survives a ring wrap intact.
 |-----------------|------------|-------------------------------------------------------------|
 | `ThreadId`      | `varint`   | The producing thread track.                                 |
 | `SequenceNumber`| `varint`   | Monotonic within the thread's chunk stream.                 |
-| `TimestampBase` | `u64`      | **Absolute** ticks; every record `BeginDelta` is relative to this. |
+| `TimestampBase` | `u64`      | **Absolute** ticks; every record `BeginDelta` is relative to this, so it is no later than any record's begin. It need not be when the chunk's first record was written. |
 | `BaseFrame`     | `varint`   | Frame index the per-record frame deltas are relative to.    |
 | `RecordCount`   | `varint`   | Number of records.                                          |
 | `Records`       | record×`RecordCount` | Encoded as below.                                 |
@@ -180,8 +180,7 @@ survives a ring wrap intact.
 A ring dump normally begins mid-sequence, because wrapping discards whole chunks; the sequence
 numbers are what make the discarded span visible as a *gap* rather than as silence. A decoder must
 accept a first chunk whose sequence number is not 0 and must treat a jump in sequence numbers as
-dropped chunks, not as an error. The consequence, stated plainly: the ring's configured duration is
-honoured only to within one chunk.
+dropped chunks, not as an error.
 
 Each **record**:
 

@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Asset/ResidencyBatch.h>
+#include <Veng/Diagnostics/TraceSink.h>
 #include <Veng/Scene/SimClock.h>
 #include <Veng/WorldInstanceId.h>
 
@@ -43,6 +44,15 @@ namespace Veng
 
         /// @brief The explicit pause toggle (SetWorldPaused), composed with the refcount.
         bool ExplicitPaused = false;
+
+        /// @brief The profiler name of this world's Sim phase scope, interned when the world opens.
+        ///
+        /// Interned once so the per-frame scope formats and hashes nothing; 0 (no name) when no
+        /// profiler was installed at open.
+        Diagnostics::NameId SimScopeName = 0;
+
+        /// @brief The profiler name of this world's View phase scope, interned when the world opens.
+        Diagnostics::NameId ViewScopeName = 0;
 
         /// @brief Returns the live scene this world drives.
         [[nodiscard]] Scene& GetScene() const { return *LiveScene; }

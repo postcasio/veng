@@ -635,6 +635,14 @@ namespace Veng
         /// resolves every key to itself (GetLocalization() is still non-null), so a non-localized or
         /// headless consumer is unchanged.
         optional<AssetId> LocaleIndex = std::nullopt;
+
+        /// @brief Construction parameters for the application's profiler (GetProfiler()).
+        ///
+        /// Sizes its per-thread buffers and the continuous ring — how many seconds of history a
+        /// ring dump carries, and the per-thread byte ceiling on reaching it. The defaults suit a
+        /// typical frame; a consumer recording a denser one raises the ceiling. Inert under
+        /// VE_PROFILE=OFF.
+        Diagnostics::ProfilerConfig Profiler;
     };
 
     /// @brief The destination of an Application::Travel: the key, arrival payload, and presentation choice.
@@ -2050,6 +2058,13 @@ namespace Veng
 
         /// @brief The virtual GPU track the bridge emits back-dated pass timings onto; 0 until created.
         Diagnostics::TrackId m_GpuTrack = 0;
+
+        /// @brief The bridge's whole-frame GPU scope name, interned with the track; 0 until then.
+        Diagnostics::NameId m_GpuFrameName = 0;
+
+        /// @brief Each GPU pass name the bridge has interned, so a frame's passes cost a lookup each
+        /// rather than a pass through the profiler's locked string table.
+        unordered_map<string, Diagnostics::NameId> m_GpuPassNames;
 
         /// @brief Per frame-in-flight slot: the profiler frame index whose GPU work occupies the slot.
         ///
