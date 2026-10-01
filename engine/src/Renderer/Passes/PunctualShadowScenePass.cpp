@@ -206,10 +206,11 @@ namespace Veng::Renderer
                     const std::span<const SubMeshCandidate> candidates =
                         view.Broadphase->GetSubMeshCandidates();
 
-                    // Static caster draw: the canonical-layout depth pipeline, bind buffers + MVP
-                    // once per mesh (submeshes are contiguous within a face in GatherMeshes order).
+                    // Static caster draw: the canonical-layout depth pipeline. Buffers bind per mesh
+                    // and the MVP per entity, since consecutive entities may share a mesh.
                     const auto DrawStatic = [&](const VisibleMesh& item, u32 subMeshIndex,
-                                                const mat4& lightViewProj, const Mesh*& lastBound)
+                                                const mat4& lightViewProj, const Mesh*& lastBound,
+                                                const VisibleMesh*& lastPushed)
                     {
                         if (!item.CastsShadows)
                         {
@@ -229,9 +230,13 @@ namespace Veng::Renderer
                         {
                             cmd.BindVertexBuffer(mesh.GetVertexBuffer());
                             cmd.BindIndexBuffer(mesh.GetIndexBuffer());
+                            lastBound = &mesh;
+                        }
+                        if (lastPushed != &item)
+                        {
                             cmd.PushConstants(
                                 PunctualShadowPushConstants{.MVP = lightViewProj * item.World});
-                            lastBound = &mesh;
+                            lastPushed = &item;
                         }
                         cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
                     };
@@ -316,11 +321,12 @@ namespace Veng::Renderer
                             cmd.BindPipeline(m_Pipeline);
                             registry.Bind(cmd);
                             const Mesh* lastStatic = nullptr;
+                            const VisibleMesh* lastPushed = nullptr;
                             for (const u32 id : m_CullScratch)
                             {
                                 const SubMeshCandidate& c = candidates[id];
                                 DrawStatic(view.Visible[c.MeshCandidate], c.SubMeshIndex,
-                                           lightViewProj, lastStatic);
+                                           lightViewProj, lastStatic, lastPushed);
                             }
 
                             // Skinned casters.

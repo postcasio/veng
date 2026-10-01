@@ -278,6 +278,7 @@ namespace Veng::Renderer
                         cmd.BindPipeline(m_Pipeline);
                         registry.Bind(cmd);
                         const Mesh* lastBound = nullptr;
+                        const VisibleMesh* lastPushed = nullptr;
                         for (const u32 id : m_CullScratch)
                         {
                             const SubMeshCandidate& c = candidates[id];
@@ -298,15 +299,19 @@ namespace Veng::Renderer
                             }
                             const SubMesh& subMesh = mesh.GetSubMeshes()[c.SubMeshIndex];
 
-                            // The candidate list is in GatherMeshes order, so a mesh's submeshes
-                            // are contiguous — bind its buffers + MVP once.
+                            // Submeshes are contiguous in GatherMeshes order, but consecutive
+                            // entities may share a mesh: buffers bind per mesh, the MVP per entity.
                             if (lastBound != &mesh)
                             {
                                 cmd.BindVertexBuffer(mesh.GetVertexBuffer());
                                 cmd.BindIndexBuffer(mesh.GetIndexBuffer());
+                                lastBound = &mesh;
+                            }
+                            if (lastPushed != &item)
+                            {
                                 cmd.PushConstants(
                                     ShadowPushConstants{.MVP = lightViewProj * item.World});
-                                lastBound = &mesh;
+                                lastPushed = &item;
                             }
                             cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
                         }

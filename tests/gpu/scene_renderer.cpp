@@ -2550,6 +2550,90 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// Two casters sharing one mesh each cast their own shadow. The depth passes bind a mesh's
+// buffers once across consecutive draws of it, so a transform that rode the same guard would draw
+// the second instance at the first one's place: one shadow drawn twice, the other missing.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: two casters sharing a mesh each darken their own receiver")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_shared_caster.vengpack");
+
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(material.has_value());
+
+    const Ref<Mesh> plane = Mesh::BuildSync(
+        Context, Primitives::Plane(vec2(10.0f), uvec2(1), *material), "Shared Caster Plane");
+    const Ref<Mesh> caster =
+        Mesh::BuildSync(Context, Primitives::Cube(1.2f, *material), "Shared Caster");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+
+    const Entity planeEntity = scene->CreateEntity();
+    scene->Add<Transform>(planeEntity);
+    scene->Add<MeshRenderer>(planeEntity).Mesh = assets.Adopt(plane);
+
+    // Left and right of the camera's axis, so each shadow falls in its own half of the frame.
+    for (const f32 x : {-2.5f, 2.5f})
+    {
+        const Entity casterEntity = scene->CreateEntity();
+        scene->Add<Transform>(casterEntity).Position = vec3(x, 1.6f, 0.0f);
+        scene->Add<MeshRenderer>(casterEntity).Mesh = assets.Adopt(caster);
+    }
+
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Type = LightType::Directional,
+        .Direction = vec3(0.0f, -1.0f, 0.0f),
+        .Color = vec3(1.0f),
+        .Intensity = DirectionalLux(3.0f),
+    };
+
+    constexpr uvec2 extent{128, 128};
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 6.0f, 6.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = true},
+    });
+
+    auto Luma = [&](const vector<u8>& pixels, u32 x, u32 y) -> f32
+    {
+        const vec3 c = DecodeTexel(pixels, extent.x, x, y);
+        return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
+    };
+
+    const vector<u8> shadowed = RenderOutput(Context, *renderer, *scene, camera);
+    renderer->Configure({.Mode = DebugView::Final, .Bloom = false, .Shadows = false});
+    const vector<u8> unshadowed = RenderOutput(Context, *renderer, *scene, camera);
+
+    // The deepest darkening the shadow pass causes in each half of the frame.
+    f32 leftDarkening = 0.0f;
+    f32 rightDarkening = 0.0f;
+    for (u32 y = 4; y < extent.y - 4; ++y)
+    {
+        for (u32 x = 4; x < extent.x - 4; ++x)
+        {
+            const f32 darkening = Luma(unshadowed, x, y) - Luma(shadowed, x, y);
+            f32& half = x < extent.x / 2 ? leftDarkening : rightDarkening;
+            half = std::max(half, darkening);
+        }
+    }
+    CHECK(leftDarkening > 0.03f);
+    CHECK(rightDarkening > 0.03f);
+
+    std::filesystem::remove(outArchive);
+}
+
 // The surface-flags channel (ORM alpha) declining shadow-map reception. The scene above,
 // measured three ways at the one texel the cast shadow falls on: shadowed (the flag clear),
 // with the flag set, and with the shadow system off entirely. Setting the flag must lift that
