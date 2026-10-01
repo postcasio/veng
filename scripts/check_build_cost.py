@@ -6,7 +6,8 @@ checks a tree against it. It reads clang's ``-ftime-trace`` JSON **directly** â€
 Trace document per translation unit, written beside that TU's object file â€” aggregates the
 whole tree, and fails when a tracked figure has regressed past the threshold below.
 
-Run it after any change to the reflection headers, the include graph, or the PCH set::
+Running it is never required: no change obliges a tracing build, so it is run only when a
+build-cost measurement is asked for::
 
     cmake -B build-trace -S . -DVE_DEBUG=ON -DVENG_TIME_TRACE=ON
     cmake --build build-trace -j 6

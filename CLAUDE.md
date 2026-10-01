@@ -485,10 +485,12 @@ python3 scripts/check_build_cost.py --tree build-trace                    # chec
 python3 scripts/check_build_cost.py --tree build-trace --write-baseline   # refresh
 ```
 
-Exit codes: `0` pass, `1` regression, `2` skipped, `3` inconclusive. **Run it after any change to
-the reflection headers, the include graph, or the PCH set.** Whoever lands such a change owns the
-number: either the check passes, or the same commit refreshes the baseline **and its body says
-why the number moved** — a refresh with no stated reason turns the tripwire into a rubber stamp.
+Exit codes: `0` pass, `1` regression, `2` skipped, `3` inconclusive. **Running it is never required.**
+No change — to the reflection headers, the include graph, the PCH set, or anything else — obliges
+a tracing build: a cold uncached build of the whole tree costs more than the check is worth as a
+routine gate, so it is run only when someone asks for a build-cost measurement. When a run does
+refresh the baseline, that commit's body says why the number moved — a refresh with no stated
+reason turns the tripwire into a rubber stamp.
 
 The thresholds: total compile CPU may exceed the baseline by **5 %**; a single origin's
 instantiation total may exceed its baseline by **10 % *and* by 5 s absolute**, both conjuncts,
