@@ -7,6 +7,7 @@
 #include <Veng/Renderer/Types.h>
 
 #include "../DrawPlan.h"
+#include "../FrameTopology.h"
 
 namespace Veng::Renderer
 {
@@ -27,10 +28,12 @@ namespace Veng::Renderer
         /// @param plan        Borrowed per-frame draw plan the renderer fills before each replay.
         /// @param cull        Active cull mode selecting the submission shape.
         /// @param indirectId  The cull-written indirect-command buffer id (GPU mode).
+        /// @param stores      Which colour channels the pass stores; the rest are discarded.
         GBufferScenePass(Context& context, uvec2 extent, const GBufferDrawPlan* plan,
-                         SceneRendererSettings::CullMode cull, ResourceId indirectId)
+                         SceneRendererSettings::CullMode cull, ResourceId indirectId,
+                         const GBufferChannelStates& stores)
             : m_Context(context), m_Extent(extent), m_Plan(plan), m_Cull(cull),
-              m_IndirectId(indirectId)
+              m_IndirectId(indirectId), m_Stores(stores)
         {
         }
 
@@ -53,5 +56,7 @@ namespace Veng::Renderer
         SceneRendererSettings::CullMode m_Cull = SceneRendererSettings::CullMode::CPU;
         /// @brief The indirect-command buffer id read under CullMode::GPU.
         ResourceId m_IndirectId;
+        /// @brief Which colour channels the pass stores for a later reader.
+        GBufferChannelStates m_Stores;
     };
 }

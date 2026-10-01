@@ -673,7 +673,8 @@ namespace Veng::Renderer
         const ResourceId indirectId = m_GpuCull->ImportIndirect(graph);
 
         auto gbufferPass = CreateUnique<GBufferScenePass>(
-            m_Context, renderExtent, &m_Internal->Plan, m_GpuCull->GetActiveCull(), indirectId);
+            m_Context, renderExtent, &m_Internal->Plan, m_GpuCull->GetActiveCull(), indirectId,
+            m_Topology->GBufferStores);
         m_Passes.push_back(std::move(gbufferPass));
 
         // The entity-id picking pass: a depth-tested re-draw of the same survivors into the R32Uint

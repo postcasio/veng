@@ -1204,6 +1204,18 @@ bandwidth-constrained consumer must count G4 as a fixed tax it cannot drop. Set-
 material parameter block, and texture handles work identically for an opaque material; only the
 fragment shader's outputs are g-buffer channels.
 
+**Written is unconditional; stored is not.** Every channel is allocated and written every frame,
+but the g-buffer pass stores a channel only when a later pass reads it — on a tile-based GPU the
+store at the end of the pass is the bandwidth, and a channel with no reader can end its life in
+tile memory. The decision is `FrameTopology::GBufferStores`, one `GBufferChannelState`
+(`Stored` / `Discarded`) per colour channel, resolved with the rest of the topology. Albedo, normal,
+ORM and emissive are always stored (lighting reads them; SSR and the debug arms read some), as is
+depth. **Velocity is stored only when the TAA/TAAU resolve or the `MotionVectors` arm is wired**;
+under every other configuration — the default `AntiAliasingMode::None`, FXAA, CMAA2, every other
+debug arm — the pass declares `StoreOp::DontCare` on it, so `GetVelocityView()` stays non-null but
+its contents are undefined after the frame. On an immediate-mode GPU the discard costs and saves
+nothing.
+
 ### The PostProcess fullscreen-material path
 
 A `PostProcessScenePass` runs a PostProcess material as a fullscreen effect: it builds a
@@ -1886,7 +1898,7 @@ from his published papers — the mathematics, not anyone's code.
   velocity at the outermost texels (free slip). The metric scales the x-derivative and the
   x-advection step per row — a **stretch on the grid**, documented as nothing more; a caller reads
   whatever it likes into rows being shorter here than there.
-- **Nothing rides bindless and nothing touches the render graph.** Every kernel binds its own set 1
+- **Nothing rides bindless and nothing touches the render graph.** Every kernel binds its own set 3
   and the solver records its own barriers, the `AtmospherePrecompute` pattern. A caller amortizing a
   long spin-up wraps `RecordStep` in `GeneratedTextureService` ticks; **the solver holds no reference
   to the service**, so the dependency points one way and the solver is equally usable with a bare
@@ -1954,7 +1966,7 @@ The surface is the intersection of what a flow effect needs:
   unclamped sharpen in a feedback loop amplifies each pass's overshoot and diverges; clamping to the
   neighbourhood means the result is never brighter than the brightest neighbour, so the global
   maximum is non-increasing under any advect/sharpen sequence. `strength` 0 records nothing.
-- **Nothing rides bindless and nothing touches the render graph.** Every kernel binds its own set 1
+- **Nothing rides bindless and nothing touches the render graph.** Every kernel binds its own set 3
   and the primitive records its own barriers, the `FluidSim` / `AtmospherePrecompute` pattern.
 
 **A long unbroken advect turns any dye to mush.** Each step samples with interpolation, so a feedback
@@ -1992,8 +2004,8 @@ living in **set 0**. `Register(...)` allocates a free-list slot and returns a ty
 (`TextureHandle`, `SamplerHandle`, `StorageImageHandle`, `MaterialHandle`); `Release` defers the
 slot reclaim through the same per-frame retire window. **`PipelineLayout` reserves set 0 in every
 pipeline** for the registry, bound once per pipeline bind (`registry.Bind(cmd)`), not per draw —
-draws select array elements via push-constant indices. Author-declared descriptor sets shift to
-**set 1+**.
+draws select array elements via push-constant indices. Sets 1 and 2 are the registry's volume and
+cube arrays, so author-declared descriptor sets shift to **set 3+** (`BindlessRegistry::FirstUserSet`).
 
 **The registry reports its occupancy, not only its headroom.** `GetFreeSlots()` gives the seven
 arrays' free counts (`BindlessCapacity`); `DescribeSlots(BindlessArray)` gives one array's slots in

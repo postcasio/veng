@@ -10,6 +10,14 @@
 
 namespace Veng::Renderer
 {
+    namespace
+    {
+        [[nodiscard]] StoreOp StoreOf(const GBufferChannelState state)
+        {
+            return state == GBufferChannelState::Stored ? StoreOp::Store : StoreOp::DontCare;
+        }
+    }
+
     void GBufferScenePass::Declare(RenderGraph& graph, const PassIO& io)
     {
         RenderGraph::PassBuilder builder = graph.AddPass("Scene GBuffer");
@@ -17,19 +25,19 @@ namespace Veng::Renderer
             .Color({
                 .Resource = io.GBufferAlbedo,
                 .Load = LoadOp::Clear,
-                .Store = StoreOp::Store,
+                .Store = StoreOf(m_Stores.Albedo),
                 .Clear = ClearColor{.R = 0.05f, .G = 0.05f, .B = 0.08f, .A = 1.0f},
             })
             .Color({
                 .Resource = io.GBufferNormal,
                 .Load = LoadOp::Clear,
-                .Store = StoreOp::Store,
+                .Store = StoreOf(m_Stores.Normal),
                 .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
             })
             .Color({
                 .Resource = io.GBufferOrm,
                 .Load = LoadOp::Clear,
-                .Store = StoreOp::Store,
+                .Store = StoreOf(m_Stores.Orm),
                 // Default occlusion 1 (unoccluded), roughness/metallic/emissive 0
                 // for any background texel; a material overwrites all four.
                 .Clear = ClearColor{.R = 1.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
@@ -39,9 +47,10 @@ namespace Veng::Renderer
                 // writes it alongside the g-buffer, so motion vectors cost no second
                 // geometry pass. Cleared to zero motion for any background texel; the
                 // TAA resolve falls back to depth reprojection wherever it stays zero.
+                // Discarded on a frame with no reader (see FrameTopology::GBufferStores).
                 .Resource = io.Velocity,
                 .Load = LoadOp::Clear,
-                .Store = StoreOp::Store,
+                .Store = StoreOf(m_Stores.Velocity),
                 .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
             })
             .Color({
@@ -50,7 +59,7 @@ namespace Veng::Renderer
                 // pixel's outgoing light. Cleared to zero so an un-drawn pixel emits nothing.
                 .Resource = io.GBufferEmissive,
                 .Load = LoadOp::Clear,
-                .Store = StoreOp::Store,
+                .Store = StoreOf(m_Stores.Emissive),
                 .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
             })
             .Depth({
@@ -102,7 +111,7 @@ namespace Veng::Renderer
         {
             // The fragment pipeline is not shared across surface materials — a custom
             // fragment shader is its own pipeline — so it binds per group, keyed on the
-            // group's material. Set 0 (bindless), set 1 (the per-draw DrawData SSBO), and
+            // group's material. Set 0 (bindless), set 3 (the per-draw DrawData SSBO), and
             // the frame selector push share the surface pipeline layout (core surface.vert
             // + the deferred g-buffer formats), so they (re)bind against whichever pipeline
             // is current; binding them right after each pipeline bind keeps a valid layout.
@@ -154,11 +163,11 @@ namespace Veng::Renderer
             }
         }
 
-        // Skinned draws: the skinned surface pipeline + the palette set (set 2), always
+        // Skinned draws: the skinned surface pipeline + the palette set (set 4), always
         // CPU-direct (skinned meshes opt out of GPU-driven culling). They share the same
         // DrawData buffer; each slot's DrawData.PaletteBase points into the palette. As on
         // the static path the fragment pipeline binds per group, keyed on the group's
-        // material; set 0 / set 1 / set 2 / the push (re)bind against its shared layout.
+        // material; set 0 / set 3 / set 4 / the push (re)bind against its shared layout.
         if (!plan.SkinnedSlots.empty())
         {
             const Mesh* lastBound = nullptr;
@@ -168,7 +177,7 @@ namespace Veng::Renderer
                 if (lastPipeline != group.PipelineMaterial)
                 {
                     // Bind the material's skinned g-buffer pipeline, not its static one: the skinned
-                    // pipeline's layout carries the palette at set 2, so the bind below is valid.
+                    // pipeline's layout carries the palette at set 4, so the bind below is valid.
                     group.PipelineMaterial->BindSkinned(cmd);
                     registry.Bind(cmd);
                     cmd.BindDescriptorSets(DescriptorSetBindInfo{

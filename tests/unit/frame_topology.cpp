@@ -307,3 +307,39 @@ TEST_CASE("frame topology: the resolve is stateless")
     CHECK(first.AutoExposureActive);
     CHECK(second.AutoExposureActive);
 }
+
+TEST_CASE("frame topology: velocity is stored only where something reads it")
+{
+    // Velocity's readers are the temporal resolve and the motion-vector blit; every other colour
+    // channel is stored in every configuration.
+    constexpr std::array modes{AntiAliasingMode::None, AntiAliasingMode::FXAA,
+                               AntiAliasingMode::TAA, AntiAliasingMode::CMAA2,
+                               AntiAliasingMode::TAAU};
+    for (usize arm = 0; arm < ArmCount; ++arm)
+    {
+        for (const AntiAliasingMode aa : modes)
+        {
+            SceneRendererSettings settings = ModeOnly(static_cast<DebugView>(arm));
+            settings.AntiAliasing = aa;
+            const FrameTopology topology = Resolve(settings);
+            CAPTURE(DebugViewNames[arm]);
+            CAPTURE(static_cast<int>(aa));
+
+            const bool read = topology.TaaActive || settings.Mode == DebugView::MotionVectors;
+            CHECK((topology.GBufferStores.Velocity == GBufferChannelState::Stored) == read);
+
+            GBufferChannelStates others = topology.GBufferStores;
+            others.Velocity = GBufferChannelState::Stored;
+            CHECK(others == GBufferChannelStates{});
+        }
+    }
+
+    // The default configuration has no reader, and both temporal modes on Final do.
+    CHECK(Resolve(SceneRendererSettings{}).GBufferStores.Velocity ==
+          GBufferChannelState::Discarded);
+    SceneRendererSettings taa;
+    taa.AntiAliasing = AntiAliasingMode::TAA;
+    CHECK(Resolve(taa).GBufferStores.Velocity == GBufferChannelState::Stored);
+    taa.AntiAliasing = AntiAliasingMode::TAAU;
+    CHECK(Resolve(taa).GBufferStores.Velocity == GBufferChannelState::Stored);
+}

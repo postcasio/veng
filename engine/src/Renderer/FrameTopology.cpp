@@ -33,6 +33,12 @@ namespace Veng::Renderer
         topology.FxaaActive = aaFinal && settings.AntiAliasing == AntiAliasingMode::FXAA;
         topology.Cmaa2Active = aaFinal && settings.AntiAliasing == AntiAliasingMode::CMAA2;
 
+        // Velocity's only readers are the temporal resolve and the motion-vector blit.
+        topology.GBufferStores.Velocity =
+            topology.TaaActive || settings.Mode == DebugView::MotionVectors
+                ? GBufferChannelState::Stored
+                : GBufferChannelState::Discarded;
+
         topology.DebugShadow = settings.Mode == DebugView::Shadows;
         topology.DebugAo = settings.Mode == DebugView::AO;
         // Cascades debug needs the shadow pass wired so cascade constants are written.

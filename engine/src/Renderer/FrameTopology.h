@@ -24,6 +24,42 @@ namespace Veng::Renderer
         Full,
     };
 
+    /// @brief Whether a g-buffer colour channel's contents outlive the g-buffer pass.
+    ///
+    /// Every channel is allocated and written by the g-buffer pass whatever its state — the opaque
+    /// material contract is five render targets unconditionally. The state decides only the pass's
+    /// store op: on a tile-based GPU the store at the end of the pass is what spends memory
+    /// bandwidth, so a channel nothing reads afterwards ends its life in tile memory.
+    enum class GBufferChannelState : u8
+    {
+        /// @brief The pass stores the channel; a later pass reads it.
+        Stored,
+        /// @brief The pass writes the channel and discards it (StoreOp::DontCare); nothing reads it.
+        Discarded,
+    };
+
+    /// @brief The store state of each of the five g-buffer colour channels.
+    ///
+    /// Depth is not listed: it has readers after the g-buffer pass in every configuration and is
+    /// always stored.
+    struct GBufferChannelStates
+    {
+        /// @brief G0, the albedo channel.
+        GBufferChannelState Albedo = GBufferChannelState::Stored;
+        /// @brief G1, the world-normal channel.
+        GBufferChannelState Normal = GBufferChannelState::Stored;
+        /// @brief G2, the packed occlusion/roughness/metallic channel.
+        GBufferChannelState Orm = GBufferChannelState::Stored;
+        /// @brief G3, the per-object motion-vector channel.
+        GBufferChannelState Velocity = GBufferChannelState::Stored;
+        /// @brief G4, the HDR emissive channel.
+        GBufferChannelState Emissive = GBufferChannelState::Stored;
+
+        /// @brief Compares every channel's state.
+        /// @return True when both decide the same store for every channel.
+        [[nodiscard]] bool operator==(const GBufferChannelStates&) const = default;
+    };
+
     /// @brief The resolved sky facts the frame topology decides from.
     ///
     /// Plain data rather than the sky-resolve state machine itself, so the decision is a pure
@@ -102,6 +138,12 @@ namespace Veng::Renderer
         bool RefractionActive = false;
         /// @brief How much of the depth-of-field chain is wired.
         DofStages Dof = DofStages::None;
+
+        /// @brief Which g-buffer colour channels the g-buffer pass stores for a later reader.
+        ///
+        /// Velocity is the one channel with no reader on most frames: only the temporal resolve
+        /// and the MotionVectors debug blit sample it, so it is discarded when neither is wired.
+        GBufferChannelStates GBufferStores;
 
         /// @brief The sky source bakes to a cube this frame, so the bake's set backs the skybox.
         bool BakedSkyWanted = false;

@@ -11,7 +11,8 @@
 ///
 /// Passes are declared with the logical resources they read and write; the engine
 /// derives every pipeline barrier from those declarations. Passes execute in
-/// declaration order — no culling, reordering, or aliasing.
+/// declaration order — no culling or reordering. Transients whose format, extent and
+/// usage match and whose lifetimes do not overlap may share one backing image.
 ///
 /// Resources are addressed by a Vulkan-free ResourceId, not a concrete Ref<ImageView>:
 /// a transient is graph-owned (declared with CreateTransient, allocated and resolved

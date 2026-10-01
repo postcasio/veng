@@ -368,11 +368,13 @@ namespace Veng::Renderer
         /// @brief Returns the per-object velocity target (g-buffer channel G3).
         ///
         /// RG screen-space motion vectors written by the surface pass as a fourth g-buffer
-        /// channel every frame (not a separate prepass, never null). Renderer-owned;
-        /// invalidated by Resize and Configure. Exposed for tests.
+        /// channel every frame (not a separate prepass, never null). The g-buffer pass stores
+        /// the channel only when something reads it — the TAA/TAAU resolve or the MotionVectors
+        /// debug view — so under any other configuration the view's contents are undefined after
+        /// a frame. Renderer-owned; invalidated by Resize and Configure. Exposed for tests.
         [[nodiscard]] Ref<ImageView> GetVelocityView() const;
 
-        /// @brief Returns the punctual shadow atlas view (set 1 binding 4).
+        /// @brief Returns the punctual shadow atlas view (set 3 binding 4).
         ///
         /// A 2D depth atlas of MaxShadowedPunctual·CubeFaceCount tiles, SampleCmp'd by the
         /// lighting pass. Renderer-owned; invalidated by Resize and Configure. Exposed for
@@ -927,20 +929,20 @@ namespace Veng::Renderer
 
         /// @brief Cascade-debug lighting variant (DebugView::Cascades).
         ///
-        /// Tint fragment shader over the plain lighting layout (set 1 + non-SSAO push block),
+        /// Tint fragment shader over the plain lighting layout (sets 3 and 4 + non-SSAO push block),
         /// writing the output format directly. Reuses m_LightingLayout.
         Ref<class GraphicsPipeline> m_CascadeDebugPipeline;
 
         /// @brief IBL-contribution debug lighting variant (DebugView::IblContribution).
         ///
         /// Lighting fragment variant returning only the IBL ambient term (diffuse + specular IBL × AO)
-        /// over the plain lighting layout (set 1 + non-SSAO push block), writing the output format
+        /// over the plain lighting layout (sets 3 and 4 + non-SSAO push block), writing the output format
         /// directly. Reuses m_LightingLayout.
         Ref<class GraphicsPipeline> m_IblContributionDebugPipeline;
 
         /// @brief Fullscreen skybox pipeline (radiance cube over the lit HDR), writing HdrFormat.
         Ref<class GraphicsPipeline> m_SkyboxPipeline;
-        /// @brief Layout for m_SkyboxPipeline: the IBL set (set 1) + the skybox push block.
+        /// @brief Layout for m_SkyboxPipeline: the IBL set (set 3) + the skybox push block.
         Ref<class PipelineLayout> m_SkyboxLayout;
 
         /// @brief Fullscreen unclamped-HDR copy pipeline the post-process effect passes fall back to
@@ -960,7 +962,7 @@ namespace Veng::Renderer
 
         /// @brief Fullscreen procedural-atmosphere sky pipeline (LUTs over the lit HDR), writing HdrFormat.
         Ref<class GraphicsPipeline> m_SkyPipeline;
-        /// @brief Layout for m_SkyPipeline: the atmosphere set (set 1) + the sky push block.
+        /// @brief Layout for m_SkyPipeline: the atmosphere set (set 3) + the sky push block.
         Ref<class PipelineLayout> m_SkyLayout;
 
         /// @brief SSAO fullscreen pipeline writing the R8 AO target.
@@ -976,9 +978,9 @@ namespace Veng::Renderer
         /// an opaque pointer so this header stays free of the pipeline aggregate's definition.
         Unique<DebugBlitPipelines> m_DebugBlits;
 
-        /// @brief The set-1 shadow descriptor system + punctual atlas + constants rings; created at Create.
+        /// @brief The set-3 shadow descriptor system + punctual atlas + constants rings; created at Create.
         ///
-        /// Owns the comparison sampler, the set-1 layout/set, the debug-blit layout/set/sampler,
+        /// Owns the comparison sampler, the set-3 layout/set, the debug-blit layout/set/sampler,
         /// the dummy and punctual atlases, and both constants rings. The lighting layout reserves
         /// its set layout, so it exists before the pipelines. The directional cascade atlas is not
         /// owned here — ShadowScenePass owns it and Rebuild binds its view (or the dummy) into the
@@ -1139,7 +1141,7 @@ namespace Veng::Renderer
         /// the cull compute pipeline live on m_GpuCull. Called once at Create.
         void CreateCullResources();
 
-        /// @brief Per-draw DrawData SSBO (set used by the surface pipeline's set 1, binding 0).
+        /// @brief Per-draw DrawData SSBO (set used by the surface pipeline's set 3, binding 0).
         ///
         /// Host-visible, ring-buffered for frames-in-flight (MaxCullCandidates records per region);
         /// the surface vertex stage reads its record by the candidate id folded with the pushed
@@ -1147,7 +1149,7 @@ namespace Veng::Renderer
         Ref<Buffer> m_DrawDataBuffer;
         /// @brief Set 1 for the surface pipeline: binding 0 the DrawData SSBO.
         Ref<DescriptorSetLayout> m_DrawDataSetLayout;
-        /// @brief Descriptor set bound at set 1 for every surface draw.
+        /// @brief Descriptor set bound at set 3 for every surface draw.
         Ref<DescriptorSet> m_DrawDataSet;
 
         /// @brief Identity candidate-id buffer bound to vertex binding 1 (instance rate).
@@ -1160,13 +1162,13 @@ namespace Veng::Renderer
         /// @brief Maximum skinning matrices uploaded per frame across all skinned instances.
         static constexpr u32 MaxSkinningMatricesPerFrame = 8192;
 
-        /// @brief Per-instance skinning palette (mat4 per bone), bound at set 2 for skinned draws.
+        /// @brief Per-instance skinning palette (mat4 per bone), bound at set 4 for skinned draws.
         ///
         /// Host-visible, ring-buffered for frames-in-flight (MaxSkinningMatricesPerFrame matrices
         /// per region). Each skinned instance's bones are appended contiguously and its DrawData
         /// PaletteBase is the absolute index of its first bone in this buffer.
         Ref<Buffer> m_PaletteBuffer;
-        /// @brief Set 2 for the skinned surface pipeline / set 1 for the skinned shadow pipeline: the palette SSBO.
+        /// @brief Set 4 for the skinned surface pipeline / set 3 for the skinned shadow pipeline: the palette SSBO.
         Ref<DescriptorSetLayout> m_PaletteSetLayout;
         /// @brief Descriptor set holding the palette buffer, bound for skinned draws.
         Ref<DescriptorSet> m_PaletteSet;
@@ -1322,8 +1324,8 @@ namespace Veng::Renderer
 
         /// @brief The sky-resolve state machine and the three sky radiance-cube helpers; created at Create.
         ///
-        /// Owns the image-based-lighting maps (set 2 for the lighting pass), the procedural-atmosphere
-        /// LUTs (set 1 for the sky pass), and the baked-sky cube, plus the whole resolve state machine
+        /// Owns the image-based-lighting maps (set 4 for the lighting pass), the procedural-atmosphere
+        /// LUTs (set 3 for the sky pass), and the baked-sky cube, plus the whole resolve state machine
         /// (resolved source-kind/tier/bake-mode, the once-per-change dirty gates, the projected
         /// skylight SH). Created before CreatePipelines so the lighting and sky layouts reserve its
         /// consumer set layouts; Rebuild reaches the sets/layouts and the resolved kind/tier through

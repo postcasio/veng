@@ -166,7 +166,7 @@ namespace Veng::Renderer
                                           m_LightingLayout, lightingFs, HdrFormat);
 
         // SSAO-enabled lighting variant: wider push block (adds the AO slot) and
-        // the AO-fold fragment shader. Same set-1 shadow + set-2 IBL layout.
+        // the AO-fold fragment shader. Same set-3 shadow + set-4 IBL layout.
         m_SsaoLightingLayout = PipelineLayout::Create(
             m_Context, {
                            .Name = "SceneRenderer SSAO Lighting Layout",
@@ -190,7 +190,7 @@ namespace Veng::Renderer
                          iblContributionDebugFs, m_OutputFormat);
 
         // Skybox: a fullscreen pass compositing the radiance cube over the lit HDR. It reads the
-        // IBL set (set 1, radiance + sampler) and the depth target through bindless; its push is
+        // IBL set (set 3, radiance + sampler) and the depth target through bindless; its push is
         // eight u32s (Size = 32 matches SkyboxPushConstants).
         const AssetHandle<Veng::Shader> skyboxFs = LoadShader(SkyboxFragId, "skybox fragment");
         m_SkyboxLayout = PipelineLayout::Create(
@@ -250,7 +250,7 @@ namespace Veng::Renderer
                                               m_IblCubeDebugLayout, iblCubeDebugFs, m_OutputFormat);
 
         // Procedural atmosphere sky: a fullscreen pass sampling the precomputed LUTs along each
-        // view ray. It reads the atmosphere set (set 1, scattering + transmittance + sampler) and
+        // view ray. It reads the atmosphere set (set 3, scattering + transmittance + sampler) and
         // the depth target through bindless; its push is 128 bytes (matches SkyScenePass's
         // SkyPushConstants: the 32-byte header + the 96-byte AtmosphereParams block).
         const AssetHandle<Veng::Shader> skyFs =
@@ -484,7 +484,7 @@ namespace Veng::Renderer
                                                          .HostMapped = true,
                                                      });
 
-        // Stage flags must match the surface pipeline's reflected set-1 layout exactly for
+        // Stage flags must match the surface pipeline's reflected set-3 layout exactly for
         // descriptor-set compatibility. The shared material header declares g_DrawData in
         // both stages (the fragment includes it even though only the vertex stage reads it),
         // so the cooker reflects it Vertex | Fragment — match that here.
@@ -505,7 +505,7 @@ namespace Veng::Renderer
         // The per-instance skinning palette drives skinned draws. Host-visible, ring-buffered;
         // a skinned draw's DrawData.PaletteBase indexes it directly. Vertex-stage only — the
         // skinned vertex shaders declare g_Palette in the vertex stage alone, so the reflected
-        // set layout (set 2 for the surface pipeline, set 1 for the shadow pipeline) is Vertex.
+        // set layout (set 4 for the surface pipeline, set 3 for the shadow pipeline) is Vertex.
         const u64 paletteRegion = static_cast<u64>(MaxSkinningMatricesPerFrame) * sizeof(mat4);
         m_PaletteBuffer = Buffer::Create(m_Context, {
                                                         .Name = "SceneRenderer Skinning Palette",

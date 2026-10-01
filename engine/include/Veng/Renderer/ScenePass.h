@@ -119,10 +119,11 @@ namespace Veng::Renderer
         /// @brief Per-object screen-space velocity target — g-buffer channel G3.
         ///
         /// The g-buffer pass writes it as a fourth color attachment (SV_Target3) every frame,
-        /// so it is always valid. The TAA resolve samples it, and the MotionVectors debug blit
-        /// declares .Sample so the graph derives the ColorAttachment → ShaderReadOnly transition.
+        /// so the id is always valid; its contents are stored only on a frame wiring one of its
+        /// readers. The TAA resolve samples it, and the MotionVectors debug blit declares .Sample
+        /// so the graph derives the ColorAttachment → ShaderReadOnly transition.
         ResourceId Velocity;
-        /// @brief Bindless slot for the velocity target (always valid — written every frame).
+        /// @brief Bindless slot for the velocity target (always valid; contents as for Velocity).
         TextureHandle VelocityHandle;
 
         /// @brief HDR emissive target — g-buffer channel G4.
@@ -175,10 +176,10 @@ namespace Veng::Renderer
         ///
         /// Invalid when the punctual shadow pass is compiled out. When valid the lighting pass declares
         /// .Sample so the graph derives the DepthAttachment → ShaderReadOnly transition. The atlas is
-        /// renderer-owned (set 1 binding 4, off bindless); the punctual pass writes the view threaded
+        /// renderer-owned (set 3 binding 4, off bindless); the punctual pass writes the view threaded
         /// in PunctualShadowView.
         ResourceId PunctualShadowMap;
-        /// @brief Punctual shadow atlas view for the lighting pass's set 1 binding.
+        /// @brief Punctual shadow atlas view for the lighting pass's set 3 binding.
         Ref<ImageView> PunctualShadowView;
 
         /// @brief Imported output id the terminal pass writes.
