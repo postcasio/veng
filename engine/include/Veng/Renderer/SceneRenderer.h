@@ -610,9 +610,9 @@ namespace Veng::Renderer
 
         /// @brief Resolves this Execute's dynamic-resolution sub-rect from the view's render scale.
         ///
-        /// A debug view, SSR, GPU hi-Z occlusion, a composited depth-of-field chain, or the Kawase
-        /// bloom kernel each force full resolution (they do not carry the sub-rect sampling), so the
-        /// scale applies only on the plain Final path.
+        /// A debug view, SSR, GPU hi-Z occlusion, or a composited depth-of-field chain behind a
+        /// temporal resolve each force full resolution (they do not carry the sub-rect sampling),
+        /// so the scale applies only on the plain Final path.
         /// @param view  The frame's scene view (its RenderScale is the requested multiplier).
         /// @return The sub-rect extent and its UV mapping into the allocation.
         [[nodiscard]] FrameScale ResolveRenderScale(const SceneView& view) const;

@@ -1188,7 +1188,7 @@ namespace Veng::Renderer
             .Ssao = m_SsaoId,
             .SsaoHandle = ssaoHandle,
             .BloomMip0 = m_Topology->BloomActive ? m_BloomChainId.Level(0) : ResourceId{},
-            .BloomMip0Handle = m_Bloom->GetMip0Handle(),
+            .BloomMip0Handle = m_Topology->BloomActive ? m_Bloom->GetMip0Handle() : TextureHandle{},
             .Velocity = velocityId,
             .VelocityHandle = m_VelocityHandle,
             .GBufferEmissive = emissiveId,
@@ -1912,9 +1912,17 @@ namespace Veng::Renderer
         m_Taa->Resize(m_RenderAllocExtent, m_SceneColorAllocExtent, m_Settings.UsesTaa());
         m_Aa->Resize(m_Extent, m_Settings.Mode == DebugView::Final ? m_Settings.AntiAliasing
                                                                    : AntiAliasingMode::None);
-        // The pyramid and the mask it reads both run at the post-resolve allocation — the mask
-        // because the promotion carries it there.
-        m_Bloom->Resize(m_Extent, PostSceneView());
+        // The bright pass reads the scene colour and the mask at the post-resolve allocation — the
+        // mask because the promotion carries it there — and the pyramid is half of it. With bloom
+        // inactive nothing reads the chain, so it is not held.
+        if (ResolveBloomActive(m_Settings))
+        {
+            m_Bloom->Resize(m_Extent, PostSceneView());
+        }
+        else
+        {
+            m_Bloom->Release();
+        }
         // The min-Z reduce sets bind the fresh depth view from the g-buffer.
         m_Ssr->Recreate(m_Settings, m_RenderAllocExtent, m_DepthView,
                         m_GpuCull->GetHiZReduceSetLayout(), m_Bloom->GetDownUpSetLayout());
@@ -1974,7 +1982,8 @@ namespace Veng::Renderer
         {
             CreateHdr();
         }
-        // The bloom pyramid is extent-driven (unchanged here); only the kernel choice may change.
+        // The kernel is read at record time; whether the pyramid is held follows the bloom gate,
+        // which RecreateExtentSubsystems applies.
         m_Bloom->Reconfigure(m_Settings.Kernel);
         RecreateExtentSubsystems();
         m_AutoExposure->RebindHdr(PostSceneView());
@@ -2054,7 +2063,10 @@ namespace Veng::Renderer
             // The bloom add; a zero intensity is the shader's bloom-off gate.
             tonemap.SetParam("BloomIntensity",
                              m_Topology->BloomActive ? view.BloomIntensity : 0.0f);
-            tonemap.SetParam("BloomScale", m_Bloom->GetMip0SampleMap(postResolveExtent));
+            if (m_Topology->BloomActive)
+            {
+                tonemap.SetParam("BloomScale", m_Bloom->GetMip0SampleMap(postResolveExtent));
+            }
         }
 
         // Sync the broadphase first: re-gathers and rebuilds only when the scene's spatial
@@ -2458,15 +2470,15 @@ namespace Veng::Renderer
         // (TAA/TAAU) resolve is sub-rect-aware — it reconstructs the full allocation from the
         // sub-rect, which is what makes TAAU an upscaler — so it does not force full resolution.
         // The exclusions do not carry the sub-rect sampling and each forces full resolution
-        // (correct, just no scaling): the GPU hi-Z occlusion test, the SSR trace, and the Dual-Kawase
-        // bloom kernel. A composited depth-of-field chain joins them only behind a temporal resolve:
+        // (correct, just no scaling): the GPU hi-Z occlusion test and the SSR trace. Bloom runs
+        // downstream of the promotion, so neither kernel sees the sub-rect. A composited
+        // depth-of-field chain joins them only behind a temporal resolve:
         // that resolve reconstructs the whole render allocation, so the chain would read
         // allocation-resolution scene colour through the sub-rect map its depth reads need.
         const bool drsSupported =
             m_Settings.Mode == DebugView::Final && !m_Settings.SSR &&
             !(m_GpuCull->GetActiveCull() == SceneRendererSettings::CullMode::GPU &&
               m_Settings.Occlusion) &&
-            !(m_Settings.Bloom && m_Settings.Kernel == BloomKernel::Kawase) &&
             !(m_Topology->DofComposited() && m_Topology->TaaActive);
         const f32 renderScale = drsSupported ? view.RenderScale : 1.0f;
         const uvec2 validExtent =

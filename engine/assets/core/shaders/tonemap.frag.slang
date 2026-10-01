@@ -131,8 +131,9 @@ float4 fsMain(PostProcessFragmentInput input) : SV_Target0
     float2 uv = min(input.v_UV * p.RenderScale.xy, p.RenderScale.zw);
     float3 hdr = g_Textures[NonUniformResourceIndex(p.Hdr)].Sample(
         g_Samplers[NonUniformResourceIndex(p.HdrSampler)], uv).rgb;
-    // Bloom is added in linear HDR ahead of exposure. The branch is uniform across the draw, and
-    // with bloom inactive the Bloom slot is never indexed.
+    // Bloom is added in linear HDR ahead of exposure; its mip 0 is half the scene's resolution, so
+    // this one bilinear tap magnifies it. The branch is uniform across the draw, and with bloom
+    // inactive the Bloom slot is never indexed.
     if (p.BloomIntensity > 0.0)
     {
         const float2 bloomUv = min(input.v_UV * p.BloomScale.xy, p.BloomScale.zw);

@@ -278,7 +278,7 @@ costs are allocated separately:
   the allocation itself.
 - The **post-resolve allocation** — `region · MaxAllocationScale`, no render scale — holds the tail:
   the promoted scene colour, the promoted bloom mask, the post-process effect ping-pong pair, the
-  overlay-document intermediate, the bloom pyramid, the spatial-AA LDR intermediate
+  overlay-document intermediate, the bloom pyramid (at half of it), the spatial-AA LDR intermediate
   and edge map, and the output. `SceneView::PostResolveExtent` is **always** this, at any render scale in any AA mode.
 
 `MaxAllocationScale` is the outer factor on **both**, which is what keeps supersampling supersampling
@@ -334,9 +334,8 @@ interface composited pre-bloom. A dynamic-resolution controller's loop is unaffe
 still measures whole-frame GPU time and converges, with the scaled portion simply a smaller fraction
 of what it measures, so it settles at a lower scale for the same budget.
 
-**The remaining `drsSupported` exclusions are about the sub-rect, not the allocation.** SSR, the GPU
-hi-Z occlusion test, and the Dual-Kawase bloom kernel are not sub-rect-aware and force the per-frame
-render scale to 1; they still render into a *reduced render allocation* perfectly well, so a static
+**The remaining `drsSupported` exclusions are about the sub-rect, not the allocation.** SSR and the
+GPU hi-Z occlusion test are not sub-rect-aware and force the per-frame render scale to 1; they still render into a *reduced render allocation* perfectly well, so a static
 render-scale reduction reaches them. A composited depth-of-field chain joins them **only behind a
 temporal resolve**: that resolve reconstructs the whole render allocation, so the chain would be
 reading allocation-resolution scene colour through the sub-rect map its depth reads need. Without a
@@ -348,8 +347,9 @@ A shader that samples the g-buffer maps a **logical** screen UV through the view
 every such read is correct whatever resolution the pass itself runs at. The explicit maps beside it:
 `PostProcessEffectScenePass` derives `DepthScaleUV` against the render allocation while
 `SceneScaleUV` is the identity over the post-resolve one. The bloom bright-pass is **not** one of
-these: its mask input is promoted to the pyramid's own allocation, so it reads the mask through the
-same `SourceScaleUV`/`SourceMaxUV` as the colour.
+these: its mask input is promoted to the scene colour's own allocation, so it reads the mask through
+the same `SourceScaleUV`/`SourceMaxUV` as the colour. Bloom as a whole runs downstream of the
+promotion, so the sub-rect never reaches it and neither kernel restricts the render scale.
 
 #### Temporal upscaling (TAAU)
 
@@ -773,14 +773,23 @@ not a PostProcess material. The lit HDR target is bright-passed (a soft-knee `Th
 **Karis-average** firefly suppression on the first downsample, the firefly-stability mechanism
 that holds whether or not the optional TAA resolve is on) into a single `HdrFormat` mip-chain
 image's mip 0, **progressively downsampled** through the chain, then **upsampled** with an
-accumulating dual filter (`mip[i] += upsample(mip[i+1]) * Radius`). The **tonemap** composites it:
-it samples mip 0 beside the scene colour, through the extra-input seam of its `PostProcessScenePass`,
-and adds `mip0 * Intensity` in linear HDR ahead of exposure — so no full-resolution intermediate holds
-the sum, and with bloom inactive the intensity is written 0 and the add is skipped. The whole
-sweep is **compute**: per-level dispatches with a barrier between levels, mirroring the hi-Z
-reduction's mip-chain shape (one image with N mip levels, per-mip storage views for the writes, a
-whole-chain sampled view + a clamp-to-edge linear sampler for the bilinear taps, per-level
-descriptor sets, all off bindless).
+accumulating dual filter (`mip[i] += upsample(mip[i+1]) * Radius`). **The pyramid begins at half
+resolution**: mip 0 is half the post-resolve allocation (floor-halved, `BloomPyramidBase`), so the
+bright pass is the chain's first genuine 2:1 downsample and no level is a full-resolution surface.
+The chain is the full-extent chain less its finest level (`BloomMipCount`), so its coarsest level —
+and the widest glow it reaches — is the same at every extent. Every pyramid-side sub-rect map is taken
+over the pyramid's valid base (half the frame's valid extent); only level 0's source, the scene colour
+and the mask read with its taps, maps over the scene's. The arithmetic is device-free in
+`BloomMips.h`, pinned by `tests/unit/bloom_mips.cpp`. The **tonemap** composites it: it samples mip 0
+beside the scene colour, through the extra-input seam of its `PostProcessScenePass`, magnifying it 2×
+in one bilinear tap, and adds `mip0 * Intensity` in linear HDR ahead of exposure — so no
+full-resolution intermediate holds the sum, and with bloom inactive the intensity is written 0 and
+the add is skipped. The whole sweep is **compute**: per-level dispatches with a barrier between
+levels, mirroring the hi-Z reduction's mip-chain shape (one image with N mip levels, one single-mip
+view per level serving as storage destination and sampled source, a clamp-to-edge linear sampler for
+the bilinear taps, per-level descriptor sets, all off bindless). **The pyramid exists only while
+bloom is active** (`ResolveBloomActive` — the setting on the Final path, or `DebugView::Bloom`): a
+renderer with bloom off allocates no chain, and a reconfigure at an unchanged extent keeps it.
 The filter kernel is a `BloomKernel { Cod, Kawase }` topology knob — the COD/Jimenez 13-tap-down /
 tent-up dual filter (the default and the golden's kernel) or the bandwidth-optimized **Dual
 Kawase** filter for the TBDR GPUs veng primarily targets. `Bloom` (on/off) and `Kernel` are

@@ -2232,6 +2232,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 // (not a second golden) pins that Kawase also blooms a bright region. The same metallic
 // brick fixture drives a tight HDR highlight; with Bloom on and Kernel = Kawase the halo
 // lifts over the bloom-off result, and the Kernel switch is a clean Configure recompile.
+// Bloom runs downstream of the promotion, so the kernel leaves the render scale alone: a
+// half-scale frame renders its sub-rect and still blooms near and far.
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "scene renderer: the Kawase bloom kernel also spreads a bright region")
 {
@@ -2304,7 +2306,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     auto HaloLuma = [&](const vector<u8>& pixels) -> f64 { return AnnulusLuma(pixels, 8, 24); };
     auto FarHaloLuma = [&](const vector<u8>& pixels) -> f64 { return AnnulusLuma(pixels, 12, 40); };
 
-    auto Render = [&]() -> vector<u8>
+    auto Render = [&](f32 renderScale = 1.0f) -> vector<u8>
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -2312,6 +2314,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                 renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
                                                            .Camera = camera,
                                                            .Delta = 0.0f,
+                                                           .RenderScale = renderScale,
                                                            .BloomThreshold = 1.0f,
                                                            .BloomIntensity = 1.0f,
                                                            .BloomRadius = 1.0f});
@@ -2325,6 +2328,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const vector<u8> noBloomPixels = Render();
     const f64 haloNoBloom = HaloLuma(noBloomPixels);
     const f64 farHaloNoBloom = FarHaloLuma(noBloomPixels);
+    const vector<u8> noBloomHalfPixels = Render(0.5f);
+    const f64 haloNoBloomHalf = HaloLuma(noBloomHalfPixels);
+    const f64 farHaloNoBloomHalf = FarHaloLuma(noBloomHalfPixels);
 
     // Bloom ON with the Kawase kernel (a Configure recompile selecting the Kawase pipelines).
     renderer->Configure({.Mode = DebugView::Final, .Bloom = true, .Kernel = BloomKernel::Kawase});
@@ -2338,6 +2344,12 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // The far-halo lift is small and GPU-dependent; the margin pins a real widening (see the
     // COD kernel's far-halo check for the rationale).
     CHECK(farHaloKawase > farHaloNoBloom + 0.003);
+
+    // At half render scale the Kawase frame takes the sub-rect, and blooms it as fully.
+    const vector<u8> kawaseHalfPixels = Render(0.5f);
+    CHECK(renderer->GetValidExtent() == uvec2{extent.x / 2, extent.y / 2});
+    CHECK(HaloLuma(kawaseHalfPixels) > haloNoBloomHalf + 0.01);
+    CHECK(FarHaloLuma(kawaseHalfPixels) > farHaloNoBloomHalf + 0.003);
 
     std::filesystem::remove(outArchive);
 }

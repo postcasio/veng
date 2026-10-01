@@ -1,7 +1,8 @@
 // Bloom downsample: one destination mip per dispatch. Each invocation owns one
 // destination texel and gathers a 13-tap Call-of-Duty/Jimenez kernel from the source
 // (the lit HDR target for mip 0, the prior bloom mip otherwise), reading bilinearly so
-// the wide taps land between source texels.
+// the wide taps land between source texels. Every level halves its source — mip 0 is half
+// the scene colour — so the bright pass is the chain's first 2:1 downsample.
 //
 // Mip 0 fuses two extra steps: a soft-knee bright-pass (the luminance above Threshold
 // ramps in continuously) and a Karis partial-tonemap average (each 2x2 tap group is
@@ -86,15 +87,15 @@ void csMain(uint3 id : SV_DispatchThreadID)
     if (id.x >= g_PC.DestExtent.x || id.y >= g_PC.DestExtent.y)
         return;
 
-    // The destination texel center in [0,1]; one source texel is two destination texels
-    // wide, so the kernel offsets below (in destination texels) sample at source-texel
-    // half steps for the bilinear COD pattern.
+    // The destination texel center in [0,1]. Every level, mip 0 included, halves its source,
+    // so one destination texel spans two source texels; the kernel offsets below are in
+    // destination texels.
     float2 texel = 1.0 / float2(g_PC.DestExtent);
     float2 uv = (float2(id.xy) + 0.5) * texel;
 
     // The 13-tap kernel: a center, an inner 2x2 ring and an outer 3x3 ring of the
     // COD/Jimenez "Next Generation Post Processing" downsample. Offsets are in
-    // destination texels (== half a source texel each side).
+    // destination texels (== two source texels each).
     float2 o = texel;
 
     float3 a = SampleSource(uv + float2(-2, -2) * o);

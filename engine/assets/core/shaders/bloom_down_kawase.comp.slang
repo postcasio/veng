@@ -3,6 +3,8 @@
 // target for mip 0, the prior bloom mip otherwise) — a center tap plus four diagonal
 // half-texel taps. The bilinear fetches let five samples cover the same footprint the COD
 // 13-tap covers with more taps, for less bandwidth on the tile-based GPUs this kernel targets.
+// Every level halves its source — mip 0 is half the scene colour — so the bright pass is the
+// chain's first 2:1 downsample.
 //
 // Mip 0 fuses two extra steps: a soft-knee bright-pass (the luminance above Threshold
 // ramps in continuously) and a Karis partial-tonemap average (each diagonal tap is weighted

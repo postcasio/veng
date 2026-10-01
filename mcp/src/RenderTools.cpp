@@ -623,14 +623,13 @@ namespace Veng::Mcp
                 const Renderer::SceneRendererSettings& s = renderer.GetSettings();
                 const bool cullGpu =
                     renderer.GetActiveCullMode() == Renderer::SceneRendererSettings::CullMode::GPU;
-                const bool bloomKawase = s.Bloom && s.Kernel == Renderer::BloomKernel::Kawase;
                 const bool debugView = s.Mode != Renderer::DebugView::Final;
                 // The sub-rect DRS scaling is applied only on this exact battery set; anything else
                 // forces full resolution (ResolveRenderScale), so the effective extent is valid_extent
                 // regardless of render_scale. The temporal (TAA/TAAU) resolve is sub-rect-aware and no
                 // longer forces full resolution, but depth of field composited after it does.
-                const bool subRectApplied = !s.SSR && !(cullGpu && s.Occlusion) && !bloomKawase &&
-                                            !debugView && !(s.UsesTaa() && s.DepthOfField);
+                const bool subRectApplied = !s.SSR && !(cullGpu && s.Occlusion) && !debugView &&
+                                            !(s.UsesTaa() && s.DepthOfField);
                 Json result = {
                     {"visible", renderer.GetLastVisibleCount()},
                     {"frustum_survived", renderer.GetFrustumSurvivedCount()},
@@ -650,7 +649,6 @@ namespace Veng::Mcp
                       {"ssr", s.SSR},
                       {"cull_gpu", cullGpu},
                       {"occlusion", s.Occlusion},
-                      {"bloom_kawase", bloomKawase},
                       {"debug_view", debugView}}},
                     {"dynamic_resolution", viewport->IsDynamicResolutionEnabled()}};
                 if (const optional<Renderer::DynamicResolutionSettings>& drs =

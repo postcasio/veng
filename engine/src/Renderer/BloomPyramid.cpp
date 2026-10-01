@@ -1,7 +1,6 @@
 #include "BloomPyramid.h"
 
 #include <algorithm>
-#include <bit>
 
 #include <fmt/format.h>
 
@@ -22,6 +21,7 @@
 #include <Veng/Renderer/Types.h>
 
 #include "AutoExposureMeter.h"
+#include "BloomMips.h"
 
 namespace Veng::Renderer
 {
@@ -39,10 +39,6 @@ namespace Veng::Renderer
 
         // The bloom pyramid's image usage: a compute-written, compute-read mip chain.
         constexpr ImageUsage BloomPyramidUsage = ImageUsage::Storage | ImageUsage::Sampled;
-
-        // The coarsest pyramid level holds a ~8 px edge (2^3) rather than a degenerate
-        // 1×1 contributing nothing: the chain stops BloomTileShift levels short.
-        constexpr u32 BloomTileShift = 3;
 
         // The bloom downsample push: the destination mip extent, a level-0 bright-pass
         // flag (1.0 enables bright-pass + Karis), the soft-knee threshold, and the level-0
@@ -69,29 +65,6 @@ namespace Veng::Renderer
             vec2 SourceMaxUV;
             f32 Radius;
         };
-
-        // The dynamic-resolution sub-rect mapping for one mip level of a high-water-mark-allocated
-        // chain: the valid extent at that level, and the (scale, clamp) UVs mapping a [0,1] valid
-        // UV into the level's valid region. At full resolution ScaleUV is 1 and MaxUV ~1.
-        struct MipSubRect
-        {
-            uvec2 ValidExtent;
-            vec2 ScaleUV;
-            vec2 MaxUV;
-        };
-
-        MipSubRect ComputeMipSubRect(uvec2 validBase, uvec2 allocBase, u32 level)
-        {
-            const uvec2 valid{std::max(validBase.x >> level, 1u),
-                              std::max(validBase.y >> level, 1u)};
-            const uvec2 alloc{std::max(allocBase.x >> level, 1u),
-                              std::max(allocBase.y >> level, 1u)};
-            return {
-                .ValidExtent = valid,
-                .ScaleUV = vec2(valid) / vec2(alloc),
-                .MaxUV = (vec2(valid) - 0.5f) / vec2(alloc),
-            };
-        }
     }
 
     Unique<BloomPyramid> BloomPyramid::Create(Context& context, AssetManager& assets,
@@ -184,36 +157,40 @@ namespace Veng::Renderer
         m_Context.GetBindlessRegistry().Release(m_Mip0Handle);
     }
 
-    void BloomPyramid::Resize(const uvec2 extent, const Ref<ImageView>& hdrView)
+    void BloomPyramid::Resize(const uvec2 sceneExtent, const Ref<ImageView>& hdrView)
     {
+        // A reconfigure that leaves the scene extent alone keeps the chain; only the level-0
+        // source can have moved.
+        if (m_Image != nullptr && sceneExtent == m_SceneExtent)
+        {
+            SetSourceView(hdrView);
+            return;
+        }
+
         // Bloom operates in linear HDR space before tonemap, sampling bilinearly: the wide
         // COD/tent taps land between texels, so the pyramid's HdrFormat must advertise linear
         // filtering — a capability the point-Load hi-Z reduction never exercises.
         VE_ASSERT(m_Context.IsFormatLinearFilterSupported(HdrFormat),
                   "BloomPyramid: bloom needs SampledImageFilterLinear on the HDR format");
 
-        m_Extent = extent;
+        m_SceneExtent = sceneExtent;
+        m_Extent = BloomPyramidBase(sceneExtent);
 
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_Mip0Handle);
 
-        // The pyramid stops BloomTileShift levels short of 1×1 so the coarsest level holds a
-        // ~8 px edge; the max(1u, …) floor guards a tiny extent (mirroring hi-Z's guard).
-        const u32 maxDim = std::max(extent.x, extent.y);
-        const u32 mipCount =
-            maxDim == 0 ? 1u : std::max(1u, std::bit_width(maxDim) - BloomTileShift);
+        const u32 mipCount = BloomMipCount(sceneExtent);
 
         m_Image = Image::Create(m_Context, {
                                                .Name = "SceneRenderer Bloom Pyramid",
-                                               .Extent = {extent.x, extent.y, 1},
+                                               .Extent = {m_Extent.x, m_Extent.y, 1},
                                                .MipLevels = mipCount,
                                                .Format = HdrFormat,
                                                .Usage = BloomPyramidUsage,
                                            });
 
-        // One single-mip storage view per level (the down/up dispatches write each), plus a
-        // whole-chain sampled view for the bilinear reads. Storage and sampled access to one
-        // mip need distinct views.
+        // One single-mip view per level, serving as the storage destination of the dispatch that
+        // writes it and as the sampled source of the dispatches that read it.
         m_Mips.clear();
         m_Mips.reserve(mipCount);
         for (u32 level = 0; level < mipCount; level++)
@@ -226,11 +203,6 @@ namespace Veng::Renderer
                                .MipLevels = 1,
                            }));
         }
-        m_SampleView = ImageView::Create(m_Context, {
-                                                        .Name = "SceneRenderer Bloom Sample View",
-                                                        .Image = m_Image,
-                                                        .MipLevels = mipCount,
-                                                    });
 
         // Clamp-to-edge linear sampler for the bilinear taps; MaxLod covers every level so a
         // per-mip sampled source view's level 0 always resolves.
@@ -290,6 +262,19 @@ namespace Veng::Renderer
         }
     }
 
+    void BloomPyramid::Release()
+    {
+        // The images and sets retire through the frame bin; the slot through the registry's window.
+        m_Context.GetBindlessRegistry().Release(m_Mip0Handle);
+        m_Mip0Handle = TextureHandle{};
+        m_DownSets.clear();
+        m_UpSets.clear();
+        m_Mips.clear();
+        m_Image.reset();
+        m_SceneExtent = uvec2(0);
+        m_Extent = uvec2(1);
+    }
+
     void BloomPyramid::SetSourceView(const Ref<ImageView>& source)
     {
         // The bright pass samples the source at level 0, so it must track Declare's hdrId. A Rebuild
@@ -310,7 +295,7 @@ namespace Veng::Renderer
 
     vec4 BloomPyramid::GetMip0SampleMap(const uvec2 validExtent) const
     {
-        const MipSubRect mip0 = ComputeMipSubRect(validExtent, m_Extent, 0);
+        const MipSubRect mip0 = ComputeMipSubRect(BloomPyramidBase(validExtent), m_Extent, 0);
         return {mip0.ScaleUV, mip0.MaxUV};
     }
 
@@ -320,6 +305,7 @@ namespace Veng::Renderer
     {
         const u32 mipCount = static_cast<u32>(m_Mips.size());
         const uvec2 allocExtent = m_Extent;
+        const uvec2 sceneAllocExtent = m_SceneExtent;
 
         // The mask is folded in only when the renderer supplied a live target and both slots
         // resolved; without it level 0 is the luminance bright-pass alone.
@@ -354,20 +340,21 @@ namespace Veng::Renderer
             // Only level 0 bright-passes, so only level 0 reads the mask.
             const bool levelMask = maskActive && level == 0;
             Context* context = &m_Context;
-            // The source is mip level-1 (the HDR for level 0); its dynamic-resolution sub-rect
-            // ratio is at the source's level. Computed at record time from this frame's extent.
-            const u32 srcLevel = level == 0 ? 0u : level - 1;
             const AutoExposureMeter* meter = &autoExposure;
             builder.Execute(
-                [pipeline, set, level, srcLevel, allocExtent, brightPass, meter, levelMask,
+                [pipeline, set, level, allocExtent, sceneAllocExtent, brightPass, meter, levelMask,
                  maskHandle, maskSampler, context](PassContext& inner)
                 {
                     const auto* view = static_cast<const SceneView*>(inner.UserData());
                     VE_ASSERT(view != nullptr, "Bloom down pass: null SceneView");
-                    const MipSubRect dst =
-                        ComputeMipSubRect(view->PostResolveExtent, allocExtent, level);
+                    // Every pyramid level maps over the pyramid's own valid base; only level 0's
+                    // source, the scene colour (and the mask read with its taps), maps over the
+                    // scene's. Computed at record time from this frame's extent.
+                    const uvec2 validBase = BloomPyramidBase(view->PostResolveExtent);
+                    const MipSubRect dst = ComputeMipSubRect(validBase, allocExtent, level);
                     const MipSubRect src =
-                        ComputeMipSubRect(view->PostResolveExtent, allocExtent, srcLevel);
+                        level == 0 ? ComputeMipSubRect(view->PostResolveExtent, sceneAllocExtent, 0)
+                                   : ComputeMipSubRect(validBase, allocExtent, level - 1);
                     CommandBuffer& cmd = inner.Cmd();
                     cmd.BindPipeline(pipeline);
                     if (levelMask)
@@ -423,10 +410,9 @@ namespace Veng::Renderer
                 {
                     const auto* view = static_cast<const SceneView*>(inner.UserData());
                     VE_ASSERT(view != nullptr, "Bloom up pass: null SceneView");
-                    const MipSubRect dst =
-                        ComputeMipSubRect(view->PostResolveExtent, allocExtent, level);
-                    const MipSubRect src =
-                        ComputeMipSubRect(view->PostResolveExtent, allocExtent, srcLevel);
+                    const uvec2 validBase = BloomPyramidBase(view->PostResolveExtent);
+                    const MipSubRect dst = ComputeMipSubRect(validBase, allocExtent, level);
+                    const MipSubRect src = ComputeMipSubRect(validBase, allocExtent, srcLevel);
                     CommandBuffer& cmd = inner.Cmd();
                     cmd.BindPipeline(pipeline);
                     cmd.BindDescriptorSets(DescriptorSetBindInfo{

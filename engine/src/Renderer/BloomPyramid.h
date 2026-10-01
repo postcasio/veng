@@ -27,8 +27,7 @@ namespace Veng::Renderer
     /// @brief Owns the compute mip-pyramid bloom battery — resources, pipelines, and sweep.
     ///
     /// The post-lighting bloom vertical the renderer wires ahead of tonemap: the HDR mip-chain
-    /// pyramid image with its per-level storage views and whole-chain sample view, the clamp
-    /// linear sampler, the four compute pipelines (Cod/Kawase down/up) with their set layout and
+    /// pyramid image with its per-level views, the clamp linear sampler, the four compute pipelines (Cod/Kawase down/up) with their set layout and
     /// per-level descriptor sets, and the mip-0 bindless slot. Declare contributes the down/up
     /// sweep; the tonemap adds the accumulated mip 0 into the scene colour itself, sampling it
     /// through GetMip0Handle and GetMip0SampleMap. The down-pass threshold divides by the frame's
@@ -36,6 +35,10 @@ namespace Veng::Renderer
     /// is a construction-time choice re-applied on Reconfigure. All of set 1 is held off the set-0
     /// bindless registry (the closed bloom chain needs no global registration, and a dedicated set
     /// sidesteps the set-0 storage-image argument-buffer path on MoltenVK).
+    ///
+    /// The pyramid begins at half the scene extent: the bright pass is the chain's first 2:1
+    /// downsample, so no level is a full-resolution surface, and the tonemap's bilinear tap
+    /// magnifies mip 0 on the way into the add.
     class BloomPyramid
     {
     public:
@@ -53,15 +56,21 @@ namespace Veng::Renderer
         BloomPyramid(const BloomPyramid&) = delete;
         BloomPyramid& operator=(const BloomPyramid&) = delete;
 
-        /// @brief Recreates the extent-sized pyramid, views, and per-level sets.
+        /// @brief Builds the pyramid, views, and per-level sets for a scene extent.
         ///
-        /// Builds the HDR mip chain (stopping a few levels short of 1×1), the per-mip storage
-        /// views, the whole-chain sampled view, and the down/up descriptor sets; the level-0 down
-        /// set binds @p hdrView, so this runs after the HDR target is recreated. Mip 0 registers
-        /// into bindless for the tonemap's bloom read.
-        /// @param extent  The post-resolve allocation the pyramid is sized to.
-        /// @param hdrView The live scene-colour target the level-0 down set binds.
-        void Resize(uvec2 extent, const Ref<ImageView>& hdrView);
+        /// Builds the HDR mip chain at half @p sceneExtent (BloomPyramidBase, stopping a few
+        /// levels short of 1×1), the per-mip views, and the down/up descriptor sets; the level-0
+        /// down set binds @p hdrView, so this runs after the HDR target is recreated. Mip 0
+        /// registers into bindless for the tonemap's bloom read. A call at the extent the pyramid
+        /// already holds keeps the chain and only re-points the level-0 source.
+        /// @param sceneExtent The post-resolve allocation the bright pass reads.
+        /// @param hdrView     The live scene-colour target the level-0 down set binds.
+        void Resize(uvec2 sceneExtent, const Ref<ImageView>& hdrView);
+
+        /// @brief Drops the pyramid, its views, sets, and mip-0 slot, keeping the pipelines.
+        ///
+        /// A renderer with bloom inactive holds no chain; a later Resize rebuilds it.
+        void Release();
 
         /// @brief Re-applies the down/up filter kernel choice (Cod or Kawase).
         /// @param kernel The kernel selected this frame; read by Declare at record time.
@@ -86,9 +95,9 @@ namespace Veng::Renderer
         ///
         /// Level 0 additionally takes the larger of its luminance bright-pass and the bloom mask,
         /// the screen-space target a forward material writes to name the glow it wants apart from
-        /// how bright it is. The mask reaches the tail at the pyramid's own allocation — promoted
-        /// alongside the scene colour when the scene rasterized less than it — so it is read through
-        /// the same sub-rect mapping as the colour beside it. An invalid mask id or slot leaves
+        /// how bright it is. The mask reaches the tail at the scene colour's own allocation —
+        /// promoted alongside it when the scene rasterized less than it — so it is read through the
+        /// same sub-rect mapping as the colour beside it. An invalid mask id or slot leaves
         /// level 0 on the bright-pass alone.
         /// @param graph        The renderer's internal graph being rebuilt.
         /// @param hdrId        The HDR target import (the level-0 source).
@@ -106,10 +115,11 @@ namespace Veng::Renderer
 
         /// @brief The sub-rect map a full-frame UV reads mip 0 through.
         ///
-        /// The same mapping the sweep's own dispatches derive for level 0, so a reader of mip 0
-        /// lands on the texels the up-sweep wrote: `xy` the valid/allocated scale, `zw` the
-        /// bilinear-tap clamp (half a texel inside the valid region).
-        /// @param validExtent The frame's valid post-resolve extent (SceneView::PostResolveExtent).
+        /// The same mapping the sweep's own dispatches derive for level 0 — over the pyramid's
+        /// valid base, half @p validExtent — so a reader of mip 0 lands on the texels the
+        /// up-sweep wrote: `xy` the valid/allocated scale, `zw` the bilinear-tap clamp (half a
+        /// texel inside the valid region).
+        /// @param validExtent The frame's valid scene extent (SceneView::PostResolveExtent).
         /// @return `(scale.xy, clamp.zw)`, applied as `min(uv * map.xy, map.zw)`.
         [[nodiscard]] vec4 GetMip0SampleMap(uvec2 validExtent) const;
 
@@ -132,7 +142,9 @@ namespace Veng::Renderer
 
         /// @brief The down/up filter kernel choice, read by Declare at record time.
         BloomKernel m_Kernel;
-        /// @brief The post-resolve allocation the pyramid is sized to (set by Resize).
+        /// @brief The scene extent the pyramid was built for (zero while released).
+        uvec2 m_SceneExtent{0};
+        /// @brief The pyramid's level-0 extent, half the scene extent (set by Resize).
         uvec2 m_Extent{1};
 
         /// @brief Cod bloom downsample pipeline (bright-pass + Karis on mip 0, 13-tap below).
@@ -150,10 +162,8 @@ namespace Veng::Renderer
 
         /// @brief Bloom mip-pyramid image: an HDR mip chain the compute down/up sweep operates on.
         Ref<Image> m_Image;
-        /// @brief One single-mip storage view per pyramid level (the down/up dispatches write each).
+        /// @brief One single-mip view per pyramid level, the storage destination and sampled source.
         std::vector<Ref<ImageView>> m_Mips;
-        /// @brief Whole-chain sampled view of the pyramid; the down/up dispatches read a level by LOD.
-        Ref<ImageView> m_SampleView;
         /// @brief Clamp-to-edge linear sampler for the bilinear down/up taps.
         Ref<Sampler> m_Sampler;
         /// @brief Bindless slot for pyramid mip 0 (the tonemap and the DebugView::Bloom arm read it).
