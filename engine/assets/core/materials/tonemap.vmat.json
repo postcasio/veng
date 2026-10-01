@@ -16,6 +16,28 @@
       "texture": "Hdr"
     },
     {
+      "name": "Bloom",
+      "type": "texture"
+    },
+    {
+      "name": "BloomSampler",
+      "type": "sampler",
+      "texture": "Bloom"
+    },
+    {
+      "name": "BloomIntensity",
+      "value": 0.0
+    },
+    {
+      "name": "BloomScale",
+      "value": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
       "name": "Exposure",
       "value": 1.0
     },

@@ -359,11 +359,6 @@ namespace Veng::Renderer
         /// path, which runs no lighting and allocates no HDR target.
         [[nodiscard]] Ref<ImageView> GetHdrView() const;
 
-        /// @brief Returns the bloom composite result the tonemap stage reads when Bloom is on.
-        ///
-        /// Null when Bloom is off (tonemap reads the raw HDR target instead). Exposed for tests.
-        [[nodiscard]] Ref<ImageView> GetBloomResultView() const;
-
         /// @brief Returns the persisted TAA history target, or null when TAA is off.
         ///
         /// Holds the previous frame's resolved HDR. Renderer-owned; invalidated by Resize
@@ -890,6 +885,11 @@ namespace Veng::Renderer
         TextureHandle m_PpEffectHandleB;
         /// @brief Bindless slot for the overlay-document intermediate; a composite material samples it.
         TextureHandle m_HdrOverlayDocHandle;
+        /// @brief Bindless slot of the scene colour the tonemap reads, set by Rebuild.
+        ///
+        /// With bloom inactive Execute writes it into the tonemap's bloom handle field too, so that
+        /// field never names a slot an earlier topology held.
+        TextureHandle m_TonemapSourceHandle;
         /// @brief Bindless slot of the linear clamp sampler the fullscreen passes read the g-buffer
         /// and HDR target through, shared out of the registry across every SceneRenderer.
         SamplerHandle m_SamplerHandle;
@@ -1191,8 +1191,6 @@ namespace Veng::Renderer
         ResourceId m_EmissiveId;
         /// @brief Per-mip subresource handle for the bloom pyramid the down/up sweep reads and writes.
         MipChainId m_BloomChainId;
-        /// @brief Imported id for the bloom composite result.
-        ResourceId m_BloomResultId;
         /// @brief Imported id for the scene-side bloom-mask target the translucent pass writes.
         ///
         /// Invalid when bloom is off, which is what takes the mask attachment off the translucent

@@ -237,10 +237,10 @@ namespace Veng::Renderer
     /// @brief Optional second runtime-bound input for a PostProcessScenePass.
     ///
     /// Some PostProcess materials sample a second upstream target alongside the
-    /// primary one (e.g. the bloom composite samples the HDR target and the blurred
-    /// bloom residual together). When Texture is valid the pass declares .Sample on
-    /// Source and writes the handle pair into the named fields each frame; an invalid
-    /// Texture is skipped.
+    /// primary one (e.g. the tonemap samples the scene colour and, under bloom, the
+    /// accumulated bloom pyramid's mip 0 together). When Texture is valid the pass
+    /// declares .Sample on Source and writes the handle pair into the named fields each
+    /// frame; an invalid Texture is skipped.
     struct PostProcessExtraInput
     {
         /// @brief The second imported upstream target.

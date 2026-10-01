@@ -1,9 +1,10 @@
 // Tonemap fragment stage: the engine's first PostProcess-domain material. It samples the HDR
-// lighting target through the bindless set-0 array (the HDR input is a runtime-bound handle field
-// the post pass rewrites each frame), applies an exposure scale, and maps the linear HDR color to
-// the display range with a selectable tone curve (the Tonemapper param, written each frame from the
-// SceneView). The terminal stage of the deferred chain — it replaces a plain clamp with a curve
-// that rolls off highlights instead of hard-clipping them.
+// scene colour through the bindless set-0 array (the HDR input is a runtime-bound handle field
+// the post pass rewrites each frame), adds the accumulated bloom when bloom is active, applies an
+// exposure scale, and maps the linear HDR color to the display range with a selectable tone curve
+// (the Tonemapper param, written each frame from the SceneView). The terminal stage of the deferred
+// chain — it replaces a plain clamp with a curve that rolls off highlights instead of hard-clipping
+// them.
 //
 // The output stays linear; the swapchain composite handles the final display (sRGB) encoding, so
 // every operator below returns linear color and any curve authored against a display gamma undoes
@@ -14,8 +15,8 @@
 #include "Veng/postprocess.slang"
 
 // MaterialParams is this material's whole parameter block: the bindless handle slots for the HDR
-// input (uint members the post pass writes each frame with the renderer's current HDR target
-// index) beside the authored Exposure and Tonemapper params. Read through the standard set-0
+// and bloom inputs (uint members written each frame with the renderer's current target indices)
+// beside the authored Exposure and Tonemapper params. Read through the standard set-0
 // byte-addressed material buffer at this material's own block offset.
 struct MaterialParams
 {
@@ -25,6 +26,10 @@ struct MaterialParams
     float4 RenderScale; // dynamic-resolution upscale: xy source validExtent/allocExtent, zw clamp
     uint   Hdr;         // bindless sampled-image index (runtime-bound each frame)
     uint   HdrSampler;  // bindless sampler index (runtime-bound each frame)
+    float4 BloomScale;  // bloom mip-0 sub-rect map: xy validExtent/allocExtent, zw clamp
+    uint   Bloom;       // bindless index of bloom pyramid mip 0 (runtime-bound each frame)
+    uint   BloomSampler; // bindless sampler index for the bloom read (runtime-bound each frame)
+    float  BloomIntensity; // bloom mix, set per frame; 0 when bloom is not active
     float  Exposure;    // authored param, set per frame from the SceneView
     float  Tonemapper;  // the Renderer::Tonemapper enum as a float, set per frame from the SceneView
     float  OutputBrightness; // display-calibration multiply, set per frame from the SceneView
@@ -126,6 +131,15 @@ float4 fsMain(PostProcessFragmentInput input) : SV_Target0
     float2 uv = min(input.v_UV * p.RenderScale.xy, p.RenderScale.zw);
     float3 hdr = g_Textures[NonUniformResourceIndex(p.Hdr)].Sample(
         g_Samplers[NonUniformResourceIndex(p.HdrSampler)], uv).rgb;
+    // Bloom is added in linear HDR ahead of exposure. The branch is uniform across the draw, and
+    // with bloom inactive the Bloom slot is never indexed.
+    if (p.BloomIntensity > 0.0)
+    {
+        const float2 bloomUv = min(input.v_UV * p.BloomScale.xy, p.BloomScale.zw);
+        hdr += g_Textures[NonUniformResourceIndex(p.Bloom)].Sample(
+                   g_Samplers[NonUniformResourceIndex(p.BloomSampler)], bloomUv).rgb *
+               p.BloomIntensity;
+    }
     float3 exposed = max(hdr * p.Exposure, 0.0);
 
     // Branch on the selected operator (the Renderer::Tonemapper enum carried as a float).

@@ -278,7 +278,7 @@ costs are allocated separately:
   the allocation itself.
 - The **post-resolve allocation** — `region · MaxAllocationScale`, no render scale — holds the tail:
   the promoted scene colour, the promoted bloom mask, the post-process effect ping-pong pair, the
-  overlay-document intermediate, the bloom pyramid and its result, the spatial-AA LDR intermediate
+  overlay-document intermediate, the bloom pyramid, the spatial-AA LDR intermediate
   and edge map, and the output. `SceneView::PostResolveExtent` is **always** this, at any render scale in any AA mode.
 
 `MaxAllocationScale` is the outer factor on **both**, which is what keeps supersampling supersampling
@@ -773,18 +773,21 @@ not a PostProcess material. The lit HDR target is bright-passed (a soft-knee `Th
 **Karis-average** firefly suppression on the first downsample, the firefly-stability mechanism
 that holds whether or not the optional TAA resolve is on) into a single `HdrFormat` mip-chain
 image's mip 0, **progressively downsampled** through the chain, then **upsampled** with an
-accumulating dual filter (`mip[i] += upsample(mip[i+1]) * Radius`) and **composited** back into
-linear HDR (`hdr + mip0 * Intensity`) ahead of tonemap. The whole sweep is **compute**: per-level
-dispatches with a barrier between levels, mirroring the hi-Z reduction's mip-chain shape (one
-image with N mip levels, per-mip storage views for the writes, a whole-chain sampled view + a
-clamp-to-edge linear sampler for the bilinear taps, per-level descriptor sets, all off bindless).
+accumulating dual filter (`mip[i] += upsample(mip[i+1]) * Radius`). The **tonemap** composites it:
+it samples mip 0 beside the scene colour, through the extra-input seam of its `PostProcessScenePass`,
+and adds `mip0 * Intensity` in linear HDR ahead of exposure — so no full-resolution intermediate holds
+the sum, and with bloom inactive the intensity is written 0 and the add is skipped. The whole
+sweep is **compute**: per-level dispatches with a barrier between levels, mirroring the hi-Z
+reduction's mip-chain shape (one image with N mip levels, per-mip storage views for the writes, a
+whole-chain sampled view + a clamp-to-edge linear sampler for the bilinear taps, per-level
+descriptor sets, all off bindless).
 The filter kernel is a `BloomKernel { Cod, Kawase }` topology knob — the COD/Jimenez 13-tap-down /
 tent-up dual filter (the default and the golden's kernel) or the bandwidth-optimized **Dual
 Kawase** filter for the TBDR GPUs veng primarily targets. `Bloom` (on/off) and `Kernel` are
 `SceneRendererSettings` topology knobs (a `Configure` recompile); `Threshold` / `Intensity` /
-`Radius` are per-frame `SceneView` values that ride the compute push, so tuning them never
-recompiles. `DebugView::Bloom` blits pyramid mip 0 after the up-sweep — the accumulated bloom
-contribution before composite.
+`Radius` are per-frame `SceneView` values — the first and last ride the compute push, `Intensity`
+the tonemap's material block — so tuning them never recompiles. `DebugView::Bloom` blits pyramid
+mip 0 after the up-sweep — the accumulated bloom contribution the tonemap would add.
 
 ### Depth of field and the physical camera
 
@@ -1095,7 +1098,7 @@ the renderer's single internal graph — it is not a `RenderGraph::Pass`. The re
 (sizing, declared reads/writes, recording). It knows only how to record, never what feeds it.
 
 The renderer's pipeline images (g-buffer albedo / world-normal / ORM / velocity / emissive, depth,
-HDR, the bloom mip pyramid + composite result, output) are **renderer-owned `Image`/`ImageView`s
+HDR, the bloom mip pyramid, output) are **renderer-owned `Image`/`ImageView`s
 `Import`ed** into
 the internal graph — not graph transients — because a fullscreen pass samples an upstream target
 through the bindless set-0 array, which needs a `Ref<ImageView>` to `Register` (a transient
@@ -1198,9 +1201,9 @@ upstream target as a material handle field (`Material::SetTextureHandle`/`SetSam
 resident asset), and drives the material's authored params. The loader builds the pipeline
 *layout* for both domains but the `GraphicsPipeline` only for Surface — a PostProcess material's
 pipeline is built by the pass, which alone knows the color format. **Tonemap is the PostProcess
-material** (core `tonemap.vmat`): the HDR (or bloom-composite) target is runtime-bound each frame
-and the per-frame `Exposure` from `SceneView` is written into the ring-buffered block each
-`Execute`. The fixed plumbing composites stay hardcoded engine passes — `SwapChainCompositePass`
+material** (core `tonemap.vmat`): the HDR target — and, under bloom, pyramid mip 0 as its extra
+input — is runtime-bound each frame, and the per-frame `Exposure` and bloom `Intensity` from
+`SceneView` are written into the ring-buffered block each `Execute`. The fixed plumbing composites stay hardcoded engine passes — `SwapChainCompositePass`
 (scene behind, ImGui over) and the `DebugView` blits (albedo/normal/depth, the packed-ORM
 channels, the emissive channel, the SSAO target, the bloom pyramid, the directional and punctual
 shadow maps) have no

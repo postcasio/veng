@@ -2342,6 +2342,93 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// The tonemap adds bloom itself: with Bloom off it writes a zero intensity and skips the add, and
+// with Bloom on it adds the accumulated pyramid. A scene with no pixel above the bright-pass
+// threshold seeds an all-zero pyramid, so the two must render the same frame to within one
+// half-float step — the bloom-off gate and the bloom-on path agree on what "no bloom" is.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: bloom on with nothing above threshold matches bloom off")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_bloom_gate.vengpack");
+
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(material.has_value());
+    const Ref<Mesh> cube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *material), "Bloom Gate Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Direction = vec3(0.0f, 0.0f, -1.0f),
+        .Color = vec3(1.0f),
+        .Intensity = DirectionalLux(1.0f),
+    };
+
+    constexpr uvec2 extent{64, 64};
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false},
+    });
+
+    // A threshold far above anything the scene holds, so the bright pass passes nothing.
+    auto Render = [&]() -> vector<u8>
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                           .Camera = camera,
+                                                           .Delta = 0.0f,
+                                                           .BloomThreshold = 1.0e4f,
+                                                           .BloomIntensity = 1.0f,
+                                                           .BloomRadius = 1.0f});
+            });
+        const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
+        REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+        return pixels;
+    };
+
+    const vector<u8> offPixels = Render();
+    renderer->Configure({.Mode = DebugView::Final, .Bloom = true});
+    const vector<u8> onPixels = Render();
+
+    // The worst disagreement beyond one half-float step of the larger value (half carries a
+    // 10-bit mantissa), accumulated over the frame and asserted once.
+    f32 worstExcess = 0.0f;
+    for (u32 y = 0; y < extent.y; ++y)
+    {
+        for (u32 x = 0; x < extent.x; ++x)
+        {
+            const vec3 off = DecodeTexel(offPixels, extent.x, x, y);
+            const vec3 on = DecodeTexel(onPixels, extent.x, x, y);
+            for (i32 c = 0; c < 3; ++c)
+            {
+                const f32 step = std::max(std::abs(off[c]), std::abs(on[c])) * 0x1p-10f;
+                worstExcess = std::max(worstExcess, std::abs(off[c] - on[c]) - step);
+            }
+        }
+    }
+    // The cube is lit, so the comparison is between two real frames rather than two black ones.
+    CHECK(DecodeTexel(offPixels, extent.x, extent.x / 2, extent.y / 2).r > 0.01f);
+    CHECK(worstExcess <= 0.0f);
+
+    std::filesystem::remove(outArchive);
+}
+
 // The directional-shadow property assertion (this plan's property pin beyond the
 // re-blessed golden). A caster cube floats above a large receiver plane, lit by a
 // directional light traveling straight down. With Shadows ON the plane texel

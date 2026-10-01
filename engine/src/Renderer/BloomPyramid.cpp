@@ -27,17 +27,15 @@ namespace Veng::Renderer
 {
     namespace
     {
-        // The core bloom compute shaders (downsample, upsample-accumulate, composite) and the
-        // Dual Kawase variants of the down/up sweep.
+        // The core bloom compute shaders (downsample, upsample-accumulate) and the Dual Kawase
+        // variants of the down/up sweep.
         constexpr AssetId BloomDownCompId{0x5B8811BEAC5D9C3BULL};
         constexpr AssetId BloomUpCompId{0x4F28282A720BC9F2ULL};
-        constexpr AssetId BloomCompositeCompId{0x533236398AB7654FULL};
         constexpr AssetId BloomDownKawaseCompId{0xCB1AA796A1E3BBEFULL};
         constexpr AssetId BloomUpKawaseCompId{0x0C269FA0D5F353D2ULL};
 
         // Linear float HDR format for the bloom pyramid; matches the lighting target format.
         constexpr Format HdrFormat = Format::RGBA16Sfloat;
-        constexpr ImageUsage HdrUsage = ImageUsage::ColorAttachment | ImageUsage::Sampled;
 
         // The bloom pyramid's image usage: a compute-written, compute-read mip chain.
         constexpr ImageUsage BloomPyramidUsage = ImageUsage::Storage | ImageUsage::Sampled;
@@ -70,17 +68,6 @@ namespace Veng::Renderer
             vec2 SourceScaleUV;
             vec2 SourceMaxUV;
             f32 Radius;
-        };
-
-        // The bloom composite push: the result extent, the source sub-rect mapping (shared by
-        // the HDR and bloom-mip-0 inputs, both at mip-0 scale), and the bloom mix. Matches
-        // bloom_composite.comp.
-        struct BloomCompositePush
-        {
-            uvec2 DestExtent;
-            vec2 SourceScaleUV;
-            vec2 SourceMaxUV;
-            f32 Intensity;
         };
 
         // The dynamic-resolution sub-rect mapping for one mip level of a high-water-mark-allocated
@@ -127,7 +114,7 @@ namespace Veng::Renderer
         // The bloom compute pipelines. Set 1 is off bindless (the closed bloom chain needs
         // no global registration, and a dedicated set sidesteps the set-0 storage-image
         // argument-buffer path on MoltenVK). Down/up share one set layout (sampled source +
-        // linear sampler + storage dest); composite needs a distinct one (two sampled inputs).
+        // linear sampler + storage dest).
         const AssetHandle<Veng::Shader> bloomDownCs =
             LoadShader(BloomDownCompId, "bloom downsample");
         const AssetHandle<Veng::Shader> bloomUpCs = LoadShader(BloomUpCompId, "bloom upsample");
@@ -135,8 +122,6 @@ namespace Veng::Renderer
             LoadShader(BloomDownKawaseCompId, "bloom downsample (Kawase)");
         const AssetHandle<Veng::Shader> bloomUpKawaseCs =
             LoadShader(BloomUpKawaseCompId, "bloom upsample (Kawase)");
-        const AssetHandle<Veng::Shader> bloomCompositeCs =
-            LoadShader(BloomCompositeCompId, "bloom composite");
 
         m_DownUpSetLayout = DescriptorSetLayout::Create(
             m_Context, {
@@ -157,30 +142,6 @@ namespace Veng::Renderer
                                     .Stages = ShaderStage::Compute},
                                },
                        });
-        m_CompositeSetLayout = DescriptorSetLayout::Create(
-            m_Context, {
-                           .Name = "SceneRenderer Bloom Composite Set Layout",
-                           .Bindings =
-                               {
-                                   {.Binding = 0,
-                                    .Type = DescriptorType::SampledImage,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Compute},
-                                   {.Binding = 1,
-                                    .Type = DescriptorType::SampledImage,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Compute},
-                                   {.Binding = 2,
-                                    .Type = DescriptorType::Sampler,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Compute},
-                                   {.Binding = 3,
-                                    .Type = DescriptorType::StorageImage,
-                                    .Count = 1,
-                                    .Stages = ShaderStage::Compute},
-                               },
-                       });
-
         m_DownUpLayout = PipelineLayout::Create(
             m_Context,
             {
@@ -188,14 +149,6 @@ namespace Veng::Renderer
                 .DescriptorSetLayouts = {m_DownUpSetLayout},
                 .PushConstantRanges = {PushConstantRange::Of<BloomDownPush>(ShaderStage::Compute)},
             });
-        m_CompositeLayout = PipelineLayout::Create(
-            m_Context, {
-                           .Name = "SceneRenderer Bloom Composite Layout",
-                           .DescriptorSetLayouts = {m_CompositeSetLayout},
-                           .PushConstantRanges = {PushConstantRange::Of<BloomCompositePush>(
-                               ShaderStage::Compute)},
-                       });
-
         m_DownPipeline = ComputePipeline::Create(
             m_Context,
             {
@@ -224,20 +177,11 @@ namespace Veng::Renderer
                            .ShaderStage = {.Stage = ShaderStage::Compute,
                                            .Module = bloomUpKawaseCs.Get()->Module},
                        });
-        m_CompositePipeline = ComputePipeline::Create(
-            m_Context, {
-                           .Name = "SceneRenderer Bloom Composite Pipeline",
-                           .PipelineLayout = m_CompositeLayout,
-                           .ShaderStage = {.Stage = ShaderStage::Compute,
-                                           .Module = bloomCompositeCs.Get()->Module},
-                       });
     }
 
     BloomPyramid::~BloomPyramid()
     {
-        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
-        bindless.Release(m_ResultHandle);
-        bindless.Release(m_Mip0Handle);
+        m_Context.GetBindlessRegistry().Release(m_Mip0Handle);
     }
 
     void BloomPyramid::Resize(const uvec2 extent, const Ref<ImageView>& hdrView)
@@ -251,7 +195,6 @@ namespace Veng::Renderer
         m_Extent = extent;
 
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
-        bindless.Release(m_ResultHandle);
         bindless.Release(m_Mip0Handle);
 
         // The pyramid stops BloomTileShift levels short of 1×1 so the coarsest level holds a
@@ -303,18 +246,8 @@ namespace Veng::Renderer
                                                    .MaxLod = static_cast<f32>(mipCount),
                                                });
 
-        // The full-resolution composite result the tonemap samples; registered into bindless.
-        m_ResultImage = Image::Create(m_Context, {
-                                                     .Name = "SceneRenderer Bloom Result",
-                                                     .Extent = {extent.x, extent.y, 1},
-                                                     .Format = HdrFormat,
-                                                     .Usage = HdrUsage | ImageUsage::Storage,
-                                                 });
-        m_ResultView = ImageView::Create(
-            m_Context, {.Name = "SceneRenderer Bloom Result", .Image = m_ResultImage});
-        m_ResultHandle = bindless.Register(m_ResultView);
-
-        // The DebugView::Bloom arm samples pyramid mip 0 (post up-sweep) as a bindless source.
+        // The tonemap and the DebugView::Bloom arm sample pyramid mip 0 (post up-sweep) as a
+        // bindless source.
         m_Mip0Handle = bindless.Register(m_Mips[0]);
 
         // Per-level descriptor sets. A down step binds the source (HDR for level 0, mip k-1
@@ -355,26 +288,15 @@ namespace Veng::Renderer
                 m_UpSets.push_back(std::move(set));
             }
         }
-
-        // Composite: HDR + bloom mip 0 sampled inputs, the linear sampler, and the result dest.
-        m_CompositeSet =
-            DescriptorSet::Create(m_Context, {
-                                                 .Name = "SceneRenderer Bloom Composite Set",
-                                                 .Layout = m_CompositeSetLayout,
-                                             });
-        m_CompositeSet->Write(0, hdrView);
-        m_CompositeSet->Write(1, m_Mips[0]);
-        m_CompositeSet->Write(2, m_Sampler);
-        m_CompositeSet->Write(3, m_ResultView);
     }
 
     void BloomPyramid::SetSourceView(const Ref<ImageView>& source)
     {
-        // The bright pass samples the source at level 0; the composite samples it as the base it
-        // adds bloom onto. Both must track Declare's hdrId. A Rebuild can re-point the source while a
-        // prior frame's command buffer still references these sets, which are not update-after-bind,
-        // so recreate them fresh rather than writing in place — the old sets retire through the
-        // per-frame path. The AutoExposureMeter::RebindHdr / ShadowSystem::RebuildSets precedent.
+        // The bright pass samples the source at level 0, so it must track Declare's hdrId. A Rebuild
+        // can re-point the source while a prior frame's command buffer still references the set,
+        // which is not update-after-bind, so recreate it fresh rather than writing in place — the
+        // old set retires through the per-frame path. The AutoExposureMeter::RebindHdr /
+        // ShadowSystem::RebuildSets precedent.
         if (!m_DownSets.empty())
         {
             Ref<DescriptorSet> set = DescriptorSet::Create(
@@ -384,23 +306,17 @@ namespace Veng::Renderer
             set->Write(2, m_Mips[0]);
             m_DownSets[0] = std::move(set);
         }
-        if (m_CompositeSet)
-        {
-            Ref<DescriptorSet> set =
-                DescriptorSet::Create(m_Context, {.Name = "SceneRenderer Bloom Composite Set",
-                                                  .Layout = m_CompositeSetLayout});
-            set->Write(0, source);
-            set->Write(1, m_Mips[0]);
-            set->Write(2, m_Sampler);
-            set->Write(3, m_ResultView);
-            m_CompositeSet = std::move(set);
-        }
+    }
+
+    vec4 BloomPyramid::GetMip0SampleMap(const uvec2 validExtent) const
+    {
+        const MipSubRect mip0 = ComputeMipSubRect(validExtent, m_Extent, 0);
+        return {mip0.ScaleUV, mip0.MaxUV};
     }
 
     void BloomPyramid::Declare(RenderGraph& graph, const ResourceId hdrId, const MipChainId chainId,
-                               const ResourceId resultId, const AutoExposureMeter& autoExposure,
-                               const ResourceId maskId, const TextureHandle maskHandle,
-                               const SamplerHandle maskSampler)
+                               const AutoExposureMeter& autoExposure, const ResourceId maskId,
+                               const TextureHandle maskHandle, const SamplerHandle maskSampler)
     {
         const u32 mipCount = static_cast<u32>(m_Mips.size());
         const uvec2 allocExtent = m_Extent;
@@ -525,40 +441,6 @@ namespace Veng::Renderer
                         .Radius = view->BloomRadius,
                     });
                     cmd.Dispatch((dst.ValidExtent.x + 7) / 8, (dst.ValidExtent.y + 7) / 8, 1);
-                });
-        }
-
-        // Composite over the valid sub-rect: result = hdr + mip0 * Intensity. Samples the HDR
-        // target and bloom mip 0 (both at mip-0 sub-rect scale) and stores into the result the
-        // terminal tonemap upscales.
-        {
-            RenderGraph::PassBuilder builder = graph.AddComputePass("Bloom Composite");
-            builder.Sample(hdrId);
-            builder.Sample(chainId.Level(0));
-            builder.StorageWrite(resultId);
-
-            const Ref<ComputePipeline> pipeline = m_CompositePipeline;
-            const Ref<DescriptorSet> set = m_CompositeSet;
-            builder.Execute(
-                [pipeline, set, allocExtent](PassContext& inner)
-                {
-                    const auto* view = static_cast<const SceneView*>(inner.UserData());
-                    VE_ASSERT(view != nullptr, "Bloom composite pass: null SceneView");
-                    const MipSubRect r = ComputeMipSubRect(view->PostResolveExtent, allocExtent, 0);
-                    CommandBuffer& cmd = inner.Cmd();
-                    cmd.BindPipeline(pipeline);
-                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {set},
-                        .FirstSet = 3,
-                        .PipelineBindPoint = PipelineBindPoint::Compute,
-                    });
-                    cmd.PushConstants(BloomCompositePush{
-                        .DestExtent = r.ValidExtent,
-                        .SourceScaleUV = r.ScaleUV,
-                        .SourceMaxUV = r.MaxUV,
-                        .Intensity = view->BloomIntensity,
-                    });
-                    cmd.Dispatch((r.ValidExtent.x + 7) / 8, (r.ValidExtent.y + 7) / 8, 1);
                 });
         }
     }

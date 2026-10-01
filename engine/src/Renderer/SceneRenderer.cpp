@@ -500,6 +500,7 @@ namespace Veng::Renderer
             ppEffectFinalHandle = oddCount ? m_PpEffectHandleA : m_PpEffectHandleB;
             ppEffectFinalView = oddCount ? m_PpEffectViewA : m_PpEffectViewB;
         }
+        m_TonemapSourceHandle = ppEffectFinalHandle;
 
         // The overlay-document intermediate is imported when a material overlay composites — the
         // render-to-intermediate pass writes it and the composite samples it; its backing was
@@ -578,10 +579,9 @@ namespace Veng::Renderer
         if (m_Topology->BloomActive)
         {
             // The pyramid imports one per-mip slot per level (the down/up sweep declares
-            // per-level access on these); the result is a single full-resolution import.
+            // per-level access on these, and the tonemap samples level 0).
             m_BloomChainId =
                 graph.ImportImageMips("SceneRenderer Bloom Pyramid", m_Bloom->GetMipCount());
-            m_BloomResultId = graph.Import("SceneRenderer Bloom Result");
             // The mask is wired with the sweep that reads it: with bloom off nothing consumes it,
             // so the translucent pass drops the attachment rather than clearing a dead target.
             m_BloomMaskId = graph.Import("SceneRenderer Bloom Mask");
@@ -911,20 +911,6 @@ namespace Veng::Renderer
                 m_GuiHdrOverlayPass->SetCompositeCount(m_HdrOverlayCompositeCount);
             }
 
-            // Tonemap source: bloom composite when bloom is on, else the finished scene color — which
-            // is the last effect's output when the effect chain ran (ppEffectFinalId), m_HdrId
-            // otherwise.
-            ResourceId tonemapSourceId = ppEffectFinalId;
-            TextureHandle tonemapSourceHandle = ppEffectFinalHandle;
-
-            if (m_Topology->BloomActive)
-            {
-                // The bloom down/up/composite compute sweep is declared into the graph by
-                // the tail anchor in the pass loop; here the tonemap just reads its result.
-                tonemapSourceId = m_BloomResultId;
-                tonemapSourceHandle = m_Bloom->GetResultHandle();
-            }
-
             // The HDR tail declares just before the tonemap — never after it, even when a
             // post-tonemap pass (DebugDraw) follows in the list.
             hdrTailAnchor = m_Passes.size();
@@ -933,16 +919,32 @@ namespace Veng::Renderer
             // below turns it into the output; otherwise the tonemap writes the output directly.
             const ResourceId tonemapOutputId =
                 m_Topology->PostTonemapAa() ? m_AaInputId : m_OutputId;
-            m_Passes.push_back(
+            // The tonemap reads the finished scene color — the last effect's output when the effect
+            // chain ran (ppEffectFinalId), m_HdrId otherwise — and, under bloom, adds pyramid mip 0
+            // to it in registers.
+            auto tonemapPass =
                 CreateUnique<PostProcessScenePass>(m_Context, m_TonemapMaterial,
                                                    PostProcessInput{
-                                                       .Source = tonemapSourceId,
-                                                       .SourceTexture = tonemapSourceHandle,
+                                                       .Source = ppEffectFinalId,
+                                                       .SourceTexture = ppEffectFinalHandle,
                                                        .Sampler = m_SamplerHandle,
                                                        .TextureField = "Hdr",
                                                        .SamplerField = "HdrSampler",
                                                    },
-                                                   tonemapOutputId, m_OutputFormat, tailExtent));
+                                                   tonemapOutputId, m_OutputFormat, tailExtent);
+            if (m_Topology->BloomActive)
+            {
+                // The down/up sweep is declared by the tail anchor in the pass loop, ahead of this
+                // pass; the tonemap samples its accumulated mip 0.
+                tonemapPass->SetExtraInput({
+                    .Source = m_BloomChainId.Level(0),
+                    .Texture = m_Bloom->GetMip0Handle(),
+                    .Sampler = m_SamplerHandle,
+                    .TextureField = "Bloom",
+                    .SamplerField = "BloomSampler",
+                });
+            }
+            m_Passes.push_back(std::move(tonemapPass));
 
             // The spatial AA resolve reads the tonemapped LDR intermediate and writes the output. It
             // sits after the tonemap and before DebugDraw so gizmos composite over the resolved scene.
@@ -1298,13 +1300,12 @@ namespace Veng::Renderer
                 }
                 if (m_Topology->BloomActive)
                 {
-                    // Re-point the pyramid's source descriptors at the view its declared read
-                    // resolves to, so the bright pass and composite sample the effect chain's
-                    // output (with any pre-bloom overlay) rather than the raw HDR they were built on.
+                    // Re-point the pyramid's source descriptor at the view its declared read
+                    // resolves to, so the bright pass samples the effect chain's output (with any
+                    // pre-bloom overlay) rather than the raw HDR it was built on.
                     m_Bloom->SetSourceView(ppEffectFinalView);
-                    m_Bloom->Declare(graph, ppEffectFinalId, m_BloomChainId, m_BloomResultId,
-                                     *m_AutoExposure, PostMaskId(), PostMaskHandle(),
-                                     m_SamplerHandle);
+                    m_Bloom->Declare(graph, ppEffectFinalId, m_BloomChainId, *m_AutoExposure,
+                                     PostMaskId(), PostMaskHandle(), m_SamplerHandle);
                 }
                 if (m_Topology->AutoExposureActive)
                 {
@@ -2050,6 +2051,10 @@ namespace Veng::Renderer
             // Display-calibration output knobs; the shader skips the step at the neutral (1, 1) pair.
             tonemap.SetParam("OutputBrightness", view.OutputBrightness);
             tonemap.SetParam("OutputGamma", view.OutputGamma);
+            // The bloom add; a zero intensity is the shader's bloom-off gate.
+            tonemap.SetParam("BloomIntensity",
+                             m_Topology->BloomActive ? view.BloomIntensity : 0.0f);
+            tonemap.SetParam("BloomScale", m_Bloom->GetMip0SampleMap(postResolveExtent));
         }
 
         // Sync the broadphase first: re-gathers and rebuilds only when the scene's spatial
@@ -2322,6 +2327,16 @@ namespace Veng::Renderer
         // passes so a skinned caster casts its posed shadow.
         resolvedView.SkinningPalette = m_PaletteSet;
         resolvedView.SkinnedPaletteBases = &m_PaletteBaseByEntity;
+
+        // With bloom inactive no extra input rewrites the tonemap's bloom handle pair, so it is
+        // pointed at the live scene colour rather than left on a slot an earlier topology held —
+        // here, after every Rebuild this Execute can trigger has settled the source.
+        if (!m_Topology->BloomActive && m_TonemapMaterial.IsLoaded())
+        {
+            MaterialInstance& tonemap = *m_TonemapMaterial.Get();
+            tonemap.SetTextureHandle("Bloom", m_TonemapSourceHandle);
+            tonemap.SetSamplerHandle("BloomSampler", m_SamplerHandle);
+        }
 
         // Assemble this frame's graph import bindings — the always-bound targets plus the
         // conditionally-declared battery imports, matched to the compiled graph's declared imports.
@@ -2636,13 +2651,12 @@ namespace Veng::Renderer
         if (m_Topology->BloomActive)
         {
             // Each pyramid mip binds its per-frame storage view to its per-mip import slot
-            // (the down/up sweep declared per-level access on these); the result is one slot.
+            // (the down/up sweep declared per-level access on these).
             const std::vector<Ref<ImageView>>& bloomMips = m_Bloom->GetMipViews();
             for (u32 level = 0; level < bloomMips.size(); level++)
             {
                 bindings.push_back({m_BloomChainId.Level(level), bloomMips[level]});
             }
-            bindings.push_back({m_BloomResultId, m_Bloom->GetResultView()});
             bindings.push_back({m_BloomMaskId, m_BloomMaskView});
         }
         if (m_Topology->AutoExposureActive)
@@ -2920,10 +2934,6 @@ namespace Veng::Renderer
     Ref<ImageView> SceneRenderer::GetHdrView() const
     {
         return m_HdrView;
-    }
-    Ref<ImageView> SceneRenderer::GetBloomResultView() const
-    {
-        return m_Bloom->GetResultView();
     }
     Ref<ImageView> SceneRenderer::GetTaaHistoryView() const
     {

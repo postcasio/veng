@@ -57,7 +57,7 @@ namespace Veng::Renderer
         const PostProcessExtraInput extra = m_Extra;
         const bool hasExtra = extra.Texture.IsValid();
 
-        // A two-source pass (bloom composite) declares .Sample on both ids for the
+        // A two-source pass (the tonemap under bloom) declares .Sample on both ids for the
         // graph-derived barriers; single-source passes declare only the primary input.
         RenderGraph::PassBuilder builder = graph.AddPass("PostProcess");
         builder

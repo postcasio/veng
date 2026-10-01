@@ -202,11 +202,6 @@
       "source": "shaders/bloom_up_kawase.comp.shader.json"
     },
     {
-      "id": "0x533236398AB7654F",
-      "type": "Shader",
-      "source": "shaders/bloom_composite.comp.shader.json"
-    },
-    {
       "id": "0x9BF9CB926D0595B1",
       "type": "Shader",
       "source": "shaders/auto_exposure.comp.shader.json"

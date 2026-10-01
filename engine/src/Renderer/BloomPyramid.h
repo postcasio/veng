@@ -28,14 +28,14 @@ namespace Veng::Renderer
     ///
     /// The post-lighting bloom vertical the renderer wires ahead of tonemap: the HDR mip-chain
     /// pyramid image with its per-level storage views and whole-chain sample view, the clamp
-    /// linear sampler, the composite result image, the five compute pipelines (Cod/Kawase
-    /// down/up + composite) with their two set layouts and per-level descriptor sets, and the
-    /// result + mip-0 bindless slots. Declare contributes the down/up/composite sweep; the
-    /// down-pass threshold divides by the frame's resolved exposure, the one cross-battery read
-    /// (from AutoExposureMeter). The filter kernel is a construction-time choice re-applied on
-    /// Reconfigure. All of set 1 is held off the set-0 bindless registry (the closed bloom chain
-    /// needs no global registration, and a dedicated set sidesteps the set-0 storage-image
-    /// argument-buffer path on MoltenVK).
+    /// linear sampler, the four compute pipelines (Cod/Kawase down/up) with their set layout and
+    /// per-level descriptor sets, and the mip-0 bindless slot. Declare contributes the down/up
+    /// sweep; the tonemap adds the accumulated mip 0 into the scene colour itself, sampling it
+    /// through GetMip0Handle and GetMip0SampleMap. The down-pass threshold divides by the frame's
+    /// resolved exposure, the one cross-battery read (from AutoExposureMeter). The filter kernel
+    /// is a construction-time choice re-applied on Reconfigure. All of set 1 is held off the set-0
+    /// bindless registry (the closed bloom chain needs no global registration, and a dedicated set
+    /// sidesteps the set-0 storage-image argument-buffer path on MoltenVK).
     class BloomPyramid
     {
     public:
@@ -47,43 +47,42 @@ namespace Veng::Renderer
         static Unique<BloomPyramid> Create(Context& context, AssetManager& assets,
                                            BloomKernel kernel);
 
-        /// @brief Releases the result/mip-0 bindless slots; the images retire through the frame bin.
+        /// @brief Releases the mip-0 bindless slot; the images retire through the frame bin.
         ~BloomPyramid();
 
         BloomPyramid(const BloomPyramid&) = delete;
         BloomPyramid& operator=(const BloomPyramid&) = delete;
 
-        /// @brief Recreates the extent-sized pyramid, result image, views, and per-level sets.
+        /// @brief Recreates the extent-sized pyramid, views, and per-level sets.
         ///
         /// Builds the HDR mip chain (stopping a few levels short of 1×1), the per-mip storage
-        /// views, the whole-chain sampled view, the composite result, and the down/up + composite
-        /// descriptor sets; the level-0 down set and the composite set bind @p hdrView, so this
-        /// runs after the HDR target is recreated. The result view registers into bindless for the
-        /// tonemap sample.
+        /// views, the whole-chain sampled view, and the down/up descriptor sets; the level-0 down
+        /// set binds @p hdrView, so this runs after the HDR target is recreated. Mip 0 registers
+        /// into bindless for the tonemap's bloom read.
         /// @param extent  The post-resolve allocation the pyramid is sized to.
-        /// @param hdrView The live scene-colour target the level-0 source and composite sets bind.
+        /// @param hdrView The live scene-colour target the level-0 down set binds.
         void Resize(uvec2 extent, const Ref<ImageView>& hdrView);
 
         /// @brief Re-applies the down/up filter kernel choice (Cod or Kawase).
         /// @param kernel The kernel selected this frame; read by Declare at record time.
         void Reconfigure(BloomKernel kernel) { m_Kernel = kernel; }
 
-        /// @brief Re-points the level-0 down set and the composite set at a new scene-color source.
+        /// @brief Re-points the level-0 down set at a new scene-color source.
         ///
         /// Resize binds the raw HDR target, but a pre-bloom post-process effect chain replaces the
         /// scene color Declare reads (its `hdrId`) with the effect chain's final target. The bright
-        /// pass and the composite base both sample this view, so both sets are re-pointed; the id
-        /// passed to Declare must resolve to the same image, or the derived barrier and the sampled
-        /// image diverge. Cheap enough to call each Rebuild (two descriptor writes, no realloc).
+        /// pass samples this view; the id passed to Declare must resolve to the same image, or the
+        /// derived barrier and the sampled image diverge. Cheap enough to call each Rebuild (one
+        /// descriptor set, no realloc).
         /// @param source The live scene-color view Declare's `hdrId` resolves to this Rebuild.
         void SetSourceView(const Ref<ImageView>& source);
 
-        /// @brief Declares the down/up/composite compute sweep into the graph ahead of tonemap.
+        /// @brief Declares the down/up compute sweep into the graph ahead of tonemap.
         ///
-        /// Down-sweep (level 0..N-1, barrier between levels), in-place tent up-sweep (level
-        /// N-2..0, barrier between levels), then the composite into the result. Per-frame
-        /// Threshold / Intensity / Radius ride the compute push, read from the SceneView at record
-        /// time; the down-pass threshold divides by @p autoExposure's resolved exposure.
+        /// Down-sweep (level 0..N-1, barrier between levels), then the in-place tent up-sweep
+        /// (level N-2..0, barrier between levels), leaving the accumulated bloom in mip 0. Per-frame
+        /// Threshold / Radius ride the compute push, read from the SceneView at record time; the
+        /// down-pass threshold divides by @p autoExposure's resolved exposure.
         ///
         /// Level 0 additionally takes the larger of its luminance bright-pass and the bloom mask,
         /// the screen-space target a forward material writes to name the glow it wants apart from
@@ -92,25 +91,27 @@ namespace Veng::Renderer
         /// the same sub-rect mapping as the colour beside it. An invalid mask id or slot leaves
         /// level 0 on the bright-pass alone.
         /// @param graph        The renderer's internal graph being rebuilt.
-        /// @param hdrId        The HDR target import (level-0 source and composite input).
+        /// @param hdrId        The HDR target import (the level-0 source).
         /// @param chainId      The per-mip pyramid import the down/up sweep reads and writes.
-        /// @param resultId     The composite result import.
         /// @param autoExposure The exposure meter whose resolved exposure scales the threshold.
         /// @param maskId       The bloom-mask target import, or an invalid id when there is none.
         /// @param maskHandle   Bindless slot of the bloom-mask target.
         /// @param maskSampler  Bindless slot of the sampler the mask is read through.
-        void Declare(RenderGraph& graph, ResourceId hdrId, MipChainId chainId, ResourceId resultId,
+        void Declare(RenderGraph& graph, ResourceId hdrId, MipChainId chainId,
                      const AutoExposureMeter& autoExposure, ResourceId maskId,
                      TextureHandle maskHandle, SamplerHandle maskSampler);
 
-        /// @brief The composite result the tonemap stage reads when bloom is on.
-        [[nodiscard]] const Ref<ImageView>& GetResultView() const { return m_ResultView; }
-
-        /// @brief Bindless slot for the composite result view (the tonemap samples it).
-        [[nodiscard]] TextureHandle GetResultHandle() const { return m_ResultHandle; }
-
-        /// @brief Bindless slot for pyramid mip 0 (the DebugView::Bloom arm blits it).
+        /// @brief Bindless slot for pyramid mip 0, sampled by the tonemap and the Bloom debug blit.
         [[nodiscard]] TextureHandle GetMip0Handle() const { return m_Mip0Handle; }
+
+        /// @brief The sub-rect map a full-frame UV reads mip 0 through.
+        ///
+        /// The same mapping the sweep's own dispatches derive for level 0, so a reader of mip 0
+        /// lands on the texels the up-sweep wrote: `xy` the valid/allocated scale, `zw` the
+        /// bilinear-tap clamp (half a texel inside the valid region).
+        /// @param validExtent The frame's valid post-resolve extent (SceneView::PostResolveExtent).
+        /// @return `(scale.xy, clamp.zw)`, applied as `min(uv * map.xy, map.zw)`.
+        [[nodiscard]] vec4 GetMip0SampleMap(uvec2 validExtent) const;
 
         /// @brief Number of mip levels in the pyramid (the import slot count and the binding range).
         [[nodiscard]] u32 GetMipCount() const { return static_cast<u32>(m_Mips.size()); }
@@ -142,16 +143,10 @@ namespace Veng::Renderer
         Ref<ComputePipeline> m_DownKawasePipeline;
         /// @brief Kawase bloom upsample-accumulate pipeline (8-tap bilinear into the finer level).
         Ref<ComputePipeline> m_UpKawasePipeline;
-        /// @brief Bloom composite compute pipeline (hdr + mip0 * Intensity → result).
-        Ref<ComputePipeline> m_CompositePipeline;
         /// @brief Shared layout for the down/up pipelines (the shared down/up set + push block).
         Ref<PipelineLayout> m_DownUpLayout;
-        /// @brief Layout for the composite pipeline (the distinct composite set + push block).
-        Ref<PipelineLayout> m_CompositeLayout;
         /// @brief Set-1 layout shared by down/up: sampled source (0) + sampler (1) + storage dest (2).
         Ref<DescriptorSetLayout> m_DownUpSetLayout;
-        /// @brief Set-1 layout for composite: two sampled inputs (0,1) + sampler (2) + storage dest (3).
-        Ref<DescriptorSetLayout> m_CompositeSetLayout;
 
         /// @brief Bloom mip-pyramid image: an HDR mip chain the compute down/up sweep operates on.
         Ref<Image> m_Image;
@@ -161,20 +156,12 @@ namespace Veng::Renderer
         Ref<ImageView> m_SampleView;
         /// @brief Clamp-to-edge linear sampler for the bilinear down/up taps.
         Ref<Sampler> m_Sampler;
-        /// @brief Bloom composite result image (full extent); the tonemap samples it when bloom is on.
-        Ref<Image> m_ResultImage;
-        /// @brief View over m_ResultImage.
-        Ref<ImageView> m_ResultView;
-        /// @brief Bindless slot for the composite result view.
-        TextureHandle m_ResultHandle;
-        /// @brief Bindless slot for pyramid mip 0 (the DebugView::Bloom arm blits it).
+        /// @brief Bindless slot for pyramid mip 0 (the tonemap and the DebugView::Bloom arm read it).
         TextureHandle m_Mip0Handle;
 
         /// @brief One downsample set per level k, binding level k's source and destination.
         std::vector<Ref<DescriptorSet>> m_DownSets;
         /// @brief One upsample set per finer level k, binding the coarser source (k+1) and dest (k).
         std::vector<Ref<DescriptorSet>> m_UpSets;
-        /// @brief Composite set: HDR + bloom mip 0 sampled inputs and the result storage dest.
-        Ref<DescriptorSet> m_CompositeSet;
     };
 }

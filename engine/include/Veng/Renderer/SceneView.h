@@ -329,10 +329,11 @@ namespace Veng::Renderer
         /// lighting regime. Tuning this rides the compute push, so it does not trigger a
         /// recompile. Ignored when bloom is inactive.
         f32 BloomThreshold = 1.0f;
-        /// @brief Bloom composite mix intensity; pushed to the composite compute each Execute.
+        /// @brief Bloom mix intensity; written to the tonemap material each Execute.
         ///
-        /// Scales the accumulated bloom added back into the HDR. Tuning this rides the compute
-        /// push, so it does not trigger a recompile. Ignored when bloom is inactive.
+        /// Scales the accumulated bloom the tonemap adds back into the HDR ahead of exposure. A
+        /// per-frame material parameter, so it does not trigger a recompile. Ignored when bloom is
+        /// inactive.
         f32 BloomIntensity = 1.0f;
         /// @brief Bloom upsample spread; pushed to the upsample compute each Execute.
         ///
