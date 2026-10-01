@@ -64,6 +64,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <Veng/Assert.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Log.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
@@ -310,6 +311,7 @@ namespace Veng::Renderer
 
     void SceneRenderer::Rebuild()
     {
+        VE_PROFILE_SCOPE("Render/GraphRebuild");
         // The lean geometry path is a second topology axis: its arm is a single guarded early branch
         // wiring only the depth + world-normal prepass, so the shaded hot-path body below is not
         // restructured.
@@ -1724,6 +1726,7 @@ namespace Veng::Renderer
                                      const u32 halfResViewConstantsIndex,
                                      const bool halfResViewReady)
     {
+        VE_PROFILE_SCOPE("Render/PrepareDraws");
         GBufferDrawPlan& plan = m_Internal->Plan;
         plan.Cull = m_GpuCull->GetActiveCull();
         plan.DrawDataSet = m_DrawDataSet;
@@ -2404,7 +2407,10 @@ namespace Veng::Renderer
         // The atmosphere LUTs were generated ahead of the atmosphere bake, before the frame's
         // view claim (a baked atmosphere reads them per face); nothing more to record here.
 
-        m_Internal->Graph->Execute(cmd, bindings, &resolvedView);
+        {
+            VE_PROFILE_SCOPE("Render/GraphExecute");
+            m_Internal->Graph->Execute(cmd, bindings, &resolvedView);
+        }
 
         // Service a pending pick: the picking subsystem transitions the EntityId target to
         // TransferSrc and copies the search window under the cursor into its readback buffer on the
@@ -2535,6 +2541,7 @@ namespace Veng::Renderer
 
     void SceneRenderer::ApplyTransformInterpolation(const SceneView& view, SceneView& resolvedView)
     {
+        VE_PROFILE_SCOPE("Render/Interpolate");
         // The broadphase tree stays built from the current-tick transforms (its cull is
         // conservative, so a sub-tick offset never drops a visible submesh); only the drawn worlds
         // interpolate. A static scene reports no motion history and skips the copy, so its draw is
@@ -2556,6 +2563,7 @@ namespace Veng::Renderer
 
     void SceneRenderer::ResolveScenePasses(SceneView& resolvedView)
     {
+        VE_PROFILE_SCOPE("Render/ResolvePasses");
         // Resolve the scene's one Sky component into this frame's sky fields — the lights model,
         // the renderer reading the component off the scene the way it reads the lights. A resolved
         // source-kind or lighting-tier change recompiles the pass set at this frame boundary,

@@ -2,6 +2,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/Mesh.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Scene/Scene.h>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -69,6 +70,7 @@ namespace Veng
 
     void ComputeWorldMatrices(const Scene& scene, vector<mat4>& out)
     {
+        VE_PROFILE_SCOPE("Scene/WorldMatrices");
         const TypeId id = scene.m_Registry->IdOf<Transform>();
         const usize count = scene.PoolCount(id);
         const Entity* dense = scene.DensePtr(id);

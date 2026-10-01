@@ -2,6 +2,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetHandle.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Net/LagCompensation.h>
 #include <Veng/Net/SeatRelease.h>
 #include <Veng/Physics/PhysicsWorld.h>
@@ -221,6 +222,7 @@ namespace Veng
 
     void Scene::SnapshotTransformHistory()
     {
+        VE_PROFILE_SCOPE("Scene/SnapshotTransforms");
         const u64 version = GetSpatialVersion();
         if (version == m_HistoryVersion)
         {

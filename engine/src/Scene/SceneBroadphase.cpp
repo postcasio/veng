@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include <Veng/Asset/Mesh.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 
@@ -10,6 +11,7 @@ namespace Veng
 {
     void SceneBroadphase::Sync(const Scene& scene, const Entity exclude, const u32 layerMask)
     {
+        VE_PROFILE_SCOPE("Render/BroadphaseSync");
         const u64 version = scene.GetSpatialVersion();
 
         // The spatial version is a per-scene counter, so a broadphase re-pointed at a different
@@ -67,7 +69,10 @@ namespace Veng
 
     void SceneBroadphase::Rebuild(const Scene& scene, const Entity exclude, const u32 layerMask)
     {
-        GatherMeshes(scene, m_Candidates, m_SceneBounds, exclude, layerMask);
+        {
+            VE_PROFILE_SCOPE("Render/GatherMeshes");
+            GatherMeshes(scene, m_Candidates, m_SceneBounds, exclude, layerMask);
+        }
 
         // The caster bound is the union of the shadow-casting candidates alone — the box the
         // shadow projections fit to, so a non-caster (an emissive body co-located with its own
@@ -98,7 +103,10 @@ namespace Veng
             }
         }
 
-        m_Tree.Build(m_LeafScratch);
+        {
+            VE_PROFILE_SCOPE("Render/BvhBuild");
+            m_Tree.Build(m_LeafScratch);
+        }
 
         // Record entities whose mesh is not yet resident so a later Sync rebuilds
         // when one loads; const View avoids bumping the spatial version.

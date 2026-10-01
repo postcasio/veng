@@ -2,6 +2,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/CollisionShape.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Log.h>
 #include <Veng/Renderer/DebugDraw.h>
 
@@ -352,6 +353,7 @@ namespace Veng
 
         JPH::RefConst<JPH::Shape> BuildShape(const Collider& collider)
         {
+            VE_PROFILE_SCOPE("Physics/BuildShape");
             JPH::RefConst<JPH::Shape> shape;
             if (collider.Shape == ColliderShape::Mesh)
             {

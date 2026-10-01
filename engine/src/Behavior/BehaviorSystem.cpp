@@ -1,6 +1,7 @@
 #include <Veng/Behavior/BehaviorSystem.h>
 
 #include <Veng/Behavior/BehaviorAgent.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Math/Random.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
@@ -16,6 +17,7 @@ namespace Veng
         {
             m_Agents.push_back(entity);
         }
+        VE_PROFILE_COUNTER("Behavior/Agents", static_cast<f64>(m_Agents.size()));
 
         for (const Entity entity : m_Agents)
         {
@@ -46,6 +48,7 @@ namespace Veng
                 agent.Slots.assign(agent.Tree->NodeCount(), NodeSlot{});
             }
 
+            VE_PROFILE_SCOPE("Behavior/Agent");
             Rng random(agent.Seed);
             const BehaviorContext behaviorContext{
                 .Scene = scene,

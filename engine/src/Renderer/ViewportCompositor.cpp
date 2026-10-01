@@ -1,7 +1,6 @@
 #include <Veng/Renderer/ViewportCompositor.h>
 
 #include <Veng/Assert.h>
-#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Log.h>
 #include <Veng/Renderer/BindlessRegistry.h>
@@ -192,10 +191,6 @@ namespace Veng::Renderer
         // barrier), so viewport outputs are in Sample layout before a later consumer samples them.
         for (Viewport* viewport : m_Viewports)
         {
-            // A per-viewport scope named by the viewport's id: a multi-viewport app reads as
-            // separate entries rather than one summed bar.
-            const string label = "Viewport " + std::to_string(viewport->GetId().Value);
-            VE_PROFILE_SCOPE_DYNAMIC(label);
             viewport->Render(cmd);
         }
     }

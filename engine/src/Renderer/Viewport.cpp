@@ -3,6 +3,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Mesh.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/DrawList.h>
 #include <Veng/Gui/Overlay.h>
@@ -45,6 +46,11 @@ namespace Veng::Renderer
                   "Viewport MaxAllocationScale must be > 0 (got {})", info.MaxAllocationScale);
 
         m_Id = info.Context.GetViewportRegistry().Mint(*this);
+        if (Diagnostics::Profiler* profiler = Diagnostics::GetActiveProfiler())
+        {
+            // Named by id, so a multi-viewport app reads as separate entries, not one summed bar.
+            m_ProfileName = profiler->InternName(fmt::format("Viewport {}", m_Id.Value));
+        }
 
         // A struct member cannot default to a value pulled from the Context&, so an
         // Undefined ColorFormat resolves to the window's output format here.
@@ -460,6 +466,7 @@ namespace Veng::Renderer
 
     void Viewport::Render(CommandBuffer& cmd)
     {
+        VE_PROFILE_SCOPE_ID(m_ProfileName);
         // A disabled viewport skips its whole render, keeping the prior output — the owner knows
         // it is fully occluded (a fullscreen screen presented over it) and pays nothing for it.
         if (!m_Enabled)
@@ -550,7 +557,10 @@ namespace Veng::Renderer
             atlas->RecordUploads(cmd);
         }
 
-        m_Renderer->Execute(cmd, view);
+        {
+            VE_PROFILE_SCOPE("Viewport/SceneExecute");
+            m_Renderer->Execute(cmd, view);
+        }
 
         // The output is sampled outside the renderer's graph (the compositor, an ImGui
         // panel, a material), so transition it to a sampleable layout here.
@@ -569,6 +579,7 @@ namespace Veng::Renderer
 
     void Viewport::RenderDocuments(CommandBuffer& cmd)
     {
+        VE_PROFILE_SCOPE("Viewport/Documents");
         if (m_Documents.empty())
         {
             return;
@@ -612,6 +623,7 @@ namespace Veng::Renderer
 
     void Viewport::RenderSurfaces(CommandBuffer& cmd)
     {
+        VE_PROFILE_SCOPE("Viewport/Surfaces");
         if (m_ViewState.World == nullptr)
         {
             return;
@@ -744,6 +756,7 @@ namespace Veng::Renderer
 
     void Viewport::DriveOverlays()
     {
+        VE_PROFILE_SCOPE("Viewport/Overlays");
         if (m_ViewState.World == nullptr)
         {
             return;
@@ -781,6 +794,7 @@ namespace Veng::Renderer
 
     void Viewport::DriveHdrOverlays()
     {
+        VE_PROFILE_SCOPE("Viewport/HdrOverlays");
         m_HdrOverlayViews.clear();
         m_HdrInputDocuments.clear();
         if (m_ViewState.World == nullptr)

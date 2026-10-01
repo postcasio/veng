@@ -10,6 +10,7 @@
 #include <Veng/Asset/Animation.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Asset/Skeleton.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Log.h>
 #include <Veng/Scene/AnimationBlend.h>
 #include <Veng/Scene/Components.h>
@@ -640,32 +641,35 @@ namespace Veng
         // Add a SkinnedPose to any animated, resident, skinned-mesh entity that lacks one.
         // Collected first so the structural add never happens mid-iteration.
         vector<Entity> needPose;
-        const auto collect = [&](const Entity entity)
         {
-            if (scene.Has<SkinnedPose>(entity))
+            VE_PROFILE_SCOPE("Animation/Collect");
+            const auto collect = [&](const Entity entity)
             {
-                return;
-            }
-            const auto* renderer = readScene.TryGet<MeshRenderer>(entity);
-            if (renderer != nullptr && renderer->Mesh.IsLoaded() && renderer->Mesh->IsSkinned())
-            {
-                needPose.push_back(entity);
-            }
-        };
-        for (auto [entity, animator] : readScene.View<Animator>())
-        {
-            collect(entity);
-        }
-        for (auto [entity, overrides] : readScene.View<JointOverrides>())
-        {
-            if (!scene.Has<Animator>(entity))
+                if (scene.Has<SkinnedPose>(entity))
+                {
+                    return;
+                }
+                const auto* renderer = readScene.TryGet<MeshRenderer>(entity);
+                if (renderer != nullptr && renderer->Mesh.IsLoaded() && renderer->Mesh->IsSkinned())
+                {
+                    needPose.push_back(entity);
+                }
+            };
+            for (auto [entity, animator] : readScene.View<Animator>())
             {
                 collect(entity);
             }
-        }
-        for (const Entity entity : needPose)
-        {
-            scene.Add<SkinnedPose>(entity, SkinnedPose{});
+            for (auto [entity, overrides] : readScene.View<JointOverrides>())
+            {
+                if (!scene.Has<Animator>(entity))
+                {
+                    collect(entity);
+                }
+            }
+            for (const Entity entity : needPose)
+            {
+                scene.Add<SkinnedPose>(entity, SkinnedPose{});
+            }
         }
 
         // Advance each animator and write its skinning palette. MeshRenderer is read through the
@@ -675,122 +679,129 @@ namespace Veng
         vector<Entity> driveEntities;
         vector<vec3> driveDeltas;
         vector<JointRotation> rotations;
-        for (auto [entity, animator] : scene.View<Animator>())
         {
-            auto* pose = scene.TryGet<SkinnedPose>(entity);
-            if (pose == nullptr)
+            VE_PROFILE_SCOPE("Animation/Animators");
+            for (auto [entity, animator] : scene.View<Animator>())
             {
-                continue;
-            }
-
-            const Skeleton* resident = ResidentSkeleton(readScene, entity);
-            if (resident == nullptr)
-            {
-                continue;
-            }
-            const Skeleton& skeleton = *resident;
-
-            rotations.clear();
-            if (auto* overrides = scene.TryGet<JointOverrides>(entity))
-            {
-                ResolveJointOverrides(skeleton, *overrides, rotations);
-            }
-
-            // A blend space or state set replaces the single-clip play: pose in blend/state space
-            // into the same SkinnedPose. An Animator carrying neither is the single-clip path below,
-            // unchanged.
-            auto* blend = scene.TryGet<AnimationBlend>(entity);
-            auto* stateSet = scene.TryGet<AnimationStateSet>(entity);
-            if (blend != nullptr || stateSet != nullptr)
-            {
-                PoseBlended(skeleton, animator, blend, stateSet, rotations, delta, *pose);
-                continue;
-            }
-
-            const f32 prevTime = animator.Time;
-            if (animator.Playing)
-            {
-                animator.Time += delta * animator.Speed;
-            }
-
-            vector<mat4> localPose;
-            if (!animator.Clip.IsLoaded())
-            {
-                skeleton.ComputeLocalPose(rotations, localPose);
-                skeleton.ComputeSkinningMatrices(localPose, pose->Skinning);
-                continue;
-            }
-
-            const Animation& clip = *animator.Clip.Get();
-
-            if (rotations.empty())
-            {
-                SampleAnimationPose(skeleton, clip, animator.Time, animator.Loop, localPose);
-            }
-            else
-            {
-                // The rotation composes in TRS form so it lands before the joint's scale.
-                vector<JointPose> sampled;
-                SampleAnimationLocalPose(skeleton, clip, animator.Time, animator.Loop, sampled);
-                ApplyJointRotations(rotations, sampled);
-                ComposeLocalPose(sampled, localPose);
-            }
-
-            const i32 rootBone = FindRootMotionBone(skeleton, clip);
-            if (rootBone >= 0 && static_cast<usize>(rootBone) < localPose.size())
-            {
-                // Strip the baked translation from the rendered pose: the root bone keeps its
-                // animated rotation/scale but holds its bind-pose position. Column 3 of the
-                // composed local matrix is exactly that translation.
-                const vec3 bindPosition =
-                    skeleton.Bones[static_cast<usize>(rootBone)].LocalPosition;
-                localPose[static_cast<usize>(rootBone)][3] = vec4(bindPosition, 1.0f);
-
-                if (animator.RootMotion != RootMotionMode::Discard)
+                auto* pose = scene.TryGet<SkinnedPose>(entity);
+                if (pose == nullptr)
                 {
-                    const vec3 localDelta = ExtractRootDelta(skeleton, clip, rootBone, prevTime,
-                                                             animator.Time, animator.Loop);
-                    const vec3 modelDelta =
-                        BindModelRotation(skeleton,
-                                          skeleton.Bones[static_cast<usize>(rootBone)].Parent) *
-                        localDelta;
+                    continue;
+                }
 
-                    if (animator.RootMotion == RootMotionMode::Presentation)
+                const Skeleton* resident = ResidentSkeleton(readScene, entity);
+                if (resident == nullptr)
+                {
+                    continue;
+                }
+                const Skeleton& skeleton = *resident;
+
+                rotations.clear();
+                if (auto* overrides = scene.TryGet<JointOverrides>(entity))
+                {
+                    ResolveJointOverrides(skeleton, *overrides, rotations);
+                }
+
+                // A blend space or state set replaces the single-clip play: pose in blend/state space
+                // into the same SkinnedPose. An Animator carrying neither is the single-clip path below,
+                // unchanged.
+                auto* blend = scene.TryGet<AnimationBlend>(entity);
+                auto* stateSet = scene.TryGet<AnimationStateSet>(entity);
+                if (blend != nullptr || stateSet != nullptr)
+                {
+                    VE_PROFILE_SCOPE("Animation/Blended");
+                    PoseBlended(skeleton, animator, blend, stateSet, rotations, delta, *pose);
+                    continue;
+                }
+
+                const f32 prevTime = animator.Time;
+                if (animator.Playing)
+                {
+                    animator.Time += delta * animator.Speed;
+                }
+
+                vector<mat4> localPose;
+                if (!animator.Clip.IsLoaded())
+                {
+                    skeleton.ComputeLocalPose(rotations, localPose);
+                    skeleton.ComputeSkinningMatrices(localPose, pose->Skinning);
+                    continue;
+                }
+
+                const Animation& clip = *animator.Clip.Get();
+
+                if (rotations.empty())
+                {
+                    SampleAnimationPose(skeleton, clip, animator.Time, animator.Loop, localPose);
+                }
+                else
+                {
+                    // The rotation composes in TRS form so it lands before the joint's scale.
+                    vector<JointPose> sampled;
+                    SampleAnimationLocalPose(skeleton, clip, animator.Time, animator.Loop, sampled);
+                    ApplyJointRotations(rotations, sampled);
+                    ComposeLocalPose(sampled, localPose);
+                }
+
+                const i32 rootBone = FindRootMotionBone(skeleton, clip);
+                if (rootBone >= 0 && static_cast<usize>(rootBone) < localPose.size())
+                {
+                    // Strip the baked translation from the rendered pose: the root bone keeps its
+                    // animated rotation/scale but holds its bind-pose position. Column 3 of the
+                    // composed local matrix is exactly that translation.
+                    const vec3 bindPosition =
+                        skeleton.Bones[static_cast<usize>(rootBone)].LocalPosition;
+                    localPose[static_cast<usize>(rootBone)][3] = vec4(bindPosition, 1.0f);
+
+                    if (animator.RootMotion != RootMotionMode::Discard)
                     {
-                        if (auto* transform = scene.TryGet<Transform>(entity))
+                        const vec3 localDelta = ExtractRootDelta(skeleton, clip, rootBone, prevTime,
+                                                                 animator.Time, animator.Loop);
+                        const vec3 modelDelta =
+                            BindModelRotation(skeleton,
+                                              skeleton.Bones[static_cast<usize>(rootBone)].Parent) *
+                            localDelta;
+
+                        if (animator.RootMotion == RootMotionMode::Presentation)
                         {
-                            transform->Position +=
-                                transform->Rotation * (transform->Scale * modelDelta);
+                            if (auto* transform = scene.TryGet<Transform>(entity))
+                            {
+                                transform->Position +=
+                                    transform->Rotation * (transform->Scale * modelDelta);
+                            }
+                        }
+                        else
+                        {
+                            driveEntities.push_back(entity);
+                            driveDeltas.push_back(modelDelta);
                         }
                     }
-                    else
-                    {
-                        driveEntities.push_back(entity);
-                        driveDeltas.push_back(modelDelta);
-                    }
                 }
-            }
 
-            skeleton.ComputeSkinningMatrices(localPose, pose->Skinning);
+                skeleton.ComputeSkinningMatrices(localPose, pose->Skinning);
+            }
         }
 
         // A clip-less entity's JointOverrides pose its skeleton from the bind pose.
-        for (auto [entity, overrides] : scene.View<JointOverrides>())
         {
-            if (scene.Has<Animator>(entity))
+            VE_PROFILE_SCOPE("Animation/OverridesOnly");
+            for (auto [entity, overrides] : scene.View<JointOverrides>())
             {
-                continue;
+                if (scene.Has<Animator>(entity))
+                {
+                    continue;
+                }
+                auto* pose = scene.TryGet<SkinnedPose>(entity);
+                const Skeleton* skeleton = ResidentSkeleton(readScene, entity);
+                if (pose == nullptr || skeleton == nullptr)
+                {
+                    continue;
+                }
+                ResolveJointOverrides(*skeleton, overrides, rotations);
+                vector<mat4> localPose;
+                skeleton->ComputeLocalPose(rotations, localPose);
+                skeleton->ComputeSkinningMatrices(localPose, pose->Skinning);
             }
-            auto* pose = scene.TryGet<SkinnedPose>(entity);
-            const Skeleton* skeleton = ResidentSkeleton(readScene, entity);
-            if (pose == nullptr || skeleton == nullptr)
-            {
-                continue;
-            }
-            ResolveJointOverrides(*skeleton, overrides, rotations);
-            vector<mat4> localPose;
-            skeleton->ComputeLocalPose(rotations, localPose);
-            skeleton->ComputeSkinningMatrices(localPose, pose->Skinning);
         }
 
         // Publish Drive-mode deltas now that iteration is done; add a RootMotionDelta on first run.

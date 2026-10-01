@@ -1,5 +1,7 @@
 #include <Veng/Renderer/LightPacking.h>
 
+#include <Veng/Diagnostics/Profiler.h>
+
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Transforms.h>
@@ -272,6 +274,7 @@ namespace Veng::Renderer
     PackedSceneLights PackSceneLights(const Scene& world, const bool punctualShadows,
                                       const u32 punctualShadowResolution, const AABB& sceneBounds)
     {
+        VE_PROFILE_SCOPE("Render/PackLights");
         PackedSceneLights result;
 
         // Gather the scene's lights in iteration order — the order they are packed in below, and

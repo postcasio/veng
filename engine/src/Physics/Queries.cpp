@@ -2,6 +2,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/CollisionShape.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Physics/PhysicsWorld.h>
 
 #include "PhysicsInternal.h"
@@ -124,6 +125,7 @@ namespace Veng
     optional<RayHit> Raycast(const PhysicsWorld* world, const dvec3 origin, const vec3 direction,
                              const f32 maxDistance, const QueryFilter& filter)
     {
+        VE_PROFILE_SCOPE("Physics/Raycast");
         if (world == nullptr || maxDistance <= 0.0f || glm::length(direction) <= 0.0f)
         {
             return std::nullopt;
@@ -168,6 +170,7 @@ namespace Veng
     optional<ShapeHit> ShapeCast(const PhysicsWorld* world, const Collider& shape,
                                  const PhysicsPose& from, const dvec3 to, const QueryFilter& filter)
     {
+        VE_PROFILE_SCOPE("Physics/ShapeCast");
         if (world == nullptr)
         {
             return std::nullopt;
@@ -223,6 +226,7 @@ namespace Veng
     usize Overlap(const PhysicsWorld* world, const Collider& shape, const PhysicsPose& at,
                   const QueryFilter& filter, vector<Entity>& out)
     {
+        VE_PROFILE_SCOPE("Physics/Overlap");
         out.clear();
         if (world == nullptr)
         {

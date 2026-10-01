@@ -795,6 +795,9 @@ namespace Veng::Renderer
         Context& m_Context;
         /// @brief The minted identity, resolved through Context::GetViewportRegistry().
         ViewportId m_Id;
+        /// @brief The Diagnostics::NameId of this viewport's render scope, interned once at
+        /// construction; zero when no profiler is installed.
+        u32 m_ProfileName = 0;
         /// @brief The asset manager the owned GuiScenePass loads its gui shaders through.
         AssetManager& m_Assets;
         /// @brief The owned deferred renderer.

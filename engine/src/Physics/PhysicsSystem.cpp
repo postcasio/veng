@@ -1,5 +1,6 @@
 #include <Veng/Physics/PhysicsSystem.h>
 
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Physics/Components.h>
 #include <Veng/Physics/PhysicsWorld.h>
 #include <Veng/Renderer/DebugDraw.h>
@@ -285,7 +286,10 @@ namespace Veng
             }
         }
 
-        world->Step(delta);
+        {
+            VE_PROFILE_SCOPE("Physics/Step");
+            world->Step(delta);
+        }
 
         // Pull: PhysicsPose is always written, so a consumer reading it sees this tick's result
         // whether or not the Transform is bound to the solver.

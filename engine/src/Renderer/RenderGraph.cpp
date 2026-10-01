@@ -1,6 +1,7 @@
 #include <Veng/Renderer/RenderGraph.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Log.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/Context.h>
@@ -243,6 +244,8 @@ namespace Veng::Renderer
         struct Pass
         {
             string Name;
+            /// @brief The pass name interned once at compile, so recording it costs no hash.
+            Diagnostics::NameId ProfileName = 0;
             RenderGraph::PassType Type = RenderGraph::PassType::Graphics;
             u32 LayerCount = 1;
             u32 ViewMask = 0;
@@ -412,10 +415,12 @@ namespace Veng::Renderer
         vector<Backend::ScheduledPass> schedule =
             Backend::DeriveRenderGraphSchedule(scheduleResources, schedulePasses);
 
+        Diagnostics::Profiler* profiler = Diagnostics::GetActiveProfiler();
         for (usize i = 0; i < m_Passes.size(); i++)
         {
             CompiledGraph::Native::Pass baked;
             baked.Name = m_Passes[i]->Name;
+            baked.ProfileName = profiler != nullptr ? profiler->InternName(baked.Name) : 0;
             baked.Type = m_Passes[i]->Type;
             baked.LayerCount = m_Passes[i]->LayerCount;
             baked.ViewMask = m_Passes[i]->ViewMask;
@@ -496,6 +501,7 @@ namespace Veng::Renderer
 
         for (const Native::Pass& pass : native.Passes)
         {
+            VE_PROFILE_SCOPE_ID(pass.ProfileName);
             // Bracket the pass's GPU work — transitions included, so a barrier stall counts
             // against the pass that waited — with a timestamp scope. Inert unless the device
             // supports timestamps; the timestamps sit outside BeginRendering/EndRendering.

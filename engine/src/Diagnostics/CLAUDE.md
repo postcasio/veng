@@ -216,8 +216,18 @@ The call sites that make a capture worth taking, plus the seam and bridge that p
   not a scope) and wraps each phase in a stable-named scope in the order the frame runs them:
   `Frame/RequestDrain`, `TaskSystem/PumpMainThread`, `Frame/AssetFinalize`, `Frame/Input`,
   `Frame/ImGui`, `WorldRunner/Tick`, the net pumps, `Frame/Update`, `Frame/ViewPush`,
-  `Frame/RenderBegin`, `Frame/Render` (per viewport, dynamic), `Frame/OnRender`, `Frame/Composite`,
+  `Frame/RenderBegin`, `Frame/Render`, `Frame/OnRender`, `Frame/Composite`,
   `Frame/RenderEnd`. **The names are stable strings** — the HUD and the flamegraph key on them.
+- **Rendering, per viewport and per pass.** Each viewport scopes its render as `Viewport <id>`,
+  interned at construction, with `Viewport/*` phases beneath it. The scene renderer scopes its CPU
+  phases as `Render/*` (broadphase sync, gather and BVH build, light packing, interpolation, draw
+  preparation, graph replay, graph rebuild), and `CompiledGraph::Execute` scopes each pass's
+  recording under the pass's own name, interned at compile — so a CPU pass reads beside its GPU
+  timing of the same name.
+- **Per-entity engine work.** `Behavior/Agent` scopes each agent's tree tick (with a
+  `Behavior/Agents` counter), `Animation/*` the animation system's phases, `Physics/*` each world
+  query, collider shape build and solver step, and `Scene/*` the transform snapshot and world-matrix
+  pass — the work a crowded scene multiplies.
 - **Simulation, per world and per system.** `WorldRunner::Tick` carries an outer scope; each world's
   Sim and View phases get a dynamic scope named by the world's identity, and the Sim phase records
   a `WorldRunner/SimSteps` counter (the fixed-step catch-up count). `SceneSimulation` **retains each
