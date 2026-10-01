@@ -3085,13 +3085,17 @@ namespace Veng
         }
         const Renderer::SceneRenderer& renderer = viewport->GetRenderer();
 
-        // The cull funnel, read as four aligned series: visible → frustum-survived → GPU-survived →
-        // drawn. The getters keep their ownership; this adds the sampler.
+        // The cull funnel, read as aligned series: visible → frustum-survived → GPU-survived →
+        // drawn. The GPU stage only runs under GPU culling, so its series exists only then; a
+        // constant zero would read as everything occluded.
         VE_PROFILE_COUNTER("Render/Visible", static_cast<f64>(renderer.GetLastVisibleCount()));
         VE_PROFILE_COUNTER("Render/FrustumSurvived",
                            static_cast<f64>(renderer.GetFrustumSurvivedCount()));
-        VE_PROFILE_COUNTER("Render/GpuSurvivors",
-                           static_cast<f64>(renderer.GetLastGpuSurvivorCount()));
+        if (renderer.GetActiveCullMode() == Renderer::SceneRendererSettings::CullMode::GPU)
+        {
+            VE_PROFILE_COUNTER("Render/GpuSurvivors",
+                               static_cast<f64>(renderer.GetLastGpuSurvivorCount()));
+        }
         VE_PROFILE_COUNTER("Render/Drawn", static_cast<f64>(renderer.GetLastDrawnCount()));
 
         const Renderer::PointFieldStats pointFields = renderer.GetPointFieldStats();
