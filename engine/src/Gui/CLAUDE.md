@@ -786,8 +786,8 @@ keep-visible-until-settled sequencing the utility owns). `Viewport::WorldToDocum
 `Gui::Placement` helpers (`ClampIntoBounds`, `AnchorBeside`, `Veng/Gui/Placement.h`) clamp a
 card/label into bounds; the projection policy and rejection margins stay the game's. The drive
 paths that support them are paint-only where they can be: `SetText` early-outs on unchanged text,
-`SetImageUv` is an atlas-flipbook setter, `SetRotation` a per-frame angle, `SetArc` a gauge's
-angles, and `SetPolylinePoints` a chart's data.
+`SetImageUv` is an atlas-flipbook setter, `SetImageTint` a state recolour of authored art,
+`SetRotation` a per-frame angle, `SetArc` a gauge's angles, and `SetPolylinePoints` a chart's data.
 
 **Pinning comes in two forms, and only one of them names a size.** `SetPlacement(element, topLeft,
 size)` writes an absolute position *and* a fixed `Points` extent; `SetPinnedPosition(element,

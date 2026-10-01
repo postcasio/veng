@@ -609,6 +609,37 @@ TEST_CASE("gui document: SetImageUv is a paint-only write of the sampled sub-rec
     CHECK(list.GetVertices()[2].Uv.y == doctest::Approx(1.0f));
 }
 
+TEST_CASE("gui document: SetImageTint is a paint-only write of the drawn colour")
+{
+    Document doc;
+    Element& image = doc.Add(doc.Root(), ElementKind::Image);
+    image.ImageTexture = Renderer::TextureHandle{.Index = 0};
+    image.ImageSampler = Renderer::SamplerHandle{.Index = 0};
+    doc.SetStyle(image,
+                 []
+                 {
+                     Style style;
+                     style.Width = Length::Points(32.0f);
+                     style.Height = Length::Points(32.0f);
+                     return style;
+                 }());
+    doc.Solve(vec2(200.0f, 200.0f));
+
+    const vec4 tint{4.0f, 0.5f, 0.25f, 1.0f};
+    doc.SetImageTint(image, tint);
+    CHECK_FALSE(doc.IsDirty());
+
+    DrawList list;
+    doc.Build(list);
+    REQUIRE(list.GetVertices().size() == 4);
+    for (const auto& vertex : list.GetVertices())
+    {
+        CHECK(vertex.Color.r == doctest::Approx(tint.r));
+        CHECK(vertex.Color.g == doctest::Approx(tint.g));
+        CHECK(vertex.Color.b == doctest::Approx(tint.b));
+    }
+}
+
 TEST_CASE("gui rotation: a rotated parent rigidly rotates its child's emitted positions")
 {
     Document doc;

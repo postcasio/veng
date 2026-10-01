@@ -1374,6 +1374,12 @@ namespace Veng::Gui
         m_PaintDirty = true;
     }
 
+    void Document::SetImageTint(Element& element, const vec4 tint)
+    {
+        element.ImageTint = tint;
+        m_PaintDirty = true;
+    }
+
     optional<vector<vec2>> ParsePolylinePoints(const string_view text)
     {
         vector<vec2> points;

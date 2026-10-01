@@ -293,6 +293,16 @@ namespace Veng::Gui
         /// @param uv       The UV sub-rect to sample, in normalized 0..1 texture coordinates.
         void SetImageUv(Element& element, const Rect& uv);
 
+        /// @brief Sets an Image element's tint — a paint-only write, no layout re-solve.
+        ///
+        /// Replaces the linear straight-alpha RGBA the markup's `tint` attribute authored, so a
+        /// driver recolours one piece of art by state (a warning glyph turning red) without a second
+        /// element authored in the other colour. The style opacity still folds into the alpha at
+        /// paint. The tint is unused off an Image element, so setting it there is inert.
+        /// @param element  The element whose tint to set.
+        /// @param tint     The tint, linear straight-alpha RGBA.
+        void SetImageTint(Element& element, vec4 tint);
+
         /// @brief Sets a Polyline's points — a paint-only write, no layout re-solve.
         ///
         /// Replaces Element::Points, in normalized content-box space ((0, 0) the content box's
