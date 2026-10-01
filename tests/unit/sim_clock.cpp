@@ -90,6 +90,21 @@ TEST_CASE("sim clock: the spiral-of-death clamp bounds the step count and drops 
     CHECK(clock.GetTick() == 6);
 }
 
+TEST_CASE("sim clock: a frame that fills the clamp exactly keeps its residual as alpha")
+{
+    SimClock clock = Make(60, 5);
+
+    // 5.5 steps runs the five the clamp allows and owes less than one more, so nothing is dropped.
+    const SimStep step = clock.Advance(Step60 * 5.5f);
+    CHECK(step.Steps == 5);
+    CHECK_FALSE(step.Clamped);
+    CHECK(step.Alpha == doctest::Approx(0.5f));
+
+    // The carried half step completes on the next half-step frame.
+    const SimStep next = clock.Advance(Step60 * 0.5f);
+    CHECK(next.Steps == 1);
+}
+
 TEST_CASE("sim clock: SetTick jumps the tick epoch and clears the accumulator")
 {
     SimClock clock = Make();

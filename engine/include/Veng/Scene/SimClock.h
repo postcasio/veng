@@ -95,7 +95,7 @@ namespace Veng
             // Spiral-of-death clamp: a backlog past the per-frame ceiling is dropped, not chased, so
             // a long stall resyncs to the present rather than running an unbounded catch-up burst.
             const bool clamped = steps == m_MaxTicksPerFrame && m_Accumulator >= simDelta;
-            if (steps == m_MaxTicksPerFrame)
+            if (clamped)
             {
                 m_Accumulator = 0.0f;
             }
