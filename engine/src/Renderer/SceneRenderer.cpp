@@ -33,6 +33,7 @@
 #include "Passes/VolumeScenePass.h"
 #include "ShadowSystem.h"
 #include "RefractionGrab.h"
+#include "GuiOverlayProjection.h"
 #include "HalfResTranslucency.h"
 #include <Veng/Renderer/BakedSkyCube.h>
 #include "PostProcessEffectResolver.h"
@@ -906,9 +907,10 @@ namespace Veng::Renderer
                 // A material overlay renders to the intermediate, then composites through its material
                 // into the scene color and the bloom mask (present only under bloom). Each such overlay
                 // gets a declared pass pair.
-                m_GuiHdrOverlayPass->SetComposite(m_HdrOverlayDocId, m_HdrOverlayDocHandle,
-                                                  PostMaskId(), BloomMaskFormat);
+                m_GuiHdrOverlayPass->SetComposite(m_HdrOverlayDocId, PostMaskId(), BloomMaskFormat);
+                m_GuiHdrOverlayPass->SetDocTarget(m_HdrOverlayDocHandle, m_HdrOverlayDocExtent);
                 m_GuiHdrOverlayPass->SetCompositeCount(m_HdrOverlayCompositeCount);
+                m_GuiHdrOverlayPass->SetHasDirect(m_HdrOverlayHasDirect);
             }
 
             // The HDR tail declares just before the tonemap — never after it, even when a
@@ -1506,34 +1508,41 @@ namespace Veng::Renderer
         // boundary (insert or drop the overlay pass); a stable presence replays, and the overlays'
         // per-frame content reaches the pass through the SceneView with no recompile. The count of
         // material-composited overlays is structural too — each needs its own render-to-intermediate +
-        // composite pass pair — so a change in it recompiles alongside presence.
+        // composite pass pair — and so is whether any overlay is direct, which alone declares the
+        // direct pass; a change in either recompiles alongside presence.
         const bool present = !view.HdrOverlays.empty();
         u32 materialCount = 0;
+        bool hasDirect = false;
         for (const GuiHdrOverlayView& overlay : view.HdrOverlays)
         {
             if (overlay.Material != nullptr)
             {
                 ++materialCount;
             }
+            else
+            {
+                hasDirect = true;
+            }
         }
-        if (present != m_HasHdrOverlay || materialCount != m_HdrOverlayCompositeCount)
+        if (present != m_HasHdrOverlay || materialCount != m_HdrOverlayCompositeCount ||
+            hasDirect != m_HdrOverlayHasDirect)
         {
             m_HasHdrOverlay = present;
             m_HdrOverlayCompositeCount = materialCount;
+            m_HdrOverlayHasDirect = hasDirect;
             Rebuild();
         }
     }
 
     void SceneRenderer::UpdateHdrOverlayTargets(const bool active)
     {
-        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         if (!active)
         {
             // Release the intermediate when no material overlay composites, so a renderer that stops
             // running them carries no extra HDR target.
             if (m_HdrOverlayDocExtent != uvec2{0, 0})
             {
-                bindless.Release(m_HdrOverlayDocHandle);
+                m_Context.GetBindlessRegistry().Release(m_HdrOverlayDocHandle);
                 m_HdrOverlayDocHandle = TextureHandle{};
                 m_HdrOverlayDocView.reset();
                 m_HdrOverlayDocImage.reset();
@@ -1542,17 +1551,43 @@ namespace Veng::Renderer
             return;
         }
 
-        // Already allocated at the current allocation extent — nothing to do (a plain topology Rebuild
-        // keeps the target).
-        if (m_HdrOverlayDocExtent == m_Extent)
+        // A plain topology Rebuild keeps the target at its high-water extent. A first activation
+        // allocates one granule, so the handle exists before the tail wiring reads it;
+        // PrepareHdrOverlayDocuments grows it to the frame's documents before the graph runs.
+        if (m_HdrOverlayDocExtent == uvec2{0, 0})
+        {
+            AllocateHdrOverlayDocTarget(
+                GrowGuiOverlayDocumentAllocation(uvec2{0, 0}, uvec2{0, 0}, m_Extent));
+        }
+    }
+
+    void SceneRenderer::PrepareHdrOverlayDocuments(const SceneView& view)
+    {
+        if (!m_HdrOverlayActive || m_HdrOverlayCompositeCount == 0 ||
+            m_GuiHdrOverlayPass == nullptr)
         {
             return;
         }
 
+        const uvec2 required = m_GuiHdrOverlayPass->PrepareDocuments(view);
+        const uvec2 grown =
+            GrowGuiOverlayDocumentAllocation(m_HdrOverlayDocExtent, required, m_Extent);
+        if (grown != m_HdrOverlayDocExtent)
+        {
+            AllocateHdrOverlayDocTarget(grown);
+            m_GuiHdrOverlayPass->SetDocTarget(m_HdrOverlayDocHandle, m_HdrOverlayDocExtent);
+        }
+    }
+
+    void SceneRenderer::AllocateHdrOverlayDocTarget(const uvec2 extent)
+    {
+        // The release is deferred past the frames still in flight, which keep the previous image
+        // alive through their own references.
+        BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_HdrOverlayDocHandle);
         m_HdrOverlayDocImage = Image::Create(m_Context, {
                                                             .Name = "SceneRenderer Gui Overlay Doc",
-                                                            .Extent = {m_Extent.x, m_Extent.y, 1},
+                                                            .Extent = {extent.x, extent.y, 1},
                                                             .Format = HdrFormat,
                                                             .Usage = HdrUsage,
                                                         });
@@ -1560,7 +1595,7 @@ namespace Veng::Renderer
             ImageView::Create(m_Context, {.Name = "SceneRenderer Gui Overlay Doc View",
                                           .Image = m_HdrOverlayDocImage});
         m_HdrOverlayDocHandle = bindless.Register(m_HdrOverlayDocView);
-        m_HdrOverlayDocExtent = m_Extent;
+        m_HdrOverlayDocExtent = extent;
     }
 
     void SceneRenderer::UpdatePostProcessEffectTargets(const bool active)
@@ -2350,6 +2385,10 @@ namespace Veng::Renderer
             tonemap.SetTextureHandle("Bloom", m_TonemapSourceHandle);
             tonemap.SetSamplerHandle("BloomSampler", m_SamplerHandle);
         }
+
+        // Size the overlay-document intermediate to this frame's documents — after every Rebuild
+        // this Execute can trigger, before the bindings below bind its (possibly regrown) view.
+        PrepareHdrOverlayDocuments(resolvedView);
 
         // Assemble this frame's graph import bindings — the always-bound targets plus the
         // conditionally-declared battery imports, matched to the compiled graph's declared imports.

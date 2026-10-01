@@ -9,6 +9,7 @@
   "fields": [
     { "name": "Tint", "type": "vec4", "value": [2.0, 0.5, 0.5, 1.0] },
     { "name": "Mask", "type": "float", "value": 6.0 },
-    { "name": "Document", "type": "texture" }
+    { "name": "Document", "type": "texture" },
+    { "name": "DocumentRect", "type": "vec4" }
   ]
 }

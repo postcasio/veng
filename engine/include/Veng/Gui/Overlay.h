@@ -153,17 +153,22 @@ namespace Veng
         /// Null (the default, an empty handle) composites the document straight into scene HDR — the
         /// direct blend every overlay took before, byte-for-byte. When set, a SceneHdrPreBloom overlay
         /// is instead composited through the named MaterialInstance: the engine renders the overlay's
-        /// document to an intermediate HDR target and runs the material as a fullscreen composite that
-        /// samples it, writing the shaped color into scene HDR and, when the material declares a bloom
-        /// mask, an amplitude into the renderer's bloom-mask target — so the document can bloom by a
-        /// strength it names rather than by how bright it is, decoupled from its drawn luminance.
+        /// document to an intermediate HDR target and runs the material as a composite over the
+        /// pixels the document covers, writing the shaped color into scene HDR and, when the material
+        /// declares a bloom mask, an amplitude into the renderer's bloom-mask target — so the document
+        /// can bloom by a strength it names rather than by how bright it is, decoupled from its drawn
+        /// luminance.
         ///
-        /// The material is a PostProcess-domain MaterialInstance whose fragment samples the rendered
-        /// document through a runtime-bound `Document` texture handle (written by the composite each
-        /// frame, the PostProcess `Scene`-handle convention) by integer pixel coordinate — the
-        /// document is rasterized at the composite resolution, so it reads 1:1. A material declaring
-        /// `"bloomMask": true` additionally returns a float SV_Target1 amplitude. Ignored for a
-        /// PostTonemap overlay, which never reaches the pre-bloom composite.
+        /// The material is a PostProcess-domain MaterialInstance declaring two runtime-bound fields
+        /// the composite writes each frame: `Document` (a texture handle — the rendered document,
+        /// premultiplied) and `DocumentRect` (a vec4 — the document's rect in scene pixels, origin
+        /// then size; the intermediate holds only that rect). Its fragment reads the document with
+        /// `LoadOverlayDocument(Document, DocumentRect, sv_position.xy)` from
+        /// `Veng/overlay_composite.slang`, which is 1:1 with the composite resolution and transparent
+        /// outside the rect. A material without `DocumentRect` is reported by name and not
+        /// composited. A material declaring `"bloomMask": true` additionally returns a float
+        /// SV_Target1 amplitude. Ignored for a PostTonemap overlay, which never reaches the pre-bloom
+        /// composite.
         AssetHandle<MaterialInstance> Material;
 
         /// @brief How this overlay maps into its target: flat screen-space (the default) or world-anchored.

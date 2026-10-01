@@ -52,4 +52,75 @@ namespace Veng::Renderer
         const vec3 world = vec3(model * vec4(local, 1.0f));
         return ProjectToScreen(camera, world, screenExtent);
     }
+
+    /// @brief The pixel granule a material overlay's document rect and its intermediate round to.
+    ///
+    /// Coarse enough that a document drifting by a few pixels a frame keeps the same rect, so the
+    /// intermediate grows in steps rather than tracking every sub-granule change.
+    inline constexpr u32 GuiOverlayDocumentGranule = 64;
+
+    /// @brief The target-pixel rectangle a material overlay's projected document covers this frame.
+    struct GuiOverlayDocumentRect
+    {
+        /// @brief Top-left corner in target pixels; granule-aligned.
+        uvec2 Origin{0, 0};
+        /// @brief Width and height in target pixels; zero when the document covers nothing.
+        uvec2 Size{0, 0};
+
+        /// @brief Returns true when the rect covers no pixel.
+        [[nodiscard]] bool IsEmpty() const { return Size.x == 0 || Size.y == 0; }
+    };
+
+    /// @brief Rounds @p value up to the next multiple of GuiOverlayDocumentGranule.
+    [[nodiscard]] constexpr u32 RoundUpToGuiOverlayGranule(const u32 value)
+    {
+        return (value + GuiOverlayDocumentGranule - 1) / GuiOverlayDocumentGranule *
+               GuiOverlayDocumentGranule;
+    }
+
+    /// @brief Derives a document rect from the bounds of the document's projected geometry.
+    ///
+    /// The bounds round outward to the granule, then clamp to the target, so every pixel a vertex
+    /// of the projected geometry can cover lies inside the rect; geometry wholly outside the target
+    /// yields an empty rect. The origin stays granule-aligned; only a size clamped at the target's
+    /// far edge is not a granule multiple.
+    /// @param boundsMin  The projected geometry's minimum corner, in target pixels.
+    /// @param boundsMax  The projected geometry's maximum corner, in target pixels.
+    /// @param extent     The target's pixel extent.
+    /// @return The rect, or an empty rect when the bounds miss the target.
+    [[nodiscard]] inline GuiOverlayDocumentRect
+    ComputeGuiOverlayDocumentRect(const vec2& boundsMin, const vec2& boundsMax, const uvec2& extent)
+    {
+        const vec2 lo = glm::max(glm::floor(boundsMin), vec2(0.0f));
+        const vec2 hi = glm::min(glm::ceil(boundsMax), vec2(extent));
+        if (!(hi.x > lo.x && hi.y > lo.y))
+        {
+            return {};
+        }
+        const uvec2 origin = uvec2(lo) / GuiOverlayDocumentGranule * GuiOverlayDocumentGranule;
+        const uvec2 end = glm::min(uvec2(RoundUpToGuiOverlayGranule(static_cast<u32>(hi.x)),
+                                         RoundUpToGuiOverlayGranule(static_cast<u32>(hi.y))),
+                                   extent);
+        return {.Origin = origin, .Size = end - origin};
+    }
+
+    /// @brief The extent the shared document intermediate takes to hold a rect of @p required size.
+    ///
+    /// It grows to cover the requirement, rounded to the granule, and never shrinks below its
+    /// high-water mark — so a document swinging into view grows it once, not every frame. The one
+    /// shrink is to the target's own granule-rounded extent, when the target was resized below it.
+    /// @param allocated  The intermediate's current extent; zero when unallocated.
+    /// @param required   The largest document rect size this frame.
+    /// @param extent     The target's pixel extent.
+    /// @return The extent the intermediate should have; equal to @p allocated when nothing changes.
+    [[nodiscard]] inline uvec2 GrowGuiOverlayDocumentAllocation(const uvec2& allocated,
+                                                                const uvec2& required,
+                                                                const uvec2& extent)
+    {
+        const uvec2 ceiling(RoundUpToGuiOverlayGranule(extent.x),
+                            RoundUpToGuiOverlayGranule(extent.y));
+        const uvec2 wanted(RoundUpToGuiOverlayGranule(glm::max(required.x, 1u)),
+                           RoundUpToGuiOverlayGranule(glm::max(required.y, 1u)));
+        return glm::min(glm::max(allocated, wanted), ceiling);
+    }
 }

@@ -1,10 +1,13 @@
 #include "GuiHdrOverlayScenePass.h"
 
+#include <limits>
+
 #include <fmt/format.h>
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/MaterialInstance.h>
+#include <Veng/Log.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
@@ -13,7 +16,6 @@
 #include <Veng/Scene/Camera.h>
 
 #include "GuiScenePass.h"
-#include "../GuiOverlayProjection.h"
 
 namespace Veng::Renderer
 {
@@ -53,11 +55,10 @@ namespace Veng::Renderer
 
     GuiHdrOverlayScenePass::~GuiHdrOverlayScenePass() = default;
 
-    void GuiHdrOverlayScenePass::SetComposite(ResourceId docTarget, TextureHandle docTargetHandle,
-                                              ResourceId bloomMask, Format bloomMaskFormat)
+    void GuiHdrOverlayScenePass::SetComposite(ResourceId docTarget, ResourceId bloomMask,
+                                              Format bloomMaskFormat)
     {
         m_DocTargetId = docTarget;
-        m_DocTargetHandle = docTargetHandle;
         m_BloomMaskId = bloomMask;
         m_BloomMaskFormat = bloomMaskFormat;
 
@@ -130,60 +131,115 @@ namespace Veng::Renderer
         return m_CompositePipelines.emplace(parent, std::move(pipeline)).first->second;
     }
 
+    bool GuiHdrOverlayScenePass::AppendOverlay(Gui::DrawList& into,
+                                               const GuiHdrOverlayView& overlay,
+                                               const SceneView& view)
+    {
+        // A screen-space overlay scales its logical extent to the scene-color region; a
+        // world-anchored one projects through the live camera onto its plane.
+        const vec2 target = vec2(view.PostResolveExtent);
+        if (overlay.WorldAnchored)
+        {
+            const mat4 model = overlay.Model;
+            const vec2 surfaceSize = overlay.SurfaceSize;
+            const vec2 docExtent = overlay.DocExtent;
+            const CameraView& camera = view.Camera;
+            return into.AppendProjected(*overlay.DrawList,
+                                        [&](vec2 point) -> optional<vec2>
+                                        {
+                                            return ProjectGuiOverlayPoint(point, docExtent,
+                                                                          surfaceSize, model,
+                                                                          camera, target);
+                                        });
+        }
+        const vec2 scale = target / glm::max(overlay.DocExtent, vec2(1.0f));
+        return into.AppendProjected(*overlay.DrawList, [scale](vec2 point) -> optional<vec2>
+                                    { return point * scale; });
+    }
+
+    uvec2 GuiHdrOverlayScenePass::PrepareDocuments(const SceneView& view)
+    {
+        m_DocLists.resize(m_CompositeCount);
+        m_DocRects.assign(m_CompositeCount, GuiOverlayDocumentRect{});
+
+        uvec2 required{0, 0};
+        for (u32 i = 0; i < m_CompositeCount; ++i)
+        {
+            Gui::DrawList& projected = m_DocLists[i];
+            projected.Clear();
+            const GuiHdrOverlayView* overlay = MaterialOverlay(view, i);
+            if (overlay == nullptr || overlay->DrawList == nullptr ||
+                overlay->DrawList->IsEmpty() || !AppendOverlay(projected, *overlay, view) ||
+                projected.IsEmpty())
+            {
+                continue;
+            }
+
+            // Fragments exist only inside the projected triangles, so the vertices' bounds hold
+            // every pixel the document can cover.
+            vec2 lo(std::numeric_limits<f32>::max());
+            vec2 hi(std::numeric_limits<f32>::lowest());
+            for (const Gui::GuiVertex& vertex : projected.GetVertices())
+            {
+                lo = glm::min(lo, vertex.Position);
+                hi = glm::max(hi, vertex.Position);
+            }
+            m_DocRects[i] = ComputeGuiOverlayDocumentRect(lo, hi, view.PostResolveExtent);
+            required = glm::max(required, m_DocRects[i].Size);
+        }
+        return required;
+    }
+
     void GuiHdrOverlayScenePass::RecordDocument(const ScenePassContext& ctx, const u32 index)
     {
-        const SceneView& view = ctx.View();
-        const GuiHdrOverlayView* overlay = MaterialOverlay(view, index);
-        if (overlay == nullptr || overlay->DrawList == nullptr || overlay->DrawList->IsEmpty())
+        if (index >= m_DocRects.size() || m_DocRects[index].IsEmpty())
         {
             return;
         }
+        const GuiOverlayDocumentRect& rect = m_DocRects[index];
+        VE_ASSERT(rect.Size.x <= m_DocTargetExtent.x && rect.Size.y <= m_DocTargetExtent.y,
+                  "GuiHdrOverlayScenePass: document rect {}x{} exceeds the {}x{} intermediate",
+                  rect.Size.x, rect.Size.y, m_DocTargetExtent.x, m_DocTargetExtent.y);
 
-        // Project the overlay's document into the cleared intermediate exactly as the direct path
-        // projects into the scene color: a screen-space overlay scales its logical extent to the
-        // scene-color region, a world-anchored one projects through the live camera onto its plane. The
-        // intermediate then holds the document at the same pixels the composite reads by pixel coord.
-        const vec2 target = vec2(view.PostResolveExtent);
+        // The document was projected into target pixels ahead of the graph; shifting it by the
+        // rect's origin lands the rect at the intermediate's origin, and the record draws only the
+        // rect's own extent of the intermediate.
+        const vec2 origin = vec2(rect.Origin);
         m_Merged.Clear();
-        if (overlay->WorldAnchored)
-        {
-            const mat4 model = overlay->Model;
-            const vec2 surfaceSize = overlay->SurfaceSize;
-            const vec2 docExtent = overlay->DocExtent;
-            const CameraView& camera = view.Camera;
-            m_Merged.AppendProjected(*overlay->DrawList,
-                                     [&](vec2 point) -> optional<vec2>
-                                     {
-                                         return ProjectGuiOverlayPoint(
-                                             point, docExtent, surfaceSize, model, camera, target);
-                                     });
-        }
-        else
-        {
-            const vec2 scale = target / glm::max(overlay->DocExtent, vec2(1.0f));
-            m_Merged.AppendProjected(*overlay->DrawList, [scale](vec2 point) -> optional<vec2>
-                                     { return point * scale; });
-        }
+        m_Merged.AppendProjected(m_DocLists[index],
+                                 [origin](vec2 point) -> optional<vec2> { return point - origin; });
 
-        if (m_Merged.IsEmpty())
-        {
-            return;
-        }
-
-        // The projected geometry is already in target pixels, so the recorder draws it 1:1 (UiScale 1)
-        // into the cleared intermediate at the scene-color region extent.
+        // The projected geometry is already in target pixels, so the recorder draws it 1:1 (UiScale 1).
         m_Gui->SetUiScale(1.0f);
-        m_Gui->SetTime(view.GuiTime);
+        m_Gui->SetTime(ctx.View().GuiTime);
         m_Gui->SetDrawList(m_Merged);
-        m_Gui->RecordInto(ctx.Cmd(), view.PostResolveExtent);
+        m_Gui->RecordInto(ctx.Cmd(), rect.Size);
     }
 
     void GuiHdrOverlayScenePass::RecordComposite(const ScenePassContext& ctx, const u32 index)
     {
         const SceneView& view = ctx.View();
         const GuiHdrOverlayView* overlay = MaterialOverlay(view, index);
-        if (overlay == nullptr || overlay->Material == nullptr)
+        if (overlay == nullptr || overlay->Material == nullptr || index >= m_DocRects.size() ||
+            m_DocRects[index].IsEmpty())
         {
+            return;
+        }
+        const GuiOverlayDocumentRect& rect = m_DocRects[index];
+
+        // The intermediate holds only the document rect, so a material reading it by scene pixel
+        // would read the wrong texels; one that cannot be told where the rect lies is not drawn.
+        const MaterialFieldHandle rectField = overlay->Material->Field("DocumentRect");
+        if (!rectField.IsValid())
+        {
+            if (m_ReportedWithoutRect.insert(overlay->Material->GetParent().Get()).second)
+            {
+                Log::Error("GuiHdrOverlayScenePass: composite material '{}' declares no "
+                           "'DocumentRect' field (float4: origin, size); the overlay is not "
+                           "composited. Read the document through LoadOverlayDocument "
+                           "(Veng/overlay_composite.slang).",
+                           overlay->Material->GetName());
+            }
             return;
         }
 
@@ -201,15 +257,17 @@ namespace Veng::Renderer
             m_ViewMaterials[index].Resolve(m_Assets, m_Context, *overlay->Material,
                                            fmt::format("{} (View)", overlay->Material->GetName()));
 
-        // Write the intermediate's live bindless slot into the material's Document field, so the
-        // fullscreen fragment samples this frame's rendered document; must precede Material::Bind so
-        // the pushed selector reads a param block carrying the current handle.
+        // Write the intermediate's live bindless slot and where the document sits in it; must
+        // precede Material::Bind so the pushed selector reads a param block carrying both.
         material.SetTextureHandle("Document", m_DocTargetHandle);
+        material.SetParam(rectField, vec4(vec2(rect.Origin), vec2(rect.Size)));
 
+        // The viewport stays the full target so sv_position is a scene pixel; the scissor keeps the
+        // fragment to the pixels the document can cover.
         const Ref<GraphicsPipeline>& pipeline = CompositePipeline(material);
         cmd.BindPipeline(pipeline);
         cmd.SetViewport({0, 0}, view.PostResolveExtent);
-        cmd.SetScissor({0, 0}, view.PostResolveExtent);
+        cmd.SetScissor(ivec2(rect.Origin), rect.Size);
         m_Context.GetBindlessRegistry().Bind(cmd);
         material.Bind(cmd);
         cmd.DrawFullscreenTriangle();
@@ -218,69 +276,48 @@ namespace Veng::Renderer
     void GuiHdrOverlayScenePass::Declare(RenderGraph& graph, const PassIO& /*io*/)
     {
         // The direct path: merge every overlay WITHOUT a composite material and blend it into the scene
-        // color in place. A scene of only direct overlays is byte-identical to the pre-material pass.
-        graph.AddPass("Gui HDR Overlay")
-            .Color({
-                .Resource = m_Output,
-                .Load = LoadOp::Load,
-                .Store = StoreOp::Store,
-            })
-            .Execute(
-                [this](PassContext& inner)
-                {
-                    const ScenePassContext ctx = Wrap(inner);
-                    const SceneView& view = ctx.View();
-                    if (view.HdrOverlays.empty())
+        // color in place. Declared only while such an overlay is conveyed.
+        if (m_HasDirect)
+        {
+            graph.AddPass("Gui HDR Overlay")
+                .Color({
+                    .Resource = m_Output,
+                    .Load = LoadOp::Load,
+                    .Store = StoreOp::Store,
+                })
+                .Execute(
+                    [this](PassContext& inner)
                     {
-                        return;
-                    }
-
-                    const vec2 target = vec2(view.PostResolveExtent);
-                    m_Merged.Clear();
-                    for (const GuiHdrOverlayView& overlay : view.HdrOverlays)
-                    {
-                        if (overlay.Material != nullptr || overlay.DrawList == nullptr ||
-                            overlay.DrawList->IsEmpty())
+                        const ScenePassContext ctx = Wrap(inner);
+                        const SceneView& view = ctx.View();
+                        m_Merged.Clear();
+                        for (const GuiHdrOverlayView& overlay : view.HdrOverlays)
                         {
-                            continue;
+                            if (overlay.Material != nullptr || overlay.DrawList == nullptr ||
+                                overlay.DrawList->IsEmpty())
+                            {
+                                continue;
+                            }
+                            AppendOverlay(m_Merged, overlay, view);
                         }
-                        if (overlay.WorldAnchored)
-                        {
-                            const mat4 model = overlay.Model;
-                            const vec2 surfaceSize = overlay.SurfaceSize;
-                            const vec2 docExtent = overlay.DocExtent;
-                            const CameraView& camera = view.Camera;
-                            m_Merged.AppendProjected(*overlay.DrawList,
-                                                     [&](vec2 point) -> optional<vec2>
-                                                     {
-                                                         return ProjectGuiOverlayPoint(
-                                                             point, docExtent, surfaceSize, model,
-                                                             camera, target);
-                                                     });
-                        }
-                        else
-                        {
-                            const vec2 scale = target / glm::max(overlay.DocExtent, vec2(1.0f));
-                            m_Merged.AppendProjected(*overlay.DrawList,
-                                                     [scale](vec2 point) -> optional<vec2>
-                                                     { return point * scale; });
-                        }
-                    }
 
-                    if (m_Merged.IsEmpty())
-                    {
-                        return;
-                    }
+                        if (m_Merged.IsEmpty())
+                        {
+                            return;
+                        }
 
-                    m_Gui->SetUiScale(1.0f);
-                    m_Gui->SetTime(view.GuiTime);
-                    m_Gui->SetDrawList(m_Merged);
-                    m_Gui->RecordInto(ctx.Cmd(), view.PostResolveExtent);
-                });
+                        m_Gui->SetUiScale(1.0f);
+                        m_Gui->SetTime(view.GuiTime);
+                        m_Gui->SetDrawList(m_Merged);
+                        m_Gui->RecordInto(ctx.Cmd(), view.PostResolveExtent);
+                    });
+        }
 
         // The material path: one render-to-intermediate pass and one composite pass per material
         // overlay, in order, all reusing the single intermediate — the graph serializes the reuse. The
         // renderer recompiles when the count changes, so each material overlay has its declared pair.
+        // The intermediate is sized to the largest document rect, so its clear and store cost what
+        // the documents cover.
         for (u32 i = 0; i < m_CompositeCount; ++i)
         {
             graph.AddPass(fmt::format("Gui HDR Overlay Doc {}", i))

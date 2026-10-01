@@ -11,6 +11,10 @@
 //     both active, the effect writes the scene color, the overlay composites over it (so it ran
 //     after the effect), and the overlay blooms (so it ran before bloom) — effect → overlay → bloom.
 //
+// Material overlays cost what their documents cover: a frame of only material overlays declares no
+// direct pass, a document moving and growing across frames composites as a fresh renderer would, and a
+// composite material that cannot be told where its document lies is reported by name, not drawn.
+//
 // A separate case drives a real GuiOverlay component through a Viewport to prove per-component
 // placement routing: a SceneHdrPreBloom component composites into the scene HDR and never joins the
 // post-tonemap layer stack, while a PostTonemap component does.
@@ -30,6 +34,7 @@
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Gui/DrawList.h>
 #include <Veng/Gui/Overlay.h>
+#include <Veng/Log.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
@@ -539,8 +544,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 {
     RegisterBuiltinTypes(Types);
 
-    // The same composite material both overlays name — the shared-instance case the HUD uses (its
-    // head-up pane and console MFD both composite through one glow-split material each frame).
+    // The same composite material both overlays name — the shared-instance case of one consumer
+    // compositing two documents through a single glow-split material each frame.
     const path compositeDir = path(GPU_POSTPROCESS_FIXTURE_DIR);
     const path archive = Veng::TestSupport::TempDir() / "veng_gui_hdr_overlay_two.vengpack";
     Cook::Cooker cooker;
@@ -767,6 +772,237 @@ TEST_CASE_FIXTURE(
     ldrScene->Get<GuiOverlay>(ldrEntity).Visible = true;
     Context.ImmediateCommands([&](CommandBuffer& cmd) { ldrViewport->Render(cmd); });
     CHECK(ldrViewport->GetAttachedDocuments().size() == 1);
+
+    std::filesystem::remove(archive);
+}
+
+namespace
+{
+    // Cooks the composite-material fixture pack into @p archive and mounts it on @p assets.
+    void MountCompositePack(AssetManager& assets, const path& archive)
+    {
+        Cook::Cooker cooker;
+        Cook::RegisterBuiltinImporters(cooker);
+        REQUIRE(cooker
+                    .CookPack(path(GPU_POSTPROCESS_FIXTURE_DIR) / "overlay_composite_pack.json",
+                              archive, {}, nullptr, nullptr, nullptr, nullptr, {},
+                              path(VENG_CORE_SHADER_DIR))
+                    .has_value());
+        REQUIRE(assets.Mount(archive).has_value());
+    }
+
+    bool HasPass(std::span<const Context::GpuPassTiming> timings, std::string_view name)
+    {
+        for (const Context::GpuPassTiming& timing : timings)
+        {
+            if (timing.Name == name)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui hdr overlay: a frame of only material overlays declares no direct pass")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const path archive = Veng::TestSupport::TempDir() / "veng_gui_hdr_overlay_passes.vengpack";
+    MountCompositePack(assets, archive);
+    const AssetResult<AssetHandle<MaterialInstance>> composite =
+        assets.LoadSync<MaterialInstance>(AssetId{0x00000000008A0010ULL});
+    REQUIRE(composite.has_value());
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const CameraView camera = FrontCamera();
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = Extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
+    });
+
+    const Gui::DrawList list = OverlayQuad(vec2(40.0f), vec2(48.0f), vec4(0.2f, 0.35f, 0.9f, 1.0f));
+    GuiHdrOverlayView material = ScreenSpaceView(list);
+    material.Material = composite->Get();
+    const GuiHdrOverlayView direct = ScreenSpaceView(list);
+
+    // The pass list the frame ran, read from the graph's per-pass GPU scopes.
+    const auto passesFor = [&](std::span<const GuiHdrOverlayView> overlays)
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                           .Camera = camera,
+                                                           .Delta = 0.0f,
+                                                           .HdrOverlays = overlays});
+            });
+        const std::span<const Context::GpuPassTiming> timings =
+            Context.GetLastImmediateGpuPassTimings();
+        return std::pair{HasPass(timings, "Gui HDR Overlay"),
+                         HasPass(timings, "Gui HDR Overlay 0")};
+    };
+
+    const GuiHdrOverlayView onlyMaterial[] = {material};
+    const GuiHdrOverlayView both[] = {material, direct};
+    const auto [materialDirect, materialComposite] = passesFor(onlyMaterial);
+    const auto [mixedDirect, mixedComposite] = passesFor(both);
+    if (!Context.IsGpuTimingSupported())
+    {
+        MESSAGE("GPU timing unsupported; the pass list cannot be read on this device");
+        std::filesystem::remove(archive);
+        return;
+    }
+
+    CHECK_FALSE(materialDirect);
+    CHECK(materialComposite);
+    // A direct overlay joining the frame brings the direct pass back beside the composite.
+    CHECK(mixedDirect);
+    CHECK(mixedComposite);
+
+    std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "gui hdr overlay: a material document moving and growing across frames composites "
+    "as a fresh renderer would")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const path archive = Veng::TestSupport::TempDir() / "veng_gui_hdr_overlay_grow.vengpack";
+    MountCompositePack(assets, archive);
+    const AssetResult<AssetHandle<MaterialInstance>> composite =
+        assets.LoadSync<MaterialInstance>(AssetId{0x00000000008A0010ULL});
+    REQUIRE(composite.has_value());
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const CameraView camera = FrontCamera();
+    const auto makeRenderer = [&]
+    {
+        return SceneRenderer::Create({
+            .Context = Context,
+            .Assets = assets,
+            .OutputFormat = Context.GetOutputFormat(),
+            .Extent = Extent,
+            .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
+        });
+    };
+    const auto render = [&](SceneRenderer& renderer, const Gui::DrawList& list)
+    {
+        GuiHdrOverlayView view = ScreenSpaceView(list);
+        view.Material = composite->Get();
+        const GuiHdrOverlayView views[] = {view};
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer.Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                          .Camera = camera,
+                                                          .Delta = 0.0f,
+                                                          .HdrOverlays = views});
+            });
+        return renderer.GetOutput()->GetImage()->Download();
+    };
+
+    // A small document, then a tall one (the intermediate grows in y), then a wide one (it grows in
+    // x), then a small one elsewhere (it keeps its high-water extent) — each at a rect off the
+    // target's origin on at least one axis, so a read by scene pixel would miss it.
+    struct Frame
+    {
+        vec2 Min;
+        vec2 Size;
+        uvec2 Inside;
+    };
+    const Frame frames[] = {
+        {.Min = vec2(70.0f, 80.0f), .Size = vec2(20.0f, 16.0f), .Inside = uvec2(80, 88)},
+        {.Min = vec2(70.0f, 10.0f), .Size = vec2(50.0f, 110.0f), .Inside = uvec2(100, 100)},
+        {.Min = vec2(4.0f, 70.0f), .Size = vec2(110.0f, 40.0f), .Inside = uvec2(60, 90)},
+        {.Min = vec2(96.0f, 4.0f), .Size = vec2(24.0f, 30.0f), .Inside = uvec2(108, 20)},
+    };
+
+    const Unique<SceneRenderer> persistent = makeRenderer();
+    for (const Frame& frame : frames)
+    {
+        CAPTURE(frame.Min.x);
+        const Gui::DrawList list =
+            OverlayQuad(frame.Min, frame.Size, vec4(0.2f, 0.35f, 0.9f, 1.0f));
+        const vector<u8> carried = render(*persistent, list);
+        const Unique<SceneRenderer> fresh = makeRenderer();
+        const vector<u8> reference = render(*fresh, list);
+
+        // The document drew where it lies, shaped by the material (its tint boosts red), and the
+        // renderer carrying an intermediate from earlier frames produced the fresh renderer's image.
+        CHECK(DecodeTexel(carried, Extent.x, frame.Inside.x, frame.Inside.y).r > 0.1f);
+        CHECK(carried == reference);
+    }
+
+    std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "gui hdr overlay: a composite material without DocumentRect is reported, not drawn")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const path archive = Veng::TestSupport::TempDir() / "veng_gui_hdr_overlay_no_rect.vengpack";
+    MountCompositePack(assets, archive);
+    // The fixture material that declares a Document handle and no DocumentRect.
+    const AssetResult<AssetHandle<MaterialInstance>> composite =
+        assets.LoadSync<MaterialInstance>(AssetId{0x8D46DBAE78387963ULL});
+    REQUIRE(composite.has_value());
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const CameraView camera = FrontCamera();
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = Extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
+    });
+
+    const Gui::DrawList list = OverlayQuad(vec2(40.0f), vec2(48.0f), vec4(0.2f, 0.35f, 0.9f, 1.0f));
+    GuiHdrOverlayView view = ScreenSpaceView(list);
+    view.Material = composite->Get();
+    const GuiHdrOverlayView views[] = {view};
+    const auto render = [&](std::span<const GuiHdrOverlayView> overlays)
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(cmd, Renderer::SceneView{.World = *scene,
+                                                           .Camera = camera,
+                                                           .Delta = 0.0f,
+                                                           .HdrOverlays = overlays});
+            });
+        return renderer->GetOutput()->GetImage()->Download();
+    };
+
+    const vector<u8> baseline = render({});
+
+    vector<string> errors;
+    Log::SetSink(
+        [&](const Log::Level level, std::string_view message)
+        {
+            if (level == Log::Level::Error)
+            {
+                errors.emplace_back(message);
+            }
+        });
+    const vector<u8> first = render(views);
+    const vector<u8> second = render(views);
+    Log::SetSink(nullptr);
+
+    // Reported once, naming the field it lacks; and the overlay left the scene as it was.
+    REQUIRE(errors.size() == 1);
+    CHECK(errors[0].find("DocumentRect") != string::npos);
+    CHECK(first == baseline);
+    CHECK(second == baseline);
 
     std::filesystem::remove(archive);
 }

@@ -278,8 +278,9 @@ costs are allocated separately:
   the allocation itself.
 - The **post-resolve allocation** — `region · MaxAllocationScale`, no render scale — holds the tail:
   the promoted scene colour, the promoted bloom mask, the post-process effect ping-pong pair, the
-  overlay-document intermediate, the bloom pyramid (at half of it), the spatial-AA LDR intermediate
-  and edge map, and the output. `SceneView::PostResolveExtent` is **always** this, at any render scale in any AA mode.
+  bloom pyramid (at half of it), the spatial-AA LDR intermediate and edge map, and the output. The
+  overlay-document intermediate works in its pixels but is sized to the documents it holds, not to
+  it (see "The pre-bloom GUI overlay"). `SceneView::PostResolveExtent` is **always** this, at any render scale in any AA mode.
 
 `MaxAllocationScale` is the outer factor on **both**, which is what keeps supersampling supersampling
 the tail with the scene. A debug view (`Mode != Final`) pins the render allocation to the
@@ -1218,6 +1219,35 @@ channels, the emissive channel, the SSAO target, the bloom pyramid, the directio
 shadow maps) have no
 authorable surface; a PostProcess material is for *tunable effects with exposed parameters*, not
 plumbing.
+
+### The pre-bloom GUI overlay
+
+`GuiHdrOverlayScenePass` composites each `SceneHdrPreBloom` overlay into the scene colour after the
+post-process effects and before bloom, at the post-resolve allocation. Each of its passes costs what
+the overlays cover rather than the frame:
+
+- **The direct pass exists only while a direct overlay does.** Overlays naming no material merge into
+  one draw list blended in place; `ResolveHdrOverlays` recompiles on whether any is conveyed, beside
+  presence and the material count, so a frame of only material overlays carries no load and store of
+  the scene colour for it.
+- **A material overlay's intermediate holds its document rect.** `PrepareDocuments` projects each
+  material overlay's document ahead of the graph; the projection's bounds, rounded outward to a
+  64-pixel granule and clamped to the target, are the overlay's **document rect** for the frame. The
+  document renders with the rect's origin at the intermediate's origin. The one shared intermediate
+  is sized to the largest rect seen, **growing on demand and never shrinking** while material overlays
+  stay active (a resize below it is the one shrink), and released when none composites. A grow
+  recreates the target and re-registers its bindless slot; the graph imports it by name, so it is not
+  a recompile.
+- **The composite is scissored to the rect.** Its viewport stays the full target, so `sv_position` is
+  a scene pixel. The scene colour's (and mask's) load and store still cover the whole attachment — a
+  render pass's load and store actions are not scissored on a tile-based GPU.
+
+**The composite-material contract.** A composite material declares `Document` (texture handle) and
+`DocumentRect` (`float4`: origin, size, in scene pixels), both written per frame into the pass's
+per-view mirror, and reads the document through `LoadOverlayDocument` in the bindings-free
+`Veng/overlay_composite.slang` (included after `Veng/postprocess.slang`), which subtracts the origin
+and returns transparent outside the rect. A material lacking `DocumentRect` is reported once, by
+name, and not composited — a read by scene pixel would land at the wrong texels.
 
 ### Point fields
 

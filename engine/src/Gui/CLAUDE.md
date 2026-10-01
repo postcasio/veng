@@ -898,6 +898,15 @@ goes); `Detach` covers the other case — a viewport stops presenting a world th
 rebind), where the engine detaches the departed scene's overlays without waiting on component
 teardown.
 
+**A `SceneHdrPreBloom` overlay naming a `Material` composites through it, over the pixels its document
+covers.** The renderer draws the document into an intermediate holding only the document's projected
+rect, so the PostProcess-domain composite material declares `Document` (texture handle) and
+`DocumentRect` (`vec4`: origin, size, in scene pixels) and reads the document through
+`LoadOverlayDocument` (`Veng/overlay_composite.slang`) rather than by scene pixel; one without
+`DocumentRect` is reported by name and not drawn. The renderer side — the rect, the intermediate's
+growth, the scissored composite — is in [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "The pre-bloom
+GUI overlay".
+
 ### The driver — per-instance presentation binding
 
 The game owns only the data binding, and the **ergonomic path for it is a driver**, not a

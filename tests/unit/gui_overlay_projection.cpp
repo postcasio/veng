@@ -3,11 +3,13 @@
 // projects it through the live camera to screen pixels; a point behind the eye is culled. These pin
 // the properties the "HUD stays anchored while you look around" behavior reduces to — a known
 // surface-local point lands where expected, a camera rotation slides it, and a behind-eye point is
-// dropped — plus the screen-space affine mapping the flat placement reproduces. Pure math; no device.
+// dropped — plus the screen-space affine mapping the flat placement reproduces, and the document rect
+// a material overlay's intermediate is sized to. Pure math; no device.
 
 #include <doctest/doctest.h>
 
 #include <cmath>
+#include <utility>
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -121,4 +123,74 @@ TEST_CASE("gui overlay projection: the model transform places a local point in w
     CHECK(world.x == doctest::Approx(5.0f));
     CHECK(world.y == doctest::Approx(0.0f));
     CHECK(world.z == doctest::Approx(-1.0f));
+}
+
+TEST_CASE(
+    "gui overlay document rect: covers the projection, granule-aligned, clamped to the target")
+{
+    constexpr uvec2 Target{1000, 700};
+    constexpr u32 G = GuiOverlayDocumentGranule;
+
+    // Bounds inside, straddling each edge, sub-pixel, and covering the whole target — the boundary
+    // cases a projected pane reaches while it swings across the screen.
+    const std::pair<vec2, vec2> bounds[] = {
+        {vec2(130.4f, 90.2f), vec2(300.6f, 211.9f)},
+        {vec2(-40.0f, 20.0f), vec2(70.0f, 80.0f)},
+        {vec2(950.5f, 650.0f), vec2(1100.0f, 760.0f)},
+        {vec2(500.25f, 333.75f), vec2(500.75f, 334.25f)},
+        {vec2(-10.0f), vec2(2000.0f)},
+        {vec2(64.0f, 128.0f), vec2(128.0f, 192.0f)},
+    };
+
+    u32 failures = 0;
+    for (const auto& [lo, hi] : bounds)
+    {
+        const GuiOverlayDocumentRect rect = ComputeGuiOverlayDocumentRect(lo, hi, Target);
+        const uvec2 end = rect.Origin + rect.Size;
+        const vec2 coveredLo = glm::max(glm::floor(lo), vec2(0.0f));
+        const vec2 coveredHi = glm::min(glm::ceil(hi), vec2(Target));
+        const bool contains = vec2(rect.Origin).x <= coveredLo.x &&
+                              vec2(rect.Origin).y <= coveredLo.y && vec2(end).x >= coveredHi.x &&
+                              vec2(end).y >= coveredHi.y;
+        const bool clamped = end.x <= Target.x && end.y <= Target.y;
+        const bool aligned = rect.Origin.x % G == 0 && rect.Origin.y % G == 0 &&
+                             (end.x % G == 0 || end.x == Target.x) &&
+                             (end.y % G == 0 || end.y == Target.y);
+        failures += (rect.IsEmpty() || !contains || !clamped || !aligned) ? 1u : 0u;
+    }
+    CHECK(failures == 0);
+
+    // Already-aligned bounds take exactly their own granules.
+    const GuiOverlayDocumentRect exact =
+        ComputeGuiOverlayDocumentRect(vec2(64.0f, 128.0f), vec2(128.0f, 192.0f), Target);
+    CHECK(exact.Origin == uvec2(64, 128));
+    CHECK(exact.Size == uvec2(64, 64));
+
+    // A projection wholly off the target, on any side, covers nothing.
+    CHECK(ComputeGuiOverlayDocumentRect(vec2(-200.0f), vec2(-1.0f), Target).IsEmpty());
+    CHECK(
+        ComputeGuiOverlayDocumentRect(vec2(1000.0f, 0.0f), vec2(1200.0f, 50.0f), Target).IsEmpty());
+    CHECK(ComputeGuiOverlayDocumentRect(vec2(0.0f, 900.0f), vec2(50.0f, 950.0f), Target).IsEmpty());
+}
+
+TEST_CASE(
+    "gui overlay document rect: the intermediate grows to cover and never shrinks while active")
+{
+    constexpr uvec2 Target{1000, 700};
+
+    // A first allocation is one granule, then grows to cover a larger rect, rounded to the granule.
+    const uvec2 first = GrowGuiOverlayDocumentAllocation(uvec2(0), uvec2(0), Target);
+    CHECK(first == uvec2(GuiOverlayDocumentGranule));
+    const uvec2 grown = GrowGuiOverlayDocumentAllocation(first, uvec2(300, 130), Target);
+    CHECK(grown == uvec2(320, 192));
+
+    // A smaller rect, or one larger on a single axis, never takes back what the other axis holds.
+    CHECK(GrowGuiOverlayDocumentAllocation(grown, uvec2(10, 10), Target) == grown);
+    CHECK(GrowGuiOverlayDocumentAllocation(grown, uvec2(100, 400), Target) == uvec2(320, 448));
+
+    // The target's own granule-rounded extent bounds it, and a target resized below the high-water
+    // mark brings it down to the new bound.
+    CHECK(GrowGuiOverlayDocumentAllocation(grown, Target, Target) == uvec2(1024, 704));
+    CHECK(GrowGuiOverlayDocumentAllocation(uvec2(1024, 704), uvec2(10), uvec2(200, 100)) ==
+          uvec2(256, 128));
 }

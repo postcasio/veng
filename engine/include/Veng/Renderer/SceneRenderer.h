@@ -563,20 +563,34 @@ namespace Veng::Renderer
         /// @param active  Whether the effect chain runs this pass set.
         void UpdatePostProcessEffectTargets(bool active);
 
-        /// @brief (Re)allocates or releases the overlay-document intermediate HDR target.
+        /// @brief Allocates or releases the overlay-document intermediate HDR target.
         ///
-        /// Allocates one allocation-sized HDR target (registered bindless) when @p active and none is
-        /// current — a material overlay renders its document here before the composite samples it — and
-        /// releases it when inactive. Content-driven, so a renderer with no material overlay carries no
-        /// extra target. Modeled on UpdatePostProcessEffectTargets.
+        /// Allocates the HDR target (registered bindless) when @p active and none is current — a
+        /// material overlay renders its document here before the composite reads it — at its
+        /// high-water extent, which PrepareHdrOverlayDocuments grows; releases it when inactive.
+        /// Content-driven, so a renderer with no material overlay carries no extra target.
         /// @param active  Whether a material overlay is composited this pass set.
         void UpdateHdrOverlayTargets(bool active);
+
+        /// @brief Derives this frame's material-overlay document rects and grows the intermediate to hold them.
+        ///
+        /// Runs each Execute after every Rebuild it can trigger and before the import bindings are
+        /// built: a grow recreates the target and re-registers its bindless slot, which the graph
+        /// picks up through the import binding without a recompile. A no-op when no material
+        /// overlay is composited.
+        /// @param view  The frame's resolved scene view.
+        void PrepareHdrOverlayDocuments(const SceneView& view);
+
+        /// @brief (Re)creates the overlay-document intermediate at @p extent and re-registers its slot.
+        /// @param extent  The intermediate's new pixel extent.
+        void AllocateHdrOverlayDocTarget(uvec2 extent);
 
         /// @brief Resolves whether any scene-HDR-pre-bloom overlay is present this Execute.
         ///
         /// Reads SceneView::HdrOverlays (the engine-built pre-bloom overlays the viewport conveyed).
-        /// A change in presence recompiles the pass set at the frame boundary — inserting or dropping
-        /// the pre-bloom overlay pass — the point-field content-driven model; a stable presence
+        /// A change in presence, in the count of material overlays, or in whether any overlay is
+        /// direct recompiles the pass set at the frame boundary — inserting or dropping the
+        /// pre-bloom overlay passes — the point-field content-driven model; a stable presence
         /// replays, and the overlays' per-frame content reaches the pass through SceneView with no
         /// recompile. The overlays themselves are read directly by the pass at Execute.
         /// @param view  The scene view whose HdrOverlays span is resolved.
@@ -781,10 +795,11 @@ namespace Veng::Renderer
         /// @brief The intermediate HDR target a material overlay's document renders to before compositing.
         ///
         /// A material overlay renders its document here (cleared transparent), then its material samples
-        /// it fullscreen into the scene HDR + bloom mask — the render-to-texture the composite needs
-        /// because a target cannot be both a color attachment and a sampled input in one pass. Reused by
-        /// every material overlay in the frame (allocation-sized, HDR). Content-driven: allocated only
-        /// while a material overlay is composited (UpdateHdrOverlayTargets), released otherwise.
+        /// it into the scene HDR + bloom mask — the render-to-texture the composite needs because a
+        /// target cannot be both a color attachment and a sampled input in one pass. Reused by every
+        /// material overlay in the frame, and sized to the largest document rect seen while active
+        /// (PrepareHdrOverlayDocuments), not to the allocation. Content-driven: allocated only while a
+        /// material overlay is composited (UpdateHdrOverlayTargets), released otherwise.
         Ref<Image> m_HdrOverlayDocImage;
         /// @brief View over m_HdrOverlayDocImage.
         Ref<ImageView> m_HdrOverlayDocView;
@@ -1444,7 +1459,13 @@ namespace Veng::Renderer
         /// ResolveHdrOverlays.
         u32 m_HdrOverlayCompositeCount = 0;
 
-        /// @brief The allocation extent the overlay-document intermediate was last allocated at; zero while none.
+        /// @brief Whether the last resolved SceneView conveyed an overlay naming no material.
+        ///
+        /// Structural like the composite count: the direct pass is declared only while it holds, so
+        /// a frame of only material overlays carries no load and store of the scene color for it.
+        bool m_HdrOverlayHasDirect = false;
+
+        /// @brief The overlay-document intermediate's extent — its high-water mark; zero while none.
         uvec2 m_HdrOverlayDocExtent{0, 0};
 
         /// @brief The allocation extent the ping-pong effect targets were last allocated at.

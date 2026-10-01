@@ -1,0 +1,11 @@
+{
+  "defaultInstance": "0x8D46DBAE78387963",
+  "domain": "PostProcess",
+  "shaders": {
+    "vertex": "0x00000000008A0001",
+    "fragment": "0x9C06C4E91362D2F9"
+  },
+  "fields": [
+    { "name": "Document", "type": "texture" }
+  ]
+}
