@@ -80,7 +80,7 @@ namespace Veng::Renderer
         ResourceId GBufferAlbedo;
         /// @brief G1 — world-space normal.
         ResourceId GBufferNormal;
-        /// @brief G2 — packed occlusion/roughness/metallic/emissive.
+        /// @brief G2 — packed occlusion/roughness/metallic/surface flags.
         ResourceId GBufferOrm;
         /// @brief Depth attachment, also a sampled source for the lighting pass.
         ResourceId GBufferDepth;

@@ -389,8 +389,8 @@ namespace Veng::Renderer
 
     void SsrChain::Declare(RenderGraph& graph, const ResourceId sceneId,
                            const MipChainId reflectionChainId, const MipChainId hiZChainId,
-                           const ResourceId normalId, const ResourceId ormId,
-                           const ResourceId depthId, const ResourceId hdrId,
+                           const ResourceId albedoId, const ResourceId normalId,
+                           const ResourceId ormId, const ResourceId depthId, const ResourceId hdrId,
                            const TextureHandle depthHandle, const TextureHandle normalHandle,
                            const TextureHandle ormHandle, const TextureHandle albedoHandle,
                            const SamplerHandle samplerHandle)
@@ -551,6 +551,7 @@ namespace Veng::Renderer
                     .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
                 })
                 .Sample(sceneId)
+                .Sample(albedoId)
                 .Sample(normalId)
                 .Sample(ormId)
                 .Sample(depthId);

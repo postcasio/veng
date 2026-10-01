@@ -85,6 +85,7 @@ namespace Veng::Renderer
         /// @param sceneId            The lit scene-color intermediate import (trace + composite sample).
         /// @param reflectionChainId  The per-mip reflection pyramid import (trace + blur).
         /// @param hiZChainId         The per-mip min-Z pyramid import (reduction + trace).
+        /// @param albedoId           The G0 albedo import (the composite's read, declared sampled).
         /// @param normalId           The G1 world-normal import (declared sampled for barrier order).
         /// @param ormId              The G2 packed occlusion/roughness/metallic import.
         /// @param depthId            The depth import.
@@ -95,9 +96,9 @@ namespace Veng::Renderer
         /// @param albedoHandle       Bindless slot for the G0 albedo (the composite's metallic F0 tint).
         /// @param samplerHandle      Shared linear sampler bindless slot.
         void Declare(RenderGraph& graph, ResourceId sceneId, MipChainId reflectionChainId,
-                     MipChainId hiZChainId, ResourceId normalId, ResourceId ormId,
-                     ResourceId depthId, ResourceId hdrId, TextureHandle depthHandle,
-                     TextureHandle normalHandle, TextureHandle ormHandle,
+                     MipChainId hiZChainId, ResourceId albedoId, ResourceId normalId,
+                     ResourceId ormId, ResourceId depthId, ResourceId hdrId,
+                     TextureHandle depthHandle, TextureHandle normalHandle, TextureHandle ormHandle,
                      TextureHandle albedoHandle, SamplerHandle samplerHandle);
 
         /// @brief The lit scene-color intermediate view (bound to its import when SSR is active).

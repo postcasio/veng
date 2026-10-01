@@ -1235,8 +1235,9 @@ namespace Veng::Renderer
                 if (m_Topology->SsrActive)
                 {
                     m_Ssr->Declare(graph, m_SsrSceneId, m_SsrReflectionChainId, m_SsrHiZChainId,
-                                   m_NormalId, m_OrmId, m_DepthId, dofTargetId, m_DepthHandle,
-                                   m_NormalHandle, m_OrmHandle, m_AlbedoHandle, m_SamplerHandle);
+                                   m_AlbedoId, m_NormalId, m_OrmId, m_DepthId, dofTargetId,
+                                   m_DepthHandle, m_NormalHandle, m_OrmHandle, m_AlbedoHandle,
+                                   m_SamplerHandle);
                 }
                 if (m_PointFieldPass != nullptr)
                 {
