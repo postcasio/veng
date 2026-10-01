@@ -58,7 +58,8 @@ The load-bearing configure-time options (pass `-D<NAME>=ON|OFF`):
 
 | Option | Default | Effect |
 |--------|---------|--------|
-| `VE_DEBUG` | `OFF` | Vulkan validation layers, asserts, `-Werror`; also selects a Debug build type. |
+| `VE_DEBUG` | `OFF` | Asserts, debug code, `-Werror`; also selects a Debug build type. |
+| `VE_VALIDATION` | `VE_DEBUG` | Vulkan validation layers and the `validation_gate` test. A separate knob so a profiling tree keeps its debug code without the layer, which hooks every recorded command. |
 | `VE_PROFILE` | `OFF` | Compiles in the diagnostics profiler (scope timing, per-thread trace buffers). It is a `PUBLIC` compile definition on the `veng` target — owned by the engine and propagated to every consumer, **never set by a consumer**, since a consumer whose macro expansion disagrees with the engine it links is an ABI split. With it off, every `VE_PROFILE_*` macro expands to nothing and no event-recording or buffer code is built. |
 | `VENG_ENABLE_CLANG_TIDY` | `OFF` | Runs clang-tidy per-TU during the build. |
 | `VENG_ENABLE_COVERAGE` | `OFF` | Instruments veng's own sources for gcov. |

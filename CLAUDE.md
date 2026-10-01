@@ -59,7 +59,7 @@ every module is written against; each module's architecture lives in its own `CL
 ## Build & test
 
 ```sh
-# Default build — VE_DEBUG=ON (Vulkan validation on). Configure once, then build.
+# Default build — VE_DEBUG=ON, VE_VALIDATION=ON (Vulkan validation on). Configure once, then build.
 cmake -B build-debug -S .
 cmake --build build-debug -j 4
 ctest --test-dir build-debug -j 4 --output-on-failure
@@ -69,12 +69,12 @@ ctest --test-dir build-debug -j 4 --output-on-failure
 When veng is the top-level project and the binary dir's basename is one of the four
 canonical names, `CMakeLists.txt` fixes the tree's settings from its name:
 
-| tree basename | build type | `VE_DEBUG` | `VE_PROFILE` | `VENG_ENABLE_COVERAGE` |
-|---|---|---|---|---|
-| `build` | Release | OFF | OFF | OFF |
-| `build-debug` | Debug | ON | OFF | OFF |
-| `build-debug-profiling` | Debug | ON | ON | OFF |
-| `build-coverage` | Debug | ON | OFF | ON |
+| tree basename | build type | `VE_DEBUG` | `VE_VALIDATION` | `VE_PROFILE` | `VENG_ENABLE_COVERAGE` |
+|---|---|---|---|---|---|
+| `build` | Release | OFF | OFF | OFF | OFF |
+| `build-debug` | Debug | ON | ON | OFF | OFF |
+| `build-debug-profiling` | Debug | ON | OFF | ON | OFF |
+| `build-coverage` | Debug | ON | ON | OFF | ON |
 
 A variable unset in the cache is forced to the table's value — so the bare configure
 above yields the documented tree with no flags — and a value contradicting the table
@@ -83,12 +83,16 @@ corrected: flipping any of these is a full rebuild and must be chosen by picking
 right tree name, deleting the tree, or using a non-canonical name. Any other basename
 (worktree trees, CI dirs, scratch trees) is untouched and takes flags as usual.
 `VE_DEBUG` and `VE_PROFILE` are **independent knobs** — neither implies nor excludes
-the other; `build-debug-profiling` (validation *and* profiler) is the standing
-profiling tree, and `VE_PROFILE` defaults plain OFF everywhere.
+the other; `build-debug-profiling` (debug code *and* profiler) is the standing
+profiling tree, and `VE_PROFILE` defaults plain OFF everywhere. **`VE_VALIDATION`** alone
+compiles in the Vulkan validation layers (`VE_ENABLE_VALIDATION_LAYERS`) and registers the
+`validation_gate` test; it defaults to `VE_DEBUG`, and the profiling tree pins it OFF because
+synchronization validation hooks every `vkCmd*`, so a profile of command recording would
+measure the layer as much as the engine. That tree keeps `VE_DEBUG`'s asserts and debug code.
 
 For a non-canonical tree name, `VE_DEBUG` still selects the build-type default: with
 no explicit `CMAKE_BUILD_TYPE`, a `VE_DEBUG=ON` tree configures as **Debug** and a
-validation-OFF tree as **Release**, so the debug tree is genuinely unoptimized and
+`VE_DEBUG=OFF` tree as **Release**, so the debug tree is genuinely unoptimized and
 debuggable rather than `-O3` wearing the name. `-g` is added to veng's own targets
 under `VE_DEBUG` regardless of type, so a tree pinned to Release still yields
 `file:line` backtraces out of `libveng`. The cooker's codec hot loops opt back into
@@ -621,8 +625,9 @@ handshake are in
 
 ### The release build (validation OFF)
 
-`VE_DEBUG=ON` enables Vulkan validation layers (`VE_ENABLE_VALIDATION_LAYERS`), and
-the default `build-debug` above turns it on — so validation runs by default. The
+`VE_VALIDATION` (on wherever `VE_DEBUG` is, unless a tree says otherwise) enables Vulkan
+validation layers (`VE_ENABLE_VALIDATION_LAYERS`), and the default `build-debug` above turns
+it on — so validation runs by default. The
 validation-**OFF** build is the *optional* one, in its own `build/` dir (both
 `build/` and `build-debug/` are gitignored):
 
@@ -647,7 +652,7 @@ the default and catches more. Do not build both routinely.
   [cooker/CLAUDE.md](cooker/CLAUDE.md#what-is-checked-and-what-was-deliberately-not).
 - **Validation errors do NOT fail tests by themselves.** The debug-messenger
   callback (`engine/src/Renderer/Backend/Context.cpp`) only `Log::Error`s on
-  validation errors — it never aborts. So a green `ctest` under `VE_DEBUG` only means
+  validation errors — it never aborts. So a green `ctest` under `VE_VALIDATION` only means
   something if the validation gate ran: `ctest --test-dir build-debug -j 4 -L
   validation` (the `validation_gate` test) runs the `gpu`-labelled binaries and
   fails on any unallowlisted `Vulkan validation` ERROR line

@@ -1,18 +1,18 @@
-# ValidationGate.cmake — local Vulkan validation-error gate (plan 06)
+# ValidationGate.cmake — local Vulkan validation-error gate
 #
 # Run via `cmake -P ValidationGate.cmake -D VENG_GATE_BIN_<NAME>=<path> ...`
 # (see the `validation_gate` test registration in the root CMakeLists.txt).
 #
 # Runs each of the gpu-labelled binaries (headless_smoke, compute_dispatch,
 # veng_test_gpu) and inspects their combined stdout+stderr for lines matching
-# `[ERROR] Vulkan validation: ...`. Under VE_DEBUG these binaries enable the
+# `[ERROR] Vulkan validation: ...`. Under VE_VALIDATION these binaries enable the
 # Vulkan validation layers; the debug messenger (engine/src/Renderer/Backend/Context.cpp)
 # logs validation ERRORs via Log::Error but never aborts (CLAUDE.md), so a green
 # ctest is not by itself proof of a validation-clean run. This script is that
 # proof: any unallowlisted "Vulkan validation" ERROR line fails the test.
 #
-# Under the default (non-VE_DEBUG) build, no validation layers are enabled, so
-# no such lines can appear and this gate is trivially green.
+# A tree without VE_VALIDATION enables no layers, so no such lines could appear;
+# the gate is registered only where the layers are compiled in.
 
 # ---------------------------------------------------------------------------
 # Allowlist of documented, pinned validation gaps.

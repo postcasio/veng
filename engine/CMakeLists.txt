@@ -45,7 +45,10 @@ target_include_directories(veng_backend_objs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 target_compile_definitions(veng_backend_objs PRIVATE VE_BUILD_SHARED)
 target_compile_options(veng_backend_objs PRIVATE -fno-exceptions)
 if (VE_DEBUG)
-    target_compile_definitions(veng_backend_objs PRIVATE VE_ENABLE_VALIDATION_LAYERS=1 VE_DEBUG=1)
+    target_compile_definitions(veng_backend_objs PRIVATE VE_DEBUG=1)
+endif ()
+if (VE_VALIDATION)
+    target_compile_definitions(veng_backend_objs PRIVATE VE_ENABLE_VALIDATION_LAYERS=1)
 endif ()
 # The backend objects are absorbed into veng via $<TARGET_OBJECTS>, so veng's PUBLIC VE_PROFILE does
 # not reach them; set it here too, keeping every TU in the library on one VE_PROFILE_* expansion.
@@ -439,7 +442,12 @@ set_source_files_properties(src/Vendor/TinyExr.cpp PROPERTIES
 set_source_files_properties(src/Vendor/StbVorbis.cpp PROPERTIES COMPILE_OPTIONS "-w")
 
 if (VE_DEBUG)
-    target_compile_definitions(veng PUBLIC VE_ENABLE_VALIDATION_LAYERS=1 VE_DEBUG=1)
+    target_compile_definitions(veng PUBLIC VE_DEBUG=1)
+endif ()
+# Validation is its own knob (VE_VALIDATION, defaulting to VE_DEBUG), so a debug tree can keep its
+# asserts and debug code without the layer hooking every command it records.
+if (VE_VALIDATION)
+    target_compile_definitions(veng PUBLIC VE_ENABLE_VALIDATION_LAYERS=1)
 endif ()
 
 # The diagnostics profiler is a PUBLIC compile definition, following the VE_DEBUG precedent above:

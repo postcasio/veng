@@ -46,10 +46,10 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # CMakeCache.txt, nothing in a build's output says which way it went, and a validation-less
 # "build-debug" runs the validation gate proving nothing — so the name is made authoritative:
 #
-#   build                  Release  VE_DEBUG=OFF  VE_PROFILE=OFF  VENG_ENABLE_COVERAGE=OFF
-#   build-debug            Debug    VE_DEBUG=ON   VE_PROFILE=OFF  VENG_ENABLE_COVERAGE=OFF
-#   build-debug-profiling  Debug    VE_DEBUG=ON   VE_PROFILE=ON   VENG_ENABLE_COVERAGE=OFF
-#   build-coverage         Debug    VE_DEBUG=ON   VE_PROFILE=OFF  VENG_ENABLE_COVERAGE=ON
+#   build                  Release  VE_DEBUG=OFF  VE_VALIDATION=OFF  VE_PROFILE=OFF  VENG_ENABLE_COVERAGE=OFF
+#   build-debug            Debug    VE_DEBUG=ON   VE_VALIDATION=ON   VE_PROFILE=OFF  VENG_ENABLE_COVERAGE=OFF
+#   build-debug-profiling  Debug    VE_DEBUG=ON   VE_VALIDATION=OFF  VE_PROFILE=ON   VENG_ENABLE_COVERAGE=OFF
+#   build-coverage         Debug    VE_DEBUG=ON   VE_VALIDATION=ON   VE_PROFILE=OFF  VENG_ENABLE_COVERAGE=ON
 #
 # A variable unset in the cache is forced to the table's value, so a bare `cmake -B build-debug`
 # yields the documented tree. A value already set and contradicting the table — a stale cache or
@@ -57,6 +57,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # rebuild and must be chosen, not inherited. Any other basename (worktrees, CI dirs, scratch
 # trees) is untouched, and so is every subproject build. VE_DEBUG and VE_PROFILE are independent
 # knobs — neither implies nor excludes the other; the per-tree rows above are the whole policy.
+# The profiling tree carries no validation because the layer hooks every command it would measure.
 # Placed ahead of the VE_DEBUG declaration and the build-type default below, which the forced
 # values pre-empt for canonical names and which still serve every other tree.
 if (PROJECT_IS_TOP_LEVEL)
@@ -65,21 +66,25 @@ if (PROJECT_IS_TOP_LEVEL)
     if (VENG_TREE_NAME STREQUAL "build")
         set(VENG_TREE_BUILD_TYPE Release)
         set(VENG_TREE_VE_DEBUG OFF)
+        set(VENG_TREE_VE_VALIDATION OFF)
         set(VENG_TREE_VE_PROFILE OFF)
         set(VENG_TREE_VENG_ENABLE_COVERAGE OFF)
     elseif (VENG_TREE_NAME STREQUAL "build-debug")
         set(VENG_TREE_BUILD_TYPE Debug)
         set(VENG_TREE_VE_DEBUG ON)
+        set(VENG_TREE_VE_VALIDATION ON)
         set(VENG_TREE_VE_PROFILE OFF)
         set(VENG_TREE_VENG_ENABLE_COVERAGE OFF)
     elseif (VENG_TREE_NAME STREQUAL "build-debug-profiling")
         set(VENG_TREE_BUILD_TYPE Debug)
         set(VENG_TREE_VE_DEBUG ON)
+        set(VENG_TREE_VE_VALIDATION OFF)
         set(VENG_TREE_VE_PROFILE ON)
         set(VENG_TREE_VENG_ENABLE_COVERAGE OFF)
     elseif (VENG_TREE_NAME STREQUAL "build-coverage")
         set(VENG_TREE_BUILD_TYPE Debug)
         set(VENG_TREE_VE_DEBUG ON)
+        set(VENG_TREE_VE_VALIDATION ON)
         set(VENG_TREE_VE_PROFILE OFF)
         set(VENG_TREE_VENG_ENABLE_COVERAGE ON)
     else ()
@@ -96,7 +101,7 @@ if (PROJECT_IS_TOP_LEVEL)
                     "follow the tree's name; drop the flag, or delete the tree and reconfigure, or "
                     "use a differently-named tree.")
         endif ()
-        foreach (VENG_TREE_VAR VE_DEBUG VE_PROFILE VENG_ENABLE_COVERAGE)
+        foreach (VENG_TREE_VAR VE_DEBUG VE_VALIDATION VE_PROFILE VENG_ENABLE_COVERAGE)
             if (NOT DEFINED ${VENG_TREE_VAR} AND NOT DEFINED CACHE{${VENG_TREE_VAR}})
                 set(${VENG_TREE_VAR} ${VENG_TREE_${VENG_TREE_VAR}} CACHE BOOL
                         "Fixed by the canonical tree name ${VENG_TREE_NAME}" FORCE)
@@ -121,7 +126,13 @@ endif ()
 # Declared here rather than beside the other options below because the build-type default
 # immediately after it keys off this value, and both have to be settled before the FetchContent
 # dependencies are configured.
-option(VE_DEBUG "Enable veng debug features (validation layers, asserts)" OFF)
+option(VE_DEBUG "Enable veng debug features (asserts, debug code, -Werror)" OFF)
+
+# VE_VALIDATION alone compiles in the Vulkan validation layers (VE_ENABLE_VALIDATION_LAYERS) and
+# registers the validation_gate test. It defaults to VE_DEBUG, so a debug tree validates unless told
+# otherwise; it is a separate knob because synchronization validation hooks every vkCmd*, so a tree
+# measuring command recording would otherwise measure the layer as much as the engine.
+option(VE_VALIDATION "Enable the Vulkan validation layers and the validation gate" ${VE_DEBUG})
 
 # Pin the build type before the FetchContent dependencies below are configured. Several of them
 # default an unset CMAKE_BUILD_TYPE to Release in their own CMakeLists — one of those writes it
@@ -2342,32 +2353,34 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
 
     # ---- Local validation-error gate ----------------------------------------
     # ctest -L validation: runs the gpu-labelled binaries that emit Vulkan
-    # validation messages under VE_DEBUG and fails if a new [ERROR] Vulkan
-    # validation line appears (see cmake/ValidationGate.cmake for the allowlist
-    # of documented gaps). Includes the launcher path so the real shipping shape
-    # runs under the gate too. Registered after the examples subdirectory so the
-    # launcher target exists. Under the default (non-VE_DEBUG) build no validation
-    # layers are enabled, so this is trivially green.
-    # The MaterialPreview gate binary exists only when the editor is built; pass its
-    # path through only when the target was built so the gate runs the two-renderer
-    # handoff there too.
-    set(VENG_GATE_MATERIAL_PREVIEW_ARG)
-    if (TARGET veng_test_material_preview)
-        set(VENG_GATE_MATERIAL_PREVIEW_ARG
-            -D VENG_GATE_BIN_MATERIAL_PREVIEW=$<TARGET_FILE:veng_test_material_preview>)
-    endif ()
+    # validation messages and fails if a new [ERROR] Vulkan validation line
+    # appears (see cmake/ValidationGate.cmake for the allowlist of documented
+    # gaps). Includes the launcher path so the real shipping shape runs under the
+    # gate too. Registered after the examples subdirectory so the launcher target
+    # exists. Registered only under VE_VALIDATION: a tree without the layers
+    # would run it and prove nothing.
+    if (VE_VALIDATION)
+        # The MaterialPreview gate binary exists only when the editor is built; pass its
+        # path through only when the target was built so the gate runs the two-renderer
+        # handoff there too.
+        set(VENG_GATE_MATERIAL_PREVIEW_ARG)
+        if (TARGET veng_test_material_preview)
+            set(VENG_GATE_MATERIAL_PREVIEW_ARG
+                -D VENG_GATE_BIN_MATERIAL_PREVIEW=$<TARGET_FILE:veng_test_material_preview>)
+        endif ()
 
-    add_test(NAME validation_gate
-        COMMAND ${CMAKE_COMMAND}
-            -D VENG_GATE_BIN_HEADLESS_SMOKE=$<TARGET_FILE:veng_test_headless_smoke>
-            -D VENG_GATE_BIN_COMPUTE_DISPATCH=$<TARGET_FILE:veng_test_compute_dispatch>
-            -D VENG_GATE_BIN_GPU=$<TARGET_FILE:veng_test_gpu>
-            -D VENG_GATE_BIN_LAUNCHER=$<TARGET_FILE:hello_triangle-launcher>
-            ${VENG_GATE_MATERIAL_PREVIEW_ARG}
-            -D VENG_GATE_LAUNCHER_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/validation_gate_launcher.ppm
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidationGate.cmake
-    )
-    set_tests_properties(validation_gate PROPERTIES LABELS validation)
+        add_test(NAME validation_gate
+            COMMAND ${CMAKE_COMMAND}
+                -D VENG_GATE_BIN_HEADLESS_SMOKE=$<TARGET_FILE:veng_test_headless_smoke>
+                -D VENG_GATE_BIN_COMPUTE_DISPATCH=$<TARGET_FILE:veng_test_compute_dispatch>
+                -D VENG_GATE_BIN_GPU=$<TARGET_FILE:veng_test_gpu>
+                -D VENG_GATE_BIN_LAUNCHER=$<TARGET_FILE:hello_triangle-launcher>
+                ${VENG_GATE_MATERIAL_PREVIEW_ARG}
+                -D VENG_GATE_LAUNCHER_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/validation_gate_launcher.ppm
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidationGate.cmake
+        )
+        set_tests_properties(validation_gate PROPERTIES LABELS validation)
+    endif ()
 endif ()
 
 # Per-config cook isolation: asserts editing one build configuration re-cooks only its
