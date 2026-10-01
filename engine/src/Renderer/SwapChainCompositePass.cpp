@@ -67,6 +67,12 @@ namespace Veng::Renderer
         AssetHandle<Shader> CompositeFS;
         Ref<PipelineLayout> Layout;
         Ref<GraphicsPipeline> Pipeline;
+
+        // View over the ImGui layer's output image, recreated by RefreshImGuiSource.
+        Ref<ImageView> LayerView;
+        // The overlay SetOverlaySource substitutes for LayerView, or null to blend the layer.
+        Ref<ImageView> OverlayOverride;
+        // The overlay actually registered and bound: OverlayOverride when set, else LayerView.
         Ref<ImageView> ImGuiView;
         TextureHandle SceneHandle;
         TextureHandle ImGuiHandle;
@@ -130,11 +136,12 @@ namespace Veng::Renderer
         if (info.ImGui != nullptr)
         {
             // View over the ImGui layer's rendered output, blended over the scene.
-            m_Impl->ImGuiView =
+            m_Impl->LayerView =
                 ImageView::Create(info.Context, {
                                                     .Name = "SwapChain Composite Layer View",
                                                     .Image = info.ImGui->GetOutputImage(),
                                                 });
+            m_Impl->ImGuiView = m_Impl->LayerView;
             m_Impl->ImGuiHandle = bindless.Register(m_Impl->ImGuiView);
         }
         m_Impl->SamplerHandle = bindless
@@ -214,14 +221,38 @@ namespace Veng::Renderer
         }
 
         // The ImGui layer recreated its offscreen image (swapchain resize); re-view the live
-        // image and re-register so the composite stops sampling the retired one. ImGuiHandle.Index
-        // is read live per frame, so this takes effect on the next replay without a recompile.
-        m_Impl->ImGuiView =
+        // image so the composite stops sampling the retired one. An override stays bound.
+        m_Impl->LayerView =
             ImageView::Create(m_Impl->Context, {
                                                    .Name = "SwapChain Composite Layer View",
                                                    .Image = m_Impl->ImGui->GetOutputImage(),
                                                });
+        BindOverlay();
+    }
 
+    void SwapChainCompositePass::SetOverlaySource(const Ref<ImageView>& overlaySource)
+    {
+        if (m_Impl->ImGui == nullptr)
+        {
+            return;
+        }
+
+        m_Impl->OverlayOverride = overlaySource;
+        BindOverlay();
+    }
+
+    void SwapChainCompositePass::BindOverlay()
+    {
+        const Ref<ImageView>& overlay =
+            m_Impl->OverlayOverride ? m_Impl->OverlayOverride : m_Impl->LayerView;
+        if (overlay == m_Impl->ImGuiView)
+        {
+            return;
+        }
+
+        // ImGuiHandle.Index is read live per frame, so the swap takes effect on the next replay
+        // without a recompile.
+        m_Impl->ImGuiView = overlay;
         BindlessRegistry& bindless = m_Impl->Context.GetBindlessRegistry();
         if (m_Impl->ImGuiHandle.IsValid())
         {

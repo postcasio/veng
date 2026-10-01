@@ -155,7 +155,8 @@ above and three collaborators it drives each frame:
 
 - **`ViewportCompositor`** (`Veng/Renderer/ViewportCompositor.h`) — the render surface. It owns
   the render-order viewport drive-list, the capture drive-list, render-all, and the gather +
-  composite tail. `RegisterViewport(Viewport&)` / `RegisterCapture(SceneCapture&)` forward to it:
+  composite tail (the gather running only when placements need assembling).
+  `RegisterViewport(Viewport&)` / `RegisterCapture(SceneCapture&)` forward to it:
   each stores a non-owning pointer (registration order = render order) and hands the resource a
   back-reference, so dropping the owner's `Unique` self-unregisters it and the caller keeps
   ownership — only the *driving* is central. It also resolves each `Layout`-carrying viewport's
@@ -456,8 +457,11 @@ and not overridable: render every registered viewport in registration order (eac
 records extra draws — it does not run the composite. When ImGui is on, the frame then records the
 overlay and runs the **managed tail**: the `GatherPass` assembles the registered `Presented`
 viewports into one full-window assembly target and `SwapChainCompositePass` composites it behind
-the ImGui overlay. The managed tail's gather + composite graphs re-`Compile()` on swapchain
-resize, and the composite re-targets the swapchain (`SetSwapChainTarget`) on a format change.
+the ImGui overlay. The gather runs only when placements need assembling — one viewport covering the
+window is sampled by the composite directly, and none composites a black stand-in — and an ImGui
+frame that draws nothing records no overlay pass. The managed tail's gather + composite graphs
+re-`Compile()` on swapchain resize, and the composite re-targets the swapchain
+(`SetSwapChainTarget`) on a format change.
 
 ## Game modules: a shared lib + a launcher
 

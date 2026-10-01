@@ -45,11 +45,11 @@ namespace Veng::Renderer
         /// Must outlive the pass.
         AssetManager& Assets;
 
-        /// @brief Initial single source to composite — the gather pass's assembly target.
+        /// @brief Initial single source to composite, sampled across the whole target.
         ///
-        /// GatherPass::GetOutput() at construction: the full-window linear-HDR target the
-        /// gather pass assembled the Presented viewports into. Rebound through SetSceneSource
-        /// after a resize invalidates the view.
+        /// The full-window linear-HDR image the frame is composited from — a GatherPass's
+        /// assembly target, or one viewport's output when it alone covers the window. Rebound
+        /// through SetSceneSource when the source changes or a resize invalidates the view.
         Ref<ImageView> SceneSource;
 
         /// @brief Swapchain color format the composite pass writes.
@@ -86,11 +86,11 @@ namespace Veng::Renderer
         SwapChainCompositePass(const SwapChainCompositePass&) = delete;
         SwapChainCompositePass& operator=(const SwapChainCompositePass&) = delete;
 
-        /// @brief Re-registers the scene bindless slot after SceneRenderer::Resize/Configure.
+        /// @brief Re-points the composite at a new scene source and re-registers its bindless slot.
         ///
         /// No recompile needed — the composite reads the bindless index live per frame, so
         /// the swap takes effect on the next replay.
-        /// @param sceneSource  The new scene output view from SceneRenderer::GetOutput().
+        /// @param sceneSource  The new source view, sampled across its whole extent.
         void SetSceneSource(const Ref<ImageView>& sceneSource);
 
         /// @brief Re-views and re-registers the ImGui overlay after the ImGui layer recreates it.
@@ -100,8 +100,19 @@ namespace Veng::Renderer
         /// image (old size → squished, old content → frozen). Like SetSceneSource, the bindless
         /// index is read live per frame, so no recompile is needed. Call from the
         /// swapchain-invalidation callback, after the ImGui layer's own callback has recreated it.
-        /// A no-op on an overlay-less pass (SwapChainCompositePassInfo::ImGui was null).
+        /// While SetOverlaySource holds an override the override stays bound, and the re-viewed
+        /// layer image is what clearing it restores. A no-op on an overlay-less pass
+        /// (SwapChainCompositePassInfo::ImGui was null).
         void RefreshImGuiSource();
+
+        /// @brief Blends @p overlaySource in place of the ImGui layer's output, or restores it.
+        ///
+        /// For a frame on which the layer drew nothing — its output image is then unwritten — a
+        /// transparent stand-in makes the composite the scene alone, encoded, with no recompile.
+        /// Re-registers the overlay's bindless slot only when the bound view changes. A no-op on an
+        /// overlay-less pass (SwapChainCompositePassInfo::ImGui was null).
+        /// @param overlaySource  The view to blend instead of the layer, or null to blend the layer.
+        void SetOverlaySource(const Ref<ImageView>& overlaySource);
 
         /// @brief Re-targets the composite at a re-negotiated swapchain format and color space.
         ///
@@ -137,6 +148,9 @@ namespace Veng::Renderer
         /// @brief Builds the composite graphics pipeline for the given swapchain format.
         /// @param swapChainFormat  Color format the composite pass writes.
         void RebuildPipeline(Format swapChainFormat);
+
+        /// @brief Registers the overlay to blend — the override when set, else the layer view.
+        void BindOverlay();
 
         /// @brief Implementation detail; defined in SwapChainCompositePass.cpp.
         struct Impl;

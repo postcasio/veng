@@ -3011,8 +3011,8 @@ namespace Veng
             m_Compositor.RenderRegistered(cmd);
         }
 
-        // The app builds its ImGui frame and records any extra draws; it no longer runs the
-        // composite or ImGuiLayer::Render — those bracket it in the engine phase.
+        // The app builds its ImGui frame and records any extra draws; the engine phase runs
+        // ImGuiLayer::Render and the composite around it.
         {
             VE_PROFILE_SCOPE("Frame/OnRender");
             OnRender();

@@ -425,6 +425,7 @@ int main()
                 }
                 imgui->Render(cmd);
             });
+        Check(imgui->HasDrawnOutput(), "the two image windows render into the UI image");
 
         // Read the composited UI image back through the fullscreen sample pass.
         const uvec2 uiExtent = context.GetRenderExtent();

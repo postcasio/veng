@@ -522,6 +522,27 @@ namespace Veng
 
         m_RenderedThisFrame = true;
 
+        ImGui::Render();
+        ImDrawData* drawData = ImGui::GetDrawData();
+
+        m_DrewOutput = drawData->CmdListsCount > 0 && drawData->TotalVtxCount > 0;
+        if (!m_DrewOutput)
+        {
+            // Texture uploads ride RenderDrawData, which an empty frame skips; they submit on
+            // their own command buffer, so they are caught up here with nothing recorded.
+            if (drawData->Textures != nullptr)
+            {
+                for (ImTextureData* texture : *drawData->Textures)
+                {
+                    if (texture->Status != ImTextureStatus_OK)
+                    {
+                        ImGui_ImplVulkan_UpdateTexture(texture);
+                    }
+                }
+            }
+            return;
+        }
+
         Backend::TransitionImage(commandBuffer, *m_Image, ImageLayout::ColorAttachment);
 
         commandBuffer.BeginRendering({
@@ -534,9 +555,6 @@ namespace Veng
             }},
         });
 
-        ImGui::Render();
-
-        ImDrawData* drawData = ImGui::GetDrawData();
         ImGui_ImplVulkan_RenderDrawData(drawData, commandBuffer.GetNative().CommandBuffer);
 
         commandBuffer.EndRendering();

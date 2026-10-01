@@ -8,6 +8,8 @@
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/GatherPass.h>
+#include <Veng/Renderer/Image.h>
+#include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/SceneCapture.h>
 #include <Veng/Renderer/SwapChainCompositePass.h>
@@ -15,6 +17,7 @@
 #include <Veng/Window.h>
 
 #include "CaptureRotation.h"
+#include "CompositeSource.h"
 
 #include <algorithm>
 
@@ -22,6 +25,22 @@
 
 namespace Veng::Renderer
 {
+    namespace
+    {
+        /// @brief Creates a 1×1 colour-attachment image and its view, to be cleared to a constant.
+        Ref<ImageView> CreateStandIn(Context& context, const string& name)
+        {
+            const Ref<Image> image = Image::Create(
+                context, {
+                             .Name = name,
+                             .Extent = {1, 1, 1},
+                             .Format = Format::RGBA16Sfloat,
+                             .Usage = ImageUsage::ColorAttachment | ImageUsage::Sampled,
+                         });
+            return ImageView::Create(context, {.Name = name + " View", .Image = image});
+        }
+    }
+
     ViewportCompositor::ViewportCompositor(Context& context) : m_Context(context) {}
 
     ViewportCompositor::~ViewportCompositor()
@@ -37,6 +56,9 @@ namespace Veng::Renderer
         m_GatherGraph.reset();
         m_Gather.reset();
         m_GatheredPlacements.clear();
+        m_SceneSource.reset();
+        m_BlackView.reset();
+        m_TransparentView.reset();
     }
 
     void ViewportCompositor::InitializeTail(AssetManager& assets, ImGuiLayer& imgui)
@@ -50,11 +72,45 @@ namespace Veng::Renderer
             .Extent = m_Context.GetSwapChainExtent(),
         });
 
+        // Clamp-to-edge sampling of a 1×1 image is its one texel everywhere, so these stand in for
+        // a full-window black scene and a full-window transparent overlay with no shader change.
+        m_BlackView = CreateStandIn(m_Context, "Composite Black Scene");
+        m_TransparentView = CreateStandIn(m_Context, "Composite Transparent Overlay");
+        m_Context.ImmediateCommands(
+            [this](CommandBuffer& cmd)
+            {
+                RenderGraph graph(m_Context);
+                const ResourceId black = graph.Import("Composite Black Scene");
+                const ResourceId transparent = graph.Import("Composite Transparent Overlay");
+                graph.AddPass("Clear Composite Stand-ins")
+                    .Color({
+                        .Resource = black,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+                    })
+                    .Color({
+                        .Resource = transparent,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 0.0f},
+                    })
+                    .Execute([](PassContext&) {});
+                const RenderGraph::ImportBinding bindings[] = {
+                    {.Id = black, .View = m_BlackView},
+                    {.Id = transparent, .View = m_TransparentView},
+                };
+                graph.Compile()->Execute(cmd, bindings);
+                cmd.PrepareForAccess(m_BlackView, AccessKind::SampleGraphics);
+                cmd.PrepareForAccess(m_TransparentView, AccessKind::SampleGraphics);
+            });
+
+        m_SceneSource = m_Gather->GetOutput();
         m_Composite = SwapChainCompositePass::Create({
             .Context = m_Context,
             .ImGui = &imgui,
             .Assets = assets,
-            .SceneSource = m_Gather->GetOutput(),
+            .SceneSource = m_SceneSource,
             .SwapChainFormat = m_Context.GetSwapChainFormat(),
             .ColorSpace = m_Context.GetActiveDisplayColorSpace(),
         });
@@ -77,8 +133,14 @@ namespace Veng::Renderer
         m_Context.AddSwapChainInvalidationCallback(
             [this, compileGather, compileComposite]
             {
+                // Only the gather's own view is replaced here; a directly sampled source is
+                // re-pointed by the next Composite if the resize moves it.
+                const bool sourcedFromGather = m_SceneSource == m_Gather->GetOutput();
                 m_Gather->Resize(m_Context.GetSwapChainExtent());
-                m_Composite->SetSceneSource(m_Gather->GetOutput());
+                if (sourcedFromGather)
+                {
+                    ApplySceneSource(m_Gather->GetOutput());
+                }
                 // The ImGui layer's invalidation callback (registered earlier, so it ran first)
                 // recreated its offscreen image; re-point the composite at it or it samples the
                 // retired one (old size → squished, stale content → frozen overlay).
@@ -88,9 +150,9 @@ namespace Veng::Renderer
                 m_GatherGraph = compileGather();
                 m_CompositeGraph = compileComposite();
 
-                // The capture pass reads the same gather output and renders at the presented
-                // extent, so a resize invalidates it exactly as it does the presented composite.
-                // It is rebuilt lazily from the next target the sink hands over.
+                // The capture pass renders at the presented extent, so a resize invalidates it
+                // exactly as it does the presented composite. It is rebuilt lazily from the next
+                // target the sink hands over.
                 ReleaseCapturePass();
             });
 
@@ -185,8 +247,6 @@ namespace Veng::Renderer
             return;
         }
 
-        // Assemble the registered Presented viewports into the gather target, each into its own
-        // region. Zero placements composites ImGui over a clear (the editor's case).
         vector<CompositePlacement> placements;
         for (const Viewport* viewport : m_Viewports)
         {
@@ -199,27 +259,80 @@ namespace Veng::Renderer
             }
         }
 
-        // Rebind only when the placement set changed (output identity or region), so a steady
-        // frame issues no bindless re-registration.
-        const auto samePlacement = [](const CompositePlacement& a, const CompositePlacement& b)
+        const CompositeSceneSource sceneSource =
+            ResolveCompositeSceneSource(placements, m_Context.GetSwapChainExtent());
+        if (sceneSource == CompositeSceneSource::Gather)
         {
-            return a.Texture == b.Texture && a.Region.Offset == b.Region.Offset &&
-                   a.Region.Extent == b.Region.Extent;
-        };
-        if (!std::ranges::equal(placements, m_GatheredPlacements, samePlacement))
+            // Rebind only when the placement set changed (output identity or region), so a steady
+            // frame issues no bindless re-registration.
+            const auto samePlacement = [](const CompositePlacement& a, const CompositePlacement& b)
+            {
+                return a.Texture == b.Texture && a.Region.Offset == b.Region.Offset &&
+                       a.Region.Extent == b.Region.Extent;
+            };
+            if (!std::ranges::equal(placements, m_GatheredPlacements, samePlacement))
+            {
+                m_Gather->SetPlacements(placements);
+                m_GatheredPlacements = std::move(placements);
+            }
+
+            m_Gather->Execute(cmd, *m_GatherGraph);
+            ApplySceneSource(m_Gather->GetOutput());
+        }
+        else
         {
-            m_Gather->SetPlacements(placements);
-            m_GatheredPlacements = std::move(placements);
+            // An idle gather would otherwise keep the last assembled viewports' outputs alive.
+            if (!m_GatheredPlacements.empty())
+            {
+                m_Gather->SetPlacements({});
+                m_GatheredPlacements.clear();
+            }
+            ApplySceneSource(sceneSource == CompositeSceneSource::Direct ? placements.back().Texture
+                                                                         : m_BlackView);
         }
 
-        m_Gather->Execute(cmd, *m_GatherGraph);
+        // The composite samples its source outside the graph that wrote it; transition it.
+        cmd.PrepareForAccess(m_SceneSource, AccessKind::SampleGraphics);
 
-        // The composite samples the assembly target outside the graph; transition it.
-        cmd.PrepareForAccess(m_Gather->GetOutput(), AccessKind::SampleGraphics);
+        ApplyOverlaySource(ResolveCompositeOverlaySource(m_ImGui->HasDrawnOutput()) ==
+                           CompositeOverlaySource::Transparent);
 
         m_Composite->Execute(cmd, *m_CompositeGraph, m_Context.GetCurrentSwapChainImageView());
 
         CompositeToSink(cmd);
+    }
+
+    void ViewportCompositor::ApplySceneSource(const Ref<ImageView>& source)
+    {
+        if (source == m_SceneSource)
+        {
+            return;
+        }
+
+        // The capture pass is built once and reused, so it is re-pointed with the presented
+        // composite or it would keep sampling a source that may since have been retired.
+        m_SceneSource = source;
+        m_Composite->SetSceneSource(m_SceneSource);
+        if (m_CaptureComposite)
+        {
+            m_CaptureComposite->SetSceneSource(m_SceneSource);
+        }
+    }
+
+    void ViewportCompositor::ApplyOverlaySource(const bool transparent)
+    {
+        if (transparent == m_OverlayTransparent)
+        {
+            return;
+        }
+
+        m_OverlayTransparent = transparent;
+        const Ref<ImageView> overlay = transparent ? m_TransparentView : nullptr;
+        m_Composite->SetOverlaySource(overlay);
+        if (m_CaptureComposite)
+        {
+            m_CaptureComposite->SetOverlaySource(overlay);
+        }
     }
 
     void ViewportCompositor::SetCaptureSink(CaptureSink* sink)
@@ -314,10 +427,14 @@ namespace Veng::Renderer
             .Context = m_Context,
             .ImGui = includeOverlay ? m_ImGui : nullptr,
             .Assets = *m_Assets,
-            .SceneSource = m_Gather->GetOutput(),
+            .SceneSource = m_SceneSource,
             .SwapChainFormat = format,
             .ColorSpace = colorSpace,
         });
+        if (m_OverlayTransparent)
+        {
+            m_CaptureComposite->SetOverlaySource(m_TransparentView);
+        }
 
         RenderGraph graph(m_Context);
         const ResourceId targetId = graph.Import("CaptureTarget");

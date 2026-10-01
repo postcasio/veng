@@ -10,15 +10,18 @@
 /// @brief Assembly pass that places each Presented viewport's texture into its region.
 ///
 /// The gather pass scissor-blits a list of placements onto one full-window linear-HDR
-/// (RGBA16F) assembly target, in list order, clearing the area no placement covers. That
-/// single target is what SwapChainCompositePass consumes — the composite stays a one-source
-/// pass and learns nothing about regions. One window-covering placement is the fullscreen
-/// game; zero placements is the editor (a cleared target); N quadrant placements is
-/// splitscreen — the same gather + composite tail for all three.
+/// (RGBA16F) assembly target, in list order, with an opaque blend, clearing the area no
+/// placement covers. That single target is what SwapChainCompositePass consumes — the
+/// composite stays a one-source pass and learns nothing about regions. N quadrant placements
+/// is splitscreen; a picture-in-picture or a region short of the window assembles the same way.
+/// ViewportCompositor skips the gather when assembling would change nothing: a last placement
+/// covering the window is sampled by the composite directly, and zero placements composite a
+/// black stand-in.
 ///
 /// The placement blit is linear-filtered: a same-resolution placement samples at texel
-/// centers (1:1, bit-identical to the source), and a placement rendered below its region
-/// (a viewport with RenderScale < 1, for dynamic resolution scaling) is upscaled to fill it.
+/// centers (1:1, bit-identical to the source), and a placement whose texture is larger or
+/// smaller than its region (a supersampled allocation, a lowered allocation ceiling) is
+/// filtered to fill it.
 ///
 /// Windowed-only: it feeds the swapchain composite and is never used headless.
 namespace Veng

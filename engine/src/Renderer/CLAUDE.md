@@ -413,15 +413,17 @@ memory and the smoke golden is unmoved.
 SSAA is not an `AntiAliasingMode` — it is the viewport allocating **above** its region resolution and
 the gather/composite tail box-downsampling on the way back. **It rides `MaxAllocationScale`**, the
 outer factor on *both* allocations, so the scene and the whole post-resolve tail supersample together
-and `GatherPass`'s linear-filter blit averages the result down into the region — a proper 2×2 box at
+and a linear-filtered lookup averages the result down into the region — a proper 2×2 box at
 exactly 2× (the standard SSAA factor), a bilinear approximation at other factors. `tests/gpu/viewport.cpp`
 pins the supersample allocation. It stacks with every AA mode including `TAAU`, since the render scale
 is a separate lever from the ceiling: `MaxAllocationScale = 2` with `RenderScale = 0.5` supersamples
 the tail while the scene renders at the region's own resolution, and the temporal resolve reconstructs
-the 2× image from it. `Viewport::SetRenderScale(scale)` with `scale > 1` still grows the *render*
-allocation above the post-resolve one — the scene renders supersampled and the promotion's bilinear
-tap is the 2×2 box at exactly 2× — but it leaves the tail native, so `MaxAllocationScale` is the lever
-that supersamples a frame end to end.
+the 2× image from it. The downsample happens in whichever pass samples the viewport — the gather's
+blit, or the swap-chain composite when that viewport alone covers the window and the gather is
+skipped (below) — through the same linear, clamp-to-edge lookup. `Viewport::SetRenderScale(scale)`
+with `scale > 1` still grows the *render* allocation above the post-resolve one — the scene renders
+supersampled and the promotion's bilinear tap is the 2×2 box at exactly 2× — but it leaves the tail
+native, so `MaxAllocationScale` is the lever that supersamples a frame end to end.
 
 ### Shadows: directional cascades + the punctual atlas
 
@@ -1421,21 +1423,41 @@ barrier).
   builds the ImGui frame (an `Offscreen` panel draws `UI::Image(vp.GetOutput())`), then — when
   ImGui is on — the overlay records and the managed tail gathers the `Presented` viewports and
   composites. The managed primary viewport is the game's plug-and-play path; the editor registers
-  no `Presented` viewport, so the gather assembles **zero placements** (a cleared target) and the
-  composite is ImGui-only.
+  no `Presented` viewport, so there are **zero placements**, the gather is skipped, and the
+  composite is ImGui over a black stand-in.
 
 **A gather pass assembles; the composite encodes.** `GatherPass` (`Veng/Renderer/GatherPass.h`)
 scissor-blits each `Presented` viewport's texture (a `CompositePlacement` = its `Ref<ImageView>` +
 its `ViewportRegion`) into its region on one full-window linear-HDR (RGBA16F) **assembly target**,
-in list order, clearing the area no placement covers; `SwapChainCompositePass` then consumes that
-single target *unchanged* (ImGui over, the display-transfer encode once). One window-covering
-placement is the fullscreen-game case (a point-sampled same-resolution copy, so the assembled
-values are bit-identical to sampling the source directly); zero placements is the editor (a
-cleared target); N quadrant placements is splitscreen — the same gather + composite tail for all
-three, the HDR/color-space encode left untouched. `SetPlacements` registers exactly one bindless
-slot per placement (`MaxPresented` is the budget, asserted at register time). **Splitscreen falls
-out** as "register N `Presented` viewports with quadrant regions"; it needs no bespoke compositing
-path.
+in list order with an opaque blend and a linear, clamp-to-edge sampler, clearing the area no
+placement covers; `SwapChainCompositePass` then consumes that single target *unchanged* (ImGui
+over, the display-transfer encode once). N quadrant placements is splitscreen; picture-in-picture
+and a region short of the window (letterboxing, an absolute region after a resize) assemble the
+same way. `SetPlacements` registers exactly one bindless slot per placement (`MaxPresented` is the
+budget, asserted at register time). **Splitscreen falls out** as "register N `Presented` viewports
+with quadrant regions"; it needs no bespoke compositing path.
+
+**The gather runs only when there is something to assemble.** When the *last* placement's region
+is exactly `{0, 0, swapChainExtent}` — the fullscreen game, or a full-window overlay drawn over
+earlier placements, which the opaque blend would overwrite — the gather's full-UV linear lookup
+into it is the very lookup the composite makes when sampling it, so `ViewportCompositor` hands the
+composite that viewport's output directly and skips the gather's full-window clear, read and
+write. At `MaxAllocationScale == 1` the result is bit-identical; at any other scale the same
+filtering happens in the composite instead, minus one RGBA16F re-quantisation. With **zero
+placements** (the editor) the composite samples a renderer-owned 1×1 black image — clamp-to-edge
+makes it black everywhere — instead of a gathered clear. The decision is a device-free function
+(`CompositeSource.h`, pinned by `tests/unit/composite_source.cpp`, since no gpu case can drive the
+windowed tail), and the composite's scene source is re-pointed (a bindless re-registration, no
+recompile) only when it changes: a viewport's output identity moves on its `Resize`/`Configure` and
+when documents attach or detach. A world under a full-window overlay is still rendered, just not
+sampled — as it was overwritten before.
+
+**An empty ImGui frame costs nothing.** `ImGuiLayer::Render` ends the ImGui frame before recording
+and, when the draw data is empty (no command lists or no vertices), records no pass and no
+transition — the full-window RGBA16F layer image is neither cleared nor stored — and
+`HasDrawnOutput()` reports it. The compositor then blends a 1×1 transparent image in its place
+(`SwapChainCompositePass::SetOverlaySource`), so `lerp(scene, ui, ui.a)` returns the scene with no
+shader or graph change, and swaps back when the layer draws again.
 
 **A presented frame is read back through a mirror, never off the swap chain.** The finished
 composite — scene plus whatever overlay was drawn over it — exists only in the swap chain image, and
@@ -1459,10 +1481,10 @@ copy of its result. `ViewportCompositor::SetCaptureSink(CaptureSink*)`
 (`Veng/Renderer/CaptureSink.h`) installs that consumer: each `Composite`, after the presented
 composite, the sink is asked for a `CaptureTarget` (`{ Ref<Image>, DisplayColorSpace,
 IncludeOverlay }`) for this frame's in-flight slot, and a supplied one is written by a **second
-`SwapChainCompositePass`** the compositor owns — same gather source, the target's format and colour
-space, the overlay bound only when the target asks for it. So the file's encoding is a setting rather
-than a consequence of the display, and the presented frame is untouched: the mirror and
-`render.screenshot_window` keep working during a capture.
+`SwapChainCompositePass`** the compositor owns — the same scene source as the presented composite,
+the target's format and colour space, the overlay bound only when the target asks for it. So the
+file's encoding is a setting rather than a consequence of the display, and the presented frame is
+untouched: the mirror and `render.screenshot_window` keep working during a capture.
 
 Four properties of the seam:
 
@@ -1473,7 +1495,9 @@ Four properties of the seam:
   other extent is a fatal assert and the composite is skipped rather than stretched into.
 - **The pass is rebuilt only when its shape moves** — the overlay choice changing, or a swap-chain
   invalidation (which re-sources the presented composite the same way). A format or colour-space
-  change is a `SetSwapChainTarget` on the existing pass.
+  change is a `SetSwapChainTarget` on the existing pass, and every change of the presented
+  composite's scene or overlay source is applied to it too, so it never samples a source the
+  display has moved off.
 - **Readability rides the frame fence.** The capture composite is recorded into the frame's command
   buffer, so its target is readable when that slot's fence has been waited —
   `GetMaxFramesInFlight()` frames later, the contract `AsyncReadback` already rides. With a sink

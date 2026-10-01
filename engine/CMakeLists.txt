@@ -318,6 +318,7 @@ add_library(veng SHARED
         src/Settings/SettingsSchema.cpp
         src/Settings/SettingsStore.cpp
         src/Renderer/CaptureSurface.cpp
+        src/Renderer/CompositeSource.cpp
         src/Renderer/DrawGather.cpp
         src/Renderer/FrameTopology.cpp
         src/Renderer/SceneRenderer.cpp

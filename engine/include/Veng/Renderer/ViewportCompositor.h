@@ -24,7 +24,9 @@ namespace Veng::Renderer
     ///
     /// Owns the render-order viewport drive-list and the capture drive-list, plus the gather +
     /// swapchain-composite tail (the GatherPass assembling the Presented viewports into one
-    /// full-window target and the SwapChainCompositePass placing it behind the ImGui overlay). A
+    /// full-window target and the SwapChainCompositePass placing it behind the ImGui overlay). The
+    /// gather runs only when the placements need assembling: a last placement covering the window
+    /// is sampled by the composite directly, and no placements composite a black stand-in. A
     /// viewport or capture registers here in registration order, which is render order — a producer
     /// registered before its consumer renders first — and hands a back-reference, so dropping its
     /// owning Unique self-unregisters it. The compositor never owns a viewport or capture; the
@@ -56,7 +58,8 @@ namespace Veng::Renderer
 
         /// @brief Builds the gather pass and swapchain composite tail, wiring the resize re-target.
         ///
-        /// Constructs the GatherPass and SwapChainCompositePass, compiles their graphs, and registers
+        /// Constructs the GatherPass and SwapChainCompositePass and the 1×1 black-scene and
+        /// transparent-overlay stand-ins, compiles the passes' graphs, and registers
         /// a swapchain-invalidation callback that resizes the gather, re-points the composite at the
         /// ImGui layer's recreated offscreen image, re-targets the swapchain on a format/color-space
         /// change, and recompiles both graphs. Called once when an ImGui overlay is present.
@@ -95,9 +98,15 @@ namespace Veng::Renderer
 
         /// @brief Gathers the Presented viewports and composites them behind the ImGui overlay.
         ///
-        /// Rebinds the gather's placement list ({ output, region } per Presented viewport — rebound
-        /// only when a viewport's output view identity or region changed), runs the gather, then the
-        /// composite into the current swapchain image. A no-op without the tail (no InitializeTail).
+        /// When the last Presented viewport's region is the whole window, the composite samples its
+        /// output directly — the gather's opaque, full-UV, linear lookup into it would produce the
+        /// same pixels — and with no Presented viewport it samples a 1×1 black stand-in; either way
+        /// the gather is skipped. Otherwise it rebinds the gather's placement list ({ output, region }
+        /// per Presented viewport — rebound only when a viewport's output view identity or region
+        /// changed) and runs the gather. The composite's source is re-pointed only when it changes.
+        /// When the ImGui layer drew nothing this frame its image is replaced by a 1×1 transparent
+        /// stand-in. Then the composite runs into the current swapchain image. A no-op without the
+        /// tail (no InitializeTail).
         /// @param cmd  The command buffer to record into.
         void Composite(CommandBuffer& cmd);
 
@@ -189,8 +198,9 @@ namespace Veng::Renderer
 
         /// @brief Builds the capture composite pass and its compiled graph for @p includeOverlay.
         ///
-        /// Sourced from the same gather output the presented composite reads, so both composite the
-        /// identical assembled frame.
+        /// Sourced from the scene and overlay the presented composite currently reads, and kept on
+        /// them as they change (ApplySceneSource, ApplyOverlaySource), so both composite the
+        /// identical frame.
         /// @param includeOverlay  Whether the pass blends the application's overlay.
         /// @param format          Colour format of the targets it will render into.
         /// @param colorSpace      Colour space the pass encodes for.
@@ -199,10 +209,35 @@ namespace Veng::Renderer
         /// @brief Releases the capture composite, its graph, and the cached target views.
         void ReleaseCapturePass();
 
+        /// @brief Points the presented and capture composites at @p source, if it is not already.
+        /// @param source  The view the composites sample as the scene.
+        void ApplySceneSource(const Ref<ImageView>& source);
+
+        /// @brief Swaps the composites' overlay between the ImGui layer and the transparent stand-in.
+        ///
+        /// Re-registers the overlay only when the choice changes.
+        /// @param transparent  True to blend the transparent stand-in, false to blend the layer.
+        void ApplyOverlaySource(bool transparent);
+
+        /// @brief The view the composites currently sample as the scene.
+        ///
+        /// The gather's output, the covering viewport's output, or the black stand-in.
+        Ref<ImageView> m_SceneSource;
+
+        /// @brief A 1×1 opaque black image: the scene when there are no Presented viewports.
+        Ref<ImageView> m_BlackView;
+
+        /// @brief A 1×1 transparent image: the overlay when the ImGui layer drew nothing.
+        Ref<ImageView> m_TransparentView;
+
+        /// @brief Whether the composites currently blend the transparent stand-in as the overlay.
+        bool m_OverlayTransparent = false;
+
         /// @brief Last placement list pushed to the gather; rebinds only when it changes.
         ///
         /// Guards against per-frame bindless churn: the gather's slots are re-registered only on a
         /// frame where a Presented viewport's output view identity or region differs from this.
+        /// Emptied, with the gather's own list, on a frame that skips the gather.
         vector<CompositePlacement> m_GatheredPlacements;
 
         /// @brief The asset manager the tail's passes build through; null until InitializeTail.

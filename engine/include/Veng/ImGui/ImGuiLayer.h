@@ -97,8 +97,19 @@ namespace Veng
         void OnCursorCaptured(bool captured) override;
 
         /// @brief Renders the built UI into the output image, leaving it sampleable for compositing.
+        ///
+        /// Ends the ImGui frame first; when the resulting draw data is empty (no command lists, or
+        /// no vertices) it records nothing — no clear, no store, no layout transition — and the
+        /// output image keeps whatever it last held. HasDrawnOutput reports which happened.
         /// @param cmd  Command buffer the render pass is recorded into.
         void Render(Renderer::CommandBuffer& cmd);
+
+        /// @brief Returns whether the last Render drew the UI into the output image.
+        ///
+        /// False when that frame's draw data was empty: the output image was not written, and a
+        /// compositor substitutes a transparent overlay rather than sampling it.
+        /// @return True when the output image holds the last rendered frame's UI.
+        [[nodiscard]] bool HasDrawnOutput() const { return m_DrewOutput; }
 
         /// @brief Pushes the active `UI::Theme` into the live ImGui and imnodes styles.
         ///
@@ -107,6 +118,8 @@ namespace Veng
         void ApplyTheme();
 
         /// @brief Returns the offscreen image the UI is rendered into.
+        ///
+        /// It holds this frame's UI only when HasDrawnOutput is true.
         [[nodiscard]] Ref<Renderer::Image> GetOutputImage() const { return m_Image; }
 
         /// @brief Registers a sampler/image pair with the ImGui Vulkan backend and returns an owning wrapper.
@@ -163,5 +176,8 @@ namespace Veng
         /// When false at the next `BeginFrame`, the stale frame is ended to keep ImGui's
         /// internal state consistent.
         bool m_RenderedThisFrame = true;
+
+        /// @brief Whether the last Render recorded drawing into the output image.
+        bool m_DrewOutput = false;
     };
 }

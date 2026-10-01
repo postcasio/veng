@@ -5,7 +5,7 @@
 
 /// @brief The seam a consumer hands the compositor an image to composite the presented frame into.
 ///
-/// The frame the window shows is produced by one fullscreen composite of the gathered viewports
+/// The frame the window shows is produced by one fullscreen composite of the presented viewports
 /// and the overlay; a sink asks for that composite to be run a **second** time, into an image the
 /// consumer owns, with a colour space of the consumer's choosing. It is the zero-copy alternative
 /// to reading the finished frame back: nothing is copied out of the swap chain, the encoding is a
@@ -29,11 +29,11 @@ namespace Veng::Renderer
         /// target whose store encodes them, Hdr10St2084 converts primaries and PQ-encodes.
         DisplayColorSpace ColorSpace = DisplayColorSpace::SrgbNonlinear;
 
-        /// @brief Whether the application's overlay is composited over the gathered viewports.
+        /// @brief Whether the application's overlay is composited over the presented viewports.
         ///
         /// The overlay is the application's own chrome — a debug shell, an editor's panels — while
-        /// a game's HUD and menus are driven into the viewports and so are part of the gathered
-        /// image either way. Off, the capture is the gathered viewports alone.
+        /// a game's HUD and menus are driven into the viewports and so are part of the presented
+        /// image either way. Off, the capture is the presented viewports alone.
         bool IncludeOverlay = false;
     };
 
