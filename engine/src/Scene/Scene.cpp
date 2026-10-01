@@ -465,7 +465,7 @@ namespace Veng
 
     void Scene::DestroyEntity(Entity entity)
     {
-        VE_ASSERT(IsAlive(entity), "DestroyEntity on a dead or stale entity");
+        VE_ASSERT(IsAlive(entity), "DestroyEntity on a {} entity", Detail::NotAliveKind(entity));
 
         // Detach the destroyed root from any surviving parent's child list first,
         // so the siblings that outlive this call stay consistent.
@@ -601,7 +601,7 @@ namespace Veng
 
     void Scene::SetParent(Entity child, Entity parent)
     {
-        VE_ASSERT(IsAlive(child), "SetParent on a dead or stale child");
+        VE_ASSERT(IsAlive(child), "SetParent on a {} child", Detail::NotAliveKind(child));
         VE_ASSERT(parent.IsNull() || IsAlive(parent), "SetParent: parent is dead or stale");
         VE_ASSERT(child != parent, "SetParent: an entity cannot parent itself");
         // A descendant adopting an ancestor would form a cycle — API misuse.
@@ -650,7 +650,7 @@ namespace Veng
 
     void Scene::MoveBefore(Entity child, Entity sibling)
     {
-        VE_ASSERT(IsAlive(child), "MoveBefore on a dead or stale child");
+        VE_ASSERT(IsAlive(child), "MoveBefore on a {} child", Detail::NotAliveKind(child));
         VE_ASSERT(!sibling.IsNull() && IsAlive(sibling),
                   "MoveBefore: sibling is null, dead, or stale");
         VE_ASSERT(child != sibling, "MoveBefore: child and sibling are the same entity");
@@ -690,14 +690,14 @@ namespace Veng
 
     Entity Scene::GetParent(Entity entity) const
     {
-        VE_ASSERT(IsAlive(entity), "GetParent on a dead or stale entity");
+        VE_ASSERT(IsAlive(entity), "GetParent on a {} entity", Detail::NotAliveKind(entity));
         const Hierarchy* link = TryHierarchy(entity);
         return link != nullptr ? link->Parent : Entity::Null;
     }
 
     void Scene::ForEachChild(Entity entity, const function<void(Entity)>& fn) const
     {
-        VE_ASSERT(IsAlive(entity), "ForEachChild on a dead or stale entity");
+        VE_ASSERT(IsAlive(entity), "ForEachChild on a {} entity", Detail::NotAliveKind(entity));
         const Hierarchy* link = TryHierarchy(entity);
         if (link == nullptr)
         {
@@ -763,7 +763,7 @@ namespace Veng
 
     TypeId Scene::FindRequirer(const Entity entity, const TypeId id) const
     {
-        VE_ASSERT(IsAlive(entity), "FindRequirer on a dead or stale entity");
+        VE_ASSERT(IsAlive(entity), "FindRequirer on a {} entity", Detail::NotAliveKind(entity));
 
         for (const auto& [poolId, pool] : m_Pools)
         {
@@ -850,7 +850,7 @@ namespace Veng
 
     void Scene::ForEachComponent(Entity entity, const function<void(TypeId, void*)>& fn)
     {
-        VE_ASSERT(IsAlive(entity), "ForEachComponent on a dead or stale entity");
+        VE_ASSERT(IsAlive(entity), "ForEachComponent on a {} entity", Detail::NotAliveKind(entity));
 
         for (auto& [id, pool] : m_Pools)
         {
@@ -871,7 +871,8 @@ namespace Veng
 
     u64 Scene::GetComponentChangeTick(Entity entity, TypeId id) const
     {
-        VE_ASSERT(IsAlive(entity), "GetComponentChangeTick on a dead or stale entity");
+        VE_ASSERT(IsAlive(entity), "GetComponentChangeTick on a {} entity",
+                  Detail::NotAliveKind(entity));
         const ComponentPool* pool = TryPoolFor(id);
         return pool != nullptr ? pool->ChangeTick(entity) : 0;
     }

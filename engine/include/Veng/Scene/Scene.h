@@ -31,6 +31,16 @@ namespace Veng
     void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds, Entity exclude,
                       u32 layerMask);
 
+    namespace Detail
+    {
+        /// @brief Why a handle failed an IsAlive assert, for its message: a null handle is a caller
+        /// that never had an entity, a dead or stale one a caller holding a handle past its entity.
+        [[nodiscard]] inline const char* NotAliveKind(const Entity entity)
+        {
+            return entity.IsNull() ? "null" : "dead or stale";
+        }
+    }
+
     /// @brief Runtime ECS world: a generational entity free-list plus one type-erased sparse-set pool per component type.
     ///
     /// The templated Add/Remove/Get/Has façade resolves T to TypeId through the
@@ -379,7 +389,7 @@ namespace Veng
         /// @pre The entity must be alive and id must name a registered type.
         void* AddComponent(Entity entity, TypeId id)
         {
-            VE_ASSERT(IsAlive(entity), "AddComponent on a dead or stale entity");
+            VE_ASSERT(IsAlive(entity), "AddComponent on a {} entity", Detail::NotAliveKind(entity));
             return AddRaw(entity, id);
         }
 
@@ -399,7 +409,8 @@ namespace Veng
         /// @pre The entity must be alive.
         VoidResult RemoveComponent(Entity entity, TypeId id)
         {
-            VE_ASSERT(IsAlive(entity), "RemoveComponent on a dead or stale entity");
+            VE_ASSERT(IsAlive(entity), "RemoveComponent on a {} entity",
+                      Detail::NotAliveKind(entity));
             return RemoveRaw(entity, id);
         }
 
@@ -418,7 +429,7 @@ namespace Veng
         template <class T>
         T& Add(Entity entity, T value = {})
         {
-            VE_ASSERT(IsAlive(entity), "Add on a dead or stale entity");
+            VE_ASSERT(IsAlive(entity), "Add on a {} entity", Detail::NotAliveKind(entity));
             void* slot = AddRaw(entity, m_Registry->IdOf<T>());
             T& component = *static_cast<T*>(slot);
             component = std::move(value);
@@ -434,7 +445,7 @@ namespace Veng
         template <class T>
         VoidResult Remove(Entity entity)
         {
-            VE_ASSERT(IsAlive(entity), "Remove on a dead or stale entity");
+            VE_ASSERT(IsAlive(entity), "Remove on a {} entity", Detail::NotAliveKind(entity));
             return RemoveRaw(entity, m_Registry->IdOf<T>());
         }
 
@@ -442,7 +453,7 @@ namespace Veng
         template <class T>
         [[nodiscard]] T* TryGet(Entity entity)
         {
-            VE_ASSERT(IsAlive(entity), "TryGet on a dead or stale entity");
+            VE_ASSERT(IsAlive(entity), "TryGet on a {} entity", Detail::NotAliveKind(entity));
             return static_cast<T*>(TryGetRaw(entity, m_Registry->IdOf<T>()));
         }
 
@@ -450,7 +461,7 @@ namespace Veng
         template <class T>
         [[nodiscard]] const T* TryGet(Entity entity) const
         {
-            VE_ASSERT(IsAlive(entity), "TryGet on a dead or stale entity");
+            VE_ASSERT(IsAlive(entity), "TryGet on a {} entity", Detail::NotAliveKind(entity));
             return static_cast<const T*>(TryGetRaw(entity, m_Registry->IdOf<T>()));
         }
 
@@ -504,7 +515,7 @@ namespace Veng
         template <class T>
         [[nodiscard]] bool Has(Entity entity) const
         {
-            VE_ASSERT(IsAlive(entity), "Has on a dead or stale entity");
+            VE_ASSERT(IsAlive(entity), "Has on a {} entity", Detail::NotAliveKind(entity));
             return HasRaw(entity, m_Registry->IdOf<T>());
         }
 
@@ -628,7 +639,8 @@ namespace Veng
         /// @return The component's storage, or nullptr if the entity lacks it.
         [[nodiscard]] void* TryGetComponent(Entity entity, TypeId id)
         {
-            VE_ASSERT(IsAlive(entity), "TryGetComponent on a dead or stale entity");
+            VE_ASSERT(IsAlive(entity), "TryGetComponent on a {} entity",
+                      Detail::NotAliveKind(entity));
             return TryGetRaw(entity, id);
         }
 
@@ -642,7 +654,8 @@ namespace Veng
         /// @return The component's const storage, or nullptr if the entity lacks it.
         [[nodiscard]] const void* TryGetComponent(Entity entity, TypeId id) const
         {
-            VE_ASSERT(IsAlive(entity), "TryGetComponent on a dead or stale entity");
+            VE_ASSERT(IsAlive(entity), "TryGetComponent on a {} entity",
+                      Detail::NotAliveKind(entity));
             return TryGetRaw(entity, id);
         }
 

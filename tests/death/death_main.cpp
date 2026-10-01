@@ -244,6 +244,17 @@ namespace
         (void)scene->Get<DeathPosition>(e);
     }
 
+    void RunSceneTryGetNullEntity()
+    {
+        TypeRegistry registry;
+        registry.Register<DeathPosition>("DeathPosition");
+        const Unique<Scene> scene = Scene::Create(registry);
+
+        // A null handle fails the same IsAlive assert, and the message names it null rather than
+        // dead or stale, since no entity ever stood behind it.
+        (void)scene->TryGet<DeathPosition>(Entity::Null);
+    }
+
     void RunSceneGetMissingComponent()
     {
         TypeRegistry registry;
@@ -622,6 +633,10 @@ int main(int argc, char** argv)
     else if (name == "scene_get_stale_entity")
     {
         RunSceneGetStaleEntity();
+    }
+    else if (name == "scene_try_get_null_entity")
+    {
+        RunSceneTryGetNullEntity();
     }
     else if (name == "scene_get_missing_component")
     {

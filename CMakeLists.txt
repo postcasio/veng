@@ -1256,6 +1256,10 @@ if (VENG_BUILD_TESTS)
     set_tests_properties(death.scene_get_stale_entity PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "dead or stale entity")
 
+    add_test(NAME death.scene_try_get_null_entity COMMAND veng_test_death scene_try_get_null_entity)
+    set_tests_properties(death.scene_try_get_null_entity PROPERTIES LABELS "death;fast"
+            PASS_REGULAR_EXPRESSION "TryGet on a null entity")
+
     add_test(NAME death.scene_get_missing_component COMMAND veng_test_death scene_get_missing_component)
     set_tests_properties(death.scene_get_missing_component PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "lacks the component")
