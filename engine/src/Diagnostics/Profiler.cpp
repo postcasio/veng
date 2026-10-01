@@ -255,6 +255,10 @@ namespace Veng::Diagnostics
             vector<Unique<Chunk>> Chunks;
             usize CurrentChunk = 0;
             u64 NextSequence = 0;
+            /// @brief The capture epoch this thread's chunks were last armed under. Written by the
+            /// owning thread, read by a collector deciding whether the chunks belong to the
+            /// current capture.
+            std::atomic<u64> Epoch{0};
 
             vector<ScopeStackEntry> Stack;
 
@@ -279,6 +283,11 @@ namespace Veng::Diagnostics
             ThreadId NextThreadId = 1;
             u64 RegistrationOverflow = 0;
             std::atomic<u64> DroppedEvents{0};
+            /// @brief Bumped at every capture boundary; a thread whose chunks predate it re-arms them
+            /// on its next emit, so recordings from before the boundary never reach a collector.
+            std::atomic<u64> CaptureEpoch{0};
+            /// @brief DroppedEvents at the last capture boundary; a file's accounting is the delta.
+            u64 EpochDroppedBase = 0;
 
             std::mutex StringMutex;
             std::unordered_map<string, NameId> StringToId;
@@ -313,6 +322,9 @@ namespace Veng::Diagnostics
             void EmitThreadTrack(ThreadState& state);
             NameId Intern(string_view text);
             void HandChunkToSink(ThreadState& state, Chunk& chunk);
+            void FlushCurrentEpoch();
+            void AdvanceEpoch();
+            [[nodiscard]] u64 EpochDroppedEvents() const;
             void AdvanceFrame();
 
             static VoidResult EnsureDirectory(const path& file);
@@ -373,6 +385,18 @@ namespace Veng::Diagnostics
                 (void)&t_ExitGuard;
             }
 
+            /// @brief Re-arms every chunk of a thread that last recorded under an earlier capture epoch,
+            /// discarding what it held.
+            void AdoptEpoch(ThreadState& state, u64 epoch)
+            {
+                for (auto& chunk : state.Chunks)
+                {
+                    chunk->Arm(NowTicks(), state.NextSequence++);
+                }
+                state.CurrentChunk = 0;
+                state.Epoch.store(epoch, std::memory_order_relaxed);
+            }
+
             /// @brief Appends one built record, streaming or ring-wrapping when the current chunk fills.
             ///
             /// The record's timestamp deltas are computed against the chunk it actually lands in, so a
@@ -381,6 +405,11 @@ namespace Veng::Diagnostics
                            u64 beginAbs, u64 endAbs, u64 valueBits, u64 frame)
             {
                 ProfilerState& profiler = *state.Owner;
+                if (const u64 epoch = profiler.CaptureEpoch.load(std::memory_order_acquire);
+                    state.Epoch.load(std::memory_order_relaxed) != epoch)
+                {
+                    AdoptEpoch(state, epoch);
+                }
                 Chunk* chunk = state.Chunks[state.CurrentChunk].get();
                 u32 offset = chunk->WriteOffset.load(std::memory_order_relaxed);
 
@@ -455,6 +484,8 @@ namespace Veng::Diagnostics
                 chunk->Arm(NowTicks(), state->NextSequence++);
                 state->Chunks.push_back(std::move(chunk));
             }
+            state->Epoch.store(CaptureEpoch.load(std::memory_order_relaxed),
+                               std::memory_order_relaxed);
             state->Agg.Reserve(Config.StringTableCapacity);
             state->Stack.reserve(64);
 
@@ -472,6 +503,35 @@ namespace Veng::Diagnostics
             chunk.SealHeader();
             const u32 bytes = chunk.WriteOffset.load(std::memory_order_relaxed);
             Sink->OnChunk(state.Id, chunk.Data.get(), bytes);
+        }
+
+        void ProfilerState::FlushCurrentEpoch()
+        {
+            const u64 epoch = CaptureEpoch.load(std::memory_order_relaxed);
+            const std::scoped_lock lock(RegistryMutex);
+            for (auto& thread : Threads)
+            {
+                // A thread idle since the last boundary holds only recordings from before it.
+                if (thread->Epoch.load(std::memory_order_relaxed) != epoch)
+                {
+                    continue;
+                }
+                for (auto& chunk : thread->Chunks)
+                {
+                    HandChunkToSink(*thread, *chunk);
+                }
+            }
+        }
+
+        void ProfilerState::AdvanceEpoch()
+        {
+            EpochDroppedBase = DroppedEvents.load(std::memory_order_relaxed);
+            CaptureEpoch.fetch_add(1, std::memory_order_release);
+        }
+
+        u64 ProfilerState::EpochDroppedEvents() const
+        {
+            return DroppedEvents.load(std::memory_order_relaxed) - EpochDroppedBase;
         }
 
         void ProfilerState::DetachThread(ThreadState* state)
@@ -773,6 +833,8 @@ namespace Veng::Diagnostics
             CaptureFilePath = file;
             CaptureFrameBudget = frameCount;
             CaptureStartFrame = FrameIndex.load(std::memory_order_relaxed);
+            // The ring's standing contents are history from before the capture, not part of it.
+            AdvanceEpoch();
             // Recording on (Mode != Off), streaming to the file (a non-null sink selects the
             // hand-off-when-full drain). The standing RingEnabled is untouched — a capture overrides
             // the active policy but does not change it.
@@ -788,22 +850,16 @@ namespace Veng::Diagnostics
                 return std::unexpected(string("no capture is running"));
             }
 
+            FlushCurrentEpoch();
             u64 droppedThreads = 0;
             {
                 const std::scoped_lock lock(RegistryMutex);
                 droppedThreads = RegistrationOverflow;
-                // Flush every thread's outstanding chunk up to its published write offset.
-                for (auto& thread : Threads)
-                {
-                    for (auto& chunk : thread->Chunks)
-                    {
-                        HandChunkToSink(*thread, *chunk);
-                    }
-                }
             }
-            CaptureSink->SetAccounting(DroppedEvents.load(std::memory_order_relaxed),
-                                       droppedThreads);
+            CaptureSink->SetAccounting(EpochDroppedEvents(), droppedThreads);
             CaptureSink->BeginClose();
+            // Everything recorded so far is in the file; a later ring dump must not repeat it.
+            AdvanceEpoch();
 
             const path written = CaptureFilePath;
             DrainingSink = std::move(CaptureSink);
@@ -860,8 +916,13 @@ namespace Veng::Diagnostics
             {
                 const std::scoped_lock lock(RegistryMutex);
                 droppedThreads = RegistrationOverflow;
+                const u64 epoch = CaptureEpoch.load(std::memory_order_relaxed);
                 for (auto& thread : Threads)
                 {
+                    if (thread->Epoch.load(std::memory_order_relaxed) != epoch)
+                    {
+                        continue;
+                    }
                     // Each thread's live chunks in sequence order, oldest first — the discarded span
                     // between them reads as a sequence gap, not silence.
                     std::vector<Chunk*> live;
@@ -885,7 +946,7 @@ namespace Veng::Diagnostics
                 }
             }
 
-            sink->SetAccounting(DroppedEvents.load(std::memory_order_relaxed), droppedThreads);
+            sink->SetAccounting(EpochDroppedEvents(), droppedThreads);
             sink->BeginClose();
 
             const path written = file;
@@ -1083,14 +1144,7 @@ namespace Veng::Diagnostics
     {
         if (m_State->Sink)
         {
-            const std::scoped_lock lock(m_State->RegistryMutex);
-            for (auto& thread : m_State->Threads)
-            {
-                for (auto& chunk : thread->Chunks)
-                {
-                    m_State->HandChunkToSink(*thread, *chunk);
-                }
-            }
+            m_State->FlushCurrentEpoch();
             m_State->Sink->OnFlush();
             m_State->Sink->OnClose();
         }

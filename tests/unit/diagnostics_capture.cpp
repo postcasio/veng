@@ -398,6 +398,63 @@ TEST_CASE(
     CHECK(d.Accounting->first > 0); // the discarded-event count travels in the file
 }
 
+TEST_CASE("capture: a capture over a standing ring carries nothing recorded before it began")
+{
+    const std::filesystem::path dir = FreshDir("overring");
+
+    ProfilerConfig config;
+    config.ChunkBytes = 256;    // ~7 records per chunk
+    config.ChunksPerThread = 4; // retained chunks a capture could wrongly sweep up
+    Profiler profiler(config);
+    profiler.SetRingEnabled(true);
+
+    // Wrap the ring so it both drops events and holds several full chunks of pre-capture history.
+    for (int f = 0; f < 50; ++f)
+    {
+        profiler.BeginFrame();
+        for (int i = 0; i < 10; ++i)
+        {
+            VE_PROFILE_SCOPE("BeforeCapture");
+        }
+    }
+    REQUIRE(profiler.GetDroppedEventCount() > 0);
+
+    // The newest pre-capture chunk sequence: every chunk the capture writes must be newer than it.
+    const path ring = dir / "ring.vtrace";
+    REQUIRE(profiler.DumpRing(ring));
+    WaitDrain(profiler);
+    const Decoded before = Decode(ReadFile(ring));
+    REQUIRE_FALSE(before.Chunks.empty());
+    u64 newestBefore = 0;
+    for (const auto& [thread, sequence] : before.Chunks)
+    {
+        newestBefore = std::max(newestBefore, sequence);
+    }
+
+    const path out = dir / "capture.vtrace";
+    REQUIRE(profiler.BeginCapture(out));
+    for (int f = 0; f < 3; ++f)
+    {
+        profiler.BeginFrame();
+        VE_PROFILE_SCOPE("DuringCapture");
+    }
+    REQUIRE(profiler.EndCapture());
+    WaitDrain(profiler);
+
+    const Decoded d = Decode(ReadFile(out));
+    CHECK(d.Complete);
+    REQUIRE_FALSE(d.Chunks.empty());
+    u64 oldestCaptured = ~0ull;
+    for (const auto& [thread, sequence] : d.Chunks)
+    {
+        oldestCaptured = std::min(oldestCaptured, sequence);
+    }
+    CHECK(oldestCaptured > newestBefore);
+    // The ring's earlier discards happened before the capture and are not this file's loss.
+    REQUIRE(d.Accounting.has_value());
+    CHECK(d.Accounting->first == 0);
+}
+
 TEST_CASE("capture: the retention cap deletes oldest-first once the directory exceeds it")
 {
     const std::filesystem::path dir = FreshDir("retention");
