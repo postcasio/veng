@@ -1,7 +1,7 @@
 // Writes each indirect command's instanceCount (1 = survivor, 0 = culled) into a
 // fixed-max VkDrawIndexedIndirectCommand buffer, the compute->indirect handoff the
-// GPU cull drives. Set 0 is reserved for the bindless registry, so the command
-// buffer binds on set 1. Each command is 5 u32s (indexCount, instanceCount,
+// GPU cull drives. Sets 0-2 are reserved for the bindless registries, so the command
+// buffer binds on set 3. Each command is 5 u32s (indexCount, instanceCount,
 // firstIndex, vertexOffset, firstInstance) = 20 bytes; instanceCount is word 1.
 [[vk::binding(0, 3)]] RWStructuredBuffer<uint> u_Commands;
 

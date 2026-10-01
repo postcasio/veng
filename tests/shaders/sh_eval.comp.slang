@@ -3,8 +3,8 @@
 // the GPU result to the CPU EvalIrradiance and the checked-in golden constants. The whole
 // point is sharing the exact basis include with the deferred lighting pass — this shader
 // pulls in the same Veng/sh.slang the engine does, so any basis/normalization drift between
-// CPU and GPU fails the consistency test. Set 0 is reserved for the bindless registry, so the
-// buffers bind on set 1, matching the test's hand-built layout.
+// CPU and GPU fails the consistency test. Sets 0-2 are reserved for the bindless registries, so
+// the buffers bind on set 3, matching the test's hand-built layout.
 #include "Veng/sh.slang"
 
 [[vk::binding(0, 3)]] ByteAddressBuffer u_Coefficients; // 9 float4 (xyz coefficient, w pad)
