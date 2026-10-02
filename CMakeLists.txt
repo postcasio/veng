@@ -141,9 +141,8 @@ option(VE_VALIDATION "Enable the Vulkan validation layers and the validation gat
 #
 # The default follows VE_DEBUG, so the two stay consistent: the debug tree is a Debug build
 # (unoptimized, debuggable, asserts live), and the validation-OFF tree is a Release one. Without
-# this a VE_DEBUG tree compiled at -O3 -DNDEBUG — debuggable in name only. The cooker's codec hot
-# loops opt back into -O2 under $<CONFIG:Debug> (VENG_COOK_DEBUG_OPT in cooker/CMakeLists.txt), so
-# a Debug cook does not run its encoders unoptimized. Override explicitly as usual:
+# this a VE_DEBUG tree compiled at -O3 -DNDEBUG — debuggable in name only. Code nobody steps
+# through opts back into -O2 under Debug through VENG_DEBUG_OPT below. Override explicitly as usual:
 # -DCMAKE_BUILD_TYPE=RelWithDebInfo.
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     if (VE_DEBUG)
@@ -155,6 +154,15 @@ if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release RelWithDebInfo MinSizeRel)
     message(STATUS "build type not specified; defaulting to ${VENG_DEFAULT_BUILD_TYPE} (VE_DEBUG=${VE_DEBUG})")
 endif ()
+
+# The optimization a Debug tree applies to code nobody steps through: Jolt, the cooker's codec loops,
+# and the engine's per-entity hot paths (VENG_OPTIMIZE_HOT_PATHS below). The tree's -g still applies,
+# so backtraces through these units resolve. MSVC's /O2 is rejected alongside the /RTC1 runtime
+# checks its Debug flags carry, so the flag is emitted only for compilers that accept optimization
+# in a Debug build; under MSVC Debug these units stay unoptimized. Release supplies its own -O3.
+# clang refuses a precompiled header whose __OPTIMIZE__ differs from the unit's, so a unit given
+# this flag in a target with a PCH also sets SKIP_PRECOMPILE_HEADERS.
+set(VENG_DEBUG_OPT $<$<AND:$<CONFIG:Debug>,$<NOT:$<CXX_COMPILER_ID:MSVC>>>:-O2>)
 
 # VE_PROFILE compiles in the diagnostics profiler (scope timing, per-thread trace buffers). It
 # defaults OFF regardless of VE_DEBUG — the two are independent knobs, and profiling is chosen by
@@ -507,7 +515,8 @@ FetchContent_MakeAvailable(yoga)
 # - CROSS_PLATFORM_DETERMINISTIC ON drops fast-math and FMA contraction so two peers on
 #   different hardware step to the same bits.
 # - USE_ASSERTS follows VE_DEBUG, routing Jolt's assertion hook to VE_ASSERT in the debug
-#   tree exactly as an engine assert breaks.
+#   tree exactly as an engine assert breaks. They stay on although the Debug tree optimizes Jolt
+#   (below): they catch misuse of the physics API, and cost little next to -O0.
 # - JPH_USE_DX12 / JPH_USE_VK / JPH_USE_MTL are OFF: they compile Jolt's GPU compute
 #   shaders through dxc/metallib, an external toolchain this build does not carry, and
 #   nothing in veng uses the hair/soft-body compute path.
@@ -515,7 +524,8 @@ FetchContent_MakeAvailable(yoga)
 #   through its own Renderer::DebugDraw and profiles through VE_PROFILE_*.
 # - ENABLE_ALL_WARNINGS OFF keeps Jolt's own -Wall -Werror out of this tree, and
 #   INTERPROCEDURAL_OPTIMIZATION OFF keeps a bitcode archive out of libveng's link.
-# - OVERRIDE_CXX_FLAGS OFF leaves the per-configuration flags as veng's tree set them.
+# - OVERRIDE_CXX_FLAGS OFF leaves the per-configuration flags as veng's tree set them; the Debug
+#   optimization below is added on top of them.
 # - USE_STATIC_MSVC_RUNTIME_LIBRARY OFF is required, not preferred: Jolt defaults it ON, and
 #   a /MTd static-CRT archive cannot link into libveng.dll, which MSVC builds against the
 #   dynamic CRT (LNK2038, one line per Jolt object).
@@ -543,6 +553,15 @@ FetchContent_Declare(
         EXCLUDE_FROM_ALL
 )
 FetchContent_MakeAvailable(JoltPhysics)
+
+# Jolt's math types are written to be inlined; at -O0 every Vec3/Mat44 operation is a call, so a
+# Debug tree's queries, solver step and shape builds run several times slower than their code
+# warrants, and nobody steps through Jolt. It therefore compiles at -O2 in every Debug tree, the
+# coverage tree included (coverage instruments veng's own targets, never this one). Determinism is
+# unaffected: CROSS_PLATFORM_DETERMINISTIC builds Jolt with -ffp-contract=off and no fast-math, so
+# its floating-point results do not depend on the optimization level. Target-level, so Jolt's own
+# precompiled header is built with the same flag as its units.
+target_compile_options(Jolt PRIVATE ${VENG_DEBUG_OPT})
 
 # FreeType — font-outline loader. Shared scope: the cooker's FontImporter drives it (through
 # msdfgen) to bake atlases offline, AND libveng links it PRIVATE for the runtime glyph rasterizer
@@ -651,6 +670,24 @@ if (VENG_ENABLE_COVERAGE)
         message(WARNING "VENG_ENABLE_COVERAGE is ON but the compiler is not GCC/Clang; not instrumenting.")
     endif ()
 endif ()
+
+# ---------------------------------------------------------------------------
+# Debug-tree optimization of the engine's hot paths
+# ---------------------------------------------------------------------------
+
+# Compiles the engine's per-entity and per-draw translation units (VENG_HOT_PATH_SOURCES in
+# engine/CMakeLists.txt) with VENG_DEBUG_OPT, so a Debug tree's crowded frame does not pay -O0 for
+# work it multiplies by every entity or draw. Turn it off to step through one of those units. It
+# defaults OFF in a coverage build, where optimization distorts the line mapping gcov reports, and
+# ON everywhere else; it is not fixed by the canonical tree name, so any tree may flip it. A Release
+# build is unaffected either way: the expression applies under the Debug configuration only.
+if (VENG_ENABLE_COVERAGE)
+    set(VENG_OPTIMIZE_HOT_PATHS_DEFAULT OFF)
+else ()
+    set(VENG_OPTIMIZE_HOT_PATHS_DEFAULT ON)
+endif ()
+option(VENG_OPTIMIZE_HOT_PATHS "Compile the engine's per-entity hot paths at -O2 in Debug builds"
+        ${VENG_OPTIMIZE_HOT_PATHS_DEFAULT})
 
 # ---------------------------------------------------------------------------
 # Compile-time tracing (opt-in)

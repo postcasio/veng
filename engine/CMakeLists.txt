@@ -562,6 +562,59 @@ set_source_files_properties(
         src/Vendor/StbVorbis.cpp
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
+# The engine's hot paths: the translation units doing per-entity or per-draw work, which a crowded
+# frame multiplies by its entity or draw count. Under VENG_OPTIMIZE_HOT_PATHS (root CMakeLists.txt)
+# they compile with VENG_DEBUG_OPT, so a Debug tree runs them at -O2; turn the option off to step
+# through one. A unit qualifies by the shape of its work, not by how slow it measured once: a loop
+# over entities, bodies, agents, joints or draw slots belongs here, and setup, asset loading and
+# per-frame orchestration do not. The scene passes listed are the ones whose recording walks the
+# draw plan slot by slot or culls casters one at a time; passes recording a fixed number of
+# full-screen or overlay draws are left out. Header templates (Scene::Get<T>, View<Ts...>) compile in
+# the calling unit, so this reaches the out-of-line store and the systems below, never a
+# consumer's own loops.
+set(VENG_HOT_PATH_SOURCES
+        # The component store.
+        src/Scene/Scene.cpp
+        src/Scene/ComponentPool.cpp
+        # Transforms and visibility.
+        src/Scene/Transforms.cpp
+        src/Scene/SceneBroadphase.cpp
+        src/Scene/Visibility.cpp
+        src/Math/BVH.cpp
+        # Animation.
+        src/Scene/AnimationSystem.cpp
+        src/Asset/Skeleton.cpp
+        # The physics wrappers.
+        src/Physics/CharacterMovementSystem.cpp
+        src/Physics/Gravity.cpp
+        src/Physics/PhysicsSystem.cpp
+        src/Physics/PhysicsWorld.cpp
+        src/Physics/PoseResolver.cpp
+        src/Physics/Queries.cpp
+        src/Physics/RemoteCharacterBodySystem.cpp
+        # The behaviour runtime.
+        src/Behavior/BehaviorTree.cpp
+        src/Behavior/BehaviorSystem.cpp
+        # The draw path: gather, light packing, command recording, and the per-draw scene passes.
+        src/Renderer/DrawGather.cpp
+        src/Renderer/LightPacking.cpp
+        src/Renderer/Backend/CommandBuffer.cpp
+        src/Renderer/Passes/GBufferScenePass.cpp
+        src/Renderer/Passes/DepthNormalPrepassScenePass.cpp
+        src/Renderer/Passes/ShadowScenePass.cpp
+        src/Renderer/Passes/PunctualShadowScenePass.cpp
+        src/Renderer/Passes/TranslucentScenePass.cpp
+)
+# clang refuses a precompiled header whose __OPTIMIZE__ differs from the unit's, and both PCHs here
+# (veng's, and the backend object library's for CommandBuffer.cpp) are built unoptimized, so these
+# units compile without one. Applied only where the flag can be emitted (the option on, a Debug or
+# multi-config build, a compiler other than MSVC); everywhere else they keep the PCH.
+if (VENG_OPTIMIZE_HOT_PATHS AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "MSVC"
+        AND (CMAKE_CONFIGURATION_TYPES OR CMAKE_BUILD_TYPE STREQUAL "Debug"))
+    set_property(SOURCE ${VENG_HOT_PATH_SOURCES} APPEND PROPERTY COMPILE_OPTIONS ${VENG_DEBUG_OPT})
+    set_property(SOURCE ${VENG_HOT_PATH_SOURCES} PROPERTY SKIP_PRECOMPILE_HEADERS ON)
+endif ()
+
 # miniaudio spawns its own playback thread and links no libraries at build time on Apple (it
 # runtime-links Core Audio) or Windows; on other Unixes it needs pthread and libm. libveng already
 # links ${CMAKE_DL_LIBS} for dlopen.

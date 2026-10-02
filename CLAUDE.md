@@ -95,8 +95,28 @@ no explicit `CMAKE_BUILD_TYPE`, a `VE_DEBUG=ON` tree configures as **Debug** and
 `VE_DEBUG=OFF` tree as **Release**, so the debug tree is genuinely unoptimized and
 debuggable rather than `-O3` wearing the name. `-g` is added to veng's own targets
 under `VE_DEBUG` regardless of type, so a tree pinned to Release still yields
-`file:line` backtraces out of `libveng`. The cooker's codec hot loops opt back into
-`-O2` under Debug, so a debug cook does not run its encoders unoptimized.
+`file:line` backtraces out of `libveng`.
+
+**A Debug tree optimizes what nobody steps through.** One generator expression,
+`VENG_DEBUG_OPT` (root `CMakeLists.txt`), adds `-O2` under the Debug configuration on every
+compiler but MSVC (whose `/O2` is rejected beside the Debug `/RTC1` checks); `-g` still applies,
+so backtraces through these units resolve. It reaches two kinds of code:
+
+- **Third-party code, in every Debug tree.** Jolt compiles at `-O2` (its math types are written
+  to be inlined, and at `-O0` each vector operation is a call), as do the cooker's codec hot
+  loops, so a debug cook does not run its encoders unoptimized. Jolt keeps its asserts
+  (`USE_ASSERTS` follows `VE_DEBUG`), and its results do not move: `CROSS_PLATFORM_DETERMINISTIC`
+  builds it without fast-math or FP contraction, so they are independent of optimization level.
+- **The engine's hot paths, unless `VENG_OPTIMIZE_HOT_PATHS` is off.** The units doing
+  per-entity or per-draw work that a crowded frame multiplies — the component store, transforms
+  and visibility, animation, the physics wrappers, the behaviour runtime, and the draw path —
+  are listed in `VENG_HOT_PATH_SOURCES` (`engine/CMakeLists.txt`, with the criterion for joining
+  it). The option defaults **ON**, and **OFF** under `VENG_ENABLE_COVERAGE`, where optimization
+  distorts the line mapping; it is not fixed by the tree name, so configure a tree with
+  `-DVENG_OPTIMIZE_HOT_PATHS=OFF` to step through one of those units. They compile without the
+  precompiled header while optimized, since clang refuses a PCH whose `__OPTIMIZE__` differs from
+  the unit's. Header templates (`Scene::Get<T>`, `View<Ts...>`) compile in the *calling* unit, so
+  a consumer's own loops are not reached by this option.
 
 **Build and test the debug build only — do not build twice.** The `build-debug`
 tree above (`VE_DEBUG=ON`) is the one build an agent configures, builds, and tests
@@ -312,7 +332,9 @@ until you have seen it flag something.
 
 `VENG_ENABLE_COVERAGE` (default `OFF`) adds the gcov flags (`--coverage -O0 -g`) to
 veng's own targets, wired at the same boundary as the clang-tidy option so third-party
-sources are never instrumented. It also sets `CMAKE_DISABLE_PRECOMPILE_HEADERS` — a
+sources are never instrumented. It turns `VENG_OPTIMIZE_HOT_PATHS` off by default, so
+the engine's hot paths compile at `-O0` like the rest of veng; Jolt, which is never
+instrumented, stays at `-O2`. It also sets `CMAKE_DISABLE_PRECOMPILE_HEADERS` — a
 force-included PCH blurs gcov's line mapping, and the coverage flags defeat the object
 cache the primary build is tuned for.
 
@@ -525,7 +547,7 @@ assumed:
   total, for completeness only. Proof that the total alone means nothing: a deliberately
   *regressed* tree, built to exceed its baseline, measured 10 % **below** it.
 
-The PCH opt-outs (`SKIP_PRECOMPILE_HEADERS`, and the debug encode TUs matching the PCH's
+The PCH opt-outs (`SKIP_PRECOMPILE_HEADERS`, and the Debug-optimized TUs matching the PCH's
 `__OPTIMIZE__`) are untouched — the flag is orthogonal to both, and those TUs simply trace as
 the no-PCH case, which is itself useful data. `-Werror` is unaffected; `-ftime-trace` produces
 no diagnostics. The flag is clang-specific, so the compiler test is

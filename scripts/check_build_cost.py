@@ -429,6 +429,7 @@ def stall_cluster(tus: list[TuCost]) -> list[TuCost]:
 CACHE_OPTIONS = (
     "CMAKE_BUILD_TYPE",
     "VE_DEBUG",
+    "VE_VALIDATION",
     "VE_PROFILE",
     "VENG_TIME_TRACE",
     "VENG_BUILD_TESTS",
@@ -437,6 +438,7 @@ CACHE_OPTIONS = (
     "VENG_EDITOR_WITH_MCP",
     "VENG_ENABLE_CLANG_TIDY",
     "VENG_ENABLE_COVERAGE",
+    "VENG_OPTIMIZE_HOT_PATHS",
     "VENG_USE_EMBED",
     "VENG_BUILD_CONFIG",
 )

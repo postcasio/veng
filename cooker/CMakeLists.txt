@@ -140,14 +140,12 @@ FetchContent_MakeAvailable(dr_libs)
 # it creates are referenced below. Only the cooker links msdf-atlas-gen (the atlas packer); libveng
 # links msdfgen-core/ext + FreeType alone.
 
-# The debug-optimize flag for the codec hot loops. MSVC's /O2 is rejected alongside the Debug
-# runtime checks (/RTC1) the default Debug flags carry, so the flag is emitted only for compilers
-# that accept optimization in a Debug build; under MSVC Debug the codecs stay unoptimized.
-set(VENG_COOK_DEBUG_OPT $<$<AND:$<CONFIG:Debug>,$<NOT:$<CXX_COMPILER_ID:MSVC>>>:-O2>)
+# The codec hot loops below compile under VENG_DEBUG_OPT (declared in the root CMakeLists.txt): -O2
+# in a Debug build on compilers that accept it, nothing otherwise.
 
 # Optimize the ASTC codec even in a Debug build: it is a third-party hot loop nobody step-debugs,
 # and an -O0 scalar/Debug encode dominates the cook wall-clock. Release keeps the codec's own -O3.
-target_compile_options(${VENG_ASTCENC_TARGET} PRIVATE ${VENG_COOK_DEBUG_OPT})
+target_compile_options(${VENG_ASTCENC_TARGET} PRIVATE ${VENG_DEBUG_OPT})
 
 # Same reasoning for the BC7/BC5/BC4 encoder TUs and the TextureImporter's mip-resize + block-encode
 # loops: optimize in Debug so the cook does not run them unoptimized. Release inherits its own -O3.
@@ -158,7 +156,7 @@ set_source_files_properties(
         # The FontImporter drives the msdfgen MSDF render, another third-party hot loop the cook
         # runs at wall-clock cost; optimize it in Debug for the same reason.
         src/Importers/FontImporter.cpp
-        PROPERTIES COMPILE_OPTIONS "${VENG_COOK_DEBUG_OPT}")
+        PROPERTIES COMPILE_OPTIONS "${VENG_DEBUG_OPT}")
 
 # nlohmann/json — pack + per-asset JSON parsing. veng's root CMakeLists.txt makes
 # nlohmann_json::nlohmann_json available (now PUBLIC on veng itself) before this
@@ -363,7 +361,7 @@ set_source_files_properties(src/Vendor/TinyExr.cpp PROPERTIES
 # Precompile the foundational header the importer TUs all parse. The vendor
 # aggregation TUs #include third-party sources with their own feature macros —
 # force-injecting Veng.h ahead of those is unsafe — and the debug-optimized
-# encode TUs compile under ${VENG_COOK_DEBUG_OPT}, which clang rejects against
+# encode TUs compile under ${VENG_DEBUG_OPT}, which clang rejects against
 # a PCH built without it (__OPTIMIZE__ mismatch); both opt out.
 target_precompile_headers(veng_cook_objs PRIVATE <Veng/Veng.h>)
 set_source_files_properties(
