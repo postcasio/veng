@@ -2,6 +2,8 @@
 
 #include <Veng/Assert.h>
 
+#include <new>
+
 namespace Veng
 {
     Scene::ComponentPool::ComponentPool(const TypeInfo& info) : m_Info(info)
@@ -15,11 +17,36 @@ namespace Veng
         {
             m_Info.Destruct(DataAt(i));
         }
+        if (m_Data != nullptr)
+        {
+            ::operator delete(m_Data, std::align_val_t{m_Info.Align});
+        }
     }
 
     void* Scene::ComponentPool::DataAt(usize index)
     {
-        return m_Data.data() + index * m_Info.Size;
+        return m_Data + (index * m_Info.Size);
+    }
+
+    void Scene::ComponentPool::Reserve(const usize capacity)
+    {
+        auto* const data = static_cast<std::byte*>(
+            ::operator new(capacity * m_Info.Size, std::align_val_t{m_Info.Align}));
+
+        // Relocate through the type's own move constructor: a byte copy is only valid for a
+        // trivially relocatable type, and a component may hold a pointer into itself.
+        for (usize i = 0; i < m_Dense.size(); ++i)
+        {
+            void* const from = DataAt(i);
+            m_Info.MoveConstruct(data + (i * m_Info.Size), from);
+            m_Info.Destruct(from);
+        }
+        if (m_Data != nullptr)
+        {
+            ::operator delete(m_Data, std::align_val_t{m_Info.Align});
+        }
+        m_Data = data;
+        m_Capacity = capacity;
     }
 
     void* Scene::ComponentPool::Add(Entity entity)
@@ -32,9 +59,13 @@ namespace Veng
         }
 
         const u32 dense = static_cast<u32>(m_Dense.size());
+        if (dense == m_Capacity)
+        {
+            Reserve(m_Capacity == 0 ? 8 : m_Capacity * 2);
+        }
+
         m_Sparse[entity.Index] = dense;
         m_Dense.push_back(entity);
-        m_Data.resize(m_Data.size() + m_Info.Size);
         m_ChangeTicks.push_back(0);
 
         void* slot = DataAt(dense);
@@ -75,7 +106,6 @@ namespace Veng
 
         m_Sparse[entity.Index] = Tombstone;
         m_Dense.pop_back();
-        m_Data.resize(m_Data.size() - m_Info.Size);
         m_ChangeTicks.pop_back();
     }
 

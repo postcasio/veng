@@ -42,12 +42,36 @@ namespace
     {
         f32 R = 0.0f, G = 0.0f, B = 0.0f, A = 1.0f;
     };
+
+    // Holds a pointer into its own storage that only its move constructor keeps right, the way a
+    // small-buffer std::function or a node container does — so a byte copy breaks it.
+    struct SelfAnchored
+    {
+        SelfAnchored() = default;
+        SelfAnchored(const SelfAnchored& other) : Value(other.Value) {}
+        SelfAnchored(SelfAnchored&& other) noexcept : Value(other.Value) {}
+        SelfAnchored& operator=(const SelfAnchored& other)
+        {
+            Value = other.Value;
+            return *this;
+        }
+        SelfAnchored& operator=(SelfAnchored&& other) noexcept
+        {
+            Value = other.Value;
+            return *this;
+        }
+        ~SelfAnchored() = default;
+
+        int Value = 0;
+        const SelfAnchored* Self = this;
+    };
 }
 
 VE_TYPE(::Position, 0x02C0484E07079107ULL);
 VE_TYPE(::Label, 0xC8D3CFD3931A63D5ULL);
 VE_TYPE(::Velocity, 0xE7ED834F2B1F7172ULL);
 VE_TYPE(::LeafColor, 0x4BF560CC768E52A0ULL);
+VE_TYPE(::SelfAnchored, 0x6528792901F4FAC6ULL);
 
 namespace
 {
@@ -58,6 +82,7 @@ namespace
         registry.Register<Label>("Label");
         registry.Register<Velocity>("Velocity");
         registry.Register<LeafColor>("LeafColor");
+        registry.Register<SelfAnchored>("SelfAnchored");
         return registry;
     }
 }
@@ -207,6 +232,35 @@ TEST_CASE("Sparse-set swap-and-pop keeps survivors intact (non-trivial move)")
     CHECK(scene->Get<Label>(entities[4]).Text == "label-4");
 }
 
+TEST_CASE("A component that points into itself survives pool growth and compaction")
+{
+    TypeRegistry registry = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(registry);
+
+    // Enough adds to reallocate the pool's storage several times.
+    constexpr int Count = 100;
+    vector<Entity> entities;
+    for (int i = 0; i < Count; ++i)
+    {
+        entities.push_back(scene->CreateEntity());
+        scene->Add<SelfAnchored>(entities.back()).Value = i;
+    }
+    (void)scene->Remove<SelfAnchored>(entities[10]);
+
+    int anchored = 0;
+    int valued = 0;
+    for (int i = 0; i < Count; ++i)
+    {
+        if (const auto* component = scene->TryGet<SelfAnchored>(entities[i]))
+        {
+            anchored += component->Self == component ? 1 : 0;
+            valued += component->Value == i ? 1 : 0;
+        }
+    }
+    CHECK(anchored == Count - 1);
+    CHECK(valued == Count - 1);
+}
+
 TEST_CASE("DestroyEntity removes the entity's components from every pool")
 {
     TypeRegistry registry = MakeRegistry();
@@ -238,7 +292,7 @@ TEST_CASE("TypeRegistry Register/IdOf/Info round-trip")
 {
     const TypeRegistry registry = MakeRegistry();
 
-    CHECK(registry.Count() == 4);
+    CHECK(registry.Count() == 5);
     CHECK(registry.IsRegistered(registry.IdOf<Position>()));
 
     const TypeInfo& info = registry.Info(registry.IdOf<Position>());

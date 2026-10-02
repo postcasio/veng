@@ -9,13 +9,14 @@ namespace Veng
 {
     /// @brief Type-erased sparse-set storage for one component type.
     ///
-    /// Stores raw bytes sized by `TypeInfo::Size` and manipulates them through the
-    /// type's lifecycle thunks (default-construct, destruct, move-construct).
+    /// Stores raw bytes sized by `TypeInfo::Size` and manipulates them only through the
+    /// type's lifecycle thunks (default-construct, destruct, move-construct), so a component
+    /// that is not trivially relocatable stays valid as the pool grows and compacts.
     /// Internal to the engine — `Scene`'s templated façade is the only caller.
     ///
     /// Layout: `m_Sparse` maps entity index → dense slot (Tombstone if absent);
     /// `m_Dense` is the packed entity list (the query iteration order); `m_Data`
-    /// is parallel packed component bytes (`Count * Info.Size`).
+    /// is parallel packed component bytes (`Count * Info.Size`), aligned to the type.
     /// `Remove` is swap-and-pop: tail element moves into the hole, sparse entry patched.
     class Scene::ComponentPool
     {
@@ -61,7 +62,17 @@ namespace Veng
         /// @brief Returns the entity's component change tick, or 0 if the entity has no component here.
         [[nodiscard]] u64 ChangeTick(Entity entity) const;
 
+        ComponentPool(ComponentPool&&) = delete;
+        ComponentPool& operator=(ComponentPool&&) = delete;
+
     private:
+        /// @brief Reallocates the component storage to hold at least @p capacity elements.
+        ///
+        /// Move-constructs each element into the new storage and destructs the original, so a
+        /// component's move constructor sees every relocation.
+        /// @param capacity  The element count the new storage must hold.
+        void Reserve(usize capacity);
+
         /// @brief Sentinel for an absent sparse entry.
         static constexpr u32 Tombstone = ~0u;
 
@@ -75,8 +86,10 @@ namespace Veng
         vector<u32> m_Sparse;
         /// @brief dense slot → entity
         vector<Entity> m_Dense;
-        /// @brief dense slot → component bytes (Count * Size)
-        vector<std::byte> m_Data;
+        /// @brief dense slot → component bytes, aligned to the type; holds m_Capacity elements.
+        std::byte* m_Data = nullptr;
+        /// @brief The element count m_Data has room for.
+        usize m_Capacity = 0;
         /// @brief dense slot → last sim tick this component was stamped at (parallel to m_Dense).
         ///
         /// Swap-and-popped with m_Dense on Remove so it stays aligned. Zero for a component never
