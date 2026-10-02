@@ -3,7 +3,6 @@
 #include <cstring>
 
 #include <fmt/format.h>
-#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
 #include <Veng/Asset/CookedBlobs.h>
@@ -19,17 +18,31 @@ namespace Veng
             return m;
         }
 
-        mat4 ComposeTrs(const vec3& position, const quat& rotation, const vec3& scale)
+        // a * b for affine matrices (bottom row 0,0,0,1): the terms the bottom row zeroes are
+        // skipped, so the result is exactly the full product's.
+        mat4 AffineMultiply(const mat4& a, const mat4& b)
         {
-            return glm::translate(mat4(1.0f), position) * glm::mat4_cast(rotation) *
-                   glm::scale(mat4(1.0f), scale);
+            const vec4 a0 = a[0];
+            const vec4 a1 = a[1];
+            const vec4 a2 = a[2];
+            return mat4((a0 * b[0].x) + (a1 * b[0].y) + (a2 * b[0].z),
+                        (a0 * b[1].x) + (a1 * b[1].y) + (a2 * b[1].z),
+                        (a0 * b[2].x) + (a1 * b[2].y) + (a2 * b[2].z),
+                        (a0 * b[3].x) + (a1 * b[3].y) + (a2 * b[3].z) + a[3]);
         }
+    }
+
+    mat4 ComposeBoneTransform(const vec3& translation, const quat& rotation, const vec3& scale)
+    {
+        const mat3 basis = glm::mat3_cast(rotation);
+        return mat4(vec4(basis[0] * scale.x, 0.0f), vec4(basis[1] * scale.y, 0.0f),
+                    vec4(basis[2] * scale.z, 0.0f), vec4(translation, 1.0f));
     }
 
     mat4 Skeleton::BindLocalMatrix(const usize bone) const
     {
         const Bone& b = Bones[bone];
-        return ComposeTrs(b.LocalPosition, b.LocalRotation, b.LocalScale);
+        return ComposeBoneTransform(b.LocalPosition, b.LocalRotation, b.LocalScale);
     }
 
     i32 Skeleton::FindBone(const std::string_view name) const
@@ -78,7 +91,7 @@ namespace Veng
         out.resize(Bones.size());
         for (usize i = 0; i < Bones.size(); ++i)
         {
-            out[i] = ComposeTrs(Bones[i].LocalPosition, rotation[i], Bones[i].LocalScale);
+            out[i] = ComposeBoneTransform(Bones[i].LocalPosition, rotation[i], Bones[i].LocalScale);
         }
     }
 
@@ -105,18 +118,27 @@ namespace Veng
 
     void Skeleton::ComputeSkinningMatrices(std::span<const mat4> localPose, vector<mat4>& out) const
     {
+        vector<mat4> model;
+        ComputeSkinningMatrices(localPose, out, model);
+    }
+
+    void Skeleton::ComputeSkinningMatrices(std::span<const mat4> localPose, vector<mat4>& out,
+                                           vector<mat4>& model) const
+    {
         const usize count = Bones.size();
         out.resize(count);
+        model.resize(count);
 
-        // modelBone(b) composes the local poses down the parent chain. Bones are topological,
-        // so a parent's model matrix is always computed before its children's.
-        vector<mat4> model(count);
+        // model[b] is GlobalInverse * modelBone(b): folding GlobalInverse into each root makes it
+        // ride down the chain, so a bone pays one product for its chain and one for its inverse
+        // bind. Bones are topological, so a parent's entry is always written before its children's.
         for (usize i = 0; i < count; ++i)
         {
             const mat4 local = i < localPose.size() ? localPose[i] : BindLocalMatrix(i);
             const i32 parent = Bones[i].Parent;
-            model[i] = parent >= 0 ? model[static_cast<usize>(parent)] * local : local;
-            out[i] = GlobalInverse * model[i] * Bones[i].InverseBind;
+            model[i] = AffineMultiply(
+                parent >= 0 ? model[static_cast<usize>(parent)] : GlobalInverse, local);
+            out[i] = AffineMultiply(model[i], Bones[i].InverseBind);
         }
     }
 

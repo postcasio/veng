@@ -40,6 +40,9 @@ namespace Veng
         vector<Vec3Key> Scale;
     };
 
+    /// @brief The RootMotionBone value of a clip whose root-motion bone has not been computed.
+    inline constexpr i32 RootMotionBoneUnknown = -2;
+
     /// @brief A set of per-bone keyframe tracks animating a skeleton, loaded by AssetId.
     ///
     /// A CPU-only asset (no GPU resource): the animation system samples it against a Skeleton
@@ -50,7 +53,23 @@ namespace Veng
         f32 Duration = 0.0f;
         /// @brief Per-bone animation tracks.
         vector<AnimationChannel> Channels;
+        /// @brief The clip's root-motion bone (FindAnimatedRootBone), computed once at load.
+        ///
+        /// -1 when the clip bakes no translation. A clip built in code rather than loaded holds
+        /// RootMotionBoneUnknown until a caller sets it, and is then scanned on each use.
+        i32 RootMotionBone = RootMotionBoneUnknown;
     };
+
+    /// @brief Returns the topmost bone whose position track varies over the clip.
+    ///
+    /// The lowest bone index among channels whose position keys span more than a small epsilon on
+    /// some axis: bones are topological, so that is the highest varying bone in the hierarchy (in a
+    /// typical rig the hips). Independent of any skeleton, so a loader can cache it on the clip.
+    /// @param animation  The clip to inspect.
+    /// @param boneLimit  Channels targeting a bone index at or past this are ignored.
+    /// @return The bone index, or -1 when no in-range channel's position varies.
+    [[nodiscard]] i32 FindAnimatedRootBone(const Animation& animation,
+                                           usize boneLimit = static_cast<usize>(-1));
 
     /// @brief AssetTypeTrait specialization mapping Animation to AssetTypes::Animation.
     template <>

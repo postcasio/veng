@@ -45,6 +45,17 @@ namespace Veng
         quat Rotation{1.0f, 0.0f, 0.0f, 0.0f};
     };
 
+    /// @brief Composes a bone's local transform from its translation, rotation and scale.
+    ///
+    /// Equal to translate(translation) * mat4(rotation) * scale(scale), written directly: the
+    /// rotation's columns scaled per axis, the translation in column 3, and an affine bottom row.
+    /// @param translation  Local translation in parent space.
+    /// @param rotation     Local rotation in parent space.
+    /// @param scale        Local scale, applied before the rotation.
+    /// @return The bone's local transform.
+    [[nodiscard]] mat4 ComposeBoneTransform(const vec3& translation, const quat& rotation,
+                                            const vec3& scale);
+
     /// @brief A bone hierarchy with inverse-bind matrices, loaded by AssetId.
     ///
     /// A CPU-only asset (no GPU resource): a skinned Mesh references one, and the animation
@@ -122,6 +133,17 @@ namespace Veng
         /// @param localPose  Per-bone local transform matrices, one per bone (size GetBoneCount()).
         /// @param out        Receives GetBoneCount() skinning matrices.
         void ComputeSkinningMatrices(std::span<const mat4> localPose, vector<mat4>& out) const;
+
+        /// @brief Composes the skinning palette into out, using model as caller-held scratch.
+        ///
+        /// The same palette as the two-argument overload, for a caller posing many skeletons a
+        /// frame that keeps one scratch buffer rather than allocating one per call. Every matrix
+        /// involved — local poses, GlobalInverse, inverse binds — is taken to be affine.
+        /// @param localPose  Per-bone local transform matrices (a missing bone takes its bind local).
+        /// @param out        Receives GetBoneCount() skinning matrices.
+        /// @param model      Scratch; resized to GetBoneCount() and overwritten.
+        void ComputeSkinningMatrices(std::span<const mat4> localPose, vector<mat4>& out,
+                                     vector<mat4>& model) const;
 
         /// @brief Composes the skinning palette for the bind pose (every bone at its bind local).
         ///

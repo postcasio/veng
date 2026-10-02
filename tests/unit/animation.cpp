@@ -8,6 +8,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cmath>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -22,6 +23,7 @@
 #include <Veng/Log.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Scene/AnimationBlend.h>
 #include <Veng/Scene/AnimationSystem.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
@@ -655,4 +657,144 @@ TEST_CASE("AnimationSystem composes joint overrides onto an Animator's clip")
     CHECK(ApproxEqual(SkinnedRestPosition(skinning, RigHand),
                       TestSupport::ArmRigRestPosition(RigArm) + vec3(-1.0f, 0.0f, 0.0f)));
     CHECK(IsApproxIdentity(skinning[RigSide]));
+}
+
+TEST_CASE("direct bone composition equals translate times rotate times scale")
+{
+    const vector<JointPose> pose = {
+        {},
+        {.Translation = vec3(1.5f, -2.0f, 0.25f),
+         .Rotation = QuarterTurn(vec3(0, 0, 1)),
+         .Scale = vec3(2.0f, 0.5f, 3.0f)},
+        {.Translation = vec3(-4.0f, 0.0f, 7.0f),
+         .Rotation = glm::angleAxis(glm::radians(37.0f), glm::normalize(vec3(1, 2, 3))),
+         .Scale = vec3(0.1f, 4.0f, 1.0f)},
+        {.Translation = vec3(0.0f, 10.0f, 0.0f),
+         .Rotation = glm::angleAxis(glm::radians(-150.0f), vec3(0, 1, 0)),
+         .Scale = vec3(-1.0f, 1.0f, 2.5f)},
+    };
+
+    // ComposeLocalPose is the same composition, per bone.
+    vector<mat4> local;
+    ComposeLocalPose(pose, local);
+    REQUIRE(local.size() == pose.size());
+
+    f32 worst = 0.0f;
+    for (usize i = 0; i < pose.size(); ++i)
+    {
+        const mat4 expected = glm::translate(mat4(1.0f), pose[i].Translation) *
+                              glm::mat4_cast(pose[i].Rotation) *
+                              glm::scale(mat4(1.0f), pose[i].Scale);
+        const mat4 direct =
+            ComposeBoneTransform(pose[i].Translation, pose[i].Rotation, pose[i].Scale);
+        CHECK(local[i] == direct);
+        for (int col = 0; col < 4; ++col)
+        {
+            for (int row = 0; row < 4; ++row)
+            {
+                worst = std::max(worst, std::abs(direct[col][row] - expected[col][row]));
+            }
+        }
+    }
+    CHECK(worst <= 1e-5f);
+}
+
+TEST_CASE("AnimationSystem poses a settled one-shot clip once and re-poses when its input changes")
+{
+    PosingScene posing;
+    const Entity entity = posing.Spawn();
+    // Already past the clip's end and still playing: the clamped time is the end on every frame.
+    posing.World->Add<Animator>(
+        entity, Animator{.Clip = posing.Assets->Adopt<Animation>(CreateRef<Animation>(ArmClip())),
+                         .Time = 2.0f,
+                         .Loop = false,
+                         .Playing = true});
+
+    // The clip's end pose, from the pure sampling path.
+    const Skeleton rig = TestSupport::MakeArmRig();
+    vector<mat4> endLocal;
+    SampleAnimationPose(rig, ArmClip(), 1.0f, false, endLocal);
+    vector<mat4> endSkinning;
+    rig.ComputeSkinningMatrices(endLocal, endSkinning);
+
+    posing.Tick();
+    REQUIRE(posing.World->Has<SkinnedPose>(entity));
+    CHECK(posing.World->Get<SkinnedPose>(entity).Version == 1);
+    CHECK(ApproxEqual(posing.Skinning(entity)[RigHand], endSkinning[RigHand]));
+
+    for (int frame = 0; frame < 60; ++frame)
+    {
+        posing.Tick();
+    }
+    // The clock kept running; the pose was not recomputed.
+    CHECK(posing.World->Get<Animator>(entity).Time > 2.9f);
+    CHECK(posing.World->Get<SkinnedPose>(entity).Version == 1);
+
+    // Rewinding into the clip changes the sampled time, so the very next frame re-poses.
+    posing.World->Get<Animator>(entity).Time = 0.0f;
+    posing.Tick();
+    CHECK(posing.World->Get<SkinnedPose>(entity).Version == 2);
+    CHECK_FALSE(ApproxEqual(posing.Skinning(entity)[RigHand], endSkinning[RigHand]));
+}
+
+TEST_CASE("AnimationSystem poses a settled state once and re-poses on the frame it is released")
+{
+    PosingScene posing;
+    const Entity entity = posing.Spawn();
+    posing.World->Add<Animator>(entity, Animator{});
+    posing.World->Add<AnimationStateSet>(
+        entity, AnimationStateSet{.States = {AnimationState{.Name = "Deploy",
+                                                            .Clip = posing.Assets->Adopt<Animation>(
+                                                                CreateRef<Animation>(ArmClip())),
+                                                            .Loop = false,
+                                                            .FadeIn = 0.0f}},
+                                  .RequestedState = "Deploy"});
+
+    // A one-second one-shot at 60 Hz has finished well within 90 frames.
+    for (int frame = 0; frame < 90; ++frame)
+    {
+        posing.Tick();
+    }
+    const u64 settled = posing.World->Get<SkinnedPose>(entity).Version;
+    for (int frame = 0; frame < 30; ++frame)
+    {
+        posing.Tick();
+    }
+    CHECK(posing.World->Get<SkinnedPose>(entity).Version == settled);
+
+    posing.World->Get<AnimationStateSet>(entity).RequestedState.clear();
+    posing.Tick();
+    CHECK(posing.World->Get<SkinnedPose>(entity).Version == settled + 1);
+    for (const mat4& skin : posing.Skinning(entity))
+    {
+        CHECK(IsApproxIdentity(skin));
+    }
+}
+
+TEST_CASE("AnimationSystem re-poses joint overrides only when a rotation's value changes")
+{
+    PosingScene posing;
+    const Entity entity = posing.Spawn();
+    const quat turn = QuarterTurn(vec3(0, 0, 1));
+    posing.World->Add<JointOverrides>(
+        entity, JointOverrides{.Entries = {{.Joint = "Arm", .LocalRotation = turn}}});
+
+    for (int frame = 0; frame < 30; ++frame)
+    {
+        posing.Tick();
+    }
+    CHECK(posing.World->Get<SkinnedPose>(entity).Version == 1);
+
+    // Rewriting the identical value is not a change.
+    posing.World->Get<JointOverrides>(entity).Entries[0].LocalRotation = turn;
+    posing.Tick();
+    CHECK(posing.World->Get<SkinnedPose>(entity).Version == 1);
+
+    posing.World->Get<JointOverrides>(entity).Entries[0].LocalRotation = quat(1, 0, 0, 0);
+    posing.Tick();
+    CHECK(posing.World->Get<SkinnedPose>(entity).Version == 2);
+    for (const mat4& skin : posing.Skinning(entity))
+    {
+        CHECK(IsApproxIdentity(skin));
+    }
 }

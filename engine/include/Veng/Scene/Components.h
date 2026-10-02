@@ -322,13 +322,21 @@ namespace Veng
 
     /// @brief Runtime-only skinning palette for a skinned-mesh entity.
     ///
-    /// Holds the bone matrices the animation system computes each tick and the renderer
-    /// uploads into the GPU skinning palette. Never serialized (a derived, per-frame product);
-    /// added automatically to a skinned entity by the animation system.
+    /// Holds the bone matrices the animation system computes and the renderer uploads into the GPU
+    /// skinning palette. Never serialized (a derived product); added automatically to a skinned
+    /// entity by the animation system. The system recomputes Skinning only on a frame whose pose
+    /// inputs differ from the ones it was last computed from, and bumps Version when it does, so a
+    /// reader comparing Version against the value it last saw knows whether the palette moved.
     struct SkinnedPose
     {
         /// @brief Per-bone skinning matrices (GlobalInverse * modelBone * InverseBind).
         vector<mat4> Skinning;
+        /// @brief Incremented each time the animation system rewrites Skinning; 0 before the first.
+        u64 Version = 0;
+        /// @brief The animation system's encoding of the inputs Skinning was computed from.
+        ///
+        /// Opaque to every other reader. Clearing it forces the next update to recompute.
+        vector<u64> InputKey;
     };
 
     /// @brief One procedural joint rotation: a joint named as authored, and the local turn it takes.
@@ -363,7 +371,9 @@ namespace Veng
     /// beside it are untouched. Entries are applied in order, so two naming one joint compose.
     /// Names are resolved against the skeleton once and cached (Resolved); the cache re-resolves
     /// only when the skeleton or the set of names changes, so rewriting LocalRotation every frame
-    /// costs no lookup. A name the skeleton lacks is ignored, with one warning per resolution.
+    /// costs no lookup. The pose is recomputed only when a resolved rotation's value differs from
+    /// the one last posed, so leaving the entries alone and rewriting them with identical values
+    /// are equally free. A name the skeleton lacks is ignored, with one warning per resolution.
     /// Clearing Entries returns a clip-less entity to its bind pose; removing the component leaves
     /// its last SkinnedPose standing. There are no limits and no blending: the caller clamps.
     struct JointOverrides

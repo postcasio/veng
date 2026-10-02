@@ -115,6 +115,7 @@ namespace Veng
             }
         }
 
+        animation->RootMotionBone = FindAnimatedRootBone(*animation);
         return Detail::LoadJob{.Resource = Detail::RefAny(animation)};
     }
 }

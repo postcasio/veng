@@ -185,10 +185,13 @@ extern "C"
 /// from EnterScope. A module constructs the ApplicationInfo it hands back, reads a world through
 /// inline accessors, and instantiates the scope macros, so a stale module lays the info struct out
 /// short and calls the scope entry point under its old signature.
+/// Version 42 grows Animation with its cached root-motion bone and SkinnedPose with its change
+/// counter and input key. A module that builds an Animation in code, or reads a SkinnedPose, lays
+/// the struct out short, so the engine would read the new members past its end.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 41u
+#define VENG_MODULE_ABI_VERSION 42u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

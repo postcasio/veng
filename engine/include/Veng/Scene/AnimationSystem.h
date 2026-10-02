@@ -181,9 +181,22 @@ namespace Veng
     /// the entity Transform (Presentation), or publishes it as a RootMotionDelta (Drive) for the
     /// Sim-phase RootMotionDriveSystem to consume. A blend or state pose strips the root translation
     /// (the character controller owns position) and publishes no delta.
+    ///
+    /// A pose is recomputed only when its inputs change. Each frame the system reduces an entity's
+    /// pose to its inputs — the skeleton, each contributing clip with its sample time after looping
+    /// or clamping, the blend and crossfade weights, the stripped root bone, and the joint override
+    /// rotations — and samples and skins only when they differ from the ones in the entity's
+    /// SkinnedPose, bumping SkinnedPose::Version when it does. Clocks advance and root motion is
+    /// extracted every frame regardless; a finished one-shot clip clamps to its end, so it keys the
+    /// same on every frame after and is posed once.
     class AnimationSystem final : public SceneSystem
     {
     public:
+        /// @brief Constructs the system with empty scratch.
+        AnimationSystem();
+        /// @brief Destroys the system and its scratch.
+        ~AnimationSystem() override;
+
         /// @brief Returns Phase::View — posing is presentation derived after the Sim phase.
         [[nodiscard]] Phase GetPhase() const override { return Phase::View; }
 
@@ -192,6 +205,13 @@ namespace Veng
         /// @param delta    Time in seconds since the previous tick.
         /// @param context  Per-tick services (unused).
         void OnUpdate(Scene& scene, f32 delta, const SystemContext& context) override;
+
+    private:
+        /// @brief The per-update scratch buffers posing reuses; defined beside the system.
+        struct Workspace;
+
+        /// @brief Scratch held across updates, so posing allocates nothing in the steady state.
+        Unique<Workspace> m_Workspace;
     };
 }
 

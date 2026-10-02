@@ -339,7 +339,11 @@ level from the resolve seam's global facet (`GraphicsGlobalFacet::TextureQuality
   component (`AssetHandle<Animation>` + time/speed/loop/playing) plays a clip; the View-phase
   **`AnimationSystem`** samples it against the mesh's `Skeleton` each tick into a transient
   **`SkinnedPose`** component (the bone palette, `Skeleton::ComputeSkinningMatrices` =
-  `GlobalInverse · modelBone · inverseBind`). The `SceneRenderer` splits its g-buffer draw plan
+  `GlobalInverse · modelBone · inverseBind`). The system re-samples and re-skins an entity only
+  when its pose inputs change — the clips with their looped-or-clamped sample times, the blend and
+  crossfade weights, the joint override rotations — so a finished one-shot or an unmoved rig is
+  posed once; `SkinnedPose::Version` counts the rewrites. A loaded `Animation` carries its
+  root-motion bone (`RootMotionBone`), found once at load. The `SceneRenderer` splits its g-buffer draw plan
   into a static path (the existing GPU-driven-cull pipeline) and a **skinned path** drawn
   CPU-direct. The skinned path's pipeline is a **per-Surface-material sibling of the static
   g-buffer pipeline** — the core `surface_skinned.vert` (4-influence linear-blend skinning) paired
