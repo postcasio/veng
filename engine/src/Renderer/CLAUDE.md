@@ -1322,7 +1322,7 @@ and face culling** paired with `gbuffer_shading_override.frag`: a constant albed
 vertex normal, a mid roughness, the motion vector, and no material block or texture read. So the
 pass binds the same sets, records the same draws over the same groups and runs the same vertex work
 and raster, and the "Scene GBuffer" time with the override on is the pass without material shading;
-the difference is what shading costs. Lighting and everything after it run as usual over the
+the difference is what shading costs. Under a profiling build the application samples the override, and `LightTileCulling`, as 0/1 counters (`Render/GBufferShadingOverride`, `Render/LightTileCulling`), so one capture that flips either partway splits into its two halves over the same view. Lighting and everything after it run as usual over the
 untextured surfaces.
 
 - **One override pipeline per material and layout**, not one for the whole pass, because one

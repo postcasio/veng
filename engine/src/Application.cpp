@@ -3154,6 +3154,13 @@ namespace Veng
         VE_PROFILE_COUNTER("Render/ShadowViews",
                            static_cast<f64>(renderer.GetLastShadowViewCount()));
 
+        // The cost-comparison toggles, as 0/1 series, so a capture that flips one partway splits
+        // into its two halves frame by frame rather than needing a second capture of another view.
+        const Renderer::SceneRendererSettings& settings = renderer.GetSettings();
+        VE_PROFILE_COUNTER("Render/GBufferShadingOverride",
+                           settings.GBufferShadingOverride ? 1.0 : 0.0);
+        VE_PROFILE_COUNTER("Render/LightTileCulling", settings.LightTileCulling ? 1.0 : 0.0);
+
         const Renderer::PointFieldStats pointFields = renderer.GetPointFieldStats();
         VE_PROFILE_COUNTER("Render/PointFieldCells", static_cast<f64>(pointFields.CellsInFrustum));
         VE_PROFILE_COUNTER("Render/PointFieldSprites", static_cast<f64>(pointFields.SpritePoints));
