@@ -249,6 +249,15 @@ namespace Veng
         void
         SetStopContextFactory(function<optional<SystemContext>(WorldInstanceId, Scene&)> factory);
 
+        /// @brief Sets the hook told a world's scene is about to be destroyed.
+        ///
+        /// Called with the scene while it is still live, once per scene the runner destroys: a world
+        /// dropped by CloseWorld (after its OnStop), or a placeholder scene InstallScene replaces. A
+        /// presentation layer that retains a raw scene pointer across frames uses it to drop that
+        /// pointer before it dangles.
+        /// @param hook  The retiring hook, or an empty function to clear it.
+        void SetSceneRetiringHook(function<void(const Scene&)> hook);
+
         /// @brief Closes a world, stopping its simulation and dropping it; the id then resolves to nothing.
         ///
         /// Outside Tick the close is immediate. Issued from inside Tick — a system closing its own or
@@ -415,6 +424,9 @@ namespace Veng
 
         /// @brief Builds a started world's stop context at CloseWorld; unset leaves OnStop unrun.
         function<optional<SystemContext>(WorldInstanceId, Scene&)> m_StopContextFactory;
+
+        /// @brief Told a scene is about to be destroyed; unset tells no one.
+        function<void(const Scene&)> m_SceneRetiringHook;
 
         /// @brief Worlds a close issued inside Tick queued, in issue order; drained after the walk.
         vector<WorldInstanceId> m_PendingCloses;

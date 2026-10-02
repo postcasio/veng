@@ -315,6 +315,19 @@ namespace Veng
                 return MakeWorldContext(world);
             });
 
+        // A viewport retains the scene it last presented until its next push, which runs after the
+        // tick, so a world closed in between (a departure, a reap, a drained request) would leave the
+        // pointer dangling for the frame-top pointer routing and the tick's view lookup. Drop it
+        // from every registered viewport before the scene is destroyed.
+        m_WorldRunner->SetSceneRetiringHook(
+            [this](const Scene& scene)
+            {
+                for (Renderer::Viewport* viewport : m_Compositor.GetViewports())
+                {
+                    viewport->ReleasePresentedScene(scene);
+                }
+            });
+
         // ImGui needs a window (GLFW backend), so it's only available windowed.
         if (!m_Info.Headless && m_Info.ImGui)
         {

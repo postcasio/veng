@@ -211,10 +211,12 @@ extern "C"
 /// public header so a component access inlines into the calling unit. A module registers types
 /// and reads components through those inline paths, so a stale module lays all three out at the
 /// old layout and looks its pools up in a table the host no longer has.
+/// Version 48 grows WorldRunner with its scene-retiring hook. A module reaches the runner through
+/// the Application it subclasses, so a stale module lays the runner out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 47u
+#define VENG_MODULE_ABI_VERSION 48u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

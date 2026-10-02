@@ -137,6 +137,11 @@ namespace Veng
         m_StopContextFactory = std::move(factory);
     }
 
+    void WorldRunner::SetSceneRetiringHook(function<void(const Scene&)> hook)
+    {
+        m_SceneRetiringHook = std::move(hook);
+    }
+
     void WorldRunner::CloseWorld(const WorldInstanceId world)
     {
         // Inside a tick the walk owns m_Worlds, so the close is queued rather than erasing under it.
@@ -202,6 +207,11 @@ namespace Veng
             }
         }
 
+        if (m_SceneRetiringHook)
+        {
+            m_SceneRetiringHook(scene);
+        }
+
         // Erase by id rather than through the iterator found above: a system's OnStop may close a
         // world itself, and an immediate close of another world moves this one's slot out from under
         // a held iterator (one issued inside a tick is queued instead, and cannot).
@@ -250,6 +260,10 @@ namespace Veng
     {
         World* resolved = ResolveWorld(world);
         VE_ASSERT(resolved != nullptr, "WorldRunner::InstallScene: unminted world");
+        if (resolved->OwnedScene != nullptr && m_SceneRetiringHook)
+        {
+            m_SceneRetiringHook(*resolved->OwnedScene);
+        }
         resolved->OwnedScene = std::move(scene);
         resolved->LiveScene = resolved->OwnedScene.get();
         return *resolved->LiveScene;

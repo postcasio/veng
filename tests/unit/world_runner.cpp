@@ -10,6 +10,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <iterator>
 #include <map>
 #include <utility>
@@ -926,6 +927,61 @@ TEST_CASE("A close issued from a system's OnStop is drained in its turn")
     CHECK(runner.ResolveWorld(first) == nullptr);
     CHECK(runner.ResolveWorld(cascaded) == nullptr);
     CHECK_FALSE(runner.IsTicking());
+}
+
+TEST_CASE("The scene-retiring hook names each scene the runner destroys, while its world resolves")
+{
+    CloseProbe::Reset();
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<CloseProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+
+    ContextStorage storage;
+    CloseProbe::Runner = &runner;
+
+    // Each call records the scene and whether its world still resolved: a hook that ran after the
+    // erase would be handed a destroyed scene.
+    vector<std::pair<const Scene*, bool>> retired;
+    WorldInstanceId expected;
+    runner.SetSceneRetiringHook(
+        [&](const Scene& scene)
+        {
+            const World* world = runner.ResolveWorld(expected);
+            retired.emplace_back(&scene, world != nullptr && &world->GetScene() == &scene);
+        });
+
+    const WorldInstanceId immediate = runner.OpenWorld(EmptyWorld(storage));
+    const WorldInstanceId queued = runner.OpenWorld(WorldOf(storage, {SystemIdOf<CloseProbe>()}));
+    const WorldInstanceId installed = runner.OpenWorld(EmptyWorld(storage));
+    const WorldInstanceId peer = runner.OpenWorld(EmptyWorld(storage));
+    const Scene* immediateScene = &runner.ResolveWorld(immediate)->GetScene();
+    const Scene* queuedScene = &runner.ResolveWorld(queued)->GetScene();
+    const Scene* placeholder = &runner.ResolveWorld(installed)->GetScene();
+
+    // A close outside a tick retires the scene at the call.
+    expected = immediate;
+    runner.CloseWorld(immediate);
+    REQUIRE(retired.size() == 1);
+    CHECK(retired[0] == std::pair{immediateScene, true});
+
+    // A close a system issues inside the tick retires the scene at the drain, once.
+    expected = queued;
+    CloseProbe::Target[queuedScene] = queued;
+    runner.Tick(OneStep(storage));
+    REQUIRE(retired.size() == 2);
+    CHECK(retired[1] == std::pair{queuedScene, true});
+
+    // Installing over a placeholder retires the placeholder; the installed scene is not retired.
+    expected = installed;
+    runner.InstallScene(installed, Scene::Create(types));
+    REQUIRE(retired.size() == 3);
+    CHECK(retired[2] == std::pair{placeholder, true});
+
+    // The peer was never named.
+    CHECK(std::ranges::none_of(retired, [&](const auto& entry)
+                               { return entry.first == &runner.ResolveWorld(peer)->GetScene(); }));
 }
 
 TEST_CASE("A close issued outside a tick applies before the call returns")

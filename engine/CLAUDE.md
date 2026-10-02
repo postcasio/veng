@@ -357,6 +357,13 @@ live world when it returns — but the new world first ticks the next frame. Nei
 viewport's *render* walk, where a `GuiDriver` runs and `IsTicking()` is false: a driver wanting a
 world opened or closed stamps a request component a system acts on from its tick.
 
+**A closing world's scene leaves every viewport before it is destroyed.** A viewport retains the
+scene it last presented until its next view push, and the push runs after the tick, so a world
+closed at the top of a frame (a departure, a reap, a drained request) would otherwise leave
+`GetPresentedScene` dangling for the frame-top pointer routing. The runner's scene-retiring hook
+(`SetSceneRetiringHook`, fired by a close and by `InstallScene`'s replacement) lets the
+`Application` call `Viewport::ReleasePresentedScene` on every registered viewport first.
+
 The world drive is an accumulator: each world's Sim phase steps at its own fixed `SimTickRate`
 (`GameWorldInfo`, default 60 Hz) with a monotonic tick, its View phase runs once per frame, and the
 render gather blends transforms between the last two ticks. **A frame's steps are bounded twice**:
@@ -491,7 +498,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 47** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 48** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the

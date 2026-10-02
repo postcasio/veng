@@ -153,6 +153,9 @@ namespace
         vector<PresentedCall> Presented;
         vector<std::pair<usize, WorldInstanceId>> Abandoned;
         vector<DepartedCall> Departed;
+        // Closes each departed world from inside its departure hook, as a game discarding the world
+        // it travelled away from does.
+        bool CloseOnDepart = false;
         // Every presented ('P') and departed ('D') call in the order the hooks ran.
         vector<std::pair<char, WorldInstanceId>> Hooks;
 
@@ -183,6 +186,10 @@ namespace
                 .TickAtCall = world.Clock.GetTick(),
                 .PresenceAtCall = directory != nullptr ? directory->PresenceOf(world.Id) : 0,
             });
+            if (CloseOnDepart)
+            {
+                GetWorldRunner().CloseWorld(world.Id);
+            }
         }
 
         void OnInitialize() override
@@ -726,6 +733,63 @@ TEST_CASE("A world the viewport leaves departs once, untouched by a tick, after 
     };
 
     app.Frames = 6;
+    app.Run({});
+}
+
+TEST_CASE("A world closed before the next view push leaves no viewport naming its scene")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    MvApp app(HeadlessInfo({ManagedViewportInfo{}}), types, systems);
+    app.CloseOnDepart = true;
+
+    MvApp::WorldSeat a{};
+    MvApp::WorldSeat b{};
+    MvApp::WorldSeat unrelated{};
+    int departFrame = -1;
+
+    app.InitFn = [&](MvApp& app)
+    {
+        a = app.OpenReadyCameraWorld(vec3(0.0f, 0.0f, 5.0f));
+        b = app.OpenReadyCameraWorld(vec3(20.0f, 3.0f, 5.0f));
+        unrelated = app.OpenCameraWorld(vec3(-20.0f, 0.0f, 5.0f));
+        app.GetManagedViewports().SetViewportWorld(0, a.World);
+    };
+
+    app.StepFn = [&](MvApp& app, int frame)
+    {
+        const Renderer::Viewport* v = app.GetManagedViewports().Get(0);
+        REQUIRE(v != nullptr);
+
+        if (frame == 1)
+        {
+            // Closing a world the viewport does not present leaves its retained scene alone.
+            REQUIRE(v->GetPresentedScene() == a.Scene);
+            app.GetWorldRunner().CloseWorld(unrelated.World);
+            CHECK(v->GetPresentedScene() == a.Scene);
+            app.RebindManagedViewport(0, b.World);
+        }
+        else if (departFrame < 0 && !app.Departed.empty())
+        {
+            // The departure closed A at this frame's top, after the last push named A's scene and
+            // before this frame's push. Until that push the viewport names no scene, rather than
+            // A's destroyed one that the frame-top pointer routing would read.
+            departFrame = frame;
+            REQUIRE(app.Departed[0].World == a.World);
+            CHECK(app.GetWorldRunner().ResolveWorld(a.World) == nullptr);
+            CHECK(v->GetPresentedScene() == nullptr);
+        }
+        else if (frame == 5)
+        {
+            CHECK(departFrame > 1);
+            CHECK(app.Departed.size() == 1);
+            CHECK(v->GetPresentedScene() == b.Scene);
+        }
+    };
+
+    app.Frames = 7;
     app.Run({});
 }
 

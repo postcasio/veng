@@ -400,6 +400,17 @@ namespace Veng::Renderer
         /// @param state  The scene, camera, and per-frame tone/bloom knobs to render with.
         void SetViewState(const ViewState& state);
 
+        /// @brief Drops the retained scene when it is the given one; a no-op otherwise.
+        ///
+        /// The retained ViewState outlives the frame it was pushed in, but not the scene it names: a
+        /// scene destroyed between two pushes would leave GetPresentedScene dangling for whatever
+        /// reads it before the next push. The scene's owner calls this before destroying it. The
+        /// viewport then presents no scene, exactly as a pushed null-scene ViewState leaves it, until
+        /// its owner pushes again. It is not a fresh push, so an on-demand viewport does not render
+        /// for it.
+        /// @param scene  The scene about to be destroyed.
+        void ReleasePresentedScene(const Scene& scene);
+
         /// @brief Reconfigures the owned renderer's topology and sizing knobs.
         ///
         /// Invalidates GetOutput()/GetOutputHandle() exactly as SceneRenderer::Configure does;
@@ -900,6 +911,9 @@ namespace Veng::Renderer
         /// Called whenever either half moves — a document attach or detach, and the per-frame
         /// pre-bloom drive — so the list an input layer walks is never a frame behind the stack.
         void RebuildInputDocuments();
+
+        /// @brief Invalidates what was resolved against the retained scene, ahead of that scene changing.
+        void OnPresentedSceneChanging();
 
         /// @brief Drives every GuiSurface in the bound scene into its HDR target ahead of the render.
         ///

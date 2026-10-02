@@ -434,17 +434,32 @@ namespace Veng::Renderer
         // the old scene bails rather than landing an id in a swapped/cleared one.
         if (state.World != m_ViewState.World)
         {
-            ++m_SceneEpoch;
-
-            // A pre-bloom overlay's document is off the layer stack, so nothing detaches it when the
-            // scene it lives in is closed or swapped out: drop the departed scene's routables here
-            // rather than route a pointer into a document whose owner may already be gone.
-            m_HdrInputDocuments.clear();
-            RebuildInputDocuments();
+            OnPresentedSceneChanging();
         }
         m_ViewState = state;
         m_HasViewState = true;
         m_ViewStateFresh = true;
+    }
+
+    void Viewport::ReleasePresentedScene(const Scene& scene)
+    {
+        if (m_ViewState.World != &scene)
+        {
+            return;
+        }
+        OnPresentedSceneChanging();
+        m_ViewState.World = nullptr;
+    }
+
+    void Viewport::OnPresentedSceneChanging()
+    {
+        ++m_SceneEpoch;
+
+        // A pre-bloom overlay's document is off the layer stack, so nothing detaches it when the
+        // scene it lives in is closed or swapped out: drop the departed scene's routables here
+        // rather than route a pointer into a document whose owner may already be gone.
+        m_HdrInputDocuments.clear();
+        RebuildInputDocuments();
     }
 
     void Viewport::Configure(const SceneRendererSettings& settings)
