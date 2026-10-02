@@ -110,8 +110,10 @@ if command -v clang-tidy >/dev/null 2>&1 && [ -n "$staged_tus" ]; then
         tidy_finding_lines "$tidy_out" >&2
         exit 1
     fi
+elif [ -z "$staged_tus" ]; then
+    echo "pre-commit: no staged .cpp/.cc, skipping tidy check." >&2
 else
-    echo "pre-commit: clang-tidy not found, or no staged .cpp/.cc, skipping tidy check." >&2
+    echo "pre-commit: clang-tidy not found on PATH, skipping tidy check." >&2
 fi
 
 exit 0
