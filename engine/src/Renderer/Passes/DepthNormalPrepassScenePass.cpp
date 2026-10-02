@@ -4,8 +4,6 @@
 
 #include <span>
 
-#include <glm/gtc/matrix_inverse.hpp>
-
 #include <Veng/Assert.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
@@ -67,12 +65,11 @@ namespace Veng::Renderer
             u32 PaletteBase;
         };
 
-        // The world normal matrix: the inverse-transpose of the world upper 3x3, so a non-uniform
-        // scale still yields a correct world normal. Returned as three column vectors laid out for
-        // the push block (the shader reconstructs the transform from them).
-        void WorldNormalColumns(const mat4& world, vec4& c0, vec4& c1, vec4& c2)
+        // The world normal matrix the gather computed (the inverse-transpose of the world upper
+        // 3x3, correct under non-uniform scale), as three column vectors laid out for the push
+        // block (the shader reconstructs the transform from them).
+        void WorldNormalColumns(const mat3& normalMatrix, vec4& c0, vec4& c1, vec4& c2)
         {
-            const mat3 normalMatrix = glm::inverseTranspose(mat3(world));
             c0 = vec4(normalMatrix[0], 0.0f);
             c1 = vec4(normalMatrix[1], 0.0f);
             c2 = vec4(normalMatrix[2], 0.0f);
@@ -304,8 +301,8 @@ namespace Veng::Renderer
                         if (lastPushed != &item)
                         {
                             DepthNormalPushConstants push{.MVP = viewProj * item.World};
-                            WorldNormalColumns(item.World, push.NormalColumn0, push.NormalColumn1,
-                                               push.NormalColumn2);
+                            WorldNormalColumns(item.NormalMatrix, push.NormalColumn0,
+                                               push.NormalColumn1, push.NormalColumn2);
                             cmd.PushConstants(push);
                             lastPushed = &item;
                         }
@@ -317,11 +314,7 @@ namespace Veng::Renderer
                     if (view.SkinningPalette != nullptr && view.SkinnedPaletteBases != nullptr)
                     {
                         cmd.BindPipeline(m_SkinnedPipeline);
-                        cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                            .Sets = {view.SkinningPalette},
-                            .FirstSet = 3,
-                            .PipelineBindPoint = PipelineBindPoint::Graphics,
-                        });
+                        cmd.BindDescriptorSets({view.SkinningPalette.get()}, 3);
                         const Mesh* lastSkinned = nullptr;
                         for (const u32 id : m_CullScratch)
                         {
@@ -338,9 +331,8 @@ namespace Veng::Renderer
                             }
                             const SubMesh& subMesh = mesh.GetSubMeshes()[c.SubMeshIndex];
 
-                            const auto baseIt =
-                                view.SkinnedPaletteBases->find(PackEntity(item.Owner));
-                            if (baseIt == view.SkinnedPaletteBases->end())
+                            const u32* paletteBase = view.SkinnedPaletteBases->Find(item.Owner);
+                            if (paletteBase == nullptr)
                             {
                                 continue;
                             }
@@ -352,9 +344,9 @@ namespace Veng::Renderer
                                 lastSkinned = &mesh;
                             }
                             DepthNormalSkinnedPushConstants push{.MVP = viewProj * item.World};
-                            WorldNormalColumns(item.World, push.NormalColumn0, push.NormalColumn1,
-                                               push.NormalColumn2);
-                            push.PaletteBase = baseIt->second;
+                            WorldNormalColumns(item.NormalMatrix, push.NormalColumn0,
+                                               push.NormalColumn1, push.NormalColumn2);
+                            push.PaletteBase = *paletteBase;
                             cmd.PushConstants(push);
                             cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
                         }

@@ -3084,6 +3084,12 @@ namespace Veng
     void Application::SampleRenderCounters()
     {
 #if defined(VE_PROFILE) && VE_PROFILE
+        // The draw commands the frame recorded through CommandBuffer so far — captures, viewports
+        // and the composite — which is what batching is measured by.
+        VE_PROFILE_COUNTER(
+            "Render/DrawCalls",
+            static_cast<f64>(m_RenderContext.GetCurrentCommandBuffer().GetDrawCallCount()));
+
         if (m_ManagedViewports == nullptr || m_ManagedViewports->GetCount() == 0)
         {
             return;

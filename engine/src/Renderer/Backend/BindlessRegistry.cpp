@@ -926,11 +926,7 @@ namespace Veng::Renderer
 
     void BindlessRegistry::Bind(CommandBuffer& cmd, PipelineBindPoint bindPoint) const
     {
-        cmd.BindDescriptorSets({
-            .Sets = {m_Set, m_VolumeSet, m_CubeSet},
-            .FirstSet = 0,
-            .PipelineBindPoint = bindPoint,
-        });
+        cmd.BindDescriptorSets({m_Set.get(), m_VolumeSet.get(), m_CubeSet.get()}, 0, bindPoint);
     }
 
     u32 BindlessRegistry::GetCurrentFrameBase() const

@@ -266,6 +266,39 @@ namespace Veng
         }
     }
 
+    void BVH::QueryBits(const Frustum& frustum, const std::span<u64> bits) const
+    {
+        if (m_Root == NullNode)
+        {
+            return;
+        }
+
+        i32 stack[64];
+        i32 top = 0;
+        stack[top++] = m_Root;
+
+        while (top > 0)
+        {
+            const Node& node = m_Nodes[stack[--top]];
+            if (!Intersects(frustum, node.Box))
+            {
+                continue;
+            }
+
+            if (node.IsLeaf())
+            {
+                VE_ASSERT(node.Id / 64 < bits.size(), "BVH::QueryBits: leaf {} past the bit span",
+                          node.Id);
+                bits[node.Id / 64] |= u64{1} << (node.Id % 64);
+            }
+            else
+            {
+                stack[top++] = node.Child1;
+                stack[top++] = node.Child2;
+            }
+        }
+    }
+
     i32 BVH::GetHeight() const
     {
         if (m_Root == NullNode)

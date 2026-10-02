@@ -1665,7 +1665,8 @@ namespace Veng
         /// @brief Samples the per-frame profiler counters (task pool, net telemetry) once per frame.
         void SampleFrameCounters();
 
-        /// @brief Samples the renderer's cull-funnel and point-field counters at the render-block end.
+        /// @brief Samples the frame's draw-call count and the renderer's cull-funnel and point-field
+        ///        counters at the render-block end.
         void SampleRenderCounters();
 
         /// @brief Lifts the last completed frame's GPU pass timings onto the virtual GPU track.

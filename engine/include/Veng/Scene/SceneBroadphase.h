@@ -80,7 +80,9 @@ namespace Veng
         /// @brief Appends per-submesh candidate ids visible to frustum, in ascending order.
         ///
         /// Each id indexes GetSubMeshCandidates(). `out` is the caller's reused scratch,
-        /// cleared by the caller; this appends.
+        /// cleared by the caller; this appends. The order comes from marking survivors in a
+        /// bitset over the candidate ids and walking it, not from a sort. Not safe to call
+        /// concurrently on one broadphase: the bitset is the broadphase's reused scratch.
         void Cull(const Frustum& frustum, vector<u32>& out) const;
 
         /// @brief Returns the union of all live candidates' world bounds.
@@ -130,6 +132,8 @@ namespace Veng
         vector<AABB> m_LeafBoxes;
         /// @brief Reused per rebuild: tight box + candidate index per leaf.
         vector<BVH::Leaf> m_LeafScratch;
+        /// @brief Reused per Cull: one survivor bit per submesh candidate.
+        mutable vector<u64> m_CullBits;
         /// @brief (Transform, MeshRenderer) entities whose mesh is not yet resident.
         vector<Entity> m_Pending;
         /// @brief World-space union of all gathered candidate bounds.

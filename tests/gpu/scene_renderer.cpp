@@ -5560,6 +5560,120 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// Instanced batching. The static opaque survivors are ordered by (pipeline, mesh, submesh) before
+// their slots are claimed, so every instance of one mesh lands in one contiguous run and records as
+// a single instanced DrawIndexed whose instances each read their own DrawData record. Two
+// properties pin that: the g-buffer pass's draw-command count does not grow with the number of
+// instances (counted through the command buffer's own counter), and each instance still renders
+// at its own transform — two columns of cubes leave both columns covered and the gap between them
+// clear, which a run drawn through one shared transform could not.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: instances of one mesh record one instanced draw, each at its "
+                  "own transform")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_instanced_runs.vengpack");
+
+    const AssetResult<AssetHandle<MaterialInstance>> brick =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(brick.has_value());
+    REQUIRE(brick->IsLoaded());
+
+    constexpr uvec2 extent{64, 64};
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 6.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    // Albedo terminates after the g-buffer, so the frame's draws are the g-buffer's plus one blit.
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Albedo},
+    });
+
+    const Ref<Mesh> cube = Mesh::BuildSync(Context, Primitives::Cube(0.5f, *brick), "Run Cube");
+    const AssetHandle<Mesh> cubeHandle = assets.Adopt(cube);
+    const Unique<Scene> scene = Scene::Create(Types);
+    auto AddCube = [&](const vec3 position)
+    {
+        const Entity entity = scene->CreateEntity();
+        scene->Add<Transform>(entity).Position = position;
+        scene->Add<MeshRenderer>(entity).Mesh = cubeHandle;
+    };
+
+    // The draw commands one Execute records, read off the command buffer's counter.
+    auto RenderCountingDraws = [&]() -> u32
+    {
+        u32 draws = 0;
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                const u32 before = cmd.GetDrawCallCount();
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+                draws = cmd.GetDrawCallCount() - before;
+            });
+        return draws;
+    };
+
+    AddCube(vec3(-1.2f, 0.0f, 0.0f));
+    const u32 singleDraws = RenderCountingDraws();
+    REQUIRE(renderer->GetLastDrawnCount() == 1);
+
+    // Two columns of five, the centre column left empty; gather order alternates the columns.
+    for (const f32 y : {-1.6f, -0.8f, 0.8f, 1.6f})
+    {
+        AddCube(vec3(1.2f, y, 0.0f));
+        AddCube(vec3(-1.2f, y, 0.0f));
+    }
+    AddCube(vec3(1.2f, 0.0f, 0.0f));
+    constexpr u32 Instances = 10;
+
+    const u32 crowdDraws = RenderCountingDraws();
+    REQUIRE(renderer->GetLastDrawnCount() == Instances);
+    CHECK(crowdDraws == singleDraws);
+
+    // Each instance at its own transform: both columns are covered, the gap between them is not.
+    const vector<u8> pixels = renderer->GetOutput()->GetImage()->Download();
+    REQUIRE(pixels.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+    u32 left = 0;
+    u32 right = 0;
+    u32 middle = 0;
+    for (u32 y = 0; y < extent.y; ++y)
+    {
+        for (u32 x = 0; x < extent.x; ++x)
+        {
+            if (DecodeTexel(pixels, extent.x, x, y).r < 0.3f)
+            {
+                continue;
+            }
+            if (x < 24)
+            {
+                ++left;
+            }
+            else if (x >= 40)
+            {
+                ++right;
+            }
+            else
+            {
+                ++middle;
+            }
+        }
+    }
+    CHECK(left > 0);
+    CHECK(right > 0);
+    CHECK(middle == 0);
+    // Five cubes a side, mirrored across the view axis: the columns cover alike.
+    CHECK(left == doctest::Approx(right).epsilon(0.2));
+
+    std::filesystem::remove(outArchive);
+}
+
 // The skinned g-buffer regression. A skinned mesh's color pass draws through a dedicated
 // pipeline variant — the core skinned surface vertex stage (surface_skinned.vert) paired with
 // the material's fragment, a three-set layout carrying the per-instance skinning palette at set

@@ -321,11 +321,7 @@ namespace Veng::Renderer
                         if (view.SkinningPalette != nullptr && view.SkinnedPaletteBases != nullptr)
                         {
                             cmd.BindPipeline(m_SkinnedPipeline);
-                            cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                                .Sets = {view.SkinningPalette},
-                                .FirstSet = 3,
-                                .PipelineBindPoint = PipelineBindPoint::Graphics,
-                            });
+                            cmd.BindDescriptorSets({view.SkinningPalette.get()}, 3);
                             const Mesh* lastSkinned = nullptr;
                             for (const u32 id : m_CullScratch)
                             {
@@ -347,9 +343,8 @@ namespace Veng::Renderer
                                 }
                                 const SubMesh& subMesh = mesh.GetSubMeshes()[c.SubMeshIndex];
 
-                                const auto baseIt =
-                                    view.SkinnedPaletteBases->find(PackEntity(item.Owner));
-                                if (baseIt == view.SkinnedPaletteBases->end())
+                                const u32* paletteBase = view.SkinnedPaletteBases->Find(item.Owner);
+                                if (paletteBase == nullptr)
                                 {
                                     continue;
                                 }
@@ -362,7 +357,7 @@ namespace Veng::Renderer
                                 }
                                 cmd.PushConstants(ShadowSkinnedPushConstants{
                                     .MVP = lightViewProj * item.World,
-                                    .PaletteBase = baseIt->second,
+                                    .PaletteBase = *paletteBase,
                                 });
                                 cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
                             }

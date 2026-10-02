@@ -180,6 +180,12 @@ namespace Veng::Renderer
         // half-resolution rendering, sorted back-to-front on their own (the layer composites as a
         // whole under the full-resolution draws).
         TranslucentDrawPlan HalfResTranslucentPlan;
+        // PrepareDraws' reused scratch: the static survivors' sort keys and the survivors the
+        // static phase triages to the skinned and translucent phases. Held across frames so a
+        // steady-state gather allocates nothing.
+        vector<DrawKey> DrawKeyScratch;
+        vector<u32> SkinnedScratch;
+        vector<u32> TranslucentScratch;
         // The frame's gathered flipbook sprites, which the sprite pass uploads and draws.
         SpriteDrawPlan SpritePlan;
         // Whether the pass set carries the sprite pass. Content-driven with deactivation
@@ -1691,8 +1697,6 @@ namespace Veng::Renderer
         const u32 slotDrops = stats.StaticDropped + stats.SkinnedDropped + stats.TranslucentDropped;
         if (slotDrops > 0 && !m_DrawSlotBudgetWarned)
         {
-            // A static-phase drop covers the untriaged remainder — the phase triages the skinned
-            // and translucent survivors as it goes, so its overflow ends the triage as well.
             Log::Warn("SceneRenderer: the per-frame draw-slot budget of {} is exhausted; {} static "
                       "/ {} skinned / {} translucent candidates were not drawn. The frame is "
                       "clamped rather than failed, and later frames clamp without warning again.",
@@ -1736,11 +1740,13 @@ namespace Veng::Renderer
         plan.PipelineMaterial = nullptr;
         plan.Slots.clear();
         plan.Groups.clear();
+        plan.Runs.clear();
         plan.SkinnedPipelineMaterial = nullptr;
         plan.PaletteSet = m_PaletteSet;
         plan.SkinnedSlots.clear();
         plan.SkinnedGroups.clear();
-        m_PaletteBaseByEntity.clear();
+        plan.SkinnedRuns.clear();
+        m_PaletteBaseByEntity.Begin();
 
         TranslucentDrawPlan& translucentPlan = m_Internal->TranslucentPlan;
         translucentPlan.DrawDataSet = m_DrawDataSet;
@@ -1801,10 +1807,10 @@ namespace Veng::Renderer
         // when filling DrawData. The surface pass writes velocity every frame (G3), so this is
         // always maintained.
         {
-            m_CurrentWorlds.clear();
+            m_CurrentWorlds.Begin();
             for (const VisibleMesh& vm : view.Visible)
             {
-                m_CurrentWorlds[PackEntity(vm.Owner)] = vm.World;
+                m_CurrentWorlds.Set(vm.Owner, vm.World);
             }
         }
 
@@ -1824,10 +1830,12 @@ namespace Veng::Renderer
         // contiguous from 0. The static phase triages the survivors the other two gather, so it
         // must run first.
         DrawBudget budget(MaxCullCandidates, MaxSkinningMatricesPerFrame);
-        vector<u32> skinnedScratch;
-        vector<u32> translucentScratch;
+        vector<u32>& skinnedScratch = m_Internal->SkinnedScratch;
+        vector<u32>& translucentScratch = m_Internal->TranslucentScratch;
+        skinnedScratch.clear();
+        translucentScratch.clear();
         GatherStaticOpaque(gatherInput, m_CullScratch, plan, budget, skinnedScratch,
-                           translucentScratch);
+                           translucentScratch, m_Internal->DrawKeyScratch);
         GatherSkinned(gatherInput, skinnedScratch, plan, m_PaletteBaseByEntity, budget);
         GatherTranslucent(gatherInput, translucentScratch, translucentPlan, halfResPlan, budget);
 
@@ -2569,6 +2577,7 @@ namespace Veng::Renderer
                     candidate.World = ApplyPredictionError(candidate.World, *error);
                 }
             }
+            candidate.NormalMatrix = glm::inverseTranspose(mat3(candidate.World));
             candidate.WorldBounds = candidate.Mesh->GetBounds().Transformed(candidate.World);
         }
         resolvedView.Visible = m_InterpolatedCandidates;
@@ -2843,8 +2852,8 @@ namespace Veng::Renderer
         // This frame's worlds + skinning-palette bases become next frame's "previous" for the
         // velocity channel. The palette buffer is ring-buffered, so the previous bases still point
         // at resident data next frame.
-        m_PreviousWorlds.swap(m_CurrentWorlds);
-        m_PreviousPaletteBaseByEntity = m_PaletteBaseByEntity;
+        m_PreviousWorlds.Swap(m_CurrentWorlds);
+        m_PreviousPaletteBaseByEntity.Swap(m_PaletteBaseByEntity);
     }
 
     Ref<ImageView> SceneRenderer::GetOutput() const

@@ -131,6 +131,26 @@ separates *deciding* from *wiring*:
   retained cull arm asserts that invariant directly. The grouping loop both the static and skinned
   phases run is one pure `GroupContiguousSlots` over a span of slots, covered by
   `tests/unit/draw_grouping.cpp`.
+- **Static draws are sorted before they are laid out, and each run of equal slots is one instanced
+  draw.** `GatherStaticOpaque` keys its survivors with `DrawKey` — (parent material, mesh,
+  submesh, candidate) — and orders them with `SortDrawKeys` before claiming a slot, so every
+  instance of one submesh takes adjacent slots. `GroupContiguousSlots` then cuts the slots into
+  groups (one pipeline bind per parent material, one buffer bind per mesh) and each group into
+  `InstanceRun`s — equal index range, consecutive candidate ids — and the g-buffer and picking
+  passes record one `DrawIndexed(indexCount, runLength, …, firstInstance = first candidate)` per
+  run. No shader changed for it: the surface vertex stage already reads its candidate id from the
+  identity, instance-rate candidate-id buffer at `firstInstance + instance`. The key is the
+  *parent* because a Surface instance's `Bind` binds its parent's pipeline and pushes nothing (its
+  selector rides `DrawData`), so instances of one parent share a group. Pointers order the key, so
+  the order between two meshes is arbitrary but fixed; the GPU-cull path consumes the same slots,
+  still one indirect draw per group. Skinned slots are not sorted (their palettes are claimed in
+  survivor order), but record through the same runs.
+- **Per-entity frame state is flat.** This frame's and last frame's world matrices and palette
+  bases live in `EntityFrameTable`s (`Veng/Renderer/EntityFrameTable.h`) — an array by entity slot
+  whose entries carry the generation and frame stamp they were written under, so `Begin` retires a
+  frame without clearing and a lookup is an index. A current/previous pair swaps in O(1) at the end
+  of `Execute`. The normal matrix is not computed per draw at all: `VisibleMesh::NormalMatrix` is
+  filled where the world matrix is (the gather and the interpolation pass).
 - **The per-frame budget is a type, not a predicate the phases each re-test.** `DrawBudget`
   (`DrawBudget.h`, header-only and device-free) owns both cursors, both limits (`MaxCullCandidates`
   slots, `MaxSkinningMatricesPerFrame` palette matrices), and the per-phase drop counts; a phase
@@ -142,10 +162,10 @@ separates *deciding* from *wiring*:
   budget lays out what fits and abandons the rest, `SceneRenderer::GetDrawBudgetStats()` reports
   the limit, the grants, and the per-phase drops, and the renderer warns once for its lifetime
   (the latch is the renderer's, so the budget stays I/O-free and unit-testable in the `fast` band
-  — `tests/unit/draw_budget.cpp`). The static phase's count carries a caveat: it triages the
-  skinned and translucent survivors as it lays out its own slots, so its overflow ends the triage
-  too and `StaticDropped` covers every remaining candidate, including ones a later phase would
-  have drawn.
+  — `tests/unit/draw_budget.cpp`). The static phase triages every survivor before it claims a
+  slot (it must, to sort), so the skinned and translucent lists are always complete; an exhausted
+  budget counts the static survivors left unseated in `StaticDropped`, and the later phases, finding
+  the budget spent, count their own.
 - **Construction lives in `SceneRendererResources.cpp`** — the `Create` half of the lifetime split
   below, compiled as a **second translation unit of the same class**, not a new type. The six
   `Create*` members keep unchanged signatures and reference `m_Internal` nowhere, so the split needs
@@ -234,7 +254,7 @@ G0/G1/G2 — `curUV - prevUV` from the per-vertex current and previous clip posi
 the shared `ComputeMotionVector` helper. So there is **no separate velocity prepass**: the one
 geometry rasterization that fills the g-buffer also fills velocity. The previous position comes
 from a per-draw `PrevWorld` matrix (`GpuDrawData` carries it; the renderer tracks each entity's
-prior world in `m_PreviousWorlds`, keyed by packed `Entity` and swapped each frame) and the
+prior world in `m_PreviousWorlds`, an `EntityFrameTable` swapped each frame) and the
 unjittered `CurViewProj`/`PrevViewProj` (both in the set-0 view-constants block); the skinned
 surface vertex stage additionally skins the previous position through the previous-frame palette
 (`PrevPaletteBase`), so deformation motion writes velocity too. The resolve uses the velocity
@@ -1064,9 +1084,12 @@ with the **camera** frustum, the cascaded shadow pass once per cascade of every 
 linear scan's per-submesh survivor set (a node wholly outside a frustum rejects its subtree; a
 leaf is accepted on its tight box), so the cull is conservative (an extra draw, never a dropped
 visible submesh) and the rendered image is **byte-identical** — only the draw calls issued differ.
+The survivors come back in ascending id order without a sort: the descent marks them in a bitset
+over the candidate ids (`BVH::QueryBits`) and `Cull` walks its words.
 
 `SceneRendererSettings::Cull` selects how those survivors are submitted. Under **`CullMode::CPU`**
-(the default) the renderer records a direct per-submesh draw for each camera-frustum survivor.
+(the default) the renderer records the camera-frustum survivors directly, one instanced draw per
+run of equal slots (see `PrepareDraws` above).
 Under **`CullMode::GPU`** the same frustum survivors are uploaded to a GPU buffer, a **compute**
 pass runs a **hi-Z occlusion test** over each candidate's screen-space AABB against the
 **previous-frame depth pyramid** and writes each `VkDrawIndexedIndirectCommand`'s `instanceCount`

@@ -198,10 +198,15 @@ extern "C"
 /// its refit state, and BVH with its build scratch and recorded costs. A module reads a scene
 /// through inline accessors and a renderer that holds a broadphase, so a stale module lays all three
 /// out short and reads the members after the additions at shifted offsets.
+/// Version 45 grows VisibleMesh with its normal matrix, SceneBroadphase with its cull bitset, and
+/// CommandBuffer with its draw counter (holding the bound pipeline in place of a copy of its formats),
+/// and changes SceneRenderer's per-entity frame state from hashed maps to flat tables. A module reads
+/// visible meshes through a SceneView, holds a renderer, and records through a CommandBuffer whose
+/// inline bind helpers it instantiates, so a stale module lays all four out at the old layout.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 44u
+#define VENG_MODULE_ABI_VERSION 45u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

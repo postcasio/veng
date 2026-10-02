@@ -19,26 +19,37 @@ namespace Veng::Renderer
 
     // One per-candidate draw the geometry pass records, in candidate-slot order.
     // The candidate id (== the slot) reaches the surface vertex stage via the
-    // instance attribute fetched at firstInstance; its DrawData record holds the
-    // world/normal/material. CPU mode issues a DrawIndexed per slot; GPU mode issues
-    // one DrawIndexedIndirect over a mesh group's contiguous command run.
+    // instance attribute fetched at firstInstance + instance; its DrawData record holds the
+    // world/normal/material. CPU mode issues one instanced DrawIndexed per run of equal slots;
+    // GPU mode issues one DrawIndexedIndirect over a group's contiguous command run.
     struct DrawSlot
     {
         const Mesh* SourceMesh;
-        // The submesh's material — its pipeline is bound for this slot's group. Surface
-        // materials do not all share one pipeline (a custom fragment shader is its own
-        // pipeline), so the group that binds a pipeline is keyed on this, not just the mesh.
+        // The submesh's material, bound for this slot's group. Its Bind binds the parent
+        // material's pipeline (a Surface instance pushes nothing; its selector rides DrawData).
         const MaterialInstance* Pipeline;
+        // The identity of the pipeline Pipeline binds — its parent material. Groups are keyed on
+        // this, not on the instance, so instances of one parent share a group and a pipeline bind.
+        const void* PipelineKey;
         u32 IndexCount;
         u32 FirstIndex;
         i32 VertexOffset;
         u32 CandidateId; // == the per-draw DrawData slot and the command firstInstance
     };
 
+    // A contiguous run of slots drawing the same index range of the same mesh with consecutive
+    // candidate ids, so one instanced DrawIndexed(IndexCount, Count, ..., firstInstance = the first
+    // slot's candidate id) covers it: instance i reads candidate firstInstance + i.
+    struct InstanceRun
+    {
+        u32 FirstSlot;
+        u32 Count;
+    };
+
     // A contiguous run of candidate slots sharing one source mesh and one pipeline, so the
     // mesh's vertex/index buffers and the material pipeline each bind once. CPU mode draws
-    // each slot; GPU mode issues one vkCmdDrawIndexedIndirect over the run's commands (the
-    // culled slots no-op).
+    // each of the group's runs instanced; GPU mode issues one vkCmdDrawIndexedIndirect over the
+    // group's commands (the culled slots no-op).
     struct DrawGroup
     {
         const Mesh* SourceMesh;
@@ -47,6 +58,9 @@ namespace Veng::Renderer
         const MaterialInstance* PipelineMaterial;
         u32 FirstSlot;
         u32 SlotCount;
+        // The group's instanced runs, a contiguous range of the plan's run list.
+        u32 FirstRun;
+        u32 RunCount;
     };
 
     // The per-frame submission plan SceneRenderer fills before each graph replay and
@@ -64,11 +78,15 @@ namespace Veng::Renderer
         // group's own pipeline (see DrawGroup). Borrowed: the mesh's resident AssetHandle keeps
         // it alive for this frame.
         const MaterialInstance* PipelineMaterial = nullptr;
+        // Ordered by (parent pipeline, mesh, submesh) before slots were claimed, so equal draws
+        // are adjacent and each run below is one instanced draw.
         vector<DrawSlot> Slots;
         // Contiguous runs sharing a mesh and a pipeline; each carries the material pipeline to
         // bind for its draws, so a scene mixing surface materials with different fragment
         // shaders binds each draw's own pipeline rather than one for the whole pass.
         vector<DrawGroup> Groups;
+        // The groups' instanced runs; a group indexes its range.
+        vector<InstanceRun> Runs;
 
         // Skinned draws ride a parallel CPU-direct path after the static draws: per group the
         // skinned surface pipeline (built from surface_skinned.vert) from that group's material,
@@ -79,6 +97,7 @@ namespace Veng::Renderer
         Ref<DescriptorSet> PaletteSet;
         vector<DrawSlot> SkinnedSlots;
         vector<DrawGroup> SkinnedGroups;
+        vector<InstanceRun> SkinnedRuns;
     };
 
     // One forward translucent draw, in back-to-front order. Unlike the opaque plan's

@@ -1,6 +1,7 @@
 #include <Veng/Renderer/CommandBuffer.h>
 
 #include <algorithm>
+#include <array>
 
 #include <Veng/Assert.h>
 #include <Veng/Renderer/Context.h>
@@ -46,6 +47,7 @@ namespace Veng::Renderer
 
     void CommandBuffer::Begin(CommandBufferUsage flags)
     {
+        m_DrawCallCount = 0;
         VK_ASSERT(m_Native->CommandBuffer.begin({.flags = ToVk(flags)}),
                   "failed to begin command buffer!");
     }
@@ -62,37 +64,45 @@ namespace Veng::Renderer
                 .clearValue = ToVk(info.ClearValue)};
     }
 
-    // Draw-time pipeline/attachment format validation: a dynamic-rendering
-    // pipeline declares its attachment formats at creation, and they must match
-    // the formats of the views the render graph is currently rendering into —
-    // otherwise Vulkan validation raises a silent (easy to miss) error. Checked
-    // only when both the active rendering attachments and a bound graphics
-    // pipeline's formats are known, so manual/non-graph draws without this info
-    // never false-trip.
-    static void ValidateBoundPipelineAttachmentFormats(const vector<Format>& activeColorFormats,
-                                                       const Format activeDepthFormat,
-                                                       const vector<Format>& pipelineColorFormats,
-                                                       const Format pipelineDepthFormat)
+    // Draw-time pipeline/attachment format validation: a dynamic-rendering pipeline declares its
+    // attachment formats at creation, and they must match the formats of the views the render graph
+    // is currently rendering into — otherwise Vulkan validation raises a silent (easy to miss)
+    // error. Checked only when both the active rendering attachments and a bound graphics
+    // pipeline's formats are known, so manual/non-graph draws without this info never false-trip.
+    void CommandBuffer::ValidateAttachmentFormats()
     {
+#if defined(VE_DEBUG) && VE_DEBUG
+        if (m_AttachmentFormatsValidated || !m_HasActiveRenderingInfo || !m_BoundGraphicsPipeline)
+        {
+            return;
+        }
+        m_AttachmentFormatsValidated = true;
+
+        const vector<Format>& pipelineColorFormats =
+            m_BoundGraphicsPipeline->GetColorAttachmentFormats();
+        const Format pipelineDepthFormat = m_BoundGraphicsPipeline->GetDepthAttachmentFormat();
+
         VE_ASSERT(
-            pipelineColorFormats.size() == activeColorFormats.size(),
+            pipelineColorFormats.size() == m_ActiveColorAttachmentFormats.size(),
             "CommandBuffer::Draw: bound pipeline declares {} color attachment(s) but {} are active",
-            pipelineColorFormats.size(), activeColorFormats.size());
+            pipelineColorFormats.size(), m_ActiveColorAttachmentFormats.size());
 
         for (usize i = 0; i < pipelineColorFormats.size(); i++)
         {
             VE_ASSERT(
-                pipelineColorFormats[i] == activeColorFormats[i],
+                pipelineColorFormats[i] == m_ActiveColorAttachmentFormats[i],
                 "CommandBuffer::Draw: color attachment {} format mismatch — pipeline declares {}, "
                 "render target is {}",
                 i, static_cast<u32>(pipelineColorFormats[i]),
-                static_cast<u32>(activeColorFormats[i]));
+                static_cast<u32>(m_ActiveColorAttachmentFormats[i]));
         }
 
-        VE_ASSERT(pipelineDepthFormat == activeDepthFormat,
+        VE_ASSERT(pipelineDepthFormat == m_ActiveDepthAttachmentFormat,
                   "CommandBuffer::Draw: depth attachment format mismatch — pipeline declares {}, "
                   "render target is {}",
-                  static_cast<u32>(pipelineDepthFormat), static_cast<u32>(activeDepthFormat));
+                  static_cast<u32>(pipelineDepthFormat),
+                  static_cast<u32>(m_ActiveDepthAttachmentFormat));
+#endif
     }
 
     void CommandBuffer::BeginRendering(const RenderingInfo& info)
@@ -112,6 +122,7 @@ namespace Veng::Renderer
                                             : Format::Undefined;
 
         m_HasActiveRenderingInfo = true;
+        m_AttachmentFormatsValidated = false;
 
         vector<vk::RenderingAttachmentInfo> colorAttachments;
         colorAttachments.reserve(info.ColorAttachments.size());
@@ -158,6 +169,7 @@ namespace Veng::Renderer
         m_ActiveColorAttachmentFormats.clear();
         m_ActiveDepthAttachmentFormat = Format::Undefined;
         m_HasActiveRenderingInfo = false;
+        m_AttachmentFormatsValidated = false;
     }
 
     void CommandBuffer::PushConstants(const PushConstantsInfo& info)
@@ -169,27 +181,41 @@ namespace Veng::Renderer
 
     void CommandBuffer::BindDescriptorSets(const DescriptorSetBindInfo& info)
     {
-        vector<vk::DescriptorSet> descriptorSets;
-        descriptorSets.reserve(info.Sets.size());
-
-        for (auto& descriptorSet : info.Sets)
+        VE_ASSERT(info.Sets.size() <= MaxBoundDescriptorSets,
+                  "CommandBuffer::BindDescriptorSets: {} sets exceeds the {}-set limit",
+                  info.Sets.size(), MaxBoundDescriptorSets);
+        std::array<const DescriptorSet*, MaxBoundDescriptorSets> sets{};
+        for (usize i = 0; i < info.Sets.size(); ++i)
         {
-            descriptorSets.push_back(descriptorSet->GetNative().Set);
+            sets[i] = info.Sets[i].get();
+        }
+        BindDescriptorSets(std::span<const DescriptorSet* const>(sets.data(), info.Sets.size()),
+                           info.FirstSet, info.PipelineBindPoint, info.DynamicOffsets);
+    }
+
+    void CommandBuffer::BindDescriptorSets(const std::span<const DescriptorSet* const> sets,
+                                           const u32 firstSet, const PipelineBindPoint bindPoint,
+                                           const std::span<const u32> dynamicOffsets)
+    {
+        VE_ASSERT(sets.size() <= MaxBoundDescriptorSets,
+                  "CommandBuffer::BindDescriptorSets: {} sets exceeds the {}-set limit",
+                  sets.size(), MaxBoundDescriptorSets);
+        std::array<vk::DescriptorSet, MaxBoundDescriptorSets> native{};
+        for (usize i = 0; i < sets.size(); ++i)
+        {
+            native[i] = sets[i]->GetNative().Set;
         }
 
         m_Native->CommandBuffer.bindDescriptorSets(
-            ToVk(info.PipelineBindPoint), m_LastBoundPipelineLayout->GetNative().Layout,
-            info.FirstSet, descriptorSets, info.DynamicOffsets);
+            ToVk(bindPoint), m_LastBoundPipelineLayout->GetNative().Layout, firstSet,
+            static_cast<u32>(sets.size()), native.data(), static_cast<u32>(dynamicOffsets.size()),
+            dynamicOffsets.data());
     }
 
     void CommandBuffer::DrawFullscreenTriangle()
     {
-        if (m_HasActiveRenderingInfo && m_HasBoundGraphicsPipelineFormats)
-        {
-            ValidateBoundPipelineAttachmentFormats(
-                m_ActiveColorAttachmentFormats, m_ActiveDepthAttachmentFormat,
-                m_BoundPipelineColorAttachmentFormats, m_BoundPipelineDepthAttachmentFormat);
-        }
+        ValidateAttachmentFormats();
+        ++m_DrawCallCount;
 
         m_Native->CommandBuffer.draw(3, 1, 0, 0);
     }
@@ -197,12 +223,8 @@ namespace Veng::Renderer
     void CommandBuffer::Draw(const u32 vertexCount, const u32 instanceCount, const u32 firstVertex,
                              const u32 firstInstance)
     {
-        if (m_HasActiveRenderingInfo && m_HasBoundGraphicsPipelineFormats)
-        {
-            ValidateBoundPipelineAttachmentFormats(
-                m_ActiveColorAttachmentFormats, m_ActiveDepthAttachmentFormat,
-                m_BoundPipelineColorAttachmentFormats, m_BoundPipelineDepthAttachmentFormat);
-        }
+        ValidateAttachmentFormats();
+        ++m_DrawCallCount;
 
         m_Native->CommandBuffer.draw(vertexCount, instanceCount, firstVertex, firstInstance);
     }
@@ -211,12 +233,8 @@ namespace Veng::Renderer
                                     const u32 firstIndex, const i32 vertexOffset,
                                     const u32 firstInstance)
     {
-        if (m_HasActiveRenderingInfo && m_HasBoundGraphicsPipelineFormats)
-        {
-            ValidateBoundPipelineAttachmentFormats(
-                m_ActiveColorAttachmentFormats, m_ActiveDepthAttachmentFormat,
-                m_BoundPipelineColorAttachmentFormats, m_BoundPipelineDepthAttachmentFormat);
-        }
+        ValidateAttachmentFormats();
+        ++m_DrawCallCount;
 
         m_Native->CommandBuffer.drawIndexed(indexCount, instanceCount, firstIndex, vertexOffset,
                                             firstInstance);
@@ -225,12 +243,8 @@ namespace Veng::Renderer
     void CommandBuffer::DrawIndexedIndirect(const Ref<Buffer>& buffer, const u64 offset,
                                             const u32 drawCount, const u32 stride)
     {
-        if (m_HasActiveRenderingInfo && m_HasBoundGraphicsPipelineFormats)
-        {
-            ValidateBoundPipelineAttachmentFormats(
-                m_ActiveColorAttachmentFormats, m_ActiveDepthAttachmentFormat,
-                m_BoundPipelineColorAttachmentFormats, m_BoundPipelineDepthAttachmentFormat);
-        }
+        ValidateAttachmentFormats();
+        ++m_DrawCallCount;
 
         // vkCmdDrawIndexedIndirect requires a 4-byte-aligned offset.
         VE_ASSERT(offset % 4 == 0, "DrawIndexedIndirect: offset {} is not 4-byte aligned", offset);
@@ -250,12 +264,10 @@ namespace Veng::Renderer
                                              pipeline->GetNative().Pipeline);
         m_LastBoundPipelineLayout = pipeline->GetPipelineLayout();
 
-        // Capture the declared attachment formats for draw-time validation
-        // against the active rendering attachments (see Draw/DrawIndexed/
-        // DrawFullscreenTriangle).
-        m_BoundPipelineColorAttachmentFormats = pipeline->GetColorAttachmentFormats();
-        m_BoundPipelineDepthAttachmentFormat = pipeline->GetDepthAttachmentFormat();
-        m_HasBoundGraphicsPipelineFormats = true;
+        // Held for the draw-time format check, which reads the pipeline's declared formats in
+        // place rather than copying them on every bind.
+        m_BoundGraphicsPipeline = pipeline;
+        m_AttachmentFormatsValidated = false;
     }
 
     void CommandBuffer::BindPipeline(const Ref<ComputePipeline>& pipeline)
@@ -264,12 +276,10 @@ namespace Veng::Renderer
                                              pipeline->GetNative().Pipeline);
         m_LastBoundPipelineLayout = pipeline->GetPipelineLayout();
 
-        // A compute pipeline has no rendering attachments; clear any previously
-        // captured graphics formats so draw-time validation doesn't run against
-        // a stale graphics pipeline.
-        m_BoundPipelineColorAttachmentFormats.clear();
-        m_BoundPipelineDepthAttachmentFormat = Format::Undefined;
-        m_HasBoundGraphicsPipelineFormats = false;
+        // A compute pipeline has no rendering attachments; drop the graphics pipeline so the
+        // draw-time check doesn't run against a stale one.
+        m_BoundGraphicsPipeline = nullptr;
+        m_AttachmentFormatsValidated = false;
     }
 
     void CommandBuffer::SetScissor(const ivec2 offset, const uvec2 extent)

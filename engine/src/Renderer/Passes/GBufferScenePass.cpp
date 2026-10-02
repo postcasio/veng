@@ -18,6 +18,18 @@ namespace Veng::Renderer
         }
     }
 
+    void RecordInstanceRuns(CommandBuffer& cmd, const std::span<const DrawSlot> slots,
+                            const std::span<const InstanceRun> runs, const DrawGroup& group)
+    {
+        for (u32 r = 0; r < group.RunCount; ++r)
+        {
+            const InstanceRun& run = runs[group.FirstRun + r];
+            const DrawSlot& first = slots[run.FirstSlot];
+            cmd.DrawIndexed(first.IndexCount, run.Count, first.FirstIndex, first.VertexOffset,
+                            first.CandidateId);
+        }
+    }
+
     void GBufferScenePass::Declare(RenderGraph& graph, const PassIO& io)
     {
         RenderGraph::PassBuilder builder = graph.AddPass("Scene GBuffer");
@@ -111,10 +123,12 @@ namespace Veng::Renderer
         {
             // The fragment pipeline is not shared across surface materials — a custom
             // fragment shader is its own pipeline — so it binds per group, keyed on the
-            // group's material. Set 0 (bindless), set 3 (the per-draw DrawData SSBO), and
-            // the frame selector push share the surface pipeline layout (core surface.vert
-            // + the deferred g-buffer formats), so they (re)bind against whichever pipeline
-            // is current; binding them right after each pipeline bind keeps a valid layout.
+            // group's parent material. The slots were ordered by (parent, mesh, submesh), so
+            // each pipeline binds once and each mesh's buffers bind once per pipeline. Set 0
+            // (bindless), set 3 (the per-draw DrawData SSBO), and the frame selector push share
+            // the surface pipeline layout (core surface.vert + the deferred g-buffer formats),
+            // so they (re)bind against whichever pipeline is current; binding them right after
+            // each pipeline bind keeps a valid layout.
             const Mesh* lastBound = nullptr;
             const MaterialInstance* lastPipeline = nullptr;
             for (const DrawGroup& group : plan.Groups)
@@ -123,11 +137,7 @@ namespace Veng::Renderer
                 {
                     group.PipelineMaterial->Bind(cmd);
                     registry.Bind(cmd);
-                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {plan.DrawDataSet},
-                        .FirstSet = 3,
-                        .PipelineBindPoint = PipelineBindPoint::Graphics,
-                    });
+                    cmd.BindDescriptorSets({plan.DrawDataSet.get()}, 3);
                     cmd.PushConstants(plan.Push);
                     lastPipeline = group.PipelineMaterial;
                 }
@@ -151,14 +161,10 @@ namespace Veng::Renderer
                 }
                 else
                 {
-                    // CPU mode issues a direct DrawIndexed per surviving slot, the
-                    // candidate id carried as firstInstance (the same instance path).
-                    for (u32 s = 0; s < group.SlotCount; ++s)
-                    {
-                        const DrawSlot& slot = plan.Slots[group.FirstSlot + s];
-                        cmd.DrawIndexed(slot.IndexCount, 1, slot.FirstIndex, slot.VertexOffset,
-                                        slot.CandidateId);
-                    }
+                    // CPU mode issues one instanced DrawIndexed per run of equal slots, the first
+                    // slot's candidate id carried as firstInstance: instance i reads candidate
+                    // firstInstance + i through the identity candidate-id buffer.
+                    RecordInstanceRuns(cmd, plan.Slots, plan.Runs, group);
                 }
             }
         }
@@ -180,16 +186,7 @@ namespace Veng::Renderer
                     // pipeline's layout carries the palette at set 4, so the bind below is valid.
                     group.PipelineMaterial->BindSkinned(cmd);
                     registry.Bind(cmd);
-                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {plan.DrawDataSet},
-                        .FirstSet = 3,
-                        .PipelineBindPoint = PipelineBindPoint::Graphics,
-                    });
-                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {plan.PaletteSet},
-                        .FirstSet = 4,
-                        .PipelineBindPoint = PipelineBindPoint::Graphics,
-                    });
+                    cmd.BindDescriptorSets({plan.DrawDataSet.get(), plan.PaletteSet.get()}, 3);
                     cmd.PushConstants(plan.Push);
                     lastPipeline = group.PipelineMaterial;
                 }
@@ -199,12 +196,7 @@ namespace Veng::Renderer
                     cmd.BindIndexBuffer(group.SourceMesh->GetIndexBuffer());
                     lastBound = group.SourceMesh;
                 }
-                for (u32 s = 0; s < group.SlotCount; ++s)
-                {
-                    const DrawSlot& slot = plan.SkinnedSlots[group.FirstSlot + s];
-                    cmd.DrawIndexed(slot.IndexCount, 1, slot.FirstIndex, slot.VertexOffset,
-                                    slot.CandidateId);
-                }
+                RecordInstanceRuns(cmd, plan.SkinnedSlots, plan.SkinnedRuns, group);
             }
         }
     }

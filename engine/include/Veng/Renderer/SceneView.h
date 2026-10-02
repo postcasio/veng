@@ -39,6 +39,9 @@ namespace Veng
 
 namespace Veng::Renderer
 {
+    template <typename T>
+    class EntityFrameTable;
+
     class Context;
     class DescriptorSet;
     class BakedSkyCube;
@@ -452,11 +455,12 @@ namespace Veng::Renderer
         /// draws). Holds the same buffer the geometry pass fills in PrepareDraws.
         Ref<DescriptorSet> SkinningPalette;
 
-        /// @brief This frame's PaletteBase per skinned entity (packed Entity → base); set each Execute.
+        /// @brief This frame's PaletteBase per skinned entity; set each Execute.
         ///
         /// Filled by the geometry-pass draw preparation; a shadow pass looks up a skinned caster's
-        /// palette base here so it casts its posed shadow. Borrowed; valid only for this Execute.
-        const unordered_map<u64, u32>* SkinnedPaletteBases = nullptr;
+        /// palette base here (Find, from Veng/Renderer/EntityFrameTable.h) so it casts its posed
+        /// shadow. Borrowed; valid only for this Execute.
+        const EntityFrameTable<u32>* SkinnedPaletteBases = nullptr;
 
         /// @brief Scene-HDR-pre-bloom overlays the engine composites before bloom; borrowed for the Execute.
         ///

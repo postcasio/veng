@@ -232,21 +232,16 @@ namespace Veng::Renderer
                 registry.Bind(cmd);
                 if (cached.ForwardLit)
                 {
-                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {plan.DrawDataSet, m_Forward.IblSet, m_Forward.ShadowSet},
-                        .FirstSet = BindlessRegistry::FirstUserSet,
-                        .PipelineBindPoint = PipelineBindPoint::Graphics,
-                        .DynamicOffsets = {frameSlot * m_Forward.ShadowRingStride,
-                                           frameSlot * m_Forward.PunctualRingStride},
-                    });
+                    cmd.BindDescriptorSets(
+                        {plan.DrawDataSet.get(), m_Forward.IblSet.get(), m_Forward.ShadowSet.get()},
+                        BindlessRegistry::FirstUserSet, PipelineBindPoint::Graphics,
+                        {frameSlot * m_Forward.ShadowRingStride,
+                         frameSlot * m_Forward.PunctualRingStride});
                 }
                 else
                 {
-                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                        .Sets = {plan.DrawDataSet},
-                        .FirstSet = BindlessRegistry::FirstUserSet,
-                        .PipelineBindPoint = PipelineBindPoint::Graphics,
-                    });
+                    cmd.BindDescriptorSets({plan.DrawDataSet.get()},
+                                           BindlessRegistry::FirstUserSet);
                 }
                 cmd.PushConstants(plan.Push);
                 lastPipeline = pipeline.get();

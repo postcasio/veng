@@ -27,6 +27,11 @@ namespace Veng
         Entity Owner;
         /// @brief Entity's world matrix.
         mat4 World;
+        /// @brief The inverse-transpose of World's upper 3×3, which carries normals to world space.
+        ///
+        /// Computed once wherever World is, so every pass drawing the entity's submeshes reads it
+        /// rather than inverting per draw. Correct under non-uniform scale.
+        mat3 NormalMatrix{1.0f};
         /// @brief World-space AABB of the mesh.
         AABB WorldBounds;
         /// @brief Resident mesh pointer; valid for the gathering Execute only.

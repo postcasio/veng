@@ -1,6 +1,7 @@
 #include <Veng/Scene/SceneBroadphase.h>
 
 #include <algorithm>
+#include <bit>
 
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Diagnostics/Profiler.h>
@@ -159,10 +160,19 @@ namespace Veng
 
     void SceneBroadphase::Cull(const Frustum& frustum, vector<u32>& out) const
     {
-        const usize start = out.size();
-        m_Tree.Query(frustum, out);
-        // Sort the appended range ascending so draws issue in GatherMeshes order;
-        // an earlier-appended range is left untouched.
-        std::sort(out.begin() + static_cast<std::ptrdiff_t>(start), out.end());
+        // Mark the survivors, then walk the words in order so they append ascending (GatherMeshes
+        // order) without a sort; an earlier-appended range of `out` is left untouched.
+        const usize words = (m_SubMeshCandidates.size() + 63) / 64;
+        m_CullBits.assign(words, 0);
+        m_Tree.QueryBits(frustum, m_CullBits);
+        for (usize w = 0; w < words; ++w)
+        {
+            u64 bits = m_CullBits[w];
+            while (bits != 0)
+            {
+                out.push_back(static_cast<u32>(w * 64) + static_cast<u32>(std::countr_zero(bits)));
+                bits &= bits - 1;
+            }
+        }
     }
 }

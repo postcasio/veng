@@ -1,5 +1,6 @@
 #pragma once
 
+#include <initializer_list>
 #include <span>
 
 #include <Veng/Assert.h>
@@ -233,6 +234,43 @@ namespace Veng::Renderer
         /// @brief Binds descriptor sets.
         void BindDescriptorSets(const DescriptorSetBindInfo& info);
 
+        /// @brief Binds consecutive descriptor sets without allocating.
+        ///
+        /// The recording-path form: the sets are borrowed for the call and no container is built,
+        /// so a pass binding per pipeline or per tile pays only the Vulkan call.
+        /// @param sets           The sets to bind, in set order; at most MaxBoundDescriptorSets.
+        /// @param firstSet       Index of the first set in the bound pipeline's layout.
+        /// @param bindPoint      Bind point (default Graphics).
+        /// @param dynamicOffsets One byte offset per dynamic descriptor across the sets, in binding
+        ///                       order; empty for sets with none.
+        void BindDescriptorSets(std::span<const DescriptorSet* const> sets, u32 firstSet,
+                                PipelineBindPoint bindPoint = PipelineBindPoint::Graphics,
+                                std::span<const u32> dynamicOffsets = {});
+
+        /// @brief Binds consecutive descriptor sets from a braced list, without allocating.
+        /// @param sets           The sets to bind, in set order; at most MaxBoundDescriptorSets.
+        /// @param firstSet       Index of the first set in the bound pipeline's layout.
+        /// @param bindPoint      Bind point (default Graphics).
+        /// @param dynamicOffsets One byte offset per dynamic descriptor across the sets.
+        void BindDescriptorSets(std::initializer_list<const DescriptorSet*> sets, u32 firstSet,
+                                PipelineBindPoint bindPoint = PipelineBindPoint::Graphics,
+                                std::initializer_list<u32> dynamicOffsets = {})
+        {
+            BindDescriptorSets(std::span<const DescriptorSet* const>(sets.begin(), sets.size()),
+                               firstSet, bindPoint,
+                               std::span<const u32>(dynamicOffsets.begin(), dynamicOffsets.size()));
+        }
+
+        /// @brief The most descriptor sets one bind call accepts.
+        static constexpr u32 MaxBoundDescriptorSets = 8;
+
+        /// @brief Returns the number of draw commands recorded since the last Begin.
+        ///
+        /// Counts every Draw, DrawIndexed, DrawIndexedIndirect and DrawFullscreenTriangle call — the
+        /// commands, not the instances or indirect records they expand to — so it reads how much a
+        /// frame's recording cost, which is what batching reduces.
+        [[nodiscard]] u32 GetDrawCallCount() const { return m_DrawCallCount; }
+
         /// @brief Records a fullscreen triangle draw (no vertex buffer needed).
         void DrawFullscreenTriangle();
 
@@ -329,6 +367,13 @@ namespace Veng::Renderer
         /// @brief Layout of the most recently bound pipeline; used for typed push-constant lookup.
         Ref<PipelineLayout> m_LastBoundPipelineLayout;
 
+        /// @brief Checks the bound pipeline's attachment formats against the active rendering's.
+        ///
+        /// Debug builds only, and once per pipeline bind within a rendering scope rather than per
+        /// draw: neither side changes between two draws, so the first draw after either changes is
+        /// the one place a mismatch can appear.
+        void ValidateAttachmentFormats();
+
         /// @brief Attachment-format validation state captured from BeginRendering and BindPipeline.
         ///
         /// Compared at draw time to turn a silent dynamic-rendering validation error into a
@@ -339,12 +384,13 @@ namespace Veng::Renderer
         /// @brief True while inside BeginRendering/EndRendering.
         bool m_HasActiveRenderingInfo = false;
 
-        /// @brief Color attachment formats declared by the bound pipeline.
-        vector<Format> m_BoundPipelineColorAttachmentFormats;
-        /// @brief Depth format declared by the bound pipeline.
-        Format m_BoundPipelineDepthAttachmentFormat = Format::Undefined;
-        /// @brief True once a graphics pipeline has been bound.
-        bool m_HasBoundGraphicsPipelineFormats = false;
+        /// @brief The bound graphics pipeline, whose declared formats the draw-time check reads;
+        ///        null while none (or a compute pipeline) is bound.
+        Ref<GraphicsPipeline> m_BoundGraphicsPipeline;
+        /// @brief True once the current pipeline and rendering scope have been checked.
+        bool m_AttachmentFormatsValidated = false;
+        /// @brief Draw commands recorded since the last Begin.
+        u32 m_DrawCallCount = 0;
     };
 
     template <typename T>

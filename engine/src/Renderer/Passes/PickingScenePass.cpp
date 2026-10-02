@@ -1,5 +1,7 @@
 #include "PickingScenePass.h"
 
+#include "GBufferScenePass.h"
+
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
@@ -68,11 +70,7 @@ namespace Veng::Renderer
         {
             cmd.BindPipeline(staticPipeline);
             registry.Bind(cmd);
-            cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                .Sets = {plan.DrawDataSet},
-                .FirstSet = 3,
-                .PipelineBindPoint = PipelineBindPoint::Graphics,
-            });
+            cmd.BindDescriptorSets({plan.DrawDataSet.get()}, 3);
             cmd.PushConstants(plan.Push);
 
             const Mesh* lastBound = nullptr;
@@ -94,12 +92,7 @@ namespace Veng::Renderer
                 }
                 else
                 {
-                    for (u32 s = 0; s < group.SlotCount; ++s)
-                    {
-                        const DrawSlot& slot = plan.Slots[group.FirstSlot + s];
-                        cmd.DrawIndexed(slot.IndexCount, 1, slot.FirstIndex, slot.VertexOffset,
-                                        slot.CandidateId);
-                    }
+                    RecordInstanceRuns(cmd, plan.Slots, plan.Runs, group);
                 }
             }
         }
@@ -109,16 +102,7 @@ namespace Veng::Renderer
         {
             cmd.BindPipeline(skinnedPipeline);
             registry.Bind(cmd);
-            cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                .Sets = {plan.DrawDataSet},
-                .FirstSet = 3,
-                .PipelineBindPoint = PipelineBindPoint::Graphics,
-            });
-            cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                .Sets = {plan.PaletteSet},
-                .FirstSet = 4,
-                .PipelineBindPoint = PipelineBindPoint::Graphics,
-            });
+            cmd.BindDescriptorSets({plan.DrawDataSet.get(), plan.PaletteSet.get()}, 3);
             cmd.PushConstants(plan.Push);
 
             const Mesh* lastBound = nullptr;
@@ -130,12 +114,7 @@ namespace Veng::Renderer
                     cmd.BindIndexBuffer(group.SourceMesh->GetIndexBuffer());
                     lastBound = group.SourceMesh;
                 }
-                for (u32 s = 0; s < group.SlotCount; ++s)
-                {
-                    const DrawSlot& slot = plan.SkinnedSlots[group.FirstSlot + s];
-                    cmd.DrawIndexed(slot.IndexCount, 1, slot.FirstIndex, slot.VertexOffset,
-                                    slot.CandidateId);
-                }
+                RecordInstanceRuns(cmd, plan.SkinnedSlots, plan.SkinnedRuns, group);
             }
         }
     }

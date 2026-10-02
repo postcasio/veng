@@ -17,11 +17,10 @@ namespace Veng::Renderer
         u32 SlotLimit = 0;
         /// @brief Slots actually claimed across the three phases this frame.
         u32 SlotsGranted = 0;
-        /// @brief Submeshes the static opaque phase could not draw.
+        /// @brief Static opaque submeshes the static phase could not seat.
         ///
-        /// The phase triages the skinned and translucent survivors as it lays out its own slots,
-        /// so exhausting the budget also ends the triage: this counts every candidate left after
-        /// the failed claim, including ones a later phase would otherwise have drawn.
+        /// The phase triages every survivor before it claims a slot, so this counts only static
+        /// survivors; the skinned and translucent phases count their own drops.
         u32 StaticDropped = 0;
         /// @brief Submeshes the skinned phase could not draw for want of a draw slot.
         u32 SkinnedDropped = 0;

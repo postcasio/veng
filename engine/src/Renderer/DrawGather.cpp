@@ -2,8 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
-
-#include <glm/gtc/matrix_inverse.hpp>
+#include <functional>
 
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/MaterialInstance.h>
@@ -30,45 +29,107 @@ namespace Veng::Renderer
     {
         // Last frame's matrix for this entity, or the current one (zero object motion) when first
         // seen — the previous world the surface pass writes velocity from.
-        mat4 ResolvePreviousWorld(const unordered_map<u64, mat4>& previousWorlds, const u64 packed,
+        mat4 ResolvePreviousWorld(const EntityFrameTable<mat4>& previousWorlds, const Entity owner,
                                   const mat4& currentWorld)
         {
-            const auto it = previousWorlds.find(packed);
-            if (it != previousWorlds.end())
-            {
-                return it->second;
-            }
-            return currentWorld;
+            const mat4* previous = previousWorlds.Find(owner);
+            return previous != nullptr ? *previous : currentWorld;
+        }
+
+        // The per-draw record every gathered draw writes: world, the normal matrix's three columns
+        // (computed once per entity at gather), and the frame-folded material selector.
+        GpuDrawData MakeDrawData(const VisibleMesh& item, const MaterialInstance& material,
+                                 const mat4& prevWorld)
+        {
+            return GpuDrawData{
+                .World = item.World,
+                .NormalColumn0 = vec4(item.NormalMatrix[0], 0.0f),
+                .NormalColumn1 = vec4(item.NormalMatrix[1], 0.0f),
+                .NormalColumn2 = vec4(item.NormalMatrix[2], 0.0f),
+                .MaterialOffset = material.GetMaterialSelector(),
+                .EntityIndex = item.Owner.Index,
+                .PrevWorld = prevWorld,
+            };
+        }
+
+        // Whether two adjacent slots draw the same index range with consecutive candidate ids, so
+        // one instanced draw covers both.
+        bool ExtendsRun(const DrawSlot& previous, const DrawSlot& next)
+        {
+            return next.IndexCount == previous.IndexCount &&
+                   next.FirstIndex == previous.FirstIndex &&
+                   next.VertexOffset == previous.VertexOffset &&
+                   next.CandidateId == previous.CandidateId + 1;
         }
     }
 
-    void GroupContiguousSlots(const std::span<const DrawSlot> slots, vector<DrawGroup>& groups)
+    void SortDrawKeys(const std::span<DrawKey> keys)
+    {
+        std::ranges::sort(keys,
+                          [](const DrawKey& a, const DrawKey& b)
+                          {
+                              if (a.Pipeline != b.Pipeline)
+                              {
+                                  return std::less<const void*>{}(a.Pipeline, b.Pipeline);
+                              }
+                              if (a.SourceMesh != b.SourceMesh)
+                              {
+                                  return std::less<const Mesh*>{}(a.SourceMesh, b.SourceMesh);
+                              }
+                              if (a.SubMeshIndex != b.SubMeshIndex)
+                              {
+                                  return a.SubMeshIndex < b.SubMeshIndex;
+                              }
+                              return a.Candidate < b.Candidate;
+                          });
+    }
+
+    void GroupContiguousSlots(const std::span<const DrawSlot> slots, vector<DrawGroup>& groups,
+                              vector<InstanceRun>& runs)
     {
         for (u32 s = 0; s < slots.size();)
         {
             const Mesh* mesh = slots[s].SourceMesh;
-            const MaterialInstance* pipeline = slots[s].Pipeline;
+            const void* pipeline = slots[s].PipelineKey;
             u32 count = 0;
             while (s + count < slots.size() && slots[s + count].SourceMesh == mesh &&
-                   slots[s + count].Pipeline == pipeline)
+                   slots[s + count].PipelineKey == pipeline)
             {
                 ++count;
             }
+
+            const u32 firstRun = static_cast<u32>(runs.size());
+            for (u32 r = s; r < s + count;)
+            {
+                u32 length = 1;
+                while (r + length < s + count &&
+                       ExtendsRun(slots[r + length - 1], slots[r + length]))
+                {
+                    ++length;
+                }
+                runs.push_back(InstanceRun{.FirstSlot = r, .Count = length});
+                r += length;
+            }
+
             groups.push_back(DrawGroup{.SourceMesh = mesh,
-                                       .PipelineMaterial = pipeline,
+                                       .PipelineMaterial = slots[s].Pipeline,
                                        .FirstSlot = s,
-                                       .SlotCount = count});
+                                       .SlotCount = count,
+                                       .FirstRun = firstRun,
+                                       .RunCount = static_cast<u32>(runs.size()) - firstRun});
             s += count;
         }
     }
 
     void GatherStaticOpaque(const DrawGatherInput& input, const std::span<const u32> survivors,
                             GBufferDrawPlan& plan, DrawBudget& budget, vector<u32>& skinnedOut,
-                            vector<u32>& translucentOut)
+                            vector<u32>& translucentOut, vector<DrawKey>& keyScratch)
     {
-        for (usize index = 0; index < survivors.size(); ++index)
+        // Triage every survivor first, keying the static ones; slots are claimed only once the
+        // keys are ordered, so equal draws land in adjacent slots.
+        keyScratch.clear();
+        for (const u32 id : survivors)
         {
-            const u32 id = survivors[index];
             const SubMeshCandidate& candidate = input.Candidates[id];
             const VisibleMesh& item = input.View.Visible[candidate.MeshCandidate];
             const Mesh& mesh = *item.Mesh;
@@ -85,7 +146,8 @@ namespace Veng::Renderer
             // into the forward translucent plan (they output final color through the forward pass,
             // not the g-buffer). The frustum-survivor set is shared — a translucent submesh is
             // simply routed to a different draw list.
-            if (materials[subMesh.MaterialIndex].Get()->GetDomain() == MaterialDomain::Translucent)
+            const MaterialInstance* material = materials[subMesh.MaterialIndex].Get();
+            if (material->GetDomain() == MaterialDomain::Translucent)
             {
                 translucentOut.push_back(id);
                 continue;
@@ -100,37 +162,39 @@ namespace Veng::Renderer
                 continue;
             }
 
-            // Exhausting the budget ends the triage above too, so every remaining survivor is
-            // lost — including ones the skinned and translucent phases would have gathered.
+            keyScratch.push_back(DrawKey{
+                .Pipeline = material->GetParent().Get(),
+                .SourceMesh = &mesh,
+                .SubMeshIndex = candidate.SubMeshIndex,
+                .Candidate = id,
+            });
+        }
+
+        SortDrawKeys(keyScratch);
+
+        for (usize index = 0; index < keyScratch.size(); ++index)
+        {
+            const DrawKey& key = keyScratch[index];
             u32 slot = 0;
             if (!budget.TryClaimSlot(slot))
             {
                 budget.RecordDropped(DrawPhase::StaticOpaque,
-                                     static_cast<u32>(survivors.size() - index));
+                                     static_cast<u32>(keyScratch.size() - index));
                 break;
             }
 
-            const MaterialInstance& material = *materials[subMesh.MaterialIndex].Get();
+            const SubMeshCandidate& candidate = input.Candidates[key.Candidate];
+            const VisibleMesh& item = input.View.Visible[candidate.MeshCandidate];
+            const SubMesh& subMesh = key.SourceMesh->GetSubMeshes()[key.SubMeshIndex];
+            const MaterialInstance* material = item.Materials[subMesh.MaterialIndex].Get();
             if (!plan.PipelineMaterial)
             {
-                plan.PipelineMaterial = materials[subMesh.MaterialIndex].Get();
+                plan.PipelineMaterial = material;
             }
 
-            // Per-draw record: world matrix, the normal matrix's three columns (inverse-
-            // transpose of the upper 3×3, correct under non-uniform scale), and the
-            // frame-folded material selector.
-            const mat3 normalMatrix = glm::inverseTranspose(mat3(item.World));
-            const mat4 prevWorld =
-                ResolvePreviousWorld(input.PreviousWorlds, PackEntity(item.Owner), item.World);
-            input.DrawData[input.FrameBase + slot] = GpuDrawData{
-                .World = item.World,
-                .NormalColumn0 = vec4(normalMatrix[0], 0.0f),
-                .NormalColumn1 = vec4(normalMatrix[1], 0.0f),
-                .NormalColumn2 = vec4(normalMatrix[2], 0.0f),
-                .MaterialOffset = material.GetMaterialSelector(),
-                .EntityIndex = item.Owner.Index,
-                .PrevWorld = prevWorld,
-            };
+            input.DrawData[input.FrameBase + slot] =
+                MakeDrawData(item, *material,
+                             ResolvePreviousWorld(input.PreviousWorlds, item.Owner, item.World));
 
             if (input.CullData != nullptr)
             {
@@ -146,8 +210,9 @@ namespace Veng::Renderer
             }
 
             plan.Slots.push_back(DrawSlot{
-                .SourceMesh = &mesh,
-                .Pipeline = materials[subMesh.MaterialIndex].Get(),
+                .SourceMesh = key.SourceMesh,
+                .Pipeline = material,
+                .PipelineKey = key.Pipeline,
                 .IndexCount = subMesh.IndexCount,
                 .FirstIndex = subMesh.IndexOffset,
                 .VertexOffset = 0,
@@ -155,11 +220,11 @@ namespace Veng::Renderer
             });
         }
 
-        GroupContiguousSlots(plan.Slots, plan.Groups);
+        GroupContiguousSlots(plan.Slots, plan.Groups, plan.Runs);
     }
 
     void GatherSkinned(const DrawGatherInput& input, const std::span<const u32> skinned,
-                       GBufferDrawPlan& plan, unordered_map<u64, u32>& paletteBaseByEntity,
+                       GBufferDrawPlan& plan, EntityFrameTable<u32>& paletteBaseByEntity,
                        DrawBudget& budget)
     {
         for (usize index = 0; index < skinned.size(); ++index)
@@ -181,13 +246,12 @@ namespace Veng::Renderer
             // One palette per entity, shared by its submeshes. Computed on first encounter from
             // the entity's SkinnedPose (the animation system's output) or the bind pose when the
             // entity has none (e.g. the editor with systems paused).
-            const u64 packed = PackEntity(item.Owner);
             u32 paletteBase = 0;
             u32 slot = 0;
-            const auto existing = paletteBaseByEntity.find(packed);
-            if (existing != paletteBaseByEntity.end())
+            const u32* existing = paletteBaseByEntity.Find(item.Owner);
+            if (existing != nullptr)
             {
-                paletteBase = existing->second;
+                paletteBase = *existing;
                 if (!budget.TryClaimSlot(slot))
                 {
                     budget.RecordDropped(DrawPhase::Skinned,
@@ -229,7 +293,7 @@ namespace Veng::Renderer
                                 static_cast<usize>(boneCount) * sizeof(mat4));
                 }
 
-                paletteBaseByEntity[packed] = paletteBase;
+                paletteBaseByEntity.Set(item.Owner, paletteBase);
             }
 
             const MaterialInstance& material = *materials[subMesh.MaterialIndex].Get();
@@ -241,32 +305,20 @@ namespace Veng::Renderer
             // Velocity needs the previous frame's world and palette base for this entity (its
             // deformation motion). The previous palette data is still resident in its own ring
             // region. First seen → no motion (current values).
-            const mat4 prevWorld = ResolvePreviousWorld(input.PreviousWorlds, packed, item.World);
-            u32 prevPaletteBase = paletteBase;
-            {
-                const auto prevBaseIt = input.PreviousPaletteBases.find(packed);
-                if (prevBaseIt != input.PreviousPaletteBases.end())
-                {
-                    prevPaletteBase = prevBaseIt->second;
-                }
-            }
+            const mat4 prevWorld =
+                ResolvePreviousWorld(input.PreviousWorlds, item.Owner, item.World);
+            const u32* prevBase = input.PreviousPaletteBases.Find(item.Owner);
+            const u32 prevPaletteBase = prevBase != nullptr ? *prevBase : paletteBase;
 
-            const mat3 normalMatrix = glm::inverseTranspose(mat3(item.World));
-            input.DrawData[input.FrameBase + slot] = GpuDrawData{
-                .World = item.World,
-                .NormalColumn0 = vec4(normalMatrix[0], 0.0f),
-                .NormalColumn1 = vec4(normalMatrix[1], 0.0f),
-                .NormalColumn2 = vec4(normalMatrix[2], 0.0f),
-                .MaterialOffset = material.GetMaterialSelector(),
-                .PaletteBase = paletteBase,
-                .PrevPaletteBase = prevPaletteBase,
-                .EntityIndex = item.Owner.Index,
-                .PrevWorld = prevWorld,
-            };
+            GpuDrawData drawData = MakeDrawData(item, material, prevWorld);
+            drawData.PaletteBase = paletteBase;
+            drawData.PrevPaletteBase = prevPaletteBase;
+            input.DrawData[input.FrameBase + slot] = drawData;
 
             plan.SkinnedSlots.push_back(DrawSlot{
                 .SourceMesh = &mesh,
                 .Pipeline = materials[subMesh.MaterialIndex].Get(),
+                .PipelineKey = material.GetParent().Get(),
                 .IndexCount = subMesh.IndexCount,
                 .FirstIndex = subMesh.IndexOffset,
                 .VertexOffset = 0,
@@ -274,7 +326,7 @@ namespace Veng::Renderer
             });
         }
 
-        GroupContiguousSlots(plan.SkinnedSlots, plan.SkinnedGroups);
+        GroupContiguousSlots(plan.SkinnedSlots, plan.SkinnedGroups, plan.SkinnedRuns);
     }
 
     void GatherTranslucent(const DrawGatherInput& input, const std::span<const u32> translucent,
@@ -305,18 +357,8 @@ namespace Veng::Renderer
 
             const MaterialInstance& material = *materials[subMesh.MaterialIndex].Get();
 
-            const mat3 normalMatrix = glm::inverseTranspose(mat3(item.World));
-            const mat4 prevWorld =
-                ResolvePreviousWorld(input.PreviousWorlds, PackEntity(item.Owner), item.World);
-            input.DrawData[input.FrameBase + slot] = GpuDrawData{
-                .World = item.World,
-                .NormalColumn0 = vec4(normalMatrix[0], 0.0f),
-                .NormalColumn1 = vec4(normalMatrix[1], 0.0f),
-                .NormalColumn2 = vec4(normalMatrix[2], 0.0f),
-                .MaterialOffset = material.GetMaterialSelector(),
-                .EntityIndex = item.Owner.Index,
-                .PrevWorld = prevWorld,
-            };
+            input.DrawData[input.FrameBase + slot] = MakeDrawData(
+                item, material, ResolvePreviousWorld(input.PreviousWorlds, item.Owner, item.World));
 
             // Sort key: the submesh's *own* center in view space. The camera looks down -Z, so a
             // farther submesh has a more negative z; sorting ascending by z draws farthest first.

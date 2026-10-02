@@ -2,6 +2,7 @@
 
 #include <span>
 
+#include <Veng/Renderer/EntityFrameTable.h>
 #include <Veng/Renderer/SceneView.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/Visibility.h>
@@ -13,17 +14,6 @@
 
 namespace Veng::Renderer
 {
-    /// @brief Packs an entity into the key the per-frame velocity and palette maps are keyed by.
-    ///
-    /// Index and generation both participate, so a reused slot never inherits the previous
-    /// entity's previous-frame world or palette base.
-    /// @param entity The entity to key by.
-    /// @return The packed key.
-    [[nodiscard]] constexpr u64 PackEntity(const Entity entity)
-    {
-        return (static_cast<u64>(entity.Index) << 32) | static_cast<u64>(entity.Generation);
-    }
-
     /// @brief Whether a submesh contributes to a shadow map — i.e. whether it occludes light.
     ///
     /// A submesh casts when it has a resident material that is not Translucent. The domain test is
@@ -66,42 +56,78 @@ namespace Veng::Renderer
         GpuCullCandidate* CullData = nullptr;
         /// @brief Mapped skinning palette matrices; a palette base indexes this absolutely.
         mat4* PaletteData = nullptr;
-        /// @brief Previous frame's world matrix per packed entity, the object-velocity source.
-        const unordered_map<u64, mat4>& PreviousWorlds;
-        /// @brief Previous frame's palette base per packed entity, the deformation-velocity source.
-        const unordered_map<u64, u32>& PreviousPaletteBases;
+        /// @brief Previous frame's world matrix per entity, the object-velocity source.
+        const EntityFrameTable<mat4>& PreviousWorlds;
+        /// @brief Previous frame's palette base per entity, the deformation-velocity source.
+        const EntityFrameTable<u32>& PreviousPaletteBases;
     };
 
-    /// @brief Groups contiguous slots sharing both a source mesh and a pipeline.
+    /// @brief The sort key a batched pass orders its draws by before laying them out.
+    ///
+    /// Equal keys up to Candidate draw the same index range of the same mesh through the same
+    /// pipeline, so ordering by this key makes every such set adjacent — one pipeline bind per
+    /// pipeline, one buffer bind per mesh, one instanced draw per submesh. Candidate is the
+    /// tiebreak, keeping gather order within a run.
+    struct DrawKey
+    {
+        /// @brief The pipeline the draw binds (a g-buffer draw's parent material), or null for a
+        ///        pass that draws everything through one pipeline.
+        const void* Pipeline = nullptr;
+        /// @brief The mesh whose buffers the draw binds.
+        const Mesh* SourceMesh = nullptr;
+        /// @brief The submesh within SourceMesh.
+        u32 SubMeshIndex = 0;
+        /// @brief The survivor's candidate id; the tiebreak, and how the caller finds it again.
+        u32 Candidate = 0;
+    };
+
+    /// @brief Orders draw keys by (pipeline, mesh, submesh, candidate), so equal draws are adjacent.
+    ///
+    /// The order is total and depends only on the keys, so the same survivors always lay out the
+    /// same way within a process. Pipeline and mesh compare by address, so the order between two
+    /// distinct meshes is arbitrary but fixed — which is all batching needs.
+    /// @param keys The keys to sort in place.
+    void SortDrawKeys(std::span<DrawKey> keys);
+
+    /// @brief Groups contiguous slots sharing a source mesh and a pipeline, and splits each group
+    ///        into instanced runs.
     ///
     /// The mesh's buffers and the material pipeline each bind once per group. Splitting on the
-    /// pipeline (not just the mesh) is what lets surface materials with different fragment shaders
-    /// coexist — each group binds its own. Pure: a span of slots in, groups appended out.
+    /// pipeline key (not just the mesh) is what lets surface materials with different fragment
+    /// shaders coexist — each group binds its own. Within a group, a run is a maximal stretch of
+    /// slots drawing the same index range with consecutive candidate ids, which one instanced draw
+    /// covers. Pure: a span of slots in, groups and runs appended out.
     /// @param slots  The slots to group, in submission order.
-    /// @param groups Receives one group per contiguous run; appended to, not cleared.
-    void GroupContiguousSlots(std::span<const DrawSlot> slots, vector<DrawGroup>& groups);
+    /// @param groups Receives one group per contiguous (mesh, pipeline) stretch; appended to.
+    /// @param runs   Receives each group's runs, in order; appended to. A group's FirstRun indexes
+    ///               this list as it stands after the call.
+    void GroupContiguousSlots(std::span<const DrawSlot> slots, vector<DrawGroup>& groups,
+                              vector<InstanceRun>& runs);
 
     /// @brief Lays out the static opaque slots and triages the survivors the later phases gather.
     ///
     /// One slot per survivor whose submesh has a loaded material; a materialless or not-yet-resident
-    /// submesh is skipped, matching the direct draw it replaces. The triage is a by-product of the
-    /// same single pass, not a separable step: translucent and skinned survivors are emitted into
-    /// the two output lists rather than traversed for a second time.
+    /// submesh is skipped, matching the direct draw it replaces. The triage runs first, over every
+    /// survivor: translucent and skinned survivors go to the two output lists, and the static ones
+    /// are keyed and ordered by SortDrawKeys before any slot is claimed, so equal draws take
+    /// adjacent slots and the plan's runs batch them.
     ///
     /// @pre Runs before GatherSkinned and GatherTranslucent, which consume its output lists and
     ///      continue its slot cursor — the static range must stay contiguous from 0, because the
     ///      GPU cull arrays are indexed by it.
-    /// An exhausted slot budget ends the phase, so it also ends the triage: every survivor after
-    /// that point is counted as a static drop and never reaches the later phases' lists.
+    /// An exhausted slot budget ends the phase: every static survivor not yet seated is counted as a
+    /// static drop. The triaged lists are complete either way; the later phases find the budget
+    /// spent and count their own drops.
     /// @param input          The shared per-frame inputs.
     /// @param survivors      The camera-frustum survivors, in ascending candidate-id order.
-    /// @param plan           Receives the static slots and their groups.
+    /// @param plan           Receives the static slots, their groups and their runs.
     /// @param budget         The shared draw budget, claimed once per laid-out slot.
     /// @param skinnedOut     Receives the skinned survivors, in survivor order.
     /// @param translucentOut Receives the translucent survivors, in survivor order.
+    /// @param keyScratch     Reused storage for the static survivors' sort keys; cleared here.
     void GatherStaticOpaque(const DrawGatherInput& input, std::span<const u32> survivors,
                             GBufferDrawPlan& plan, DrawBudget& budget, vector<u32>& skinnedOut,
-                            vector<u32>& translucentOut);
+                            vector<u32>& translucentOut, vector<DrawKey>& keyScratch);
 
     /// @brief Lays out the skinned slots after the static range and writes their palettes.
     ///
@@ -112,13 +138,13 @@ namespace Veng::Renderer
     /// @pre GatherStaticOpaque ran, so the static range is already contiguous from 0.
     /// @param input                The shared per-frame inputs.
     /// @param skinned              The skinned survivors GatherStaticOpaque triaged out.
-    /// @param plan                 Receives the skinned slots and their groups.
-    /// @param paletteBaseByEntity  This frame's palette base per packed entity; read back by the
-    ///                             shadow passes.
+    /// @param plan                 Receives the skinned slots, their groups and their runs.
+    /// @param paletteBaseByEntity  This frame's palette base per entity, begun by the caller; read
+    ///                             back by the shadow passes.
     /// @param budget               The shared draw budget, continued from the static range; an
     ///                             entity's first submesh claims its slot and palette together.
     void GatherSkinned(const DrawGatherInput& input, std::span<const u32> skinned,
-                       GBufferDrawPlan& plan, unordered_map<u64, u32>& paletteBaseByEntity,
+                       GBufferDrawPlan& plan, EntityFrameTable<u32>& paletteBaseByEntity,
                        DrawBudget& budget);
 
     /// @brief Lays out the translucent draws after the opaque slots and sorts them for blending.

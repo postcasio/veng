@@ -5,6 +5,7 @@
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/DebugDraw.h>
 #include <Veng/Renderer/DrawBudgetStats.h>
+#include <Veng/Renderer/EntityFrameTable.h>
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/RenderGraph.h>
@@ -1178,11 +1179,11 @@ namespace Veng::Renderer
         Ref<DescriptorSetLayout> m_PaletteSetLayout;
         /// @brief Descriptor set holding the palette buffer, bound for skinned draws.
         Ref<DescriptorSet> m_PaletteSet;
-        /// @brief This frame's PaletteBase per skinned entity (packed Entity → base), read by the shadow passes.
-        unordered_map<u64, u32> m_PaletteBaseByEntity;
+        /// @brief This frame's PaletteBase per skinned entity, read by the shadow passes.
+        EntityFrameTable<u32> m_PaletteBaseByEntity;
         /// @brief Previous frame's PaletteBase per skinned entity; surface_skinned.vert skins the
-        ///        previous position through it for velocity. Swapped from m_PaletteBaseByEntity each frame.
-        unordered_map<u64, u32> m_PreviousPaletteBaseByEntity;
+        ///        previous position through it for velocity. Swapped with m_PaletteBaseByEntity each frame.
+        EntityFrameTable<u32> m_PreviousPaletteBaseByEntity;
 
         /// @brief Reused per-frame frustum-survivor candidate ids (broadphase Cull scratch).
         ///
@@ -1293,15 +1294,15 @@ namespace Veng::Renderer
         /// snap the sequence). Folds into TaaJitterSampleCount.
         u64 m_FrameIndex = 0;
 
-        /// @brief Previous frame's world matrix per entity, keyed by a packed Entity id.
+        /// @brief Previous frame's world matrix per entity.
         ///
         /// The surface pass writes velocity from each drawn object's prior transform; PrepareDraws
         /// looks it up here and writes it into the per-draw record (DrawData.PrevWorld). An entity
         /// absent (first seen) reprojects with zero object motion. Maintained every frame (velocity
-        /// is always written); swapped from m_CurrentWorlds at the end of each Execute.
-        unordered_map<u64, mat4> m_PreviousWorlds;
+        /// is always written); swapped with m_CurrentWorlds at the end of each Execute.
+        EntityFrameTable<mat4> m_PreviousWorlds;
         /// @brief This frame's world matrix per entity; swapped into m_PreviousWorlds after Execute.
-        unordered_map<u64, mat4> m_CurrentWorlds;
+        EntityFrameTable<mat4> m_CurrentWorlds;
 
         /// @brief Non-owning pointer to the wired ShadowScenePass, or null when shadows are compiled out.
         ///

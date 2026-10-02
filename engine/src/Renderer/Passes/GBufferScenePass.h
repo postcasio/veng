@@ -1,5 +1,7 @@
 #pragma once
 
+#include <span>
+
 #include <Veng/Veng.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/ScenePass.h>
@@ -11,7 +13,20 @@
 
 namespace Veng::Renderer
 {
+    class CommandBuffer;
     class Context;
+
+    /// @brief Records a draw group's instanced runs: one DrawIndexed per run.
+    ///
+    /// Each run draws its first slot's index range with one instance per slot, firstInstance the
+    /// first slot's candidate id, so instance i reads candidate firstInstance + i. The caller has
+    /// bound the group's pipeline, sets, and mesh buffers.
+    /// @param cmd   The command buffer to record into.
+    /// @param slots The plan's slots the runs index.
+    /// @param runs  The plan's runs the group indexes.
+    /// @param group The group whose runs to draw.
+    void RecordInstanceRuns(CommandBuffer& cmd, std::span<const DrawSlot> slots,
+                            std::span<const InstanceRun> runs, const DrawGroup& group);
 
     /// @brief Records the deferred g-buffer geometry pass from the per-frame draw plan.
     ///

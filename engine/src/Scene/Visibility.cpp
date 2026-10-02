@@ -1,5 +1,7 @@
 #include <Veng/Scene/Visibility.h>
 
+#include <glm/gtc/matrix_inverse.hpp>
+
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/RemoteInterpolationSystem.h>
@@ -63,6 +65,7 @@ namespace Veng
             out.push_back(VisibleMesh{
                 .Owner = entity,
                 .World = world,
+                .NormalMatrix = glm::inverseTranspose(mat3(world)),
                 .WorldBounds = worldBounds,
                 .Mesh = renderer->Mesh.Get(),
                 .Materials = materials,

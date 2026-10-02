@@ -61,6 +61,14 @@ namespace Veng
         /// Descends internal nodes by their enclosing box; tests leaves by their tight box.
         void Query(const Frustum& frustum, vector<u32>& out) const;
 
+        /// @brief Sets the bit of every leaf whose box intersects `frustum` (bits not cleared).
+        ///
+        /// The same descent as Query, recording membership instead of appending, so a caller
+        /// wanting the survivors in id order walks the words rather than sorting.
+        /// @param frustum The frustum to test against.
+        /// @param bits    One bit per leaf id, low bit first within each word; must hold every id.
+        void QueryBits(const Frustum& frustum, std::span<u64> bits) const;
+
         /// @brief Returns the number of leaf nodes.
         [[nodiscard]] u32 GetLeafCount() const { return m_LeafCount; }
 
