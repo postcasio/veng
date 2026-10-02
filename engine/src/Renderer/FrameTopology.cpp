@@ -130,6 +130,14 @@ namespace Veng::Renderer
 
         topology.TaaUpscalePromotes = ResolveTemporalUpscalePromotes(settings);
 
+        // The tile cull serves every lighting pass that shades direct light: the composited arms,
+        // and the Reflections and CoC arms, which force-wire lighting as the input they inspect.
+        // The cascade and IBL-contribution variants run the lighting pass but discard its direct
+        // term, so a cull there would be work for nothing.
+        topology.LightTileCullActive =
+            settings.LightTileCulling && (topology.SceneComposited || topology.DebugReflections ||
+                                          settings.Mode == DebugView::CoC);
+
         return topology;
     }
 

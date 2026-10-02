@@ -69,7 +69,7 @@ The renderer is split along three conventions, and a new battery follows all of 
   object in `src/Renderer/` (forward-declared in `SceneRenderer.h`), on the `EnvironmentIbl`
   precedent: `ShadowSystem`, `BloomPyramid`, `AutoExposureMeter`, `TaaResolve`,
   `PostResolveUpscale`, `SsrChain`, `DofChain`,
-  `RefractionGrab`, `GpuCullSystem`, `PickingSystem`, and `SkyResolver` (which itself owns the
+  `RefractionGrab`, `GpuCullSystem`, `LightTileCuller`, `PickingSystem`, and `SkyResolver` (which itself owns the
   three sky radiance-cube helpers `EnvironmentIbl` / `AtmospherePrecompute` / `BakedSkyCube`).
   A subsystem owns its full vertical slice — its `Create`/recreate path, its `Declare*`
   contribution, its per-frame work — and **releases its own bindless handles in its own
@@ -465,8 +465,8 @@ every caster through four more cascade viewports, where a punctual tile costs a 
 memory and one traversal.
 
 **A view packs only the lights that can light it, and past the cap the brightest.** One view
-carries `MaxLights` (16) lights, and every pixel of the lighting pass loops all of them, so a slot
-spent on a light that adds nothing costs every pixel. `PackSceneLights` skips a light of zero
+carries `MaxLights` (16) lights, and every pixel the lighting pass shades visits each of them its
+tile has not culled, so a slot spent on a light that adds nothing costs pixels across the screen. `PackSceneLights` skips a light of zero
 radiance, a positioned light of non-positive range, an area light whose emitter has no area, and —
 given the camera frustum — a positioned light whose range sphere (grown by its emitter's reach)
 misses it. The rest are ranked by the radiance each delivers at the camera position (inverse square
@@ -476,8 +476,41 @@ would score zero every light whose range ends short of the camera but not of wha
 **The loop skips what cannot light a pixel** (`EvaluateDirectLighting`, `Veng/lighting.slang`): a
 light of zero radiance, a pixel at or past a light's range (for an area light, tested before the LTC
 integral), a pixel outside a spot's cone, and a punctual or directional light behind the surface
-each `continue` before the shadow lookup and the BRDF. Each skip is exact — the term it skips is
+each return before the shadow lookup and the BRDF. Each skip is exact — the term it skips is
 zero — so it changes cost, never the image.
+
+**Before the loop, a tile cull drops the lights that cannot reach a tile at all**
+(`Settings.LightTileCulling`, on by default; `LightTileCuller`, `light_tile_cull.comp`). One compute
+workgroup per `LightTileSize` (16) pixel tile — the "Light Tile Cull" pass, declared by the lighting
+pass ahead of itself — reduces the tile's depth to its nearest and farthest geometry, bounds the
+slice of the tile's frustum between them by the view-space box around its eight corners, and writes
+one `u32` per tile: bit *i* set when the view's *i*-th packed light's influence sphere reaches the
+box. The lighting pass (`EvaluateDirectLightingMasked`) then visits only the set bits, in index
+order, so a full mask sums exactly what the unmasked loop does. **The bound is conservative, so the
+image never moves:** a shaded pixel reconstructs its position at a pixel centre strictly inside the
+tile's edges and at a depth inside its range, so it lies in the box; a point or spot light lights
+nothing past its range (a spot stays sphere-bounded, its cone untested); an area light's sphere is
+its range grown by its emitter's reach (a Sphere's radius, a Rect's or Polygon's farthest vertex
+from its position), since its cutoff is measured from the emitter's surface; and the sphere grows
+by a `1e-5` relative epsilon over the camera-relative magnitudes to cover the float error of the
+lighting pass's own world-space reconstruction. A **directional light has no range and is in every
+tile's mask**; a tile showing only sky (cleared depth) gets no positioned light. Which arms cull is
+`FrameTopology::LightTileCullActive`: every arm whose lighting pass shades direct light (Final, Bloom,
+Reflections, CoC), never the cascade-tint or IBL-only variants that discard it.
+
+The masks live in a device-local storage buffer with **one region per frame in flight** (a renderer
+executes once per frame, so a frame never writes a region an in-flight frame reads), laid out
+row-major over the tile grid of the render allocation, so a dynamic-resolution sub-rect needs no
+reallocation. The buffer is registered in the set-0 storage-buffer array, and the view block's
+`LightTiles` names it — slot, row stride, this frame's first word, or `LightTilesNone` when no cull
+ran — so any pass can find a pixel's mask through `Veng/light_tiles.slang`. It is imported into the
+graph: the cull's `StorageBufferWrite` and the lighting pass's `StorageBufferRead` (which, on a
+graphics pass, is `AccessKind::StorageBufferReadGraphics`, a fragment-stage scope) derive the barrier.
+**The masks describe the opaque depth range**, so they serve the deferred pass; a forward-lit
+translucent fragment in front of that depth is not covered by them and still loops every light — a
+forward consumer would want a second word per tile bounding the near plane to the opaque depth.
+`SceneRenderer::ReadbackLightTileMasks()` downloads the last frame's masks for tests and diagnostics,
+and the toggle stays a setting so the two costs can be compared in a capture.
 
 **Both budgets are spent by estimated contribution, never by arrival.** `PackSceneLights` scores
 every packed shadow-casting light by the radiance the lighting pass would apply at the point of the caster
@@ -1070,7 +1103,7 @@ and `ViewportCompositor::RenderRegistered` reserves one slot per registered
 viewport before driving the captures at all — so **captures give way before viewports do**, a missing
 reflection over a stale window. An over-budget capture set is driven **round-robin** across frames
 from a retained cursor (`CaptureRotation.h`, the device-free arithmetic), which costs each map refresh
-latency instead of starving whichever captures registered last. Its stride is **704 bytes**. The shadow system's own state — each cascade
+latency instead of starving whichever captures registered last. Its stride is **720 bytes**. The shadow system's own state — each cascade
 set's matrices and splits, and the shared params — rides the shadow set's `ShadowConstants` block
 instead, so set 0 stays a lean, material-facing view block (shared by materials, lighting, and SSAO).
 
@@ -1078,8 +1111,8 @@ instead, so set 0 stays a lean, material-facing view block (shared by materials,
 area-vertex bases of the region the view claimed, the live light count, the ambient arm
 (`AmbientArm` — flat floor, SH skylight, or split-sum IBL, resolved once per view by
 `ResolveAmbientArm`), the arm's parameters (the flat floor, the IBL and skylight intensities), and
-the LTC LUT handles with the prefiltered cube's mip count. Everything that lights a surface in this
-view reads it from there — the deferred pass and a forward-lit translucent fragment alike (see
+the LTC LUT handles with the prefiltered cube's mip count, and where the view's per-tile light masks
+live (`LightTiles`). Everything that lights a surface in this view reads it from there — the deferred pass and a forward-lit translucent fragment alike (see
 [Forward lighting for translucent surfaces](#forward-lighting-for-translucent-surfaces)) — so the two
 cannot be handed different lights. The bases are the claimed region's, filled after `TryBeginView`,
 so the half-resolution layer's second region carries its own. The deferred push is left with the

@@ -48,6 +48,10 @@ namespace Veng::Renderer
         uvec4 LightLuts;
         vec4 AmbientFloor;  // rgb the flat-arm ambient floor, w the IBL arm's intensity
         vec4 AmbientParams; // x the SH skylight arm's intensity; yzw unused
+        // x the per-tile light-mask buffer's bindless storage-buffer slot, or LightTilesNone when
+        // no tile cull ran for the view; y the tile grid's row stride in tiles; z this frame's
+        // first mask word; w unused.
+        uvec4 LightTiles;
     };
 
     static_assert(sizeof(ViewConstantsBlock) <= BindlessRegistry::ViewConstantsStride,

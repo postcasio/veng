@@ -343,3 +343,26 @@ TEST_CASE("frame topology: velocity is stored only where something reads it")
     taa.AntiAliasing = AntiAliasingMode::TAAU;
     CHECK(Resolve(taa).GBufferStores.Velocity == GBufferChannelState::Stored);
 }
+
+TEST_CASE("frame topology: the light-tile cull runs exactly where lighting shades direct light")
+{
+    // The arms whose lighting pass shades direct light into an image someone reads: the two that
+    // composite the scene, and the two that force-wire lighting as the input they inspect. The
+    // cascade and IBL-contribution variants run lighting but discard its direct term.
+    for (usize arm = 0; arm < ArmCount; ++arm)
+    {
+        const auto mode = static_cast<DebugView>(arm);
+        const bool shadesDirect = mode == DebugView::Final || mode == DebugView::Bloom ||
+                                  mode == DebugView::Reflections || mode == DebugView::CoC;
+        SceneRendererSettings settings = ModeOnly(mode);
+        CAPTURE(DebugViewNames[arm]);
+        CHECK(Resolve(settings).LightTileCullActive == shadesDirect);
+
+        settings.LightTileCulling = false;
+        CHECK_FALSE(Resolve(settings).LightTileCullActive);
+    }
+
+    SceneRendererSettings lean;
+    lean.Path = RenderPath::GeometryDepthNormal;
+    CHECK_FALSE(Resolve(lean).LightTileCullActive);
+}

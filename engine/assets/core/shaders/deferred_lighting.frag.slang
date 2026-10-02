@@ -25,11 +25,17 @@
 // straight from G1 (a signed float target). World position is reconstructed from
 // the depth attachment via ViewConstants.InvViewProj — one of the two depth targets
 // read as textures in the engine — rather than stored in a fat position target.
+//
+// When the view carries per-tile light masks (Veng/light_tiles.slang), each pixel shades only the
+// lights its tile's mask names; the cull that wrote them is conservative, so the result is the one
+// every light would give.
 #include "view_constants.slang"
 #include "Veng/surface_flags.slang"
+#include "Veng/light_tiles.slang"
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
+[[vk::binding(3, 0)]] ByteAddressBuffer g_Buffers[];
 
 // The shared lighting core: the BRDF, the light loop, shadowing, and the ambient arms, read from
 // the per-view light state in the view block — the same evaluation a forward-lit translucent
@@ -51,6 +57,17 @@ struct PushConstants
 };
 
 [[vk::push_constant]] ConstantBuffer<PushConstants> g_PC;
+
+// The lights this pixel's tile can be reached by, or every light when the view has no masks.
+uint TileLightMask(ViewConstants vc, float2 fragCoord)
+{
+    if (!HasLightTiles(vc))
+    {
+        return AllLightsMask(vc.LightState.y);
+    }
+    uint2 tile = uint2(fragCoord) / LightTileSize;
+    return g_Buffers[NonUniformResourceIndex(vc.LightTiles.x)].Load(LightTileWord(vc, tile) * 4u);
+}
 
 struct VSOutput
 {
@@ -115,7 +132,8 @@ float4 fsMain(VSOutput input) : SV_Target
     return float4(CascadeDebugTint(surface.ViewDepth), 1.0);
 #endif
 
-    LightingResult direct = EvaluateDirectLighting(vc, surface);
+    LightingResult direct =
+        EvaluateDirectLightingMasked(vc, surface, TileLightMask(vc, input.sv_position.xy));
 
     // The ambient occlusion factor. The SSAO variant samples the screen-space AO
     // target and combines it with the baked ORM.r occlusion by min — SSAO modulates

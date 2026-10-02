@@ -424,6 +424,17 @@ namespace Veng::Renderer
         /// record fewer draws), so it still invalidates GetOutput() like any Configure.
         bool FrustumCull = true;
 
+        /// @brief Whether the lighting pass shades each pixel with only the lights that can reach
+        ///        its screen tile.
+        ///
+        /// A topology change: it inserts a compute pass ahead of lighting that cuts the screen into
+        /// LightTileSize-pixel tiles, bounds each tile's visible geometry by its depth range, and
+        /// writes a mask of the packed lights whose range reaches it; the lighting pass then visits
+        /// only the tile's lights instead of every packed light. The bound is conservative, so the
+        /// image is the same either way and only the lighting cost moves. Off loops every packed
+        /// light at every pixel — kept as a switch so the two costs can be compared.
+        bool LightTileCulling = true;
+
         /// @brief Selects CPU direct draws or the GPU-driven occlusion-cull → indirect-draw path.
         ///
         /// GPU is honored only where Context::IsGpuDrivenCullingSupported() is true; otherwise

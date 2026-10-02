@@ -255,7 +255,8 @@ namespace Veng::Renderer
             /// @brief Declares a storage-image read and write on resource (atomics, or an in-place
             /// update reading its own writes).
             PassBuilder& StorageReadWrite(ResourceId resource);
-            /// @brief Declares a storage-buffer read on a buffer resource.
+            /// @brief Declares a storage-buffer read on a buffer resource, by the stage this pass's
+            ///        type runs (compute, or a graphics pass's fragment stage).
             PassBuilder& StorageBufferRead(ResourceId resource);
             /// @brief Declares a storage-buffer write on a buffer resource.
             PassBuilder& StorageBufferWrite(ResourceId resource);

@@ -12,6 +12,7 @@
 #include "FrameTopology.h"
 #include "GpuBlocks.h"
 #include "GpuCullSystem.h"
+#include "LightTileCuller.h"
 #include "PickingSystem.h"
 #include "Passes/DebugBlitScenePasses.h"
 #include "Passes/DebugDrawScenePass.h"
@@ -254,6 +255,7 @@ namespace Veng::Renderer
         // reduce pipeline creation is not frame-observable, so building it here rather than in
         // CreatePipelines is the settled pipeline-order relaxation.
         m_GpuCull = GpuCullSystem::Create(m_Context, m_Assets, m_Settings);
+        m_LightTiles = LightTileCuller::Create(m_Context, m_Assets);
         m_Picking = PickingSystem::Create(m_Context, m_Assets);
         CreatePipelines();
         // The SSR chain's blur pipeline layout reserves the bloom down/up set layout, and its
@@ -618,6 +620,13 @@ namespace Veng::Renderer
             m_AutoExposureId = graph.ImportBuffer("SceneRenderer AutoExposure");
         }
 
+        // The per-tile light masks: the cull pass writes them and the lighting pass reads them
+        // through this import, so the barrier between the two is graph-derived. Every lighting pass
+        // this topology wires culls with them, or none does.
+        (void)m_LightTiles->Import(graph, m_Topology->LightTileCullActive);
+        LightTileCuller* const lightTiles =
+            m_Topology->LightTileCullActive ? m_LightTiles.get() : nullptr;
+
         TextureHandle ssaoHandle{};
         if (m_Topology->SsaoActive)
         {
@@ -737,7 +746,7 @@ namespace Veng::Renderer
                 m_Context, m_Topology->SsaoFold ? m_SsaoLightingPipeline : m_LightingPipeline,
                 renderExtent, m_Topology->SsaoFold, m_Shadows->GetSet(),
                 m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
-                m_SkyResolver->GetIbl().GetSet()));
+                m_SkyResolver->GetIbl().GetSet(), lightTiles));
 
             // The resolved sky source wires exactly one fullscreen sky pass in the shared sky slot,
             // before the TAA/SSR/bloom tail so the sky resolves, reflects, and tonemaps with the
@@ -1049,7 +1058,7 @@ namespace Veng::Renderer
                 m_Context, m_CascadeDebugPipeline, renderExtent, /*useSsao=*/false,
                 m_Shadows->GetSet(), m_Shadows->GetConstantsRingStride(),
                 m_Shadows->GetPunctualRingStride(), m_SkyResolver->GetIbl().GetSet(),
-                /*writeToOutput=*/true));
+                /*lightTiles=*/nullptr, /*writeToOutput=*/true));
             break;
         case DebugView::Bloom:
             // Bloom samples the composited HDR, so the same contributors the Final arm folds into it
@@ -1063,7 +1072,7 @@ namespace Veng::Renderer
                 m_Context, m_Topology->SsaoFold ? m_SsaoLightingPipeline : m_LightingPipeline,
                 renderExtent, m_Topology->SsaoFold, m_Shadows->GetSet(),
                 m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
-                m_SkyResolver->GetIbl().GetSet()));
+                m_SkyResolver->GetIbl().GetSet(), lightTiles));
             if (m_Topology->SkyboxWanted)
             {
                 m_Passes.push_back(CreateUnique<SkyboxScenePass>(
@@ -1137,7 +1146,7 @@ namespace Veng::Renderer
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, m_LightingPipeline, renderExtent, /*useSsao=*/false, m_Shadows->GetSet(),
                 m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
-                m_SkyResolver->GetIbl().GetSet()));
+                m_SkyResolver->GetIbl().GetSet(), lightTiles));
             m_Passes.push_back(CreateUnique<FullscreenBlitScenePass>(
                 m_Context, m_DebugBlits->Albedo, tailExtent,
                 FullscreenBlitScenePass::Source::Reflections));
@@ -1149,7 +1158,7 @@ namespace Veng::Renderer
             m_Passes.push_back(CreateUnique<DeferredLightingScenePass>(
                 m_Context, m_LightingPipeline, renderExtent, /*useSsao=*/false, m_Shadows->GetSet(),
                 m_Shadows->GetConstantsRingStride(), m_Shadows->GetPunctualRingStride(),
-                m_SkyResolver->GetIbl().GetSet()));
+                m_SkyResolver->GetIbl().GetSet(), lightTiles));
             m_Passes.push_back(
                 CreateUnique<CocBlitScenePass>(m_Context, m_DebugBlits->Coc, tailExtent));
             break;
@@ -1181,7 +1190,7 @@ namespace Veng::Renderer
                 m_Context, m_IblContributionDebugPipeline, renderExtent, /*useSsao=*/false,
                 m_Shadows->GetSet(), m_Shadows->GetConstantsRingStride(),
                 m_Shadows->GetPunctualRingStride(), m_SkyResolver->GetIbl().GetSet(),
-                /*writeToOutput=*/true));
+                /*lightTiles=*/nullptr, /*writeToOutput=*/true));
             break;
         }
 
@@ -1992,6 +2001,8 @@ namespace Veng::Renderer
         m_Refraction->Recreate(m_Settings, m_RenderAllocExtent);
         m_HalfResTranslucent->Recreate(m_HalfResTranslucentActive, m_RenderAllocExtent);
         m_Picking->Recreate(m_Settings, m_RenderAllocExtent);
+        // The mask grid covers the render allocation the lighting pass shades.
+        m_LightTiles->Recreate(m_Settings.LightTileCulling, m_RenderAllocExtent);
     }
 
     u32 SceneRenderer::GetMaxShadowResolution() const
@@ -2311,6 +2322,10 @@ namespace Veng::Renderer
                                m_SkyResolver->GetIbl().GetPrefilterMipCount()),
             .AmbientFloor = vec4(resolvedView.AmbientFloor, resolvedView.EnvironmentIntensity),
             .AmbientParams = vec4(resolvedView.SkylightIntensity, 0.0f, 0.0f, 0.0f),
+            // The renderer executes once per frame, so the frame-in-flight index selects a mask
+            // region no frame still on the GPU reads.
+            .LightTiles = m_LightTiles->ViewState(m_Topology->LightTileCullActive,
+                                                  m_Context.GetCurrentFrameInFlight()),
         };
         for (u32 i = 0; i < ShCoefficientCount; ++i)
         {
@@ -2781,6 +2796,11 @@ namespace Veng::Renderer
             bindings.push_back(
                 {.Id = m_AutoExposureId, .Buffer = m_AutoExposure->GetHistogramBuffer()});
         }
+        if (m_Topology->LightTileCullActive)
+        {
+            bindings.push_back(
+                {.Id = m_LightTiles->GetMaskId(), .Buffer = m_LightTiles->GetBuffer()});
+        }
         if (m_Topology->SsaoActive && m_SsaoPass != nullptr)
         {
             bindings.push_back({m_SsaoId, m_SsaoPass->GetAoView()});
@@ -2927,6 +2947,12 @@ namespace Veng::Renderer
     {
         return m_GpuCull->GetLastGpuSurvivorCount();
     }
+
+    LightTileMasks SceneRenderer::ReadbackLightTileMasks() const
+    {
+        return m_LightTiles->Readback();
+    }
+
     vector<u32> SceneRenderer::ReadbackGpuSurvivorFlags() const
     {
         return m_GpuCull->ReadbackGpuSurvivorFlags();

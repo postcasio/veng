@@ -741,8 +741,9 @@ namespace Veng::Renderer
         /// One stride per frame-in-flight; a pass reads at index * ViewConstantsStride.
         /// Mirrors the shader-side constant in view_constants.slang; the ViewConstants
         /// block (the camera/view matrices, the sub-rect mapping, the sky SH, the frame
-        /// clock, the scene-color grab handles, and the view's light state) fills it exactly.
-        static constexpr u32 ViewConstantsStride = 704;
+        /// clock, the scene-color grab handles, the view's light state, and where its per-tile
+        /// light masks live) fills it exactly.
+        static constexpr u32 ViewConstantsStride = 720;
 
         /// @brief The fixed byte stride of one GpuLight entry in the LightBinding
         /// ByteAddressBuffer.

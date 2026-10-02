@@ -338,6 +338,11 @@ TEST_CASE("ScopeFor maps each AccessKind to its documented scope")
     CHECK(sbr.Stage == vk::PipelineStageFlagBits::eComputeShader);
     CHECK(sbr.Access == vk::AccessFlagBits::eShaderRead);
 
+    const auto sbrg = ScopeFor(Kind::StorageBufferReadGraphics);
+    CHECK(sbrg.Layout == vk::ImageLayout::eUndefined);
+    CHECK(sbrg.Stage == vk::PipelineStageFlagBits::eFragmentShader);
+    CHECK(sbrg.Access == vk::AccessFlagBits::eShaderRead);
+
     const auto sbw = ScopeFor(Kind::StorageBufferWrite);
     CHECK(sbw.Layout == vk::ImageLayout::eUndefined);
     CHECK(sbw.Stage == vk::PipelineStageFlagBits::eComputeShader);

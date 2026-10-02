@@ -11,6 +11,7 @@ namespace Veng::Renderer
     class Context;
     class DescriptorSet;
     class GraphicsPipeline;
+    class LightTileCuller;
 
     // The deferred-lighting fragment push block: the g-buffer bindless slots (including the G4
     // emissive read), the shared sampler, and the view-constants index. The light state — light and
@@ -49,6 +50,9 @@ namespace Veng::Renderer
     /// the view block. Declaring .Sample on each g-buffer id drives the
     /// graph-derived attachment → shader-read transitions, including the depth attachment →
     /// shader-read barrier.
+    ///
+    /// Given a LightTileCuller, the pass declares the cull ahead of itself and reads its masks, so
+    /// each pixel visits only its tile's lights; the view block tells the shader where they are.
     class DeferredLightingScenePass final : public ScenePass
     {
     public:
@@ -65,16 +69,19 @@ namespace Veng::Renderer
         ///                         current region via a bind-time dynamic offset.
         /// @param punctualRingStride Per-frame PunctualShadow region stride.
         /// @param iblSet           The set-4 IBL maps + sampler descriptor set (always valid).
+        /// @param lightTiles       The per-tile light cull to run ahead of the pass and read, or
+        ///                         null to visit every packed light at every pixel. Renderer-owned;
+        ///                         outlives the pass.
         /// @param writeToOutput    When true, writes directly to the output target (cascade-debug
         ///                         terminal arm); otherwise writes the HDR target.
         DeferredLightingScenePass(Context& context, Ref<GraphicsPipeline> pipeline, uvec2 extent,
                                   bool useSsao, Ref<DescriptorSet> shadowSet, u32 shadowRingStride,
                                   u32 punctualRingStride, Ref<DescriptorSet> iblSet,
-                                  bool writeToOutput = false)
+                                  LightTileCuller* lightTiles = nullptr, bool writeToOutput = false)
             : m_Context(context), m_Pipeline(std::move(pipeline)), m_Extent(extent),
               m_UseSsao(useSsao), m_ShadowSet(std::move(shadowSet)),
               m_ShadowRingStride(shadowRingStride), m_PunctualRingStride(punctualRingStride),
-              m_IblSet(std::move(iblSet)), m_WriteToOutput(writeToOutput)
+              m_IblSet(std::move(iblSet)), m_LightTiles(lightTiles), m_WriteToOutput(writeToOutput)
         {
         }
 
@@ -100,6 +107,8 @@ namespace Veng::Renderer
         u32 m_PunctualRingStride = 0;
         /// @brief The set-4 IBL descriptor set.
         Ref<DescriptorSet> m_IblSet;
+        /// @brief The per-tile light cull this pass reads, or null for none.
+        LightTileCuller* m_LightTiles = nullptr;
         /// @brief Whether this pass writes directly to the output target.
         bool m_WriteToOutput = false;
     };

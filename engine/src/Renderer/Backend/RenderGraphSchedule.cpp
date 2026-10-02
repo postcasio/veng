@@ -30,9 +30,7 @@ namespace Veng::Renderer::Backend
                 const u32 slot = access.Resource.Index;
                 const ScheduleResource& source = resources[slot];
 
-                const bool isBufferAccess = access.Kind == AccessKind::StorageBufferRead ||
-                                            access.Kind == AccessKind::StorageBufferWrite ||
-                                            access.Kind == AccessKind::IndirectRead;
+                const bool isBufferAccess = IsBufferAccess(access.Kind);
 
                 VE_ASSERT(isBufferAccess == source.IsBuffer,
                           "RenderGraph::Compile: pass '{}' declares a {} access on '{}', which is "
@@ -45,8 +43,7 @@ namespace Veng::Renderer::Backend
                     const auto scope = ScopeFor(access.Kind);
 
                     // A transient buffer read before any pass writes it reads undefined contents.
-                    const bool isBufferRead = access.Kind == AccessKind::StorageBufferRead ||
-                                              access.Kind == AccessKind::IndirectRead;
+                    const bool isBufferRead = IsBufferReadAccess(access.Kind);
                     if (!source.IsImport && isBufferRead)
                     {
                         VE_ASSERT(written[slot],

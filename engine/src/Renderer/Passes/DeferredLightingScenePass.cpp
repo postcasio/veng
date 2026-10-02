@@ -1,5 +1,7 @@
 #include "DeferredLightingScenePass.h"
 
+#include "../LightTileCuller.h"
+
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DescriptorSet.h>
@@ -20,6 +22,13 @@ namespace Veng::Renderer
         const Ref<DescriptorSet> shadowSet = m_ShadowSet;
         const u32 shadowRingStride = m_ShadowRingStride;
         const u32 punctualRingStride = m_PunctualRingStride;
+
+        // The tile cull reduces the depth this pass reads and writes the masks it reads, so it is
+        // declared first; its mask write orders ahead of the read below.
+        if (m_LightTiles != nullptr)
+        {
+            m_LightTiles->DeclareCull(graph, io.GBufferDepth, depthHandle);
+        }
 
         RenderGraph::PassBuilder builder = graph.AddPass("Deferred Lighting");
         builder
@@ -51,6 +60,13 @@ namespace Veng::Renderer
         if (useSsao)
         {
             builder.Sample(io.Ssao);
+        }
+
+        // The masks reach the shader through the set-0 storage-buffer array the view block names;
+        // the declaration is for barrier derivation.
+        if (m_LightTiles != nullptr)
+        {
+            builder.StorageBufferRead(m_LightTiles->GetMaskId());
         }
 
         const Ref<DescriptorSet> iblSet = m_IblSet;

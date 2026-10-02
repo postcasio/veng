@@ -164,6 +164,36 @@ TEST_CASE("Schedule: compute storage-write to graphics indirect-read derives a b
     CHECK(barrier.DstAccess == vk::AccessFlagBits::eIndirectCommandRead);
 }
 
+TEST_CASE("Schedule: compute storage-write to a fragment storage-buffer read waits at the fragment "
+          "stage")
+{
+    // A compute pass writes a buffer a graphics pass's fragment stage reads: the barrier's
+    // destination is the stage that reads, so the fragment work cannot start before the write lands.
+    const vector<ScheduleResource> resources{ImportBuffer("Masks")};
+
+    const vector<RenderGraph::Access> write{Access(0, AccessKind::StorageBufferWrite)};
+    const vector<RenderGraph::Access> read{Access(0, AccessKind::StorageBufferReadGraphics)};
+    const vector<SchedulePass> passes{
+        {.Name = "Cull", .Accesses = write},
+        {.Name = "Shade", .Accesses = read},
+        {.Name = "CullAgain", .Accesses = write},
+    };
+
+    const auto schedule = DeriveRenderGraphSchedule(resources, passes);
+
+    REQUIRE(schedule.size() == 3);
+    REQUIRE(schedule[1].BufferBarriers.size() == 1);
+    const ScheduledBufferBarrier& toRead = schedule[1].BufferBarriers[0];
+    CHECK(toRead.SrcStage == vk::PipelineStageFlagBits::eComputeShader);
+    CHECK(toRead.SrcAccess == vk::AccessFlagBits::eShaderWrite);
+    CHECK(toRead.DstStage == vk::PipelineStageFlagBits::eFragmentShader);
+    CHECK(toRead.DstAccess == vk::AccessFlagBits::eShaderRead);
+
+    // A later write waits on the fragment read rather than on a compute stage that read nothing.
+    REQUIRE(schedule[2].BufferBarriers.size() == 1);
+    CHECK(schedule[2].BufferBarriers[0].SrcStage == vk::PipelineStageFlagBits::eFragmentShader);
+}
+
 TEST_CASE("Schedule: a read-after-read on a buffer emits no barrier")
 {
     const vector<ScheduleResource> resources{ImportBuffer("Params")};

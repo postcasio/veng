@@ -136,6 +136,13 @@ namespace Veng::Renderer
         bool SsrActive = false;
         /// @brief The pre-translucent scene-color copy is wired.
         bool RefractionActive = false;
+        /// @brief The per-tile light cull runs ahead of the lighting pass, which then visits only
+        ///        each tile's lights.
+        ///
+        /// Set where the lighting pass shades direct light into an image someone reads — the
+        /// composited arms and the debug arms that force-wire lighting as an input — and never for
+        /// the two lighting variants that discard it (the cascade tint and the IBL-only arm).
+        bool LightTileCullActive = false;
         /// @brief How much of the depth-of-field chain is wired.
         DofStages Dof = DofStages::None;
 

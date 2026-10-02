@@ -5,7 +5,8 @@
 // previous and current unjittered view-projections (PrevViewProj / CurViewProj) the
 // TAA resolve reprojects through and the surface stage writes its g-buffer velocity
 // channel from, plus the view's light state (LightState onward) the shared lighting core
-// (Veng/lighting.slang) reads. The shadow system rides its own ShadowConstants block, not here.
+// (Veng/lighting.slang) reads, and where this view's per-tile light masks live. The shadow system
+// rides its own ShadowConstants block, not here.
 //
 // Ring-buffered across frames-in-flight, byte-addressed at index * ViewConstantsStride;
 // mirrors BindlessRegistry::ViewConstantsStride and the CPU ViewConstantsBlock exactly.
@@ -85,9 +86,13 @@ struct ViewConstants
     float4 AmbientFloor;
     // x the SH skylight arm's intensity; yzw unused.
     float4 AmbientParams;
+    // The view's per-tile light masks (Veng/light_tiles.slang): x the bindless g_Buffers slot of
+    // the mask buffer, or LightTilesNone when no cull ran for this view; y the tile grid's row
+    // stride in tiles; z this frame's first mask word in that buffer; w unused.
+    uint4 LightTiles;
 };
 
-static const uint ViewConstantsStride = 704;
+static const uint ViewConstantsStride = 720;
 
 [[vk::binding(5, 0)]] ByteAddressBuffer g_ViewConstants;
 

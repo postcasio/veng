@@ -59,6 +59,7 @@ namespace Veng::Renderer
     class RefractionGrab;
     class HalfResTranslucency;
     class GpuCullSystem;
+    class LightTileCuller;
     class PickingSystem;
     class Image;
     class Sampler;
@@ -71,6 +72,23 @@ namespace Veng::Renderer
     class GuiHdrOverlayScenePass;
     struct DebugBlitPipelines;
     struct FrameTopology;
+
+    /// @brief The edge, in pixels, of the square screen tiles the lighting pass culls lights over.
+    ///
+    /// One cull workgroup covers one tile, so it is also the workgroup's edge. Mirrors
+    /// LightTileSize in Veng/light_tiles.slang.
+    inline constexpr u32 LightTileSize = 16;
+
+    /// @brief The per-tile light masks one Execute's light-tile cull wrote.
+    struct LightTileMasks
+    {
+        /// @brief The tile grid covering the frame's rendered extent, in tiles.
+        uvec2 Tiles{0};
+        /// @brief One mask per tile, row-major over Tiles. Bit i names the view's i-th packed light
+        ///        (PackedSceneLights::Lights order): set when that light can reach a surface the
+        ///        tile shows.
+        vector<u32> Masks;
+    };
 
     /// @brief Long-lived deferred render pipeline owning an offscreen target.
     ///
@@ -279,6 +297,14 @@ namespace Veng::Renderer
         /// for the GPU↔CPU set-equivalence test. Empty under CullMode::CPU.
         /// @return The per-candidate instanceCount verdicts, or empty if no GPU Execute has run.
         [[nodiscard]] vector<u32> ReadbackGpuSurvivorFlags() const;
+
+        /// @brief Reads back the per-tile light masks the last Execute's light-tile cull wrote.
+        ///
+        /// Blocks on a device read; exposed for tests and diagnostics. Empty when the cull did not
+        /// run (Settings.LightTileCulling off, or a topology whose lighting pass shades no direct
+        /// light).
+        /// @return The masks over the tile grid of the last Execute's rendered extent.
+        [[nodiscard]] LightTileMasks ReadbackLightTileMasks() const;
 
         /// @brief Returns true if the broadphase rebuilt its tree from scratch during the most recent Execute.
         ///
@@ -1010,6 +1036,9 @@ namespace Veng::Renderer
 
         /// @brief The auto-exposure metering battery — histogram pipeline, ring, and adaptation state.
         Unique<AutoExposureMeter> m_AutoExposure;
+
+        /// @brief The per-tile light cull ahead of the lighting pass — its mask ring and pipeline.
+        Unique<LightTileCuller> m_LightTiles;
 
         /// @brief The TAA resolve battery — resolve/copy pipelines, lit/history targets, reset gate.
         Unique<TaaResolve> m_Taa;

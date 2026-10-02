@@ -150,6 +150,12 @@ namespace Veng::Renderer::Backend
                 .Stage = vk::PipelineStageFlagBits::eComputeShader,
                 .Access = vk::AccessFlagBits::eShaderWrite,
             };
+        case Kind::StorageBufferReadGraphics:
+            return {
+                .Layout = vk::ImageLayout::eUndefined,
+                .Stage = vk::PipelineStageFlagBits::eFragmentShader,
+                .Access = vk::AccessFlagBits::eShaderRead,
+            };
         }
         VE_ASSERT(false, "unhandled AccessKind {}", static_cast<u32>(kind));
     }

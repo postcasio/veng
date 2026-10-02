@@ -320,16 +320,22 @@ namespace Veng::Renderer
         TransferDst,
         /// @brief Read as indirect draw/dispatch arguments (eDrawIndirect/eIndirectCommandRead).
         IndirectRead,
-        /// @brief Read as a storage buffer.
+        /// @brief Read as a storage buffer by a compute shader.
         ///
         /// Distinct from StorageRead, which is a storage-image layout; a buffer has no
         /// layout, so this resolves to a stage/access memory scope with no transition.
+        /// StorageBufferReadGraphics is the fragment-stage read, for the reason the Sample*
+        /// kinds name their stage.
         StorageBufferRead,
         /// @brief Written as a storage buffer.
         ///
         /// Distinct from StorageWrite, which is a storage-image layout; a buffer has no
         /// layout, so this resolves to a stage/access memory scope with no transition.
         StorageBufferWrite,
+        /// @brief Read as a storage buffer by a fragment shader.
+        ///
+        /// @see StorageBufferRead, the compute-stage read.
+        StorageBufferReadGraphics,
     };
 
     /// @brief Whether an access kind is a sampled read, whichever stage performs it.
@@ -341,6 +347,22 @@ namespace Veng::Renderer
     {
         return kind == AccessKind::SampleGraphics || kind == AccessKind::SampleCompute ||
                kind == AccessKind::SampleAny;
+    }
+
+    /// @brief Whether an access kind reads a buffer, whichever stage or path performs it.
+    ///
+    /// A storage-buffer read names its stage like a sampled one does, so code asking "is this a
+    /// buffer read" asks here rather than comparing against one kind and missing the other.
+    [[nodiscard]] constexpr bool IsBufferReadAccess(const AccessKind kind)
+    {
+        return kind == AccessKind::StorageBufferRead ||
+               kind == AccessKind::StorageBufferReadGraphics || kind == AccessKind::IndirectRead;
+    }
+
+    /// @brief Whether an access kind touches a buffer rather than an image.
+    [[nodiscard]] constexpr bool IsBufferAccess(const AccessKind kind)
+    {
+        return IsBufferReadAccess(kind) || kind == AccessKind::StorageBufferWrite;
     }
 
     /// @brief Width of index elements in an index buffer.

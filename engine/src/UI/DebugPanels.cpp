@@ -868,6 +868,7 @@ namespace Veng::UI
         if (auto section = UI::CollapsingHeader("Culling"))
         {
             changed |= UI::Checkbox("Frustum culling", settings.FrustumCull);
+            changed |= UI::Checkbox("Light tile culling", settings.LightTileCulling);
 
             // The GPU arm is a different pass topology, so the selector and the occlusion toggle
             // both drive a recompile. The selector greys out where the device cannot honor GPU

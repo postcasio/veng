@@ -12,18 +12,13 @@
 //
 // The includer declares the set-0 bindless arrays g_Textures / g_Samplers and the view block
 // (view_constants.slang) before including this, and chooses the shadow system's set through
-// VE_SHADOW_SET (see shadow.slang). This file declares the set-0 light and area-vertex buffers
-// (bindings 6 and 7) and the image-based-lighting maps at set 4.
+// VE_SHADOW_SET (see shadow.slang). This file declares the image-based-lighting maps at set 4, and
+// through Veng/light_buffer.slang the set-0 light and area-vertex buffers (bindings 6 and 7).
 #include "../shadow.slang"
+#include "Veng/light_buffer.slang"
 #include "Veng/sh.slang"
 #include "Veng/light_flags.slang"
 #include "Veng/ltc.slang"
-
-[[vk::binding(6, 0)]] ByteAddressBuffer g_Lights;
-// The per-view area-light polygon-vertex buffer (Rect/Polygon world-space vertices, one vec4
-// each). A light's Area.y/z give the base/count relative to this view's region; the view block's
-// area-vertex base folds in the region start, exactly as its light base does for the light buffer.
-[[vk::binding(7, 0)]] ByteAddressBuffer g_AreaVertices;
 
 // Set 4: the image-based-lighting maps (off the bindless registry, a closed renderer-owned set).
 // Irradiance is the diffuse term; the prefiltered cube + the BRDF LUT are the split-sum specular
@@ -34,38 +29,12 @@
 [[vk::binding(3, 4)]] Texture2D g_BrdfLut;
 [[vk::binding(4, 4)]] SamplerState g_IblSampler;
 
-static const uint LightStride = 96;
-static const uint AreaVertexStride = 16;
-
-// LightType, matching the Light builtin's enum.
-static const float LightTypeDirectional = 0.0;
-static const float LightTypePoint = 1.0;
-static const float LightTypeSpot = 2.0;
-static const float LightTypeRect = 3.0;
-static const float LightTypeSphere = 4.0;
-static const float LightTypePolygon = 5.0;
-
 // The view block's ambient arm (LightState.w), matching the renderer's AmbientArm.
 static const uint AmbientArmFlat = 0;
 static const uint AmbientArmSkylight = 1;
 static const uint AmbientArmIbl = 2;
 
 static const float LightingPi = 3.14159265358979323846;
-
-// One light, packed by the renderer into the ring-buffered light buffer. Position
-// is the entity's world transform; the type rides DirectionType.w. The last two
-// vec4 carry the source/shape size: a Sphere's or a Point/Spot's source radius, a
-// Rect/Polygon's vertex range into the area-vertex buffer, the area-shadow slot, and
-// the world area normal.
-struct GpuLight
-{
-    float4 PositionRange;   // xyz world position, w range
-    float4 DirectionType;   // xyz travel direction, w LightType
-    float4 ColorIntensity;  // rgb linear color, a intensity
-    float4 Cone;            // x cos(inner), y cos(outer), z punctual shadow slot, w LightFlag bits
-    float4 Area;            // x sphere/point/spot source radius, y poly vertex base, z poly vertex count, w area-shadow slot
-    float4 AreaNormal;      // xyz world area normal (Rect/Polygon), w shadow source radius
-};
 
 // The surface a lighting evaluation shades, in world space. Build it with MakeLightingSurface,
 // which applies the roughness floor and derives the metal-tinted base reflectance.
@@ -197,12 +166,6 @@ float3x3 LtcMatrix(ViewConstants vc, float nDotV, float roughness, out float4 t2
                     t1.y, 0.0, t1.w);
 }
 
-// Load a packed area-light polygon vertex (world space) by its region-relative index.
-float3 LtcAreaVertex(ViewConstants vc, uint index)
-{
-    return g_AreaVertices.Load<float4>((vc.LightState.z + index) * AreaVertexStride).xyz;
-}
-
 // The LTC integral over a convex polygon read from the area-vertex buffer. Minv is the fitted
 // matrix (specular) or identity (Lambert diffuse). areaNormal is the polygon's CCW front-face
 // normal; a one-sided light contributes nothing to a point behind its plane.
@@ -214,11 +177,11 @@ float LtcPolygon(ViewConstants vc, float3 N, float3 V, float3 P, float3x3 Minv, 
     // Slang's float3x3(a,b,c) fills rows, so this is already the world→(T1,T2,N) rotation.
     float3x3 M = mul(Minv, float3x3(T1, T2, N));
 
-    float3 prev = normalize(mul(M, LtcAreaVertex(vc, base + count - 1u) - P));
+    float3 prev = normalize(mul(M, LoadAreaVertex(vc, base + count - 1u) - P));
     float3 vsum = float3(0.0);
     for (uint i = 0; i < count; ++i)
     {
-        float3 cur = normalize(mul(M, LtcAreaVertex(vc, base + i) - P));
+        float3 cur = normalize(mul(M, LoadAreaVertex(vc, base + i) - P));
         vsum += LtcIntegrateEdgeVec(prev, cur);
         prev = cur;
     }
@@ -231,7 +194,7 @@ float LtcPolygon(ViewConstants vc, float3 N, float3 V, float3 P, float3x3 Minv, 
     // The edge-vector z sums negative for a front face pointing at the shading point (the
     // Rect/Polygon CCW authoring convention), so the front-lit axis cosine is the negated z.
     float z = -vsum.z / len;
-    bool behind = dot(P - LtcAreaVertex(vc, base), areaNormal) < 0.0;
+    bool behind = dot(P - LoadAreaVertex(vc, base), areaNormal) < 0.0;
     if (behind && !twoSided)
     {
         return 0.0;
@@ -313,15 +276,15 @@ float AreaLightSurfaceDistance(ViewConstants vc, GpuLight light, float3 P)
     // The polygon is convex and planar: P projects inside it when that projection sits on the same
     // side of every edge, and otherwise the nearest point lies on an edge.
     float3 n = light.AreaNormal.xyz;
-    float planeDist = dot(P - LtcAreaVertex(vc, base), n);
+    float planeDist = dot(P - LoadAreaVertex(vc, base), n);
     float3 Q = P - planeDist * n;
     bool anyInside = false;
     bool anyOutside = false;
     float edgeDist2 = 3.4e38;
-    float3 prev = LtcAreaVertex(vc, base + count - 1u);
+    float3 prev = LoadAreaVertex(vc, base + count - 1u);
     for (uint i = 0u; i < count; ++i)
     {
-        float3 cur = LtcAreaVertex(vc, base + i);
+        float3 cur = LoadAreaVertex(vc, base + i);
         float3 edge = cur - prev;
         float side = dot(cross(edge, Q - prev), n);
         anyInside = anyInside || side > 0.0;
@@ -351,162 +314,178 @@ float AreaShadowVisibility(GpuLight light, float3 worldPos, float3 N)
     return AreaShadowSample(slot, worldPos, N, L, light.AreaNormal.w, length(toLight));
 }
 
-// The Cook-Torrance response of the surface to every live light in this view's light region,
-// shadowed. Directional lights have no attenuation; point/spot fall off with distance, and spot
-// adds a cone factor; area lights integrate analytically through LTC. A light whose contribution
-// here is exactly zero — zero radiance, the pixel at or past its range or outside its cone, or the
-// light behind the surface — is skipped before its shadow lookup and BRDF.
-LightingResult EvaluateDirectLighting(ViewConstants vc, LightingSurface s)
+// Adds one light's shadowed Cook-Torrance response at the surface to direct. Directional lights
+// have no attenuation; point/spot fall off with distance, and spot adds a cone factor; area lights
+// integrate analytically through LTC. A light whose contribution here is exactly zero — zero
+// radiance, the pixel at or past its range or outside its cone, or the light behind the surface —
+// returns before its shadow lookup and BRDF.
+void AccumulateLight(ViewConstants vc, LightingSurface s, GpuLight light,
+                     inout LightingResult direct)
 {
     float3 N = s.Normal;
     float3 worldPos = s.Position;
 
+    float type = light.DirectionType.w;
+    float3 radiance = light.ColorIntensity.rgb * light.ColorIntensity.a;
+    if (all(radiance == float3(0.0)))
+    {
+        return;
+    }
+
+    // Rect/Sphere/Polygon are area lights: shade analytically through the LTC path and fall
+    // off with a smooth range cutoff only — the solid-angle integral already carries the
+    // inverse-square, so no separate distance term. The cutoff is measured from the emitter's
+    // surface, not its center, and is zero at the range, so the integral is skipped past it.
+    // (Area shadowing is applied below.)
+    if (type > LightTypeSpot + 0.5)
+    {
+        float dist = AreaLightSurfaceDistance(vc, light, worldPos);
+        float range = max(light.PositionRange.w, 1e-4);
+        if (dist >= range)
+        {
+            return;
+        }
+        LightingResult area = EvaluateAreaLight(vc, s, light);
+        float rangeFactor = saturate(1.0 - pow(dist / range, 4.0));
+        rangeFactor *= rangeFactor;
+        // A near-parallel area light is shadowed by the cascade set fit to it — parallel
+        // projection, fit to the camera view — using its travel direction, not its position.
+        // Any other area light samples its punctual perspective tile.
+        float areaVisibility;
+        if (s.DeclinesShadowMaps)
+        {
+            areaVisibility = 1.0;
+        }
+        else if (LightIsAreaCascadeShadowed(light.Cone.w))
+        {
+            float3 sunL = normalize(-light.DirectionType.xyz);
+            areaVisibility = DirectionalShadowVisibility(worldPos, N, sunL, s.ViewDepth,
+                                                        LightCascadeSet(light.Cone.w));
+        }
+        else
+        {
+            areaVisibility = AreaShadowVisibility(light, worldPos, N);
+        }
+        direct.Diffuse += area.Diffuse * rangeFactor * areaVisibility;
+        direct.Specular += area.Specular * rangeFactor * areaVisibility;
+        return;
+    }
+
+    float3 L;
+    float attenuation = 1.0;
+    bool isDirectional = type == LightTypeDirectional;
+    if (isDirectional)
+    {
+        // The light direction is the direction the light travels; the surface
+        // faces the light along -direction.
+        L = normalize(-light.DirectionType.xyz);
+    }
+    else
+    {
+        // Point and spot are placed at PositionRange.xyz; L points from the
+        // surface toward the light.
+        float3 toLight = light.PositionRange.xyz - worldPos;
+        float dist = length(toLight);
+        float range = max(light.PositionRange.w, 1e-4);
+        if (dist >= range)
+        {
+            return;
+        }
+        L = dist > 1e-4 ? toLight / dist : float3(0.0, 0.0, 1.0);
+
+        // Inverse-square falloff with a smooth cutoff at Range: physically
+        // correct near the light, faded to zero by the range radius so the loop
+        // bound stays meaningful.
+        //
+        // The near field is bounded by the light's spherical source radius (Area.x):
+        // the shading distance is clamped to be no less than it before the square, so a
+        // real source size — not an epsilon guard — caps the response at contact. A zero
+        // radius (the default) falls back to the 1e-4 floor and is bit-identical to a pure
+        // inverse-square. A 1/(d^2 + 1) denominator is deliberately not used: the +1
+        // perturbs the falloff at every distance, not only near the singularity, so it
+        // cannot be read as absolute radiance under a fixed exposure. L still comes from the
+        // true toLight — the clamp bounds the magnitude of the response, not its direction.
+        float sourceRadius = light.Area.x;
+        float distanceFactor = 1.0 / max(max(dist * dist, sourceRadius * sourceRadius), 1e-4);
+        float rangeFactor = saturate(1.0 - pow(dist / range, 4.0));
+        rangeFactor *= rangeFactor;
+        attenuation = distanceFactor * rangeFactor;
+
+        if (type == LightTypeSpot)
+        {
+            // Smoothstep the cone between cos(inner) (full) and cos(outer)
+            // (zero); the surface-to-light direction is compared against the
+            // light's travel direction.
+            float cosAngle = dot(normalize(-light.DirectionType.xyz), L);
+            float cosInner = light.Cone.x;
+            float cosOuter = light.Cone.y;
+            attenuation *= smoothstep(cosOuter, cosInner, cosAngle);
+            if (attenuation <= 0.0)
+            {
+                return;
+            }
+        }
+    }
+
+    // EvaluateLight scales by the clamped N·L, so a light behind the surface adds exactly zero.
+    if (dot(N, L) <= 0.0)
+    {
+        return;
+    }
+
+    // A directional light is shadowed by the cascade set fit to its direction, unless the
+    // atlas had none left for it (the denied flag), in which case it shades unshadowed
+    // rather than reading a cascade fit to some other light. A point or spot light is
+    // shadowed by its punctual atlas tile, gated by its shadow slot (Cone.z, -1 =
+    // unshadowed). Both sample through hardware SampleCmp.
+    float visibility;
+    if (s.DeclinesShadowMaps)
+    {
+        visibility = 1.0;
+    }
+    else if (isDirectional)
+    {
+        visibility = LightIsCascadeDenied(light.Cone.w)
+            ? 1.0
+            : DirectionalShadowVisibility(worldPos, N, L, s.ViewDepth,
+                                          LightCascadeSet(light.Cone.w));
+    }
+    else
+    {
+        int slot = int(light.Cone.z);
+        visibility = PunctualShadowVisibility(worldPos, N, L, slot);
+    }
+
+    LightingResult lit = EvaluateLight(s, L, radiance * attenuation);
+    direct.Diffuse += lit.Diffuse * visibility;
+    direct.Specular += lit.Specular * visibility;
+}
+
+// The response of the surface to the lights of this view's light region that lightMask names (bit i
+// the region's i-th light), shadowed. The lights are visited in index order, so a mask naming every
+// light sums exactly what the unmasked loop does; a caller that knows a light cannot reach the
+// surface — the deferred pass's per-tile cull — clears its bit and skips it outright.
+LightingResult EvaluateDirectLightingMasked(ViewConstants vc, LightingSurface s, uint lightMask)
+{
     LightingResult direct;
     direct.Diffuse = float3(0.0);
     direct.Specular = float3(0.0);
 
-    uint lightBase = vc.LightState.x;
-    uint lightCount = vc.LightState.y;
-    for (uint i = 0; i < lightCount; ++i)
+    uint remaining = lightMask & AllLightsMask(vc.LightState.y);
+    while (remaining != 0u)
     {
-        GpuLight light = g_Lights.Load<GpuLight>((lightBase + i) * LightStride);
-
-        float type = light.DirectionType.w;
-        float3 radiance = light.ColorIntensity.rgb * light.ColorIntensity.a;
-        if (all(radiance == float3(0.0)))
-        {
-            continue;
-        }
-
-        // Rect/Sphere/Polygon are area lights: shade analytically through the LTC path and fall
-        // off with a smooth range cutoff only — the solid-angle integral already carries the
-        // inverse-square, so no separate distance term. The cutoff is measured from the emitter's
-        // surface, not its center, and is zero at the range, so the integral is skipped past it.
-        // (Area shadowing is applied below.)
-        if (type > LightTypeSpot + 0.5)
-        {
-            float dist = AreaLightSurfaceDistance(vc, light, worldPos);
-            float range = max(light.PositionRange.w, 1e-4);
-            if (dist >= range)
-            {
-                continue;
-            }
-            LightingResult area = EvaluateAreaLight(vc, s, light);
-            float rangeFactor = saturate(1.0 - pow(dist / range, 4.0));
-            rangeFactor *= rangeFactor;
-            // A near-parallel area light is shadowed by the cascade set fit to it — parallel
-            // projection, fit to the camera view — using its travel direction, not its position.
-            // Any other area light samples its punctual perspective tile.
-            float areaVisibility;
-            if (s.DeclinesShadowMaps)
-            {
-                areaVisibility = 1.0;
-            }
-            else if (LightIsAreaCascadeShadowed(light.Cone.w))
-            {
-                float3 sunL = normalize(-light.DirectionType.xyz);
-                areaVisibility = DirectionalShadowVisibility(worldPos, N, sunL, s.ViewDepth,
-                                                            LightCascadeSet(light.Cone.w));
-            }
-            else
-            {
-                areaVisibility = AreaShadowVisibility(light, worldPos, N);
-            }
-            direct.Diffuse += area.Diffuse * rangeFactor * areaVisibility;
-            direct.Specular += area.Specular * rangeFactor * areaVisibility;
-            continue;
-        }
-
-        float3 L;
-        float attenuation = 1.0;
-        bool isDirectional = type == LightTypeDirectional;
-        if (isDirectional)
-        {
-            // The light direction is the direction the light travels; the surface
-            // faces the light along -direction.
-            L = normalize(-light.DirectionType.xyz);
-        }
-        else
-        {
-            // Point and spot are placed at PositionRange.xyz; L points from the
-            // surface toward the light.
-            float3 toLight = light.PositionRange.xyz - worldPos;
-            float dist = length(toLight);
-            float range = max(light.PositionRange.w, 1e-4);
-            if (dist >= range)
-            {
-                continue;
-            }
-            L = dist > 1e-4 ? toLight / dist : float3(0.0, 0.0, 1.0);
-
-            // Inverse-square falloff with a smooth cutoff at Range: physically
-            // correct near the light, faded to zero by the range radius so the loop
-            // bound stays meaningful.
-            //
-            // The near field is bounded by the light's spherical source radius (Area.x):
-            // the shading distance is clamped to be no less than it before the square, so a
-            // real source size — not an epsilon guard — caps the response at contact. A zero
-            // radius (the default) falls back to the 1e-4 floor and is bit-identical to a pure
-            // inverse-square. A 1/(d^2 + 1) denominator is deliberately not used: the +1
-            // perturbs the falloff at every distance, not only near the singularity, so it
-            // cannot be read as absolute radiance under a fixed exposure. L still comes from the
-            // true toLight — the clamp bounds the magnitude of the response, not its direction.
-            float sourceRadius = light.Area.x;
-            float distanceFactor = 1.0 / max(max(dist * dist, sourceRadius * sourceRadius), 1e-4);
-            float rangeFactor = saturate(1.0 - pow(dist / range, 4.0));
-            rangeFactor *= rangeFactor;
-            attenuation = distanceFactor * rangeFactor;
-
-            if (type == LightTypeSpot)
-            {
-                // Smoothstep the cone between cos(inner) (full) and cos(outer)
-                // (zero); the surface-to-light direction is compared against the
-                // light's travel direction.
-                float cosAngle = dot(normalize(-light.DirectionType.xyz), L);
-                float cosInner = light.Cone.x;
-                float cosOuter = light.Cone.y;
-                attenuation *= smoothstep(cosOuter, cosInner, cosAngle);
-                if (attenuation <= 0.0)
-                {
-                    continue;
-                }
-            }
-        }
-
-        // EvaluateLight scales by the clamped N·L, so a light behind the surface adds exactly zero.
-        if (dot(N, L) <= 0.0)
-        {
-            continue;
-        }
-
-        // A directional light is shadowed by the cascade set fit to its direction, unless the
-        // atlas had none left for it (the denied flag), in which case it shades unshadowed
-        // rather than reading a cascade fit to some other light. A point or spot light is
-        // shadowed by its punctual atlas tile, gated by its shadow slot (Cone.z, -1 =
-        // unshadowed). Both sample through hardware SampleCmp.
-        float visibility;
-        if (s.DeclinesShadowMaps)
-        {
-            visibility = 1.0;
-        }
-        else if (isDirectional)
-        {
-            visibility = LightIsCascadeDenied(light.Cone.w)
-                ? 1.0
-                : DirectionalShadowVisibility(worldPos, N, L, s.ViewDepth,
-                                              LightCascadeSet(light.Cone.w));
-        }
-        else
-        {
-            int slot = int(light.Cone.z);
-            visibility = PunctualShadowVisibility(worldPos, N, L, slot);
-        }
-
-        LightingResult lit = EvaluateLight(s, L, radiance * attenuation);
-        direct.Diffuse += lit.Diffuse * visibility;
-        direct.Specular += lit.Specular * visibility;
+        uint index = firstbitlow(remaining);
+        remaining &= remaining - 1u;
+        AccumulateLight(vc, s, LoadLight(vc, index), direct);
     }
     return direct;
+}
+
+// The Cook-Torrance response of the surface to every live light in this view's light region,
+// shadowed.
+LightingResult EvaluateDirectLighting(ViewConstants vc, LightingSurface s)
+{
+    return EvaluateDirectLightingMasked(vc, s, AllLightsMask(vc.LightState.y));
 }
 
 // The indirect (ambient) term, three-way on the view block's ambient arm. With an environment

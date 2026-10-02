@@ -46,6 +46,7 @@ namespace Veng::Renderer
             case AccessKind::IndirectRead:
             case AccessKind::StorageBufferRead:
             case AccessKind::StorageBufferWrite:
+            case AccessKind::StorageBufferReadGraphics:
                 break;
             }
             VE_ASSERT(false, "a generated-texture target cannot be produced through AccessKind {}",

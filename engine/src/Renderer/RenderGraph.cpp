@@ -92,7 +92,12 @@ namespace Veng::Renderer
 
     RenderGraph::PassBuilder& RenderGraph::PassBuilder::StorageBufferRead(const ResourceId resource)
     {
-        m_Pass.Accesses.push_back({.Resource = resource, .Kind = AccessKind::StorageBufferRead});
+        // The stage comes from the pass, as Sample's does: a later write must wait on the stage
+        // that actually read.
+        const AccessKind kind = m_Pass.Type == PassType::Compute
+                                    ? AccessKind::StorageBufferRead
+                                    : AccessKind::StorageBufferReadGraphics;
+        m_Pass.Accesses.push_back({.Resource = resource, .Kind = kind});
         return *this;
     }
 

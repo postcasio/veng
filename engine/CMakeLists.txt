@@ -351,6 +351,7 @@ add_library(veng SHARED
         src/Renderer/HalfResTranslucency.cpp
         src/Renderer/RefractionGrab.cpp
         src/Renderer/GpuCullSystem.cpp
+        src/Renderer/LightTileCuller.cpp
         src/Renderer/PickingSystem.cpp
         src/Renderer/Passes/SkyboxScenePass.cpp
         src/Renderer/Passes/IblCubeDebugScenePass.cpp

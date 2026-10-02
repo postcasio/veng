@@ -13,6 +13,7 @@
 // automated correctness gate for the deferred plan.
 
 #include <array>
+#include <bit>
 #include <cmath>
 
 #include <doctest/doctest.h>
@@ -2157,6 +2158,174 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const vec3 litCenter = DecodeTexel(inRange, extent.x, extent.x / 2, extent.y / 2);
     const vec3 ambientCenter = DecodeTexel(ambientOnly, extent.x, extent.x / 2, extent.y / 2);
     CHECK(litCenter.r > ambientCenter.r * 2.0f);
+
+    std::filesystem::remove(outArchive);
+}
+
+// The per-tile light masks are conservative and tight. A face-on brick cube is lit by a sun, a point
+// light reaching the left of its face, and a small Rect panel reaching its upper right corner, with
+// six point lights hovering between it and the camera, each inside the frustum (so packed) and each
+// ending short of the cube. The masks name the sun in every tile, no positioned light where a tile
+// shows only sky, none of the hovering lights anywhere, and the point light where it reaches the
+// face but not where its range ends short of it. Rendering with the cull off gives the same bytes:
+// no tile dropped a light that reaches one of its pixels.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: the light-tile masks keep every light that reaches a tile and "
+                  "drop the lights that cannot")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_light_tiles.vengpack");
+
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(material.has_value());
+
+    const Ref<Mesh> cube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *material), "Light Tile Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
+
+    const Entity sun = scene->CreateEntity();
+    scene->Add<Light>(sun) = Light{.Type = LightType::Directional,
+                                   .Direction = glm::normalize(vec3(0.2f, -0.3f, -1.0f)),
+                                   .Intensity = DirectionalLux(0.3f)};
+
+    // The cube's front face is at z = 0.7. The point light's sphere meets it in a disc about
+    // x = -0.55 of radius ~0.52, so it reaches the left of the face and not the right.
+    const vec3 leftPosition{-0.55f, 0.0f, 1.0f};
+    const Entity left = scene->CreateEntity();
+    scene->Add<Transform>(left).Position = leftPosition;
+    scene->Add<Light>(left) =
+        Light{.Type = LightType::Point, .Intensity = PointLumens(6.0f), .Range = 0.6f};
+
+    // A half turn about +Y faces the panel's emitting +Z toward the cube; its range reaches the face
+    // only from the emitter's surface, so it is the reach-grown bound that keeps it.
+    const Entity rect = scene->CreateEntity();
+    scene->Add<Transform>(rect) =
+        Transform{.Position = vec3(0.45f, 0.45f, 0.95f),
+                  .Rotation = glm::angleAxis(glm::pi<f32>(), vec3(0.0f, 1.0f, 0.0f))};
+    scene->Add<Light>(rect) = Light{.Type = LightType::Rect,
+                                    .Intensity = AreaNits(40.0f),
+                                    .Range = 0.35f,
+                                    .Width = 0.3f,
+                                    .Height = 0.3f,
+                                    .TwoSided = true};
+
+    vector<vec3> hoveringPositions;
+    for (const f32 x : {-0.25f, 0.0f, 0.25f})
+    {
+        for (const f32 y : {-0.15f, 0.15f})
+        {
+            const vec3 position{x, y, 2.2f};
+            hoveringPositions.push_back(position);
+            const Entity hovering = scene->CreateEntity();
+            scene->Add<Transform>(hovering).Position = position;
+            scene->Add<Light>(hovering) =
+                Light{.Type = LightType::Point, .Intensity = PointLumens(200.0f), .Range = 0.3f};
+        }
+    }
+
+    constexpr uvec2 extent{128, 128};
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    // Every light is packed, so the masks — not the packing — are what leave the hovering ones out.
+    // Bit i of a mask names the i-th packed light.
+    const Frustum frustum = Frustum::FromViewProjection(camera.ViewProjection());
+    const vec3 cameraPosition = camera.GetPosition();
+    const PackedSceneLights packed =
+        PackSceneLights(*scene, true, 1024, AABB::Empty(), &frustum, &cameraPosition);
+    REQUIRE(packed.LightCount == 9);
+    auto bitAt = [&](const vec3& position) -> u32
+    {
+        for (u32 i = 0; i < packed.LightCount; ++i)
+        {
+            if (glm::length(vec3(packed.Lights[i].PositionRange) - position) < 1e-4f)
+            {
+                return 1u << i;
+            }
+        }
+        return 0u;
+    };
+    u32 sunBit = 0;
+    for (u32 i = 0; i < packed.LightCount; ++i)
+    {
+        if (packed.Lights[i].DirectionType.w == static_cast<f32>(LightType::Directional))
+        {
+            sunBit = 1u << i;
+        }
+    }
+    REQUIRE(sunBit != 0u);
+    const u32 leftBit = bitAt(leftPosition);
+    REQUIRE(leftBit != 0u);
+    u32 hoveringBits = 0;
+    for (const vec3& position : hoveringPositions)
+    {
+        hoveringBits |= bitAt(position);
+    }
+    REQUIRE(std::popcount(hoveringBits) == static_cast<int>(hoveringPositions.size()));
+
+    // Bloom and SSAO are off: neither is bit-stable across renders on MoltenVK, and the last claim
+    // is byte equality. Shadows stay on.
+    SceneRendererSettings settings{.Mode = DebugView::Final, .Bloom = false, .AO = false};
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = settings,
+    });
+
+    const vector<u8> culled = RenderOutput(Context, *renderer, *scene, camera);
+    const LightTileMasks masks = renderer->ReadbackLightTileMasks();
+    REQUIRE(masks.Tiles == uvec2(extent.x / LightTileSize, extent.y / LightTileSize));
+    REQUIRE(masks.Masks.size() == static_cast<usize>(masks.Tiles.x) * masks.Tiles.y);
+
+    u32 tilesWithoutSun = 0;
+    u32 anyMask = 0;
+    for (const u32 mask : masks.Masks)
+    {
+        tilesWithoutSun += (mask & sunBit) == 0u ? 1u : 0u;
+        anyMask |= mask;
+    }
+    CHECK(tilesWithoutSun == 0u);
+    CHECK((anyMask & hoveringBits) == 0u);
+
+    // The tile holding a world point on the face, through the same uv = ndc * 0.5 + 0.5 mapping the
+    // lighting pass reconstructs with.
+    auto maskAt = [&](const vec3& world) -> u32
+    {
+        const vec4 clip = camera.ViewProjection() * vec4(world, 1.0f);
+        const vec2 pixel = (vec2(clip) / clip.w * 0.5f + 0.5f) * vec2(extent);
+        const uvec2 tile = uvec2(pixel) / LightTileSize;
+        return masks.Masks[static_cast<usize>(tile.y) * masks.Tiles.x + tile.x];
+    };
+    // The corner tile shows only sky.
+    CHECK((masks.Masks[0] & ~sunBit) == 0u);
+    CHECK((maskAt(vec3(-0.55f, 0.0f, 0.7f)) & leftBit) != 0u);
+    CHECK((maskAt(vec3(0.6f, 0.0f, 0.7f)) & leftBit) == 0u);
+
+    settings.LightTileCulling = false;
+    renderer->Configure(settings);
+    const vector<u8> unculled = RenderOutput(Context, *renderer, *scene, camera);
+    CHECK(renderer->ReadbackLightTileMasks().Masks.empty());
+    CHECK(culled == unculled);
+
+    // The point light visibly lights the face where its tile keeps it, so the equality above is
+    // over lit pixels rather than an ambient-only frame.
+    const vec4 leftClip = camera.ViewProjection() * vec4(-0.55f, 0.0f, 0.7f, 1.0f);
+    const uvec2 leftPixel = uvec2((vec2(leftClip) / leftClip.w * 0.5f + 0.5f) * vec2(extent));
+    const vec3 litLeft = DecodeTexel(culled, extent.x, leftPixel.x, leftPixel.y);
+    const vec4 rightClip = camera.ViewProjection() * vec4(0.0f, -0.4f, 0.7f, 1.0f);
+    const uvec2 rightPixel = uvec2((vec2(rightClip) / rightClip.w * 0.5f + 0.5f) * vec2(extent));
+    const vec3 unlitFace = DecodeTexel(culled, extent.x, rightPixel.x, rightPixel.y);
+    CHECK(litLeft.r > unlitFace.r * 1.5f);
 
     std::filesystem::remove(outArchive);
 }
