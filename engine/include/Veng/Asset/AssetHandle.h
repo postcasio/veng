@@ -91,6 +91,13 @@ namespace Veng
         /// A failed handle never becomes resident, so a caller waiting on IsLoaded() can stop.
         [[nodiscard]] bool HasFailed() const { return m_Entry != nullptr && m_Entry->Failed; }
 
+        /// @brief Returns true when nothing more will arrive: resident, empty, or failed.
+        ///
+        /// What a caller holding presentation or a spawn until an asset lands waits on, rather than
+        /// on IsLoaded(): an empty handle and a failed one never become resident, so waiting on
+        /// IsLoaded() alone would hold that caller for good.
+        [[nodiscard]] bool IsSettled() const { return !IsValid() || IsLoaded() || HasFailed(); }
+
         /// @brief Returns the asset's id (may be invalid for runtime-adopted resources).
         [[nodiscard]] AssetId Id() const { return m_Id; }
 

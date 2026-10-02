@@ -86,6 +86,12 @@ namespace
     }
 }
 
+template <>
+struct Veng::AssetTypeTrait<ThreadProbe>
+{
+    static constexpr AssetTypeId Type = ThreadProbeType;
+};
+
 TEST_CASE("AssetManager: LoadSync<RawAsset> resolves a mounted asset")
 {
     const path archivePath = WriteFixtureArchive();
@@ -319,10 +325,14 @@ TEST_CASE("AssetManager: an async load parses on a worker and lands through the 
     REQUIRE(entry != nullptr);
     CHECK(entry->Resource == nullptr);
     CHECK(manager.GetParsingCount() == 1);
+    const AssetHandle<ThreadProbe> handle = AssetManager::HandleOf<ThreadProbe>(entry);
+    CHECK_FALSE(handle.IsSettled());
+    CHECK(AssetHandle<ThreadProbe>().IsSettled());
 
     tasks.WaitForAll();
     manager.PumpFinalizes();
     REQUIRE(entry->Resource != nullptr);
+    CHECK(handle.IsSettled());
     CHECK(manager.GetParsingCount() == 0);
     CHECK(std::static_pointer_cast<ThreadProbe>(entry->Resource)->ParsedOn !=
           std::this_thread::get_id());
@@ -356,6 +366,7 @@ TEST_CASE("AssetManager: a failed async parse marks the entry failed and frees t
 
     CHECK(entry->Failed);
     CHECK(entry->Resource == nullptr);
+    CHECK(AssetManager::HandleOf<ThreadProbe>(entry).IsSettled());
     CHECK(manager.CachedEntry(AssetId{0x4D2}) == nullptr);
 
     // A blocking load of the same id runs again and reports the decode error.
