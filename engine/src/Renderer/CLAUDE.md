@@ -1050,11 +1050,13 @@ The scene-drawing passes **cull at submesh granularity through a BVH broadphase*
 renderer-owned `SceneBroadphase` (`Veng/Scene/SceneBroadphase.h`) holds a bounding volume
 hierarchy whose **leaves are per-submesh** — one leaf per `SubMesh`, on its local-space `AABB`
 folded over the submesh's index range at load (no cooked-format change). Each `Execute` calls
-`SceneBroadphase::Sync`: it re-gathers the candidates (the pure `GatherMeshes` pass,
+`SceneBroadphase::Sync`: **only on a frame the scene's spatial version moved** (or a still-loading
+mesh became resident) it re-gathers the candidates (the pure `GatherMeshes` pass,
 `Veng/Scene/Visibility.h`, over every resident `(Transform, MeshRenderer)` entity — world matrix +
-world-space `AABB` + resident mesh) and rebuilds the tree **only on a frame the scene's spatial
-version moved** (or a still-loading mesh became resident) — a static scene rebuilds the tree not
-at all and queries a stable one. The gathered list rides `std::span<const VisibleMesh> Visible` on
+world-space `AABB` + resident mesh) and brings the tree current: a **refit** when the candidates are
+the same entities and meshes as before (only their bounds moved), a rebuild when the set changed or
+refits have degraded the tree's surface-area cost past `SceneBroadphase::RefitCostLimit`. A static
+scene touches the tree not at all and queries a stable one. The gathered list rides `std::span<const VisibleMesh> Visible` on
 `SceneView`; `SceneBroadphase::Cull` descends the tree once per view — the g-buffer geometry pass
 with the **camera** frustum, the cascaded shadow pass once per cascade of every cascade set with
 **each cascade's** light frustum, each punctual light's view with its own — so the many-view shadow workload queries
@@ -1097,8 +1099,9 @@ slot limit, the slots the three gather phases granted, and the submeshes each dr
 budget was exhausted — the stage that makes a clamped frame legible, since the survivor counts
 above it do not move when the clamp fires), with `GetLastGpuSurvivorCount()` the GPU occlusion
 survivor count read back one frame late under `CullMode::GPU`, and `DidBroadphaseRebuildLastFrame()` /
-`GetBroadphaseNodeCount()` reporting whether the tree rebuilt and its size. Tree maintenance is
-rebuild-on-version-move, not incremental; culling granularity is per-submesh, not meshlet;
+`DidBroadphaseRefitLastFrame()` / `GetBroadphaseNodeCount()` reporting whether the tree rebuilt or
+refit and its size. Tree maintenance is refit-or-rebuild on a version move, never insertion or
+removal of single leaves; culling granularity is per-submesh, not meshlet;
 occlusion is temporal hi-Z, not two-pass; shadow views cull on the CPU BVH only.
 
 ### ScenePass and PassIO

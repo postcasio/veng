@@ -1,6 +1,9 @@
 #include <Veng/Math/BVH.h>
 
+#include <Veng/Assert.h>
+
 #include <algorithm>
+#include <array>
 
 namespace Veng
 {
@@ -14,8 +17,50 @@ namespace Veng
             const vec3 size = glm::max(box.Size(), vec3(0.0f));
             return 2.0f * (size.x * size.y + size.y * size.z + size.z * size.x);
         }
+    }
 
-        constexpr i32 BucketCount = 12;
+    namespace Detail
+    {
+        BucketSplit BestBucketSplit(const std::span<const AABB, BVH::BucketCount> boxes,
+                                    const std::span<const u32, BVH::BucketCount> counts)
+        {
+            constexpr i32 Buckets = BVH::BucketCount;
+
+            // Right side of each boundary: rightArea[s] and rightCount[s] cover buckets s..end.
+            f32 rightArea[Buckets] = {};
+            u32 rightCount[Buckets] = {};
+            AABB right = AABB::Empty();
+            u32 rightLeaves = 0;
+            for (i32 b = Buckets - 1; b > 0; --b)
+            {
+                right.Expand(boxes[b]);
+                rightLeaves += counts[b];
+                rightArea[b] = SurfaceArea(right);
+                rightCount[b] = rightLeaves;
+            }
+
+            // Grow the left side one bucket at a time and cost each boundary against its suffix.
+            BucketSplit best;
+            AABB left = AABB::Empty();
+            u32 leftLeaves = 0;
+            for (i32 split = 1; split < Buckets; ++split)
+            {
+                left.Expand(boxes[split - 1]);
+                leftLeaves += counts[split - 1];
+                if (leftLeaves == 0 || rightCount[split] == 0)
+                {
+                    continue;
+                }
+
+                const f32 cost = SurfaceArea(left) * static_cast<f32>(leftLeaves) +
+                                 rightArea[split] * static_cast<f32>(rightCount[split]);
+                if (cost < best.Cost)
+                {
+                    best = BucketSplit{.Split = split, .Cost = cost};
+                }
+            }
+            return best;
+        }
     }
 
     void BVH::Build(std::span<const Leaf> leaves)
@@ -26,33 +71,88 @@ namespace Veng
 
         if (leaves.empty())
         {
+            m_Cost = 0.0f;
+            m_BuildCost = 0.0f;
             return;
         }
 
-        // Copy into scratch BuildRange partitions in place. The node pool is
-        // sized to the exact internal+leaf count (2N-1 for N leaves) so no
-        // reallocation invalidates an index mid-build.
+        // Copy into scratch BuildRange partitions in place, with each centroid computed once rather
+        // than at every level that bins it. The node pool is sized to the exact internal+leaf count
+        // (2N-1 for N leaves) so no reallocation invalidates an index mid-build.
         m_Nodes.reserve(2 * leaves.size() - 1);
-        vector<Leaf> scratch(leaves.begin(), leaves.end());
-        m_Root = BuildRange(scratch);
+        m_BuildScratch.resize(leaves.size());
+        for (usize i = 0; i < leaves.size(); ++i)
+        {
+            m_BuildScratch[i] = BuildLeaf{.Item = leaves[i], .Centroid = leaves[i].Box.Center()};
+        }
+        m_Root = BuildRange(m_BuildScratch);
+
+        UpdateCost();
+        m_BuildCost = m_Cost;
     }
 
-    i32 BVH::BuildRange(std::span<Leaf> leaves)
+    void BVH::Refit(const std::span<const AABB> boxes)
+    {
+        // Children precede their parents in the pool, so one forward pass is bottom-up.
+        for (Node& node : m_Nodes)
+        {
+            if (node.IsLeaf())
+            {
+                VE_ASSERT(node.Id < boxes.size(), "BVH::Refit: leaf id {} has no box ({} given)",
+                          node.Id, boxes.size());
+                node.Box = boxes[node.Id];
+            }
+            else
+            {
+                node.Box = Union(m_Nodes[node.Child1].Box, m_Nodes[node.Child2].Box);
+            }
+        }
+        UpdateCost();
+    }
+
+    void BVH::UpdateCost()
+    {
+        m_Cost = 0.0f;
+        if (m_Root == NullNode)
+        {
+            return;
+        }
+
+        const f32 rootArea = SurfaceArea(m_Nodes[static_cast<usize>(m_Root)].Box);
+        if (rootArea <= 0.0f)
+        {
+            return;
+        }
+
+        f32 internalArea = 0.0f;
+        for (const Node& node : m_Nodes)
+        {
+            if (!node.IsLeaf())
+            {
+                internalArea += SurfaceArea(node.Box);
+            }
+        }
+        m_Cost = internalArea / rootArea;
+    }
+
+    i32 BVH::BuildRange(std::span<BuildLeaf> leaves)
     {
         if (leaves.size() == 1)
         {
             const i32 index = static_cast<i32>(m_Nodes.size());
-            m_Nodes.push_back(Node{
-                .Box = leaves[0].Box, .Child1 = NullNode, .Child2 = NullNode, .Id = leaves[0].Id});
+            m_Nodes.push_back(Node{.Box = leaves[0].Item.Box,
+                                   .Child1 = NullNode,
+                                   .Child2 = NullNode,
+                                   .Id = leaves[0].Item.Id});
             return index;
         }
 
         // Centroid bounds pick the split axis; the longest centroid axis spreads
         // the leaves widest, giving the SAH sweep the most separation to work with.
         AABB centroidBounds = AABB::Empty();
-        for (const Leaf& leaf : leaves)
+        for (const BuildLeaf& leaf : leaves)
         {
-            centroidBounds.Expand(leaf.Box.Center());
+            centroidBounds.Expand(leaf.Centroid);
         }
 
         const vec3 centroidSize = centroidBounds.Size();
@@ -66,7 +166,8 @@ namespace Veng
             axis = 2;
         }
 
-        const auto centroidAxis = [axis](const Leaf& leaf) { return leaf.Box.Center()[axis]; };
+        const auto byAxis = [axis](const BuildLeaf& a, const BuildLeaf& b)
+        { return a.Centroid[axis] < b.Centroid[axis]; };
 
         const usize median = leaves.size() / 2;
         usize mid = median;
@@ -75,9 +176,7 @@ namespace Veng
         {
             // Every centroid coincides on the split axis — the SAH sweep has no
             // separation to score, so split at the median to keep the tree balanced.
-            std::nth_element(leaves.begin(), leaves.begin() + median, leaves.end(),
-                             [&](const Leaf& a, const Leaf& b)
-                             { return centroidAxis(a) < centroidAxis(b); });
+            std::nth_element(leaves.begin(), leaves.begin() + median, leaves.end(), byAxis);
         }
         else
         {
@@ -87,81 +186,42 @@ namespace Veng
             const f32 axisMin = centroidBounds.Min[axis];
             const f32 axisInv = static_cast<f32>(BucketCount) / centroidSize[axis];
 
-            AABB bucketBox[BucketCount];
-            i32 bucketCount[BucketCount] = {};
-            for (i32 b = 0; b < BucketCount; ++b)
-            {
-                bucketBox[b] = AABB::Empty();
-            }
+            std::array<AABB, BucketCount> bucketBox;
+            std::array<u32, BucketCount> bucketCount = {};
+            bucketBox.fill(AABB::Empty());
 
-            const auto bucketOf = [&](const Leaf& leaf)
+            const auto bucketOf = [&](const BuildLeaf& leaf)
             {
-                const i32 b = static_cast<i32>((centroidAxis(leaf) - axisMin) * axisInv);
+                const i32 b = static_cast<i32>((leaf.Centroid[axis] - axisMin) * axisInv);
                 return std::clamp(b, 0, BucketCount - 1);
             };
 
-            for (const Leaf& leaf : leaves)
+            for (const BuildLeaf& leaf : leaves)
             {
                 const i32 b = bucketOf(leaf);
-                bucketBox[b].Expand(leaf.Box);
+                bucketBox[b].Expand(leaf.Item.Box);
                 ++bucketCount[b];
             }
 
-            // Sweep candidate splits; SAH cost = leftArea*leftCount + rightArea*rightCount.
-            f32 bestCost = std::numeric_limits<f32>::infinity();
-            i32 bestSplit = -1;
-            for (i32 split = 1; split < BucketCount; ++split)
-            {
-                AABB leftBox = AABB::Empty();
-                i32 leftCount = 0;
-                for (i32 b = 0; b < split; ++b)
-                {
-                    leftBox.Expand(bucketBox[b]);
-                    leftCount += bucketCount[b];
-                }
-
-                AABB rightBox = AABB::Empty();
-                i32 rightCount = 0;
-                for (i32 b = split; b < BucketCount; ++b)
-                {
-                    rightBox.Expand(bucketBox[b]);
-                    rightCount += bucketCount[b];
-                }
-
-                if (leftCount == 0 || rightCount == 0)
-                {
-                    continue;
-                }
-
-                const f32 cost = SurfaceArea(leftBox) * static_cast<f32>(leftCount) +
-                                 SurfaceArea(rightBox) * static_cast<f32>(rightCount);
-                if (cost < bestCost)
-                {
-                    bestCost = cost;
-                    bestSplit = split;
-                }
-            }
-
-            if (bestSplit < 0)
+            const Detail::BucketSplit best = Detail::BestBucketSplit(bucketBox, bucketCount);
+            if (best.Split < 0)
             {
                 // Every leaf fell in one bucket despite a nonzero centroid spread
                 // (float binning collapse) — median-split to make progress.
-                std::nth_element(leaves.begin(), leaves.begin() + median, leaves.end(),
-                                 [&](const Leaf& a, const Leaf& b)
-                                 { return centroidAxis(a) < centroidAxis(b); });
+                std::nth_element(leaves.begin(), leaves.begin() + median, leaves.end(), byAxis);
             }
             else
             {
                 // The SAH skip of empty-side splits guarantees both groups are
                 // non-empty, so the partition boundary is a valid interior split.
                 const auto boundary = std::ranges::partition(
-                    leaves, [&](const Leaf& leaf) { return bucketOf(leaf) < bestSplit; });
+                    leaves, [&](const BuildLeaf& leaf) { return bucketOf(leaf) < best.Split; });
                 mid = static_cast<usize>(boundary.begin() - leaves.begin());
             }
         }
 
-        const std::span<Leaf> left = leaves.subspan(0, mid);
-        const std::span<Leaf> right = leaves.subspan(mid);
+        const std::span<BuildLeaf> left = leaves.subspan(0, mid);
+        const std::span<BuildLeaf> right = leaves.subspan(mid);
         const i32 child1 = BuildRange(left);
         const i32 child2 = BuildRange(right);
 

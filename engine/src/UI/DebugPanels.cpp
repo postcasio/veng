@@ -75,8 +75,10 @@ namespace Veng::UI
             UI::Text(fmt::format("Occlusion survived: {}", renderer.GetLastGpuSurvivorCount()));
         }
 
-        const bool rebuilt = renderer.DidBroadphaseRebuildLastFrame();
-        UI::Text(fmt::format("Broadphase: {} ({} nodes)", rebuilt ? "rebuilt" : "static",
+        const char* broadphase = renderer.DidBroadphaseRebuildLastFrame() ? "rebuilt"
+                                 : renderer.DidBroadphaseRefitLastFrame() ? "refit"
+                                                                          : "static";
+        UI::Text(fmt::format("Broadphase: {} ({} nodes)", broadphase,
                              renderer.GetBroadphaseNodeCount()));
     }
 

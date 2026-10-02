@@ -271,11 +271,17 @@ namespace Veng::Renderer
         /// @return The per-candidate instanceCount verdicts, or empty if no GPU Execute has run.
         [[nodiscard]] vector<u32> ReadbackGpuSurvivorFlags() const;
 
-        /// @brief Returns true if the broadphase rebuilt its tree during the most recent Execute.
+        /// @brief Returns true if the broadphase rebuilt its tree from scratch during the most recent Execute.
         ///
-        /// False on a fully static frame (the scene's spatial version was unchanged).
+        /// False on a fully static frame (the scene's spatial version was unchanged) and on a frame
+        /// whose candidates only moved, which refits the tree instead.
         /// Diagnostic only; the rendered image is identical regardless.
         [[nodiscard]] bool DidBroadphaseRebuildLastFrame() const;
+
+        /// @brief Returns true if the broadphase refit its tree to moved candidates during the most recent Execute.
+        ///
+        /// Exclusive with DidBroadphaseRebuildLastFrame. Diagnostic only.
+        [[nodiscard]] bool DidBroadphaseRefitLastFrame() const;
 
         /// @brief Returns true if the atmosphere LUTs regenerated during the most recent Execute.
         ///

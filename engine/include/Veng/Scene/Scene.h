@@ -26,6 +26,7 @@ namespace Veng
     struct AABB;
     struct Hierarchy;
     struct VisibleMesh;
+    mat4 WorldMatrix(const Scene& scene, Entity entity);
     void ComputeWorldMatrices(const Scene& scene, vector<mat4>& out);
     AABB SceneBounds(const Scene& scene);
     void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds, Entity exclude,
@@ -359,7 +360,9 @@ namespace Veng
         /// (never snapshotted) falls back to its live Transform, so the result equals WorldMatrix when
         /// no interpolation applies; a ViewPose level resolves its live Transform (a per-frame authored
         /// pose is already this frame's — see ViewPose). A View system (a camera rig) reads this so the
-        /// camera and the meshes it frames share one interpolated pose.
+        /// camera and the meshes it frames share one interpolated pose. While the interpolated pass is
+        /// current at @p alpha (UpdateInterpolatedWorldTransforms) this reads its entry instead of
+        /// walking.
         ///
         /// **The exemption is the ViewPose tag and nothing else.** An entity whose Transform is written
         /// per frame but which carries no tag is blended from history like any other, which resolves a
@@ -379,6 +382,36 @@ namespace Veng
         /// render gather skips its interpolation copy when this is false, keeping a static scene's
         /// draw byte-identical to the un-interpolated path.
         [[nodiscard]] bool HasTransformInterpolation() const { return m_HistoryDirty; }
+
+        /// @brief Brings the scene's world-matrix pass current with its transforms.
+        ///
+        /// Computes every world matrix once, into an array indexed by entity, in an order where a
+        /// parent precedes its children, so each entity costs one multiply onto its parent's entry.
+        /// Afterwards WorldMatrix reads an entry instead of walking the Hierarchy chain. The pass is
+        /// skipped when nothing spatial moved since the last one, and the parent-first order is
+        /// rebuilt only when the topology changed: a Transform or Hierarchy added or removed, a
+        /// reparent, a destroy, or a non-const Hierarchy access. A spatial change after the pass makes
+        /// it stale, and WorldMatrix walks again until the next one, so a reader never sees a stale
+        /// matrix.
+        ///
+        /// It is const because the pass is a cache derived from the scene rather than scene state: it
+        /// moves no spatial version and stamps no change tick, so a read-only consumer such as the
+        /// render gather can bring it current. It does write that cache, so it must not run while
+        /// another thread updates or reads the same scene's world matrices.
+        void UpdateWorldTransforms() const;
+
+        /// @brief Returns true while the world-matrix pass is current, so WorldMatrix reads it.
+        [[nodiscard]] bool AreWorldTransformsCurrent() const;
+
+        /// @brief Brings the interpolated world-matrix pass current at @p alpha.
+        ///
+        /// The same parent-first pass as UpdateWorldTransforms, composing each level from the two-tick
+        /// history blended by @p alpha exactly as GetInterpolatedWorldTransform does. Afterwards
+        /// GetInterpolatedWorldTransform at the same alpha reads an entry. Skipped when nothing spatial
+        /// moved, the history did not roll, and the alpha is unchanged. The concurrency rule of
+        /// UpdateWorldTransforms applies.
+        /// @param alpha  The interpolation fraction in [0, 1] (0 = previous tick, 1 = current).
+        void UpdateInterpolatedWorldTransforms(f32 alpha) const;
 
         /// @brief Stops the attached simulation over this scene; a no-op when none is attached.
         ///
@@ -727,8 +760,19 @@ namespace Veng
 
         /// @brief Returns true if id names a spatial pool (Transform, Hierarchy, or MeshRenderer).
         [[nodiscard]] static bool IsSpatialId(TypeId id);
+        /// @brief Returns true if id names a pool that decides world-transform topology (Transform, Hierarchy).
+        [[nodiscard]] static bool IsTopologyId(TypeId id);
         /// @brief Advances the spatial version counter.
         void BumpSpatial() { ++m_SpatialVersion; }
+        /// @brief Advances the topology version, and the spatial version with it.
+        ///
+        /// For a change that can alter which entities the world-transform pass visits or who parents
+        /// whom, so the pass rebuilds its parent-first order.
+        void BumpTopology()
+        {
+            ++m_TopologyVersion;
+            ++m_SpatialVersion;
+        }
 
         /// @brief Returns the entity's Hierarchy component, creating it if absent.
         ///
@@ -753,6 +797,8 @@ namespace Veng
         usize m_LiveCount = 0;
         /// @brief Monotonic counter for spatial-pool changes.
         u64 m_SpatialVersion = 0;
+        /// @brief Monotonic counter for changes to which entities carry a world transform or a parent.
+        u64 m_TopologyVersion = 0;
         /// @brief The sim tick a non-const component access stamps as the touched component's change tick.
         ///
         /// Starts at the floor rather than zero, which is reserved for *before any tick*.
@@ -821,6 +867,90 @@ namespace Veng
         /// @return The entity's interpolated (or live) local matrix.
         [[nodiscard]] mat4 InterpolatedLocalMatrix(Entity entity, f32 alpha) const;
 
+        /// @brief InterpolatedLocalMatrix with the Transform and ViewPose pools already resolved.
+        /// @param entity      The entity whose local matrix to resolve.
+        /// @param alpha       The interpolation fraction in [0, 1].
+        /// @param transforms  The Transform pool, or null when there is none.
+        /// @param viewPoses   The ViewPose pool, or null when there is none.
+        /// @return The entity's interpolated (or live) local matrix.
+        [[nodiscard]] mat4 InterpolatedLocalMatrix(Entity entity, f32 alpha,
+                                                   const ComponentPool* transforms,
+                                                   const ComponentPool* viewPoses) const;
+
+        /// @brief Sentinel parent slot of a root in the world-transform order.
+        static constexpr u32 NoWorldParent = ~0u;
+
+        /// @brief One entity in the parent-first world-transform order.
+        struct WorldPassNode
+        {
+            /// @brief The entity whose world matrix this node computes.
+            Entity Owner;
+            /// @brief The parent's entity slot, or NoWorldParent for a root.
+            u32 Parent = NoWorldParent;
+        };
+
+        /// @brief The world-transform pass's bookkeeping for one entity slot.
+        struct WorldPassSlot
+        {
+            /// @brief The generation of the entity the order placed in this slot.
+            u32 Generation = 0;
+            /// @brief The order build that placed this slot; a slot from an older build is absent.
+            u32 Order = 0;
+            /// @brief Depth below the entity's root; the order sorts by it.
+            u32 Depth = 0;
+            /// @brief The parent's entity slot, or NoWorldParent for a root.
+            u32 Parent = NoWorldParent;
+        };
+
+        /// @brief The world-transform pass: the parent-first order and the matrices it computes.
+        ///
+        /// A cache derived from the scene's transforms, keyed by the spatial and topology versions, so
+        /// the const update paths may refresh it. Every vector grows to the slot count and is reused,
+        /// so a steady-state pass allocates nothing.
+        struct WorldTransformCache
+        {
+            /// @brief Entities with a world transform, parents first.
+            vector<WorldPassNode> Order;
+            /// @brief Bookkeeping per entity slot.
+            vector<WorldPassSlot> Slots;
+            /// @brief Current-tick world matrices, per entity slot.
+            vector<mat4> World;
+            /// @brief Interpolated world matrices, per entity slot.
+            vector<mat4> Interpolated;
+            /// @brief Order-build scratch: the unplaced chain of one upward walk.
+            vector<Entity> Walk;
+            /// @brief Order-build scratch: entities in placement order, before the depth sort.
+            vector<Entity> Placed;
+            /// @brief Order-build scratch: the counting sort's per-depth offsets.
+            vector<u32> DepthOffsets;
+            /// @brief The current order build; 0 is never stamped.
+            u32 OrderBuild = 0;
+            /// @brief The topology version the order was built at.
+            u64 OrderVersion = ~0ULL;
+            /// @brief The spatial version World was computed at.
+            u64 WorldVersion = ~0ULL;
+            /// @brief The spatial version Interpolated was computed at.
+            u64 InterpolatedVersion = ~0ULL;
+            /// @brief The alpha Interpolated was computed at.
+            f32 InterpolatedAlpha = 0.0f;
+            /// @brief The previous-tick history capture Interpolated was computed from.
+            u32 InterpolatedPrevCapture = 0;
+            /// @brief The current-tick history capture Interpolated was computed from.
+            u32 InterpolatedCurCapture = 0;
+        };
+
+        /// @brief Rebuilds the parent-first order over every entity with a Transform or a Hierarchy.
+        void RebuildWorldOrder() const;
+        /// @brief Returns the pass's slot record for @p entity, or null when the order does not hold it.
+        [[nodiscard]] const WorldPassSlot* FindWorldPassSlot(Entity entity) const;
+        /// @brief Returns @p entity's world matrix from a current pass, or null to walk instead.
+        [[nodiscard]] const mat4* FindWorldMatrix(Entity entity) const;
+        /// @brief Returns @p entity's interpolated world matrix from a pass current at @p alpha, or null.
+        [[nodiscard]] const mat4* FindInterpolatedWorldMatrix(Entity entity, f32 alpha) const;
+
+        /// @brief The world-transform pass; mutable because it is a cache the const paths refresh.
+        mutable WorldTransformCache m_WorldCache;
+
         /// @brief Previous Sim tick's transform snapshot.
         TransformHistoryBuffer m_TransformPrev;
         /// @brief Current Sim tick's transform snapshot.
@@ -853,6 +983,7 @@ namespace Veng
         template <class...>
         friend class SceneView;
 
+        friend mat4 WorldMatrix(const Scene& scene, Entity entity);
         friend void ComputeWorldMatrices(const Scene& scene, vector<mat4>& out);
         friend AABB SceneBounds(const Scene& scene);
         friend void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds,

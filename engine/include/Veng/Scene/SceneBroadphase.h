@@ -16,10 +16,12 @@ namespace Veng
 
     /// @brief Consumer-owned spatial broadphase that keeps a BVH current with a Scene.
     ///
-    /// Rebuilds the tree when the scene's spatial version changes or a still-loading
-    /// mesh becomes resident; otherwise a Sync is a cheap version compare. Holds the
-    /// BVH, the gathered candidate list, the last-seen version, and the set of
-    /// not-yet-resident candidates.
+    /// Re-gathers when the scene's spatial version changes or a still-loading mesh becomes
+    /// resident; otherwise a Sync is a cheap version compare. A re-gather that yields the same
+    /// candidates (same entities, same meshes, same order) refits the tree to their new bounds;
+    /// one that changes them, or a refit that has degraded the tree's surface-area cost past
+    /// RefitCostLimit times its cost at build, rebuilds it. Holds the BVH, the gathered candidate
+    /// list, the last-seen version, and the set of not-yet-resident candidates.
     ///
     /// SceneBroadphase is not Scene state: one Scene may be read by multiple
     /// renderers, each with its own broadphase and tree lifetime. The Scene owns only
@@ -29,12 +31,21 @@ namespace Veng
     class SceneBroadphase
     {
     public:
+        /// @brief How far a refit may degrade the tree's surface-area cost before Sync rebuilds it.
+        ///
+        /// A ratio of the refit tree's cost to its cost at its last build. Moving candidates make
+        /// sibling boxes overlap and grow, so queries visit more nodes; past this the rebuild costs
+        /// less than the queries it saves.
+        static constexpr f32 RefitCostLimit = 1.5f;
+
         /// @brief Brings the tree current with scene, omitting one nominated entity.
         ///
-        /// Rebuilds (re-gather + BVH::Build) iff @p scene is a different instance than
-        /// the current tree was gathered from, the scene's spatial version moved since
-        /// the last Sync, a mesh that was still loading has become resident, or
-        /// @p exclude differs from the entity the current tree was gathered against.
+        /// Re-gathers iff @p scene is a different instance than the current tree was gathered
+        /// from, the scene's spatial version moved since the last Sync, a mesh that was still
+        /// loading has become resident, or @p exclude or @p layerMask differs from the view the
+        /// current tree was gathered against. The re-gather then refits the tree when it yields
+        /// the same candidates as before from the same scene and view, and rebuilds it otherwise
+        /// (or when the refit tree's cost passed RefitCostLimit).
         ///
         /// The excluded entity is dropped by the gather itself, so it is absent from
         /// every consumer of this broadphase — the candidate list, the per-submesh
@@ -84,26 +95,39 @@ namespace Veng
         /// do (or the scene is empty).
         [[nodiscard]] AABB GetCasterBounds() const { return m_CasterBounds; }
 
-        /// @brief Returns true if the most recent Sync rebuilt the tree.
+        /// @brief Returns true if the most recent Sync rebuilt the tree from scratch.
         ///
-        /// False on a fully static frame. The rendered image is identical either way.
+        /// False on a fully static frame and on a refit. The rendered image is identical either way.
         [[nodiscard]] bool DidRebuildLastSync() const { return m_DidRebuild; }
+        /// @brief Returns true if the most recent Sync refit the tree to moved candidates.
+        ///
+        /// Exclusive with DidRebuildLastSync: a Sync that refit and then rebuilt for a degraded cost
+        /// reports the rebuild only.
+        [[nodiscard]] bool DidRefitLastSync() const { return m_DidRefit; }
         /// @brief Returns the number of nodes in the BVH.
         [[nodiscard]] u32 GetNodeCount() const { return m_Tree.GetNodeCount(); }
 
     private:
-        /// @brief Re-gathers candidates, rebuilds the BVH, and refreshes the pending set.
+        /// @brief Re-gathers candidates, refits or rebuilds the BVH, and refreshes the pending set.
         /// @param scene    Scene to gather from.
         /// @param exclude  One entity the gather omits; Entity::Null omits none.
         /// @param layerMask Render layers the gather includes.
-        void Rebuild(const Scene& scene, Entity exclude, u32 layerMask);
+        /// @param allowRefit Whether the tree may be refit; false when the scene or view changed.
+        void Update(const Scene& scene, Entity exclude, u32 layerMask, bool allowRefit);
+
+        /// @brief Rebuilds the BVH over m_LeafBoxes.
+        void RebuildTree();
 
         /// @brief The bounding-volume hierarchy over the gathered candidates.
         BVH m_Tree;
         /// @brief Dense per-mesh gather records in GatherMeshes order.
         vector<VisibleMesh> m_Candidates;
+        /// @brief The re-gather's destination, compared against m_Candidates and then swapped in.
+        vector<VisibleMesh> m_GatherScratch;
         /// @brief Flat per-submesh candidates; one BVH leaf each, a Cull id is an index.
         vector<SubMeshCandidate> m_SubMeshCandidates;
+        /// @brief Each submesh candidate's world box, indexed by candidate id; the refit's input.
+        vector<AABB> m_LeafBoxes;
         /// @brief Reused per rebuild: tight box + candidate index per leaf.
         vector<BVH::Leaf> m_LeafScratch;
         /// @brief (Transform, MeshRenderer) entities whose mesh is not yet resident.
@@ -133,5 +157,7 @@ namespace Veng
         u32 m_LastLayerMask = AllRenderLayers;
         /// @brief Set by the most recent Sync call.
         bool m_DidRebuild = false;
+        /// @brief Set by the most recent Sync call.
+        bool m_DidRefit = false;
     };
 }

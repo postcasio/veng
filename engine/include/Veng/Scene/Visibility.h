@@ -61,7 +61,9 @@ namespace Veng
 
     /// @brief Gathers every resident (Transform, MeshRenderer) entity into out and unions their world bounds.
     ///
-    /// Clears out first, then fills it in Transform pool dense order. Each entry's
+    /// Clears out first, then fills it in MeshRenderer pool dense order, so the cost
+    /// follows the renderables rather than every Transform. World matrices come from
+    /// the scene's world-matrix pass, brought current first. Each entry's
     /// WorldBounds = Mesh->GetBounds().Transformed(world). A non-resident mesh
     /// handle (not IsLoaded()) is skipped. outBounds equals SceneBounds(scene) and
     /// is AABB::Empty() when no resident mesh renderers exist. No culling is

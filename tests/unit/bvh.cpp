@@ -7,6 +7,8 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
+#include <limits>
 #include <random>
 
 // Veng.h (pulled by these) sets the engine's GLM config — Vulkan ZO depth, the
@@ -284,4 +286,110 @@ TEST_CASE("BVH balance: height stays within a small factor of log2(leaf count)")
         // imbalance never flakes while a linear-chain regression still trips.
         CHECK(static_cast<f32>(height) <= 4.0f * ideal + 2.0f);
     }
+}
+
+TEST_CASE("BVH bucket split: the linear sweep picks a least-cost boundary")
+{
+    // A fixed, uneven bucket set: empty buckets at both ends and in the middle, boxes of different
+    // sizes, so the least-cost boundary is neither the median nor the first non-empty one.
+    std::array<AABB, BVH::BucketCount> boxes;
+    std::array<u32, BVH::BucketCount> counts = {0, 3, 1, 0, 7, 2, 0, 0, 5, 1, 4, 0};
+    boxes.fill(AABB::Empty());
+    for (i32 b = 0; b < BVH::BucketCount; ++b)
+    {
+        if (counts[b] > 0)
+        {
+            const f32 x = static_cast<f32>(b) * 4.0f;
+            boxes[b] = AABB{.Min = vec3(x, -1.0f - static_cast<f32>(b % 3), -1.0f),
+                            .Max = vec3(x + 3.0f, 1.0f, 1.0f + static_cast<f32>(b % 4))};
+        }
+    }
+
+    const Detail::BucketSplit chosen = Detail::BestBucketSplit(boxes, counts);
+    REQUIRE(chosen.Split > 0);
+    REQUIRE(chosen.Split < BVH::BucketCount);
+
+    // The property is "minimum cost": cost every boundary that leaves both sides non-empty from
+    // its definition, and the chosen one is the least of them and costed as such.
+    const auto area = [](const AABB& box)
+    {
+        const vec3 size = glm::max(box.Size(), vec3(0.0f));
+        return 2.0f * (size.x * size.y + size.y * size.z + size.z * size.x);
+    };
+    f32 least = std::numeric_limits<f32>::infinity();
+    for (i32 split = 1; split < BVH::BucketCount; ++split)
+    {
+        AABB left = AABB::Empty();
+        AABB right = AABB::Empty();
+        u32 leftCount = 0;
+        u32 rightCount = 0;
+        for (i32 b = 0; b < BVH::BucketCount; ++b)
+        {
+            (b < split ? left : right).Expand(boxes[b]);
+            (b < split ? leftCount : rightCount) += counts[b];
+        }
+        if (leftCount > 0 && rightCount > 0)
+        {
+            least = std::min(least, area(left) * static_cast<f32>(leftCount) +
+                                        area(right) * static_cast<f32>(rightCount));
+        }
+    }
+    CHECK(chosen.Cost == doctest::Approx(least));
+
+    // Every leaf in one bucket leaves no boundary to choose.
+    std::array<u32, BVH::BucketCount> single = {};
+    single[5] = 9;
+    CHECK(Detail::BestBucketSplit(boxes, single).Split == -1);
+}
+
+TEST_CASE("BVH refit: queries stay exact over moved leaves, and scrambling them degrades the cost")
+{
+    // Sixteen boxes along x: the build groups neighbours, so its cost is low.
+    vector<BVH::Leaf> leaves;
+    for (u32 i = 0; i < 16; ++i)
+    {
+        leaves.push_back(
+            BVH::Leaf{.Box = BoxAt(vec3(static_cast<f32>(i) * 10.0f, 0.0f, 0.0f), 1.0f), .Id = i});
+    }
+    BVH bvh;
+    bvh.Build(leaves);
+    CHECK(bvh.GetCost() == doctest::Approx(bvh.GetBuildCost()));
+
+    // Move one leaf a little: the refit tree still queries exactly the linear scan of the new
+    // boxes, and its root covers the moved leaf.
+    vector<AABB> boxes;
+    for (const BVH::Leaf& leaf : leaves)
+    {
+        boxes.push_back(leaf.Box);
+    }
+    boxes[3] = BoxAt(vec3(35.0f, 20.0f, 0.0f), 1.0f);
+    leaves[3].Box = boxes[3];
+    bvh.Refit(boxes);
+    CheckValidity(bvh, leaves);
+
+    std::mt19937 rng(0x5EEDu);
+    std::uniform_real_distribution<f32> pos(-60.0f, 200.0f);
+    for (i32 i = 0; i < 8; ++i)
+    {
+        const vec3 eye(pos(rng), pos(rng), pos(rng));
+        const vec3 target(pos(rng), 0.0f, 0.0f);
+        if (glm::distance(eye, target) < 1.0f)
+        {
+            continue;
+        }
+        const Frustum frustum =
+            Frustum::FromViewProjection(MakeCameraAt(eye, target).ViewProjection());
+        CHECK(SortedQuery(bvh, frustum) == LinearScan(leaves, frustum));
+    }
+
+    // Scramble every leaf across the line: each internal node now spans most of it, so the refit
+    // tree's cost rises well past the cost it recorded at build, which stays put.
+    const f32 buildCost = bvh.GetBuildCost();
+    for (u32 i = 0; i < 16; ++i)
+    {
+        boxes[i] = BoxAt(vec3(static_cast<f32>((i * 7) % 16) * 10.0f, 0.0f, 0.0f), 1.0f);
+    }
+    bvh.Refit(boxes);
+    CHECK(bvh.GetBuildCost() == buildCost);
+    CHECK(bvh.GetCost() > 1.5f * buildCost);
 }

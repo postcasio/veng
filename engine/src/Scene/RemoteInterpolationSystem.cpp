@@ -5,6 +5,7 @@
 #include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/Transforms.h>
 
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
@@ -47,6 +48,13 @@ namespace Veng
         const f32 rotationDrift = 1.0f - std::abs(glm::dot(error.Rotation, identity));
         return glm::length(error.Position) < NegligiblePosition &&
                rotationDrift < NegligibleRotation;
+    }
+
+    mat4 ApplyPredictionError(const mat4& world, const PredictionError& error)
+    {
+        const vec3 origin = vec3(world[3]);
+        return glm::translate(mat4(1.0f), origin + error.Position) *
+               glm::mat4_cast(error.Rotation) * glm::translate(mat4(1.0f), -origin) * world;
     }
 
     optional<Transform> SampleRemoteInterpolation(const std::span<const RemoteSample> samples,

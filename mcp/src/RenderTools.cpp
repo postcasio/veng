@@ -636,6 +636,7 @@ namespace Veng::Mcp
                     {"drawn", renderer.GetLastDrawnCount()},
                     {"gpu_survivors", renderer.GetLastGpuSurvivorCount()},
                     {"broadphase_rebuilt", renderer.DidBroadphaseRebuildLastFrame()},
+                    {"broadphase_refit", renderer.DidBroadphaseRefitLastFrame()},
                     {"broadphase_nodes", renderer.GetBroadphaseNodeCount()},
                     {"gpu_frame_time_ms", host.Assets.GetContext().GetLastGpuFrameTimeMs()},
                     {"render_scale", viewport->GetRenderScale()},

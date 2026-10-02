@@ -12,10 +12,16 @@ namespace Veng
 {
     mat4 LocalMatrix(const Transform& transform)
     {
-        const mat4 translation = glm::translate(mat4(1.0f), transform.Position);
-        const mat4 rotation = glm::mat4_cast(transform.Rotation);
-        const mat4 scale = glm::scale(mat4(1.0f), transform.Scale);
-        return translation * rotation * scale;
+        // T * R * S written out: the rotation's columns scaled by the scale, the position as the
+        // translation column. Equal to multiplying the three matrices, since every term those
+        // products add beyond these is a zero.
+        const mat3 rotation = glm::mat3_cast(transform.Rotation);
+        mat4 local(1.0f);
+        local[0] = vec4(rotation[0] * transform.Scale.x, 0.0f);
+        local[1] = vec4(rotation[1] * transform.Scale.y, 0.0f);
+        local[2] = vec4(rotation[2] * transform.Scale.z, 0.0f);
+        local[3] = vec4(transform.Position, 1.0f);
+        return local;
     }
 
     Transform InterpolateTransform(const Transform& from, const Transform& to, const f32 alpha)
@@ -29,6 +35,11 @@ namespace Veng
 
     mat4 WorldMatrix(const Scene& scene, Entity entity)
     {
+        if (const mat4* world = scene.FindWorldMatrix(entity))
+        {
+            return *world;
+        }
+
         // Walk the Hierarchy chain entity → root, collecting it so the cycle/dead-
         // entity checks can run before composing. A revisited entity is a cycle;
         // a parent link pointing at a dead entity is a dangling link — both API
@@ -70,8 +81,9 @@ namespace Veng
 
     void ComputeWorldMatrices(const Scene& scene, vector<mat4>& out)
     {
-        VE_PROFILE_SCOPE("Scene/WorldMatrices");
-        const TypeId id = scene.m_Registry->IdOf<Transform>();
+        scene.UpdateWorldTransforms();
+
+        const TypeId id = TypeIdOf<Transform>();
         const usize count = scene.PoolCount(id);
         const Entity* dense = scene.DensePtr(id);
 
@@ -85,25 +97,17 @@ namespace Veng
 
     AABB SceneBounds(const Scene& scene)
     {
-        // ComputeWorldMatrices uses Transform pool dense order, matching DensePtr below,
-        // so worldMatrices[i] is the world matrix for dense[i].
-        vector<mat4> worldMatrices;
-        ComputeWorldMatrices(scene, worldMatrices);
-
-        const TypeId transformId = scene.m_Registry->IdOf<Transform>();
-        const Entity* dense = scene.DensePtr(transformId);
-        const usize count = scene.PoolCount(transformId);
+        scene.UpdateWorldTransforms();
 
         AABB bounds = AABB::Empty();
-        for (usize i = 0; i < count; ++i)
+        for (auto [entity, renderer] : scene.View<MeshRenderer>())
         {
-            const auto* renderer = scene.TryGet<MeshRenderer>(dense[i]);
-            if (renderer == nullptr || !renderer->Visible || !renderer->Mesh.IsLoaded())
+            if (!renderer.Visible || !renderer.Mesh.IsLoaded() || !scene.Has<Transform>(entity))
             {
                 continue;
             }
 
-            bounds.Expand(renderer->Mesh->GetBounds().Transformed(worldMatrices[i]));
+            bounds.Expand(renderer.Mesh->GetBounds().Transformed(WorldMatrix(scene, entity)));
         }
         return bounds;
     }

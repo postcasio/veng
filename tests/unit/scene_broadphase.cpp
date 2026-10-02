@@ -260,7 +260,8 @@ TEST_CASE("SceneBroadphase: a changed layer mask forces a rebuild without a spat
     CHECK_FALSE(broadphase.DidRebuildLastSync());
 }
 
-TEST_CASE("SceneBroadphase: every spatial mutation rebuilds and the tree stays correct")
+TEST_CASE("SceneBroadphase: a move refits, a changed candidate set rebuilds, and the tree stays "
+          "correct")
 {
     Renderer::Context context;
     TaskSystem tasks;
@@ -289,12 +290,18 @@ TEST_CASE("SceneBroadphase: every spatial mutation rebuilds and the tree stays c
     broadphase.Sync(*scene);
     REQUIRE(broadphase.DidRebuildLastSync());
 
-    // After each mutation, the next Sync rebuilds AND the broadphase's cull equals a
-    // linear scan and equals a fresh full-rebuild broadphase — so the rebuild
-    // converges to the same tree regardless of the mutation history.
-    auto CheckConverges = [&]()
+    // After each mutation, the next Sync refits (the same candidates, moved) or rebuilds (a
+    // changed set), AND the broadphase's cull equals a linear scan and equals a fresh full-rebuild
+    // broadphase — so the tree culls the same set regardless of the mutation history.
+    enum class Expect
     {
-        CHECK(broadphase.DidRebuildLastSync());
+        Refit,
+        Rebuild,
+    };
+    auto CheckConverges = [&](const Expect expect)
+    {
+        CHECK(broadphase.DidRebuildLastSync() == (expect == Expect::Rebuild));
+        CHECK(broadphase.DidRefitLastSync() == (expect == Expect::Refit));
 
         SceneBroadphase fresh;
         fresh.Sync(*scene);
@@ -316,37 +323,89 @@ TEST_CASE("SceneBroadphase: every spatial mutation rebuilds and the tree stays c
     {
         scene->Get<Transform>(a).Position = vec3(20.0f, 1.0f, -3.0f);
         broadphase.Sync(*scene);
-        CheckConverges();
+        CheckConverges(Expect::Refit);
     }
 
     SUBCASE("add an entity")
     {
         AddMesh(vec3(12.0f, -4.0f, 8.0f));
         broadphase.Sync(*scene);
-        CheckConverges();
+        CheckConverges(Expect::Rebuild);
     }
 
     SUBCASE("remove a component")
     {
         (void)scene->Remove<MeshRenderer>(b);
         broadphase.Sync(*scene);
-        CheckConverges();
+        CheckConverges(Expect::Rebuild);
         CHECK(broadphase.GetCandidates().size() == 2);
     }
 
     SUBCASE("reparent (SetParent link)")
     {
+        // Reparenting moves b's world matrix but keeps every candidate, so it only refits.
         scene->SetParent(b, a);
         broadphase.Sync(*scene);
-        CheckConverges();
+        CheckConverges(Expect::Refit);
     }
 
     SUBCASE("destroy an entity")
     {
         scene->DestroyEntity(b);
         broadphase.Sync(*scene);
-        CheckConverges();
+        CheckConverges(Expect::Rebuild);
         CHECK(broadphase.GetCandidates().size() == 2);
+    }
+}
+
+TEST_CASE("SceneBroadphase: a refit that degrades the tree past its cost limit rebuilds it")
+{
+    Renderer::Context context;
+    TaskSystem tasks;
+    TypeRegistry types;
+    RegisterBuiltins(types);
+
+    const AssetManager manager(context, tasks, types);
+    Unique<Scene> scene = Scene::Create(types);
+
+    const AssetHandle<Mesh> mesh =
+        manager.Adopt<Mesh>(BoundsMesh(AABB{.Min = vec3(-0.5f), .Max = vec3(0.5f)}));
+
+    // Sixteen meshes along x, built into a tree that groups neighbours.
+    vector<Entity> entities;
+    for (i32 i = 0; i < 16; ++i)
+    {
+        const Entity e = scene->CreateEntity();
+        scene->Add<Transform>(e, Transform{.Position = vec3(static_cast<f32>(i) * 10.0f, 0, 0)});
+        scene->Add<MeshRenderer>(e, MeshRenderer{.Mesh = mesh});
+        entities.push_back(e);
+    }
+    SceneBroadphase broadphase;
+    broadphase.Sync(*scene);
+    REQUIRE(broadphase.DidRebuildLastSync());
+
+    // A small move keeps the tree's quality, so it refits.
+    scene->Get<Transform>(entities[0]).Position.y = 1.0f;
+    broadphase.Sync(*scene);
+    CHECK(broadphase.DidRefitLastSync());
+
+    // Scrambling every mesh across the line keeps the same candidates but leaves each internal node
+    // spanning most of the scene, past the refit cost limit, so the Sync rebuilds instead.
+    for (i32 i = 0; i < 16; ++i)
+    {
+        scene->Get<Transform>(entities[static_cast<usize>(i)]).Position =
+            vec3(static_cast<f32>((i * 7) % 16) * 10.0f, 0.0f, 0.0f);
+    }
+    broadphase.Sync(*scene);
+    CHECK(broadphase.DidRebuildLastSync());
+    CHECK_FALSE(broadphase.DidRefitLastSync());
+
+    std::mt19937 rng(0xFACEu);
+    for (const Frustum& frustum : MakeFrustums(rng))
+    {
+        vector<u32> culled;
+        broadphase.Cull(frustum, culled);
+        CHECK(culled == LinearScan(broadphase.GetCandidates(), frustum));
     }
 }
 

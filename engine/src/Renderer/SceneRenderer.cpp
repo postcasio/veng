@@ -94,6 +94,7 @@
 #include <Veng/Asset/Skeleton.h>
 
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/RemoteInterpolationSystem.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Transforms.h>
 
@@ -2551,11 +2552,23 @@ namespace Veng::Renderer
             return;
         }
 
+        // One parent-first pass over the blended history, then an array read per candidate. A
+        // predicted entity's smoothing residual applies to its blended world exactly as the gather
+        // applies it to the current-tick one.
+        view.World.UpdateInterpolatedWorldTransforms(view.Alpha);
+        const bool anyPredictionError = view.World.TryGetFirst<PredictionError>() != nullptr;
         const std::span<const VisibleMesh> candidates = m_Broadphase.GetCandidates();
         m_InterpolatedCandidates.assign(candidates.begin(), candidates.end());
         for (VisibleMesh& candidate : m_InterpolatedCandidates)
         {
             candidate.World = view.World.GetInterpolatedWorldTransform(candidate.Owner, view.Alpha);
+            if (anyPredictionError)
+            {
+                if (const auto* error = view.World.TryGet<PredictionError>(candidate.Owner))
+                {
+                    candidate.World = ApplyPredictionError(candidate.World, *error);
+                }
+            }
             candidate.WorldBounds = candidate.Mesh->GetBounds().Transformed(candidate.World);
         }
         resolvedView.Visible = m_InterpolatedCandidates;
@@ -2936,6 +2949,11 @@ namespace Veng::Renderer
     bool SceneRenderer::DidBroadphaseRebuildLastFrame() const
     {
         return m_Broadphase.DidRebuildLastSync();
+    }
+
+    bool SceneRenderer::DidBroadphaseRefitLastFrame() const
+    {
+        return m_Broadphase.DidRefitLastSync();
     }
     bool SceneRenderer::DidRegenerateAtmosphereLastFrame() const
     {

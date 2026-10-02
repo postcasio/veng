@@ -110,9 +110,12 @@ change to a **spatial pool** (`Transform`/`Hierarchy`/`MeshRenderer`) — a stru
 `Get`/`View`/`Each` path, a potential in-place edit), or a `ForEachComponent` visit (the editor
 inspector's erased-`void*` edit path). A **`const`** `View`/`Each` does **not** bump it, so a
 read-only consumer iterates without forcing a version move. This is the access-as-write
-change-tick a consumer (the `SceneBroadphase`) gates its tree rebuild on: it caches the version it
-last built against and rebuilds only when the version moved. One constraint: a `Transform&`
-retained across frames and written without re-acquiring it bypasses the bump — write transforms
+change-tick a consumer (the `SceneBroadphase`) gates its re-gather on: it caches the version it
+last built against and re-gathers only when the version moved. A narrower **topology version**
+moves (with the spatial version) only on a change to which entities carry a `Transform` or
+`Hierarchy` or to who parents whom; the [world-transform pass](#world-transforms) rebuilds its
+order on it. One constraint: a `Transform&`
+retained across frames and written without re-acquiring it bypasses the bump (and so leaves the world-transform pass current over a stale matrix) — write transforms
 through the scene accessors each frame, as all engine and sample code does.
 
 ## Change ticks — and why zero is reserved
@@ -163,8 +166,8 @@ world) has none. `Clone()` does **not** copy the simulation.
 The builtins are plain reflected components, pre-registered identically to a game's own: `Name` (a
 display label), `Transform` (**local** TRS — `Position`/`Rotation`/`Scale`, never a world matrix),
 `Hierarchy` (the intrusive scene-graph link — a `Parent` up-edge plus the ordered child list,
-mutated through `SetParent`/`Detach`/`MoveBefore`; `WorldMatrix`/`ComputeWorldMatrices` walk the
-`Parent` edge as `parent.world * local`, recomputed on demand with no dirty-flag cache), `Camera`
+mutated through `SetParent`/`Detach`/`MoveBefore`; world matrices compose along the `Parent` edge
+as `parent.world * local` — see [World transforms](#world-transforms) for the per-frame pass), `Camera`
 (the component whose FovY/Near/Far and world transform build a `CameraView`, the value type
 carrying the view/projection — Y flipped for Vulkan clip space), `MeshRenderer` (holds the
 `AssetHandle<Mesh>` a draw queries — the mesh owns its materials, so a renderer queries
@@ -270,14 +273,18 @@ updates it each frame after advancing the sprites, so the level must run `Flipbo
 
 A `Scene` reduces to a world-space bound on demand: `SceneBounds(scene)`
 (`Veng/Scene/Transforms.h`) unions every resident `(Transform, MeshRenderer)` entity's world-space
-mesh bound, reusing `ComputeWorldMatrices`' one amortized pass — recompute-on-demand, no
-dirty-flag cache. `GatherMeshes` (`Veng/Scene/Visibility.h`) is the pure one-shot candidate gather
-over the same pass (world matrix + world-space `AABB` + resident mesh per entity, skipping a
-renderer whose `Visible` is clear or whose `MeshRenderer::Layer` is absent from the caller's
-`layerMask` — the one place both filters are honoured, so nothing downstream re-tests them); the
-`SceneBroadphase` caches that gather and builds the BVH from it, re-gathering only when the
-scene's spatial version moves (or a still-loading mesh becomes resident, or the exclude or layer
-mask the caller's view carries changes). The broadphase is a BVH
+mesh bound, reading the scene's [world-transform pass](#world-transforms); the bound itself is not
+cached. `GatherMeshes` (`Veng/Scene/Visibility.h`) is the pure one-shot candidate gather over the
+`MeshRenderer` pool and that pass (world matrix + world-space `AABB` + resident mesh per entity,
+skipping a renderer whose `Visible` is clear or whose `MeshRenderer::Layer` is absent from the
+caller's `layerMask` — the one place both filters are honoured, so nothing downstream re-tests
+them); the `SceneBroadphase` caches that gather and builds the BVH from it, re-gathering only when
+the scene's spatial version moves (or a still-loading mesh becomes resident, or the exclude or layer
+mask the caller's view carries changes). A re-gather that yields the same candidates — same
+entities, same meshes, same order — **refits** the tree bottom-up to their moved bounds instead of
+rebuilding it; a changed set rebuilds, and so does a refit that has pushed the tree's surface-area
+cost past `SceneBroadphase::RefitCostLimit` times its cost at build, so a refit never leaves a
+degraded tree in place for long. The broadphase is a BVH
 with **per-submesh leaves**, the granularity the renderer's GPU-driven hi-Z occlusion culling
 operates at. Each `Mesh` carries a local-space `GetBounds()` derived from its canonical vertex
 positions at load, and each `SubMesh` a local-space `AABB` folded over its index range. Both build
@@ -286,6 +293,29 @@ with the union/expand/center/extents/corners/transform algebra and an empty sent
 (`Veng/Math/Frustum.h`) is its visibility companion — six bounding planes extracted
 Gribb-Hartmann from a view-projection matrix (Vulkan ZO clip), with a conservative
 `Intersects(Frustum, AABB)` p-vertex test (never a false cull).
+
+## World transforms
+
+A `Scene` computes its world matrices in **one parent-first pass**:
+`Scene::UpdateWorldTransforms()` writes every entity's world matrix into an array indexed by
+`Entity::Index`, visiting entities in an order where a parent precedes its children, so each costs
+one multiply onto its parent's entry. The order is rebuilt only when the **topology version**
+moves — a `Transform` or `Hierarchy` added or removed, a `SetParent`/`MoveBefore`, a destroy, or a
+non-`const` `Hierarchy` access — and a cycle or dangling parent asserts when it is built. The pass
+itself is skipped while the spatial version has not moved, and allocates nothing at steady state.
+`WorldMatrix(scene, entity)` reads the entry while the pass is current and walks the chain
+otherwise, so a reader is never handed a stale matrix: any spatial change makes the pass stale
+until the next update. The update is `const` — the pass is a cache derived from the scene, moving
+no version and stamping no change tick — so the read-only render gather brings it current; it must
+not run while another thread reads the same scene's matrices. `GatherMeshes`, `SceneBounds` and
+`ComputeWorldMatrices` bring it current themselves; any other reader that wants O(1) lookups across
+many entities calls the update once first.
+
+`Scene::UpdateInterpolatedWorldTransforms(alpha)` is the same pass over the two-tick history,
+composing each level exactly as `GetInterpolatedWorldTransform` does (a `ViewPose` level live), and
+`GetInterpolatedWorldTransform` at that alpha then reads its entry. It is keyed by the spatial
+version, the two history captures and the alpha, so the renderer's interpolation computes it once a
+frame and a later reader at the frame's alpha (the sprite and ribbon gathers) reuses it.
 
 ## Cameras & seats
 

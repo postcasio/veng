@@ -403,6 +403,64 @@ TEST_CASE("ComputeWorldMatrices matches per-entity WorldMatrix for a forest")
     }
 }
 
+TEST_CASE("World-transform pass: one parent-first pass equals the composed chain for every node")
+{
+    TypeRegistry registry = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(registry);
+
+    // Three levels with rotation and non-uniform scale at each, plus a Transform-less link between
+    // the middle and a second leaf (it contributes identity), and children created before their
+    // parents so slot order is not parent-first.
+    const Entity leaf = scene->CreateEntity();
+    const Entity link = scene->CreateEntity();
+    const Entity sideLeaf = scene->CreateEntity();
+    const Entity mid = scene->CreateEntity();
+    const Entity root = scene->CreateEntity();
+
+    scene->Add<Transform>(root,
+                          Transform{.Position = vec3(10.0f, -2.0f, 3.0f),
+                                    .Rotation = glm::angleAxis(0.7f, glm::normalize(vec3(1, 2, 0))),
+                                    .Scale = vec3(2.0f, 1.0f, 0.5f)});
+    scene->Add<Transform>(mid, Transform{.Position = vec3(0.0f, 5.0f, -1.0f),
+                                         .Rotation = glm::angleAxis(-1.2f, vec3(0, 0, 1)),
+                                         .Scale = vec3(1.0f, 3.0f, 1.0f)});
+    scene->Add<Transform>(leaf, Transform{.Position = vec3(1.0f, 0.0f, 2.0f),
+                                          .Rotation = glm::angleAxis(2.1f, vec3(0, 1, 0)),
+                                          .Scale = vec3(0.25f, 1.0f, 4.0f)});
+    scene->Add<Transform>(sideLeaf, Transform{.Position = vec3(-3.0f, 1.0f, 0.0f)});
+    scene->SetParent(mid, root);
+    scene->SetParent(leaf, mid);
+    scene->SetParent(link, mid);
+    scene->SetParent(sideLeaf, link);
+
+    const auto local = [&](const Entity e) { return LocalMatrix(scene->Get<Transform>(e)); };
+    const mat4 rootWorld = local(root);
+    const mat4 midWorld = rootWorld * local(mid);
+    const mat4 leafWorld = midWorld * local(leaf);
+    const mat4 sideWorld = midWorld * local(sideLeaf);
+
+    scene->UpdateWorldTransforms();
+    REQUIRE(scene->AreWorldTransformsCurrent());
+    CHECK(MatrixApproxEqual(WorldMatrix(*scene, root), rootWorld));
+    CHECK(MatrixApproxEqual(WorldMatrix(*scene, mid), midWorld));
+    CHECK(MatrixApproxEqual(WorldMatrix(*scene, leaf), leafWorld));
+    CHECK(MatrixApproxEqual(WorldMatrix(*scene, link), midWorld));
+    CHECK(MatrixApproxEqual(WorldMatrix(*scene, sideLeaf), sideWorld));
+
+    // A write makes the pass stale and WorldMatrix walks; the next pass agrees with it again.
+    scene->Get<Transform>(mid).Position = vec3(4.0f, 0.0f, 0.0f);
+    CHECK_FALSE(scene->AreWorldTransformsCurrent());
+    const mat4 movedLeaf = rootWorld * local(mid) * local(leaf);
+    CHECK(MatrixApproxEqual(WorldMatrix(*scene, leaf), movedLeaf));
+    scene->UpdateWorldTransforms();
+    CHECK(MatrixApproxEqual(WorldMatrix(*scene, leaf), movedLeaf));
+
+    // A reparent rebuilds the order: the side leaf now hangs from the root directly.
+    scene->SetParent(sideLeaf, root);
+    scene->UpdateWorldTransforms();
+    CHECK(MatrixApproxEqual(WorldMatrix(*scene, sideLeaf), rootWorld * local(sideLeaf)));
+}
+
 // --- TryGetFirst -------------------------------------------------------------
 
 TEST_CASE("TryGetFirst returns the first component in dense order, or nullptr when none")

@@ -64,7 +64,7 @@ TEST_CASE("GatherMeshes: two mesh entities yield two VisibleMeshes in dense orde
 
     REQUIRE(out.size() == 2);
 
-    // Transform-pool dense order: a then b.
+    // MeshRenderer-pool dense order: a then b.
     CHECK(out[0].Owner == a);
     CHECK(out[1].Owner == b);
 

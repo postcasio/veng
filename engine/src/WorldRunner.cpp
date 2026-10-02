@@ -454,7 +454,7 @@ namespace Veng
                 // instance. The one mutable access bumps the scene's spatial version once, which the
                 // broadphase re-gathers on — subsequent frames read the installed clone const.
                 AssetHandle<MaterialInstance> material;
-                if (const auto* renderer = scene.TryGet<MeshRenderer>(entity);
+                if (const auto* renderer = std::as_const(scene).TryGet<MeshRenderer>(entity);
                     renderer != nullptr && renderer->Mesh.IsLoaded())
                 {
                     if (!renderer->InstanceMaterials.empty())

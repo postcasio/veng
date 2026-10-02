@@ -260,6 +260,7 @@ add_library(veng SHARED
         src/Scene/Transforms.cpp
         src/Scene/VehicleSystem.cpp
         src/Scene/Visibility.cpp
+        src/Scene/WorldTransforms.cpp
         src/Renderer/SwapChainCompositePass.cpp
         src/Renderer/GatherPass.cpp
         src/Gui/BindingContext.cpp
@@ -581,6 +582,8 @@ set(VENG_HOT_PATH_SOURCES
         src/Scene/Transforms.cpp
         src/Scene/SceneBroadphase.cpp
         src/Scene/Visibility.cpp
+        src/Scene/WorldTransforms.cpp
+        src/Math/AABB.cpp
         src/Math/BVH.cpp
         # Animation.
         src/Scene/AnimationSystem.cpp

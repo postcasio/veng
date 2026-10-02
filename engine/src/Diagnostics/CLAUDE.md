@@ -234,7 +234,7 @@ The call sites that make a capture worth taking, plus the seam and bridge that p
   `Frame/RenderEnd`. **The names are stable strings** — the HUD and the flamegraph key on them.
 - **Rendering, per viewport and per pass.** Each viewport scopes its render as `Viewport <id>`,
   interned at construction, with `Viewport/*` phases beneath it. The scene renderer scopes its CPU
-  phases as `Render/*` (broadphase sync, gather and BVH build, light packing, interpolation, draw
+  phases as `Render/*` (broadphase sync, gather, BVH build and refit, light packing, interpolation, draw
   preparation, graph replay, graph rebuild), and `CompiledGraph::Execute` scopes each pass's
   recording under the pass's own name, interned at compile — so a CPU pass reads beside its GPU
   timing of the same name.

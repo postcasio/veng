@@ -6,41 +6,30 @@
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Transforms.h>
 
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/quaternion.hpp>
-
 namespace Veng
 {
     void GatherMeshes(const Scene& scene, vector<VisibleMesh>& out, AABB& outBounds,
                       const Entity exclude, const u32 layerMask)
     {
-        // ComputeWorldMatrices uses Transform pool dense order, matching DensePtr below,
-        // so worldMatrices[i] is the world matrix for dense[i].
-        vector<mat4> worldMatrices;
-        ComputeWorldMatrices(scene, worldMatrices);
+        scene.UpdateWorldTransforms();
 
-        const TypeId transformId = scene.m_Registry->IdOf<Transform>();
-        const Entity* dense = scene.DensePtr(transformId);
-        const usize count = scene.PoolCount(transformId);
+        // Only a predicted entity being smoothed carries a residual, so the per-entity lookup is
+        // skipped outright when none does.
+        const bool anyPredictionError = scene.PoolCount(TypeIdOf<PredictionError>()) > 0;
 
         out.clear();
         outBounds = AABB::Empty();
-        for (usize i = 0; i < count; ++i)
+        for (auto [entity, rendererRef] : scene.View<MeshRenderer>())
         {
-            if (dense[i] == exclude)
-            {
-                continue;
-            }
-
-            const auto* renderer = scene.TryGet<MeshRenderer>(dense[i]);
-            if (renderer == nullptr || !renderer->Visible || !renderer->Mesh.IsLoaded())
+            const MeshRenderer* renderer = &rendererRef;
+            if (entity == exclude || !renderer->Visible || !renderer->Mesh.IsLoaded())
             {
                 continue;
             }
 
             // The view's layer mask filters here, beside Visible, so nothing downstream re-tests it:
             // an off-mask renderer is absent from the candidate list and never widens outBounds.
-            if (!RenderLayerInMask(layerMask, renderer->Layer))
+            if (!RenderLayerInMask(layerMask, renderer->Layer) || !scene.Has<Transform>(entity))
             {
                 continue;
             }
@@ -48,13 +37,13 @@ namespace Veng
             // A predicted entity being visually smoothed after a reconciliation correction carries a
             // decaying render offset (position + rotation about its origin), applied only here — the
             // sim Transform stays authoritative; the render pose eases into it.
-            mat4 world = worldMatrices[i];
-            if (const auto* error = scene.TryGet<PredictionError>(dense[i]))
+            mat4 world = WorldMatrix(scene, entity);
+            if (anyPredictionError)
             {
-                const vec3 origin = vec3(world[3]);
-                world = glm::translate(mat4(1.0f), origin + error->Position) *
-                        glm::mat4_cast(error->Rotation) * glm::translate(mat4(1.0f), -origin) *
-                        world;
+                if (const auto* error = scene.TryGet<PredictionError>(entity))
+                {
+                    world = ApplyPredictionError(world, *error);
+                }
             }
 
             const AABB worldBounds = renderer->Mesh->GetBounds().Transformed(world);
@@ -72,7 +61,7 @@ namespace Veng
                     ? std::span<const AssetHandle<MaterialInstance>>(renderer->InstanceMaterials)
                     : meshMaterials;
             out.push_back(VisibleMesh{
-                .Owner = dense[i],
+                .Owner = entity,
                 .World = world,
                 .WorldBounds = worldBounds,
                 .Mesh = renderer->Mesh.Get(),

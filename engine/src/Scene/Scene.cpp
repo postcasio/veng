@@ -120,6 +120,12 @@ namespace Veng
                id == TypeIdOf<MeshRenderer>();
     }
 
+    bool Scene::IsTopologyId(TypeId id)
+    {
+        // Whether an entity carries one of these decides whether the world-transform pass visits it.
+        return id == TypeIdOf<Transform>() || id == TypeIdOf<Hierarchy>();
+    }
+
     Scene::Scene(TypeRegistry& registry) : m_Registry(&registry) {}
 
     // Out-of-line so the SceneSimulation, PhysicsWorld, PhysicsPoseResolver and PoseHistory types
@@ -262,12 +268,21 @@ namespace Veng
 
     mat4 Scene::InterpolatedLocalMatrix(const Entity entity, const f32 alpha) const
     {
+        return InterpolatedLocalMatrix(entity, alpha, TryPoolFor(TypeIdOf<Transform>()),
+                                       TryPoolFor(TypeIdOf<ViewPose>()));
+    }
+
+    mat4 Scene::InterpolatedLocalMatrix(const Entity entity, const f32 alpha,
+                                        const ComponentPool* transforms,
+                                        const ComponentPool* viewPoses) const
+    {
         // A ViewPose transform is authored per frame, after the tick snapshot: its live pose is
         // already this frame's pose, and the history ring holds earlier frames' writes — blending
         // those would render the entity a frame stale against the anchor it follows.
         const TransformSnapshot* prev = m_TransformPrev.Find(entity);
         const TransformSnapshot* cur = m_TransformCur.Find(entity);
-        if (prev != nullptr && cur != nullptr && !Has<ViewPose>(entity))
+        if (prev != nullptr && cur != nullptr &&
+            (viewPoses == nullptr || !viewPoses->Contains(entity)))
         {
             const Transform from{
                 .Position = prev->Position, .Rotation = prev->Rotation, .Scale = prev->Scale};
@@ -278,7 +293,9 @@ namespace Veng
 
         // No two-tick history for this entity (first snapshot, or spawned since), or a live
         // ViewPose: use the live pose.
-        if (const auto* transform = TryGet<Transform>(entity))
+        if (const auto* transform = transforms != nullptr
+                                        ? static_cast<const Transform*>(transforms->TryGet(entity))
+                                        : nullptr)
         {
             return LocalMatrix(*transform);
         }
@@ -287,6 +304,11 @@ namespace Veng
 
     mat4 Scene::GetInterpolatedWorldTransform(const Entity entity, const f32 alpha) const
     {
+        if (const mat4* world = FindInterpolatedWorldMatrix(entity, alpha))
+        {
+            return *world;
+        }
+
         // Walk the Hierarchy chain entity → root with the same cycle/dead-entity checks WorldMatrix
         // runs, then compose root → entity from each level's interpolated local matrix.
         vector<Entity> chain;
@@ -535,7 +557,7 @@ namespace Veng
 
         if (spatialTouched)
         {
-            BumpSpatial();
+            BumpTopology();
         }
     }
 
@@ -654,7 +676,7 @@ namespace Veng
             }
         }
 
-        BumpSpatial();
+        BumpTopology();
     }
 
     void Scene::Detach(Entity child)
@@ -699,7 +721,7 @@ namespace Veng
             HierarchyOf(prev).NextSibling = child;
         }
 
-        BumpSpatial();
+        BumpTopology();
     }
 
     Entity Scene::GetParent(Entity entity) const
@@ -764,7 +786,11 @@ namespace Veng
 
     void* Scene::AddRaw(Entity entity, TypeId id)
     {
-        if (IsSpatialId(id))
+        if (IsTopologyId(id))
+        {
+            BumpTopology();
+        }
+        else if (IsSpatialId(id))
         {
             BumpSpatial();
         }
@@ -817,7 +843,11 @@ namespace Veng
             }
         }
 
-        if (IsSpatialId(id))
+        if (IsTopologyId(id))
+        {
+            BumpTopology();
+        }
+        else if (IsSpatialId(id))
         {
             BumpSpatial();
         }
@@ -828,8 +858,13 @@ namespace Veng
     void* Scene::TryGetRaw(Entity entity, TypeId id)
     {
         // A non-const access is a potential in-place edit the ECS never sees,
-        // so bump the version conservatively (over-bump, never under).
-        if (IsSpatialId(id))
+        // so bump the version conservatively (over-bump, never under). A Hierarchy
+        // edit can reparent, so it moves the topology too.
+        if (id == TypeIdOf<Hierarchy>())
+        {
+            BumpTopology();
+        }
+        else if (IsSpatialId(id))
         {
             BumpSpatial();
         }
@@ -873,7 +908,11 @@ namespace Veng
                 // The erased pointer is a mutable edit funnel (the inspector's),
                 // so visiting a spatial pool bumps the version like a non-const
                 // access, and stamps the component's change tick per entity.
-                if (IsSpatialId(id))
+                if (id == TypeIdOf<Hierarchy>())
+                {
+                    BumpTopology();
+                }
+                else if (IsSpatialId(id))
                 {
                     BumpSpatial();
                 }

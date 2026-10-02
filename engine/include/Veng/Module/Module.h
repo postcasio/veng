@@ -194,10 +194,14 @@ extern "C"
 /// SceneSystem, builds SystemContexts and both info structs, and reads a world through inline
 /// accessors, so a stale module carries a vtable short of the slot the simulation dispatches through
 /// and lays every one of those structs out short.
+/// Version 44 grows Scene with its topology version and world-transform cache, SceneBroadphase with
+/// its refit state, and BVH with its build scratch and recorded costs. A module reads a scene
+/// through inline accessors and a renderer that holds a broadphase, so a stale module lays all three
+/// out short and reads the members after the additions at shifted offsets.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 43u
+#define VENG_MODULE_ABI_VERSION 44u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

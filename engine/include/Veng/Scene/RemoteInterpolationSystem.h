@@ -74,6 +74,16 @@ namespace Veng
     /// @return True when the offset is negligible and the component can be removed.
     [[nodiscard]] VE_API bool IsPredictionErrorNegligible(const PredictionError& error);
 
+    /// @brief Returns a render world matrix with a prediction residual applied about its origin.
+    ///
+    /// The offset rotation turns the pose about the matrix's own translation, then the position offset
+    /// moves it. Every render gather of a predicted entity's world, interpolated or not, goes through
+    /// this so the eased pose is the same wherever it is drawn.
+    /// @param world  The entity's render world matrix.
+    /// @param error  The residual to apply.
+    /// @return The world matrix the entity draws at.
+    [[nodiscard]] VE_API mat4 ApplyPredictionError(const mat4& world, const PredictionError& error);
+
     /// @brief Blends the two samples bracketing @p renderTick into a displayed local pose.
     ///
     /// The pure core of remote interpolation: over a tick-ordered sample run, returns the sample TRS

@@ -221,3 +221,51 @@ TEST_CASE("scene interpolation: an offset child of a turning parent sweeps a tic
     CHECK(glm::distance(Translation(scene->GetInterpolatedWorldTransform(child, 0.5f)),
                         unInterpolated) == doctest::Approx(chord * 0.5f).epsilon(0.01));
 }
+
+TEST_CASE("scene interpolation: the interpolated pass equals the per-entity walk at its alpha")
+{
+    TypeRegistry registry = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(registry);
+
+    // A turning, moving parent with an offset child, and a ViewPose grandchild whose live pose is
+    // written after the last tick: the pass must blend the first two and take the third live.
+    const Entity parent = scene->CreateEntity();
+    const Entity child = scene->CreateEntity();
+    const Entity anchored = scene->CreateEntity();
+    scene->Add<Transform>(parent, Transform{});
+    scene->Add<Transform>(child, Transform{.Position = {4.0f, 0.0f, 0.0f}});
+    scene->Add<Transform>(anchored, Transform{.Position = {0.0f, 1.0f, 0.0f}});
+    scene->Add<ViewPose>(anchored);
+    scene->SetParent(child, parent);
+    scene->SetParent(anchored, child);
+    scene->SnapshotTransformHistory();
+
+    scene->Get<Transform>(parent) =
+        Transform{.Position = {2.0f, 0.0f, 0.0f},
+                  .Rotation = glm::angleAxis(glm::radians(90.0f), vec3(0, 1, 0))};
+    scene->Get<Transform>(child).Scale = vec3(1.0f, 2.0f, 1.0f);
+    scene->SnapshotTransformHistory();
+    scene->Get<Transform>(anchored).Position = vec3(0.0f, 3.0f, 0.0f);
+
+    const f32 alpha = 0.3f;
+    const mat4 walkedChild = scene->GetInterpolatedWorldTransform(child, alpha);
+    const mat4 walkedAnchored = scene->GetInterpolatedWorldTransform(anchored, alpha);
+
+    scene->UpdateInterpolatedWorldTransforms(alpha);
+    const auto equal = [](const mat4& a, const mat4& b)
+    {
+        for (i32 c = 0; c < 4; ++c)
+        {
+            if (!glm::all(glm::epsilonEqual(a[c], b[c], 1e-5f)))
+            {
+                return false;
+            }
+        }
+        return true;
+    };
+    CHECK(equal(scene->GetInterpolatedWorldTransform(child, alpha), walkedChild));
+    CHECK(equal(scene->GetInterpolatedWorldTransform(anchored, alpha), walkedAnchored));
+
+    // Another alpha is not the pass's, so it walks and still blends correctly.
+    CHECK(equal(scene->GetInterpolatedWorldTransform(child, 1.0f), WorldMatrix(*scene, child)));
+}
