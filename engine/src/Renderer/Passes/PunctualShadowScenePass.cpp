@@ -23,7 +23,7 @@
 #include <Veng/Asset/Shader.h>
 #include <Veng/Asset/VertexLayout.h>
 
-#include <Veng/Math/Frustum.h>
+#include <Veng/Diagnostics/Profiler.h>
 
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/Visibility.h>
@@ -63,9 +63,9 @@ namespace Veng::Renderer
 
     PunctualShadowScenePass::PunctualShadowScenePass(Context& context, AssetManager& assets,
                                                      const CasterRecordRing& records,
+                                                     const ShadowCasterViews& casters,
                                                      u32 resolution)
-        : m_Context(context), m_Records(records), m_Resolution(resolution),
-          m_Batch(context, "Punctual Shadow Depth", context.GetMaxFramesInFlight())
+        : m_Context(context), m_Records(records), m_Casters(casters), m_Resolution(resolution)
     {
         const AssetResult<AssetHandle<Veng::Shader>> vs =
             assets.LoadSync<Veng::Shader>(ShadowDepthVertId);
@@ -180,23 +180,10 @@ namespace Veng::Renderer
 
     PunctualShadowScenePass::~PunctualShadowScenePass() = default;
 
-    void PunctualShadowScenePass::Configure(const SceneRendererSettings& settings)
+    void PunctualShadowScenePass::AddViews(ShadowCasterViews& casters, const SceneView& view)
     {
-        m_FrustumCull = settings.FrustumCull;
-    }
-
-    void PunctualShadowScenePass::BuildViews(const SceneView& view)
-    {
-        const std::span<const SubMeshCandidate> candidates =
-            view.Broadphase->GetSubMeshCandidates();
-        const bool skinnedPosed =
-            view.SkinningPalette != nullptr && view.SkinnedPaletteBases != nullptr;
-
         m_Views.clear();
-        m_Batch.Begin(candidates);
-        m_Skinned.clear();
-        m_SkinnedViewEnds.clear();
-
+        m_FirstView = casters.GetViewCount();
         const u32 count = view.PunctualShadowCount < MaxShadowedPunctual ? view.PunctualShadowCount
                                                                          : MaxShadowedPunctual;
         for (u32 slot = 0; slot < count; ++slot)
@@ -209,7 +196,6 @@ namespace Veng::Renderer
                 continue;
             }
             const u32 faceCount = type > 1.5f ? 1u : CubeFaceCount;
-
             for (u32 face = 0; face < faceCount; ++face)
             {
                 if ((view.PunctualShadowFaceMask[slot] & (1u << face)) == 0)
@@ -217,48 +203,9 @@ namespace Veng::Renderer
                     continue;
                 }
                 m_Views.push_back(ShadowView{.Slot = slot, .Face = face});
-
-                // Cull against the face's own frustum: off-screen casters within the light's
-                // range/cone are kept; only what falls outside is dropped.
-                m_CullScratch.clear();
-                if (m_FrustumCull)
-                {
-                    view.Broadphase->Cull(
-                        Frustum::FromViewProjection(view.PunctualShadowRawViewProj[slot][face]),
-                        m_CullScratch);
-                }
-                else
-                {
-                    for (u32 i = 0; i < candidates.size(); ++i)
-                    {
-                        m_CullScratch.push_back(i);
-                    }
-                }
-
-                for (const u32 id : m_CullScratch)
-                {
-                    const SubMeshCandidate& c = candidates[id];
-                    const VisibleMesh& item = view.Visible[c.MeshCandidate];
-                    if (!item.CastsShadows)
-                    {
-                        continue;
-                    }
-                    const Mesh& mesh = *item.Mesh;
-                    if (!CastsShadow(item.Materials, mesh, c.SubMeshIndex))
-                    {
-                        continue;
-                    }
-                    if (!mesh.IsSkinned())
-                    {
-                        m_Batch.Add(id, mesh, c.SubMeshIndex);
-                    }
-                    else if (skinnedPosed)
-                    {
-                        m_Skinned.push_back(id);
-                    }
-                }
-                m_Batch.EndView();
-                m_SkinnedViewEnds.push_back(static_cast<u32>(m_Skinned.size()));
+                // Off-screen casters within the light's range or cone are kept; only what falls
+                // outside the face's own frustum is dropped.
+                casters.AddView(view.PunctualShadowRawViewProj[slot][face], 0.0f);
             }
         }
     }
@@ -285,13 +232,13 @@ namespace Veng::Renderer
                     const SceneView& view = ctx.View();
                     const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
-                    BuildViews(view);
                     if (m_Views.empty())
                     {
                         return;
                     }
+                    VE_PROFILE_SCOPE("Shadow/Record");
                     const u32 frameIndex = m_Context.GetCurrentFrameInFlight();
-                    m_Batch.Upload(frameIndex);
+                    const DepthInstanceBatch& batch = m_Casters.GetBatch();
 
                     // Slot s, face f renders into the tile at (column f, row s).
                     const auto SetTile = [&](const ShadowView& shadowView)
@@ -307,49 +254,52 @@ namespace Veng::Renderer
 
                     // Static casters: one instanced draw per submesh per view, the view's raw
                     // light-space matrix pushed once.
-                    if (!m_Batch.IsEmpty())
+                    bool staticBound = false;
+                    for (u32 v = 0; v < m_Views.size(); ++v)
                     {
-                        cmd.BindPipeline(m_Pipeline);
-                        registry.Bind(cmd);
-                        cmd.BindDescriptorSets({&m_Records.GetSet(frameIndex)},
-                                               BindlessRegistry::FirstUserSet);
-                        m_Batch.BindInstanceIds(cmd);
-                        for (u32 v = 0; v < m_Views.size(); ++v)
+                        const u32 shadowView = m_FirstView + v;
+                        if (batch.GetViewDrawCount(shadowView) == 0)
                         {
-                            if (m_Batch.GetViewDrawCount(v) == 0)
-                            {
-                                continue;
-                            }
-                            cmd.PushConstants(
-                                PunctualShadowPushConstants{.ViewProj = SetTile(m_Views[v])});
-                            m_Batch.RecordView(cmd, v);
+                            continue;
                         }
+                        if (!staticBound)
+                        {
+                            cmd.BindPipeline(m_Pipeline);
+                            registry.Bind(cmd);
+                            cmd.BindDescriptorSets({&m_Records.GetSet(frameIndex)},
+                                                   BindlessRegistry::FirstUserSet);
+                            batch.BindInstanceIds(cmd);
+                            staticBound = true;
+                        }
+                        cmd.PushConstants(
+                            PunctualShadowPushConstants{.ViewProj = SetTile(m_Views[v])});
+                        batch.RecordView(cmd, shadowView);
                     }
 
                     // Skinned casters: the skinned depth pipeline; the posed shadow comes from the
                     // per-instance palette indexed by the entity's PaletteBase.
-                    if (m_Skinned.empty())
-                    {
-                        return;
-                    }
                     const std::span<const SubMeshCandidate> candidates =
                         view.Broadphase->GetSubMeshCandidates();
-                    cmd.BindPipeline(m_SkinnedPipeline);
-                    cmd.BindDescriptorSets({view.SkinningPalette.get()},
-                                           BindlessRegistry::FirstUserSet);
-                    u32 begin = 0;
+                    bool skinnedBound = false;
                     for (u32 v = 0; v < m_Views.size(); ++v)
                     {
-                        const u32 end = m_SkinnedViewEnds[v];
-                        if (begin == end)
+                        const std::span<const u32> skinned = m_Casters.GetSkinned(m_FirstView + v);
+                        if (skinned.empty())
                         {
                             continue;
                         }
+                        if (!skinnedBound)
+                        {
+                            cmd.BindPipeline(m_SkinnedPipeline);
+                            cmd.BindDescriptorSets({view.SkinningPalette.get()},
+                                                   BindlessRegistry::FirstUserSet);
+                            skinnedBound = true;
+                        }
                         const mat4 lightViewProj = SetTile(m_Views[v]);
                         const Mesh* lastSkinned = nullptr;
-                        for (u32 i = begin; i < end; ++i)
+                        for (const u32 id : skinned)
                         {
-                            const SubMeshCandidate& c = candidates[m_Skinned[i]];
+                            const SubMeshCandidate& c = candidates[id];
                             const VisibleMesh& item = view.Visible[c.MeshCandidate];
                             const u32* paletteBase = view.SkinnedPaletteBases->Find(item.Owner);
                             if (paletteBase == nullptr)
@@ -368,7 +318,6 @@ namespace Veng::Renderer
                                 .MVP = lightViewProj * item.World, .PaletteBase = *paletteBase});
                             cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
                         }
-                        begin = end;
                     }
                 });
     }

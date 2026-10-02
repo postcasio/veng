@@ -34,6 +34,7 @@
 #include "Passes/TaaScenePass.h"
 #include "Passes/TranslucentScenePass.h"
 #include "Passes/VolumeScenePass.h"
+#include "ShadowCasters.h"
 #include "ShadowSystem.h"
 #include "RefractionGrab.h"
 #include "GuiOverlayProjection.h"
@@ -176,6 +177,9 @@ namespace Veng::Renderer
         // Every visible mesh's world and normal matrices, written once per frame by PrepareDraws
         // and read by every instanced depth pass (the shadow views and the depth+normal prepass).
         Unique<CasterRecordRing> CasterRecords;
+        // Every shadow view's casters, culled per view, grouped once and uploaded once per frame
+        // before the graph runs; both shadow passes record from it.
+        Unique<ShadowCasterViews> ShadowCasters;
         // The per-frame geometry submission plan PrepareDraws fills before each replay and
         // the geometry pass reads at record time (the pass holds a pointer to it).
         GBufferDrawPlan Plan;
@@ -237,6 +241,7 @@ namespace Veng::Renderer
         // from the context independently.
         m_FramesInFlight = m_Context.GetMaxFramesInFlight();
         m_Internal->CasterRecords = CreateUnique<CasterRecordRing>(m_Context, m_FramesInFlight);
+        m_Internal->ShadowCasters = CreateUnique<ShadowCasterViews>(m_Context, m_FramesInFlight);
         m_Shadows = ShadowSystem::Create(m_Context, m_Settings);
         // The sky-resolve subsystem owns the IBL maps, the atmosphere LUTs, and the baked-sky cube;
         // their consumer set layouts must exist before CreatePipelines reserves sets (the lighting
@@ -659,9 +664,9 @@ namespace Veng::Renderer
         Ref<ImageView> shadowAtlasView;
         if (m_Topology->ShadowActive)
         {
-            auto shadowPass =
-                CreateUnique<ShadowScenePass>(m_Context, m_Assets, *m_Internal->CasterRecords,
-                                              m_Settings.ShadowResolution, m_Settings.CascadeCount);
+            auto shadowPass = CreateUnique<ShadowScenePass>(
+                m_Context, m_Assets, *m_Internal->CasterRecords, *m_Internal->ShadowCasters,
+                m_Settings.ShadowResolution, m_Settings.CascadeCount);
             m_ShadowPass = shadowPass.get();
             shadowAtlasView = shadowPass->GetShadowView();
             m_Passes.push_back(std::move(shadowPass));
@@ -672,7 +677,7 @@ namespace Veng::Renderer
         if (m_Topology->PunctualShadowActive)
         {
             auto punctualPass = CreateUnique<PunctualShadowScenePass>(
-                m_Context, m_Assets, *m_Internal->CasterRecords,
+                m_Context, m_Assets, *m_Internal->CasterRecords, *m_Internal->ShadowCasters,
                 m_Settings.PunctualShadowResolution);
             m_PunctualShadowPass = punctualPass.get();
             m_Passes.push_back(std::move(punctualPass));
@@ -2475,6 +2480,23 @@ namespace Veng::Renderer
         // Size the overlay-document intermediate to this frame's documents — after every Rebuild
         // this Execute can trigger, before the bindings below bind its (possibly regrown) view.
         PrepareHdrOverlayDocuments(resolvedView);
+
+        // Every shadow view's casters, culled, grouped and uploaded once for both shadow passes —
+        // after every Rebuild, since the passes it fills are the ones this frame's graph holds.
+        if (m_ShadowPass != nullptr || m_PunctualShadowPass != nullptr)
+        {
+            ShadowCasterViews& casters = *m_Internal->ShadowCasters;
+            casters.Begin(resolvedView, m_Settings.FrustumCull);
+            if (m_ShadowPass != nullptr)
+            {
+                m_ShadowPass->AddViews(casters, resolvedView);
+            }
+            if (m_PunctualShadowPass != nullptr)
+            {
+                m_PunctualShadowPass->AddViews(casters, resolvedView);
+            }
+            casters.Build(frameIndex);
+        }
 
         // Assemble this frame's graph import bindings — the always-bound targets plus the
         // conditionally-declared battery imports, matched to the compiled graph's declared imports.

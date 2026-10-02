@@ -92,16 +92,109 @@ namespace Veng::Renderer
         vector<Frame> m_Frames;
     };
 
-    /// @brief One depth pass's static-caster draws across its views, as instanced runs.
+    /// @brief One instanced depth draw of a view: a submesh's index range over a run of instance ids.
+    struct DepthDraw
+    {
+        /// @brief The mesh whose buffers the draw binds.
+        const Mesh* SourceMesh = nullptr;
+        /// @brief Indices the submesh draws.
+        u32 IndexCount = 0;
+        /// @brief The submesh's first index.
+        u32 FirstIndex = 0;
+        /// @brief The draw's first instance: its offset into the instance-id list.
+        u32 FirstInstance = 0;
+        /// @brief Instances the draw covers.
+        u32 InstanceCount = 0;
+    };
+
+    /// @brief Static depth casters across several views, grouped once and filtered per view.
     ///
-    /// A pass adds each view's static survivors, closes the view, and once every view is built
-    /// uploads the instance ids and records view by view. Closing a view orders its draws by
-    /// (mesh, submesh) with SortDrawKeys and appends each draw's caster-record index to the
-    /// instance-id list, so the instances of one submesh are contiguous; GroupContiguousSlots then
-    /// cuts them into groups (one buffer bind per mesh) and runs (one instanced draw per
-    /// submesh). The ids ride per-instance vertex binding 1, each frame in flight in its own
-    /// host-mapped buffer grown on demand. The CPU lists are kept across frames, so a steady
-    /// state allocates nothing.
+    /// A pass opens each view and adds the casters that view keeps. A caster any view keeps joins
+    /// one shared list, and each view only sets its bit in that caster's mask. Build sorts the
+    /// shared list by (mesh, submesh) with SortDrawKeys and cuts it with GroupContiguousSlots
+    /// once, then walks it a single time to write every view's instance ids, view after view.
+    /// A view's ids keep the shared order, so its draws are exactly those its own casters would
+    /// group into alone, while the sort and the grouping run once however many views share them. An
+    /// instance id is the caster-record index (the candidate's MeshCandidate). Pure CPU: the
+    /// lists are kept across frames, so a steady state allocates nothing.
+    class DepthCasterGrouping
+    {
+    public:
+        /// @brief Views one grouping holds: a caster's mask is one 64-bit word.
+        static constexpr u32 MaxViews = 64;
+
+        /// @brief Clears the previous frame's views and starts this frame's.
+        /// @param candidates The broadphase's submesh candidates the added ids index.
+        void Begin(std::span<const SubMeshCandidate> candidates);
+
+        /// @brief Opens a view.
+        /// @return The view's index, counted from zero in the order views are opened.
+        /// @pre Fewer than MaxViews views are open.
+        u32 AddView();
+
+        /// @brief Adds a static caster a view keeps.
+        /// @param view         The view keeping it, from AddView.
+        /// @param candidateId  The caster's broadphase candidate id.
+        /// @param mesh         The candidate's mesh.
+        /// @param subMeshIndex The candidate's submesh.
+        /// @pre A candidate is added to one view at most once.
+        void Add(u32 view, u32 candidateId, const Mesh& mesh, u32 subMeshIndex);
+
+        /// @brief Groups the shared casters and lays out every view's draws and instance ids.
+        void Build();
+
+        /// @brief Number of views opened since Begin.
+        [[nodiscard]] u32 GetViewCount() const { return static_cast<u32>(m_Views.size()); }
+
+        /// @brief A view's draws, in (mesh, submesh) order.
+        /// @pre Build ran.
+        [[nodiscard]] std::span<const DepthDraw> GetViewDraws(u32 view) const;
+
+        /// @brief Every view's instance ids, view after view; a draw's FirstInstance indexes it.
+        /// @pre Build ran.
+        [[nodiscard]] std::span<const u32> GetInstanceIds() const { return m_InstanceIds; }
+
+    private:
+        /// @brief One view's range of draws.
+        struct View
+        {
+            /// @brief First draw of the view in m_Draws.
+            u32 FirstDraw = 0;
+            /// @brief Draws the view holds.
+            u32 DrawCount = 0;
+        };
+
+        /// @brief Marks a candidate not in the shared list.
+        static constexpr u32 NotShared = ~0u;
+
+        /// @brief The candidates the current frame's keys index.
+        std::span<const SubMeshCandidate> m_Candidates;
+        /// @brief Per candidate, its index in m_Masks, or NotShared.
+        vector<u32> m_SharedIndex;
+        /// @brief The shared casters' keys, in the order they joined; sorted by Build.
+        vector<DrawKey> m_Keys;
+        /// @brief Per shared caster (in joining order), the views keeping it, one bit each.
+        vector<u64> m_Masks;
+        /// @brief The sorted shared casters as slots; a slot's CandidateId is its position.
+        vector<DrawSlot> m_Slots;
+        /// @brief The shared slots' groups, one per mesh.
+        vector<DrawGroup> m_Groups;
+        /// @brief The shared slots' runs, one per submesh.
+        vector<InstanceRun> m_Runs;
+        /// @brief Every view's draws, view after view.
+        vector<DepthDraw> m_Draws;
+        /// @brief Every view's instance ids, view after view.
+        vector<u32> m_InstanceIds;
+        /// @brief The open views.
+        vector<View> m_Views;
+    };
+
+    /// @brief Static depth-caster draws across views, as instanced runs over one instance-id upload.
+    ///
+    /// Wraps a DepthCasterGrouping with the GPU half: Upload copies every view's instance ids into
+    /// one per-frame buffer, which rides per-instance vertex binding 1, and RecordView issues one
+    /// instanced draw per submesh at the view's offset into it. Each frame in flight owns its own
+    /// host-mapped buffer, grown on demand.
     class DepthInstanceBatch
     {
     public:
@@ -117,67 +210,54 @@ namespace Veng::Renderer
 
         /// @brief Clears the previous frame's views and starts this frame's.
         /// @param candidates The broadphase's submesh candidates the added ids index.
-        void Begin(std::span<const SubMeshCandidate> candidates);
+        void Begin(std::span<const SubMeshCandidate> candidates) { m_Grouping.Begin(candidates); }
 
-        /// @brief Adds one static draw to the view being built.
-        /// @param candidateId  The survivor's broadphase candidate id.
+        /// @brief Opens a view; see DepthCasterGrouping::AddView.
+        /// @return The view's index.
+        u32 AddView() { return m_Grouping.AddView(); }
+
+        /// @brief Adds a static caster a view keeps; see DepthCasterGrouping::Add.
+        /// @param view         The view keeping it.
+        /// @param candidateId  The caster's broadphase candidate id.
         /// @param mesh         The candidate's mesh.
         /// @param subMeshIndex The candidate's submesh.
-        void Add(u32 candidateId, const Mesh& mesh, u32 subMeshIndex);
+        void Add(const u32 view, const u32 candidateId, const Mesh& mesh, const u32 subMeshIndex)
+        {
+            m_Grouping.Add(view, candidateId, mesh, subMeshIndex);
+        }
 
-        /// @brief Closes the view being built: sorts its draws and lays out their runs.
-        void EndView();
+        /// @brief Groups the casters and lays out every view's draws.
+        void Build() { m_Grouping.Build(); }
 
         /// @brief Copies this frame's instance ids to the GPU, growing the frame's buffer if needed.
         /// @param frameIndex The frame in flight being recorded.
+        /// @pre Build ran this frame.
         void Upload(u32 frameIndex);
 
         /// @brief Binds the uploaded instance ids at the per-instance binding.
         /// @pre Upload ran this frame and the batch is not empty.
         void BindInstanceIds(CommandBuffer& cmd) const;
 
-        /// @brief Records one view's runs: each group's mesh buffers once, then one draw per run.
+        /// @brief Records one view's draws: each mesh's buffers once, then one draw per submesh.
         /// @pre The view's pipeline, sets, push block and the instance ids are bound.
         void RecordView(CommandBuffer& cmd, u32 view) const;
 
         /// @brief Whether no view holds a draw.
-        [[nodiscard]] bool IsEmpty() const { return m_InstanceIds.empty(); }
+        [[nodiscard]] bool IsEmpty() const { return m_Grouping.GetInstanceIds().empty(); }
 
         /// @brief Number of draws a view holds.
-        [[nodiscard]] u32 GetViewDrawCount(u32 view) const { return m_Views[view].SlotCount; }
+        [[nodiscard]] u32 GetViewDrawCount(const u32 view) const
+        {
+            return static_cast<u32>(m_Grouping.GetViewDraws(view).size());
+        }
 
     private:
-        /// @brief One closed view's range of slots and groups.
-        struct View
-        {
-            /// @brief First slot of the view in m_Slots.
-            u32 FirstSlot = 0;
-            /// @brief Slots the view holds.
-            u32 SlotCount = 0;
-            /// @brief First group of the view in m_Groups.
-            u32 FirstGroup = 0;
-            /// @brief Groups the view holds.
-            u32 GroupCount = 0;
-        };
-
         /// @brief Renderer context.
         Context& m_Context;
         /// @brief Debug name for the instance-id buffers.
         string m_Name;
-        /// @brief The candidates the current frame's keys index.
-        std::span<const SubMeshCandidate> m_Candidates;
-        /// @brief The view being built's keys; cleared when it closes.
-        vector<DrawKey> m_Keys;
-        /// @brief Every view's slots; a slot's CandidateId is its instance-id offset.
-        vector<DrawSlot> m_Slots;
-        /// @brief Every view's groups; a group's slot indices are relative to its view.
-        vector<DrawGroup> m_Groups;
-        /// @brief Every view's runs, indexed by the groups.
-        vector<InstanceRun> m_Runs;
-        /// @brief The caster-record index of every instance, in slot order.
-        vector<u32> m_InstanceIds;
-        /// @brief The closed views, in the order they were built.
-        vector<View> m_Views;
+        /// @brief The CPU grouping the buffers are written from.
+        DepthCasterGrouping m_Grouping;
         /// @brief Each frame in flight's instance-id buffer.
         vector<Ref<Buffer>> m_IdBuffers;
         /// @brief Each frame in flight's buffer capacity, in ids.

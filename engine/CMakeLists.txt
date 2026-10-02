@@ -331,6 +331,7 @@ add_library(veng SHARED
         src/Renderer/FrameTopology.cpp
         src/Renderer/SceneRenderer.cpp
         src/Renderer/SceneRendererResources.cpp
+        src/Renderer/ShadowCasters.cpp
         src/Renderer/Viewport.cpp
         src/Renderer/ViewportCompositor.cpp
         src/Renderer/ViewportRegistry.cpp
@@ -611,6 +612,7 @@ set(VENG_HOT_PATH_SOURCES
         src/Renderer/DepthInstancing.cpp
         src/Renderer/DrawGather.cpp
         src/Renderer/LightPacking.cpp
+        src/Renderer/ShadowCasters.cpp
         src/Renderer/Backend/CommandBuffer.cpp
         src/Renderer/Passes/GBufferScenePass.cpp
         src/Renderer/Passes/DepthNormalPrepassScenePass.cpp

@@ -277,6 +277,7 @@ namespace Veng::Renderer
                     const bool skinnedPosed =
                         view.SkinningPalette != nullptr && view.SkinnedPaletteBases != nullptr;
                     m_Batch.Begin(candidates);
+                    const u32 batchView = m_Batch.AddView();
                     m_Skinned.clear();
                     for (const u32 id : m_CullScratch)
                     {
@@ -289,14 +290,14 @@ namespace Veng::Renderer
                         }
                         if (!mesh.IsSkinned())
                         {
-                            m_Batch.Add(id, mesh, c.SubMeshIndex);
+                            m_Batch.Add(batchView, id, mesh, c.SubMeshIndex);
                         }
                         else if (skinnedPosed)
                         {
                             m_Skinned.push_back(id);
                         }
                     }
-                    m_Batch.EndView();
+                    m_Batch.Build();
 
                     // Static opaque submeshes: the instanced normal-passing pipeline.
                     if (!m_Batch.IsEmpty())
@@ -309,7 +310,7 @@ namespace Veng::Renderer
                                                BindlessRegistry::FirstUserSet);
                         m_Batch.BindInstanceIds(cmd);
                         cmd.PushConstants(DepthNormalPushConstants{.ViewProj = viewProj});
-                        m_Batch.RecordView(cmd, 0);
+                        m_Batch.RecordView(cmd, batchView);
                     }
 
                     // Skinned opaque submeshes: the skinned normal-passing pipeline + the palette set,

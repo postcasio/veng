@@ -1,12 +1,12 @@
 #include "DepthInstancing.h"
 
-#include "Passes/GBufferScenePass.h"
-
+#include <array>
 #include <bit>
 #include <cstring>
 
 #include <fmt/format.h>
 
+#include <Veng/Assert.h>
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
@@ -98,40 +98,51 @@ namespace Veng::Renderer
         return *m_Frames[frameIndex].Set;
     }
 
-    DepthInstanceBatch::DepthInstanceBatch(Context& context, string name, const u32 framesInFlight)
-        : m_Context(context), m_Name(std::move(name)), m_IdBuffers(framesInFlight),
-          m_IdCapacity(framesInFlight, 0)
-    {
-    }
-
-    DepthInstanceBatch::~DepthInstanceBatch() = default;
-
-    void DepthInstanceBatch::Begin(const std::span<const SubMeshCandidate> candidates)
+    void DepthCasterGrouping::Begin(const std::span<const SubMeshCandidate> candidates)
     {
         m_Candidates = candidates;
+        m_SharedIndex.assign(candidates.size(), NotShared);
         m_Keys.clear();
+        m_Masks.clear();
         m_Slots.clear();
         m_Groups.clear();
         m_Runs.clear();
+        m_Draws.clear();
         m_InstanceIds.clear();
         m_Views.clear();
     }
 
-    void DepthInstanceBatch::Add(const u32 candidateId, const Mesh& mesh, const u32 subMeshIndex)
+    u32 DepthCasterGrouping::AddView()
     {
-        m_Keys.push_back(DrawKey{
-            .Pipeline = nullptr,
-            .SourceMesh = &mesh,
-            .SubMeshIndex = subMeshIndex,
-            .Candidate = candidateId,
-        });
+        VE_ASSERT(m_Views.size() < MaxViews, "DepthCasterGrouping: more than {} views", MaxViews);
+        m_Views.emplace_back();
+        return static_cast<u32>(m_Views.size()) - 1;
     }
 
-    void DepthInstanceBatch::EndView()
+    void DepthCasterGrouping::Add(const u32 view, const u32 candidateId, const Mesh& mesh,
+                                  const u32 subMeshIndex)
+    {
+        u32& shared = m_SharedIndex[candidateId];
+        if (shared == NotShared)
+        {
+            shared = static_cast<u32>(m_Masks.size());
+            m_Masks.push_back(0);
+            m_Keys.push_back(DrawKey{
+                .Pipeline = nullptr,
+                .SourceMesh = &mesh,
+                .SubMeshIndex = subMeshIndex,
+                .Candidate = candidateId,
+            });
+        }
+        m_Masks[shared] |= u64{1} << view;
+    }
+
+    void DepthCasterGrouping::Build()
     {
         SortDrawKeys(m_Keys);
 
-        const u32 firstSlot = static_cast<u32>(m_Slots.size());
+        // The shared slots' CandidateIds are their positions, so a submesh's casters are
+        // consecutive and GroupContiguousSlots cuts one run per submesh.
         for (const DrawKey& key : m_Keys)
         {
             const SubMesh& subMesh = key.SourceMesh->GetSubMeshes()[key.SubMeshIndex];
@@ -142,28 +153,100 @@ namespace Veng::Renderer
                 .IndexCount = subMesh.IndexCount,
                 .FirstIndex = subMesh.IndexOffset,
                 .VertexOffset = 0,
-                .CandidateId = static_cast<u32>(m_InstanceIds.size()),
+                .CandidateId = static_cast<u32>(m_Slots.size()),
             });
-            m_InstanceIds.push_back(m_Candidates[key.Candidate].MeshCandidate);
         }
-        m_Keys.clear();
+        GroupContiguousSlots(m_Slots, m_Groups, m_Runs);
 
-        const u32 slotCount = static_cast<u32>(m_Slots.size()) - firstSlot;
-        const u32 firstGroup = static_cast<u32>(m_Groups.size());
-        GroupContiguousSlots(std::span<const DrawSlot>(m_Slots).subspan(firstSlot, slotCount),
-                             m_Groups, m_Runs);
-        m_Views.push_back(View{
-            .FirstSlot = firstSlot,
-            .SlotCount = slotCount,
-            .FirstGroup = firstGroup,
-            .GroupCount = static_cast<u32>(m_Groups.size()) - firstGroup,
-        });
+        // Size every view's draws and instances, so the second walk writes each in place.
+        const u32 viewCount = static_cast<u32>(m_Views.size());
+        std::array<u32, MaxViews> drawCursor{};
+        std::array<u32, MaxViews> instanceCursor{};
+        for (const InstanceRun& run : m_Runs)
+        {
+            u64 runMask = 0;
+            for (u32 s = run.FirstSlot; s < run.FirstSlot + run.Count; ++s)
+            {
+                const u64 mask = m_Masks[m_SharedIndex[m_Keys[s].Candidate]];
+                runMask |= mask;
+                for (u64 bits = mask; bits != 0; bits &= bits - 1)
+                {
+                    ++instanceCursor[std::countr_zero(bits)];
+                }
+            }
+            for (u64 bits = runMask; bits != 0; bits &= bits - 1)
+            {
+                ++drawCursor[std::countr_zero(bits)];
+            }
+        }
+        u32 drawTotal = 0;
+        u32 instanceTotal = 0;
+        for (u32 v = 0; v < viewCount; ++v)
+        {
+            m_Views[v] = View{.FirstDraw = drawTotal, .DrawCount = drawCursor[v]};
+            drawTotal += drawCursor[v];
+            drawCursor[v] = m_Views[v].FirstDraw;
+            const u32 instances = instanceCursor[v];
+            instanceCursor[v] = instanceTotal;
+            instanceTotal += instances;
+        }
+        m_Draws.resize(drawTotal);
+        m_InstanceIds.resize(instanceTotal);
+
+        std::array<u32, MaxViews> runStart{};
+        for (const InstanceRun& run : m_Runs)
+        {
+            u64 runMask = 0;
+            for (u32 s = run.FirstSlot; s < run.FirstSlot + run.Count; ++s)
+            {
+                const DrawKey& key = m_Keys[s];
+                const u64 mask = m_Masks[m_SharedIndex[key.Candidate]];
+                for (u64 bits = mask & ~runMask; bits != 0; bits &= bits - 1)
+                {
+                    const u32 v = static_cast<u32>(std::countr_zero(bits));
+                    runStart[v] = instanceCursor[v];
+                }
+                runMask |= mask;
+                const u32 record = m_Candidates[key.Candidate].MeshCandidate;
+                for (u64 bits = mask; bits != 0; bits &= bits - 1)
+                {
+                    m_InstanceIds[instanceCursor[std::countr_zero(bits)]++] = record;
+                }
+            }
+            const DrawSlot& first = m_Slots[run.FirstSlot];
+            for (u64 bits = runMask; bits != 0; bits &= bits - 1)
+            {
+                const u32 v = static_cast<u32>(std::countr_zero(bits));
+                m_Draws[drawCursor[v]++] = DepthDraw{
+                    .SourceMesh = first.SourceMesh,
+                    .IndexCount = first.IndexCount,
+                    .FirstIndex = first.FirstIndex,
+                    .FirstInstance = runStart[v],
+                    .InstanceCount = instanceCursor[v] - runStart[v],
+                };
+            }
+        }
     }
+
+    std::span<const DepthDraw> DepthCasterGrouping::GetViewDraws(const u32 view) const
+    {
+        const View& range = m_Views[view];
+        return std::span<const DepthDraw>(m_Draws).subspan(range.FirstDraw, range.DrawCount);
+    }
+
+    DepthInstanceBatch::DepthInstanceBatch(Context& context, string name, const u32 framesInFlight)
+        : m_Context(context), m_Name(std::move(name)), m_IdBuffers(framesInFlight),
+          m_IdCapacity(framesInFlight, 0)
+    {
+    }
+
+    DepthInstanceBatch::~DepthInstanceBatch() = default;
 
     void DepthInstanceBatch::Upload(const u32 frameIndex)
     {
         m_UploadedFrame = frameIndex;
-        const u32 count = static_cast<u32>(m_InstanceIds.size());
+        const std::span<const u32> ids = m_Grouping.GetInstanceIds();
+        const u32 count = static_cast<u32>(ids.size());
         if (count == 0)
         {
             return;
@@ -183,7 +266,7 @@ namespace Veng::Renderer
                                           });
             m_IdCapacity[frameIndex] = capacity;
         }
-        std::memcpy(m_IdBuffers[frameIndex]->GetMappedData(), m_InstanceIds.data(),
+        std::memcpy(m_IdBuffers[frameIndex]->GetMappedData(), ids.data(),
                     static_cast<usize>(count) * sizeof(u32));
     }
 
@@ -194,16 +277,18 @@ namespace Veng::Renderer
 
     void DepthInstanceBatch::RecordView(CommandBuffer& cmd, const u32 view) const
     {
-        const View& range = m_Views[view];
-        const std::span<const DrawSlot> slots =
-            std::span<const DrawSlot>(m_Slots).subspan(range.FirstSlot, range.SlotCount);
-        for (u32 g = 0; g < range.GroupCount; ++g)
+        // Draws come in mesh order, so each mesh's buffers bind once per view.
+        const Mesh* bound = nullptr;
+        for (const DepthDraw& draw : m_Grouping.GetViewDraws(view))
         {
-            // Groups split on the mesh alone (the key carries no pipeline), so each binds its own.
-            const DrawGroup& group = m_Groups[range.FirstGroup + g];
-            cmd.BindVertexBuffer(group.SourceMesh->GetVertexBuffer());
-            cmd.BindIndexBuffer(group.SourceMesh->GetIndexBuffer());
-            RecordInstanceRuns(cmd, slots, m_Runs, group);
+            if (draw.SourceMesh != bound)
+            {
+                cmd.BindVertexBuffer(draw.SourceMesh->GetVertexBuffer());
+                cmd.BindIndexBuffer(draw.SourceMesh->GetIndexBuffer());
+                bound = draw.SourceMesh;
+            }
+            cmd.DrawIndexed(draw.IndexCount, draw.InstanceCount, draw.FirstIndex, 0,
+                            draw.FirstInstance);
         }
     }
 }

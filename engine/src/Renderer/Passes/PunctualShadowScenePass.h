@@ -7,6 +7,7 @@
 #include <Veng/Renderer/Types.h>
 
 #include "../DepthInstancing.h"
+#include "../ShadowCasters.h"
 
 namespace Veng
 {
@@ -27,11 +28,12 @@ namespace Veng::Renderer
     /// PunctualShadowResolution² tiles (slot = row, face = column). A spot light writes one
     /// perspective view into its slot's face-0 tile; a point light writes six cube faces into
     /// its slot's six tiles. Contributes one depth-only RenderGraph pass that sets each tile's
-    /// viewport + scissor, pushes the raw (non-tile-remapped) light view-proj, and culls
-    /// casters against the light's own frustum through the broadphase the renderer synced once
-    /// for the frame. A cube face SceneView::PunctualShadowFaceMask leaves out is not rendered.
-    /// Static casters draw instanced (one draw per submesh per view, each instance placed by its
-    /// caster record); skinned casters draw one at a time, posed through the skinning palette.
+    /// viewport + scissor and pushes the raw (non-tile-remapped) light view-proj. Each rendered
+    /// face is one view of the renderer's ShadowCasterViews, added by AddViews before the graph
+    /// runs and culled against the light's own frustum. A cube face
+    /// SceneView::PunctualShadowFaceMask leaves out is not rendered. Static casters draw instanced
+    /// from the shared grouping (one draw per submesh per view, each instance placed by its caster
+    /// record); skinned casters draw one at a time, posed through the skinning palette.
     ///
     /// The atlas is renderer-owned (set 1 binding 4, off bindless — a comparison-sampled image
     /// bars set-0 bindless on MoltenVK and a closed producer→consumer resource needs no global
@@ -45,13 +47,17 @@ namespace Veng::Renderer
         /// @param context     Renderer context.
         /// @param assets      Asset manager for the core-pack shader loads.
         /// @param records     The renderer's caster records, read by the static caster draws.
+        /// @param casters     The renderer's shadow views, which the faces draw from.
         /// @param resolution  Per-tile edge length in texels; the atlas is sized from this.
         PunctualShadowScenePass(Context& context, AssetManager& assets,
-                                const CasterRecordRing& records, u32 resolution);
+                                const CasterRecordRing& records, const ShadowCasterViews& casters,
+                                u32 resolution);
         ~PunctualShadowScenePass() override;
 
-        /// @brief Reads the frustum-cull toggle from the settings.
-        void Configure(const SceneRendererSettings& settings) override;
+        /// @brief Adds this frame's rendered faces to the shadow views.
+        /// @param casters The renderer's shadow views, opened for the frame.
+        /// @param view    The frame's view, carrying the punctual records and face matrices.
+        void AddViews(ShadowCasterViews& casters, const SceneView& view);
 
         /// @brief Contributes the depth-only punctual pass into the graph, writing the atlas.
         void Declare(RenderGraph& graph, const PassIO& io) override;
@@ -59,9 +65,6 @@ namespace Veng::Renderer
     private:
         /// @brief Loads the skinned depth shader and builds the skinned caster pipeline.
         void BuildSkinnedPipeline(AssetManager& assets);
-
-        /// @brief Culls and sorts every rendered view's casters into the batch and the skinned list.
-        void BuildViews(const SceneView& view);
 
         /// @brief One rendered view: a record's slot and one of its faces.
         struct ShadowView
@@ -75,20 +78,13 @@ namespace Veng::Renderer
         Context& m_Context;
         /// @brief The renderer's caster records the static draws place their instances by.
         const CasterRecordRing& m_Records;
+        /// @brief The renderer's shadow views the faces draw from.
+        const ShadowCasterViews& m_Casters;
         u32 m_Resolution;
-        bool m_FrustumCull = true;
-        /// @brief Frustum-query scratch — candidate indices into SceneView::Visible.
-        ///
-        /// Cleared and refilled per view/face; reused across frames to avoid per-frame allocation.
-        vector<u32> m_CullScratch;
-        /// @brief The views this frame renders, in batch view order.
+        /// @brief The faces this frame renders, in shadow-view order.
         vector<ShadowView> m_Views;
-        /// @brief Every view's static casters, as instanced runs.
-        DepthInstanceBatch m_Batch;
-        /// @brief Every view's skinned caster candidate ids, view after view.
-        vector<u32> m_Skinned;
-        /// @brief Per view, the end of its range in m_Skinned.
-        vector<u32> m_SkinnedViewEnds;
+        /// @brief This frame's first face's index among the shadow views; faces follow in order.
+        u32 m_FirstView = 0;
 
         Ref<GraphicsPipeline> m_Pipeline;
         Ref<PipelineLayout> m_Layout;

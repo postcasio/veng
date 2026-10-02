@@ -547,14 +547,28 @@ reports the views rendered (the `Render/ShadowViews` counter).
 
 **Depth passes draw instanced.** `PrepareDraws` writes every visible mesh's world and normal matrices
 once per frame into a `CasterRecordRing` (`DepthInstancing.h`), record *i* belonging to
-`SceneView::Visible[i]`. Each depth pass — the cascade pass, the punctual pass and the depth+normal
-prepass — feeds each view's static survivors to a `DepthInstanceBatch`, which orders them with
-`SortDrawKeys` (no pipeline in the key), appends each draw's record index to a per-frame instance-id
-buffer so a submesh's instances are contiguous, and cuts them with `GroupContiguousSlots`; the pass
-then records one `RecordInstanceRuns` draw per submesh per view. The ids ride per-instance vertex
-binding 1 as `a_CandidateId` (`Veng/depth_caster.slang` reads the record at set 3), and the view's
-view-projection rides the push block, so it changes per view, not per draw. Skinned casters keep one
-draw each, posed through `SkinnedPaletteBases`.
+`SceneView::Visible[i]`. A depth pass's static casters go through a `DepthInstanceBatch`, which
+groups them with `DepthCasterGrouping`: every view opens itself and adds the casters it keeps, a
+caster any view keeps joins **one shared list** and the view only sets its bit in that caster's
+mask, and `Build` orders the shared list once with `SortDrawKeys` (no pipeline in the key), cuts it
+once with `GroupContiguousSlots`, and walks it once to write every view's instance ids, view after
+view, into one per-frame buffer. A view's ids keep the shared order, so its draws are exactly the
+ones its own casters would group into alone (`tests/unit/depth_caster_grouping.cpp`), and the pass
+records one instanced draw per submesh per view at the view's offset. The ids ride per-instance
+vertex binding 1 as `a_CandidateId` (`Veng/depth_caster.slang` reads the record at set 3), and the
+view's view-projection rides the push block, so it changes per view, not per draw. Skinned casters
+keep one draw each, posed through `SkinnedPaletteBases`.
+
+**Both shadow passes draw from one set of views, built before the graph runs.** The renderer owns a
+`ShadowCasterViews` (`ShadowCasters.h`); each `Execute`, after every rebuild, it opens it, has the
+cascade pass add each granted set's cascades and the punctual pass each rendered face
+(`AddViews`), and builds it — so the cascades and the punctual faces share one grouping and one
+instance-id upload, and each pass records its views at their indices. `AddView` culls the view
+through the broadphase tree and applies the cascade's minimum-texel skip; whether a candidate casts
+at all (`MeshRenderer::CastsShadows`, an opaque material, a posed skinned mesh) does not depend on
+the view, so it is decided once per candidate per frame. The work is scoped `Shadow/Cull` (per view),
+`Shadow/Instance`, `Shadow/Upload` and `Shadow/Record` (per pass). The depth+normal prepass keeps a
+batch of its own with its one view.
 
 **Both arms are opt-out per light, through `Light::CastsShadows`.** It defaults true, so a light
 shadows unless it says otherwise; cleared, the light scores zero and is passed over for every arm.

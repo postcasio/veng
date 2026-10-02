@@ -8,6 +8,7 @@
 #include <Veng/Renderer/Types.h>
 
 #include "../DepthInstancing.h"
+#include "../ShadowCasters.h"
 
 namespace Veng
 {
@@ -33,10 +34,11 @@ namespace Veng::Renderer
     /// matrix pushed. A tile beyond the frame's cascade or set count keeps the clear and is never
     /// selected.
     ///
-    /// Static casters draw instanced: each tile's survivors are sorted by (mesh, submesh) and drawn
-    /// one instanced draw per submesh, each instance placed by its caster record. A caster whose
-    /// bound spans fewer than ShadowCasterMinTexels texels in a tile is skipped there. Skinned
-    /// casters draw one at a time, posed through the skinning palette.
+    /// Each tile is one view of the renderer's ShadowCasterViews, added by AddViews before the graph
+    /// runs: static casters draw instanced from the shared grouping, one instanced draw per submesh,
+    /// each instance placed by its caster record. A caster whose bound spans fewer than
+    /// ShadowCasterMinTexels texels in a tile is skipped there. Skinned casters draw one at a time,
+    /// posed through the skinning palette.
     ///
     /// The atlas is off bindless: it is a closed producer→consumer resource delivered to the lighting
     /// pass through a dedicated descriptor set (set 1). GetShadowView exposes the Ref<ImageView>
@@ -51,10 +53,11 @@ namespace Veng::Renderer
         /// @param context      Renderer context.
         /// @param assets       Asset manager for the core-pack shader loads.
         /// @param records      The renderer's caster records, read by the static caster draws.
+        /// @param casters      The renderer's shadow views, which the tiles draw from.
         /// @param resolution   Per-cascade tile edge length in texels.
         /// @param cascadeCount Cascades per set the atlas is sized for.
         ShadowScenePass(Context& context, AssetManager& assets, const CasterRecordRing& records,
-                        u32 resolution, u32 cascadeCount);
+                        const ShadowCasterViews& casters, u32 resolution, u32 cascadeCount);
         ~ShadowScenePass() override;
 
         /// @brief The atlas view, written into the shadow descriptor set (set 1 binding 0).
@@ -78,8 +81,13 @@ namespace Veng::Renderer
             return {m_Grid.Columns * m_Resolution, m_Grid.TotalRows() * m_Resolution};
         }
 
-        /// @brief Reads the frustum-cull toggle and the caster size threshold from the settings.
+        /// @brief Reads the caster size threshold from the settings.
         void Configure(const SceneRendererSettings& settings) override;
+
+        /// @brief Adds this frame's tiles to the shadow views: every granted set's cascades.
+        /// @param casters The renderer's shadow views, opened for the frame.
+        /// @param view    The frame's view, carrying the cascade matrices.
+        void AddViews(ShadowCasterViews& casters, const SceneView& view);
 
         /// @brief Contributes the cascaded depth pass into the graph, writing the atlas.
         void Declare(RenderGraph& graph, const PassIO& io) override;
@@ -91,29 +99,23 @@ namespace Veng::Renderer
         /// @brief Loads the skinned depth shader and builds the skinned caster pipeline.
         void BuildSkinnedPipeline(AssetManager& assets);
 
-        /// @brief Culls and sorts every tile's casters into the instance batch and the skinned list.
-        void BuildTiles(const SceneView& view, u32 tileCount, u32 cascadeCount);
-
         Context& m_Context;
         /// @brief The renderer's caster records the static draws place their instances by.
         const CasterRecordRing& m_Records;
         u32 m_Resolution;
         u32 m_CascadeCount;
+        /// @brief The renderer's shadow views the tiles draw from.
+        const ShadowCasterViews& m_Casters;
         /// @brief The atlas tile grid: one set's columns/rows plus the stacked set count.
         ShadowAtlasGrid m_Grid;
-        bool m_FrustumCull = true;
         /// @brief A caster spanning fewer texels than this in a tile is skipped there.
         f32 m_MinCasterTexels = 1.0f;
-        /// @brief Frustum-query scratch — candidate indices into SceneView::Visible.
-        ///
-        /// Cleared and refilled per cascade; reused across frames to avoid per-frame allocation.
-        vector<u32> m_CullScratch;
-        /// @brief Every tile's static casters, as instanced runs.
-        DepthInstanceBatch m_Batch;
-        /// @brief Every tile's skinned caster candidate ids, tile after tile.
-        vector<u32> m_Skinned;
-        /// @brief Per tile, the end of its range in m_Skinned.
-        vector<u32> m_SkinnedTileEnds;
+        /// @brief This frame's first tile's index among the shadow views; tiles follow in order.
+        u32 m_FirstView = 0;
+        /// @brief Tiles this frame renders: granted sets times cascades.
+        u32 m_TileCount = 0;
+        /// @brief Cascades per set this frame renders.
+        u32 m_FrameCascadeCount = 0;
 
         Ref<Image> m_ShadowImage;
         Ref<ImageView> m_ShadowView;

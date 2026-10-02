@@ -24,7 +24,7 @@
 #include <Veng/Asset/Shader.h>
 #include <Veng/Asset/VertexLayout.h>
 
-#include <Veng/Math/Frustum.h>
+#include <Veng/Diagnostics/Profiler.h>
 
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
@@ -64,12 +64,12 @@ namespace Veng::Renderer
     }
 
     ShadowScenePass::ShadowScenePass(Context& context, AssetManager& assets,
-                                     const CasterRecordRing& records, u32 resolution,
+                                     const CasterRecordRing& records,
+                                     const ShadowCasterViews& casters, u32 resolution,
                                      u32 cascadeCount)
         : m_Context(context), m_Records(records), m_Resolution(resolution),
-          m_CascadeCount(cascadeCount),
-          m_Grid(ComputeShadowAtlasGrid(cascadeCount, MaxCascadeSets)),
-          m_Batch(context, "Shadow Depth", context.GetMaxFramesInFlight())
+          m_CascadeCount(cascadeCount), m_Casters(casters),
+          m_Grid(ComputeShadowAtlasGrid(cascadeCount, MaxCascadeSets))
     {
         const AssetResult<AssetHandle<Veng::Shader>> vs =
             assets.LoadSync<Veng::Shader>(ShadowDepthVertId);
@@ -207,42 +207,21 @@ namespace Veng::Renderer
 
     void ShadowScenePass::Configure(const SceneRendererSettings& settings)
     {
-        m_FrustumCull = settings.FrustumCull;
         m_MinCasterTexels = settings.ShadowCasterMinTexels;
     }
 
-    void ShadowScenePass::BuildTiles(const SceneView& view, const u32 tileCount,
-                                     const u32 cascadeCount)
+    void ShadowScenePass::AddViews(ShadowCasterViews& casters, const SceneView& view)
     {
-        const std::span<const SubMeshCandidate> candidates =
-            view.Broadphase->GetSubMeshCandidates();
-        const bool skinnedPosed =
-            view.SkinningPalette != nullptr && view.SkinnedPaletteBases != nullptr;
-
-        m_Batch.Begin(candidates);
-        m_Skinned.clear();
-        m_SkinnedTileEnds.clear();
-        for (u32 tile = 0; tile < tileCount; ++tile)
+        // A frame no light took a set from renders none.
+        m_FrameCascadeCount =
+            m_CascadeCount < view.CascadeCount ? m_CascadeCount : view.CascadeCount;
+        const u32 sets = m_Grid.Sets < view.CascadeSetCount ? m_Grid.Sets : view.CascadeSetCount;
+        m_TileCount = sets * m_FrameCascadeCount;
+        m_FirstView = casters.GetViewCount();
+        for (u32 tile = 0; tile < m_TileCount; ++tile)
         {
-            const u32 set = tile / cascadeCount;
-            const u32 k = tile % cascadeCount;
-
-            // Cull against the near-extended cull matrix, not the render matrix: an off-screen
-            // caster between the light and the slice must survive the cull so the depth-clamped
-            // rasterization can pancake it onto the render matrix's tight near plane.
-            m_CullScratch.clear();
-            if (m_FrustumCull)
-            {
-                view.Broadphase->Cull(Frustum::FromViewProjection(view.CascadeCullViewProj[set][k]),
-                                      m_CullScratch);
-            }
-            else
-            {
-                for (u32 i = 0; i < candidates.size(); ++i)
-                {
-                    m_CullScratch.push_back(i);
-                }
-            }
+            const u32 set = tile / m_FrameCascadeCount;
+            const u32 k = tile % m_FrameCascadeCount;
 
             // The cascade is orthographic, so one scale maps a world length to tile texels: the
             // clip x row's length is 2 / the tile's world width.
@@ -251,34 +230,11 @@ namespace Veng::Renderer
                 glm::length(vec3(viewProj[0][0], viewProj[1][0], viewProj[2][0])) * 0.5f *
                 static_cast<f32>(m_Resolution);
 
-            for (const u32 id : m_CullScratch)
-            {
-                const SubMeshCandidate& c = candidates[id];
-                const VisibleMesh& item = view.Visible[c.MeshCandidate];
-                if (!item.CastsShadows)
-                {
-                    continue;
-                }
-                if (glm::length(item.WorldBounds.Size()) * texelsPerUnit < m_MinCasterTexels)
-                {
-                    continue;
-                }
-                const Mesh& mesh = *item.Mesh;
-                if (!CastsShadow(item.Materials, mesh, c.SubMeshIndex))
-                {
-                    continue;
-                }
-                if (!mesh.IsSkinned())
-                {
-                    m_Batch.Add(id, mesh, c.SubMeshIndex);
-                }
-                else if (skinnedPosed)
-                {
-                    m_Skinned.push_back(id);
-                }
-            }
-            m_Batch.EndView();
-            m_SkinnedTileEnds.push_back(static_cast<u32>(m_Skinned.size()));
+            // Cull against the near-extended cull matrix, not the render matrix: an off-screen
+            // caster between the light and the slice must survive the cull so the depth-clamped
+            // rasterization can pancake it onto the render matrix's tight near plane.
+            casters.AddView(view.CascadeCullViewProj[set][k],
+                            m_MinCasterTexels > 0.0f ? m_MinCasterTexels / texelsPerUnit : 0.0f);
         }
     }
 
@@ -286,7 +242,6 @@ namespace Veng::Renderer
     {
         const u32 resolution = m_Resolution;
         const ShadowAtlasGrid grid = m_Grid;
-        const u32 cascadeCount = m_CascadeCount;
 
         graph.AddPass("Shadow Depth")
             .Depth({
@@ -299,7 +254,7 @@ namespace Veng::Renderer
                 .Clear = ClearDepth{.Depth = 0.0f, .Stencil = 0},
             })
             .Execute(
-                [this, resolution, grid, cascadeCount](PassContext& inner)
+                [this, resolution, grid](PassContext& inner)
                 {
                     const ScenePassContext ctx = Wrap(inner);
                     CommandBuffer& cmd = ctx.Cmd();
@@ -307,21 +262,16 @@ namespace Veng::Renderer
                     const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
 
                     // Every granted set's cascades, each into its tile. Sets stack as row bands,
-                    // so a set costs a full re-traversal of the casters — which is what bounds
-                    // MaxCascadeSets. A frame no light took a set from renders none.
-                    const u32 count =
-                        cascadeCount < view.CascadeCount ? cascadeCount : view.CascadeCount;
-                    const u32 sets =
-                        grid.Sets < view.CascadeSetCount ? grid.Sets : view.CascadeSetCount;
-                    const u32 tileCount = sets * count;
+                    // so a set costs a further cull and draw of every caster through its cascades.
+                    const u32 tileCount = m_TileCount;
+                    const u32 count = m_FrameCascadeCount;
                     if (tileCount == 0)
                     {
                         return;
                     }
-
-                    BuildTiles(view, tileCount, count);
+                    VE_PROFILE_SCOPE("Shadow/Record");
                     const u32 frameIndex = m_Context.GetCurrentFrameInFlight();
-                    m_Batch.Upload(frameIndex);
+                    const DepthInstanceBatch& batch = m_Casters.GetBatch();
 
                     const auto SetTile = [&](const u32 tile)
                     {
@@ -338,48 +288,52 @@ namespace Veng::Renderer
 
                     // Static casters: one instanced draw per submesh per tile, the tile's raw
                     // light-space matrix pushed once.
-                    if (!m_Batch.IsEmpty())
+                    bool staticBound = false;
+                    for (u32 tile = 0; tile < tileCount; ++tile)
                     {
-                        cmd.BindPipeline(m_Pipeline);
-                        registry.Bind(cmd);
-                        cmd.BindDescriptorSets({&m_Records.GetSet(frameIndex)},
-                                               BindlessRegistry::FirstUserSet);
-                        m_Batch.BindInstanceIds(cmd);
-                        for (u32 tile = 0; tile < tileCount; ++tile)
+                        const u32 shadowView = m_FirstView + tile;
+                        if (batch.GetViewDrawCount(shadowView) == 0)
                         {
-                            if (m_Batch.GetViewDrawCount(tile) == 0)
-                            {
-                                continue;
-                            }
-                            cmd.PushConstants(ShadowPushConstants{.ViewProj = SetTile(tile)});
-                            m_Batch.RecordView(cmd, tile);
+                            continue;
                         }
+                        if (!staticBound)
+                        {
+                            cmd.BindPipeline(m_Pipeline);
+                            registry.Bind(cmd);
+                            cmd.BindDescriptorSets({&m_Records.GetSet(frameIndex)},
+                                                   BindlessRegistry::FirstUserSet);
+                            batch.BindInstanceIds(cmd);
+                            staticBound = true;
+                        }
+                        cmd.PushConstants(ShadowPushConstants{.ViewProj = SetTile(tile)});
+                        batch.RecordView(cmd, shadowView);
                     }
 
                     // Skinned casters: the skinned depth pipeline + the palette set, each posed
                     // through its entity's palette base.
-                    if (m_Skinned.empty())
-                    {
-                        return;
-                    }
                     const std::span<const SubMeshCandidate> candidates =
                         view.Broadphase->GetSubMeshCandidates();
-                    cmd.BindPipeline(m_SkinnedPipeline);
-                    cmd.BindDescriptorSets({view.SkinningPalette.get()},
-                                           BindlessRegistry::FirstUserSet);
-                    u32 begin = 0;
+                    bool skinnedBound = false;
                     for (u32 tile = 0; tile < tileCount; ++tile)
                     {
-                        const u32 end = m_SkinnedTileEnds[tile];
-                        if (begin == end)
+                        const std::span<const u32> skinned =
+                            m_Casters.GetSkinned(m_FirstView + tile);
+                        if (skinned.empty())
                         {
                             continue;
                         }
+                        if (!skinnedBound)
+                        {
+                            cmd.BindPipeline(m_SkinnedPipeline);
+                            cmd.BindDescriptorSets({view.SkinningPalette.get()},
+                                                   BindlessRegistry::FirstUserSet);
+                            skinnedBound = true;
+                        }
                         const mat4 lightViewProj = SetTile(tile);
                         const Mesh* lastSkinned = nullptr;
-                        for (u32 i = begin; i < end; ++i)
+                        for (const u32 id : skinned)
                         {
-                            const SubMeshCandidate& c = candidates[m_Skinned[i]];
+                            const SubMeshCandidate& c = candidates[id];
                             const VisibleMesh& item = view.Visible[c.MeshCandidate];
                             const u32* paletteBase = view.SkinnedPaletteBases->Find(item.Owner);
                             if (paletteBase == nullptr)
@@ -400,7 +354,6 @@ namespace Veng::Renderer
                             });
                             cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
                         }
-                        begin = end;
                     }
                 });
     }
