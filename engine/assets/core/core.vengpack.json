@@ -257,6 +257,11 @@
       "source": "shaders/scene_upscale.frag.shader.json"
     },
     {
+      "id": "0xDC9812D3DF548A12",
+      "type": "Shader",
+      "source": "shaders/scene_upscale_pair.frag.shader.json"
+    },
+    {
       "id": "0xBE7002B7B8E9BE5A",
       "type": "Shader",
       "source": "shaders/scene_color_copy.frag.shader.json"
@@ -345,6 +350,11 @@
       "id": "0x93DA6E42B3B5479A",
       "type": "Shader",
       "source": "shaders/ssr_hiz_reduce.comp.shader.json"
+    },
+    {
+      "id": "0x7737782FD6CC04D1",
+      "type": "Shader",
+      "source": "shaders/ssr_hiz_reduce_tail.comp.shader.json"
     },
     {
       "id": "0x19AE4B252B75EAF5",

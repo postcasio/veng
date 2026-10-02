@@ -26,6 +26,7 @@ namespace Veng::Renderer
                 .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
             })
             .Sample(m_SourceId)
+            .SkipWhenUnread([sampled = m_Sampled] { return !*sampled; })
             .Execute(
                 [this](PassContext& inner)
                 {

@@ -4542,6 +4542,99 @@ TEST_CASE_FIXTURE(
     std::filesystem::remove(outArchive);
 }
 
+// The hi-Z pyramid costs about 1.33 x W x H x 4 bytes, and only the GPU occlusion test reads it, so
+// it is held only while that test runs: none under CPU cull, a one-texel stand-in for the cull set
+// while the GPU cull runs without occlusion, and the full chain — allocated afresh, its history
+// invalid until it has been reduced once — when the test is switched on.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: the hi-Z pyramid is held only while the occlusion test reads it")
+{
+    if (!Context.IsGpuDrivenCullingSupported())
+    {
+        MESSAGE("GPU-driven culling unsupported on this device; skipping");
+        return;
+    }
+
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_hiz_alloc.vengpack");
+
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(material.has_value());
+    const Ref<Mesh> cube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.0f, *material), "HiZ Alloc Cube");
+    const Unique<Scene> scene = Scene::Create(Types);
+    AddCubeAt(*scene, assets, cube, vec3(0.0f));
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 6.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    constexpr uvec2 extent{96, 64};
+    SceneRendererSettings settings{
+        .Mode = DebugView::Albedo, .Cull = SceneRendererSettings::CullMode::CPU, .Occlusion = true};
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = settings,
+    });
+    auto Render = [&]()
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+            });
+    };
+
+    // CPU cull: no pyramid, and no reduction.
+    Render();
+    CHECK(renderer->GetHiZMipCount() == 0u);
+    CHECK(renderer->GetHiZView() == nullptr);
+    CHECK_FALSE(renderer->DidRecordPassLastFrame("HiZ Reduce Mip 0"));
+
+    // Entering GPU cull with occlusion allocates the full chain, and the first frame on it tests
+    // nothing against it: its history is invalid until a frame has reduced into it.
+    settings.Cull = SceneRendererSettings::CullMode::GPU;
+    renderer->Configure(settings);
+    REQUIRE(renderer->GetActiveCullMode() == SceneRendererSettings::CullMode::GPU);
+    CHECK(renderer->GetHiZMipCount() == static_cast<u32>(std::bit_width(extent.x)));
+    Render();
+    CHECK_FALSE(renderer->IsHiZHistoryValid());
+    CHECK(renderer->DidRecordPassLastFrame("HiZ Reduce Mip 0"));
+    Render();
+    CHECK(renderer->IsHiZHistoryValid());
+
+    // The GPU cull without the occlusion test binds a one-texel stand-in and reduces nothing.
+    settings.Occlusion = false;
+    renderer->Configure(settings);
+    CHECK(renderer->GetHiZMipCount() == 1u);
+    CHECK(renderer->GetHiZMipView(0)->GetImage()->GetWidth() == 1u);
+    Render();
+    CHECK_FALSE(renderer->DidRecordPassLastFrame("HiZ Reduce Mip 0"));
+
+    // Re-entering the reduction allocates afresh, history invalid again.
+    settings.Occlusion = true;
+    renderer->Configure(settings);
+    CHECK(renderer->GetHiZMipCount() == static_cast<u32>(std::bit_width(extent.x)));
+    Render();
+    CHECK_FALSE(renderer->IsHiZHistoryValid());
+
+    // Leaving GPU cull releases it.
+    settings.Cull = SceneRendererSettings::CullMode::CPU;
+    renderer->Configure(settings);
+    CHECK(renderer->GetHiZMipCount() == 0u);
+    Render();
+    CHECK_FALSE(renderer->DidRecordPassLastFrame("HiZ Reduce Mip 0"));
+
+    std::filesystem::remove(outArchive);
+}
+
 // The primitive-normals end-to-end guard. Every generator's outward face must be
 // front-facing (the surface pipeline culls back faces) and must shade as if its
 // normal points outward. An orthographic camera frames one primitive at a time with
@@ -5653,6 +5746,173 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const Frame ungated = Measure(Render(1.0f));
     CHECK(ungated.Peak == doctest::Approx(sharp.Peak).epsilon(0.02));
     CHECK(ungated.Corner < 0.02f);
+
+    std::filesystem::remove(outArchive);
+}
+
+// The refraction grab and its blur chain are read only by a translucent draw whose material samples
+// them, so they run only on a frame that draws one: a frame of plain translucents records none of
+// them, and the frame a refractor appears records them all.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: the refraction grab runs only on a frame a draw samples it")
+{
+    RegisterBuiltinTypes(Types);
+
+    const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_refraction_gate.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker
+                .CookPack(fixtureDir / "translucent_pack.json", outArchive, {}, nullptr, nullptr,
+                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+                .has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> plain =
+        assets.LoadSync<MaterialInstance>(AssetId{0x896001});
+    REQUIRE(plain.has_value());
+    const AssetResult<AssetHandle<MaterialInstance>> refractive =
+        assets.LoadSync<MaterialInstance>(AssetId{0x896002});
+    REQUIRE(refractive.has_value());
+
+    const Ref<Mesh> plainCube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.0f, *plain), "Refraction Gate Plain Cube");
+    const Ref<Mesh> refractiveCube = Mesh::BuildSync(Context, Primitives::Cube(1.0f, *refractive),
+                                                     "Refraction Gate Refractive Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity plainEntity = scene->CreateEntity();
+    scene->Add<Transform>(plainEntity).Position = vec3(-0.8f, 0.0f, 0.0f);
+    scene->Add<MeshRenderer>(plainEntity).Mesh = assets.Adopt(plainCube);
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 4.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = uvec2{128, 128},
+        .Settings = {.Mode = DebugView::Final,
+                     .Bloom = false,
+                     .Shadows = false,
+                     .Refraction = true,
+                     .RefractionBlur = true,
+                     .AO = false},
+    });
+    auto Render = [&]()
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+            });
+    };
+    // The copy and the first halving pass stand for the chain: every level skips on one flag.
+    auto GrabRecorded = [&]
+    {
+        return renderer->DidRecordPassLastFrame("Scene Color Copy") ||
+               renderer->DidRecordPassLastFrame("Scene Color Downsample 1");
+    };
+
+    Render();
+    CHECK(renderer->DidRecordPassLastFrame("Scene Translucent"));
+    CHECK_FALSE(GrabRecorded());
+
+    const Entity refractiveEntity = scene->CreateEntity();
+    scene->Add<Transform>(refractiveEntity).Position = vec3(0.8f, 0.0f, 0.0f);
+    scene->Add<MeshRenderer>(refractiveEntity).Mesh = assets.Adopt(refractiveCube);
+    Render();
+    CHECK(renderer->DidRecordPassLastFrame("Scene Color Copy"));
+    CHECK(renderer->DidRecordPassLastFrame("Scene Color Downsample 1"));
+
+    scene->DestroyEntity(refractiveEntity);
+    Render();
+    CHECK_FALSE(GrabRecorded());
+
+    std::filesystem::remove(outArchive);
+}
+
+// An idle half-resolution layer — wired, inside its deactivation window, with nothing routed to it
+// this frame — records none of its three passes: the depth reduce and the layer pass produce what
+// only the composite reads, and the composite has nothing to lay down.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: an idle half-resolution layer records none of its passes")
+{
+    RegisterBuiltinTypes(Types);
+
+    const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_halfres_idle.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker
+                .CookPack(fixtureDir / "translucent_pack.json", outArchive, {}, nullptr, nullptr,
+                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+                .has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    // The half-resolution translucent material's default instance.
+    const AssetResult<AssetHandle<MaterialInstance>> half =
+        assets.LoadSync<MaterialInstance>(AssetId{0x797C4B094FC6AC13ULL});
+    REQUIRE(half.has_value());
+    const Ref<Mesh> halfCube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.0f, *half), "Half-Res Idle Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity halfEntity = scene->CreateEntity();
+    scene->Add<Transform>(halfEntity);
+    scene->Add<MeshRenderer>(halfEntity).Mesh = assets.Adopt(halfCube);
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 4.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = uvec2{64, 64},
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
+    });
+    auto Render = [&]()
+    {
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+            });
+    };
+    constexpr std::array<const char*, 3> LayerPasses{
+        "Half-Res Depth Reduce", "Scene Translucent Half", "Half-Res Translucent Composite"};
+    auto LayerPassesRecorded = [&]
+    {
+        u32 recorded = 0;
+        for (const char* name : LayerPasses)
+        {
+            recorded += renderer->DidRecordPassLastFrame(name) ? 1u : 0u;
+        }
+        return recorded;
+    };
+
+    // The first frame to route a draw wires the layer (that frame draws it full-resolution); the
+    // next renders it at half resolution through all three passes.
+    Render();
+    Render();
+    CHECK(LayerPassesRecorded() == 3u);
+
+    // Nothing routed, the layer still wired: none of the three records.
+    scene->DestroyEntity(halfEntity);
+    Render();
+    CHECK(LayerPassesRecorded() == 0u);
 
     std::filesystem::remove(outArchive);
 }

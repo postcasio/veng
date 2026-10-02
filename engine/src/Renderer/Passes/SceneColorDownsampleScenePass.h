@@ -46,13 +46,15 @@ namespace Veng::Renderer
         /// @param sampler       The chain sampler's bindless slot.
         /// @param level         This pass's destination level, 1 or deeper.
         /// @param extent        The grab's base allocation extent; updated via Resize.
+        /// @param sampled       The frame's flag, set when a draw this frame samples the grab; the
+        ///                      pass skips every other frame, with the grab.
         SceneColorDownsampleScenePass(Context& context, Ref<GraphicsPipeline> pipeline,
                                       ResourceId sourceId, TextureHandle sourceHandle,
                                       ResourceId targetId, SamplerHandle sampler, u32 level,
-                                      uvec2 extent)
+                                      uvec2 extent, const bool* sampled)
             : m_Context(context), m_Pipeline(std::move(pipeline)), m_SourceId(sourceId),
               m_SourceHandle(sourceHandle), m_TargetId(targetId), m_Sampler(sampler),
-              m_Level(level), m_Extent(extent),
+              m_Level(level), m_Extent(extent), m_Sampled(sampled),
               m_Name("Scene Color Downsample " + std::to_string(level))
         {
         }
@@ -82,6 +84,8 @@ namespace Veng::Renderer
         u32 m_Level;
         /// @brief The grab's base allocation extent.
         uvec2 m_Extent;
+        /// @brief The frame's grab-sampled flag (borrowed from the renderer).
+        const bool* m_Sampled;
         /// @brief This pass's graph name, owned here because AddPass takes a view.
         string m_Name;
     };

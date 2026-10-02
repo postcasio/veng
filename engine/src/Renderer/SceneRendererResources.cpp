@@ -491,9 +491,8 @@ namespace Veng::Renderer
         m_LeanNormalHandle = bindless.Register(m_LeanNormalView);
         m_LeanDepthHandle = bindless.Register(m_LeanDepthView);
 
-        // The GPU-cull subsystem is created in either path; sizing its hi-Z against the lean depth
-        // keeps its per-frame upload valid even though the lean graph wires no cull/occlusion pass.
-        m_GpuCull->ResizeHiZ(m_RenderAllocExtent, m_LeanDepthView);
+        // The lean graph wires no cull or occlusion pass, so it holds no hi-Z pyramid; the GPU-cull
+        // subsystem's per-frame candidate upload needs none.
     }
 
     void SceneRenderer::CreateCullResources()

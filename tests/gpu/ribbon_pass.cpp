@@ -2,7 +2,8 @@
 // the lit scene color along its centre line, an alpha ribbon over black reads as its colour and
 // additive ones sum, a trail drawn behind a moved entity lights the path it took, a ribbon-less
 // scene carries no pass and renders black, and a ribbon too dim for the bloom threshold still lights
-// the margin around it, which only its bloom-mask write can do.
+// the margin around it, which only its bloom-mask write can do — at a reduced render scale too, where
+// one pass carries the colour and the mask across to the post-resolve allocation.
 
 #include <vector>
 
@@ -45,7 +46,7 @@ namespace
         CameraView Camera;
 
         std::vector<u8> Render(Context& context, const Scene& scene,
-                               const f32 bloomThreshold = 1.0f)
+                               const f32 bloomThreshold = 1.0f, const f32 renderScale = 1.0f)
         {
             context.ImmediateCommands(
                 [&](CommandBuffer& cmd)
@@ -54,6 +55,7 @@ namespace
                                       Veng::Renderer::SceneView{.World = scene,
                                                                 .Camera = Camera,
                                                                 .Delta = 0.0f,
+                                                                .RenderScale = renderScale,
                                                                 .Exposure = 1.0f,
                                                                 .Tonemapper = Tonemapper::None,
                                                                 .BloomThreshold = bloomThreshold});
@@ -169,4 +171,31 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const f32 lit = halo();
     CHECK(dark < 1e-3f);
     CHECK(lit > dark + 1e-3f);
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "ribbon pass: at a reduced render scale one pass promotes the colour and the mask")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const Unique<Scene> scene = Scene::Create(Types);
+    RibbonRender render = MakeRenderer(Context, assets, /*bloom=*/true);
+    constexpr f32 HalfScale = 0.5f;
+    const u32 mid = Extent.x / 2;
+
+    const f32 dark = RgbAt(render.Render(Context, *scene, 1.0f, HalfScale), mid, 4).x;
+    AddRibbon(*scene, vec3(0.5f), /*additive=*/true);
+    const std::vector<u8> pixels = render.Render(Context, *scene, 1.0f, HalfScale);
+
+    // Both cross the boundary in the one paired pass.
+    CHECK(render.Renderer->IsPostResolveUpscaleWired());
+    CHECK(render.Renderer->DidRecordPassLastFrame("Scene And Bloom Mask Upscale"));
+    CHECK_FALSE(render.Renderer->DidRecordPassLastFrame("Scene Upscale"));
+    CHECK_FALSE(render.Renderer->DidRecordPassLastFrame("Bloom Mask Upscale"));
+    // The colour arrived: the ribbon's centre line reads at least its own colour.
+    CHECK(RgbAt(pixels, mid, mid).x > 0.45f);
+    // The mask arrived: below the threshold, only the mask can light the margin.
+    CHECK(dark < 1e-3f);
+    CHECK(RgbAt(pixels, mid, 4).x > dark + 1e-3f);
 }

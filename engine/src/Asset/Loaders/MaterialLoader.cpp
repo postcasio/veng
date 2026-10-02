@@ -487,9 +487,11 @@ namespace Veng
         const auto sortPriority = header.SortPriority;
         const bool bloomMask = header.BloomMask != 0;
         const bool halfResolution = header.HalfResolution != 0;
+        const bool readsSceneColor = header.ReadsSceneColor != 0;
         parsed.Complete = [parts, id, domain, cullMode, blend, sortPriority, bloomMask,
-                           halfResolution](AssetManager& manager,
-                                           std::span<const Ref<Detail::AssetCacheEntry>> resolved)
+                           halfResolution,
+                           readsSceneColor](AssetManager& manager,
+                                            std::span<const Ref<Detail::AssetCacheEntry>> resolved)
             -> AssetResult<Detail::LoadJob>
         {
             Renderer::Context& context = manager.GetContext();
@@ -514,6 +516,7 @@ namespace Veng
                 .WritesBloomMask = bloomMask,
                 .HalfResolution = halfResolution,
                 .Blend = blend,
+                .ReadsSceneColor = readsSceneColor,
                 .Pipeline = nullptr,
                 .VertexShader = vsHandle,
                 .FragmentShader = fsHandle,

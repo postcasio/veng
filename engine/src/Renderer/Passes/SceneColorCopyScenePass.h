@@ -45,13 +45,17 @@ namespace Veng::Renderer
         /// @param depthCopyId  The depth-copy target this pass writes.
         /// @param sampler      Shared sampler bindless slot.
         /// @param extent       Initial render extent; updated via Resize.
+        /// @param sampled      The frame's flag, set when a draw this frame samples the grab; the
+        ///                     pass skips every other frame.
         SceneColorCopyScenePass(Context& context, Ref<GraphicsPipeline> pipeline,
                                 ResourceId sourceId, TextureHandle sourceHandle, ResourceId depthId,
                                 TextureHandle depthHandle, ResourceId copyId,
-                                ResourceId depthCopyId, SamplerHandle sampler, uvec2 extent)
+                                ResourceId depthCopyId, SamplerHandle sampler, uvec2 extent,
+                                const bool* sampled)
             : m_Context(context), m_Pipeline(std::move(pipeline)), m_SourceId(sourceId),
               m_SourceHandle(sourceHandle), m_DepthId(depthId), m_DepthHandle(depthHandle),
-              m_CopyId(copyId), m_DepthCopyId(depthCopyId), m_Sampler(sampler), m_Extent(extent)
+              m_CopyId(copyId), m_DepthCopyId(depthCopyId), m_Sampler(sampler), m_Extent(extent),
+              m_Sampled(sampled)
         {
         }
 
@@ -81,5 +85,7 @@ namespace Veng::Renderer
         SamplerHandle m_Sampler;
         /// @brief Current render extent.
         uvec2 m_Extent;
+        /// @brief The frame's grab-sampled flag (borrowed from the renderer).
+        const bool* m_Sampled;
     };
 }

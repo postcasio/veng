@@ -326,6 +326,14 @@ namespace Veng::Renderer
         /// Exclusive with DidBroadphaseRebuildLastFrame. Diagnostic only.
         [[nodiscard]] bool DidBroadphaseRefitLastFrame() const;
 
+        /// @brief Returns true if the most recent Execute recorded the named graph pass.
+        ///
+        /// False for a pass wired but held back that frame by its skip predicate (a pass with
+        /// nothing to record, or whose output nothing reads that frame), and for a name the frame's
+        /// pass set does not carry. Diagnostic only.
+        /// @param passName The pass's graph name ("Scene Color Copy", "Scene Upscale", …).
+        [[nodiscard]] bool DidRecordPassLastFrame(string_view passName) const;
+
         /// @brief Returns true if the atmosphere LUTs regenerated during the most recent Execute.
         ///
         /// True only on a frame the Atmosphere parameters changed (or the first frame the
@@ -373,9 +381,10 @@ namespace Veng::Renderer
         /// @brief Returns the whole-chain sampled view of the hi-Z depth pyramid.
         ///
         /// The max-Z mip chain reduced from the depth target each Execute while the GPU cull's
-        /// occlusion test reads it (CullMode::GPU with Occlusion on); under any other setting it
-        /// is not reduced. Renderer-owned and persisted across frames; invalidated by Resize and
-        /// Configure. Exposed for tests.
+        /// occlusion test reads it (CullMode::GPU with Occlusion on), and held only then: with
+        /// Occlusion off the GPU cull binds a one-texel stand-in, and under CullMode::CPU (or on the
+        /// GeometryDepthNormal path) there is none and this is null. Renderer-owned and persisted
+        /// across frames; invalidated by Resize and Configure. Exposed for tests.
         [[nodiscard]] Ref<ImageView> GetHiZView() const;
 
         /// @brief Returns the storage view of hi-Z mip @p level (one mip per view).
@@ -384,7 +393,7 @@ namespace Veng::Renderer
         /// @param level  Mip level in [0, mip count).
         [[nodiscard]] Ref<ImageView> GetHiZMipView(u32 level) const;
 
-        /// @brief Returns the number of mip levels in the hi-Z pyramid.
+        /// @brief Returns the number of mip levels in the hi-Z pyramid (0 when none is held).
         [[nodiscard]] u32 GetHiZMipCount() const;
 
         /// @brief Returns whether the previous-frame pyramid is valid to occlusion-test against this frame.
@@ -1099,17 +1108,20 @@ namespace Veng::Renderer
         /// It occupies the boundary between the scene side and the post-resolve tail — after the
         /// depth-of-field composite has handed the finished HDR scene colour on, before the
         /// post-process effect chain reads it — so it cannot ride the list. Null unless the scene
-        /// colour is not already the post-resolve allocation (m_PostResolveUpscaleActive).
+        /// colour is not already the post-resolve allocation (m_PostResolveUpscaleActive). When the
+        /// bloom mask crosses too, this one pass carries it as a second attachment.
         Unique<ScenePass> m_ScenePromotionPass;
 
-        /// @brief The bloom mask's promotion, held outside m_Passes and declared beside the colour's.
+        /// @brief The bloom mask's promotion on its own, held outside m_Passes and declared beside
+        ///        the colour's.
         ///
         /// The mask is the scene colour's companion channel: the translucent pass rasterizes it into
         /// the render allocation and the pre-bloom overlay composite adds to it at the post-resolve
-        /// one, so it crosses the boundary at the same point. It is its own pass rather than a
-        /// second attachment on the colour's because a temporal-upscaling resolve wires no colour
-        /// promotion at all while still leaving the mask behind. Null unless bloom is on and the
-        /// rasterized sub-rect is smaller than the post-resolve allocation.
+        /// one, so it crosses the boundary at the same point. It rides the colour's pass whenever
+        /// that pass exists, and is a pass of its own only when it does not: a temporal-upscaling
+        /// resolve wires no colour promotion at all while still leaving the mask behind. Null unless
+        /// bloom is on, the rasterized sub-rect is smaller than the post-resolve allocation, and the
+        /// colour is not promoted.
         Unique<ScenePass> m_BloomMaskPromotionPass;
 
         /// @brief One post-process effect pass per active PostProcessEffect, held outside m_Passes.

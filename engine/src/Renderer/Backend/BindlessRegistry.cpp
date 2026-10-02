@@ -977,6 +977,19 @@ namespace Veng::Renderer
         std::memcpy(base + offset, block.data(), block.size());
     }
 
+    void BindlessRegistry::PatchViewConstants(const u32 index, const u32 offset,
+                                              const std::span<const std::byte> bytes)
+    {
+        VE_ASSERT(offset + bytes.size() <= ViewConstantsStride,
+                  "BindlessRegistry::PatchViewConstants: {} bytes at offset {} exceed stride {}",
+                  bytes.size(), offset, ViewConstantsStride);
+        VE_ASSERT(index / MaxViewsPerFrame == m_Context.GetCurrentFrameInFlight(),
+                  "BindlessRegistry::PatchViewConstants: index {} is not this frame's", index);
+        auto* base = static_cast<u8*>(m_ViewConstantsBuffer->GetMappedData());
+        std::memcpy(base + static_cast<u64>(index) * ViewConstantsStride + offset, bytes.data(),
+                    bytes.size());
+    }
+
     u32 BindlessRegistry::GetCurrentViewConstantsIndex() const
     {
         return m_Context.GetCurrentFrameInFlight() * MaxViewsPerFrame + m_ViewSlot;

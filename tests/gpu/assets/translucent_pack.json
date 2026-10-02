@@ -50,6 +50,11 @@
       "id": "0x0000000000002404",
       "type": "Material",
       "source": "materials/refractive.vmat.json"
+    },
+    {
+      "id": "0xC66F784A6194F7B8",
+      "type": "Material",
+      "source": "materials/translucent_half.vmat.json"
     }
   ]
 }

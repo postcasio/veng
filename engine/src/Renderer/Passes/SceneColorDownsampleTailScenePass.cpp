@@ -10,9 +10,11 @@ namespace Veng::Renderer
 {
     SceneColorDownsampleTailScenePass::SceneColorDownsampleTailScenePass(
         Ref<ComputePipeline> pipeline, Ref<DescriptorSet> set, const ResourceId sourceId,
-        const std::span<const ResourceId> levelIds, const u32 firstLevel, const uvec2 extent)
+        const std::span<const ResourceId> levelIds, const u32 firstLevel, const uvec2 extent,
+        const bool* sampled)
         : m_Pipeline(std::move(pipeline)), m_Set(std::move(set)), m_SourceId(sourceId),
           m_LevelIds(levelIds.begin(), levelIds.end()), m_FirstLevel(firstLevel), m_Extent(extent),
+          m_Sampled(sampled),
           m_Name(fmt::format("Scene Color Downsample Tail {}-{}", firstLevel,
                              firstLevel + static_cast<u32>(levelIds.size()) - 1))
     {
@@ -26,6 +28,7 @@ namespace Veng::Renderer
         {
             builder.StorageWrite(level);
         }
+        builder.SkipWhenUnread([sampled = m_Sampled] { return !*sampled; });
         builder.Execute(
             [this](PassContext& inner)
             {

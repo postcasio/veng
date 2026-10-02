@@ -85,6 +85,12 @@ namespace Veng::Renderer
         {
             builder.Sample(io.PunctualShadowMap);
         }
+        if (m_HalfResolution)
+        {
+            // The layer is read only by its composite, which skips an idle frame with it, so the
+            // cleared target goes unread.
+            builder.SkipWhenUnread([this] { return m_Plan->Draws.empty(); });
+        }
         builder.Execute([this](PassContext& inner) { Record(Wrap(inner)); });
     }
 

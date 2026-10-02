@@ -112,7 +112,9 @@ at cook time:
   the five-target g-buffer MRT `SV_Target0`..`SV_Target4` — albedo/normal/ORM, velocity, and
   emissive; PostProcess, Sky, Translucent, and GuiFill → a single `SV_Target0`). A Translucent
   material may declare `"blend": "additive"` (default `"alpha"`), a located cook error on any other
-  domain. Because the
+  domain, and `"readsSceneColor": true` when its fragment samples the pre-translucent scene-colour
+  grab (the renderer runs the grab only on a frame some drawn material declares it), likewise
+  Translucent-only. Because the
   Surface contract's output set is part of what a cooked material *means*, a change to it bumps
   `CookedMaterialVersion`
   (`assetpack`'s `CookedBlobs.h`), so a stale blob cooked against an older output set rejects

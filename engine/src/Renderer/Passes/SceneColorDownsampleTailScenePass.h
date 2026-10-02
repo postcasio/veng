@@ -38,9 +38,11 @@ namespace Veng::Renderer
         /// @param levelIds   The tail's levels, first to coarsest (declared storage-written).
         /// @param firstLevel The tail's first level, 1 or deeper.
         /// @param extent     The grab's base allocation extent; updated via Resize.
+        /// @param sampled    The frame's flag, set when a draw this frame samples the grab; the pass
+        ///                   skips every other frame, with the grab.
         SceneColorDownsampleTailScenePass(Ref<ComputePipeline> pipeline, Ref<DescriptorSet> set,
                                           ResourceId sourceId, std::span<const ResourceId> levelIds,
-                                          u32 firstLevel, uvec2 extent);
+                                          u32 firstLevel, uvec2 extent, const bool* sampled);
 
         /// @brief Updates the grab's base allocation extent.
         void Resize(uvec2 extent) override { m_Extent = extent; }
@@ -60,6 +62,8 @@ namespace Veng::Renderer
         u32 m_FirstLevel;
         /// @brief The grab's base allocation extent.
         uvec2 m_Extent;
+        /// @brief The frame's grab-sampled flag (borrowed from the renderer).
+        const bool* m_Sampled;
         /// @brief This pass's graph name, owned here because AddComputePass takes a view.
         string m_Name;
     };

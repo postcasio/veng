@@ -250,21 +250,54 @@ namespace Veng::Renderer
         m_Context.GetBindlessRegistry().Release(m_HiZSampleHandle);
     }
 
+    GpuCullSystem::Pyramid GpuCullSystem::WantedPyramid() const
+    {
+        if (IsHiZReduced())
+        {
+            return Pyramid::Full;
+        }
+        // The cull set binds the pyramid whether or not the occlusion test reads it.
+        return m_ActiveCull == SceneRendererSettings::CullMode::GPU ? Pyramid::StandIn
+                                                                    : Pyramid::None;
+    }
+
     void GpuCullSystem::ResizeHiZ(const uvec2 extent, const Ref<ImageView>& depthView)
     {
         m_Extent = extent;
+        m_Sized = true;
+        m_Pyramid = WantedPyramid();
 
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
         bindless.Release(m_HiZSampleHandle);
+        m_HiZSampleHandle = {};
+        m_HiZImage.reset();
+        m_HiZMips.clear();
+        m_HiZSampleView.reset();
+        m_HiZReduceSets.clear();
+        m_HiZTailSet.reset();
+        m_CullSet.reset();
 
-        // A full mip chain over the depth extent: floor(log2(max(w,h))) + 1 levels.
-        const u32 maxDim = std::max(m_Extent.x, m_Extent.y);
+        // The freshly created pyramid carries no last-frame depth; the next Execute must
+        // skip occlusion rather than test against an undefined/stale chain.
+        m_HiZHistoryReset = true;
+
+        // Nothing reads a pyramid under CPU cull, so none is held — about 1.33 x W x H x 4 bytes.
+        if (m_Pyramid == Pyramid::None)
+        {
+            return;
+        }
+
+        // A full mip chain over the depth extent: floor(log2(max(w,h))) + 1 levels. The stand-in is
+        // one texel: the cull set must bind a view, and with the occlusion test off nothing samples
+        // it.
+        const uvec2 pyramidExtent = m_Pyramid == Pyramid::Full ? m_Extent : uvec2(1);
+        const u32 maxDim = std::max(pyramidExtent.x, pyramidExtent.y);
         const u32 mipCount = maxDim == 0 ? 1 : (std::bit_width(maxDim));
 
         m_HiZImage =
             Image::Create(m_Context, {
                                          .Name = "SceneRenderer HiZ",
-                                         .Extent = {m_Extent.x, m_Extent.y, 1},
+                                         .Extent = {pyramidExtent.x, pyramidExtent.y, 1},
                                          .MipLevels = mipCount,
                                          .Format = HiZFormat,
                                          .Usage = ImageUsage::Storage | ImageUsage::Sampled,
@@ -272,7 +305,6 @@ namespace Veng::Renderer
 
         // One single-mip storage view per level (the reduction writes each), plus a
         // whole-chain sampled view for the occlusion test.
-        m_HiZMips.clear();
         m_HiZMips.reserve(mipCount);
         for (u32 level = 0; level < mipCount; level++)
         {
@@ -291,43 +323,42 @@ namespace Veng::Renderer
                                                        });
         m_HiZSampleHandle = bindless.Register(m_HiZSampleView);
 
-        // Per-mip reduction descriptor sets: set k binds mip k's source (the depth
-        // target for k=0, hi-Z mip k-1 otherwise) and mip k's destination storage view.
-        m_HiZReduceSets.clear();
-        m_HiZReduceSets.reserve(mipCount);
-        for (u32 level = 0; level < mipCount; level++)
+        if (m_Pyramid == Pyramid::Full)
         {
-            Ref<DescriptorSet> set = DescriptorSet::Create(
-                m_Context, {
-                               .Name = fmt::format("SceneRenderer HiZ Reduce Set {}", level),
-                               .Layout = m_HiZReduceSetLayout,
-                           });
-            const Ref<ImageView>& source = level == 0 ? depthView : m_HiZMips[level - 1];
-            set->Write(0, source);
-            set->Write(1, m_HiZMips[level]);
-            m_HiZReduceSets.push_back(std::move(set));
-        }
-
-        // The coarse tail reads the level before it (the depth target when the whole pyramid fits)
-        // and writes each of its levels; the slots past its length repeat its last level, bound but
-        // never written.
-        m_HiZTailFirst = MipTailFirstLevel(m_Extent, mipCount, 0, HiZTailTexelCapacity);
-        m_HiZTailSet.reset();
-        if (m_HiZTailFirst < mipCount)
-        {
-            m_HiZTailSet = DescriptorSet::Create(
-                m_Context, {.Name = "SceneRenderer HiZ Tail Set", .Layout = m_HiZTailSetLayout});
-            m_HiZTailSet->Write(0, m_HiZTailFirst == 0 ? depthView : m_HiZMips[m_HiZTailFirst - 1]);
-            for (u32 slot = 0; slot < MipTailMaxLevels; slot++)
+            // Per-mip reduction descriptor sets: set k binds mip k's source (the depth
+            // target for k=0, hi-Z mip k-1 otherwise) and mip k's destination storage view.
+            m_HiZReduceSets.reserve(mipCount);
+            for (u32 level = 0; level < mipCount; level++)
             {
-                m_HiZTailSet->Write(HiZTailFirstStorageBinding + slot,
-                                    m_HiZMips[std::min(m_HiZTailFirst + slot, mipCount - 1)]);
+                Ref<DescriptorSet> set = DescriptorSet::Create(
+                    m_Context, {
+                                   .Name = fmt::format("SceneRenderer HiZ Reduce Set {}", level),
+                                   .Layout = m_HiZReduceSetLayout,
+                               });
+                const Ref<ImageView>& source = level == 0 ? depthView : m_HiZMips[level - 1];
+                set->Write(0, source);
+                set->Write(1, m_HiZMips[level]);
+                m_HiZReduceSets.push_back(std::move(set));
+            }
+
+            // The coarse tail reads the level before it (the depth target when the whole pyramid
+            // fits) and writes each of its levels; the slots past its length repeat its last
+            // level, bound but never written.
+            m_HiZTailFirst = MipTailFirstLevel(m_Extent, mipCount, 0, HiZTailTexelCapacity);
+            if (m_HiZTailFirst < mipCount)
+            {
+                m_HiZTailSet =
+                    DescriptorSet::Create(m_Context, {.Name = "SceneRenderer HiZ Tail Set",
+                                                      .Layout = m_HiZTailSetLayout});
+                m_HiZTailSet->Write(0, m_HiZTailFirst == 0 ? depthView
+                                                           : m_HiZMips[m_HiZTailFirst - 1]);
+                for (u32 slot = 0; slot < MipTailMaxLevels; slot++)
+                {
+                    m_HiZTailSet->Write(HiZTailFirstStorageBinding + slot,
+                                        m_HiZMips[std::min(m_HiZTailFirst + slot, mipCount - 1)]);
+                }
             }
         }
-
-        // The freshly created pyramid carries no last-frame depth; the next Execute must
-        // skip occlusion rather than test against an undefined/stale chain.
-        m_HiZHistoryReset = true;
 
         // The cull set samples the pyramid through binding 0, and the pyramid is recreated on
         // Resize/Configure — but the live set may still be referenced by an in-flight frame's
@@ -348,7 +379,7 @@ namespace Veng::Renderer
         }
     }
 
-    void GpuCullSystem::ResolveActiveCullMode(const SceneRendererSettings& settings)
+    bool GpuCullSystem::ResolveActiveCullMode(const SceneRendererSettings& settings)
     {
         const bool gpuRequested = settings.Cull == SceneRendererSettings::CullMode::GPU;
         const bool gpuSupported = m_Context.IsGpuDrivenCullingSupported();
@@ -367,6 +398,8 @@ namespace Veng::Renderer
         m_ActiveCull = (gpuRequested && gpuSupported) ? SceneRendererSettings::CullMode::GPU
                                                       : SceneRendererSettings::CullMode::CPU;
         m_OcclusionEnabled = settings.Occlusion;
+        // Before the first ResizeHiZ there is no pyramid to reshape: that call sizes it.
+        return m_Sized && WantedPyramid() != m_Pyramid;
     }
 
     ResourceId GpuCullSystem::ImportIndirect(RenderGraph& graph)
@@ -387,8 +420,12 @@ namespace Veng::Renderer
         // Import the hi-Z chain once: the GPU cull samples last frame's pyramid (declared
         // .Sample by DeclareCull for the graph-derived transition into ShaderReadOnly before the
         // cull) and the reduction at the tail writes this frame's pyramid into the same slots.
-        m_HiZChainId =
-            graph.ImportImageMips("SceneRenderer HiZ", static_cast<u32>(m_HiZMips.size()));
+        m_HiZChainId = {};
+        if (!m_HiZMips.empty())
+        {
+            m_HiZChainId =
+                graph.ImportImageMips("SceneRenderer HiZ", static_cast<u32>(m_HiZMips.size()));
+        }
     }
 
     void GpuCullSystem::DeclareCull(RenderGraph& graph, const GBufferDrawPlan* plan)
@@ -438,14 +475,9 @@ namespace Veng::Renderer
 
     void GpuCullSystem::DeclareHiZReduction(RenderGraph& graph, const ResourceId depthId)
     {
-        const bool reduce = IsHiZReduced();
-        if (reduce && !m_HiZReductionDeclared)
-        {
-            // The pyramid went unreduced while nothing read it, so it holds stale depth.
-            m_HiZHistoryReset = true;
-        }
-        m_HiZReductionDeclared = reduce;
-        if (!reduce)
+        // Only a reduced pyramid is held at full size; entering the reduction allocated it afresh,
+        // which marked the history invalid.
+        if (m_Pyramid != Pyramid::Full)
         {
             return;
         }

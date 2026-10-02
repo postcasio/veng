@@ -353,7 +353,7 @@ namespace Veng
     /// @brief The current material-format version.
     ///
     /// Bumped on any layout change; the loader rejects a blob whose Version != this.
-    inline constexpr u32 CookedMaterialVersion = 12u;
+    inline constexpr u32 CookedMaterialVersion = 13u;
 
     /// @brief Cooked header for a material asset.
     ///
@@ -426,6 +426,13 @@ namespace Veng
         /// weighted by its returned alpha, and leaves the destination alone otherwise — the blend an
         /// emissive glow wants. Translucent domain only, enforced at cook.
         u32 Blend = 0;
+        /// @brief Whether the fragment stage samples the pre-translucent scene-colour grab (the
+        ///        "readsSceneColor" key; default 0).
+        ///
+        /// The renderer runs the grab and its blur chain only on a frame some drawn material
+        /// declares this, and on any other frame the grab reads as unavailable. Translucent domain
+        /// only, enforced at cook.
+        u32 ReadsSceneColor = 0;
         /// @brief Number of CookedMaterialField entries following this header.
         u32 FieldCount = 0;
         /// @brief Byte size of the single parameter block; <= the per-material param stride.

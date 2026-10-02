@@ -232,10 +232,14 @@ extern "C"
 /// the presented-frame request latch in Context::Native, and McpTool::BeforeFrame. A module
 /// subclasses Application and registers MCP tools by value, so a stale one carries a vtable short of
 /// the slot the frame dispatches through and hands the server a short tool.
+/// Version 54 grows Material and MaterialInfo with whether the fragment samples the scene-colour
+/// grab, and RenderGraph::Pass with whether a skipped frame leaves its outputs unread. A module
+/// builds a MaterialInfo for a runtime material and declares graph passes, so a stale module lays
+/// both out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 53u
+#define VENG_MODULE_ABI_VERSION 54u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

@@ -33,8 +33,8 @@ namespace Veng::Renderer
     /// refractive material samples through the view block's SceneColor handles, plus the two-attachment
     /// copy pipeline that fills them. Recreate allocates the pair (and registers their bindless slots)
     /// only when Settings.Refraction is set, releasing them otherwise; Declare contributes the copy
-    /// pass into the renderer's pass list at the position the renderer grabs the lit scene color. The
-    /// copy pipeline is built unconditionally in the constructor — it is refraction-only and stays
+    /// pass into the renderer's pass list at the position the renderer grabs the lit scene color, each
+    /// of its passes skipping a frame no drawn material samples the grab. The copy pipeline is built unconditionally in the constructor — it is refraction-only and stays
     /// created regardless of the toggle.
     class RefractionGrab
     {
@@ -77,10 +77,13 @@ namespace Veng::Renderer
         /// @param extent       The current render extent.
         /// @param mipIds       One id per chain level; index 0 is `copyId`, the rest are the
         ///                     halving levels. Empty or single-entry when the blur is off.
+        /// @param sampled      The renderer's per-frame flag, set when a draw this frame samples
+        ///                     the grab (a material that IsSceneColorReader); every pass this
+        ///                     declares skips the frames it is clear.
         void Declare(vector<Unique<ScenePass>>& passes, ResourceId sourceId,
                      TextureHandle sourceHandle, ResourceId depthId, TextureHandle depthHandle,
                      ResourceId copyId, ResourceId depthCopyId, SamplerHandle sampler, uvec2 extent,
-                     std::span<const ResourceId> mipIds) const;
+                     std::span<const ResourceId> mipIds, const bool* sampled) const;
 
         /// @brief The scene-color intermediate view (bound to its import when refraction is active).
         ///

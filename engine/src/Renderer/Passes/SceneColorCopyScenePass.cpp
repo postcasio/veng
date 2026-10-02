@@ -25,6 +25,9 @@ namespace Veng::Renderer
             })
             .Sample(m_SourceId)
             .Sample(m_DepthId)
+            // The grab's only readers are the translucent draws, so a frame none of them samples
+            // it leaves the targets unread and the clears unobserved.
+            .SkipWhenUnread([sampled = m_Sampled] { return !*sampled; })
             .Execute(
                 [this](PassContext& inner)
                 {

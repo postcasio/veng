@@ -34,12 +34,16 @@ namespace Veng::Renderer
     /// when SSR runs (the toggle or the Reflections debug arm), releasing it otherwise; Declare
     /// contributes min-Z reduction → trace → blur → composite into the graph.
     ///
-    /// Two of the chain's descriptor allocations borrow layouts owned elsewhere: the blur sets and the
-    /// blur pipeline layout use the bloom down/up set layout (from BloomPyramid), and the min-Z reduce
-    /// sets and pipeline build on the renderer's hi-Z reduce layout. Both are received by reference at
-    /// construction; the blur pipeline (bloom set layout) and the min-Z reduce pipeline (hi-Z reduce
-    /// layout) are built in the constructor, so the lending layouts must already exist when SsrChain is
-    /// created.
+    /// Three of the chain's descriptor allocations borrow layouts owned elsewhere: the blur sets and
+    /// the blur pipeline layout use the bloom down/up set layout (from BloomPyramid), and the min-Z
+    /// reduce sets and pipeline, and its coarse-tail set and pipeline, build on the renderer's hi-Z
+    /// reduce and tail layouts. All are received by reference; the blur, min-Z reduce and min-Z tail
+    /// pipelines are built in the constructor, so the lending layouts must already exist when
+    /// SsrChain is created.
+    ///
+    /// The min-Z pyramid's coarse tail — the smallest levels that fit one workgroup's shared memory
+    /// (MipTailFirstLevel), never level 0, which ingests the full-resolution depth — is reduced by one
+    /// dispatch (ssr_hiz_reduce_tail.comp), bit-identical to the per-level chain.
     class SsrChain
     {
     public:
@@ -47,10 +51,12 @@ namespace Veng::Renderer
         /// @param context           The render context the resources are created on.
         /// @param assets            Asset manager used to load the SSR shaders.
         /// @param hiZReduceLayout   The hi-Z reduce pipeline layout (the min-Z reduce pipeline builds on it).
+        /// @param hiZTailLayout     The hi-Z coarse-tail pipeline layout (the min-Z tail builds on it).
         /// @param bloomDownUpLayout The bloom down/up set layout (the blur pipeline layout reserves it).
         /// @return A new SsrChain.
         static Unique<SsrChain> Create(Context& context, AssetManager& assets,
                                        const Ref<PipelineLayout>& hiZReduceLayout,
+                                       const Ref<PipelineLayout>& hiZTailLayout,
                                        const Ref<DescriptorSetLayout>& bloomDownUpLayout);
 
         /// @brief Releases the four SSR bindless slots; the images retire through the frame bin.
@@ -69,10 +75,12 @@ namespace Veng::Renderer
         /// @param extent            The full render extent (the scene-color intermediate is full-res).
         /// @param depthView         The live depth target the min-Z reduction's mip-0 source binds.
         /// @param hiZReduceSetLayout The hi-Z reduce set layout the min-Z reduce sets allocate from.
+        /// @param hiZTailSetLayout  The hi-Z coarse-tail set layout the min-Z tail set allocates from.
         /// @param bloomDownUpLayout The bloom down/up set layout the blur sets allocate from.
         void Recreate(const SceneRendererSettings& settings, uvec2 extent,
                       const Ref<ImageView>& depthView,
                       const Ref<DescriptorSetLayout>& hiZReduceSetLayout,
+                      const Ref<DescriptorSetLayout>& hiZTailSetLayout,
                       const Ref<DescriptorSetLayout>& bloomDownUpLayout);
 
         /// @brief Declares the min-Z reduction, trace, blur, and composite passes into the graph.
@@ -136,6 +144,7 @@ namespace Veng::Renderer
 
     private:
         SsrChain(Context& context, AssetManager& assets, const Ref<PipelineLayout>& hiZReduceLayout,
+                 const Ref<PipelineLayout>& hiZTailLayout,
                  const Ref<DescriptorSetLayout>& bloomDownUpLayout);
 
         /// @brief The pixel extent the trace/min-Z/blur chain runs at (SsrResolutionScale folded onto m_Extent).
@@ -162,6 +171,8 @@ namespace Veng::Renderer
         Ref<PipelineLayout> m_BlurLayout;
         /// @brief SSR min-Z reduction compute pipeline (over the borrowed hi-Z reduce layout).
         Ref<ComputePipeline> m_HiZReducePipeline;
+        /// @brief SSR min-Z coarse-tail compute pipeline (over the borrowed hi-Z tail layout).
+        Ref<ComputePipeline> m_HiZTailPipeline;
 
         /// @brief Lit scene-color intermediate the trace samples and the composite adds onto.
         Ref<Image> m_SceneImage;
@@ -196,5 +207,9 @@ namespace Veng::Renderer
         TextureHandle m_HiZSampleHandle;
         /// @brief One reduction set per min-Z level (binds the source and destination mip views).
         std::vector<Ref<DescriptorSet>> m_HiZReduceSets;
+        /// @brief The min-Z tail's set, or null when the pyramid has no tail.
+        Ref<DescriptorSet> m_HiZTailSet;
+        /// @brief The min-Z tail's first level (MipTailFirstLevel), meaningful while m_HiZTailSet is set.
+        u32 m_HiZTailFirst = 0;
     };
 }

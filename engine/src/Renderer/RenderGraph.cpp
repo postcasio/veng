@@ -14,6 +14,8 @@
 #include <Veng/Renderer/Backend/TransientAllocation.h>
 #include <Veng/Renderer/Backend/Vulkan.h>
 
+#include <algorithm>
+
 namespace Veng::Renderer
 {
     // Backend::ScopeFor and Backend::DecideBarrier live in Backend/BarrierDecision.h
@@ -148,6 +150,14 @@ namespace Veng::Renderer
     RenderGraph::PassBuilder& RenderGraph::PassBuilder::SkipWhen(function<bool()> skip)
     {
         m_Pass.Skip = std::move(skip);
+        m_Pass.SkipUnread = false;
+        return *this;
+    }
+
+    RenderGraph::PassBuilder& RenderGraph::PassBuilder::SkipWhenUnread(function<bool()> skip)
+    {
+        m_Pass.Skip = std::move(skip);
+        m_Pass.SkipUnread = true;
         return *this;
     }
 
@@ -265,6 +275,8 @@ namespace Veng::Renderer
             vector<Backend::ScheduledAttachment> Attachments; // graphics passes only
             function<void(PassContext&)> Execute;
             function<bool()> Skip;
+            /// @brief Whether the last Execute recorded this pass (false while skipped).
+            bool Recorded = false;
         };
 
         // The compiled graph and its transients must not outlive the context.
@@ -428,10 +440,10 @@ namespace Veng::Renderer
             Backend::DeriveRenderGraphSchedule(scheduleResources, schedulePasses);
 
         // A skipped frame must leave every resource as the pass would have, which a clear or a
-        // discard would not.
+        // discard would not — unless nothing reads the outputs on such a frame (SkipWhenUnread).
         for (const Unique<Pass>& pass : m_Passes)
         {
-            if (!pass->Skip)
+            if (!pass->Skip || pass->SkipUnread)
             {
                 continue;
             }
@@ -481,6 +493,12 @@ namespace Veng::Renderer
             return nullptr;
         }
         return m_Native->Resources[id.Index].Image;
+    }
+
+    bool CompiledGraph::DidRecordPass(const string_view name) const
+    {
+        const auto it = std::ranges::find(m_Native->Passes, name, &Native::Pass::Name);
+        return it != m_Native->Passes.end() && it->Recorded;
     }
 
     void CompiledGraph::Execute(CommandBuffer& cmd,
@@ -533,11 +551,12 @@ namespace Veng::Renderer
         }
 
         Backend::BarrierBatch barriers;
-        for (const Native::Pass& pass : native.Passes)
+        for (Native::Pass& pass : native.Passes)
         {
             VE_PROFILE_SCOPE_ID(pass.ProfileName);
 
-            if (pass.Skip && pass.Skip())
+            pass.Recorded = !(pass.Skip && pass.Skip());
+            if (!pass.Recorded)
             {
                 for (const Backend::ScheduledBufferBarrier& barrier : pass.BufferBarriers)
                 {

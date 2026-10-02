@@ -39,7 +39,7 @@ namespace Veng::Renderer
         /// @param depthId     Full-res opaque depth source id (declared sampled).
         /// @param depthHandle Bindless slot for the full-res opaque depth.
         /// @param targetId    The half-res depth target this pass writes.
-        /// @param plan        The layer's draw plan — a frame that routed nothing skips the draw.
+        /// @param plan        The layer's draw plan — a frame that routed nothing skips the pass.
         HalfResDepthReduceScenePass(Context& context, Ref<GraphicsPipeline> pipeline,
                                     ResourceId depthId, TextureHandle depthHandle,
                                     ResourceId targetId, const TranslucentDrawPlan* plan)

@@ -190,6 +190,13 @@ namespace Veng
         ///        Translucent domain.
         TranslucentBlend Blend = TranslucentBlend::Alpha;
 
+        /// @brief Whether the fragment stage samples the pre-translucent scene-colour grab.
+        ///
+        /// The renderer runs the grab and its blur chain only on a frame some drawn material sets
+        /// this; on any other frame the grab reads as unavailable. Translucent domain only
+        /// (cook-enforced).
+        bool ReadsSceneColor = false;
+
         /// @brief Null for PostProcess materials (built by the pass).
         Ref<Renderer::GraphicsPipeline> Pipeline;
 
@@ -266,6 +273,12 @@ namespace Veng
 
         /// @brief Returns how the translucent pass composites the material's colour.
         [[nodiscard]] TranslucentBlend GetTranslucentBlend() const { return m_Blend; }
+
+        /// @brief Returns whether the fragment stage samples the pre-translucent scene-colour grab.
+        ///
+        /// A frame none of whose drawn materials does this skips the grab and its blur chain, and
+        /// reads the grab as unavailable.
+        [[nodiscard]] bool IsSceneColorReader() const { return m_ReadsSceneColor; }
 
         /// @brief Returns the built graphics pipeline, or null for a pass-built domain (PostProcess, Sky, Translucent, GuiFill).
         [[nodiscard]] const Ref<Renderer::GraphicsPipeline>& GetPipeline() const
@@ -427,6 +440,7 @@ namespace Veng
         bool m_WritesBloomMask = false;
         bool m_HalfResolution = false;
         TranslucentBlend m_Blend = TranslucentBlend::Alpha;
+        bool m_ReadsSceneColor = false;
         Ref<Renderer::GraphicsPipeline> m_Pipeline;
         Ref<Renderer::GraphicsPipeline> m_SkinnedPipeline;
         Ref<Renderer::PipelineLayout> m_PipelineLayout;

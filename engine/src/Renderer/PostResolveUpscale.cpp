@@ -20,6 +20,8 @@ namespace Veng::Renderer
     {
         // The engine core pack's spatial scene-color upscale fragment shader.
         constexpr AssetId SceneUpscaleFragId{0x1C0CB4545070CC5FULL};
+        // Its paired entry: the scene colour and the bloom mask promoted in one pass.
+        constexpr AssetId SceneUpscalePairFragId{0xDC9812D3DF548A12ULL};
     }
 
     Unique<PostResolveUpscale> PostResolveUpscale::Create(Context& context, AssetManager& assets)
@@ -70,6 +72,19 @@ namespace Veng::Renderer
                                {
                                    {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},
                                    {.Stage = ShaderStage::Fragment, .Module = fs.Get()->Module},
+                               },
+                       });
+        const AssetHandle<Veng::Shader> pairFs =
+            LoadShader(SceneUpscalePairFragId, "scene upscale pair fragment");
+        m_PairPipeline = GraphicsPipeline::Create(
+            m_Context, {
+                           .Name = "SceneRenderer Scene And Bloom Mask Upscale Pipeline",
+                           .ColorAttachments = {{.Format = HdrFormat}, {.Format = BloomMaskFormat}},
+                           .PipelineLayout = m_Layout,
+                           .ShaderStages =
+                               {
+                                   {.Stage = ShaderStage::Vertex, .Module = vs.Get()->Module},
+                                   {.Stage = ShaderStage::Fragment, .Module = pairFs.Get()->Module},
                                },
                        });
     }

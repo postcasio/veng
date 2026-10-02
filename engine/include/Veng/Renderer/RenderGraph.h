@@ -235,6 +235,9 @@ namespace Veng::Renderer
             function<void(PassContext&)> Execute;
             /// @brief Record-time predicate skipping the pass for a frame (unset = never skipped).
             function<bool()> Skip;
+            /// @brief True when a skipped frame leaves the pass's outputs unread (SkipWhenUnread),
+            ///        which frees it to clear or discard its attachments.
+            bool SkipUnread = false;
         };
 
         /// @brief Fluent builder for configuring a declared pass.
@@ -286,6 +289,18 @@ namespace Veng::Renderer
             /// at Compile).
             /// @param skip Evaluated once per Execute, before the pass records.
             PassBuilder& SkipWhen(function<bool()> skip);
+            /// @brief Sets a record-time predicate that skips the pass on a frame nothing reads what
+            ///        it writes.
+            ///
+            /// SkipWhen for a pass whose outputs are only read when the pass runs: a producer whose
+            /// every consumer, on a frame the predicate holds, either skips too or records nothing
+            /// that samples them — a grab no draw samples, a layer no composite lays down. Such a
+            /// pass may clear or discard its attachments, because a skipped frame leaves them
+            /// undefined until the pass next runs and no reader observes that. The caller owns that
+            /// promise; the graph cannot check it. A skipped frame otherwise behaves as under
+            /// SkipWhen.
+            /// @param skip Evaluated once per Execute, before the pass records.
+            PassBuilder& SkipWhenUnread(function<bool()> skip);
 
         private:
             /// @brief The pass slot being built.
@@ -422,6 +437,13 @@ namespace Veng::Renderer
         /// for an invalid id.
         /// @param id  A ResourceId returned by RenderGraph::CreateTransient.
         [[nodiscard]] Ref<Image> ResolvedImage(ResourceId id) const;
+
+        /// @brief Whether the last Execute recorded the named pass.
+        ///
+        /// False for a pass a skip predicate held back that frame, for a name no pass carries, and
+        /// before the first Execute. The first pass carrying @p name answers.
+        /// @param name The pass's declared name.
+        [[nodiscard]] bool DidRecordPass(string_view name) const;
 
     private:
         friend class RenderGraph;

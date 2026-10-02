@@ -30,7 +30,9 @@
 // scene behind itself at a perturbed screen UV (glass, water, heat haze, a lens). The copy
 // predates the translucent pass, so one translucent surface never refracts another; the
 // helpers below are the supported read path, and SceneColorAvailable gates the sample (the
-// handles are unpopulated with the setting off).
+// handles are unpopulated with the setting off). A material whose fragment samples the copy
+// declares "readsSceneColor": true in its .vmat.json: the renderer runs the copy only on a frame
+// some drawn material declares it, and on any other frame SceneColorAvailable is false.
 //
 // The Surface, PostProcess, and Sky domains have their own contracts in Veng/surface.slang,
 // Veng/postprocess.slang, and Veng/sky.slang.
@@ -81,7 +83,8 @@ struct TranslucentBloomOutput
 };
 
 // True when the pre-translucent scene-color copy is populated this frame (the renderer's
-// Refraction setting is on); SampleSceneColor returns black otherwise.
+// Refraction setting is on and a drawn material declares "readsSceneColor"); SampleSceneColor
+// returns black otherwise.
 bool SceneColorAvailable(ViewConstants vc)
 {
     return vc.SceneColor.z != 0;

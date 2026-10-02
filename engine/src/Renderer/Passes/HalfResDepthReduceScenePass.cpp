@@ -21,15 +21,12 @@ namespace Veng::Renderer
                 .Clear = ClearDepth{.Depth = 0.0f},
             })
             .Sample(m_DepthId)
+            // An idle wired layer (deactivation hysteresis) draws nothing, and its layer pass and
+            // composite skip the same frame, so nothing reads the reduced depth.
+            .SkipWhenUnread([this] { return m_Plan->Draws.empty(); })
             .Execute(
                 [this](PassContext& inner)
                 {
-                    // An idle wired layer (deactivation hysteresis) keeps the cleared target and
-                    // pays no fullscreen reduce — nothing will composite it.
-                    if (m_Plan->Draws.empty())
-                    {
-                        return;
-                    }
                     CommandBuffer& cmd = inner.Cmd();
                     cmd.BindPipeline(m_Pipeline);
                     const uvec2 validExtent = Wrap(inner).View().RenderExtent;

@@ -296,11 +296,12 @@ namespace Veng::Renderer
                                  const TextureHandle sourceHandle, const ResourceId depthId,
                                  const TextureHandle depthHandle, const ResourceId copyId,
                                  const ResourceId depthCopyId, const SamplerHandle sampler,
-                                 const uvec2 extent, const std::span<const ResourceId> mipIds) const
+                                 const uvec2 extent, const std::span<const ResourceId> mipIds,
+                                 const bool* sampled) const
     {
         passes.push_back(CreateUnique<SceneColorCopyScenePass>(
             m_Context, m_CopyPipeline, sourceId, sourceHandle, depthId, depthHandle, copyId,
-            depthCopyId, sampler, extent));
+            depthCopyId, sampler, extent, sampled));
 
         // One halving per level below the base, in order — each reads the level the pass before it
         // wrote, which is what the graph's Sample declaration is there to order — down to the coarse
@@ -311,13 +312,13 @@ namespace Veng::Renderer
         {
             passes.push_back(CreateUnique<SceneColorDownsampleScenePass>(
                 m_Context, m_DownsamplePipeline, mipIds[level - 1], m_SceneMipHandles[level - 1],
-                mipIds[level], m_SamplerHandle, level, extent));
+                mipIds[level], m_SamplerHandle, level, extent, sampled));
         }
         if (tailFirst < levels)
         {
             passes.push_back(CreateUnique<SceneColorDownsampleTailScenePass>(
                 m_TailPipeline, m_TailSet, mipIds[tailFirst - 1], mipIds.subspan(tailFirst),
-                tailFirst, extent));
+                tailFirst, extent, sampled));
         }
     }
 }

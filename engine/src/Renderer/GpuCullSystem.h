@@ -30,16 +30,18 @@ namespace Veng::Renderer
     ///
     /// One subsystem because the pyramid and the cull are one feature: the hi-Z pyramid exists to
     /// be tested against, the history-validity gate spans both, and the GPU-band tests exercise
-    /// them together. It owns the max-Z reduction (set layout, pipeline layout, compute pipeline,
+    /// them together. The pyramid is held only while the occlusion test reads it (IsHiZReduced): a
+    /// full chain then, a one-texel stand-in the cull set binds while the GPU cull runs without the
+    /// occlusion test, and nothing at all under CullMode::CPU. It owns the max-Z reduction (set layout, pipeline layout, compute pipeline,
     /// pyramid image + per-mip storage views + whole-chain sampled view + reduction sets), the
     /// cross-frame history-validity state, the cull compute cluster (candidate/indirect/count
     /// buffers, the compute pipeline/layout/set), the active cull mode after the device-support
     /// fallback, and the per-frame dispatch + readback state.
     ///
-    /// The hi-Z reduce pipeline layout and set layout are borrowed by the SSR chain's min-Z reduce
-    /// (its pipeline is built on the pipeline layout and its reduce sets allocate from the set
-    /// layout), so this subsystem is constructed before the SSR chain, and its layouts are exposed
-    /// by reference. The pyramid is recreated from the g-buffer create/recreate tail so its
+    /// The hi-Z reduce and coarse-tail pipeline layouts and set layouts are borrowed by the SSR
+    /// chain's min-Z reduce (its pipelines are built on the pipeline layouts and its sets allocate
+    /// from the set layouts), so this subsystem is constructed before the SSR chain, and its layouts
+    /// are exposed by reference. The pyramid is recreated from the g-buffer create/recreate tail so its
     /// reduction sets bind the fresh depth view.
     class GpuCullSystem
     {
@@ -64,11 +66,13 @@ namespace Veng::Renderer
 
         /// @brief Recreates the hi-Z pyramid, per-mip views, and reduction sets at @p extent.
         ///
-        /// Sized to @p extent with a full mip chain, not cleared (it carries data across frames).
-        /// Reduction set k binds mip k's source (@p depthView for k=0, the prior mip otherwise) and
-        /// mip k's destination storage view, so the fresh depth view must be passed from the
-        /// g-buffer create/recreate tail. Rebinds the cull set (when the GPU cluster exists) against
-        /// the fresh pyramid, and forces the next occlusion test to skip history.
+        /// While the pyramid is reduced (IsHiZReduced), sized to @p extent with a full mip chain,
+        /// not cleared (it carries data across frames); reduction set k binds mip k's source
+        /// (@p depthView for k=0, the prior mip otherwise) and mip k's destination storage view, so
+        /// the fresh depth view must be passed from the g-buffer create/recreate tail. While the GPU
+        /// cull runs without the occlusion test, a one-texel stand-in the cull set binds and nothing
+        /// reads; under CullMode::CPU, nothing. Rebinds the cull set (when the GPU cluster exists)
+        /// against the fresh pyramid, and forces the next occlusion test to skip history.
         /// @param extent    The g-buffer extent the pyramid is sized to.
         /// @param depthView The live depth target the reduction's mip-0 source binds.
         void ResizeHiZ(uvec2 extent, const Ref<ImageView>& depthView);
@@ -78,7 +82,9 @@ namespace Veng::Renderer
         /// CullMode::GPU survives only where Context::IsGpuDrivenCullingSupported() is true;
         /// otherwise it degrades to CullMode::CPU, logged once. Called at Create and every Configure.
         /// @param settings The active renderer settings.
-        void ResolveActiveCullMode(const SceneRendererSettings& settings);
+        /// @return True when the pyramid the resolved mode wants differs from the one held, so the
+        ///         caller must ResizeHiZ before the next Rebuild.
+        bool ResolveActiveCullMode(const SceneRendererSettings& settings);
 
         /// @brief Imports the indirect command buffer into the graph (GPU mode only); returns its id.
         ///
@@ -89,7 +95,8 @@ namespace Veng::Renderer
         /// @return The indirect-buffer import id, or an empty id under CullMode::CPU.
         ResourceId ImportIndirect(RenderGraph& graph);
 
-        /// @brief Imports the hi-Z pyramid mip chain into the graph.
+        /// @brief Imports the hi-Z pyramid mip chain into the graph, or an empty chain when none is
+        ///        held (CullMode::CPU).
         ///
         /// The cull samples last frame's pyramid and the reduction writes this frame's into the same
         /// per-mip slots. Called on every Rebuild before the cull pass and the reduction.
@@ -109,8 +116,8 @@ namespace Veng::Renderer
         /// One dispatch per mip: mip 0 reads @p depthId, mip n>0 reads pyramid mip n-1, each writing
         /// its hi-Z mip — except the coarse tail (MipTailFirstLevel), which one dispatch reduces in a
         /// single workgroup. Declared last so it reduces this frame's completed depth. Declares nothing
-        /// unless the GPU occlusion test reads the pyramid (IsHiZReduced); the Rebuild that starts
-        /// reducing again marks the history invalid, since the pyramid then holds stale depth.
+        /// unless the GPU occlusion test reads the pyramid (IsHiZReduced), which is also the only
+        /// time a full pyramid is held.
         /// @param graph   The renderer's internal graph being rebuilt.
         /// @param depthId The depth import the mip-0 reduction reads.
         void DeclareHiZReduction(RenderGraph& graph, ResourceId depthId);
@@ -118,7 +125,7 @@ namespace Veng::Renderer
         /// @brief Whether the reduction is declared: the GPU cull is active with the occlusion test on.
         ///
         /// Nothing else reads the pyramid, so under CullMode::CPU or with Settings.Occlusion off the
-        /// chain is not run at all.
+        /// chain is neither run nor allocated.
         [[nodiscard]] bool IsHiZReduced() const
         {
             return m_ActiveCull == SceneRendererSettings::CullMode::GPU && m_OcclusionEnabled;
@@ -177,6 +184,18 @@ namespace Veng::Renderer
             return m_HiZReduceSetLayout;
         }
 
+        /// @brief The coarse-tail pipeline layout the SSR min-Z tail pipeline builds on.
+        [[nodiscard]] const Ref<PipelineLayout>& GetHiZTailLayout() const
+        {
+            return m_HiZTailLayout;
+        }
+
+        /// @brief The coarse-tail set layout the SSR min-Z tail set allocates from.
+        [[nodiscard]] const Ref<DescriptorSetLayout>& GetHiZTailSetLayout() const
+        {
+            return m_HiZTailSetLayout;
+        }
+
         /// @brief The cull mode actually in effect, after the device-support fallback.
         [[nodiscard]] SceneRendererSettings::CullMode GetActiveCull() const { return m_ActiveCull; }
 
@@ -224,8 +243,21 @@ namespace Veng::Renderer
         bool m_GpuCullWarned = false;
         /// @brief Settings.Occlusion as last resolved; with it off nothing tests against the pyramid.
         bool m_OcclusionEnabled = true;
-        /// @brief Whether the last Rebuild declared the reduction, to detect it starting again.
-        bool m_HiZReductionDeclared = false;
+        /// @brief What the held pyramid is: none, the cull set's stand-in, or the reduced chain.
+        enum class Pyramid : u8
+        {
+            None,
+            StandIn,
+            Full,
+        };
+
+        /// @brief The pyramid the resolved cull mode and occlusion setting want.
+        [[nodiscard]] Pyramid WantedPyramid() const;
+
+        /// @brief The pyramid currently held.
+        Pyramid m_Pyramid = Pyramid::None;
+        /// @brief Whether ResizeHiZ has run, so a reshape before it has no pyramid to replace.
+        bool m_Sized = false;
 
         /// @brief The pyramid extent (set by ResizeHiZ); drives the reduction dispatch sizing.
         uvec2 m_Extent{1};

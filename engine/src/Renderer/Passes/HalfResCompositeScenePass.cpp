@@ -20,7 +20,8 @@ namespace Veng::Renderer
             .Sample(m_HalfDepthId)
             .Sample(m_DepthId)
             // An idle wired layer (deactivation hysteresis) drew nothing this frame, so there is
-            // nothing to lay under the full-res translucents.
+            // nothing to lay under the full-res translucents. The depth reduce and the layer pass
+            // skip on the same predicate, which is what leaves their outputs unread.
             .SkipWhen([this] { return m_Plan->Draws.empty(); })
             .Execute(
                 [this](PassContext& inner)

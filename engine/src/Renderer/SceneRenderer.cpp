@@ -190,6 +190,9 @@ namespace Veng::Renderer
         // half-resolution rendering, sorted back-to-front on their own (the layer composites as a
         // whole under the full-resolution draws).
         TranslucentDrawPlan HalfResTranslucentPlan;
+        // Whether a draw this frame samples the refraction grab: set by PrepareDraws, and read by
+        // the grab's passes, which skip every frame it is clear.
+        bool SceneColorSampled = false;
         // PrepareDraws' reused scratch: the static survivors' sort keys and the survivors the
         // static phase triages to the skinned and translucent phases. Held across frames so a
         // steady-state gather allocates nothing.
@@ -269,7 +272,7 @@ namespace Veng::Renderer
         // min-Z reduce pipeline builds on the GPU cull subsystem's hi-Z reduce layout — both must
         // already exist, so the chain is constructed after those subsystems and CreatePipelines.
         m_Ssr = SsrChain::Create(m_Context, m_Assets, m_GpuCull->GetHiZReduceLayout(),
-                                 m_Bloom->GetDownUpSetLayout());
+                                 m_GpuCull->GetHiZTailLayout(), m_Bloom->GetDownUpSetLayout());
         // The depth-of-field chain's tile and fill pipeline layouts reserve the same bloom down/up
         // set layout, so it is likewise constructed after the bloom subsystem.
         m_Dof = DofChain::Create(m_Context, m_Assets, m_Bloom->GetDownUpSetLayout(), HdrFormat);
@@ -819,7 +822,8 @@ namespace Veng::Renderer
             {
                 m_Refraction->Declare(m_Passes, lightingTargetId, lightingTargetHandle, depthId,
                                       m_DepthHandle, m_RefractionSceneId, m_RefractionDepthId,
-                                      m_SamplerHandle, renderExtent, m_RefractionMipIds);
+                                      m_SamplerHandle, renderExtent, m_RefractionMipIds,
+                                      &m_Internal->SceneColorSampled);
             }
             // The reduced-resolution layer draws and composites immediately ahead of the
             // full-resolution translucent pass, so its result lies under every full-res
@@ -894,22 +898,42 @@ namespace Veng::Renderer
             // tonemap's own map is the identity rather than a second upscale. A temporal-upscaling
             // resolve already reconstructed the allocation, which is exactly when m_UpscaleWired is
             // false.
-            if (m_UpscaleWired)
+            //
+            // The mask crosses the same boundary on its own condition: a temporal-upscaling resolve
+            // is the colour's promotion, so the colour's pass does not exist on exactly the frames
+            // the mask still has to be carried. When both cross, one pass carries both as two
+            // attachments, so the frame pays one pass boundary rather than two.
+            const Promotion scenePromotion{
+                .SourceId = m_HdrId,
+                .OutputId = m_UpscaleSceneId,
+                .SourceHandle = m_HdrHandle,
+                .SourceExtent = sceneColorExtent,
+                .Source = PromotionSource::SceneColor,
+            };
+            const Promotion maskPromotion{
+                .SourceId = m_BloomMaskId,
+                .OutputId = m_BloomMaskPromotedId,
+                .SourceHandle = m_BloomMaskHandle,
+                .SourceExtent = renderExtent,
+                .Source = PromotionSource::BloomMask,
+            };
+            if (m_UpscaleWired && m_BloomMaskPromotionWired)
             {
                 m_ScenePromotionPass = CreateUnique<SceneUpscaleScenePass>(
-                    m_Context, m_Upscale->GetPipeline(), m_HdrId, m_UpscaleSceneId, m_HdrHandle,
-                    m_SamplerHandle, sceneColorExtent, tailExtent, PromotionSource::SceneColor);
+                    m_Context, m_Upscale->GetPairPipeline(), scenePromotion, maskPromotion,
+                    m_SamplerHandle, tailExtent);
             }
-
-            // The mask crosses the same boundary as its own step rather than as a second attachment
-            // on the pass above: a temporal-upscaling resolve is the colour's promotion, so that
-            // pass does not exist on exactly the frames the mask still has to be carried.
-            if (m_BloomMaskPromotionWired)
+            else if (m_UpscaleWired)
+            {
+                m_ScenePromotionPass = CreateUnique<SceneUpscaleScenePass>(
+                    m_Context, m_Upscale->GetPipeline(), scenePromotion, std::nullopt,
+                    m_SamplerHandle, tailExtent);
+            }
+            else if (m_BloomMaskPromotionWired)
             {
                 m_BloomMaskPromotionPass = CreateUnique<SceneUpscaleScenePass>(
-                    m_Context, m_Upscale->GetMaskPipeline(), m_BloomMaskId, m_BloomMaskPromotedId,
-                    m_BloomMaskHandle, m_SamplerHandle, renderExtent, tailExtent,
-                    PromotionSource::BloomMask);
+                    m_Context, m_Upscale->GetMaskPipeline(), maskPromotion, std::nullopt,
+                    m_SamplerHandle, tailExtent);
             }
 
             // One post-process effect pass per active effect, held outside m_Passes and declared at
@@ -1107,7 +1131,8 @@ namespace Veng::Renderer
             {
                 m_Refraction->Declare(m_Passes, lightingTargetId, lightingTargetHandle, depthId,
                                       m_DepthHandle, m_RefractionSceneId, m_RefractionDepthId,
-                                      m_SamplerHandle, renderExtent, m_RefractionMipIds);
+                                      m_SamplerHandle, renderExtent, m_RefractionMipIds,
+                                      &m_Internal->SceneColorSampled);
             }
             // The reduced-resolution layer draws and composites immediately ahead of the
             // full-resolution translucent pass, so its result lies under every full-res
@@ -1876,8 +1901,8 @@ namespace Veng::Renderer
         // Deactivation waits out an idle window rather than firing on the first empty gather: a
         // capture probe renders one cube face per frame, so a scene whose opted-in material sits
         // in some faces and not others would otherwise toggle the layer — a full graph recompile
-        // — every frame. An idle wired layer costs only its targets' memory (the passes skip
-        // their draws on an empty plan), so the window is generous.
+        // — every frame. An idle wired layer costs only its targets' memory (its passes skip a
+        // frame with an empty plan), so the window is generous.
         const bool halfResGathered = !halfResPlan.Draws.empty();
         if (halfResGathered && (!m_HalfResTranslucentActive || !halfResViewReady))
         {
@@ -1901,6 +1926,14 @@ namespace Veng::Renderer
             m_HalfResTranslucent->Recreate(false, m_RenderAllocExtent);
             Rebuild();
         }
+
+        // The grab and its blur chain are read only by a translucent draw whose material samples
+        // them, so a frame with none — most frames of most scenes — runs neither.
+        const auto samplesGrab = [](const TranslucentDraw& draw)
+        { return draw.Material->GetParent()->IsSceneColorReader(); };
+        m_Internal->SceneColorSampled = m_Topology->RefractionActive &&
+                                        (std::ranges::any_of(translucentPlan.Draws, samplesGrab) ||
+                                         std::ranges::any_of(halfResPlan.Draws, samplesGrab));
 
         m_DrawBudgetStats = budget.GetStats();
         ReportDrawBudgetDrops();
@@ -2002,7 +2035,8 @@ namespace Veng::Renderer
         }
         // The min-Z reduce sets bind the fresh depth view from the g-buffer.
         m_Ssr->Recreate(m_Settings, m_RenderAllocExtent, m_DepthView,
-                        m_GpuCull->GetHiZReduceSetLayout(), m_Bloom->GetDownUpSetLayout());
+                        m_GpuCull->GetHiZReduceSetLayout(), m_GpuCull->GetHiZTailSetLayout(),
+                        m_Bloom->GetDownUpSetLayout());
         m_Dof->Recreate(m_Settings, m_RenderAllocExtent, m_HdrView, m_DepthView,
                         m_Bloom->GetDownUpSetLayout());
         m_Refraction->Recreate(m_Settings, m_RenderAllocExtent);
@@ -2038,7 +2072,10 @@ namespace Veng::Renderer
             m_ShadingOverride->Release();
         }
         ShadowSystem::ClampResolutions(m_Context, m_Settings);
-        m_GpuCull->ResolveActiveCullMode(m_Settings);
+        // A cull-mode or occlusion change can move what the hi-Z pyramid has to be (full, a
+        // stand-in, or nothing); the g-buffer recreate below resizes it anyway, so only an
+        // unmoved allocation needs the explicit resize.
+        const bool hiZReshaped = m_GpuCull->ResolveActiveCullMode(m_Settings);
         const uvec2 priorRenderAlloc = m_RenderAllocExtent;
         const uvec2 priorSceneColorAlloc = m_SceneColorAllocExtent;
         ResolveAllocationExtents();
@@ -2060,6 +2097,10 @@ namespace Veng::Renderer
             m_ValidExtent = m_RenderAllocExtent;
             CreateGBuffer();
             CreateBloomMask();
+        }
+        else if (hiZReshaped)
+        {
+            m_GpuCull->ResizeHiZ(m_RenderAllocExtent, m_DepthView);
         }
         if (m_SceneColorAllocExtent != priorSceneColorAlloc)
         {
@@ -2438,6 +2479,23 @@ namespace Veng::Renderer
         // The surface push's ViewConstantsIndex is the shared per-view slot, distinct from the
         // renderer-owned frame-in-flight rings PrepareDraws indexes internally.
         PrepareDraws(resolvedView, viewConstantsIndex, halfResViewConstantsIndex, halfResViewReady);
+
+        // The view block went out claiming the grab, which only the gather can confirm: a frame
+        // whose draws do not sample it skips it, so the block reads it as unavailable instead —
+        // a fragment that samples it without declaring so then reads black, never a stale grab.
+        if (m_Topology->RefractionActive && !m_Internal->SceneColorSampled)
+        {
+            constexpr u32 available = 0;
+            constexpr u32 availableOffset =
+                offsetof(ViewConstantsBlock, SceneColor) + 2 * sizeof(u32);
+            registry.PatchViewConstants(viewConstantsIndex, availableOffset,
+                                        std::as_bytes(std::span(&available, 1)));
+            if (halfResViewConstantsIndex != viewConstantsIndex)
+            {
+                registry.PatchViewConstants(halfResViewConstantsIndex, availableOffset,
+                                            std::as_bytes(std::span(&available, 1)));
+            }
+        }
 
         // Build each skinned draw's surface skinned g-buffer pipeline on the first frame its
         // material is drawn skinned (idempotent). A material never skinned never pays for the
@@ -3111,6 +3169,11 @@ namespace Veng::Renderer
     {
         return IsLeanPath() ? m_LeanDepthHandle : m_DepthHandle;
     }
+    bool SceneRenderer::DidRecordPassLastFrame(const string_view passName) const
+    {
+        return m_Internal->Graph != nullptr && m_Internal->Graph->DidRecordPass(passName);
+    }
+
     Ref<ImageView> SceneRenderer::GetHiZView() const
     {
         return m_GpuCull->GetHiZSampleView();

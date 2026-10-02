@@ -75,6 +75,13 @@ namespace Veng::Renderer
             return m_MaskPipeline;
         }
 
+        /// @brief The paired promotion pipeline: the scene colour (HdrFormat) and the bloom mask
+        ///        (BloomMaskFormat) resampled in one pass, each through its own mapping.
+        [[nodiscard]] const Ref<GraphicsPipeline>& GetPairPipeline() const
+        {
+            return m_PairPipeline;
+        }
+
         /// @brief The promoted scene-color target the tail reads; null while unwired.
         [[nodiscard]] const Ref<ImageView>& GetSceneView() const { return m_SceneView; }
 
@@ -96,6 +103,8 @@ namespace Veng::Renderer
         Ref<GraphicsPipeline> m_Pipeline;
         /// @brief The fullscreen upscale pipeline writing the single-channel mask format.
         Ref<GraphicsPipeline> m_MaskPipeline;
+        /// @brief The paired upscale pipeline writing the scene colour and the mask together.
+        Ref<GraphicsPipeline> m_PairPipeline;
         /// @brief Layout for both upscale pipelines: the texture/sampler/sub-rect push block.
         Ref<PipelineLayout> m_Layout;
 

@@ -1843,6 +1843,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/viewport_documents.cpp
             tests/gpu/splitscreen.cpp
             tests/gpu/hi_z_pyramid.cpp
+            tests/gpu/ssr_min_z_tail.cpp
             tests/gpu/volume_texture_3d.cpp
             # storage_image_range.cpp drives a normalised sixteen-bit storage image: a compute
             # shader declaring the Rgba16 image format writes both ends of the range and the datum,

@@ -276,6 +276,31 @@ namespace Veng::Cook
             }
         }
 
+        // --- 1h. Parse the optional scene-colour read (default false) ---
+
+        // Set by a Translucent material whose fragment samples the pre-translucent scene-colour
+        // grab (Veng/translucent.slang's SampleSceneColor family). The renderer runs the grab only
+        // on a frame some drawn material declares it, so a sampler that leaves it out reads the
+        // grab as unavailable. Only a translucent draw runs between the grab and its next use, so
+        // the key is a located cook error on any other domain rather than silently inert.
+        bool readsSceneColor = false;
+        if (vmat.contains("readsSceneColor"))
+        {
+            if (!vmat["readsSceneColor"].is_boolean())
+            {
+                return std::unexpected(
+                    fmt::format("material importer: '{}': 'readsSceneColor' must be a boolean",
+                                vmatPath.string()));
+            }
+            readsSceneColor = vmat["readsSceneColor"].get<bool>();
+            if (readsSceneColor && domainValue != MaterialDomain::Translucent)
+            {
+                return std::unexpected(fmt::format(
+                    "material importer: '{}': 'readsSceneColor' requires the Translucent domain",
+                    vmatPath.string()));
+            }
+        }
+
         // --- 2. Validate and resolve shader references ---
 
         if (!vmat.contains("shaders") || !vmat["shaders"].is_object())
@@ -976,6 +1001,7 @@ namespace Veng::Cook
         header.BloomMask = bloomMask ? 1u : 0u;
         header.HalfResolution = halfResolution ? 1u : 0u;
         header.Blend = blend;
+        header.ReadsSceneColor = readsSceneColor ? 1u : 0u;
         header.FieldCount = static_cast<u32>(fields.size());
         header.BlockBytes = blockReflected->Size;
 

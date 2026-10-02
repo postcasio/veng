@@ -52,6 +52,14 @@ queued, and the sprite, ribbon and half-resolution composite passes idling insid
 deactivation windows, are the users: on a tile-based GPU an empty render pass still loads and stores
 its targets.
 
+**A producer nothing reads some frames skips with `SkipWhenUnread`**, which may clear or discard:
+the caller promises that on a frame the predicate holds every reader of the pass's outputs either
+skips too or samples nothing from them, so the undefined contents a skipped clear leaves are never
+observed. The graph cannot check that promise. The refraction grab and its blur chain (skipped on a
+frame no draw samples the grab) and the half-resolution layer's depth reduce and layer pass (skipped
+with their composite on an idle frame) are the users. `CompiledGraph::DidRecordPass(name)`, surfaced
+as `SceneRenderer::DidRecordPassLastFrame`, reports whether a pass recorded on the last `Execute`.
+
 ## SceneRenderer: the deferred über-pipeline
 
 `SceneRenderer` is a long-lived, configurable render pipeline on top of `RenderGraph`: it owns an
@@ -346,21 +354,22 @@ viewport at render scale 1 carries neither target and neither pass**.
 **The bloom mask is the scene colour's companion channel and crosses the same boundary — as its own
 step.** It has a writer on each side: the translucent pass rasterizes it into the render allocation
 beside the lit colour, and a `SceneHdrPreBloom` overlay whose composite material declares
-`"bloomMask": true` adds an amplitude to it at the post-resolve allocation. So a second
-`SceneUpscaleScenePass` (`PromotionSource::BloomMask`, the same shader against a
-`BloomMaskFormat` pipeline) resamples the rasterized sub-rect across a promoted, post-resolve-sized
-mask, declared immediately after the colour's promotion; the overlay composite then loads *that* and
-bloom reads it with an identity map, exactly like the scene colour beside it.
+`"bloomMask": true` adds an amplitude to it at the post-resolve allocation. So the mask is resampled
+from the rasterized sub-rect across a promoted, post-resolve-sized mask at the same boundary
+(`PromotionSource::BloomMask`, the same shader); the overlay composite then loads *that* and bloom
+reads it with an identity map, exactly like the scene colour beside it.
 
-**Its latch is separate from the colour's, and that is why it is not a second attachment on the
-colour's pass.** The colour promotion asks whether the *finished scene colour* covers the
-post-resolve allocation; the mask asks whether the *rasterized sub-rect* does — and nothing
-reconstructs the mask, so under TAAU, where the temporal resolve is the colour's promotion and no
-spatial pass is wired at all, the mask still has to be carried. Folding it into
-`SceneUpscaleScenePass`'s existing instance would tie it to a pass that does not exist on exactly
-the frames it is needed. Both latches share `PostResolveUpscaleIdleFrameLimit` and
-`UpdatePromotionLatch`; the mask's additionally requires a wired bloom sweep, since with no sweep
-there is no mask.
+**Its latch is separate from the colour's, and its pass follows from both.** The colour promotion
+asks whether the *finished scene colour* covers the post-resolve allocation; the mask asks whether
+the *rasterized sub-rect* does — and nothing reconstructs the mask, so under TAAU, where the
+temporal resolve is the colour's promotion and no spatial pass is wired at all, the mask still has to
+be carried. So: **when both latches are set, one `SceneUpscaleScenePass` carries both as two
+attachments** ("Scene And Bloom Mask Upscale", `scene_upscale.frag`'s `fsPair`, each target
+resampled through its own mapping exactly as its own pass would); when only the mask's is, it is a
+pass of its own ("Bloom Mask Upscale", against a `BloomMaskFormat` pipeline); when only the
+colour's is, the colour's pass carries it alone. Both latches share
+`PostResolveUpscaleIdleFrameLimit` and `UpdatePromotionLatch`; the mask's additionally requires a
+wired bloom sweep, since with no sweep there is no mask.
 
 **What a reduced render scale buys, and what it does not.** It scales the cost of rendering *the
 scene* and nothing downstream of the promotion; the tail is paid in full either way. That is the
@@ -661,6 +670,15 @@ view block's `SceneColor` slot. A Translucent fragment reaches them through
 distorted sample whose geometry stands in *front* of the refractor. The copy predates the translucent
 pass, so one translucent surface never refracts another.
 
+**The grab runs only on a frame something samples it.** A material whose fragment reads it declares
+`"readsSceneColor": true` in its `.vmat.json` (Translucent domain only, a cook error elsewhere;
+`Material::IsSceneColorReader`), and the gather sets a per-frame flag when any draw in the
+translucent or half-resolution plan comes from such a material. The copy, every halving pass and the
+coarse-tail dispatch skip every other frame (`SkipWhenUnread`, below), and the view block's
+`SceneColor.z` is patched to 0 after the gather, so `SceneColorAvailable` is false that frame and a
+fragment that samples without declaring reads black — never a stale grab, nor a level left in an
+undefined layout. Most frames of most scenes draw no refractor, and pay nothing for the setting.
+
 **`Settings.RefractionBlur` gives that copy a mip chain**, so the same fragment can read the scene
 behind it *blurred* — `SampleSceneColorBlurred(vc, uv, blur)`, with `blur` in [0,1] across whatever
 chain the frame has rather than in texels, so a material authors an appearance that holds at any
@@ -720,9 +738,10 @@ allocates the targets and rebuilds the pass set) and drops it only after the gat
 empty for `HalfResTranslucentIdleFrameLimit` consecutive Executes — deactivation hysteresis,
 because a capture probe renders one cube face per frame and a scene whose opted-in material sits
 in some faces and not others would otherwise recompile the graph every frame. An idle wired
-layer draws nothing on an empty plan: the composite skips its frame (`SkipWhen`), while the depth
-reduce and the layer pass clear their targets and so still run. A renderer that never sees an opted-in material carries no
-targets and no passes. `HalfResTranslucency`
+layer draws nothing on an empty plan: the depth reduce, the layer pass and the composite all skip
+that frame together — the composite under `SkipWhen`, and the two producers it alone reads under
+`SkipWhenUnread`, since they clear their targets — so the window costs only the targets' memory. A
+renderer that never sees an opted-in material carries no targets and no passes. `HalfResTranslucency`
 (`src/Renderer/HalfResTranslucency.h`) owns the vertical slice; `HalfResExtent` is the one
 rounding rule every consumer derives the half extent through.
 
@@ -1206,10 +1225,19 @@ renderer-owned, cross-frame-persisted resource (temporal hi-Z: the test reads la
 so a history-invalid frame — frame 0, the frame after a `Resize`/`Configure`, or a large view
 delta — is frustum-only, never a stale false-cull). Its coarse tail — the smallest levels that fit
 one workgroup's shared memory (`MipTailFirstLevel`) — is reduced by one dispatch
-(`hi_z_reduce_tail.comp`), bit-identical to the per-level reduction. **The reduction runs only while
+(`hi_z_reduce_tail.comp`), bit-identical to the per-level reduction. (The SSR chain's own max-Z
+pyramid takes the same treatment — `ssr_hiz_reduce_tail.comp` over the borrowed tail layouts, from
+level 1 on, since level 0 ingests the full-resolution depth through a different footprint — and is
+likewise bit-identical: a max over the same footprints.) **The reduction runs only while
 the test reads it** — under `CullMode::GPU` with `Occlusion` on (`GpuCullSystem::IsHiZReduced`); any other setting
 declares none of its per-mip passes, and the frame that starts reducing again counts as
-history-invalid, since the pyramid went stale meanwhile. `SceneRendererSettings::Occlusion` gates the
+history-invalid, since the pyramid is allocated afresh. **The pyramid is allocated only while it is
+reduced**, about `1.33 × W × H × 4` bytes otherwise held for nothing: entering the reduction (a
+`Configure` to `CullMode::GPU` with `Occlusion` on — `GpuCullSystem::ResolveActiveCullMode` reports
+the reshape and `Configure` re-runs `ResizeHiZ`) allocates it afresh with its history invalid;
+leaving it releases it. Under `CullMode::GPU` with `Occlusion` off the cull set binds a one-texel
+stand-in nothing samples; under `CullMode::CPU`, and on the depth+normal path, there is no pyramid
+and the graph imports an empty chain. `SceneRendererSettings::Occlusion` gates the
 occlusion test within the GPU path; with it off the GPU path issues every camera-frustum survivor.
 The submission shape is the **`drawIndirectCount`-free** form MoltenVK supports
 (`multiDrawIndirect` + `drawIndirectFirstInstance`, the candidate id carried in each command's

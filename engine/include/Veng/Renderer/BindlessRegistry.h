@@ -489,6 +489,15 @@ namespace Veng::Renderer
         /// @param block The view-constants data; must be <= ViewConstantsStride bytes.
         void WriteViewConstants(std::span<const std::byte> block);
 
+        /// @brief Overwrites part of a view region this frame already wrote.
+        ///
+        /// For a field whose value is known only after the block was written — once the frame's
+        /// draws are gathered — so the writer patches it rather than holding the whole block back.
+        /// @param index  A view-constants index this frame's TryBeginView granted.
+        /// @param offset Byte offset of the field within the block.
+        /// @param bytes  The field's new bytes; offset + size must be <= ViewConstantsStride.
+        void PatchViewConstants(u32 index, u32 offset, std::span<const std::byte> bytes);
+
         /// @brief The current view slot's index into the shared view-constants buffer
         /// (frameInFlight * MaxViewsPerFrame + the TryBeginView slot).
         ///

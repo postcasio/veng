@@ -22,6 +22,8 @@
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/Types.h>
 
+#include "MipTail.h"
+
 namespace Veng::Renderer
 {
     namespace
@@ -32,6 +34,24 @@ namespace Veng::Renderer
         constexpr AssetId SsrBlurDownCompId{0xEE0EED485023A7F6ULL};
         constexpr AssetId SsrCompositeFragId{0x50D9ECEAE45E31A1ULL};
         constexpr AssetId SsrHiZReduceCompId{0x93DA6E42B3B5479AULL};
+        constexpr AssetId SsrHiZReduceTailCompId{0x7737782FD6CC04D1ULL};
+
+        // Texels the min-Z tail dispatch's shared memory holds: one float each, within a 32 KiB
+        // workgroup budget. Matches TAIL_CAPACITY in ssr_hiz_reduce_tail.comp.
+        constexpr u32 MinZTailTexelCapacity = 7168;
+
+        // The tail's first storage binding; one binding per tail slot follows (the hi-Z tail set
+        // layout's).
+        constexpr u32 MinZTailFirstStorageBinding = 1;
+
+        // The min-Z tail push: the pyramid's level-0 extent, the tail's first level and its length.
+        // Matches ssr_hiz_reduce_tail.comp (and the hi-Z tail layout's push range).
+        struct MinZReduceTailPush
+        {
+            uvec2 Extent;
+            u32 FirstLevel;
+            u32 LevelCount;
+        };
 
         // Linear float HDR format for the scene-color intermediate and reflection chain.
         constexpr Format HdrFormat = Format::RGBA16Sfloat;
@@ -102,13 +122,16 @@ namespace Veng::Renderer
 
     Unique<SsrChain> SsrChain::Create(Context& context, AssetManager& assets,
                                       const Ref<PipelineLayout>& hiZReduceLayout,
+                                      const Ref<PipelineLayout>& hiZTailLayout,
                                       const Ref<DescriptorSetLayout>& bloomDownUpLayout)
     {
-        return Unique<SsrChain>(new SsrChain(context, assets, hiZReduceLayout, bloomDownUpLayout));
+        return Unique<SsrChain>(
+            new SsrChain(context, assets, hiZReduceLayout, hiZTailLayout, bloomDownUpLayout));
     }
 
     SsrChain::SsrChain(Context& context, AssetManager& assets,
                        const Ref<PipelineLayout>& hiZReduceLayout,
+                       const Ref<PipelineLayout>& hiZTailLayout,
                        const Ref<DescriptorSetLayout>& bloomDownUpLayout)
         : m_Context(context)
     {
@@ -129,6 +152,8 @@ namespace Veng::Renderer
             LoadShader(SsrBlurDownCompId, "SSR blur downsample");
         const AssetHandle<Veng::Shader> ssrHiZReduceCs =
             LoadShader(SsrHiZReduceCompId, "SSR max-Z reduce");
+        const AssetHandle<Veng::Shader> ssrHiZTailCs =
+            LoadShader(SsrHiZReduceTailCompId, "SSR max-Z reduce tail");
 
         // Builds a fullscreen pipeline (shared vertex stage) over a layout, naming the color format.
         auto MakePipeline = [&](const char* name, const Ref<PipelineLayout>& layout,
@@ -156,6 +181,15 @@ namespace Veng::Renderer
                            .PipelineLayout = hiZReduceLayout,
                            .ShaderStage = {.Stage = ShaderStage::Compute,
                                            .Module = ssrHiZReduceCs.Get()->Module},
+                       });
+        // Its coarse tail likewise reuses the hi-Z tail layout (the source level sampled, a storage
+        // view per tail slot, the tail push); only the reduce operator and footprint differ.
+        m_HiZTailPipeline = ComputePipeline::Create(
+            m_Context, {
+                           .Name = "SceneRenderer SSR MinZ Tail Pipeline",
+                           .PipelineLayout = hiZTailLayout,
+                           .ShaderStage = {.Stage = ShaderStage::Compute,
+                                           .Module = ssrHiZTailCs.Get()->Module},
                        });
 
         m_TraceLayout = PipelineLayout::Create(
@@ -216,6 +250,7 @@ namespace Veng::Renderer
     void SsrChain::Recreate(const SceneRendererSettings& settings, const uvec2 extent,
                             const Ref<ImageView>& depthView,
                             const Ref<DescriptorSetLayout>& hiZReduceSetLayout,
+                            const Ref<DescriptorSetLayout>& hiZTailSetLayout,
                             const Ref<DescriptorSetLayout>& bloomDownUpLayout)
     {
         m_Extent = extent;
@@ -244,6 +279,7 @@ namespace Veng::Renderer
             m_HiZMips.clear();
             m_HiZSampleView.reset();
             m_HiZReduceSets.clear();
+            m_HiZTailSet.reset();
             return;
         }
 
@@ -385,6 +421,23 @@ namespace Veng::Renderer
             set->Write(1, m_HiZMips[level]);
             m_HiZReduceSets.push_back(std::move(set));
         }
+
+        // The coarse tail reads the level before it and writes each of its levels; the slots past
+        // its length repeat its last level, bound but never written. Level 0 is the full-resolution
+        // ingest, a different footprint, so the tail starts no earlier than level 1.
+        m_HiZTailFirst = MipTailFirstLevel(ssrExtent, hizMips, 1, MinZTailTexelCapacity);
+        m_HiZTailSet.reset();
+        if (m_HiZTailFirst < hizMips)
+        {
+            m_HiZTailSet = DescriptorSet::Create(
+                m_Context, {.Name = "SceneRenderer SSR MinZ Tail Set", .Layout = hiZTailSetLayout});
+            m_HiZTailSet->Write(0, m_HiZMips[m_HiZTailFirst - 1]);
+            for (u32 slot = 0; slot < MipTailMaxLevels; slot++)
+            {
+                m_HiZTailSet->Write(MinZTailFirstStorageBinding + slot,
+                                    m_HiZMips[std::min(m_HiZTailFirst + slot, hizMips - 1)]);
+            }
+        }
     }
 
     void SsrChain::Declare(RenderGraph& graph, const ResourceId sceneId,
@@ -400,11 +453,12 @@ namespace Veng::Renderer
         const uvec2 ssrExtent = RenderExtent();
 
         // Max-Z reduction: build this frame's closest-surface pyramid from the depth target
-        // before the trace. One dispatch per mip; mip 0 ingests the full-res depth target into
-        // the SSR-resolution pyramid (a downsample when SSR runs below full res, a 1:1 copy at
-        // Full), deeper mips halve the prior. The per-mip graph surface derives the
-        // read-after-write barriers; the trace then reads the whole chain.
-        for (u32 level = 0; level < hizMips; level++)
+        // before the trace. One dispatch per mip above the coarse tail, and one for the tail; mip 0
+        // ingests the full-res depth target into the SSR-resolution pyramid (a downsample when SSR
+        // runs below full res, a 1:1 copy at Full), deeper mips halve the prior. The per-mip graph
+        // surface derives the read-after-write barriers; the trace then reads the whole chain.
+        const u32 hizTailFirst = m_HiZTailSet != nullptr ? m_HiZTailFirst : hizMips;
+        for (u32 level = 0; level < hizTailFirst; level++)
         {
             const u32 dstW = std::max(ssrExtent.x >> level, 1u);
             const u32 dstH = std::max(ssrExtent.y >> level, 1u);
@@ -441,6 +495,36 @@ namespace Veng::Renderer
                     });
                     cmd.PushConstants(push);
                     cmd.Dispatch((push.DestExtent.x + 7) / 8, (push.DestExtent.y + 7) / 8, 1);
+                });
+        }
+        if (hizTailFirst < hizMips)
+        {
+            RenderGraph::PassBuilder tail = graph.AddComputePass(
+                fmt::format("SSR MinZ Reduce Tail Mips {}-{}", hizTailFirst, hizMips - 1));
+            tail.Sample(hiZChainId.Level(hizTailFirst - 1));
+            for (u32 level = hizTailFirst; level < hizMips; level++)
+            {
+                tail.StorageWrite(hiZChainId.Level(level));
+            }
+            const Ref<ComputePipeline> pipeline = m_HiZTailPipeline;
+            const Ref<DescriptorSet> set = m_HiZTailSet;
+            const MinZReduceTailPush push{
+                .Extent = ssrExtent,
+                .FirstLevel = hizTailFirst,
+                .LevelCount = hizMips - hizTailFirst,
+            };
+            tail.Execute(
+                [pipeline, set, push](PassContext& inner)
+                {
+                    CommandBuffer& cmd = inner.Cmd();
+                    cmd.BindPipeline(pipeline);
+                    cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                        .Sets = {set},
+                        .FirstSet = 3,
+                        .PipelineBindPoint = PipelineBindPoint::Compute,
+                    });
+                    cmd.PushConstants(push);
+                    cmd.Dispatch(1, 1, 1);
                 });
         }
 
