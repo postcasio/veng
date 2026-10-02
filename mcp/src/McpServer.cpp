@@ -462,16 +462,17 @@ namespace Veng::Mcp
         RegisterProfileReadTools(*server, mcpHost);
         RegisterAudioTools(*server, mcpHost);
 
-        // Mutation, input-injection, and capture-control tools are opt-in: a read-only server (the
-        // default) exposes none of them, so tools/list honestly reflects the server's write
-        // capability. Injecting input mutates app state and a capture writes a file, so both ride the
-        // same AllowMutations gate.
+        // Mutation, input-injection, capture-control and renderer-settings tools are opt-in: a
+        // read-only server (the default) exposes none of them, so tools/list honestly reflects the
+        // server's write capability. Injecting input and reconfiguring a renderer mutate app state
+        // and a capture writes a file, so all ride the same AllowMutations gate.
         if (info.AllowMutations)
         {
             RegisterMutationTools(*server, mcpHost);
             RegisterInputTools(*server, mcpHost);
             RegisterProfileWriteTools(*server, mcpHost);
             RegisterRenderCaptureWriteTools(*server, mcpHost);
+            RegisterRenderSettingsWriteTools(*server, mcpHost);
         }
         return server;
     }

@@ -218,10 +218,12 @@ extern "C"
 /// where a view's per-tile light masks live. A module builds settings, holds a renderer, and cooks
 /// shaders that index the view-constants buffer by that stride, so a stale module lays the first two
 /// out short and reads every view block after the first at the wrong offset.
+/// Version 50 grows SceneRendererSettings with GBufferShadingOverride and SceneRenderer with the
+/// override's pipeline owner, so a stale module lays both out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 49u
+#define VENG_MODULE_ABI_VERSION 50u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

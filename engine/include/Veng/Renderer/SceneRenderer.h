@@ -60,6 +60,7 @@ namespace Veng::Renderer
     class HalfResTranslucency;
     class GpuCullSystem;
     class LightTileCuller;
+    class GBufferShadingOverride;
     class PickingSystem;
     class Image;
     class Sampler;
@@ -1039,6 +1040,9 @@ namespace Veng::Renderer
 
         /// @brief The per-tile light cull ahead of the lighting pass — its mask ring and pipeline.
         Unique<LightTileCuller> m_LightTiles;
+
+        /// @brief The g-buffer pass's override pipelines under Settings.GBufferShadingOverride.
+        Unique<GBufferShadingOverride> m_ShadingOverride;
 
         /// @brief The TAA resolve battery — resolve/copy pipelines, lit/history targets, reset gate.
         Unique<TaaResolve> m_Taa;

@@ -15,6 +15,7 @@
 #include <Veng/Renderer/Viewport.h>
 
 #include <fmt/format.h>
+#include <fmt/ranges.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -137,6 +138,86 @@ namespace Veng::Mcp
         constexpr std::array<string_view, 10> SettingKeys{
             "encoding", "codec",           "bits_per_pixel", "bitrate_mbps", "lockstep",
             "name",     "include_overlay", "frame_rate",     "frame_budget", "audio"};
+
+        /// @brief Every key render.configure accepts; anything else is rejected as unknown.
+        constexpr std::array<string_view, 4> ConfigureKeys{
+            "viewport", "debug_view", "light_tile_culling", "gbuffer_shading_override"};
+
+        /// @brief The renderer debug settings render.configure reports, by their argument names.
+        Json DebugSettingsJson(const Renderer::SceneRendererSettings& settings)
+        {
+            return Json{
+                {"debug_view", string(Renderer::DebugViewNames[static_cast<usize>(settings.Mode)])},
+                {"light_tile_culling", settings.LightTileCulling},
+                {"gbuffer_shading_override", settings.GBufferShadingOverride}};
+        }
+
+        /// @brief Applies a render.configure argument object onto a viewport's settings.
+        ///
+        /// Every key is optional and an absent one leaves its setting as it is. An unknown key, a
+        /// debug view naming no DebugView arm, and a toggle that is not a boolean are each a tool
+        /// error, and a refused call applies nothing.
+        /// @param args      The tools/call arguments object.
+        /// @param settings  The viewport's current settings, updated in place.
+        /// @return Nothing, or the reason the arguments were refused.
+        VoidResult ApplyDebugSettings(const Json& args, Renderer::SceneRendererSettings& settings)
+        {
+            if (!args.is_object())
+            {
+                return {};
+            }
+            for (const auto& [key, value] : args.items())
+            {
+                if (std::ranges::find(ConfigureKeys, key) == ConfigureKeys.end())
+                {
+                    return std::unexpected(
+                        fmt::format("unknown setting '{}'; one of debug_view, light_tile_culling, "
+                                    "gbuffer_shading_override",
+                                    key));
+                }
+            }
+
+            Renderer::SceneRendererSettings next = settings;
+            if (args.contains("debug_view"))
+            {
+                const Json& value = args["debug_view"];
+                const optional<usize> index =
+                    value.is_string()
+                        ? FindEnumerator(value.get<string>(), Renderer::DebugViewNames)
+                        : std::nullopt;
+                if (!index)
+                {
+                    return std::unexpected(fmt::format("'debug_view' names a DebugView arm ({})",
+                                                       fmt::join(Renderer::DebugViewNames, ", ")));
+                }
+                next.Mode = static_cast<Renderer::DebugView>(*index);
+            }
+            const auto boolArg = [&args](const string& key, bool& field) -> VoidResult
+            {
+                if (!args.contains(key))
+                {
+                    return {};
+                }
+                if (!args[key].is_boolean())
+                {
+                    return std::unexpected(fmt::format("'{}' is a boolean", key));
+                }
+                field = args[key].get<bool>();
+                return {};
+            };
+            if (VoidResult applied = boolArg("light_tile_culling", next.LightTileCulling); !applied)
+            {
+                return applied;
+            }
+            if (VoidResult applied =
+                    boolArg("gbuffer_shading_override", next.GBufferShadingOverride);
+                !applied)
+            {
+                return applied;
+            }
+            settings = next;
+            return {};
+        }
 
         /// @brief Parses and validates a capture_start argument object into settings.
         ///
@@ -650,7 +731,9 @@ namespace Veng::Mcp
                       {"ssr", s.SSR},
                       {"cull_gpu", cullGpu},
                       {"occlusion", s.Occlusion},
-                      {"debug_view", debugView}}},
+                      {"debug_view", debugView},
+                      {"light_tile_culling", s.LightTileCulling},
+                      {"gbuffer_shading_override", s.GBufferShadingOverride}}},
                     {"dynamic_resolution", viewport->IsDynamicResolutionEnabled()}};
                 if (const optional<Renderer::DynamicResolutionSettings>& drs =
                         viewport->GetDynamicResolution();
@@ -867,6 +950,49 @@ namespace Veng::Mcp
             };
             server.RegisterTool(std::move(tool));
         }
+    }
+
+    void RegisterRenderSettingsWriteTools(McpServer& server, const McpHost& host)
+    {
+        // render.configure — the renderer's diagnostic settings, so a capture can be scripted
+        // around them: set, capture, set back.
+        McpTool tool;
+        tool.Name = "render.configure";
+        tool.Description =
+            "Sets a viewport's renderer debug settings and returns them as applied. Every "
+            "argument is optional and an absent one is left as it is: 'debug_view' (a DebugView "
+            "arm by name, e.g. Final, Albedo, Normal), 'light_tile_culling' (whether the lighting "
+            "pass culls lights per screen tile), 'gbuffer_shading_override' (whether every opaque "
+            "g-buffer draw shades through one trivial fragment stage: a constant albedo and the "
+            "vertex normal over the same geometry and draws, so the 'Scene GBuffer' pass time in "
+            "render.pass_times with it on is the pass without material shading). A change "
+            "recompiles the viewport's render graph. Optional 'viewport' names the viewport "
+            "(default the primary). A host's own interface may re-apply its settings over these.";
+        tool.InputSchemaJson =
+            R"({"type":"object","properties":{)"
+            R"("viewport":{"type":"string"},)"
+            R"("debug_view":{"type":"string"},)"
+            R"("light_tile_culling":{"type":"boolean"},)"
+            R"("gbuffer_shading_override":{"type":"boolean"}},"additionalProperties":false})";
+        tool.Handler = [&host](string_view argsJson) -> Result<string>
+        {
+            const Json args = Json::parse(argsJson, nullptr, false);
+            const string name = ViewportName(args);
+            Renderer::Viewport* viewport = ResolveViewport(host, name);
+            if (viewport == nullptr)
+            {
+                return std::unexpected(name.empty() ? string("no primary viewport is available")
+                                                    : fmt::format("no viewport named '{}'", name));
+            }
+            Renderer::SceneRendererSettings settings = viewport->GetSettings();
+            if (const VoidResult applied = ApplyDebugSettings(args, settings); !applied)
+            {
+                return std::unexpected(applied.error());
+            }
+            viewport->Configure(settings);
+            return DebugSettingsJson(viewport->GetSettings()).dump();
+        };
+        server.RegisterTool(std::move(tool));
     }
 
     void RegisterRenderCaptureWriteTools(McpServer& server, const McpHost& host)

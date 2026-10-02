@@ -1,0 +1,4 @@
+{
+  "source": "gbuffer_shading_override.frag.slang",
+  "entry": "fsMain"
+}

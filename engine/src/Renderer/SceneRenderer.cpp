@@ -12,6 +12,7 @@
 #include "FrameTopology.h"
 #include "GpuBlocks.h"
 #include "GpuCullSystem.h"
+#include "GBufferShadingOverride.h"
 #include "LightTileCuller.h"
 #include "PickingSystem.h"
 #include "Passes/DebugBlitScenePasses.h"
@@ -256,6 +257,7 @@ namespace Veng::Renderer
         // CreatePipelines is the settled pipeline-order relaxation.
         m_GpuCull = GpuCullSystem::Create(m_Context, m_Assets, m_Settings);
         m_LightTiles = LightTileCuller::Create(m_Context, m_Assets);
+        m_ShadingOverride = GBufferShadingOverride::Create(m_Assets);
         m_Picking = PickingSystem::Create(m_Context, m_Assets);
         CreatePipelines();
         // The SSR chain's blur pipeline layout reserves the bloom down/up set layout, and its
@@ -699,7 +701,8 @@ namespace Veng::Renderer
 
         auto gbufferPass = CreateUnique<GBufferScenePass>(
             m_Context, renderExtent, &m_Internal->Plan, m_GpuCull->GetActiveCull(), indirectId,
-            m_Topology->GBufferStores);
+            m_Topology->GBufferStores,
+            m_Settings.GBufferShadingOverride ? m_ShadingOverride.get() : nullptr);
         m_Passes.push_back(std::move(gbufferPass));
 
         // The entity-id picking pass: a depth-tested re-draw of the same survivors into the R32Uint
@@ -2026,6 +2029,10 @@ namespace Veng::Renderer
             return;
         }
         m_Settings = settings;
+        if (!m_Settings.GBufferShadingOverride)
+        {
+            m_ShadingOverride->Release();
+        }
         ShadowSystem::ClampResolutions(m_Context, m_Settings);
         m_GpuCull->ResolveActiveCullMode(m_Settings);
         const uvec2 priorRenderAlloc = m_RenderAllocExtent;
@@ -2442,6 +2449,13 @@ namespace Veng::Renderer
         // same survivors. A no-op when picking is off or the pipelines are already built.
         m_Picking->EnsurePipelines(m_Internal->Plan.PipelineMaterial,
                                    m_Internal->Plan.SkinnedPipelineMaterial);
+
+        // The shading override's pipelines reuse each material's own layouts, the skinned ones
+        // included, so they are built after the skinned pipelines above.
+        if (m_Settings.GBufferShadingOverride)
+        {
+            m_ShadingOverride->Prepare(m_Internal->Plan);
+        }
 
         // Expose the skinning palette + per-entity bases (filled by PrepareDraws) to the shadow
         // passes so a skinned caster casts its posed shadow.

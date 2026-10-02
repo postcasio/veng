@@ -230,6 +230,11 @@ action/mapping layer resolves them exactly as it would a human's input. The batc
 events and its shape is validated up front — a malformed event rejects the whole call before any
 event lands.
 
+It also includes **`render.configure`**, which sets a viewport's diagnostic renderer settings —
+`{ viewport?, debug_view?, light_tile_culling?, gbuffer_shading_override? }`, every field optional
+— and returns them as applied, so a capture can be scripted around a setting: set it, capture,
+set it back. An unknown key or debug view refuses the whole call.
+
 ## Connecting a client
 
 The server speaks JSON-RPC 2.0 over a loopback Streamable-HTTP endpoint (POST to `/`). Point

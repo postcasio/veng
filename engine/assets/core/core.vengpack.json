@@ -212,6 +212,11 @@
       "source": "shaders/light_tile_cull.comp.shader.json"
     },
     {
+      "id": "0x7900FF4E551FA995",
+      "type": "Shader",
+      "source": "shaders/gbuffer_shading_override.frag.shader.json"
+    },
+    {
       "id": "0xCB20C4EF8A20ADBC",
       "type": "Shader",
       "source": "shaders/hi_z_reduce.comp.shader.json"

@@ -690,6 +690,9 @@ namespace Veng::UI
         bool changed = false;
 
         changed |= DebugViewCombo(settings.Mode);
+        changed |= UI::Checkbox("G-buffer shading override", settings.GBufferShadingOverride);
+        UI::Tooltip("Shades every opaque draw with a constant albedo and its vertex normal, so the "
+                    "g-buffer pass's time without material shading can be compared");
 
         if (auto section = UI::CollapsingHeader("Lighting & effects", TreeFlags::DefaultOpen))
         {

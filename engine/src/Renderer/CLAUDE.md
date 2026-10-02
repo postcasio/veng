@@ -69,7 +69,7 @@ The renderer is split along three conventions, and a new battery follows all of 
   object in `src/Renderer/` (forward-declared in `SceneRenderer.h`), on the `EnvironmentIbl`
   precedent: `ShadowSystem`, `BloomPyramid`, `AutoExposureMeter`, `TaaResolve`,
   `PostResolveUpscale`, `SsrChain`, `DofChain`,
-  `RefractionGrab`, `GpuCullSystem`, `LightTileCuller`, `PickingSystem`, and `SkyResolver` (which itself owns the
+  `RefractionGrab`, `GpuCullSystem`, `LightTileCuller`, `GBufferShadingOverride`, `PickingSystem`, and `SkyResolver` (which itself owns the
   three sky radiance-cube helpers `EnvironmentIbl` / `AtmospherePrecompute` / `BakedSkyCube`).
   A subsystem owns its full vertical slice — its `Create`/recreate path, its `Declare*`
   contribution, its per-frame work — and **releases its own bindless handles in its own
@@ -1309,6 +1309,36 @@ under every other configuration — the default `AntiAliasingMode::None`, FXAA, 
 debug arm — the pass declares `StoreOp::DontCare` on it, so `GetVelocityView()` stays non-null but
 its contents are undefined after the frame. On an immediate-mode GPU the discard costs and saves
 nothing.
+
+### The g-buffer shading override
+
+**`Settings.GBufferShadingOverride` (off by default) separates what the g-buffer pass spends on
+shading from what it spends on geometry.** The pass's GPU time alone cannot say which bounds it,
+and the two have different remedies. With the setting on, every opaque draw — static, instanced,
+skinned, CPU- or GPU-submitted — binds an override pipeline in place of its material's
+(`GBufferShadingOverride`, `src/Renderer/GBufferShadingOverride.h`), built by
+`Material::BuildFragmentOverridePipeline` from **that material's own vertex stage, pipeline layout
+and face culling** paired with `gbuffer_shading_override.frag`: a constant albedo, the interpolated
+vertex normal, a mid roughness, the motion vector, and no material block or texture read. So the
+pass binds the same sets, records the same draws over the same groups and runs the same vertex work
+and raster, and the "Scene GBuffer" time with the override on is the pass without material shading;
+the difference is what shading costs. Lighting and everything after it run as usual over the
+untextured surfaces.
+
+- **One override pipeline per material and layout**, not one for the whole pass, because one
+  vertex stage and one cull mode would change the geometry it means to hold fixed: a material may
+  author its own vertex stage and a two-sided cull. The pipelines are built the first frame each
+  material is drawn with the setting on, keyed on the layout they were built against (a material's
+  static and skinned layouts are its own) and holding it, and dropped when the setting goes off.
+- **Coverage is the rasterized geometry's.** The opaque contract has no alpha-test mode and no
+  shipped Surface fragment discards, so nothing alpha-tested exists to keep; a custom fragment that
+  discards, or writes depth through `GBufferDepthOutput`, is drawn at its rasterized coverage and
+  depth instead, since both are computed by the fragment stage the override replaces.
+- **It overrides the g-buffer pass only.** The depth-only passes run no material fragment stage,
+  and the translucent pass keeps its materials' pipelines.
+
+It is reachable from the debug panel (beside the debug view) and over MCP (`render.configure`), so a
+capture can be taken with it on and off.
 
 ### The PostProcess fullscreen-material path
 

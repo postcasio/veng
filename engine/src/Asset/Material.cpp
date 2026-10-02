@@ -2,6 +2,8 @@
 
 #include <cstring>
 
+#include <fmt/format.h>
+
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetBuild.h>
 #include <Veng/Asset/AssetManager.h>
@@ -12,7 +14,7 @@
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Task/TaskSystem.h>
 
-#include "Loaders/SurfaceSkinnedPipeline.h"
+#include "Loaders/SurfacePipeline.h"
 
 namespace Veng
 {
@@ -153,6 +155,40 @@ namespace Veng
                   "Material::EnsureSkinnedPipeline: '{}' skinned pipeline build failed: {}", m_Name,
                   built.has_value() ? "" : built.error());
         m_SkinnedPipeline = std::move(*built);
+    }
+
+    Result<Ref<Renderer::GraphicsPipeline>>
+    Material::BuildFragmentOverridePipeline(AssetManager& assets, const Shader& fragment,
+                                            const bool skinned) const
+    {
+        if (m_Domain != MaterialDomain::Surface)
+        {
+            return std::unexpected(
+                fmt::format("material '{}': a fragment override needs a Surface material", m_Name));
+        }
+
+        if (!skinned)
+        {
+            return Detail::BuildSurfacePipeline(
+                assets, m_Context, fmt::format("Material {} Override Pipeline", m_Id.Value),
+                m_PipelineLayout, *m_VertexShader.Get(), fragment, m_CullMode);
+        }
+
+        if (m_SkinnedPipeline == nullptr)
+        {
+            return std::unexpected(fmt::format(
+                "material '{}': a skinned fragment override needs the skinned pipeline built first",
+                m_Name));
+        }
+        const AssetResult<AssetHandle<Shader>> skinnedVs =
+            assets.LoadSync<Shader>(Detail::SurfaceSkinnedVertId);
+        if (!skinnedVs)
+        {
+            return std::unexpected(skinnedVs.error().Detail);
+        }
+        return Detail::BuildSurfacePipeline(
+            assets, m_Context, fmt::format("Material {} Skinned Override Pipeline", m_Id.Value),
+            m_SkinnedPipeline->GetPipelineLayout(), *skinnedVs->Get(), fragment, m_CullMode);
     }
 
     void Material::Finalize(Ref<Renderer::PipelineLayout> layout,

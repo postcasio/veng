@@ -29,4 +29,15 @@ namespace Veng::Mcp
     /// @param server  The server to register the tools into (before its first Pump()).
     /// @param host    The provider seam captured by reference into each handler.
     void RegisterRenderCaptureWriteTools(McpServer& server, const McpHost& host);
+
+    /// @brief Registers the renderer-settings write tool (render.configure).
+    ///
+    /// Sets a viewport's diagnostic renderer settings — the debug view, the light-tile cull, the
+    /// g-buffer shading override — so a capture can be scripted around them. A settings change
+    /// recompiles the viewport's graph and changes what the application shows, so it is
+    /// registered only when McpServerInfo::AllowMutations is set, beside the capture verbs. The
+    /// host must outlive the server.
+    /// @param server  The server to register the tool into (before its first Pump()).
+    /// @param host    The provider seam captured by reference into the handler.
+    void RegisterRenderSettingsWriteTools(McpServer& server, const McpHost& host);
 }

@@ -237,6 +237,20 @@ namespace Veng::Renderer
         /// Consulted only on the Shaded path; the GeometryDepthNormal path ignores it entirely.
         DebugView Mode = DebugView::Final;
 
+        /// @brief Whether every opaque g-buffer draw shades through one trivial fragment stage.
+        ///
+        /// A diagnostic: each draw keeps its own vertex stage, pipeline layout and face culling, its
+        /// sets, its submission and its draw count, and its material's fragment stage is replaced by
+        /// one writing a constant albedo, the interpolated vertex normal and a motion vector, with
+        /// no material or texture read. The geometry, raster and draw cost of the pass are therefore
+        /// those of the normal frame, so the change in the "Scene GBuffer" pass's GPU time between
+        /// the two settings is what the materials' shading costs, and the remainder is geometry.
+        /// The lighting and every later pass run as usual over the untextured surfaces. A fragment a
+        /// material would have discarded or given a written depth is shaded at its rasterized
+        /// depth instead (no opaque material alpha-tests, so coverage moves only for a custom
+        /// fragment that discards). Off by default; a toggle is a Configure like any other field.
+        bool GBufferShadingOverride = false;
+
         /// @brief Whether the compute mip-pyramid bloom runs ahead of tonemap.
         ///
         /// A topology change: it inserts/removes the bloom down/up/composite compute sweep.

@@ -1,6 +1,6 @@
 #include "MaterialLoader.h"
 
-#include "SurfaceSkinnedPipeline.h"
+#include "SurfacePipeline.h"
 
 #include <algorithm>
 #include <cstring>
@@ -32,12 +32,6 @@ namespace Veng
         // same gathered geometry through the canonical vertex stage — so it carries the
         // Material::NoSelectorPush sentinel and pushes nothing.
         constexpr u32 FullscreenSelectorPushOffset = 0;
-
-        // The core pack's skinned surface vertex stage (surface_skinned.vert): the canonical
-        // surface vertex stage plus 4-influence linear-blend skinning, reading the per-instance
-        // palette at set 2. A Surface material pairs it with its fragment to build a skinned
-        // g-buffer pipeline (lazily, on first skinned use) whose layout carries the palette set.
-        constexpr AssetId SurfaceSkinnedVertId{0x984BE76D55A4DA7CULL};
 
         u32 SelectorPushOffsetFor(MaterialDomain domain)
         {
@@ -187,68 +181,66 @@ namespace Veng
                              .PushConstantRanges = mergedRanges,
                          });
         }
+    }
 
-        // Build a Surface material's graphics pipeline against the fixed deferred g-buffer formats.
-        // Called from the main-thread finalize, where the shaders are guaranteed resident.
-        Result<Ref<Renderer::GraphicsPipeline>>
-        BuildSurfacePipeline(AssetManager& manager, Renderer::Context& context, AssetId id,
-                             const Ref<Renderer::PipelineLayout>& layout,
-                             const Veng::Shader& vsAsset, const Veng::Shader& fsAsset,
-                             Renderer::CullMode cullMode)
+    Result<Ref<Renderer::GraphicsPipeline>>
+    Detail::BuildSurfacePipeline(AssetManager& manager, Renderer::Context& context, string name,
+                                 const Ref<Renderer::PipelineLayout>& layout,
+                                 const Veng::Shader& vsAsset, const Veng::Shader& fsAsset,
+                                 Renderer::CullMode cullMode)
+    {
+        const Renderer::ShaderInterface& vsInterface = vsAsset.Interface;
+
+        // VertexLayout loads are CPU-only; synchronous here is free even on the async path.
+        optional<Renderer::VertexBufferLayout> vertexBufferLayout;
+        if (vsInterface.VertexLayoutId.has_value())
         {
-            const Renderer::ShaderInterface& vsInterface = vsAsset.Interface;
-
-            // VertexLayout loads are CPU-only; synchronous here is free even on the async path.
-            optional<Renderer::VertexBufferLayout> vertexBufferLayout;
-            if (vsInterface.VertexLayoutId.has_value())
+            const AssetResult<AssetHandle<Veng::VertexLayout>> layoutResult =
+                manager.LoadSync<Veng::VertexLayout>(*vsInterface.VertexLayoutId);
+            if (!layoutResult)
             {
-                const AssetResult<AssetHandle<Veng::VertexLayout>> layoutResult =
-                    manager.LoadSync<Veng::VertexLayout>(*vsInterface.VertexLayoutId);
-                if (!layoutResult)
-                {
-                    return std::unexpected(layoutResult.error().Detail);
-                }
-
-                vertexBufferLayout = layoutResult->Get()->GetLayout();
+                return std::unexpected(layoutResult.error().Detail);
             }
 
-            return Renderer::GraphicsPipeline::Create(
-                context,
-                {
-                    .Name = fmt::format("Material {} Pipeline", id.Value),
-                    .ColorAttachments =
-                        {
-                            {.Format = Renderer::GBuffer::AlbedoFormat,
-                             .Blend = Renderer::BlendState::Opaque()},
-                            {.Format = Renderer::GBuffer::NormalFormat,
-                             .Blend = Renderer::BlendState::Opaque()},
-                            {.Format = Renderer::GBuffer::ORMFormat,
-                             .Blend = Renderer::BlendState::Opaque()},
-                            // G3 — the per-object motion vector the surface fragment writes
-                            // alongside the g-buffer (folded in, not a separate prepass).
-                            {.Format = Renderer::GBuffer::VelocityFormat,
-                             .Blend = Renderer::BlendState::Opaque()},
-                            // G4 — HDR emissive the surface fragment writes alongside the
-                            // g-buffer; the lighting pass adds it into the outgoing radiance.
-                            {.Format = Renderer::GBuffer::EmissiveFormat,
-                             .Blend = Renderer::BlendState::Opaque()},
-                        },
-                    .DepthAttachmentFormat = Renderer::GBuffer::DepthFormat,
-                    .VertexBufferLayout = vertexBufferLayout,
-                    // The surface vertex stage reads the per-draw candidate id as an
-                    // instance-rate attribute on binding 1 (fetched at firstInstance).
-                    .InstanceCandidateId = true,
-                    .PipelineLayout = layout,
-                    .ShaderStages =
-                        {
-                            {.Stage = Renderer::ShaderStage::Vertex, .Module = vsAsset.Module},
-                            {.Stage = Renderer::ShaderStage::Fragment, .Module = fsAsset.Module},
-                        },
-                    .CullMode = cullMode,
-                    .DepthTestEnable = true,
-                    .DepthWriteEnable = true,
-                });
+            vertexBufferLayout = layoutResult->Get()->GetLayout();
         }
+
+        return Renderer::GraphicsPipeline::Create(
+            context,
+            {
+                .Name = std::move(name),
+                .ColorAttachments =
+                    {
+                        {.Format = Renderer::GBuffer::AlbedoFormat,
+                         .Blend = Renderer::BlendState::Opaque()},
+                        {.Format = Renderer::GBuffer::NormalFormat,
+                         .Blend = Renderer::BlendState::Opaque()},
+                        {.Format = Renderer::GBuffer::ORMFormat,
+                         .Blend = Renderer::BlendState::Opaque()},
+                        // G3 — the per-object motion vector the surface fragment writes
+                        // alongside the g-buffer (folded in, not a separate prepass).
+                        {.Format = Renderer::GBuffer::VelocityFormat,
+                         .Blend = Renderer::BlendState::Opaque()},
+                        // G4 — HDR emissive the surface fragment writes alongside the
+                        // g-buffer; the lighting pass adds it into the outgoing radiance.
+                        {.Format = Renderer::GBuffer::EmissiveFormat,
+                         .Blend = Renderer::BlendState::Opaque()},
+                    },
+                .DepthAttachmentFormat = Renderer::GBuffer::DepthFormat,
+                .VertexBufferLayout = vertexBufferLayout,
+                // The surface vertex stage reads the per-draw candidate id as an
+                // instance-rate attribute on binding 1 (fetched at firstInstance).
+                .InstanceCandidateId = true,
+                .PipelineLayout = layout,
+                .ShaderStages =
+                    {
+                        {.Stage = Renderer::ShaderStage::Vertex, .Module = vsAsset.Module},
+                        {.Stage = Renderer::ShaderStage::Fragment, .Module = fsAsset.Module},
+                    },
+                .CullMode = cullMode,
+                .DepthTestEnable = true,
+                .DepthWriteEnable = true,
+            });
     }
 
     Result<Ref<Renderer::GraphicsPipeline>>
@@ -277,8 +269,9 @@ namespace Veng
             return std::unexpected(layout.error());
         }
 
-        return BuildSurfacePipeline(manager, context, id, *layout, *skinnedVs->Get(),
-                                    fragmentShader, cullMode);
+        return BuildSurfacePipeline(manager, context,
+                                    fmt::format("Material {} Skinned Pipeline", id.Value), *layout,
+                                    *skinnedVs->Get(), fragmentShader, cullMode);
     }
 
     AssetResult<Detail::LoadJob> MaterialLoader::Load(AssetManager& manager,
@@ -586,8 +579,9 @@ namespace Veng
                 Ref<Renderer::GraphicsPipeline> pipeline;
                 if (domain == MaterialDomain::Surface)
                 {
-                    Result<Ref<Renderer::GraphicsPipeline>> built = BuildSurfacePipeline(
-                        manager, context, id, *layout, *vsHandle.Get(), *fsHandle.Get(), cullMode);
+                    Result<Ref<Renderer::GraphicsPipeline>> built = Detail::BuildSurfacePipeline(
+                        manager, context, fmt::format("Material {} Pipeline", id.Value), *layout,
+                        *vsHandle.Get(), *fsHandle.Get(), cullMode);
                     if (!built)
                     {
                         return std::unexpected(built.error());

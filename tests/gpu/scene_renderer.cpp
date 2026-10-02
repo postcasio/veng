@@ -12,6 +12,7 @@
 // texel, a background texel) plus a whole-frame mean-luminance invariant — the
 // automated correctness gate for the deferred plan.
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cmath>
@@ -6145,6 +6146,155 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         }
     }
     CHECK(drawnTexels > 50);
+
+    std::filesystem::remove(outArchive);
+}
+
+// The g-buffer shading override replaces each opaque draw's fragment stage and nothing else. A
+// skinned triangle and two instances of a static cube, all on one solid red material, render with
+// the override off and on: the frame records the same draws either way, the override frame is lit
+// rather than black, and its albedo is one constant grey over every drawn texel — the static and the
+// skinned draws alike — where the material's own albedo is red.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: the g-buffer shading override draws every opaque draw through "
+                  "one flat fragment at the same draw count")
+{
+    RegisterBuiltinTypes(Types);
+
+    const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_shading_override.vengpack";
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    const VoidResult cookResult =
+        cooker.CookPack(fixtureDir / "skinned_pack.json", outArchive, {}, nullptr, nullptr, nullptr,
+                        nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    REQUIRE(cookResult.has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+
+    const AssetResult<AssetHandle<Mesh>> skinnedMesh = assets.LoadSync<Mesh>(AssetId{0x2D13});
+    REQUIRE(skinnedMesh.has_value());
+    REQUIRE((*skinnedMesh)->IsSkinned());
+    const AssetResult<AssetHandle<MaterialInstance>> red =
+        assets.LoadSync<MaterialInstance>(AssetId{0x896101});
+    REQUIRE(red.has_value());
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity skinned = scene->CreateEntity();
+    scene->Add<Transform>(skinned);
+    scene->Add<MeshRenderer>(skinned).Mesh = *skinnedMesh;
+    vector<mat4> bindPose;
+    (*skinnedMesh)->GetSkeleton().Get()->ComputeBindPoseMatrices(bindPose);
+    scene->Add<SkinnedPose>(skinned).Skinning = bindPose;
+
+    const AssetHandle<Mesh> cube =
+        assets.Adopt(Mesh::BuildSync(Context, Primitives::Cube(0.35f, *red), "Override Cube"));
+    for (const f32 y : {0.2f, 0.8f})
+    {
+        const Entity entity = scene->CreateEntity();
+        scene->Add<Transform>(entity).Position = vec3(-0.6f, y, 0.0f);
+        scene->Add<MeshRenderer>(entity).Mesh = cube;
+    }
+
+    const Entity sun = scene->CreateEntity();
+    scene->Add<Light>(sun) = Light{.Type = LightType::Directional,
+                                   .Direction = glm::normalize(vec3(0.2f, -0.3f, -1.0f)),
+                                   .Intensity = DirectionalLux(3.0f)};
+
+    constexpr uvec2 extent{96, 96};
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.1f, 0.45f, 2.8f), vec3(0.1f, 0.45f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    SceneRendererSettings settings{.Mode = DebugView::Final, .Bloom = false, .AO = false};
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = settings,
+    });
+
+    // Each configuration is measured on its second frame, past any first-frame setup work.
+    auto RenderCountingDraws = [&]() -> u32
+    {
+        u32 draws = 0;
+        for (int frame = 0; frame < 2; ++frame)
+        {
+            Context.ImmediateCommands(
+                [&](CommandBuffer& cmd)
+                {
+                    const u32 before = cmd.GetDrawCallCount();
+                    renderer->Execute(
+                        cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+                    draws = cmd.GetDrawCallCount() - before;
+                });
+        }
+        return draws;
+    };
+    auto PixelAt = [&](const vector<u8>& pixels, const vec3& world) -> vec3
+    {
+        const vec4 clip = camera.ViewProjection() * vec4(world, 1.0f);
+        const uvec2 pixel = uvec2((vec2(clip) / clip.w * 0.5f + 0.5f) * vec2(extent));
+        return DecodeTexel(pixels, extent.x, pixel.x, pixel.y);
+    };
+    auto MaxOf = [](const vec3& v) { return std::max({v.x, v.y, v.z}); };
+    auto MinOf = [](const vec3& v) { return std::min({v.x, v.y, v.z}); };
+    const vec3 cubeFace{-0.6f, 0.2f, 0.175f};
+    const vec3 triangleInterior{0.3f, 0.3f, 0.0f};
+
+    const u32 shadedDraws = RenderCountingDraws();
+    const vector<u8> shaded = renderer->GetOutput()->GetImage()->Download();
+
+    settings.GBufferShadingOverride = true;
+    renderer->Configure(settings);
+    const u32 flatDraws = RenderCountingDraws();
+    const vector<u8> flat = renderer->GetOutput()->GetImage()->Download();
+    CHECK(flatDraws == shadedDraws);
+    CHECK(flat != shaded);
+    // A lit face, not the black of an unshaded or undrawn frame.
+    const vec3 litFace = PixelAt(flat, cubeFace);
+    CHECK(MaxOf(litFace) > 0.05f);
+
+    // The albedo the override wrote: one grey over every drawn texel, static and skinned.
+    settings.Mode = DebugView::Albedo;
+    renderer->Configure(settings);
+    RenderCountingDraws();
+    const vector<u8> flatAlbedo = renderer->GetOutput()->GetImage()->Download();
+    const vec3 background{0.05f, 0.05f, 0.08f};
+    u32 drawnTexels = 0;
+    f32 maxSpread = 0.0f;
+    vec3 lo(1e9f);
+    vec3 hi(-1e9f);
+    for (u32 y = 0; y < extent.y; ++y)
+    {
+        for (u32 x = 0; x < extent.x; ++x)
+        {
+            const vec3 c = DecodeTexel(flatAlbedo, extent.x, x, y);
+            if (glm::length(c - background) <= 0.1f)
+            {
+                continue;
+            }
+            ++drawnTexels;
+            maxSpread = std::max(maxSpread, MaxOf(c) - MinOf(c));
+            lo = glm::min(lo, c);
+            hi = glm::max(hi, c);
+        }
+    }
+    CHECK(drawnTexels > 100);
+    CHECK(maxSpread < 0.02f);
+    CHECK(MaxOf(hi - lo) < 0.02f);
+    const vec3 flatTriangle = PixelAt(flatAlbedo, triangleInterior);
+    CHECK(glm::length(flatTriangle - background) > 0.1f);
+
+    // Off again, the material's own red albedo comes back on the skinned draw.
+    settings.GBufferShadingOverride = false;
+    renderer->Configure(settings);
+    RenderCountingDraws();
+    const vector<u8> shadedAlbedo = renderer->GetOutput()->GetImage()->Download();
+    const vec3 shadedTriangle = PixelAt(shadedAlbedo, triangleInterior);
+    CHECK(shadedTriangle.r > shadedTriangle.g + 0.2f);
 
     std::filesystem::remove(outArchive);
 }

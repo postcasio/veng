@@ -7,6 +7,8 @@
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DescriptorSet.h>
 
+#include "../GBufferShadingOverride.h"
+
 namespace Veng::Renderer
 {
     namespace
@@ -133,7 +135,16 @@ namespace Veng::Renderer
             {
                 if (lastPipeline != group.PipelineMaterial)
                 {
-                    group.PipelineMaterial->Bind(cmd);
+                    // A Surface material's Bind binds its pipeline and pushes nothing, so binding
+                    // the override pipeline in its place leaves the rest of the state alike.
+                    if (m_ShadingOverride != nullptr)
+                    {
+                        cmd.BindPipeline(m_ShadingOverride->Get(*group.PipelineMaterial, false));
+                    }
+                    else
+                    {
+                        group.PipelineMaterial->Bind(cmd);
+                    }
                     registry.Bind(cmd);
                     cmd.BindDescriptorSets({plan.DrawDataSet.get()}, 3);
                     cmd.PushConstants(plan.Push);
@@ -182,7 +193,14 @@ namespace Veng::Renderer
                 {
                     // Bind the material's skinned g-buffer pipeline, not its static one: the skinned
                     // pipeline's layout carries the palette at set 4, so the bind below is valid.
-                    group.PipelineMaterial->BindSkinned(cmd);
+                    if (m_ShadingOverride != nullptr)
+                    {
+                        cmd.BindPipeline(m_ShadingOverride->Get(*group.PipelineMaterial, true));
+                    }
+                    else
+                    {
+                        group.PipelineMaterial->BindSkinned(cmd);
+                    }
                     registry.Bind(cmd);
                     cmd.BindDescriptorSets({plan.DrawDataSet.get(), plan.PaletteSet.get()}, 3);
                     cmd.PushConstants(plan.Push);

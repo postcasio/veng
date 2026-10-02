@@ -317,7 +317,9 @@ family registers from the editor side.
   `GetLastGpuFrameTimeMs`), `render.pass_times` (the last frame's per-pass GPU timings over
   `Context::GetLastGpuPassTimings` — the per-pass breakdown of the single number `render.stats`
   reports as `gpu_frame_time_ms`, from the backend's timestamp queries so it is profiler-independent;
-  `gpu_timing_supported` is false where the device has no timestamps), and the two bindless reads below. The PNG encode uses stb_image_write,
+  `gpu_timing_supported` is false where the device has no timestamps; `render.stats`'
+  `render_features` also reports the light-tile cull and the g-buffer shading override), and the two
+  bindless reads below. The PNG encode uses stb_image_write,
   vendored PRIVATE into `src/Vendor/StbImageWrite.cpp` — never a public header. A null/unknown
   viewport reports "no viewport".
 
@@ -345,6 +347,16 @@ family registers from the editor side.
   whole array rather than the page. Nothing is recorded per slot for this: the description is read
   back off the `Ref` the registry already keeps to stop a registered resource dangling, so a
   registration site is untouched and a caller pays only for the call.
+
+  **`render.configure` sets a viewport's diagnostic renderer settings** —
+  `{ viewport?, debug_view?, light_tile_culling?, gbuffer_shading_override? }`, each optional and
+  an absent one left as it is — `Configure`s the viewport and returns the settings as applied. It
+  is the scripted half of a comparison capture: set the override, capture, set it back. A change
+  recompiles the viewport's graph and changes what the app shows, so it registers only under
+  `AllowMutations` (`RegisterRenderSettingsWriteTools`, beside the capture verbs). An unknown key,
+  an unknown debug view (matched case-insensitively against `DebugViewNames`) or a non-boolean toggle
+  refuses the whole call. A host whose own interface holds a copy of the settings (the editor's
+  viewport panel) may re-apply that copy over them.
 
   **The `render.capture_*` trio records the presented frame to a video file**, through
   `McpHost::VideoRecorder` (`Capture::VideoRecorder`, `engine/src/Capture/CLAUDE.md`).
@@ -584,7 +596,9 @@ httplib stays PRIVATE and `veng-config` already carries `find_dependency(nlohman
   under a heading solves below that heading's box — so the assertions survive any restyling of the
   fixture.
 - **`mcp_screenshot`** — `render.screenshot` (`gpu`-labelled: the viewport `Download` → PNG
-  path).
+  path), and `render.configure` over a mutations-allowed server: the settings land on the viewport
+  and read back through `render.stats`, and an unknown setting or debug view refuses the call and
+  applies nothing.
 - **`mcp_mutation`** — the mutation tools behind `AllowMutations`, including the routed
   `ApplyMutation` hook and the batch delete verbs' per-item / over-limit result model.
 - **`mcp_input`** — `input.send` behind `AllowMutations` over a headless `Input`: key/button/move/

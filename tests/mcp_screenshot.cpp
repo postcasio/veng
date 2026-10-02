@@ -7,6 +7,8 @@
 //   - render.stats returns a plausible cull funnel + a non-negative GPU frame time,
 //   - render.screenshot returns an image content block whose base64 PNG decodes to the
 //     viewport's exact dimensions (the full readback → tonemap → PNG → base64 → decode path).
+//   - render.configure (the server allows mutations) applies the debug settings onto the
+//     viewport, reports them back, and refuses an unknown setting or debug view whole.
 // Labelled gpu; returns 77 (skips) with no Vulkan ICD, like the rest of the band.
 
 #include <Veng/Mcp/McpHost.h>
@@ -209,6 +211,7 @@ int main()
 
     Mcp::McpServerInfo info;
     info.Port = 0;
+    info.AllowMutations = true;
     Unique<Mcp::McpServer> server = Mcp::McpServer::Create(info, host);
     const u16 port = server->GetPort();
     Check(port != 0, "GetPort resolved an ephemeral port");
@@ -291,6 +294,33 @@ int main()
             Check(channels == 3, "the PNG is RGB");
             stbi_image_free(pixels);
         }
+
+        // render.configure sets the debug settings on the viewport and reports what it applied;
+        // render.stats then reads the same state back.
+        Check(names.count("render.configure") == 1, "render.configure registered");
+        const Json configured = TextPayload(
+            CallTool(client, "render.configure",
+                     Json{{"debug_view", "albedo"}, {"gbuffer_shading_override", true}}));
+        Check(configured.value("debug_view", std::string{}) == "Albedo",
+              "render.configure reports the debug view it applied");
+        Check(configured.value("gbuffer_shading_override", false),
+              "render.configure reports the shading override on");
+        Check(viewport->GetSettings().Mode == DebugView::Albedo &&
+                  viewport->GetSettings().GBufferShadingOverride,
+              "render.configure applied the settings to the viewport");
+        const Json reconfigured = TextPayload(CallTool(client, "render.stats", Json::object()));
+        Check(reconfigured["render_features"].value("gbuffer_shading_override", false),
+              "render.stats reports the shading override");
+
+        // A refused call applies nothing: an unknown setting, and a debug view naming no arm.
+        const Json unknownKey =
+            CallTool(client, "render.configure",
+                     Json{{"gbuffer_shading_override", false}, {"wireframe", true}});
+        Check(unknownKey.value("isError", false) == true, "an unknown setting is an isError");
+        const Json unknownView = CallTool(client, "render.configure", Json{{"debug_view", "nope"}});
+        Check(unknownView.value("isError", false) == true, "an unknown debug view is an isError");
+        Check(viewport->GetSettings().GBufferShadingOverride,
+              "a refused render.configure left the settings unchanged");
 
         // A screenshot of an unknown viewport is an isError result, never a null deref.
         const Json missing = CallTool(client, "render.screenshot", Json{{"viewport", "nope"}});

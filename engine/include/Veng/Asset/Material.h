@@ -10,6 +10,7 @@
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
+#include <Veng/Result.h>
 
 namespace Veng::Renderer
 {
@@ -292,6 +293,28 @@ namespace Veng
         /// stage.
         /// @param assets  Asset manager used to load the skinned vertex shader and its layout.
         void EnsureSkinnedPipeline(AssetManager& assets);
+
+        /// @brief Builds a g-buffer pipeline that keeps this material's geometry and replaces its
+        ///        shading with another fragment stage.
+        ///
+        /// The pipeline pairs @p fragment with the vertex stage, the pipeline layout and the face
+        /// culling of the material's own static g-buffer pipeline — or of its skinned one, with
+        /// @p skinned — against the same g-buffer formats, so a draw recorded through it binds the
+        /// same sets, runs the same vertex work and rasterizes the same triangles, and only the
+        /// fragment stage differs. The layout is the material's, so @p fragment may read nothing
+        /// outside it. A fragment the material's own pipeline would have discarded, or given a
+        /// written depth, is shaded at its rasterized depth instead: that work is part of the
+        /// material's fragment stage. Surface domain only. Not cached: the caller owns the result.
+        /// @param assets    Asset manager, used to load the vertex stage's layout (and the skinned
+        ///                  vertex stage).
+        /// @param fragment  The (resident) replacement fragment shader. It must read the surface
+        ///                  interpolants (Veng/surface.slang's SurfaceFragmentInput) and write the
+        ///                  g-buffer outputs.
+        /// @param skinned   Build the skinned variant; EnsureSkinnedPipeline must have run.
+        /// @return The pipeline, or a recoverable error string.
+        [[nodiscard]] Result<Ref<Renderer::GraphicsPipeline>>
+        BuildFragmentOverridePipeline(AssetManager& assets, const Shader& fragment,
+                                      bool skinned) const;
 
         /// @brief Returns the skinned pipeline's three-set layout, or null when the material has no skinned pipeline.
         ///

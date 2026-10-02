@@ -15,6 +15,7 @@ namespace Veng::Renderer
 {
     class CommandBuffer;
     class Context;
+    class GBufferShadingOverride;
 
     /// @brief Records a draw group's instanced runs: one DrawIndexed per run.
     ///
@@ -33,7 +34,9 @@ namespace Veng::Renderer
     /// Rasterizes the static and skinned survivors into the five g-buffer MRT channels
     /// plus depth, binding each draw group's own pipeline. Under CullMode::GPU the static
     /// draws issue one DrawIndexedIndirect per group over the cull-written command run;
-    /// under CullMode::CPU a direct DrawIndexed per surviving slot.
+    /// under CullMode::CPU a direct DrawIndexed per surviving slot. Under the shading override each
+    /// group binds its material's override pipeline instead of the material's own, and records the
+    /// same draws.
     class GBufferScenePass final : public ScenePass
     {
     public:
@@ -44,11 +47,14 @@ namespace Veng::Renderer
         /// @param cull        Active cull mode selecting the submission shape.
         /// @param indirectId  The cull-written indirect-command buffer id (GPU mode).
         /// @param stores      Which colour channels the pass stores; the rest are discarded.
+        /// @param shadingOverride The prepared override pipelines to draw through, or null to bind
+        ///                    each group's own material pipeline.
         GBufferScenePass(Context& context, uvec2 extent, const GBufferDrawPlan* plan,
                          SceneRendererSettings::CullMode cull, ResourceId indirectId,
-                         const GBufferChannelStates& stores)
+                         const GBufferChannelStates& stores,
+                         const GBufferShadingOverride* shadingOverride)
             : m_Context(context), m_Extent(extent), m_Plan(plan), m_Cull(cull),
-              m_IndirectId(indirectId), m_Stores(stores)
+              m_IndirectId(indirectId), m_Stores(stores), m_ShadingOverride(shadingOverride)
         {
         }
 
@@ -73,5 +79,7 @@ namespace Veng::Renderer
         ResourceId m_IndirectId;
         /// @brief Which colour channels the pass stores for a later reader.
         GBufferChannelStates m_Stores;
+        /// @brief The override pipelines drawn through in place of the materials', or null.
+        const GBufferShadingOverride* m_ShadingOverride = nullptr;
     };
 }
