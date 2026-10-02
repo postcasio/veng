@@ -49,6 +49,7 @@
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SceneViewport.h>
 
+#include "Gui/GuiCounters.h"
 #include "Render/DisplayResolve.h"
 #include "Scene/FocusRequestReconcile.h"
 #include "Scene/RequestDrain.h"
@@ -2675,30 +2676,46 @@ namespace Veng
             // drive-list), which must not run mid-drive. Regions resolve from each info's Layout here;
             // world rebinds run their departed-overlay detach and seat re-resolution through the
             // runner; present-on-ready rebinds accrue this frame's delta toward their ready timeout.
-            m_ManagedViewports->ApplyPendingReconfigure(*m_WorldRunner, delta, m_WorldView);
+            {
+                VE_PROFILE_SCOPE("Frame/ApplyReconfigure");
+                m_ManagedViewports->ApplyPendingReconfigure(*m_WorldRunner, delta, m_WorldView);
+            }
 
             // A present-on-ready rebind that landed this frame is an arrival: fire its hook before the
             // pins and the request drain, so the game applies arrival state to the now-presented world
             // ahead of anything it does this frame.
-            FireWorldArrivals();
+            {
+                VE_PROFILE_SCOPE("Frame/WorldArrivals");
+                FireWorldArrivals();
+            }
 
             // Then the presentation moments the apply produced: what a viewport now presents and what
             // it gave up on. After the arrivals, so a consumer sees a destination's arrival state
             // applied before it is told the viewport is presenting it.
-            FirePresentationHooks();
+            {
+                VE_PROFILE_SCOPE("Frame/PresentationHooks");
+                FirePresentationHooks();
+            }
 
             // Translate the managed viewports' world bindings into directory presence pins at the
             // rebind apply point (one-directional: presentation drives lifetime, never the reverse),
             // then reap the directory standalone (a host owns the reap when hosting). A presented
             // world — pending rebind destination included — is pinned and never reaped; a departed
             // world is unpinned to the dwell.
-            SyncPresentationPins();
-            ReapDirectory();
+            {
+                VE_PROFILE_SCOPE("Frame/PresentationPins");
+                SyncPresentationPins();
+            }
+            {
+                VE_PROFILE_SCOPE("Frame/ReapDirectory");
+                ReapDirectory();
+            }
 
             // The standalone durability checkpoint; while hosting, the ServerHost's Pump owns the
             // shared registry's checkpoint (with its live pose refresh), so skip it there.
             if (m_Sessions && GetServerHost() == nullptr)
             {
+                VE_PROFILE_SCOPE("Frame/Checkpoint");
                 m_Sessions->Checkpoint(static_cast<f64>(Time::Now()));
             }
 
@@ -2707,13 +2724,17 @@ namespace Veng
             // directly (host, connect, stop-net, travel, exit), and the engine carries them out here,
             // before the input snapshot and the world tick. Runs on the local Application only;
             // requests never ride the wire.
-            DrainRequestComponents();
+            {
+                VE_PROFILE_SCOPE("Frame/DrainRequests");
+                DrainRequestComponents();
+            }
 
             // Deliver queued inbound game messages at the same frame-safe point: the hosts' pumps only
             // queue them, and dispatching here — outside any scene iteration, before the world tick —
             // means a channel handler observing scene state never runs mid-tick.
             if (m_Net)
             {
+                VE_PROFILE_SCOPE("Frame/DeliverMessages");
                 if (m_Net->Server)
                 {
                     m_Net->Server->DeliverMessages();
@@ -3102,6 +3123,10 @@ namespace Veng
         VE_PROFILE_COUNTER(
             "Render/DrawCalls",
             static_cast<f64>(m_RenderContext.GetCurrentCommandBuffer().GetDrawCallCount()));
+
+        // Every document this frame presents has driven by now: the viewports' overlays and layers
+        // in the render, and the composite's.
+        Gui::Counters::SampleFrame();
 
         if (m_ManagedViewports == nullptr || m_ManagedViewports->GetCount() == 0)
         {

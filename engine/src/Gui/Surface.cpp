@@ -3,6 +3,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/MaterialInstance.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/DocumentHost.h>
 #include <Veng/Gui/DocumentTexture.h>
@@ -191,6 +192,7 @@ namespace Veng
         {
             if (Document.IsLoaded())
             {
+                VE_PROFILE_SCOPE("Gui/Instantiate");
                 runtime.Host->SetDocument(Gui::Document::Instantiate(*Document.Get(), assets));
             }
             else

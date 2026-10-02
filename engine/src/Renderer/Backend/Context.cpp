@@ -6,6 +6,7 @@
 #include <fstream>
 #include <set>
 
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Renderer/Backend/Barrier.h>
 #include <Veng/Renderer/Backend/DebugMarkers.h>
 #include <Veng/Renderer/Backend/Natives.h>
@@ -918,6 +919,7 @@ namespace Veng::Renderer
                 UpdateRenderExtent();
             }
 
+            VE_PROFILE_SCOPE("Render/Acquire");
             AcquireNextImage(frame.GetImageAvailableSemaphore());
         }
 
@@ -935,6 +937,7 @@ namespace Veng::Renderer
         // has been written once.
         if (m_GpuTimingSupported)
         {
+            VE_PROFILE_SCOPE("Render/TimestampReadback");
             const u32 slot = m_Native->CurrentFrameInFlight;
             const u32 queriesPerFrame = 2 + 2 * Native::MaxGpuScopes;
             const u32 frameBase = slot * queriesPerFrame;
@@ -1015,11 +1018,16 @@ namespace Veng::Renderer
         // Transition any resources that went resident since last frame into Sample
         // layout before passes record. The RenderGraph cannot derive this transition
         // — bindless resources are invisible to it (sampled through set 0).
-        for (const Ref<ImageView>& view : m_PendingBindlessAcquires)
+        if (!m_PendingBindlessAcquires.empty())
         {
-            commandBuffer->PrepareForAccess(view, AccessKind::SampleAny);
+            BeginGpuScope(*commandBuffer, "Frame Acquires");
+            for (const Ref<ImageView>& view : m_PendingBindlessAcquires)
+            {
+                commandBuffer->PrepareForAccess(view, AccessKind::SampleAny);
+            }
+            EndGpuScope(*commandBuffer);
+            m_PendingBindlessAcquires.clear();
         }
-        m_PendingBindlessAcquires.clear();
 
         // Amortized generation and readback record here, at the top of the frame and ahead of
         // every pass: a job's result is sampleable by the passes of the frame that finished it,
@@ -1041,7 +1049,10 @@ namespace Veng::Renderer
         {
             // The capture copy is taken here, before the present hands the image to the
             // presentation engine — after that the image is no longer the frame's to read.
-            MirrorPresentedFrame(*commandBuffer);
+            {
+                VE_PROFILE_SCOPE("Render/MirrorFrame");
+                MirrorPresentedFrame(*commandBuffer);
+            }
 
             Backend::TransitionImage(*commandBuffer, *GetCurrentSwapChainImage(),
                                      ImageLayout::PresentSrc);
@@ -1065,9 +1076,15 @@ namespace Veng::Renderer
 
         commandBuffer->End();
 
-        SubmitFrame(frame);
+        {
+            VE_PROFILE_SCOPE("Render/Submit");
+            SubmitFrame(frame);
+        }
 
-        PresentFrame();
+        {
+            VE_PROFILE_SCOPE("Render/Present");
+            PresentFrame();
+        }
 
         // The frame's command buffer is submitted and the slot has advanced. Retires from here
         // until the next BeginFrame park in PendingRetire, since CurrentFrameInFlight now names
@@ -1707,7 +1724,12 @@ namespace Veng::Renderer
 
     SynchronizationFrame& Context::AcquireNextFrame()
     {
-        m_Native->SynchronizationFrames[m_Native->CurrentFrameInFlight].GetInFlightFence().Wait();
+        {
+            VE_PROFILE_SCOPE("Render/FenceWait");
+            m_Native->SynchronizationFrames[m_Native->CurrentFrameInFlight]
+                .GetInFlightFence()
+                .Wait();
+        }
 
         // Fence signalled: GPU finished the work from the last use of this frame
         // index — everything retired then is safe to destroy now.

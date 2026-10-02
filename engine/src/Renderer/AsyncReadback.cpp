@@ -132,11 +132,18 @@ namespace Veng::Renderer
             }
         }
 
+        // Timed only on a pump that stages a copy, so an idle pump adds no span to the frame.
+        bool scoped = false;
         for (Entry& entry : m_Pending)
         {
             if (entry.Staged)
             {
                 continue;
+            }
+            if (!scoped)
+            {
+                m_Context.BeginGpuScope(cmd, "Async Readback");
+                scoped = true;
             }
             cmd.PrepareForAccess(entry.View, AccessKind::TransferSrc);
             cmd.CopyImageSubresourceToBuffer(entry.Image, entry.Staging, entry.MipLevel,
@@ -144,6 +151,10 @@ namespace Veng::Renderer
             cmd.PrepareForAccess(entry.View, entry.RestoreTo);
             entry.Staged = true;
             entry.StagedPump = m_PumpCount;
+        }
+        if (scoped)
+        {
+            m_Context.EndGpuScope(cmd);
         }
     }
 }

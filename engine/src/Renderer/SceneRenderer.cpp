@@ -2186,15 +2186,19 @@ namespace Veng::Renderer
         // ShadowParams enable flag then leaves unsampled.
         const u32 cascadeSetCount = std::max(packed.CascadeSetCount, 1u);
         std::array<CascadeData, MaxCascadeSets> cascadeSets{};
-        for (u32 s = 0; s < cascadeSetCount; ++s)
         {
-            cascadeSets[s] = ComputeCascades(view.Camera, packed.CascadeTravel[s], casterBounds,
-                                             {.Count = m_Settings.CascadeCount,
-                                              .Lambda = m_Settings.CascadeSplitLambda,
-                                              .Resolution = m_Settings.ShadowResolution,
-                                              .MaxDistance = m_Settings.MaxShadowDistance,
-                                              .MinDistance = m_Settings.MinShadowDistance,
-                                              .PancakeNear = m_Context.IsDepthClampSupported()});
+            VE_PROFILE_SCOPE("Render/Cascades");
+            for (u32 s = 0; s < cascadeSetCount; ++s)
+            {
+                cascadeSets[s] =
+                    ComputeCascades(view.Camera, packed.CascadeTravel[s], casterBounds,
+                                    {.Count = m_Settings.CascadeCount,
+                                     .Lambda = m_Settings.CascadeSplitLambda,
+                                     .Resolution = m_Settings.ShadowResolution,
+                                     .MaxDistance = m_Settings.MaxShadowDistance,
+                                     .MinDistance = m_Settings.MinShadowDistance,
+                                     .PancakeNear = m_Context.IsDepthClampSupported()});
+            }
         }
         const std::span<const CascadeData> cascades(cascadeSets.data(), cascadeSetCount);
 
@@ -2261,122 +2265,128 @@ namespace Veng::Renderer
         // reprojection matrix; the jittered one (TAA only) is what the geometry and
         // lighting actually render through.
         const mat4 viewProj = view.Camera.ViewProjection();
-        mat4 renderProj = view.Camera.Projection();
-        if (m_Topology->TaaActive && validExtent.x > 0 && validExtent.y > 0)
-        {
-            // Sub-pixel projection shear; sign is irrelevant to quality (the sequence is
-            // symmetric) and cancels between render and reconstruction, which share this
-            // matrix. The reprojection uses the separate unjittered PrevViewProj. The jitter is
-            // a fraction of the rendered (sub-rect) extent, the resolution actually rasterized.
-            const vec2 jitterPixel = TaaJitterOffset(m_FrameIndex);
-            renderProj[2][0] += 2.0f * jitterPixel.x / static_cast<f32>(validExtent.x);
-            renderProj[2][1] += 2.0f * jitterPixel.y / static_cast<f32>(validExtent.y);
-        }
-        // SH skylight: the lighting pass's second ambient arm reads the sky SH from the
-        // view-constants block below. Every SH-tier source projects the one radiance cube it fills —
-        // an environment its equirect cube, a baked material or baked atmosphere its bake cube — on
-        // that source's dirty signal above; the projection is a pure cube→SH read, so display and
-        // ambient agree.
-        const bool skylightActive = m_SkyResolver->IsSkylightActive();
-        const Sh9& skySh = m_SkyResolver->GetSkySh();
-
-        const mat4 renderViewProj = renderProj * view.Camera.View();
-        // The same projection against a view stripped to its rotation. A pass wanting the *ray*
-        // through a pixel rather than a point on it reconstructs through this, so it never forms a
-        // far-plane world point and subtracts the camera off it — a cancellation of two large
-        // near-equal numbers that costs f32 precision in proportion to how far the camera is from
-        // the world origin. Jittered with renderProj, so it agrees with what was rasterized.
-        const mat4 renderViewRotProj = renderProj * mat4(mat3(view.Camera.View()));
-        // The ambient arm every lit surface of this view takes, deferred and forward alike. IBL
-        // needs its cube-backed source resident — an environment map, or a baked material sky
-        // whose material is loaded; a display-only source shows its sky but lights nothing.
-        const AmbientArm ambientArm = ResolveAmbientArm(m_Topology->IblAllowed,
-                                                        resolvedView.Environment.IsLoaded() ||
-                                                            resolvedView.SkyMaterial.IsLoaded(),
-                                                        m_Topology->SkylightWanted);
-        ViewConstantsBlock viewConstants{
-            .InvViewProj = glm::inverse(renderViewProj),
-            .InvViewRotProj = glm::inverse(renderViewRotProj),
-            .CameraPosition = vec4(view.Camera.GetPosition(), 0.0f),
-            .View = view.Camera.View(),
-            .Proj = renderProj,
-            .PrevViewProj = m_PreviousViewProj,
-            .CurViewProj = viewProj,
-            .RenderScaleUV = vec4(renderScaleUV, m_PreviousRenderScaleUV),
-            .MaxValidUV = vec4(maxValidUV, m_PreviousMaxValidUV),
-            // The frame clock is engine-global (Time), frame-locked so every view and material
-            // reads one consistent value; the delta is this view's.
-            .TimeParams = vec4(Time::GetFrameTime(), view.Delta, 0.0f, 0.0f),
-            .ExtentParams = vec4(vec2(validExtent), vec2(m_RenderAllocExtent)),
-            // The chain's own sampler rather than the shared g-buffer one: that carries the
-            // default MaxLod of 1, which would pin every blurred sample to the top two levels with
-            // nothing anywhere reporting it. At level 0 the two behave identically.
-            .SceneColor =
-                uvec4(m_Refraction->GetSceneHandle().Index, m_Refraction->GetSamplerHandle().Index,
-                      m_Topology->RefractionActive ? 1u : 0u, m_Refraction->GetDepthHandle().Index),
-            .SceneColorChain = uvec4(m_Refraction->GetSceneMipCount(), 0, 0, 0),
-            // The light and area-vertex bases (x, z) are the claimed region's, filled once the
-            // region is claimed below.
-            .LightState = uvec4(0u, packed.LightCount, 0u, static_cast<u32>(ambientArm)),
-            .LightLuts = uvec4(m_LtcMatHandle.Index, m_LtcMagHandle.Index, m_SamplerHandle.Index,
-                               m_SkyResolver->GetIbl().GetPrefilterMipCount()),
-            .AmbientFloor = vec4(resolvedView.AmbientFloor, resolvedView.EnvironmentIntensity),
-            .AmbientParams = vec4(resolvedView.SkylightIntensity, 0.0f, 0.0f, 0.0f),
-            // The renderer executes once per frame, so the frame-in-flight index selects a mask
-            // region no frame still on the GPU reads.
-            .LightTiles = m_LightTiles->ViewState(m_Topology->LightTileCullActive,
-                                                  m_Context.GetCurrentFrameInFlight()),
-        };
-        for (u32 i = 0; i < ShCoefficientCount; ++i)
-        {
-            viewConstants.SkyShCoeffs[i] =
-                skylightActive ? vec4(skySh.Coefficients[i], 0.0f) : vec4(0.0f);
-        }
-        // The half-res translucent layer renders through a second view region of its own: the
-        // one block field its fragments must read differently is ExtentParams, which carries the
-        // HALF extents so an sv_position mapped through it lands on the same UV a full-resolution
-        // draw's would. The lights and area vertices ring beside the view constants by the same
-        // index, so the region carries its own copy. It is claimed BEFORE this render's own slot:
-        // every pass that reads GetCurrentViewConstantsIndex at record time must land on the full
-        // region, so the full claim is the later one. A frame whose view budget refuses this
-        // claim folds the layer's draws back into the full-res plan in PrepareDraws.
+        u32 viewConstantsIndex = 0;
         u32 halfResViewConstantsIndex = 0;
         bool halfResViewReady = false;
-        if (m_HalfResTranslucentActive && registry.TryBeginView())
         {
+            VE_PROFILE_SCOPE("Render/ViewConstants");
+            mat4 renderProj = view.Camera.Projection();
+            if (m_Topology->TaaActive && validExtent.x > 0 && validExtent.y > 0)
+            {
+                // Sub-pixel projection shear; sign is irrelevant to quality (the sequence is
+                // symmetric) and cancels between render and reconstruction, which share this
+                // matrix. The reprojection uses the separate unjittered PrevViewProj. The jitter is
+                // a fraction of the rendered (sub-rect) extent, the resolution actually rasterized.
+                const vec2 jitterPixel = TaaJitterOffset(m_FrameIndex);
+                renderProj[2][0] += 2.0f * jitterPixel.x / static_cast<f32>(validExtent.x);
+                renderProj[2][1] += 2.0f * jitterPixel.y / static_cast<f32>(validExtent.y);
+            }
+            // SH skylight: the lighting pass's second ambient arm reads the sky SH from the
+            // view-constants block below. Every SH-tier source projects the one radiance cube it fills —
+            // an environment its equirect cube, a baked material or baked atmosphere its bake cube — on
+            // that source's dirty signal above; the projection is a pure cube→SH read, so display and
+            // ambient agree.
+            const bool skylightActive = m_SkyResolver->IsSkylightActive();
+            const Sh9& skySh = m_SkyResolver->GetSkySh();
+
+            const mat4 renderViewProj = renderProj * view.Camera.View();
+            // The same projection against a view stripped to its rotation. A pass wanting the *ray*
+            // through a pixel rather than a point on it reconstructs through this, so it never forms a
+            // far-plane world point and subtracts the camera off it — a cancellation of two large
+            // near-equal numbers that costs f32 precision in proportion to how far the camera is from
+            // the world origin. Jittered with renderProj, so it agrees with what was rasterized.
+            const mat4 renderViewRotProj = renderProj * mat4(mat3(view.Camera.View()));
+            // The ambient arm every lit surface of this view takes, deferred and forward alike. IBL
+            // needs its cube-backed source resident — an environment map, or a baked material sky
+            // whose material is loaded; a display-only source shows its sky but lights nothing.
+            const AmbientArm ambientArm = ResolveAmbientArm(m_Topology->IblAllowed,
+                                                            resolvedView.Environment.IsLoaded() ||
+                                                                resolvedView.SkyMaterial.IsLoaded(),
+                                                            m_Topology->SkylightWanted);
+            ViewConstantsBlock viewConstants{
+                .InvViewProj = glm::inverse(renderViewProj),
+                .InvViewRotProj = glm::inverse(renderViewRotProj),
+                .CameraPosition = vec4(view.Camera.GetPosition(), 0.0f),
+                .View = view.Camera.View(),
+                .Proj = renderProj,
+                .PrevViewProj = m_PreviousViewProj,
+                .CurViewProj = viewProj,
+                .RenderScaleUV = vec4(renderScaleUV, m_PreviousRenderScaleUV),
+                .MaxValidUV = vec4(maxValidUV, m_PreviousMaxValidUV),
+                // The frame clock is engine-global (Time), frame-locked so every view and material
+                // reads one consistent value; the delta is this view's.
+                .TimeParams = vec4(Time::GetFrameTime(), view.Delta, 0.0f, 0.0f),
+                .ExtentParams = vec4(vec2(validExtent), vec2(m_RenderAllocExtent)),
+                // The chain's own sampler rather than the shared g-buffer one: that carries the
+                // default MaxLod of 1, which would pin every blurred sample to the top two levels with
+                // nothing anywhere reporting it. At level 0 the two behave identically.
+                .SceneColor = uvec4(
+                    m_Refraction->GetSceneHandle().Index, m_Refraction->GetSamplerHandle().Index,
+                    m_Topology->RefractionActive ? 1u : 0u, m_Refraction->GetDepthHandle().Index),
+                .SceneColorChain = uvec4(m_Refraction->GetSceneMipCount(), 0, 0, 0),
+                // The light and area-vertex bases (x, z) are the claimed region's, filled once the
+                // region is claimed below.
+                .LightState = uvec4(0u, packed.LightCount, 0u, static_cast<u32>(ambientArm)),
+                .LightLuts =
+                    uvec4(m_LtcMatHandle.Index, m_LtcMagHandle.Index, m_SamplerHandle.Index,
+                          m_SkyResolver->GetIbl().GetPrefilterMipCount()),
+                .AmbientFloor = vec4(resolvedView.AmbientFloor, resolvedView.EnvironmentIntensity),
+                .AmbientParams = vec4(resolvedView.SkylightIntensity, 0.0f, 0.0f, 0.0f),
+                // The renderer executes once per frame, so the frame-in-flight index selects a mask
+                // region no frame still on the GPU reads.
+                .LightTiles = m_LightTiles->ViewState(m_Topology->LightTileCullActive,
+                                                      m_Context.GetCurrentFrameInFlight()),
+            };
+            for (u32 i = 0; i < ShCoefficientCount; ++i)
+            {
+                viewConstants.SkyShCoeffs[i] =
+                    skylightActive ? vec4(skySh.Coefficients[i], 0.0f) : vec4(0.0f);
+            }
+            // The half-res translucent layer renders through a second view region of its own: the
+            // one block field its fragments must read differently is ExtentParams, which carries the
+            // HALF extents so an sv_position mapped through it lands on the same UV a full-resolution
+            // draw's would. The lights and area vertices ring beside the view constants by the same
+            // index, so the region carries its own copy. It is claimed BEFORE this render's own slot:
+            // every pass that reads GetCurrentViewConstantsIndex at record time must land on the full
+            // region, so the full claim is the later one. A frame whose view budget refuses this
+            // claim folds the layer's draws back into the full-res plan in PrepareDraws.
+            if (m_HalfResTranslucentActive && registry.TryBeginView())
+            {
+                registry.WriteLights(
+                    std::as_bytes(std::span(packed.Lights.data(), packed.LightCount)));
+                registry.WriteAreaVertices(
+                    std::as_bytes(std::span(packed.AreaVertices.data(), packed.AreaVertexCount)));
+                ViewConstantsBlock halfResConstants = viewConstants;
+                halfResConstants.ExtentParams = vec4(vec2(HalfResExtent(validExtent)),
+                                                     vec2(HalfResExtent(m_RenderAllocExtent)));
+                halfResConstants.LightState.x = registry.GetCurrentLightBase();
+                halfResConstants.LightState.z = registry.GetCurrentAreaVertexBase();
+                registry.WriteViewConstants(std::as_bytes(std::span(&halfResConstants, 1)));
+                halfResViewConstantsIndex = registry.GetCurrentViewConstantsIndex();
+                halfResViewReady = true;
+            }
+
+            // Claim this Execute's view slot before any further shared-buffer write: the
+            // view-constants and light buffers are shared across every viewport, so each render
+            // writes its own region rather than clobbering the one another viewport's draws still
+            // read this frame. A frame whose view budget is spent leaves this render's targets as
+            // the last frame left them — stale content, which is what a budget degrades to; the
+            // alternative is writing over a region another view's draws still read.
+            if (!registry.TryBeginView())
+            {
+                return;
+            }
             registry.WriteLights(std::as_bytes(std::span(packed.Lights.data(), packed.LightCount)));
             registry.WriteAreaVertices(
                 std::as_bytes(std::span(packed.AreaVertices.data(), packed.AreaVertexCount)));
-            ViewConstantsBlock halfResConstants = viewConstants;
-            halfResConstants.ExtentParams =
-                vec4(vec2(HalfResExtent(validExtent)), vec2(HalfResExtent(m_RenderAllocExtent)));
-            halfResConstants.LightState.x = registry.GetCurrentLightBase();
-            halfResConstants.LightState.z = registry.GetCurrentAreaVertexBase();
-            registry.WriteViewConstants(std::as_bytes(std::span(&halfResConstants, 1)));
-            halfResViewConstantsIndex = registry.GetCurrentViewConstantsIndex();
-            halfResViewReady = true;
-        }
-
-        // Claim this Execute's view slot before any further shared-buffer write: the
-        // view-constants and light buffers are shared across every viewport, so each render
-        // writes its own region rather than clobbering the one another viewport's draws still
-        // read this frame. A frame whose view budget is spent leaves this render's targets as
-        // the last frame left them — stale content, which is what a budget degrades to; the
-        // alternative is writing over a region another view's draws still read.
-        if (!registry.TryBeginView())
-        {
-            return;
-        }
-        registry.WriteLights(std::as_bytes(std::span(packed.Lights.data(), packed.LightCount)));
-        registry.WriteAreaVertices(
-            std::as_bytes(std::span(packed.AreaVertices.data(), packed.AreaVertexCount)));
-        viewConstants.LightState.x = registry.GetCurrentLightBase();
-        viewConstants.LightState.z = registry.GetCurrentAreaVertexBase();
-        registry.WriteViewConstants(std::as_bytes(std::span(&viewConstants, 1)));
-        const u32 viewConstantsIndex = registry.GetCurrentViewConstantsIndex();
-        if (!halfResViewReady)
-        {
-            halfResViewConstantsIndex = viewConstantsIndex;
+            viewConstants.LightState.x = registry.GetCurrentLightBase();
+            viewConstants.LightState.z = registry.GetCurrentAreaVertexBase();
+            registry.WriteViewConstants(std::as_bytes(std::span(&viewConstants, 1)));
+            viewConstantsIndex = registry.GetCurrentViewConstantsIndex();
+            if (!halfResViewReady)
+            {
+                halfResViewConstantsIndex = viewConstantsIndex;
+            }
         }
 
         // Decide whether last frame's pyramid is trustworthy this frame; the GPU cull subsystem

@@ -3,6 +3,7 @@
 #include <utility>
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Gui/UIDocument.h>
 #include <Veng/Log.h>
 
@@ -79,6 +80,7 @@ namespace Veng::Gui
         }
         m_LoadAttempted = true;
 
+        VE_PROFILE_SCOPE("Gui/Instantiate");
         const AssetResult<AssetHandle<UIDocument>> recipe =
             m_Assets.LoadSync<UIDocument>(m_DocumentId);
         if (!recipe.has_value())

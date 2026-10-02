@@ -224,6 +224,7 @@ namespace Veng::Text
         {
             return;
         }
+        m_Context.BeginGpuScope(cmd, "Glyph Uploads");
 
         // Each page is touched in one pass: its clear rectangles (a fresh page whole, an evicted
         // glyph's rectangle) are zeroed first, then a write-after-write barrier orders the glyph
@@ -331,6 +332,7 @@ namespace Veng::Text
 
         m_Pending.clear();
         m_Clears.clear();
+        m_Context.EndGpuScope(cmd);
     }
 
     u32 GlyphAtlas::GetPageCount() const

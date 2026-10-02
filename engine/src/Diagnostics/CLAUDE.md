@@ -232,12 +232,31 @@ The call sites that make a capture worth taking, plus the seam and bridge that p
   `Frame/ImGui`, `WorldRunner/Tick`, the net pumps, `Frame/Update`, `Frame/ViewPush`,
   `Frame/RenderBegin`, `Frame/Render`, `Frame/OnRender`, `Frame/Composite`,
   `Frame/RenderEnd`. **The names are stable strings** — the HUD and the flamegraph key on them.
+  `Frame/RequestDrain` splits into one scope per stage (`Frame/ApplyReconfigure`,
+  `Frame/WorldArrivals`, `Frame/PresentationHooks`, `Frame/PresentationPins`, `Frame/ReapDirectory`,
+  `Frame/Checkpoint`, `Frame/DrainRequests`, `Frame/DeliverMessages`), and a world's teardown is
+  `World/Close` around `World/Stop` (the `OnStop` pass) and `World/Destroy` (the scene's
+  destruction) wherever `WorldRunner` closes one.
+- **The frame's begin and end.** `Context::BeginFrame`/`EndFrame` scope `Render/FenceWait`,
+  `Render/Acquire`, `Render/TimestampReadback`, `Render/MirrorFrame`, `Render/Submit` and
+  `Render/Present`. The GPU work recorded ahead of the first pass carries GPU scopes of its own —
+  `Frame Acquires`, `Generated Textures`, `Async Readback` and `Glyph Uploads` — each opened only
+  when that recording has work, so an idle pump adds no span and spends none of the per-frame
+  scope budget.
 - **Rendering, per viewport and per pass.** Each viewport scopes its render as `Viewport <id>`,
   interned at construction, with `Viewport/*` phases beneath it. The scene renderer scopes its CPU
   phases as `Render/*` (broadphase sync, gather, BVH build and refit, light packing, interpolation, draw
-  preparation, graph replay, graph rebuild), and `CompiledGraph::Execute` scopes each pass's
-  recording under the pass's own name, interned at compile — so a CPU pass reads beside its GPU
-  timing of the same name.
+  preparation, graph replay, graph rebuild, cascade fitting, auto-exposure, view constants), and
+  `CompiledGraph::Execute` scopes each pass's recording under the pass's own name, interned at
+  compile — so a CPU pass reads beside its GPU timing of the same name.
+- **The GUI.** An overlay's drive scopes `Gui/HostDrive` (the host's binding refresh), then
+  `Gui/DriverUpdate` and `Gui/DriveComponents`; `Gui/Instantiate` is scoped wherever a host loads or
+  re-instantiates a tree, so it nests inside `Gui/HostDrive` on an overlay's first drive. `Document::Drive` scopes `Gui/Update`, `Gui/Solve`
+  (`Gui/ApplyStyle` and `Gui/Layout` inside a solve that ran) and `Gui/Build`, and every shaped text
+  run — measured or drawn — is `Gui/ShapeText`. Two counters, `Gui/Solves` (solves that did not
+  early-out) and `Gui/ShapedRuns`, are tallied across every document and sampled once per frame
+  after the render (`Gui/GuiCounters.h`), so each reads as a count per frame rather than a run of
+  ones.
 - **Per-entity engine work.** `Behavior/Agent` scopes each agent's tree tick (with a
   `Behavior/Agents` counter), `Animation/*` the animation system's phases, `Physics/*` each world
   query, collider shape build and solver step, and `Scene/*` the transform snapshot and world-matrix

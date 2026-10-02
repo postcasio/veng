@@ -904,6 +904,8 @@ namespace Veng::Renderer
             return;
         }
 
+        m_Context.BeginGpuScope(cmd, "Generated Textures");
+
         vector<GeneratedTextureKey> completed;
 
         // A restored job's texels land ahead of the tick loop, so its targets are sampleable by the
@@ -971,5 +973,7 @@ namespace Veng::Renderer
             const GeneratedTextureResult result{.Key = key, .Targets = job->Targets};
             job->OnComplete(result);
         }
+
+        m_Context.EndGpuScope(cmd);
     }
 }

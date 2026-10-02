@@ -1,6 +1,7 @@
 #include <Veng/Gui/Document.h>
 
 #include "FillGeometry.h"
+#include "GuiCounters.h"
 #include "YogaTree.h"
 
 #include <Veng/Assert.h>
@@ -8,6 +9,7 @@
 #include <Veng/Asset/Font.h>
 #include <Veng/Asset/MaterialInstance.h>
 #include <Veng/Asset/Texture.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Gui/Driver.h>
 #include <Veng/Gui/DriverRegistry.h>
 #include <Veng/Gui/Placement.h>
@@ -2268,6 +2270,8 @@ namespace Veng::Gui
             return vec2(0.0f);
         }
 
+        VE_PROFILE_SCOPE("Gui/ShapeText");
+        Counters::CountShapedRun();
         const vector<u32> codepoints = DecodeUtf8(text);
         const ShapeResult shaped = font->ShapeRun(codepoints, style.TextSize, availableWidth);
         return shaped.Size;
@@ -3316,28 +3320,35 @@ namespace Veng::Gui
         {
             return;
         }
+        Counters::CountSolve();
 
-        ApplyStyle(*m_Root);
-
-        const YGNodeRef rootNode = m_Yoga->Get(*m_Root);
-        YGNodeCalculateLayout(rootNode, available.x, available.y, YGDirectionLTR);
-
-        // A Table's cells widen to their per-column maxima measured off the first pass; a raised
-        // min-width re-runs the layout once. ApplyStyle re-pushes the styled min-widths on every
-        // Solve, so the natural (un-widened) widths above are what the columns are measured from.
-        if (AlignTableColumns())
         {
-            YGNodeCalculateLayout(rootNode, available.x, available.y, YGDirectionLTR);
+            VE_PROFILE_SCOPE("Gui/ApplyStyle");
+            ApplyStyle(*m_Root);
         }
 
-        ReadLayout(*m_Root, vec2(0.0f));
-
-        // Popups lay out against the document extent, not against a parent box, and their
-        // placement reads their anchor's solved rect — so they are solved after the main tree's
-        // layout read, bottom-up (a submenu anchored inside its menu reads a placed anchor).
-        for (const Popup& popup : m_Popups)
         {
-            SolvePopup(popup, available);
+            VE_PROFILE_SCOPE("Gui/Layout");
+            const YGNodeRef rootNode = m_Yoga->Get(*m_Root);
+            YGNodeCalculateLayout(rootNode, available.x, available.y, YGDirectionLTR);
+
+            // A Table's cells widen to their per-column maxima measured off the first pass; a raised
+            // min-width re-runs the layout once. ApplyStyle re-pushes the styled min-widths on every
+            // Solve, so the natural (un-widened) widths above are what the columns are measured from.
+            if (AlignTableColumns())
+            {
+                YGNodeCalculateLayout(rootNode, available.x, available.y, YGDirectionLTR);
+            }
+
+            ReadLayout(*m_Root, vec2(0.0f));
+
+            // Popups lay out against the document extent, not against a parent box, and their
+            // placement reads their anchor's solved rect — so they are solved after the main tree's
+            // layout read, bottom-up (a submenu anchored inside its menu reads a placed anchor).
+            for (const Popup& popup : m_Popups)
+            {
+                SolvePopup(popup, available);
+            }
         }
 
         m_Dirty = false;
@@ -3967,9 +3978,18 @@ namespace Veng::Gui
 
     void Document::Drive(vec2 available, f32 delta, DrawList& out)
     {
-        Update(delta);
-        Solve(available);
-        Build(out);
+        {
+            VE_PROFILE_SCOPE("Gui/Update");
+            Update(delta);
+        }
+        {
+            VE_PROFILE_SCOPE("Gui/Solve");
+            Solve(available);
+        }
+        {
+            VE_PROFILE_SCOPE("Gui/Build");
+            Build(out);
+        }
         // Build has just read every paint-only property into the draw list, so anything written
         // before this point is now on screen. Solve clears the layout flag itself.
         m_PaintDirty = false;

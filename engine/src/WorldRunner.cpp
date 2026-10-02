@@ -180,6 +180,7 @@ namespace Veng
 
     void WorldRunner::CloseWorldNow(const WorldInstanceId world)
     {
+        VE_PROFILE_SCOPE("World/Close");
         const auto it = std::ranges::find_if(m_Worlds, [world](const Unique<World>& w)
                                              { return w->Id == world; });
         if (it == m_Worlds.end())
@@ -203,6 +204,7 @@ namespace Veng
         {
             if (optional<SystemContext> context = m_StopContextFactory(closing.Id, scene))
             {
+                VE_PROFILE_SCOPE("World/Stop");
                 scene.StopSimulation(*context);
             }
         }
@@ -215,6 +217,7 @@ namespace Veng
         // Erase by id rather than through the iterator found above: a system's OnStop may close a
         // world itself, and an immediate close of another world moves this one's slot out from under
         // a held iterator (one issued inside a tick is queued instead, and cannot).
+        VE_PROFILE_SCOPE("World/Destroy");
         std::erase_if(m_Worlds, [world](const Unique<World>& w) { return w->Id == world; });
     }
 

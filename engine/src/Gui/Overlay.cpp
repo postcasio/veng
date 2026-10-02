@@ -4,6 +4,7 @@
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/MaterialInstance.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/DocumentHost.h>
 #include <Veng/Gui/DrawList.h>
@@ -134,7 +135,11 @@ namespace Veng
 
         // Present first: it instantiates the document (or re-instantiates it) and returns the live
         // tree, which the driver's OnInstantiate/OnUpdate then read.
-        Gui::Document* const document = runtime.Layer->Present(viewport);
+        Gui::Document* const document = [&]
+        {
+            VE_PROFILE_SCOPE("Gui/HostDrive");
+            return runtime.Layer->Present(viewport);
+        }();
         if (document == nullptr)
         {
             return;
@@ -199,11 +204,13 @@ namespace Veng
                                                                .Localization = strings});
                 runtime.DriverDocument = document;
             }
+            VE_PROFILE_SCOPE("Gui/DriverUpdate");
             runtime.Driver->OnUpdate(frame);
         }
 
         // Drive the document's embedded component drivers — those run whether or not the overlay
         // itself is driven, so a plain overlay may still host a self-driving component.
+        VE_PROFILE_SCOPE("Gui/DriveComponents");
         document->DriveComponents(drivers, frame);
     }
 
@@ -241,7 +248,11 @@ namespace Veng
         // Drive the host directly (load, instantiate, bind refresh) rather than through the
         // DocumentLayer: an HDR overlay is composited by the engine's pre-bloom pass, not attached to
         // the viewport's post-tonemap layer stack, so its document never joins that stack.
-        Gui::Document* const document = runtime.Host->Drive();
+        Gui::Document* const document = [&]
+        {
+            VE_PROFILE_SCOPE("Gui/HostDrive");
+            return runtime.Host->Drive();
+        }();
         if (document == nullptr)
         {
             return;
@@ -308,9 +319,13 @@ namespace Veng
                                                                .Localization = strings});
                 runtime.DriverDocument = document;
             }
+            VE_PROFILE_SCOPE("Gui/DriverUpdate");
             runtime.Driver->OnUpdate(frame);
         }
-        document->DriveComponents(drivers, frame);
+        {
+            VE_PROFILE_SCOPE("Gui/DriveComponents");
+            document->DriveComponents(drivers, frame);
+        }
 
         // Lay the document out at the authored logical extent and build its geometry into the caller's
         // draw list; the engine projects and records it in the pre-bloom pass.

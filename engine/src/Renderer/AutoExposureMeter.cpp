@@ -7,6 +7,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Shader.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Math/Ease.h>
 #include <Veng/Renderer/Buffer.h>
 #include <Veng/Renderer/CommandBuffer.h>
@@ -168,6 +169,8 @@ namespace Veng::Renderer
 
     f32 AutoExposureMeter::ResolveExposure(const SceneView& view, const bool active)
     {
+        VE_PROFILE_SCOPE("Render/AutoExposure");
+
         // Average the log-luminance histogram a completed frame metered (the current
         // frame-in-flight's ring region, written framesInFlight ago and fenced), ease the internal
         // adapted luminance toward it (eye adaptation), and resolve the exposure the tonemap uses.

@@ -1,5 +1,7 @@
 #include <Veng/Gui/DrawList.h>
 
+#include "GuiCounters.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -7,6 +9,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/Font.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Text/GlyphAtlas.h>
 
 namespace Veng::Gui
@@ -526,8 +529,12 @@ namespace Veng::Gui
             return;
         }
 
-        const ShapeResult shaped =
-            font.ShapeRun(codepoints, pixelSize, maxWidth, TextShapeMode::Draw);
+        const ShapeResult shaped = [&]
+        {
+            VE_PROFILE_SCOPE("Gui/ShapeText");
+            Counters::CountShapedRun();
+            return font.ShapeRun(codepoints, pixelSize, maxWidth, TextShapeMode::Draw);
+        }();
         if (shaped.Glyphs.empty())
         {
             return;
