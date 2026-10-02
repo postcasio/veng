@@ -268,6 +268,140 @@ TEST_CASE("queries against a scene with no physics world return empty rather tha
     CHECK_FALSE(ShapeCast(nullptr, shape, PhysicsPose{}, dvec3(1.0, 0.0, 0.0)).has_value());
     CHECK(Overlap(nullptr, shape, PhysicsPose{}, QueryFilter{}, found) == 0);
     CHECK(found.empty());
+    CHECK_FALSE(
+        ShapeCast(nullptr, Entity{.Index = 7}, PhysicsPose{}, dvec3(1.0, 0.0, 0.0)).has_value());
+    found.emplace_back(Entity{.Index = 7});
+    CHECK(OverlapBounds(nullptr, dvec3(0.0), 1.0f, QueryFilter{}, found) == 0);
+    CHECK(found.empty());
+}
+
+TEST_CASE("equal colliders share one built shape across queries and bodies until nothing holds it")
+{
+    const Ref<CollisionShape> hull = CubeHull();
+    const Unique<PhysicsWorld> world = PhysicsWorld::Create(PhysicsWorldInfo{});
+    const Collider collider = CookedCollider(hull);
+    vector<Entity> found;
+
+    // Two queries naming equal colliders (each through its own handle) resolve to one shape.
+    (void)Overlap(world.get(), collider, PhysicsPose{}, QueryFilter{}, found);
+    const void* shape = world->FindBuiltShape(collider);
+    REQUIRE(shape != nullptr);
+    (void)ShapeCast(world.get(), CookedCollider(hull), PhysicsPose{}, dvec3(1.0, 0.0, 0.0));
+    CHECK(world->FindBuiltShape(CookedCollider(hull)) == shape);
+    CHECK(world->GetBuiltShapeCount() == 1);
+
+    // A body built from that collider shares it rather than building its own.
+    const Entity body{.Index = 3};
+    world->CreateBody(body, RigidBody{.Motion = MotionType::Static}, collider, PhysicsPose{});
+    CHECK(world->GetBodyShape(body) == shape);
+    CHECK(world->GetBuiltShapeCount() == 1);
+
+    // A primitive named only by a query is built in place and never enters the cache.
+    (void)Overlap(world.get(), Collider{.Shape = ColliderShape::Sphere, .Extents = vec3(2.0f)},
+                  PhysicsPose{}, QueryFilter{}, found);
+    CHECK(world->GetBuiltShapeCount() == 1);
+
+    // While the body holds it, steps keep it; once the body is gone and a whole step passes
+    // without anything asking for it, it is dropped.
+    world->Step(1.0f / 60.0f);
+    world->Step(1.0f / 60.0f);
+    CHECK(world->FindBuiltShape(collider) == shape);
+    world->DestroyBody(body);
+    world->Step(1.0f / 60.0f);
+    world->Step(1.0f / 60.0f);
+    CHECK(world->GetBuiltShapeCount() == 0);
+    CHECK(world->FindBuiltShape(collider) == nullptr);
+}
+
+TEST_CASE("a shape cast by entity sweeps the body's own shape and never reports the body itself")
+{
+    const ContentFixture fixture;
+    const Entity wall = fixture.SpawnBox(vec3(6.0f, 0.0f, 0.0f), vec3(0.5f, 5.0f, 5.0f));
+    const Entity mover = fixture.World->CreateEntity();
+    fixture.World->Add<Transform>(mover, Transform{});
+    fixture.World->Add<RigidBody>(
+        mover, RigidBody{.Motion = MotionType::Kinematic, .Layer = PhysicsLayer::Moving});
+    fixture.World->Add<Collider>(mover, CookedCollider(fixture.Hull));
+    fixture.Step(1);
+
+    // Swept from where the body already sits, so a cast that counted the body itself would stop
+    // at once; the explicit-collider cast ignores it by hand.
+    const PhysicsPose from{.Rotation = glm::angleAxis(0.3f, vec3(0.0f, 1.0f, 0.0f))};
+    const Entity self[] = {mover};
+    const optional<ShapeHit> byCollider =
+        ShapeCast(&fixture.Physics(), CookedCollider(fixture.Hull), from, dvec3(10.0, 0.0, 0.0),
+                  QueryFilter{.Ignore = self});
+    const optional<ShapeHit> byEntity =
+        ShapeCast(&fixture.Physics(), mover, from, dvec3(10.0, 0.0, 0.0));
+    REQUIRE(byCollider.has_value());
+    REQUIRE(byEntity.has_value());
+    CHECK(byEntity->Body == wall);
+    CHECK(byEntity->Fraction == byCollider->Fraction);
+    CHECK(byEntity->Position == byCollider->Position);
+    CHECK(byEntity->Normal == byCollider->Normal);
+
+    CHECK_FALSE(ShapeCast(&fixture.Physics(), Entity{.Index = 999}, from, dvec3(10.0, 0.0, 0.0))
+                    .has_value());
+}
+
+TEST_CASE("a bounds overlap reports bodies whose bounds reach the sphere, a superset of contact")
+{
+    const ContentFixture fixture;
+    const Entity inside = fixture.SpawnBox(vec3(0.0f), vec3(0.5f));
+    const Entity straddling = fixture.SpawnBox(vec3(5.0f, 0.0f, 0.0f), vec3(0.5f));
+    fixture.SpawnBox(vec3(10.0f, 0.0f, 0.0f), vec3(0.5f));
+    // A unit sphere off the diagonal: its box's nearest corner is 4.81 m from the centre, inside
+    // the 5 m sphere, while its surface is 5.22 m away, outside it.
+    const Entity corner = fixture.World->CreateEntity();
+    fixture.World->Add<Transform>(corner, Transform{.Position = vec3(4.4f, 4.4f, 0.0f)});
+    fixture.World->Add<RigidBody>(
+        corner, RigidBody{.Motion = MotionType::Static, .Layer = PhysicsLayer::Static});
+    fixture.World->Add<Collider>(corner,
+                                 Collider{.Shape = ColliderShape::Sphere, .Extents = vec3(1.0f)});
+    const Entity moving = fixture.SpawnBox(vec3(0.0f, -2.0f, 0.0f), vec3(0.5f), MotionType::Static,
+                                           PhysicsLayer::Moving);
+    fixture.Step(1);
+
+    vector<Entity> bounds;
+    OverlapBounds(&fixture.Physics(), dvec3(0.0), 5.0f, QueryFilter{}, bounds);
+    CHECK(bounds == vector<Entity>{inside, straddling, corner, moving});
+
+    // The exact query, on the same sphere, finds a subset: everything but the corner body.
+    vector<Entity> exact;
+    Overlap(&fixture.Physics(), Collider{.Shape = ColliderShape::Sphere, .Extents = vec3(5.0f)},
+            PhysicsPose{}, QueryFilter{}, exact);
+    CHECK(exact == vector<Entity>{inside, straddling, moving});
+    CHECK(std::ranges::includes(bounds, exact,
+                                [](const Entity a, const Entity b) { return a.Index < b.Index; }));
+
+    // The layer mask and the ignore list hold.
+    OverlapBounds(&fixture.Physics(), dvec3(0.0), 5.0f,
+                  QueryFilter{.Layers = PhysicsLayerBit(PhysicsLayer::Moving)}, bounds);
+    CHECK(bounds == vector<Entity>{moving});
+    const Entity ignored[] = {inside, corner};
+    OverlapBounds(&fixture.Physics(), dvec3(0.0), 5.0f, QueryFilter{.Ignore = ignored}, bounds);
+    CHECK(bounds == vector<Entity>{straddling, moving});
+}
+
+TEST_CASE("an ignore list holds at every length, inline and past it")
+{
+    const ContentFixture fixture;
+    vector<Entity> boxes;
+    for (u32 i = 0; i < 8; ++i)
+    {
+        boxes.emplace_back(
+            fixture.SpawnBox(vec3(static_cast<f32>(i) * 2.0f, 0.0f, 0.0f), vec3(0.5f)));
+    }
+    fixture.Step(1);
+
+    vector<Entity> found;
+    for (const usize length : {usize{0}, usize{1}, usize{4}, usize{5}, usize{8}})
+    {
+        const std::span<const Entity> ignore(boxes.data(), length);
+        OverlapBounds(&fixture.Physics(), dvec3(7.0, 0.0, 0.0), 20.0f,
+                      QueryFilter{.Ignore = ignore}, found);
+        CHECK(found == vector<Entity>(boxes.begin() + static_cast<isize>(length), boxes.end()));
+    }
 }
 
 TEST_CASE("a sensor publishes the bodies inside it, and the enter and exit deltas")

@@ -4,6 +4,7 @@
 // engine⇄solver conversions, and the shape builder. Shared by PhysicsWorld.cpp and Queries.cpp,
 // and included by nothing outside engine/src/Physics — no public header names a JPH type.
 
+#include <Veng/Asset/AssetHandle.h>
 #include <Veng/Physics/Components.h>
 #include <Veng/Physics/PhysicsWorld.h>
 
@@ -23,6 +24,8 @@
 #include <Jolt/Physics/PhysicsStepListener.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 
+#include <array>
+#include <mutex>
 #include <unordered_map>
 
 namespace Veng::Detail
@@ -78,9 +81,90 @@ namespace Veng::Detail
     /// handle; a handle that is not resident yields null, which is how the step skips an entity
     /// whose geometry has not arrived. Every other shape is built from the Collider alone and
     /// never yields null (an unbuildable primitive is a fatal assert).
+    ///
+    /// Always builds afresh; bodies and queries resolve their shape through the world's ShapeCache,
+    /// which calls this only on a miss.
     /// @param collider  The shape to build.
     /// @return The built shape, or null when a ColliderShape::Mesh collider has no resident geometry.
     [[nodiscard]] JPH::RefConst<JPH::Shape> BuildShape(const Collider& collider);
+
+    /// @brief Everything that determines the solver shape a Collider builds into.
+    ///
+    /// Friction and restitution are body settings, not shape settings, so two colliders differing
+    /// only in those share a shape. Floats compare by bit pattern with negative zero folded onto
+    /// zero, so equal colliders always meet and a NaN field still finds itself.
+    struct ShapeKey
+    {
+        /// @brief The collider's shape kind.
+        ColliderShape Kind = ColliderShape::Box;
+        /// @brief Bit patterns of Extents (unused under Mesh, so zeroed), Offset, then Rotation.
+        std::array<u32, 10> Bits{};
+        /// @brief The cooked geometry's identity under ColliderShape::Mesh; null otherwise.
+        const CollisionShape* Geometry = nullptr;
+
+        /// @brief Builds the key for @p collider.
+        [[nodiscard]] static ShapeKey Of(const Collider& collider);
+
+        /// @brief Field-wise equality.
+        bool operator==(const ShapeKey&) const = default;
+    };
+
+    /// @brief Hashes a ShapeKey over every field.
+    struct ShapeKeyHash
+    {
+        /// @brief Returns @p key's hash.
+        [[nodiscard]] usize operator()(const ShapeKey& key) const;
+    };
+
+    /// @brief The world's built collider shapes, shared by every body and query that names one.
+    ///
+    /// A compound collider costs a heap-allocated build per child plus a bounding tree, and the
+    /// shape it builds is immutable, so building it once per distinct collider and sharing the
+    /// result is free of any behavioural change. Entries are reference-counted solver shapes:
+    /// a body keeps its entry alive by holding the shape, and Sweep drops an entry nothing has
+    /// held or asked for since the previous sweep, so the cache is bounded by the colliders in
+    /// use. An entry also holds the cooked geometry's handle, which pins the geometry's address
+    /// for as long as the entry keys on it.
+    ///
+    /// Guarded by a mutex, because a query may run on any thread a caller chooses.
+    class ShapeCache
+    {
+    public:
+        /// @brief Returns the built shape for @p collider, building and keeping it on a miss.
+        /// @param collider  The shape to resolve.
+        /// @param step      The world's current step count, stamping the entry as used.
+        /// @return The shared shape, or null when a ColliderShape::Mesh collider has no resident
+        ///         geometry (which is not kept, so it is built the tick the geometry arrives).
+        [[nodiscard]] JPH::RefConst<JPH::Shape> Acquire(const Collider& collider, u64 step);
+
+        /// @brief Returns the shape held for @p collider without building one, or null.
+        [[nodiscard]] const JPH::Shape* Find(const Collider& collider) const;
+
+        /// @brief Drops every entry no body holds and nothing has acquired since the previous step.
+        /// @param step  The world's step count before the step that is about to run; an entry
+        ///              stamped with it was acquired since the previous step, and is kept.
+        void Sweep(u64 step);
+
+        /// @brief Returns how many shapes the cache holds.
+        [[nodiscard]] usize Size() const;
+
+    private:
+        /// @brief One cached shape.
+        struct Entry
+        {
+            /// @brief The built shape; the cache's own reference is one of its holders.
+            JPH::RefConst<JPH::Shape> Shape;
+            /// @brief The cooked geometry the shape was built from, held so its address stays put.
+            AssetHandle<CollisionShape> Geometry;
+            /// @brief The step count at the entry's last acquisition.
+            u64 LastUsed = 0;
+        };
+
+        /// @brief Serializes every access to the map.
+        mutable std::mutex m_Mutex;
+        /// @brief The cached shapes, keyed by what built them.
+        std::unordered_map<ShapeKey, Entry, ShapeKeyHash> m_Shapes;
+    };
 
     /// @brief One recorded contact, kept for the debug visualization only.
     struct DebugContact
@@ -367,6 +451,8 @@ namespace Veng
         std::unordered_map<Entity, Detail::ConstraintRecord> Constraints;
         /// @brief Live character capsules, keyed by the entity that owns them.
         std::unordered_map<Entity, Detail::CharacterRecord> Characters;
+        /// @brief Built collider shapes, shared by bodies and queries naming equal colliders.
+        Detail::ShapeCache Shapes;
         /// @brief The installed world-space gravity field, empty when none is set.
         vector<GravitySourceInstance> GravitySources;
         /// @brief The step listener applying the field; registered only while a field is installed.

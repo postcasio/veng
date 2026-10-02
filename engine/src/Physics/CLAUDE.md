@@ -2,9 +2,10 @@
 
 `Veng/Physics/` is the engine's rigid-body simulation: a **`PhysicsWorld`** a `Scene` optionally
 owns, **`RigidBody`/`Collider`** as ordinary reflected components, cooked **`CollisionShape`**
-geometry behind them, **sensors** and **constraints**, the **`Raycast`/`ShapeCast`/`Overlap`**
-query trio, a fixed step inside the Sim phase, a small closed collision-layer table, and a debug
-visualization through the existing `Renderer::DebugDraw`. Project-wide conventions live in
+geometry behind them, **sensors** and **constraints**, the
+**`Raycast`/`ShapeCast`/`Overlap`/`OverlapBounds`** query surface, a fixed step inside the Sim
+phase, a small closed collision-layer table, and a debug visualization through the existing
+`Renderer::DebugDraw`. Project-wide conventions live in
 [the root CLAUDE.md](../../../CLAUDE.md); the ECS world and the Sim/View tick split it steps
 inside are in [../Scene/CLAUDE.md](../Scene/CLAUDE.md); the prediction/reconciliation layer the
 replay gate below defers to is in [../Net/CLAUDE.md](../Net/CLAUDE.md); the cooked-blob layout
@@ -154,21 +155,26 @@ the robust way to carry something, where friction on a fast-moving surface is no
 solves for velocity on bodies the solver integrates, so it has **no effect between two non-dynamic
 bodies** — a consumer carrying a kinematic body uses parenting, not a constraint.
 
-## The query surface — `Raycast` / `ShapeCast` / `Overlap`
+## The query surface — `Raycast` / `ShapeCast` / `Overlap` / `OverlapBounds`
 
-`Veng/Physics/Queries.h` is three free functions over a `PhysicsWorld`. Each takes an explicit
-**`QueryFilter`** (a layer mask, an ignore-entity span, and whether sensors count) rather than
-reading ambient state, and each returns the **`Entity`** alongside the geometric result so a caller
-lands back in the ECS without a second lookup. All three are **pure** — they mutate nothing, so a
-View-phase consumer may call them.
+`Veng/Physics/Queries.h` is a handful of free functions over a `PhysicsWorld`. Each takes an
+explicit **`QueryFilter`** (a layer mask, an ignore-entity span, and whether sensors count) rather
+than reading ambient state, and each returns the **`Entity`** alongside the geometric result so a
+caller lands back in the ECS without a second lookup. All are **pure** as far as a caller can see —
+the only state they touch is the world's mutex-guarded shape cache (below) — so a View-phase
+consumer may call them.
 
 ```cpp
-optional<RayHit>   Raycast  (const PhysicsWorld*, dvec3 origin, vec3 direction, f32 maxDistance,
-                             const QueryFilter& = {});
-optional<ShapeHit> ShapeCast(const PhysicsWorld*, const Collider& shape, const PhysicsPose& from,
-                             dvec3 to, const QueryFilter& = {});
-usize              Overlap  (const PhysicsWorld*, const Collider& shape, const PhysicsPose& at,
-                             const QueryFilter&, vector<Entity>& out);
+optional<RayHit>   Raycast      (const PhysicsWorld*, dvec3 origin, vec3 direction, f32 maxDistance,
+                                 const QueryFilter& = {});
+optional<ShapeHit> ShapeCast    (const PhysicsWorld*, const Collider& shape, const PhysicsPose& from,
+                                 dvec3 to, const QueryFilter& = {});
+optional<ShapeHit> ShapeCast    (const PhysicsWorld*, Entity body, const PhysicsPose& from,
+                                 dvec3 to, const QueryFilter& = {});
+usize              Overlap      (const PhysicsWorld*, const Collider& shape, const PhysicsPose& at,
+                                 const QueryFilter&, vector<Entity>& out);
+usize              OverlapBounds(const PhysicsWorld*, dvec3 center, f32 radius,
+                                 const QueryFilter&, vector<Entity>& out);
 ```
 
 - **The world is a pointer, and null is empty.** `Raycast(scene.GetPhysicsWorld(), …)` on a scene
@@ -183,10 +189,28 @@ usize              Overlap  (const PhysicsWorld*, const Collider& shape, const P
   mover and a character controller. `ShapeHit::Fraction` is the fraction of `to - from.Position`
   travelled, so the stopping pose is `from.Position + (to - from.Position) * Fraction` at
   `from.Rotation`; `Position` and `Normal` are the contact point and the outward normal of the body
-  hit.
+  hit. **The `Entity` overload sweeps a body's own built shape** — no collider named, nothing built
+  — from any pose the caller gives, and never reports the swept body itself.
 - **`Overlap` reports intersection, not contact.** A body resting exactly against the volume's face
   is not inside it — two shapes placed face to face report a penetration of a few times 1e-8 from
   float rounding alone, so the test admits a hit only past a tenth of a millimetre.
+- **`OverlapBounds` is proximity, not collision.** It asks the broad phase which bodies' bounding
+  boxes reach a sphere and runs no narrow phase, so it costs a tree walk instead of an exact test
+  (and a contact manifold) per sub-shape. Its result is a **superset** of `Overlap`'s for the same
+  sphere: a body whose box reaches the sphere while its shape does not is reported. "What is near
+  me" — steering, audio culling, interest management — is that question; a caller needing genuine
+  intersection uses `Overlap`. The broad phase keeps f32 bounds rounded outward, and the query pads
+  its radius by the centre's own f32 rounding, so the superset holds at any distance from origin.
+- **Built shapes are shared.** A `PhysicsWorld` keeps one built solver shape per distinct collider
+  (keyed by kind, extents, offset, rotation and cooked-geometry identity; friction and restitution
+  are body settings and do not split it). Body creation and cooked-geometry queries both resolve
+  through it, so a compound hull is built once however many bodies and sweeps name it. A primitive
+  named only by a query is built in place, embedded, and never enters the cache. A step drops any
+  entry no body holds and nothing has asked for since the previous step, so the cache is bounded by
+  the colliders in use; an entry holds its geometry's handle, which pins the address it keys on.
+  `GetBuiltShapeCount` / `FindBuiltShape` / `GetBodyShape` expose it for tests and diagnostics.
+- **The ignore list is for a handful of entities.** It is linear-scanned; up to four are held
+  without allocating.
 
 ## The step, and the two-writer hazard
 

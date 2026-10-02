@@ -275,6 +275,28 @@ namespace Veng
         /// @brief Returns @p entity's body pose, or nullopt when it has no body.
         [[nodiscard]] optional<PhysicsPose> GetBodyPose(Entity entity) const;
 
+        /// @brief Returns how many built collider shapes the world holds for reuse.
+        ///
+        /// Bodies and queries naming equal colliders share one built shape, and a shape nothing
+        /// holds or asks for across a whole step is dropped at the next, so this counts the
+        /// distinct colliders in use. A diagnostic: the count is what to watch for growth.
+        [[nodiscard]] u32 GetBuiltShapeCount() const;
+
+        /// @brief Returns the identity of the built shape the world holds for @p collider.
+        ///
+        /// Never builds one. An opaque address for comparison only — equal identities are the
+        /// same built shape — and never to be dereferenced.
+        /// @param collider  The collider to look up.
+        /// @return The shape's identity, or null when the world holds none for @p collider.
+        [[nodiscard]] const void* FindBuiltShape(const Collider& collider) const;
+
+        /// @brief Returns the identity of the shape @p entity's body was built with.
+        ///
+        /// An opaque address comparable with FindBuiltShape's, never to be dereferenced.
+        /// @param entity  The entity whose body to inspect.
+        /// @return The shape's identity, or null when @p entity has no body.
+        [[nodiscard]] const void* GetBodyShape(Entity entity) const;
+
         /// @brief Sets a body's linear velocity in metres per second; a no-op when it has none.
         /// @param entity    The entity whose body to drive.
         /// @param velocity  World-space linear velocity.

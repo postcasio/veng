@@ -4,6 +4,7 @@
 #include <Veng/Asset/CollisionShape.h>
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Log.h>
+#include <Veng/Math/Random.h>
 #include <Veng/Renderer/DebugDraw.h>
 
 #include "PhysicsInternal.h"
@@ -28,6 +29,7 @@
 #include <Jolt/RegisterTypes.h>
 
 #include <algorithm>
+#include <bit>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -409,6 +411,90 @@ namespace Veng
             }
             return shape;
         }
+
+        namespace
+        {
+            /// @brief A float's bit pattern with negative zero folded onto zero.
+            [[nodiscard]] u32 KeyBits(const f32 value)
+            {
+                return value == 0.0f ? 0U : std::bit_cast<u32>(value);
+            }
+        }
+
+        ShapeKey ShapeKey::Of(const Collider& collider)
+        {
+            ShapeKey key{.Kind = collider.Shape};
+            const bool mesh = collider.Shape == ColliderShape::Mesh;
+            for (u32 axis = 0; axis < 3; ++axis)
+            {
+                key.Bits[axis] = mesh ? 0U : KeyBits(collider.Extents[axis]);
+                key.Bits[3 + axis] = KeyBits(collider.Offset[axis]);
+            }
+            for (u32 component = 0; component < 4; ++component)
+            {
+                key.Bits[6 + component] = KeyBits(collider.Rotation[static_cast<i32>(component)]);
+            }
+            key.Geometry = mesh ? collider.Geometry.Get() : nullptr;
+            return key;
+        }
+
+        usize ShapeKeyHash::operator()(const ShapeKey& key) const
+        {
+            u64 hash = Hash64(static_cast<u64>(key.Kind));
+            for (const u32 bits : key.Bits)
+            {
+                hash = HashCombine(hash, bits);
+            }
+            hash = HashCombine(hash, static_cast<u64>(reinterpret_cast<uintptr_t>(key.Geometry)));
+            return static_cast<usize>(hash);
+        }
+
+        JPH::RefConst<JPH::Shape> ShapeCache::Acquire(const Collider& collider, const u64 step)
+        {
+            const ShapeKey key = ShapeKey::Of(collider);
+            const std::scoped_lock lock(m_Mutex);
+            const auto found = m_Shapes.find(key);
+            if (found != m_Shapes.end())
+            {
+                found->second.LastUsed = step;
+                return found->second.Shape;
+            }
+
+            JPH::RefConst<JPH::Shape> shape = BuildShape(collider);
+            if (shape == nullptr)
+            {
+                return {};
+            }
+            m_Shapes.emplace(key, Entry{.Shape = shape,
+                                        .Geometry = key.Geometry != nullptr
+                                                        ? collider.Geometry
+                                                        : AssetHandle<CollisionShape>{},
+                                        .LastUsed = step});
+            return shape;
+        }
+
+        const JPH::Shape* ShapeCache::Find(const Collider& collider) const
+        {
+            const ShapeKey key = ShapeKey::Of(collider);
+            const std::scoped_lock lock(m_Mutex);
+            const auto found = m_Shapes.find(key);
+            return found == m_Shapes.end() ? nullptr : found->second.Shape.GetPtr();
+        }
+
+        void ShapeCache::Sweep(const u64 step)
+        {
+            const std::scoped_lock lock(m_Mutex);
+            // A reference count of one is the cache's own: no body or in-flight query holds it.
+            std::erase_if(
+                m_Shapes, [step](const auto& entry)
+                { return entry.second.Shape->GetRefCount() == 1 && entry.second.LastUsed < step; });
+        }
+
+        usize ShapeCache::Size() const
+        {
+            const std::scoped_lock lock(m_Mutex);
+            return m_Shapes.size();
+        }
     }
 
     PhysicsWorld::Native::Native(const PhysicsWorldInfo& info)
@@ -507,7 +593,7 @@ namespace Veng
             DestroyBody(entity);
         }
 
-        const JPH::RefConst<JPH::Shape> shape = Detail::BuildShape(collider);
+        const JPH::RefConst<JPH::Shape> shape = m_Native->Shapes.Acquire(collider, m_StepCount);
         if (shape == nullptr)
         {
             // A ColliderShape::Mesh collider whose geometry has not arrived yet has no shape; the
@@ -695,11 +781,35 @@ namespace Veng
         {
             return std::nullopt;
         }
-        const JPH::BodyInterface& bodies = m_Native->System.GetBodyInterface();
+        JPH::RVec3 position;
+        JPH::Quat rotation;
+        m_Native->System.GetBodyInterface().GetPositionAndRotation(found->second.Id, position,
+                                                                   rotation);
         return PhysicsPose{
-            .Position = Detail::FromJolt(bodies.GetPosition(found->second.Id)),
-            .Rotation = Detail::FromJolt(bodies.GetRotation(found->second.Id)),
+            .Position = Detail::FromJolt(position),
+            .Rotation = Detail::FromJolt(rotation),
         };
+    }
+
+    u32 PhysicsWorld::GetBuiltShapeCount() const
+    {
+        return static_cast<u32>(m_Native->Shapes.Size());
+    }
+
+    const void* PhysicsWorld::FindBuiltShape(const Collider& collider) const
+    {
+        return m_Native->Shapes.Find(collider);
+    }
+
+    const void* PhysicsWorld::GetBodyShape(const Entity entity) const
+    {
+        const auto found = m_Native->Bodies.find(entity);
+        if (found == m_Native->Bodies.end())
+        {
+            return nullptr;
+        }
+        const JPH::BodyLockRead lock(m_Native->System.GetBodyLockInterface(), found->second.Id);
+        return lock.Succeeded() ? lock.GetBody().GetShape() : nullptr;
     }
 
     void PhysicsWorld::SetLinearVelocity(const Entity entity, const vec3 velocity)
@@ -1123,6 +1233,8 @@ namespace Veng
 
     void PhysicsWorld::Step(const f32 delta)
     {
+        m_Native->Shapes.Sweep(m_StepCount);
+
         if (m_Native->BroadPhaseDirty)
         {
             // Rebuilding the static tree is only worth it after a batch of bodies arrives, which

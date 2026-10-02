@@ -26,7 +26,8 @@ namespace Veng
         /// @brief Bodies to skip — typically the querying entity and whatever it carries.
         ///
         /// A non-owning view: it must outlive the call, which is trivially true for the caller's
-        /// own local array. Linear-scanned, so it is meant for a handful of entities.
+        /// own local array. Linear-scanned, so it is meant for a handful of entities; up to four
+        /// are held without allocating.
         std::span<const Entity> Ignore;
         /// @brief Whether a sensor body may be reported.
         ///
@@ -101,6 +102,27 @@ namespace Veng
                                                       const PhysicsPose& from, dvec3 to,
                                                       const QueryFilter& filter = {});
 
+    /// @brief Sweeps an entity's own body from a pose to a position and returns the first body met.
+    ///
+    /// The common case of the Collider overload — "sweep this body along its motion" — without
+    /// naming the collider: it casts the shape the body was built with, so it builds nothing. The
+    /// swept body itself is never reported, whatever @p filter says. As with the Collider
+    /// overload, the shape is not rotated during the sweep.
+    ///
+    /// A pure query: it mutates nothing, so a View-phase consumer may call it safely.
+    /// @param world   The world to query; **null returns nullopt**.
+    /// @param body    The entity whose body's shape to sweep; one with no body returns nullopt. A
+    ///                body built from a triangle-mesh CollisionShape cannot be swept and is a fatal
+    ///                assert.
+    /// @param from    The pose the sweep starts at, in the physics world's frame; it need not be
+    ///                where the body currently is.
+    /// @param to      The position the sweep ends at, in the physics world's frame.
+    /// @param filter  Which bodies may be reported.
+    /// @return The first contact along the sweep, or nullopt when it completes unobstructed.
+    [[nodiscard]] VE_API optional<ShapeHit> ShapeCast(const PhysicsWorld* world, Entity body,
+                                                      const PhysicsPose& from, dvec3 to,
+                                                      const QueryFilter& filter = {});
+
     /// @brief Collects every body whose shape intersects one placed at a pose.
     ///
     /// Reports bodies genuinely intersecting the volume; a body merely touching it from outside
@@ -113,4 +135,24 @@ namespace Veng
     /// @return The number of entities written to @p out.
     VE_API usize Overlap(const PhysicsWorld* world, const Collider& shape, const PhysicsPose& at,
                          const QueryFilter& filter, vector<Entity>& out);
+
+    /// @brief Collects every body whose bounding box intersects a sphere.
+    ///
+    /// A proximity query, not a collision one: it asks the broad phase which bodies' world-space
+    /// bounds reach the sphere and runs no narrow phase, so it costs a tree walk rather than an
+    /// exact test per sub-shape. The result is therefore a **superset** of the bodies whose shapes
+    /// touch the sphere — a body whose box reaches it while its shape does not is reported. Sensing
+    /// what is nearby (for steering, audio culling or interest management) is a bounds question;
+    /// a caller that needs genuine intersection uses Overlap with a sphere Collider instead.
+    ///
+    /// A pure query: it mutates nothing, so a View-phase consumer may call it safely.
+    /// @param world   The world to query; **null fills nothing and returns 0**.
+    /// @param center  The sphere's centre, in the physics world's frame.
+    /// @param radius  The sphere's radius in metres; zero finds the bodies whose bounds contain
+    ///                @p center, and a negative radius finds nothing.
+    /// @param filter  Which bodies may be reported.
+    /// @param out     Destination, cleared then filled in ascending entity slot order.
+    /// @return The number of entities written to @p out.
+    VE_API usize OverlapBounds(const PhysicsWorld* world, dvec3 center, f32 radius,
+                               const QueryFilter& filter, vector<Entity>& out);
 }
