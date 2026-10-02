@@ -21,34 +21,13 @@ namespace Veng
             return AssetLoadError{
                 .Kind = AssetError::Corrupt, .Id = id, .Detail = std::move(detail)};
         }
-
-        // Loads a Prefab dependency by id on the active path, returning its handle.
-        // A non-resolving id surfaces as a recoverable load failure.
-        AssetResult<AssetHandle<Prefab>>
-        LoadPrefabDependency(AssetManager& manager, AssetId levelId, AssetId prefabId, bool async)
-        {
-            if (async)
-            {
-                AssetHandle<Prefab> handle = manager.Load<Prefab>(prefabId);
-                if (!AssetManager::EntryOf(handle))
-                {
-                    return std::unexpected(
-                        AssetLoadError{.Kind = AssetError::MissingDependency,
-                                       .Id = prefabId,
-                                       .Detail = fmt::format("level {}: prefab {} did not resolve",
-                                                             levelId.Value, prefabId.Value)});
-                }
-                return handle;
-            }
-
-            return manager.LoadSync<Prefab>(prefabId);
-        }
     }
 
-    AssetResult<Detail::LoadJob>
-    LevelLoader::Load(AssetManager& manager, Renderer::Context& /*context*/, TaskSystem& /*tasks*/,
-                      TypeRegistry& types, AssetId id, std::span<const u8> cooked, bool async) const
+    AssetResult<Detail::ParsedAsset> LevelLoader::Parse(const AssetParseContext& context,
+                                                        const AssetId id,
+                                                        const std::span<const u8> cooked) const
     {
+        const TypeRegistry& types = context.Types;
         // ── 1. CookedLevelHeader ─────────────────────────────────────────────
         if (cooked.size() < sizeof(CookedLevelHeader))
         {
@@ -105,47 +84,41 @@ namespace Veng
             return std::unexpected(Corrupt(id, renderRead.error()));
         }
 
-        // ── 4. Resolve the world prefab and the game-mode player prefab ──────
-        const AssetResult<AssetHandle<Prefab>> world =
-            LoadPrefabDependency(manager, id, AssetId{header.WorldPrefabId}, async);
-        if (!world)
-        {
-            return std::unexpected(world.error());
-        }
-
-        // The decoded handle carries only the raw id; rebind it to a live, resident handle so
-        // the settings entity the level seeds reports the player prefab as loaded.
+        // ── 4. Name the world prefab and the game-mode player prefab ─────────
+        // Both are dependencies the level keeps resident. The environment map is not a level field:
+        // it rides an EnvironmentSky source on the world prefab's Sky component and resolves
+        // through the prefab's own dependency walk like any embedded handle.
+        const AssetId worldId{header.WorldPrefabId};
         const AssetId playerId = gameMode.PlayerPrefab.Id();
+        Detail::ParsedAsset parsed;
+        parsed.Dependencies.push_back({.Type = AssetTypes::Prefab, .Id = worldId});
         if (playerId.IsValid())
         {
-            const AssetResult<AssetHandle<Prefab>> player =
-                LoadPrefabDependency(manager, id, playerId, async);
-            if (!player)
+            parsed.Dependencies.push_back({.Type = AssetTypes::Prefab, .Id = playerId});
+        }
+
+        // ── 5. Construct the Level once the prefabs are named in the cache ───
+        parsed.Complete = [systems = std::move(systems), gameMode = std::move(gameMode),
+                           render](AssetManager&,
+                                   std::span<const Ref<Detail::AssetCacheEntry>> resolved) mutable
+            -> AssetResult<Detail::LoadJob>
+        {
+            // The decoded handle carries only the raw id; rebind it to the live entry so the
+            // settings entity the level seeds reports the player prefab as loaded.
+            const AssetHandle<Prefab> world = AssetManager::HandleOf<Prefab>(resolved[0]);
+            if (resolved.size() > 1)
             {
-                return std::unexpected(player.error());
+                gameMode.PlayerPrefab = AssetManager::HandleOf<Prefab>(resolved[1]);
             }
-            gameMode.PlayerPrefab = *player;
-        }
-
-        // ── 5. Collect dependency cache entries (kept resident for the level) ─
-        // The environment map is no longer a level field: it rides an EnvironmentSky source on the
-        // world prefab's Sky component and resolves through the prefab's own dependency walk like
-        // any embedded handle.
-        vector<Ref<Detail::AssetCacheEntry>> dependencies;
-        dependencies.push_back(AssetManager::EntryOf(*world));
-        if (playerId.IsValid())
-        {
-            dependencies.push_back(AssetManager::EntryOf(gameMode.PlayerPrefab));
-        }
-
-        // ── 6. Construct the Level ───────────────────────────────────────────
-        const Ref<Level> level =
-            Level::Create(*world, std::move(systems), std::move(gameMode), render);
-
-        return Detail::LoadJob{
-            .Resource = Detail::RefAny(level),
-            .Dependencies = std::move(dependencies),
-            .Finalize = []() -> VoidResult { return {}; },
+            const Ref<Level> level =
+                Level::Create(world, std::move(systems), std::move(gameMode), render);
+            return Detail::LoadJob{
+                .Resource = Detail::RefAny(level),
+                .Dependencies =
+                    vector<Ref<Detail::AssetCacheEntry>>(resolved.begin(), resolved.end()),
+                .Finalize = []() -> VoidResult { return {}; },
+            };
         };
+        return parsed;
     }
 }

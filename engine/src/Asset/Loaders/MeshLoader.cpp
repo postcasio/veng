@@ -57,10 +57,23 @@ namespace Veng
         }
     }
 
-    AssetResult<Detail::LoadJob> MeshLoader::Load(AssetManager& manager, Renderer::Context& context,
-                                                  TaskSystem& tasks, TypeRegistry& /*types*/,
-                                                  AssetId id, std::span<const u8> cooked,
-                                                  bool async) const
+    namespace
+    {
+        /// @brief What a mesh's completion builds it from, beyond its buffers.
+        struct MeshParts
+        {
+            /// @brief The submesh table, bounds folded.
+            vector<Veng::SubMesh> SubMeshes;
+            /// @brief The decoded socket table.
+            vector<Veng::MeshSocket> Sockets;
+            /// @brief The mesh's local-space bound.
+            AABB Bounds;
+        };
+    }
+
+    AssetResult<Detail::ParsedAsset> MeshLoader::Parse(const AssetParseContext& context,
+                                                       const AssetId id,
+                                                       const std::span<const u8> cooked) const
     {
         if (cooked.size() < sizeof(CookedMeshHeader))
         {
@@ -147,10 +160,10 @@ namespace Veng
             return std::unexpected(Corrupt(id, "mesh: cooked blob smaller than submesh table"));
         }
 
-        // Resolve cooked submesh material ids into resident material instances
-        // eagerly: a distinct non-zero id becomes one entry in the material list;
-        // each submesh stores an index into it (or NoMaterial for id 0).
-        vector<AssetHandle<Veng::MaterialInstance>> materials;
+        // Each distinct non-zero cooked submesh material id becomes one entry in the material list,
+        // and a dependency; each submesh stores an index into the list (or NoMaterial for id 0). A
+        // cooked submesh material id names a MaterialInstance — a material reference is rewritten
+        // to a parent's default-instance id at cook time.
         vector<u64> materialIds;
 
         auto resolveMaterial = [&](u64 materialId) -> AssetResult<u32>
@@ -162,20 +175,8 @@ namespace Veng
                     return i;
                 }
             }
-
-            // A cooked submesh material id names a MaterialInstance — a material reference is
-            // rewritten to a parent's default-instance id at cook time.
-            const AssetResult<AssetHandle<Veng::MaterialInstance>> result =
-                manager.LoadSync<Veng::MaterialInstance>(AssetId{materialId});
-            if (!result)
-            {
-                return std::unexpected(result.error());
-            }
-
-            const u32 index = static_cast<u32>(materials.size());
             materialIds.push_back(materialId);
-            materials.push_back(*result);
-            return index;
+            return static_cast<u32>(materialIds.size() - 1);
         };
 
         vector<Veng::SubMesh> subMeshes(header.SubMeshCount);
@@ -240,54 +241,75 @@ namespace Veng
                 vertexData, header.VertexStride, indices, subMesh.IndexOffset, subMesh.IndexCount);
         }
 
-        const Ref<Renderer::Buffer> vertexBuffer =
-            Renderer::Buffer::Create(context, {
-                                                  .Name = fmt::format("Mesh {} Vertices", id.Value),
-                                                  .Size = vertexBytes,
-                                                  .Usage = Renderer::BufferUsage::Vertex |
-                                                           Renderer::BufferUsage::TransferDst,
-                                              });
+        // The buffers are host-visible, so each upload is a copy into the mapping — worker-legal,
+        // and on an asynchronous load already on a worker.
+        const Ref<Renderer::Buffer> vertexBuffer = Renderer::Buffer::Create(
+            context.Context,
+            {
+                .Name = fmt::format("Mesh {} Vertices", id.Value),
+                .Size = vertexBytes,
+                .Usage = Renderer::BufferUsage::Vertex | Renderer::BufferUsage::TransferDst,
+            });
+        auto indexBuffer = CreateRef<Renderer::IndexBuffer>(Renderer::IndexBuffer::Create(
+            context.Context, fmt::format("Mesh {} Indices", id.Value), header.IndexCount));
+        vertexBuffer->UploadSync(vertexData);
+        indexBuffer->UploadSync(indices);
 
-        Renderer::IndexBuffer indexBuffer = Renderer::IndexBuffer::Create(
-            context, fmt::format("Mesh {} Indices", id.Value), header.IndexCount);
-
-        // Resolve the skeleton eagerly (like materials) so a skinned mesh is ready to pose
-        // the moment it is resident.
-        AssetHandle<Veng::Skeleton> skeleton;
+        // The materials, then the skeleton of a skinned mesh: resolved as dependencies so a mesh is
+        // resident only once it is ready to draw and, skinned, to pose.
+        Detail::ParsedAsset parsed;
+        for (const u64 materialId : materialIds)
+        {
+            parsed.Dependencies.push_back(
+                {.Type = AssetTypes::MaterialInstance, .Id = AssetId{materialId}});
+        }
         if (skinned)
         {
-            const AssetResult<AssetHandle<Veng::Skeleton>> resolved =
-                manager.LoadSync<Veng::Skeleton>(AssetId{header.SkeletonId});
-            if (!resolved)
-            {
-                return std::unexpected(resolved.error());
-            }
-            skeleton = *resolved;
+            parsed.Dependencies.push_back(
+                {.Type = AssetTypes::Skeleton, .Id = AssetId{header.SkeletonId}});
         }
 
-        if (async)
-        {
-            const Task<void> vertexUpload = vertexBuffer->Upload(tasks, vertexData);
-            const Task<void> indexUpload = indexBuffer.GetBuffer()->Upload(tasks, indexData);
-        }
-        else
-        {
-            vertexBuffer->UploadSync(vertexData);
-            indexBuffer.UploadSync(indices);
-        }
-
-        const Ref<Veng::Mesh> mesh = Veng::Mesh::Create({
-            .Name = fmt::format("Mesh {}", id.Value),
-            .VertexBuffer = vertexBuffer,
-            .IndexBuffer = std::move(indexBuffer),
-            .Layout = canonical,
+        auto parts = CreateRef<MeshParts>(MeshParts{
             .SubMeshes = std::move(subMeshes),
-            .Materials = std::move(materials),
-            .Bounds = Veng::Mesh::ComputeBounds(vertexData, header.VertexStride),
-            .Skeleton = skeleton,
             .Sockets = std::move(*sockets),
+            .Bounds = Veng::Mesh::ComputeBounds(vertexData, header.VertexStride),
         });
+        parsed.Complete = [vertexBuffer, indexBuffer, parts, canonical, skinned, id](
+                              AssetManager&, std::span<const Ref<Detail::AssetCacheEntry>> resolved)
+            -> AssetResult<Detail::LoadJob>
+        {
+            const usize materialCount = skinned ? resolved.size() - 1 : resolved.size();
+            vector<AssetHandle<Veng::MaterialInstance>> materials;
+            materials.reserve(materialCount);
+            for (usize i = 0; i < materialCount; ++i)
+            {
+                materials.push_back(AssetManager::HandleOf<Veng::MaterialInstance>(resolved[i]));
+            }
+            const AssetHandle<Veng::Skeleton> skeleton =
+                skinned ? AssetManager::HandleOf<Veng::Skeleton>(resolved.back())
+                        : AssetHandle<Veng::Skeleton>();
 
-        return Detail::LoadJob{.Resource = Detail::RefAny(mesh)};
+            const Ref<Veng::Mesh> mesh = Veng::Mesh::Create({
+                .Name = fmt::format("Mesh {}", id.Value),
+                .VertexBuffer = vertexBuffer,
+                .IndexBuffer = std::move(*indexBuffer),
+                .Layout = canonical,
+                .SubMeshes = std::move(parts->SubMeshes),
+                .Materials = std::move(materials),
+                .Bounds = parts->Bounds,
+                .Skeleton = skeleton,
+                .Sockets = std::move(parts->Sockets),
+            });
+
+            // The empty finalize is what holds the mesh pending until its materials (and skeleton)
+            // are resident.
+            return Detail::LoadJob{
+                .Resource = Detail::RefAny(mesh),
+                .Dependencies =
+                    vector<Ref<Detail::AssetCacheEntry>>(resolved.begin(), resolved.end()),
+                .Finalize = []() -> VoidResult { return {}; },
+            };
+        };
+        return parsed;
     }
 }

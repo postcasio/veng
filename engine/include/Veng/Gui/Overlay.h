@@ -301,6 +301,21 @@ namespace Veng
                       const Gui::GuiTranslator* translator = nullptr,
                       const Localization::Localization* localization = nullptr) const;
 
+        /// @brief Instantiates the overlay's document ahead of its first drive, without blocking.
+        ///
+        /// For an overlay in a world that is about to be presented — a destination waiting to swap in
+        /// — so the frame that first presents it does not also pay to load and instantiate the
+        /// document. Materializes the host, requests the document recipe as an asynchronous load,
+        /// and once the recipe is resident instantiates and binds the document (running any
+        /// on-instantiate callback) exactly as the first Drive or DriveHdr would; that drive then
+        /// finds the document live. The presentation driver is not instantiated here: it needs the
+        /// claiming viewport, which the first drive supplies. Never blocks, so it is called each
+        /// frame while waiting.
+        /// @param assets  The asset manager the document recipe and its fonts load through.
+        /// @return True when nothing is left to prepare — the document is live, has failed to load,
+        ///         or the overlay names none; false while its recipe is still loading.
+        bool Prepare(AssetManager& assets) const;
+
         /// @brief Detaches the presented document from a viewport's layer stack — the inverse of Drive.
         ///
         /// Removes the live document from @p viewport's layer stack when it is hosted there, leaving the

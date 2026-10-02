@@ -123,9 +123,12 @@ namespace Veng
     {
         m_Started = true;
         m_StepsSinceRun.assign(m_Systems.size(), 0);
-        for (const Unique<SceneSystem>& system : m_Systems)
+        // Scoped per system under the same interned names as the per-tick scopes, so a slow start or
+        // stop names its system the way a slow tick does.
+        for (usize i = 0; i < m_Systems.size(); ++i)
         {
-            system->OnStart(scene, context);
+            VE_PROFILE_SCOPE_ID(m_SystemProfileNames[i]);
+            m_Systems[i]->OnStart(scene, context);
         }
     }
 
@@ -180,9 +183,10 @@ namespace Veng
             return;
         }
         m_Started = false;
-        for (const Unique<SceneSystem>& system : m_Systems)
+        for (usize i = 0; i < m_Systems.size(); ++i)
         {
-            system->OnStop(scene, context);
+            VE_PROFILE_SCOPE_ID(m_SystemProfileNames[i]);
+            m_Systems[i]->OnStop(scene, context);
         }
     }
 }

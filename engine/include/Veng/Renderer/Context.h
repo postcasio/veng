@@ -558,9 +558,25 @@ namespace Veng::Renderer
         /// @brief Records commands via a callback on a one-shot command buffer and waits for completion.
         ///
         /// GPU scopes the callback opens are timed against a query pool of the one-shot buffer's
-        /// own and read back before this returns; see GetLastImmediateGpuPassTimings.
+        /// own and read back before this returns; see GetLastImmediateGpuPassTimings. Setup work
+        /// RecordSetupCommands is holding records at the head of the buffer, ahead of the callback.
         /// @param function  Records the work into the one-shot command buffer it is handed.
         void ImmediateCommands(const std::function<void(CommandBuffer&)>& function) const;
+
+        /// @brief Records one-time setup work — a clear, a staged copy, a first layout transition —
+        ///        without waiting for it.
+        ///
+        /// The work records into whichever command buffer is open: inside an ImmediateCommands
+        /// callback, that one-shot buffer; between BeginFrame and EndFrame, the frame's own command
+        /// buffer at the point of the call; otherwise it is held and recorded at the head of the
+        /// next BeginFrame or ImmediateCommands, ahead of anything that recording does. So the work
+        /// is ordered before every later use of what it touches, and no thread waits for it — which
+        /// is what a resource built mid-frame wants in place of an ImmediateCommands, whose submit
+        /// waits behind the frame already in flight.
+        /// @pre Not inside a render pass (between CommandBuffer::BeginRendering and EndRendering).
+        /// @param commands  Records the work. It may run after the caller returns, so it captures
+        ///                  what it records against by value (a Ref), never a pointer to its owner.
+        void RecordSetupCommands(std::function<void(CommandBuffer&)> commands);
 
         /// @brief Acquires the next swap chain image, signalling `semaphore` when available.
         void AcquireNextImage(Semaphore& semaphore);
@@ -682,6 +698,16 @@ namespace Veng::Renderer
         /// Populated by EnqueueBindlessAcquire and drained by BeginFrame. Holds a Ref so a
         /// view enqueued for a texture dropped before the next frame cannot dangle.
         vector<Ref<ImageView>> m_PendingBindlessAcquires;
+
+        /// @brief Setup work RecordSetupCommands was handed while no command buffer was open.
+        ///
+        /// Recorded at the head of the next BeginFrame or ImmediateCommands, in the order it was
+        /// handed over.
+        vector<std::function<void(CommandBuffer&)>> m_PendingSetupCommands;
+
+        /// @brief Records the held setup work into @p commandBuffer and empties the queue.
+        /// @param commandBuffer  The command buffer that has just begun recording.
+        void DrainSetupCommands(CommandBuffer& commandBuffer);
 
         /// @brief The render-domain viewport identity registry.
         ///

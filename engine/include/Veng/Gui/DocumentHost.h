@@ -96,6 +96,17 @@ namespace Veng::Gui
         /// @brief Returns the live document, or nullptr before the first Drive (or after a failed load).
         [[nodiscard]] Document* Get() const { return m_Document.get(); }
 
+        /// @brief Instantiates the document ahead of its first Drive without blocking on its load.
+        ///
+        /// For a host whose document will be shown soon but not yet: the recipe is requested as an
+        /// asynchronous load on the first call, and once it is resident a later call instantiates
+        /// and binds the document exactly as the first Drive would, so that Drive finds it live.
+        /// Bindings are not refreshed — Drive does that. Never blocks, so it may be called every
+        /// frame while waiting.
+        /// @return True when nothing is left to prepare — the document is live, the load failed, or
+        ///         the host has no recipe to load; false while the recipe is still loading.
+        bool Prepare();
+
     private:
         /// @brief Loads, instantiates, and binds the document once; false until it succeeds.
         [[nodiscard]] bool EnsureDocument();

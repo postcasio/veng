@@ -27,52 +27,11 @@ namespace Veng
             return AssetLoadError{
                 .Kind = AssetError::Corrupt, .Id = id, .Detail = std::move(detail)};
         }
-
-        // Resolve the parent Material handle (async or blocking), recording its cache entry.
-        AssetResult<AssetHandle<Material>> LoadParent(AssetManager& manager, AssetId instanceId,
-                                                      u64 parentId, bool async)
-        {
-            if (async)
-            {
-                AssetHandle<Material> handle = manager.Load<Material>(AssetId{parentId});
-                if (!AssetManager::EntryOf(handle))
-                {
-                    return std::unexpected(AssetLoadError{
-                        .Kind = AssetError::MissingDependency,
-                        .Id = AssetId{parentId},
-                        .Detail = fmt::format("instance {}: parent material {} did not resolve",
-                                              instanceId.Value, parentId)});
-                }
-                return handle;
-            }
-            return manager.LoadSync<Material>(AssetId{parentId});
-        }
-
-        // Resolve an override texture handle (async or blocking).
-        AssetResult<AssetHandle<Texture>>
-        LoadOverrideTexture(AssetManager& manager, AssetId instanceId, u64 textureId, bool async)
-        {
-            if (async)
-            {
-                AssetHandle<Texture> handle = manager.Load<Texture>(AssetId{textureId});
-                if (!AssetManager::EntryOf(handle))
-                {
-                    return std::unexpected(AssetLoadError{
-                        .Kind = AssetError::MissingDependency,
-                        .Id = AssetId{textureId},
-                        .Detail = fmt::format("instance {}: override texture {} did not resolve",
-                                              instanceId.Value, textureId)});
-                }
-                return handle;
-            }
-            return manager.LoadSync<Texture>(AssetId{textureId});
-        }
     }
 
-    AssetResult<Detail::LoadJob>
-    MaterialInstanceLoader::Load(AssetManager& manager, Renderer::Context& context,
-                                 TaskSystem& /*tasks*/, TypeRegistry& /*types*/, AssetId id,
-                                 std::span<const u8> cooked, bool async) const
+    AssetResult<Detail::ParsedAsset>
+    MaterialInstanceLoader::Parse(const AssetParseContext& /*context*/, const AssetId id,
+                                  const std::span<const u8> cooked) const
     {
         if (cooked.size() < sizeof(CookedMaterialInstanceHeader))
         {
@@ -111,21 +70,16 @@ namespace Veng
 
         const std::span<const u8> valueRegion = cooked.subspan(cursor, header.ValueRegionBytes);
 
-        // Resolve the parent.
-        const AssetResult<AssetHandle<Material>> parentResult =
-            LoadParent(manager, id, header.ParentId, async);
-        if (!parentResult)
-        {
-            return std::unexpected(parentResult.error());
-        }
-        const AssetHandle<Material> parent = *parentResult;
+        // The parent is the first dependency and each texture override's texture follows it, in
+        // override order; a value override carries its bytes and no dependency.
+        Detail::ParsedAsset parsed;
+        parsed.Dependencies.push_back(
+            {.Type = AssetTypes::Material, .Id = AssetId{header.ParentId}});
 
-        vector<Ref<Detail::AssetCacheEntry>> dependencies;
-        dependencies.push_back(AssetManager::EntryOf(parent));
-
-        // Build the override records, fanning out texture sub-loads.
-        vector<MaterialOverride> overrides;
-        overrides.reserve(header.OverrideCount);
+        auto overrides = CreateRef<vector<MaterialOverride>>();
+        overrides->reserve(header.OverrideCount);
+        // The overrides that take a texture, in order; the k-th takes dependency k + 1.
+        vector<usize> textureOverrides;
         for (u32 i = 0; i < header.OverrideCount; ++i)
         {
             const CookedMaterialInstanceOverride& co = cookedOverrides[i];
@@ -144,20 +98,17 @@ namespace Veng
                 {
                     std::memcpy(value.data(), valueRegion.data() + co.ValueOffset, co.ValueSize);
                 }
-                overrides.push_back(MaterialOverride{
+                overrides->push_back(MaterialOverride{
                     .Name = BridgeName(co.Name), .Value = std::move(value), .Texture = {}});
             }
             else if (co.Kind == 1)
             {
-                const AssetResult<AssetHandle<Texture>> texResult =
-                    LoadOverrideTexture(manager, id, co.TextureId, async);
-                if (!texResult)
-                {
-                    return std::unexpected(texResult.error());
-                }
-                dependencies.push_back(AssetManager::EntryOf(*texResult));
-                overrides.push_back(MaterialOverride{
-                    .Name = BridgeName(co.Name), .Value = {}, .Texture = *texResult});
+                parsed.Dependencies.push_back(
+                    {.Type = AssetTypes::Texture, .Id = AssetId{co.TextureId}});
+                // The texture is filled in by the completion, from this dependency's entry.
+                textureOverrides.push_back(overrides->size());
+                overrides->push_back(
+                    MaterialOverride{.Name = BridgeName(co.Name), .Value = {}, .Texture = {}});
             }
             else
             {
@@ -167,23 +118,36 @@ namespace Veng
             }
         }
 
-        const MaterialInstanceInfo info{
-            .Name = fmt::format("MaterialInstance {}", id.Value),
-            .Context = &context,
-            .Parent = parent,
-            .Overrides = std::move(overrides),
-        };
-
-        const Ref<MaterialInstance> instance = MaterialInstance::Prepare(info);
-
-        return Detail::LoadJob{
-            .Resource = Detail::RefAny(instance),
-            .Dependencies = std::move(dependencies),
-            .Finalize = [instance]() -> VoidResult
+        parsed.Complete = [overrides, textureOverrides = std::move(textureOverrides),
+                           id](AssetManager& manager,
+                               std::span<const Ref<Detail::AssetCacheEntry>> resolved)
+            -> AssetResult<Detail::LoadJob>
+        {
+            for (usize k = 0; k < textureOverrides.size(); ++k)
             {
-                instance->Finalize();
-                return {};
-            },
+                (*overrides)[textureOverrides[k]].Texture =
+                    AssetManager::HandleOf<Texture>(resolved[k + 1]);
+            }
+
+            const MaterialInstanceInfo info{
+                .Name = fmt::format("MaterialInstance {}", id.Value),
+                .Context = &manager.GetContext(),
+                .Parent = AssetManager::HandleOf<Material>(resolved[0]),
+                .Overrides = std::move(*overrides),
+            };
+            const Ref<MaterialInstance> instance = MaterialInstance::Prepare(info);
+
+            return Detail::LoadJob{
+                .Resource = Detail::RefAny(instance),
+                .Dependencies =
+                    vector<Ref<Detail::AssetCacheEntry>>(resolved.begin(), resolved.end()),
+                .Finalize = [instance]() -> VoidResult
+                {
+                    instance->Finalize();
+                    return {};
+                },
+            };
         };
+        return parsed;
     }
 }

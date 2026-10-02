@@ -224,10 +224,14 @@ extern "C"
 /// Gui::Document with its re-resolve queues and retained build, Gui::DrawList with per-run texture
 /// keys and recorded glyphs, and ShapedGlyph with its pen. A module drives documents and builds draw
 /// lists, so a stale one lays every element, document, and list out short.
+/// Version 52 grows AssetLoader with the two-phase protocol (ParsesOffThread, Parse) and makes Load
+/// overridable rather than pure, AssetCacheEntry with Failed, WorldRunner with its capture pool, and
+/// WorldCaptureDriveInfo/Result with the capture build budget. A module subclasses AssetLoader, so a
+/// stale one carries a vtable short of the slots the manager dispatches through.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 51u
+#define VENG_MODULE_ABI_VERSION 52u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

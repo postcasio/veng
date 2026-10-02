@@ -9,12 +9,11 @@
 
 namespace Veng
 {
-    AssetResult<Detail::LoadJob> EnvironmentLoader::Load(AssetManager& /*manager*/,
-                                                         Renderer::Context& context,
-                                                         TaskSystem& tasks, TypeRegistry& /*types*/,
-                                                         AssetId id, std::span<const u8> cooked,
-                                                         bool async) const
+    AssetResult<Detail::ParsedAsset>
+    EnvironmentLoader::Parse(const AssetParseContext& parse, const AssetId id,
+                             const std::span<const u8> cooked) const
     {
+        Renderer::Context& context = parse.Context;
         if (cooked.size() < sizeof(CookedEnvironmentHeader))
         {
             return std::unexpected(AssetLoadError{
@@ -69,17 +68,17 @@ namespace Veng
         };
 
         Ref<Veng::EnvironmentMap> environment;
-        if (async)
+        if (parse.Async)
         {
             Task<void> upload;
-            environment = Veng::EnvironmentMap::PrepareAsync(context, info, tasks, upload);
+            environment = Veng::EnvironmentMap::PrepareAsync(context, info, parse.Tasks, upload);
         }
         else
         {
             environment = Veng::EnvironmentMap::PrepareSync(context, info);
         }
 
-        return Detail::LoadJob{
+        return Detail::ParsedJob(Detail::LoadJob{
             .Resource = Detail::RefAny(environment),
             .Dependencies = {},
             .Finalize = [environment]() -> VoidResult
@@ -87,6 +86,6 @@ namespace Veng
                 environment->Finalize();
                 return {};
             },
-        };
+        });
     }
 }

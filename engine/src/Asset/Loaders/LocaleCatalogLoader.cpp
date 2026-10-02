@@ -34,10 +34,9 @@ namespace Veng
         }
     }
 
-    AssetResult<Detail::LoadJob>
-    LocaleCatalogLoader::Load(AssetManager& /*manager*/, Renderer::Context& /*context*/,
-                              TaskSystem& /*tasks*/, TypeRegistry& /*types*/, AssetId id,
-                              std::span<const u8> cooked, bool /*async*/) const
+    AssetResult<Detail::ParsedAsset>
+    LocaleCatalogLoader::Parse(const AssetParseContext& /*context*/, const AssetId id,
+                               const std::span<const u8> cooked) const
     {
         if (cooked.size() < sizeof(CookedLocaleCatalogHeader))
         {
@@ -163,6 +162,6 @@ namespace Veng
 
         const Ref<Localization::LocaleCatalog> catalog =
             Localization::LocaleCatalog::Create(std::move(contents));
-        return Detail::LoadJob{.Resource = Detail::RefAny(catalog)};
+        return Detail::ParsedJob(Detail::LoadJob{.Resource = Detail::RefAny(catalog)});
     }
 }

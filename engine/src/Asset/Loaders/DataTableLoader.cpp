@@ -15,33 +15,11 @@ namespace Veng
             return AssetLoadError{
                 .Kind = AssetError::Corrupt, .Id = id, .Detail = std::move(detail)};
         }
-
-        // Resolve the TableSchema handle (async or blocking), mirroring the material-instance parent.
-        AssetResult<AssetHandle<TableSchema>> LoadSchema(AssetManager& manager, AssetId tableId,
-                                                         u64 schemaId, bool async)
-        {
-            if (async)
-            {
-                AssetHandle<TableSchema> handle = manager.Load<TableSchema>(AssetId{schemaId});
-                if (!AssetManager::EntryOf(handle))
-                {
-                    return std::unexpected(
-                        AssetLoadError{.Kind = AssetError::MissingDependency,
-                                       .Id = AssetId{schemaId},
-                                       .Detail = fmt::format("table {}: schema {} did not resolve",
-                                                             tableId.Value, schemaId)});
-                }
-                return handle;
-            }
-            return manager.LoadSync<TableSchema>(AssetId{schemaId});
-        }
     }
 
-    AssetResult<Detail::LoadJob> DataTableLoader::Load(AssetManager& manager,
-                                                       Renderer::Context& /*context*/,
-                                                       TaskSystem& /*tasks*/, TypeRegistry& types,
-                                                       AssetId id, std::span<const u8> cooked,
-                                                       bool async) const
+    AssetResult<Detail::ParsedAsset> DataTableLoader::Parse(const AssetParseContext& /*context*/,
+                                                            const AssetId id,
+                                                            const std::span<const u8> cooked) const
     {
         if (cooked.size() < sizeof(CookedDataTableHeader))
         {
@@ -190,58 +168,63 @@ namespace Veng
             }
         }
 
-        const AssetResult<AssetHandle<TableSchema>> schemaResult =
-            LoadSchema(manager, id, header.SchemaId, async);
-        if (!schemaResult)
+        // The schema is the one dependency; the table is assembled around its entry on the main
+        // thread, where the type registry the table reads its rows through is reached.
+        auto contents = CreateRef<DataTable::Contents>(DataTable::Contents{
+            .KeyKind = static_cast<TableKeyKind>(header.KeyKind),
+            .FixedStride = fixedStride,
+            .RowStride = header.RowStride,
+            .Rows = std::move(rows),
+            .RowOffsets = std::move(rowOffsets),
+            .Keys = std::move(keys),
+            .KeyHeap = std::move(keyHeap),
+        });
+
+        Detail::ParsedAsset parsed;
+        parsed.Dependencies.push_back(
+            {.Type = AssetTypes::TableSchema, .Id = AssetId{header.SchemaId}});
+        parsed.Complete = [contents, fixedStride, stride = header.RowStride,
+                           id](AssetManager& manager,
+                               std::span<const Ref<Detail::AssetCacheEntry>> resolved)
+            -> AssetResult<Detail::LoadJob>
         {
-            return std::unexpected(schemaResult.error());
-        }
-
-        const Ref<DataTable> table = DataTable::Create(
-            DataTable::Contents{
-                .Schema = *schemaResult,
-                .KeyKind = static_cast<TableKeyKind>(header.KeyKind),
-                .FixedStride = fixedStride,
-                .RowStride = header.RowStride,
-                .Rows = std::move(rows),
-                .RowOffsets = std::move(rowOffsets),
-                .Keys = std::move(keys),
-                .KeyHeap = std::move(keyHeap),
-            },
-            types);
-
-        return Detail::LoadJob{
-            .Resource = Detail::RefAny(table),
-            .Dependencies = {AssetManager::EntryOf(*schemaResult)},
-            // The schema is resident by the time Finalize runs, so this is where a table cooked
-            // against a since-changed schema layout is caught rather than misread.
-            .Finalize = [table, fixedStride, stride = header.RowStride, id]() -> VoidResult
-            {
-                const TableSchema& schema = table->GetSchema();
-                if (schema.IsFixedStride() != fixedStride)
+            contents->Schema = AssetManager::HandleOf<TableSchema>(resolved[0]);
+            const Ref<DataTable> table =
+                DataTable::Create(std::move(*contents), manager.GetTypeRegistry());
+            return Detail::LoadJob{
+                .Resource = Detail::RefAny(table),
+                .Dependencies = {resolved[0]},
+                // The schema is resident by the time Finalize runs, so this is where a table
+                // cooked against a since-changed schema layout is caught rather than misread.
+                .Finalize = [table, fixedStride, stride, id]() -> VoidResult
                 {
-                    return std::unexpected(fmt::format(
-                        "data table {}: rows are cooked {} but its schema lays out {} — re-cook "
-                        "the pack",
-                        id.Value, fixedStride ? "fixed-stride" : "variable-size",
-                        schema.IsFixedStride() ? "fixed-stride" : "variable-size"));
-                }
-                if (fixedStride && schema.GetRowStride() != stride)
-                {
-                    return std::unexpected(fmt::format(
-                        "data table {}: rows are {} bytes but its schema lays out {} — re-cook "
-                        "the pack",
-                        id.Value, stride, schema.GetRowStride()));
-                }
-                if (schema.GetKeyKind() != table->GetKeyKind())
-                {
-                    return std::unexpected(
-                        fmt::format("data table {}: its key index and its schema disagree on the "
-                                    "key kind — re-cook the pack",
-                                    id.Value));
-                }
-                return {};
-            },
+                    const TableSchema& schema = table->GetSchema();
+                    if (schema.IsFixedStride() != fixedStride)
+                    {
+                        return std::unexpected(fmt::format(
+                            "data table {}: rows are cooked {} but its schema lays out {} — "
+                            "re-cook the pack",
+                            id.Value, fixedStride ? "fixed-stride" : "variable-size",
+                            schema.IsFixedStride() ? "fixed-stride" : "variable-size"));
+                    }
+                    if (fixedStride && schema.GetRowStride() != stride)
+                    {
+                        return std::unexpected(fmt::format(
+                            "data table {}: rows are {} bytes but its schema lays out {} — "
+                            "re-cook the pack",
+                            id.Value, stride, schema.GetRowStride()));
+                    }
+                    if (schema.GetKeyKind() != table->GetKeyKind())
+                    {
+                        return std::unexpected(fmt::format(
+                            "data table {}: its key index and its schema disagree on the key "
+                            "kind — re-cook the pack",
+                            id.Value));
+                    }
+                    return {};
+                },
+            };
         };
+        return parsed;
     }
 }

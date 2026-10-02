@@ -169,7 +169,8 @@ above and three collaborators it drives each frame:
   first-class worlds** and ticks every one each frame. Its per-frame render-side drive is narrower
   than its tick: `DriveCaptureSurfaces` walks only the worlds a view **presents**, asked through the
   caller's `IsPresented` hook (`Application::IsWorldPresented`), since a capture rendered from a world
-  nothing shows can be sampled by nothing — see
+  nothing shows can be sampled by nothing, builds at most one new capture per frame, and reuses a
+  released capture from its `SceneCapturePool` before building one — see
   [src/Renderer/CLAUDE.md](src/Renderer/CLAUDE.md).
 
 **Every `Viewport` has a `ViewportId`.** Minted at `Viewport::Create` and retired at destruction,
@@ -220,7 +221,9 @@ the game. `GetManagedViewportWorld(index)` returns the applied binding and
 counts as presented and is not reaped in its own rebind gap). **`RebindManagedViewportWhenReady(index,
 world)`** is the front-door / world-jump path: it holds the viewport on its current world until the
 destination is **ready** (resolves, its scene installed, its simulation started, its `World::Pending`
-residency batch resident, and its clock ticked ≥ 1), then swaps in one frame — no empty-world frame,
+residency batch resident, its clock ticked ≥ 1, and its visible `GuiOverlay`s' documents instantiated
+— the wait prepares them, `GuiOverlay::Prepare`, so the presenting frame does not), then swaps in one
+frame — no empty-world frame,
 no consumer polling loop. It is superseded by any later rebind of the same index (last wins); a **timed-out wait retries with
 a fresh clock** up to `PresentReadyAttempts`, so a transient stall clears with no consumer recovery
 loop, and the rebind is **abandoned** (surfaced through `GetAbandonedManagedPresentWorld(index)`)
@@ -498,7 +501,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 51** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 52** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the

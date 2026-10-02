@@ -165,16 +165,13 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(outArchive).has_value());
 
-    // A genuinely cold async request: nothing is resident, so the instance's parent Material is
-    // fanned out by this very call and is still pending when the instance is constructed.
+    // A genuinely cold async request: nothing is resident. The instance parses on a worker, so its
+    // parent Material is fanned out only when that parse lands, and is still pending when the
+    // instance is constructed.
     const AssetHandle<MaterialInstance> handle =
         assets.Load<MaterialInstance>(BrickDefaultInstanceId);
     CHECK_FALSE(handle.IsLoaded());
-
-    // The parent was fanned out as a dependency and is itself not yet resident.
-    const Ref<Detail::AssetCacheEntry> parentEntry = assets.CachedEntry(BrickParentId);
-    REQUIRE(parentEntry != nullptr);
-    CHECK(parentEntry->Resource == nullptr);
+    CHECK(assets.CachedEntry(BrickParentId) == nullptr);
 
     for (int i = 0; i < 100 && !handle.IsLoaded(); ++i)
     {

@@ -19,12 +19,14 @@ namespace Veng
         /// @brief Returns AssetTypes::StyleSheet.
         [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::StyleSheet; }
 
-        /// @brief Decodes the cooked stylesheet blob into a LoadJob producing a resident Gui::StyleSheet.
-        [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,
-                                                        Renderer::Context& context,
-                                                        TaskSystem& tasks, TypeRegistry& types,
-                                                        AssetId id, std::span<const u8> cooked,
-                                                        bool async) const override;
+        /// @brief Returns true: the decode runs on a worker for an asynchronous load.
+        [[nodiscard]] bool ParsesOffThread() const override { return true; }
+
+        /// @brief Decodes the cooked stylesheet, naming its fonts, textures and materials as
+        ///        dependencies.
+        [[nodiscard]] AssetResult<Detail::ParsedAsset>
+        Parse(const AssetParseContext& context, AssetId id,
+              std::span<const u8> cooked) const override;
     };
 
     namespace Detail

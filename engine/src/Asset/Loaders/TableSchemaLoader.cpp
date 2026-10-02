@@ -22,12 +22,11 @@ namespace Veng
         }
     }
 
-    AssetResult<Detail::LoadJob> TableSchemaLoader::Load(AssetManager& /*manager*/,
-                                                         Renderer::Context& /*context*/,
-                                                         TaskSystem& /*tasks*/, TypeRegistry& types,
-                                                         AssetId id, std::span<const u8> cooked,
-                                                         bool /*async*/) const
+    AssetResult<Detail::ParsedAsset>
+    TableSchemaLoader::Parse(const AssetParseContext& context, const AssetId id,
+                             const std::span<const u8> cooked) const
     {
+        const TypeRegistry& types = context.Types;
         if (cooked.size() < sizeof(CookedTableSchemaHeader))
         {
             return std::unexpected(Corrupt(id, "table schema: cooked blob smaller than header"));
@@ -154,9 +153,9 @@ namespace Veng
         }
 
         const u32 rowStride = allFixed ? cursor : 0;
-        return Detail::LoadJob{
+        return Detail::ParsedJob(Detail::LoadJob{
             .Resource = Detail::RefAny(TableSchema::Create(std::move(columns), header.KeyColumn,
                                                            *keyKind, allFixed, rowStride)),
-        };
+        });
     }
 }

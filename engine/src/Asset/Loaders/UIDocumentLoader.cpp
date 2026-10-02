@@ -257,149 +257,60 @@ namespace Veng
         }
     }
 
-    AssetResult<Detail::LoadJob>
-    UIDocumentLoader::Load(AssetManager& manager, Renderer::Context& /*context*/,
-                           TaskSystem& /*tasks*/, TypeRegistry& /*types*/, AssetId id,
-                           std::span<const u8> cooked, bool async) const
+    AssetResult<Detail::ParsedAsset> UIDocumentLoader::Parse(const AssetParseContext& /*context*/,
+                                                             const AssetId id,
+                                                             const std::span<const u8> cooked) const
     {
-        const AssetResult<Detail::DecodedUIDocument> decoded = Detail::DecodeUIDocument(id, cooked);
+        AssetResult<Detail::DecodedUIDocument> decoded = Detail::DecodeUIDocument(id, cooked);
         if (!decoded)
         {
             return std::unexpected(decoded.error());
         }
 
-        vector<Ref<Detail::AssetCacheEntry>> dependencies;
-        vector<AssetHandle<Gui::StyleSheet>> styleSheets;
-        styleSheets.reserve(decoded->StyleSheetIds.size());
-
-        // Load each referenced stylesheet; keep the handle for the recipe and its entry as a
-        // dependency, so the document finalizes only once its stylesheets and their fonts are
-        // resident (the material-pulls-its-textures shape).
+        // Each referenced stylesheet is a dependency whose handle the recipe keeps, so the document
+        // finalizes only once its stylesheets and their fonts are resident (the
+        // material-pulls-its-textures shape). The inline styles' fonts, an Image element's source
+        // texture and an inline `background-material` / `material` instance are ordinary load-time
+        // dependencies too, kept resident so an instantiate-time resolve is a cache hit.
+        Detail::ParsedAsset parsed;
         for (const AssetId sheetId : decoded->StyleSheetIds)
         {
-            if (async)
-            {
-                AssetHandle<Gui::StyleSheet> handle = manager.Load<Gui::StyleSheet>(sheetId);
-                if (!AssetManager::EntryOf(handle))
-                {
-                    return std::unexpected(AssetLoadError{
-                        .Kind = AssetError::MissingDependency,
-                        .Id = sheetId,
-                        .Detail =
-                            fmt::format("ui document {}: stylesheet dependency {} did not resolve",
-                                        id.Value, sheetId.Value)});
-                }
-                dependencies.push_back(AssetManager::EntryOf(handle));
-                styleSheets.push_back(std::move(handle));
-            }
-            else
-            {
-                AssetResult<AssetHandle<Gui::StyleSheet>> handle =
-                    manager.LoadSync<Gui::StyleSheet>(sheetId);
-                if (!handle)
-                {
-                    return std::unexpected(handle.error());
-                }
-                dependencies.push_back(AssetManager::EntryOf(*handle));
-                styleSheets.push_back(std::move(*handle));
-            }
+            parsed.Dependencies.push_back({.Type = AssetTypes::StyleSheet, .Id = sheetId});
         }
-
-        // The inline styles' fonts are ordinary load-time dependencies, kept resident.
         for (const AssetId fontId : decoded->FontIds)
         {
-            if (async)
-            {
-                const AssetHandle<Font> handle = manager.Load<Font>(fontId);
-                if (!AssetManager::EntryOf(handle))
-                {
-                    return std::unexpected(AssetLoadError{
-                        .Kind = AssetError::MissingDependency,
-                        .Id = fontId,
-                        .Detail = fmt::format("ui document {}: font dependency {} did not resolve",
-                                              id.Value, fontId.Value)});
-                }
-                dependencies.push_back(AssetManager::EntryOf(handle));
-            }
-            else
-            {
-                const AssetResult<AssetHandle<Font>> handle = manager.LoadSync<Font>(fontId);
-                if (!handle)
-                {
-                    return std::unexpected(handle.error());
-                }
-                dependencies.push_back(AssetManager::EntryOf(*handle));
-            }
+            parsed.Dependencies.push_back({.Type = AssetTypes::Font, .Id = fontId});
         }
-
-        // An Image element's source texture is an ordinary load-time dependency, kept resident so
-        // the instantiate-time resolve is a cache hit and the texture stays loaded like a font.
         for (const AssetId textureId : decoded->TextureIds)
         {
-            if (async)
-            {
-                const AssetHandle<Texture> handle = manager.Load<Texture>(textureId);
-                if (!AssetManager::EntryOf(handle))
-                {
-                    return std::unexpected(AssetLoadError{
-                        .Kind = AssetError::MissingDependency,
-                        .Id = textureId,
-                        .Detail =
-                            fmt::format("ui document {}: texture dependency {} did not resolve",
-                                        id.Value, textureId.Value)});
-                }
-                dependencies.push_back(AssetManager::EntryOf(handle));
-            }
-            else
-            {
-                const AssetResult<AssetHandle<Texture>> handle =
-                    manager.LoadSync<Texture>(textureId);
-                if (!handle)
-                {
-                    return std::unexpected(handle.error());
-                }
-                dependencies.push_back(AssetManager::EntryOf(*handle));
-            }
+            parsed.Dependencies.push_back({.Type = AssetTypes::Texture, .Id = textureId});
         }
-
-        // An inline `background-material` / `material` instance is an ordinary load-time
-        // dependency, resident for the instantiate-time resolve exactly as a texture is.
         for (const AssetId materialId : decoded->MaterialIds)
         {
-            if (async)
-            {
-                const AssetHandle<MaterialInstance> handle =
-                    manager.Load<MaterialInstance>(materialId);
-                if (!AssetManager::EntryOf(handle))
-                {
-                    return std::unexpected(AssetLoadError{
-                        .Kind = AssetError::MissingDependency,
-                        .Id = materialId,
-                        .Detail =
-                            fmt::format("ui document {}: material dependency {} did not resolve",
-                                        id.Value, materialId.Value)});
-                }
-                dependencies.push_back(AssetManager::EntryOf(handle));
-            }
-            else
-            {
-                const AssetResult<AssetHandle<MaterialInstance>> handle =
-                    manager.LoadSync<MaterialInstance>(materialId);
-                if (!handle)
-                {
-                    return std::unexpected(handle.error());
-                }
-                dependencies.push_back(AssetManager::EntryOf(*handle));
-            }
+            parsed.Dependencies.push_back({.Type = AssetTypes::MaterialInstance, .Id = materialId});
         }
 
-        const Ref<Gui::UIDocument> document = Gui::UIDocument::Create(
-            std::move(decoded->Elements), std::move(styleSheets), dependencies);
-
-        return Detail::LoadJob{
-            .Resource = Detail::RefAny(document),
-            .Dependencies = std::move(dependencies),
-            .Finalize = []() -> VoidResult { return {}; },
+        const usize sheetCount = decoded->StyleSheetIds.size();
+        auto elements = CreateRef<vector<Gui::UIElementRecipe>>(std::move(decoded->Elements));
+        parsed.Complete = [elements, sheetCount](
+                              AssetManager&, std::span<const Ref<Detail::AssetCacheEntry>> resolved)
+            -> AssetResult<Detail::LoadJob>
+        {
+            vector<AssetHandle<Gui::StyleSheet>> styleSheets;
+            styleSheets.reserve(sheetCount);
+            for (usize i = 0; i < sheetCount; ++i)
+            {
+                styleSheets.push_back(AssetManager::HandleOf<Gui::StyleSheet>(resolved[i]));
+            }
+            vector<Ref<Detail::AssetCacheEntry>> dependencies(resolved.begin(), resolved.end());
+            const Ref<Gui::UIDocument> document =
+                Gui::UIDocument::Create(std::move(*elements), std::move(styleSheets), dependencies);
+            return Detail::LoadJob{
+                .Resource = Detail::RefAny(document),
+                .Dependencies = std::move(dependencies),
+                .Finalize = []() -> VoidResult { return {}; },
+            };
         };
+        return parsed;
     }
 }

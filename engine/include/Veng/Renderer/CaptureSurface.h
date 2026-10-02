@@ -18,6 +18,8 @@ namespace Veng::Renderer
 {
     class Context;
     class SceneCapture;
+    class SceneCapturePool;
+    struct SceneCaptureInfo;
 
     /// @brief Runtime capture state a CaptureSurface materializes lazily; defined in CaptureSurface.cpp.
     struct CaptureSurfaceRuntime;
@@ -94,19 +96,20 @@ namespace Veng::Renderer
     /// it, beside a sampler slot and the optional probe-centre and capture-frame slots (see
     /// CenterSlot and OrientationSlot).
     ///
-    /// **The bound material is the sibling mesh *asset*'s, which is shared by every entity drawing that
-    /// asset.** The target is the first MaterialInstance of the mesh the sibling MeshRenderer names — a
-    /// cooked asset, not a per-entity copy — so two entities drawing one mesh asset resolve to one
-    /// MaterialInstance and one texture slot: the last driven wins and both sample that single probe.
-    /// The locality is therefore per mesh asset, not per entity. A scene wanting N independently
-    /// captured surfaces gives each its own mesh asset (or its own material instance); the engine
-    /// warns once per run when it sees one drive pass bind two captures onto the same MaterialInstance.
+    /// **The bound material is per entity.** Drive binds onto whatever MaterialInstance it is handed.
+    /// The engine's world drive hands it the entity's own: the sibling mesh's first MaterialInstance
+    /// belongs to the mesh *asset* and is shared by every entity drawing it, so on the first drive
+    /// the world drive installs a clone as the entity's MeshRenderer::InstanceMaterials and binds the
+    /// capture into the clone, leaving every other sharer of the mesh sampling nothing.
     ///
     /// The runtime resources (the SceneCapture and its sampler) are materialized on the first Drive, which
     /// needs the render context and asset manager the engine supplies; a component that never drives
-    /// allocates none. Teardown is the exact inverse of the bind: the component's destruction clears
-    /// the slots it filled (see Unbind), so the material stops naming a bindless slot the capture's
-    /// release has handed back to the free list.
+    /// allocates none. The engine's world drive materializes them ahead of Drive instead (see
+    /// Materialize), building at most one new capture per frame and reusing a released one of the same
+    /// configuration from its SceneCapturePool, to which the capture returns when the component goes.
+    /// Teardown is the exact inverse of the bind: the component's destruction clears the slots it
+    /// filled (see Unbind), so the material stops naming a bindless slot the capture's release has
+    /// handed back to the free list.
     struct CaptureSurface
     {
         /// @brief Default-constructs an unmaterialized capture (its runtime is empty until Drive).
@@ -296,11 +299,36 @@ namespace Veng::Renderer
         /// capture — the point at which it renders nothing until dirtied again.
         [[nodiscard]] bool IsRefreshing() const;
 
+        /// @brief Returns the configuration this surface's capture is built with.
+        ///
+        /// What Drive builds on first use and what Materialize expects to be handed: the authored
+        /// Resolution, Shadows, DepthTextureSlot and DepthResolution mapped onto a lean capture
+        /// renderer. Read on each call, so it reflects the authored fields as they stand.
+        /// @param context  The render context the capture would allocate on.
+        /// @param assets   The asset manager its face renderer would load shaders through.
+        /// @return The capture configuration.
+        [[nodiscard]] SceneCaptureInfo GetCaptureInfo(Context& context, AssetManager& assets) const;
+
+        /// @brief Installs @p capture as this surface's capture, ahead of the first Drive.
+        ///
+        /// For a driver that decides when a capture is built and where it comes from — the world
+        /// drive paces new builds and reuses released captures — rather than leaving Drive to build
+        /// one on first use. Takes the shared sampler slots Drive would. When @p pool is live as the
+        /// surface is destroyed, the capture is returned to it rather than dropped.
+        /// @param context  The render context the samplers are acquired from.
+        /// @param capture  A capture configured as GetCaptureInfo describes, detached from any
+        ///                 drive-list (a new one, or one taken from a pool).
+        /// @param pool     The pool the capture returns to when this surface releases it; an empty
+        ///                 pointer drops it instead.
+        /// @pre The surface holds no capture yet (GetCapture() is null).
+        void Materialize(Context& context, Unique<SceneCapture> capture,
+                         std::weak_ptr<SceneCapturePool> pool) const;
+
         /// @brief Builds and drives the capture, then binds its output onto the sibling material.
         ///
-        /// Materializes the runtime on first use (creating the SceneCapture at the authored resolution
-        /// and its sampler) and returns the capture so the caller registers it on the drive-list the
-        /// first time it appears. Pushes this frame's capture source (SceneCapture::SetView from @p
+        /// Materializes the runtime on first use unless Materialize already did (creating the
+        /// SceneCapture GetCaptureInfo describes and its sampler) and returns the capture so the
+        /// caller registers it on the drive-list the first time it appears. Pushes this frame's capture source (SceneCapture::SetView from @p
         /// position, at @p alpha) when the refresh policy calls for it — every frame for EveryFrame,
         /// only while a refresh is outstanding for OnDemand — so a settled OnDemand capture records
         /// nothing. Binds the

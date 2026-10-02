@@ -243,12 +243,19 @@ The call sites that make a capture worth taking, plus the seam and bridge that p
   strings** — the HUD and the flamegraph key on them.
   `Frame/RequestDrain` splits into one scope per stage (`Frame/ApplyReconfigure`,
   `Frame/WorldArrivals`, `Frame/PresentationHooks`, `Frame/PresentationPins`, `Frame/ReapDirectory`,
-  `Frame/Checkpoint`, `Frame/DrainRequests`, `Frame/DeliverMessages`), and a world's teardown is
-  `World/Close` around `World/Stop` (the `OnStop` pass) and `World/Destroy` (the scene's
-  destruction) wherever `WorldRunner` closes one.
+  `Frame/Checkpoint`, `Frame/DrainRequests`, `Frame/DeliverMessages`). A world's opening is
+  `World/Open` around `World/Load` (a cooked level's spawn), `World/OnLoaded` (the opener's hook)
+  and `World/Start` (the `OnStart` pass); its teardown is `World/Close` around `World/Stop` (the
+  `OnStop` pass) and `World/Destroy` (the scene's destruction) wherever `WorldRunner` closes one.
+  Each system's `OnStart` and `OnStop` is scoped under the system's own name, as its per-tick
+  scope is, so a slow start or stop names its system. A capture surface's first materialization is
+  `Capture/Materialize` (the face renderer's construction; a capture reused from the pool builds
+  nothing and is unscoped), and an asynchronous asset load's worker parse runs as an
+  `Asset/Parse` task.
 - **The frame's begin and end.** `Context::BeginFrame`/`EndFrame` scope `Render/FenceWait`,
   `Render/Acquire`, `Render/TimestampReadback`, `Render/MirrorFrame`, `Render/Submit` and
   `Render/Present`. The GPU work recorded ahead of the first pass carries GPU scopes of its own —
+  `Setup Commands` (one-time setup held for the frame, `Context::RecordSetupCommands`),
   `Frame Acquires`, `Generated Textures`, `Async Readback` and `Glyph Uploads` — each opened only
   when that recording has work, so an idle pump adds no span and spends none of the per-frame
   scope budget.

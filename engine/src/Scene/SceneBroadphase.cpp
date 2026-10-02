@@ -10,6 +10,22 @@
 
 namespace Veng
 {
+    void SceneBroadphase::Reset()
+    {
+        m_Tree.Build({});
+        m_Candidates.clear();
+        m_GatherScratch.clear();
+        m_SubMeshCandidates.clear();
+        m_LeafBoxes.clear();
+        m_Pending.clear();
+        m_SceneBounds = AABB::Empty();
+        m_CasterBounds = AABB::Empty();
+        m_LastScene = nullptr;
+        m_LastVersion = ~0ull;
+        m_LastExclude = Entity::Null;
+        m_LastLayerMask = AllRenderLayers;
+    }
+
     void SceneBroadphase::Sync(const Scene& scene, const Entity exclude, const u32 layerMask)
     {
         VE_PROFILE_SCOPE("Render/BroadphaseSync");

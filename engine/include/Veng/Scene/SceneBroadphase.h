@@ -59,6 +59,13 @@ namespace Veng
         void Sync(const Scene& scene, Entity exclude = Entity::Null,
                   u32 layerMask = AllRenderLayers);
 
+        /// @brief Forgets the gathered scene, leaving the broadphase as a fresh one is.
+        ///
+        /// Drops the candidates (whose mesh and material pointers are valid only while their scene
+        /// lives) and the tree, so the next Sync gathers from scratch whatever scene it is handed —
+        /// even one that reuses a forgotten scene's address and coincides with its spatial version.
+        void Reset();
+
         /// @brief Returns the live per-mesh gather records in GatherMeshes order.
         ///
         /// The scene-bound and shadow-view consumers read these (world matrix + world

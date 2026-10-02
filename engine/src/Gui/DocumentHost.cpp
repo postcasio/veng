@@ -95,6 +95,33 @@ namespace Veng::Gui
         return true;
     }
 
+    bool DocumentHost::Prepare()
+    {
+        if (m_Document != nullptr || !m_DocumentId.IsValid() || m_LoadAttempted)
+        {
+            return true;
+        }
+        // The asynchronous load is held in m_Recipe until it is resident. An unresolvable id falls
+        // through to EnsureDocument, which reports it once and latches the failure.
+        if (!m_Recipe.IsValid())
+        {
+            m_Recipe = m_Assets.Load<UIDocument>(m_DocumentId);
+        }
+        if (m_Recipe.HasFailed())
+        {
+            // The manager logged why; latch it so neither this nor Drive retries the load.
+            m_LoadAttempted = true;
+            m_Recipe = {};
+            return true;
+        }
+        if (m_Recipe.IsValid() && !m_Recipe.IsLoaded())
+        {
+            return false;
+        }
+        (void)EnsureDocument();
+        return true;
+    }
+
     Document* DocumentHost::Drive()
     {
         if (!EnsureDocument())

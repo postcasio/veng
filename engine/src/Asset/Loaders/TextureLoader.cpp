@@ -137,11 +137,18 @@ namespace Veng
         }
     }
 
-    AssetResult<Detail::LoadJob> TextureLoader::Load(AssetManager& manager,
-                                                     Renderer::Context& context, TaskSystem& tasks,
-                                                     TypeRegistry& /*types*/, AssetId id,
-                                                     std::span<const u8> cooked, bool async) const
+    AssetResult<Detail::ParsedAsset> TextureLoader::Parse(const AssetParseContext& context,
+                                                          const AssetId id,
+                                                          const std::span<const u8> cooked) const
     {
+        return Detail::ParsedJob(PrepareTexture(context, id, cooked));
+    }
+
+    AssetResult<Detail::LoadJob> TextureLoader::PrepareTexture(const AssetParseContext& parse,
+                                                               const AssetId id,
+                                                               const std::span<const u8> cooked)
+    {
+        Renderer::Context& context = parse.Context;
         if (cooked.size() < sizeof(CookedTextureHeader))
         {
             return std::unexpected(AssetLoadError{
@@ -258,7 +265,7 @@ namespace Veng
         // tightly-packed chain, so the Texture build path uploads it unchanged. A non-cappable or
         // single-mip texture resolves to skip 0 and the full chain, byte-identical to before.
         const u32 skip = Renderer::EffectiveMipSkip(header.MipCappable != 0, header.MipCount,
-                                                    manager.GetTextureQualityMipSkip());
+                                                    parse.TextureQualityMipSkip);
         const Renderer::MipSkipLayout layout =
             Renderer::ComputeMipSkip(*format, header.Width, header.Height, header.MipCount, skip);
         const usize retainedBytes = pixelBytes - layout.BaseOffset;
@@ -283,11 +290,13 @@ namespace Veng
             .ChannelLayout = *channelLayout,
         };
 
+        // On an asynchronous load this runs on a worker, where both the image creation and the
+        // upload's submit are legal; the bindless registration waits for Finalize.
         Ref<Veng::Texture> texture;
-        if (async)
+        if (parse.Async)
         {
             Task<void> upload;
-            texture = Veng::Texture::PrepareAsync(context, info, tasks, upload);
+            texture = Veng::Texture::PrepareAsync(context, info, parse.Tasks, upload);
         }
         else
         {

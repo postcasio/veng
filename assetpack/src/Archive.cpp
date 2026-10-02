@@ -351,12 +351,17 @@ namespace Veng
         // Inflate a zstd entry on first resolve into the stable-address cache; a later
         // resolve of the same id reuses it. std::map's node storage keeps every prior
         // span valid across this insertion.
-        const auto cached = m_InflateCache.find(it->Id);
-        if (cached != m_InflateCache.end())
         {
-            return ArchiveEntry{.Id = it->Id, .Type = it->Type, .Blob = cached->second};
+            const std::scoped_lock lock(*m_InflateMutex);
+            const auto cached = m_InflateCache.find(it->Id);
+            if (cached != m_InflateCache.end())
+            {
+                return ArchiveEntry{.Id = it->Id, .Type = it->Type, .Blob = cached->second};
+            }
         }
 
+        // Decompressed outside the guard; a thread that raced this one to the same id keeps the
+        // copy that landed first, and this one is dropped.
         vector<u8> inflated(it->UncompressedSize);
         const usize produced =
             ZSTD_decompress(inflated.data(), inflated.size(), stored.data(), stored.size());
@@ -369,6 +374,7 @@ namespace Veng
             return std::nullopt;
         }
 
+        const std::scoped_lock lock(*m_InflateMutex);
         const auto [entry, inserted] = m_InflateCache.emplace(it->Id, std::move(inflated));
         return ArchiveEntry{.Id = it->Id, .Type = it->Type, .Blob = entry->second};
     }

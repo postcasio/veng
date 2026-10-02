@@ -933,7 +933,13 @@ runtime host survives for the next `Drive`, idempotent and touching only the doc
 attached. `~GuiOverlay` detaches on component destruction (the right lifetime when the *component*
 goes); `Detach` covers the other case — a viewport stops presenting a world that stays alive (a world
 rebind), where the engine detaches the departed scene's overlays without waiting on component
-teardown.
+teardown. **`Prepare(assets)` is the first drive's load and instantiate, without the drive** — it
+requests the recipe asynchronously (`DocumentHost::Prepare`) and, once it is resident, instantiates
+and binds the document (running the on-instantiate callback), so the first `Drive` or `DriveHdr`
+finds it live; it never blocks, and reports whether anything is left to wait for. The managed
+viewport set prepares every visible overlay in a world waiting on a present-on-ready rebind, and
+holds the swap until they are prepared, so the frame that presents a world does not pay
+`Gui/Instantiate` for it. The driver is not instantiated early — it needs the claiming viewport.
 
 **A `SceneHdrPreBloom` overlay naming a `Material` composites through it, over the pixels its document
 covers.** The renderer draws the document into an intermediate holding only the document's projected

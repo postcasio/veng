@@ -241,12 +241,38 @@ namespace Veng::Renderer
         /// @pre This capture is not already attached to a drive-list.
         void AttachToDriveList(vector<SceneCapture*>& driveList);
 
+        /// @brief Removes this capture from the drive-list it is attached to; a no-op when none.
+        ///
+        /// The inverse of AttachToDriveList without the destruction, for a capture set aside for
+        /// reuse (SceneCapturePool) rather than dropped. A detached capture may be attached again.
+        void DetachFromDriveList();
+
+        /// @brief Whether this capture was built to the configuration @p info describes.
+        ///
+        /// Compares what Create builds from — the face resolution, the renderer settings, and the
+        /// distance and cube paths (the distance resolution only when the distance path is on) — so
+        /// a capture that answers true is interchangeable with one Create(@p info) would build.
+        /// @param info  The configuration to compare against.
+        /// @return True when a capture built from @p info would be configured identically.
+        [[nodiscard]] bool IsConfiguredFor(const SceneCaptureInfo& info) const;
+
+        /// @brief Returns the capture to the state Create leaves it in, ready for another owner.
+        ///
+        /// Drops the pushed view and the scene the face renderer last gathered, restarts the
+        /// round-robin at the first face, and re-arms the first-render atlas clears — so the next
+        /// owner's first Render builds its map from black rather than resuming from what the
+        /// previous owner's environment left in it. Its images, pipelines and bindless slots are
+        /// kept, which is the point of reusing it.
+        void ResetForReuse();
+
     private:
         explicit SceneCapture(const SceneCaptureInfo& info);
 
         Context& m_Context;
         /// @brief Face render resolution (square).
         u32 m_FaceResolution = 0;
+        /// @brief The renderer settings the face renderer was built with.
+        SceneRendererSettings m_Settings;
 
         /// @brief The face renderer, executed once per face per capture.
         Unique<SceneRenderer> m_Renderer;

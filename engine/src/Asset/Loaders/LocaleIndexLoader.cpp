@@ -28,10 +28,9 @@ namespace Veng
         }
     }
 
-    AssetResult<Detail::LoadJob>
-    LocaleIndexLoader::Load(AssetManager& /*manager*/, Renderer::Context& /*context*/,
-                            TaskSystem& /*tasks*/, TypeRegistry& /*types*/, AssetId id,
-                            std::span<const u8> cooked, bool /*async*/) const
+    AssetResult<Detail::ParsedAsset>
+    LocaleIndexLoader::Parse(const AssetParseContext& /*context*/, const AssetId id,
+                             const std::span<const u8> cooked) const
     {
         if (cooked.size() < sizeof(CookedLocaleIndexHeader))
         {
@@ -96,6 +95,6 @@ namespace Veng
 
         const Ref<Localization::LocaleIndex> index =
             Localization::LocaleIndex::Create(std::move(contents));
-        return Detail::LoadJob{.Resource = Detail::RefAny(index)};
+        return Detail::ParsedJob(Detail::LoadJob{.Resource = Detail::RefAny(index)});
     }
 }

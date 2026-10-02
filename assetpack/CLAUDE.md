@@ -59,8 +59,9 @@ the format and its serialization — neither importer nor loader.
   **lazily on the first `Find`** into a stable-address, id-keyed, never-evicted cache, so a
   span stays valid for the reader's lifetime. zstd is the one runtime codec dependency
   (linked PUBLIC); the content hash and the TOC digest cover the **stored** bytes, so
-  `vengc verify` re-hashes the on-disk bytes with no decode. `Find` is main-thread-only;
-  the lazy inflate is not synchronized.
+  `vengc verify` re-hashes the on-disk bytes with no decode. `Find` is safe from several threads
+  at once — the cache is guarded and the decompression runs outside the guard, so an engine worker
+  inflates the blob it is about to parse — but not against the reader being moved or destroyed.
 - A version number the format actually checks (the on-disk `v6`) is rejected loudly on
   mismatch — a stale/foreign archive does not load silently. The version bump is **global** —
   every `.vengpack`, including the **embedded core pack** built into `libveng`. A format

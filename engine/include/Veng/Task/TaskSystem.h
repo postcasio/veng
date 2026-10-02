@@ -82,7 +82,7 @@ namespace Veng
                 return false;
             }
 
-            std::lock_guard lock(m_State->Mutex);
+            const std::scoped_lock lock(m_State->Mutex);
             return m_State->Done;
         }
 

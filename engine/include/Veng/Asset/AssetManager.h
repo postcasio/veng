@@ -84,10 +84,11 @@ namespace Veng
 
     /// @brief Mounts cooked .vengpack archives, resolves AssetIds, and loads assets via per-type AssetLoaders.
     ///
-    /// Load<T> is asynchronous: it returns a not-yet-resident handle immediately and fills it in
-    /// on the main-thread continuation (decode + GPU upload run on the task system).
-    /// LoadSync<T> is the blocking sibling — it runs the whole pipeline inline and returns a
-    /// resident handle or a structured AssetLoadError.
+    /// Load<T> is asynchronous: it returns a not-yet-resident handle immediately, and the blob's
+    /// inflate and decode run on the task system (AssetLoader::Parse); PumpFinalizes then lands the
+    /// parse on the main thread, loads the dependencies it names, and finalizes the asset once they
+    /// are resident. LoadSync<T> is the blocking sibling — it runs the whole pipeline inline and
+    /// returns a resident handle or a structured AssetLoadError.
     class VE_API AssetManager
     {
     public:
@@ -134,10 +135,13 @@ namespace Veng
 
         /// @brief Asynchronous load — returns immediately with a handle that may not yet be resident.
         ///
-        /// Decode + GPU upload run on the task system; bindless registration and the cache swap
-        /// run on the main thread during PumpFinalizes(). A cache hit (resident or pending) returns
-        /// the existing handle. A resolution failure (NotFound/WrongType) returns an empty handle;
-        /// a later decode failure leaves the entry permanently pending and logs.
+        /// The blob's inflate and decode, and the GPU upload, run on the task system; the dependency
+        /// loads, bindless registration and the cache swap run on the main thread during
+        /// PumpFinalizes(). A cache hit (resident or pending) returns the existing handle. A
+        /// resolution failure (NotFound/WrongType) returns an empty handle; a later failure — a
+        /// corrupt blob, a dependency that does not resolve, a failed finalize — is logged, marks the
+        /// handle failed (AssetHandle::HasFailed) and drops the id from the cache, so a later load of
+        /// it starts over.
         template <typename T>
         AssetHandle<T> Load(AssetId id)
         {
@@ -175,6 +179,26 @@ namespace Veng
         [[nodiscard]] static Ref<Detail::AssetCacheEntry> EntryOf(const AssetHandle<T>& handle)
         {
             return handle.m_Entry;
+        }
+
+        /// @brief Returns a typed handle onto a cache entry, the inverse of EntryOf.
+        ///
+        /// For a two-phase loader's completion, which receives its dependencies as cache entries
+        /// (Detail::ParsedAsset::Complete). The caller owns the type contract, as with LoadUntyped:
+        /// @p entry must hold an asset of AssetTypeTrait<T>::Type.
+        /// @param entry  The cache entry; null yields an empty handle.
+        /// @return A handle sharing @p entry.
+        template <typename T>
+        [[nodiscard]] static AssetHandle<T> HandleOf(const Ref<Detail::AssetCacheEntry>& entry)
+        {
+            if (entry == nullptr)
+            {
+                return AssetHandle<T>();
+            }
+            VE_ASSERT(entry->Type == AssetTypeTrait<T>::Type,
+                      "AssetManager::HandleOf: asset {} is not of the requested type",
+                      entry->Id.Value);
+            return AssetHandle<T>(entry->Id, entry);
         }
 
         /// @brief Wraps an already-resident, runtime-created resource in an AssetHandle<T>.
@@ -470,10 +494,17 @@ namespace Veng
         /// @brief Returns the shared dynamic glyph atlas font loads use, or null when none is set.
         [[nodiscard]] Text::GlyphAtlas* GetGlyphAtlas() const { return m_GlyphAtlas; }
 
-        /// @brief Runs any pending async finalizes whose uploads completed and whose dependencies are resident.
+        /// @brief Lands finished parses and runs any pending finalizes whose dependencies are resident.
         ///
         /// Called from the frame loop after the task system's continuation pump, on the main thread.
+        /// A two-phase load whose worker parse has finished lands here first: the dependencies it
+        /// names are loaded (each parsing on a worker in turn) and its completion runs; it then
+        /// finalizes, here or on a later pump, once those dependencies are resident. Never waits for
+        /// a parse still running. Safe to call from inside a finalize.
         void PumpFinalizes();
+
+        /// @brief Returns how many asynchronous loads have a parse not yet landed by PumpFinalizes.
+        [[nodiscard]] usize GetParsingCount() const { return m_Parsing.size(); }
 
         /// @brief Drops cache entries with no AssetHandle<T> referencing them.
         ///
@@ -526,6 +557,62 @@ namespace Veng
             function<VoidResult()> Finalize;
         };
 
+        /// @brief Where an asset's cooked blob lives, found without inflating it.
+        struct BlobLocation
+        {
+            /// @brief The mounted reader holding the blob.
+            const ArchiveReader* Reader = nullptr;
+            /// @brief The entry as stored, carrying its type; its Blob is the stored, not inflated, bytes.
+            ArchiveEntry Stored;
+        };
+
+        /// @brief A two-phase load whose Parse is running on a worker, or has finished unlanded.
+        struct InFlightParse
+        {
+            /// @brief The asset being loaded.
+            AssetId Id;
+            /// @brief The pending cache slot the load fills.
+            Ref<Detail::AssetCacheEntry> Entry;
+            /// @brief The worker running the loader's Parse over the inflated blob.
+            Task<AssetResult<Detail::ParsedAsset>> Parse;
+            /// @brief The parse's result, once WaitForParses collected it ahead of its landing.
+            optional<Result<AssetResult<Detail::ParsedAsset>>> Outcome;
+        };
+
+        /// @brief Finds the reader holding @p id, in Find's precedence, without inflating anything.
+        [[nodiscard]] optional<BlobLocation> Locate(AssetId id) const;
+
+        /// @brief Builds the context a loader's Parse runs with.
+        /// @param async  Whether the parse runs on a worker for an asynchronous load.
+        [[nodiscard]] AssetParseContext MakeParseContext(bool async) const;
+
+        /// @brief Lands the in-flight parses that have finished — or, with @p wait, all of them.
+        ///
+        /// Landing one loads the dependencies it names, which may start further parses; with @p wait
+        /// those are waited for and landed too, so the list is empty on return.
+        void LandParses(bool wait);
+
+        /// @brief Waits for every in-flight parse's worker to finish, keeping the results to land later.
+        ///
+        /// What a mount or unmount waits on first: a running parse reads its blob through a mounted
+        /// reader, which the mount list's change would move or free.
+        void WaitForParses();
+
+        /// @brief Completes one finished parse: its dependencies, its completion, its finalize entry.
+        void LandParse(InFlightParse parse);
+
+        /// @brief Files a load job against its pending entry: resident at once without a finalize,
+        ///        otherwise queued for PumpFinalizes.
+        void EnqueueLoadJob(AssetId id, const Ref<Detail::AssetCacheEntry>& entry,
+                            Detail::LoadJob job);
+
+        /// @brief Marks an asynchronous load failed: logs, flags the entry and drops it from the cache.
+        void FailLoad(AssetId id, const Ref<Detail::AssetCacheEntry>& entry, const string& detail);
+
+        /// @brief Runs a two-phase loader inline for LoadSync: parse, blocking dependency loads, completion.
+        [[nodiscard]] AssetResult<Detail::LoadJob> RunParseInline(const AssetLoader& loader,
+                                                                  AssetTypeId type, AssetId id);
+
         /// @brief Registers a manager-owned keep-alive for a pending-Adopt entry.
         ///
         /// The Ref holds the detached entry off CollectGarbage()'s use_count() == 1 eviction
@@ -542,8 +629,9 @@ namespace Veng
 
         /// @brief Drops a pending-Adopt entry's keep-alive after its factory failed.
         ///
-        /// Runs on the main thread; the entry stays permanently pending (null Resource) and is
-        /// freed once the last handle drops — mirroring an async Load's deferred-failure behavior.
+        /// Runs on the main thread; the entry is marked failed, never becomes resident, and is
+        /// freed once the last handle drops — mirroring an async Load's deferred-failure behavior,
+        /// including leaving the cache when the entry is id-keyed.
         void FailPendingCreate(const Ref<Detail::AssetCacheEntry>& entry, const string& error);
 
         /// @brief Finds an id's archive entry and checks it carries the requested type.
@@ -592,5 +680,7 @@ namespace Veng
         unordered_map<AssetTypeId, Unique<AssetLoader>> m_Loaders;
         std::unordered_map<AssetId, Ref<Detail::AssetCacheEntry>> m_Cache;
         vector<PendingLoad> m_Pending;
+        /// @brief Two-phase loads whose worker parse has not been landed yet, in issue order.
+        vector<InFlightParse> m_Parsing;
     };
 }

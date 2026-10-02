@@ -516,7 +516,10 @@ namespace Veng
 
     PhysicsWorld::~PhysicsWorld()
     {
-        DestroyAllBodies();
+        // The bodies are not removed one by one first: the solver's teardown frees whatever it still
+        // holds — its body manager deletes every live body and the broad phase is deleted whole — so
+        // a removal pass here is work the teardown repeats. The constraint records only drop their
+        // references; the solver's constraint manager releases its own.
         m_Native.reset();
         ReleaseSolverRegistration();
     }
@@ -664,17 +667,34 @@ namespace Veng
 
     void PhysicsWorld::DestroyAllBodies()
     {
-        for (const auto& [owner, record] : m_Native->Constraints)
+        // One batched call per stage rather than one per object: the batched removal takes the body
+        // locks and updates the broad phase once for the whole set.
+        if (!m_Native->Constraints.empty())
         {
-            m_Native->System.RemoveConstraint(record.Constraint);
+            vector<JPH::Constraint*> constraints;
+            constraints.reserve(m_Native->Constraints.size());
+            for (const auto& [owner, record] : m_Native->Constraints)
+            {
+                constraints.push_back(record.Constraint.GetPtr());
+            }
+            m_Native->System.RemoveConstraints(constraints.data(),
+                                               static_cast<int>(constraints.size()));
+            m_Native->Constraints.clear();
         }
-        m_Native->Constraints.clear();
 
-        JPH::BodyInterface& bodies = m_Native->System.GetBodyInterface();
-        for (const auto& [entity, record] : m_Native->Bodies)
+        if (!m_Native->Bodies.empty())
         {
-            bodies.RemoveBody(record.Id);
-            bodies.DestroyBody(record.Id);
+            vector<JPH::BodyID> ids;
+            ids.reserve(m_Native->Bodies.size());
+            for (const auto& [entity, record] : m_Native->Bodies)
+            {
+                ids.push_back(record.Id);
+            }
+            JPH::BodyInterface& bodies = m_Native->System.GetBodyInterface();
+            // Every recorded body was created added (CreateAndAddBody), which the batched removal
+            // requires of each id it is handed.
+            bodies.RemoveBodies(ids.data(), static_cast<int>(ids.size()));
+            bodies.DestroyBodies(ids.data(), static_cast<int>(ids.size()));
         }
         m_Native->Bodies.clear();
         m_Native->BodyOwners.clear();

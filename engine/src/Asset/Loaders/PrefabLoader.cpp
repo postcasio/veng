@@ -1,5 +1,6 @@
 #include "PrefabLoader.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include <fmt/format.h>
@@ -20,30 +21,6 @@ namespace Veng
         {
             return AssetLoadError{
                 .Kind = AssetError::Corrupt, .Id = id, .Detail = std::move(detail)};
-        }
-
-        // Load one embedded dependency by id + type, returning its cache entry. The type comes
-        // from the registry rather than a concrete T, so a game's own asset type resolves through
-        // the same path as a builtin.
-        AssetResult<Ref<Detail::AssetCacheEntry>> LoadDependency(AssetManager& manager,
-                                                                 AssetId parentId, AssetId depId,
-                                                                 AssetTypeId type, bool async)
-        {
-            if (!async)
-            {
-                return manager.LoadSyncUntyped(type, depId);
-            }
-
-            Ref<Detail::AssetCacheEntry> entry = manager.LoadUntyped(type, depId);
-            if (!entry)
-            {
-                return std::unexpected(
-                    AssetLoadError{.Kind = AssetError::MissingDependency,
-                                   .Id = depId,
-                                   .Detail = fmt::format("prefab {}: dependency {} did not resolve",
-                                                         parentId.Value, depId.Value)});
-            }
-            return entry;
         }
 
         // An embedded handle dependency: its id and the asset type its field
@@ -232,23 +209,22 @@ namespace Veng
         return entities;
     }
 
-    AssetResult<Detail::LoadJob> PrefabLoader::Load(AssetManager& manager,
-                                                    Renderer::Context& /*context*/,
-                                                    TaskSystem& /*tasks*/, TypeRegistry& types,
-                                                    AssetId id, std::span<const u8> cooked,
-                                                    bool async) const
+    AssetResult<Detail::ParsedAsset> PrefabLoader::Parse(const AssetParseContext& context,
+                                                         const AssetId id,
+                                                         const std::span<const u8> cooked) const
     {
+        const TypeRegistry& types = context.Types;
         Result<vector<Prefab::PrefabEntity>> decoded = DecodeCookedPrefab(cooked);
         if (!decoded)
         {
             return std::unexpected(Corrupt(id, std::move(decoded.error())));
         }
-        vector<Prefab::PrefabEntity> entities = std::move(*decoded);
+        auto entities = CreateRef<vector<Prefab::PrefabEntity>>(std::move(*decoded));
 
         // Embedded AssetHandle (id, type) pairs, surfaced as dependencies.
         vector<HandleDep> handleDeps;
 
-        for (const Prefab::PrefabEntity& entity : entities)
+        for (const Prefab::PrefabEntity& entity : *entities)
         {
             // A nesting entity's body is an ordinary load-time dependency, resolved and kept
             // resident exactly like an embedded AssetHandle field's target.
@@ -283,7 +259,7 @@ namespace Veng
                 }
 
                 const VoidResult collected = CollectHandleDeps(id, instance.data(), typeInfo, types,
-                                                               manager.GetAssetTypes(), handleDeps);
+                                                               context.AssetTypes, handleDeps);
                 typeInfo.Destruct(instance.data());
                 if (!collected)
                 {
@@ -292,41 +268,33 @@ namespace Veng
             }
         }
 
-        // Fan out embedded handle dependencies (deduplicated by id).
-        vector<Ref<Detail::AssetCacheEntry>> dependencies;
-        vector<u64> loaded;
+        // The embedded handle dependencies, deduplicated by id.
+        Detail::ParsedAsset parsed;
         for (const HandleDep& dep : handleDeps)
         {
-            bool known = false;
-            for (const u64 existing : loaded)
+            const bool known = std::ranges::any_of(parsed.Dependencies,
+                                                   [&dep](const Detail::AssetDependency& existing)
+                                                   { return existing.Id.Value == dep.Id; });
+            if (!known)
             {
-                if (existing == dep.Id)
-                {
-                    known = true;
-                    break;
-                }
+                parsed.Dependencies.push_back({.Type = dep.Type, .Id = AssetId{dep.Id}});
             }
-            if (known)
-            {
-                continue;
-            }
-            loaded.push_back(dep.Id);
-
-            AssetResult<Ref<Detail::AssetCacheEntry>> entry =
-                LoadDependency(manager, id, AssetId{dep.Id}, dep.Type, async);
-            if (!entry)
-            {
-                return std::unexpected(entry.error());
-            }
-            dependencies.push_back(*entry);
         }
 
-        const Ref<Prefab> prefab = Prefab::Create(std::move(entities), dependencies, id);
-
-        return Detail::LoadJob{
-            .Resource = Detail::RefAny(prefab),
-            .Dependencies = std::move(dependencies),
-            .Finalize = []() -> VoidResult { return {}; },
+        parsed.Complete = [entities, id](AssetManager&,
+                                         std::span<const Ref<Detail::AssetCacheEntry>> resolved)
+            -> AssetResult<Detail::LoadJob>
+        {
+            vector<Ref<Detail::AssetCacheEntry>> dependencies(resolved.begin(), resolved.end());
+            const Ref<Prefab> prefab = Prefab::Create(std::move(*entities), dependencies, id);
+            // The empty finalize is what holds the prefab pending until every dependency is
+            // resident.
+            return Detail::LoadJob{
+                .Resource = Detail::RefAny(prefab),
+                .Dependencies = std::move(dependencies),
+                .Finalize = []() -> VoidResult { return {}; },
+            };
         };
+        return parsed;
     }
 }

@@ -18,11 +18,12 @@ namespace Veng
         /// @brief Returns AssetTypes::Level.
         [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Level; }
 
-        /// @brief Decodes the cooked level blob into a LoadJob producing a resident Veng::Level.
-        [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,
-                                                        Renderer::Context& context,
-                                                        TaskSystem& tasks, TypeRegistry& types,
-                                                        AssetId id, std::span<const u8> cooked,
-                                                        bool async) const override;
+        /// @brief Returns true: the decode runs on a worker for an asynchronous load.
+        [[nodiscard]] bool ParsesOffThread() const override { return true; }
+
+        /// @brief Decodes the cooked level blob, naming its world and player prefabs as dependencies.
+        [[nodiscard]] AssetResult<Detail::ParsedAsset>
+        Parse(const AssetParseContext& context, AssetId id,
+              std::span<const u8> cooked) const override;
     };
 }

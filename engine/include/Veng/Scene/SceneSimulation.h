@@ -135,9 +135,9 @@ namespace Veng
         /// @brief Each system's registered name, interned once at construction, parallel to m_Systems.
         ///
         /// The catalog knows every system's name; interning it here (never per frame — SystemNameOf
-        /// returns a string by value) gives the per-system tick scope a stable id with no per-frame
-        /// allocation. Zero when no profiler was installed at construction. Empty under VE_PROFILE=OFF
-        /// carries no cost; the per-system scope compiles out there.
+        /// returns a string by value) gives the per-system scopes — each tick, OnStart and OnStop —
+        /// a stable id with no per-frame allocation. Zero when no profiler was installed at
+        /// construction. Empty under VE_PROFILE=OFF carries no cost; the scopes compile out there.
         vector<Diagnostics::NameId> m_SystemProfileNames;
 
         /// @brief Live Sim steps each frame-keyed system has let pass since it last ran, parallel to

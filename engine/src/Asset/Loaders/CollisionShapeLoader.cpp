@@ -18,10 +18,9 @@ namespace Veng
         }
     }
 
-    AssetResult<Detail::LoadJob>
-    CollisionShapeLoader::Load(AssetManager& /*manager*/, Renderer::Context& /*context*/,
-                               TaskSystem& /*tasks*/, TypeRegistry& /*types*/, const AssetId id,
-                               const std::span<const u8> cooked, bool /*async*/) const
+    AssetResult<Detail::ParsedAsset>
+    CollisionShapeLoader::Parse(const AssetParseContext& /*context*/, const AssetId id,
+                                const std::span<const u8> cooked) const
     {
         if (cooked.size() < sizeof(CookedCollisionShapeHeader))
         {
@@ -101,7 +100,7 @@ namespace Veng
             }
             shape->Points = std::move(points);
             shape->Indices = std::move(indices);
-            return Detail::LoadJob{.Resource = Detail::RefAny(shape)};
+            return Detail::ParsedJob(Detail::LoadJob{.Resource = Detail::RefAny(shape)});
         }
 
         shape->Children.resize(header.ChildCount);
@@ -156,6 +155,6 @@ namespace Veng
             }
         }
 
-        return Detail::LoadJob{.Resource = Detail::RefAny(shape)};
+        return Detail::ParsedJob(Detail::LoadJob{.Resource = Detail::RefAny(shape)});
     }
 }

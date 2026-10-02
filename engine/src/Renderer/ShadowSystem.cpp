@@ -30,6 +30,31 @@ namespace Veng::Renderer
         // tile (0, s) and a point uses the whole of row s.
         constexpr u32 PunctualAtlasColumns = CubeFaceCount;
         constexpr u32 PunctualAtlasRows = MaxShadowedPunctual;
+
+        /// @brief Clears a depth atlas to reverse-Z far (full visibility) and leaves it sampled.
+        ///
+        /// Handed to the context as setup work rather than an immediate submit, so building a shadow
+        /// system mid-frame records the clear into the frame instead of waiting behind it.
+        void ClearShadowDepth(Context& context, Ref<ImageView> view, const char* passName)
+        {
+            context.RecordSetupCommands(
+                [&context, view = std::move(view), passName](CommandBuffer& cmd)
+                {
+                    RenderGraph graph(context);
+                    const ResourceId target = graph.Import(passName);
+                    graph.AddPass(passName)
+                        .Depth({
+                            .Resource = target,
+                            .Load = LoadOp::Clear,
+                            .Store = StoreOp::Store,
+                            .Clear = ClearDepth{.Depth = 0.0f, .Stencil = 0},
+                        })
+                        .Execute([](PassContext&) {});
+                    const RenderGraph::ImportBinding binding{.Id = target, .View = view};
+                    graph.Compile()->Execute(cmd, {&binding, 1});
+                    cmd.PrepareForAccess(view, AccessKind::SampleGraphics);
+                });
+        }
     }
 
     Unique<ShadowSystem> ShadowSystem::Create(Context& context,
@@ -129,7 +154,7 @@ namespace Veng::Renderer
 
         // 1×1 D32 dummy atlas cleared to depth = 0 (reverse-Z far = full visibility), bound
         // when no shadow pass is wired so the layout is always satisfied. Transitioned to
-        // ShaderReadOnly immediately so the lighting pass samples a valid layout even
+        // ShaderReadOnly ahead of any use so the lighting pass samples a valid layout even
         // when it does not declare .Sample on it.
         m_DummyImage =
             Image::Create(m_Context, {
@@ -142,23 +167,7 @@ namespace Veng::Renderer
                                                        .Name = "SceneRenderer Dummy Shadow View",
                                                        .Image = m_DummyImage,
                                                    });
-        m_Context.ImmediateCommands(
-            [&](CommandBuffer& cmd)
-            {
-                RenderGraph graph(m_Context);
-                const ResourceId target = graph.Import("Dummy Shadow");
-                graph.AddPass("Clear Dummy Shadow")
-                    .Depth({
-                        .Resource = target,
-                        .Load = LoadOp::Clear,
-                        .Store = StoreOp::Store,
-                        .Clear = ClearDepth{.Depth = 0.0f, .Stencil = 0},
-                    })
-                    .Execute([](PassContext&) {});
-                const RenderGraph::ImportBinding binding{.Id = target, .View = m_DummyView};
-                graph.Compile()->Execute(cmd, {&binding, 1});
-                cmd.PrepareForAccess(m_DummyView, AccessKind::SampleGraphics);
-            });
+        ClearShadowDepth(m_Context, m_DummyView, "Clear Dummy Shadow");
 
         // ShadowConstants ring: framesInFlight regions, each aligned to
         // minUniformBufferOffsetAlignment. Dynamic offset at bind time = frame * stride.
@@ -267,23 +276,7 @@ namespace Veng::Renderer
         // Clear to depth = 0 (reverse-Z far = full visibility) and transition to
         // ShaderReadOnly so binding 4 is in a valid sampleable layout before the punctual
         // pass runs.
-        m_Context.ImmediateCommands(
-            [&](CommandBuffer& cmd)
-            {
-                RenderGraph graph(m_Context);
-                const ResourceId target = graph.Import("Clear Punctual Atlas");
-                graph.AddPass("Clear Punctual Shadow Atlas")
-                    .Depth({
-                        .Resource = target,
-                        .Load = LoadOp::Clear,
-                        .Store = StoreOp::Store,
-                        .Clear = ClearDepth{.Depth = 0.0f, .Stencil = 0},
-                    })
-                    .Execute([](PassContext&) {});
-                const RenderGraph::ImportBinding binding{.Id = target, .View = m_PunctualView};
-                graph.Compile()->Execute(cmd, {&binding, 1});
-                cmd.PrepareForAccess(m_PunctualView, AccessKind::SampleGraphics);
-            });
+        ClearShadowDepth(m_Context, m_PunctualView, "Clear Punctual Shadow Atlas");
     }
 
     void ShadowSystem::RebuildSets(const Ref<ImageView>& atlasView)

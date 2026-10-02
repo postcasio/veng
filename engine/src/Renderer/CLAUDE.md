@@ -1770,6 +1770,28 @@ for its whole wait, so a make-before-break swap presents a warm probe) and skips
 whole, re-arming its already-materialized captures (`CaptureSurface::MarkDirty`) so a world that
 becomes visible again rebuilds its maps instead of resuming from what it saw before it went dark.
 
+**A capture is built at most one per frame, and a released one is reused.** A `SceneCapture` owns a
+whole face renderer, and a world presented for the first time can arrive with several capture
+surfaces at once — so the world drive builds at most `WorldCaptureDriveInfo::MaxNewCaptures` (one)
+new capture per pass, leaving a surface past the budget unmaterialized and undriven until a later
+frame. A capture whose surface is destroyed — its entity, its component, or its whole world closing
+— goes to the runner's `SceneCapturePool` (`WorldRunner::GetCapturePool`) instead of being freed:
+detached from the drive-list and reset (`SceneCapture::ResetForReuse` — the pushed view, the
+round-robin, the first-render atlas clears, and the scene its face renderer last gathered, through
+`SceneRenderer::ReleaseScene`), it is handed to the next surface asking for an identical
+configuration (`SceneCapture::IsConfiguredFor`: face resolution, renderer settings, distance and cube
+paths) before any build is considered, and that reuse costs no budget. The pool holds a bounded
+number (`SceneCapturePool::DefaultCapacity`) and drops the longest-held past it. A surface driven
+directly through `CaptureSurface::Drive`, outside the world drive, still builds its own on first use
+and frees it when it goes.
+
+**A renderer built mid-frame waits on nothing.** A face renderer's one-time setup — its shadow
+atlases' first clears, its LTC tables' upload, a baked sky cube's first clear — is handed to
+`Context::RecordSetupCommands` rather than an immediate submit, which would wait behind the frame in
+flight: it records into the frame's own command buffer at the point of construction (or into the
+open `ImmediateCommands` buffer, or, outside any recording, at the head of the next one), ordered
+before every later use of what it initializes.
+
 **A capture never draws the mesh it feeds — a surface is not part of its own environment.**
 `CaptureView::Exclude` names one entity the face renders skip, and `CaptureSurface` sets it to the
 entity it is driving for, so the rule has no authoring surface and cannot be misconfigured. Two

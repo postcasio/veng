@@ -124,10 +124,17 @@ namespace Veng
 #endif
     }
 
-    AssetManager::~AssetManager() = default;
+    AssetManager::~AssetManager()
+    {
+        // A parse still running reads through a mounted reader and this manager's registries, so
+        // it finishes before any of them go.
+        WaitForParses();
+    }
 
     VoidResult AssetManager::Mount(const path& archive)
     {
+        // A running parse holds a pointer to its reader, which growing the mount list would move.
+        WaitForParses();
         for (const MountedArchive& mount : m_Mounts)
         {
             if (mount.Path == archive)
@@ -148,6 +155,7 @@ namespace Veng
 
     VoidResult AssetManager::MountBytes(const path& identity, std::span<const u8> bytes)
     {
+        WaitForParses();
         for (const MountedArchive& mount : m_Mounts)
         {
             if (mount.Path == identity)
@@ -168,6 +176,7 @@ namespace Veng
 
     void AssetManager::Unmount(const path& archive)
     {
+        WaitForParses();
         std::erase_if(m_Mounts,
                       [&archive](const MountedArchive& mount) { return mount.Path == archive; });
     }
@@ -227,6 +236,7 @@ namespace Veng
 
     MountHandle AssetManager::MountMemory(vector<u8> archiveBytes, string debugName)
     {
+        WaitForParses();
         Result<ArchiveReader> reader = ArchiveReader::FromBytes(archiveBytes);
         VE_ASSERT(reader.has_value(), "AssetManager::MountMemory: '{}': {}", debugName,
                   reader.error());
@@ -243,6 +253,7 @@ namespace Veng
 
     void AssetManager::UnmountMemory(u64 token)
     {
+        WaitForParses();
         std::erase_if(m_MemoryMounts,
                       [token](const MemoryMount& mount) { return mount.Token == token; });
     }
@@ -268,6 +279,39 @@ namespace Veng
         }
 
         return std::nullopt;
+    }
+
+    optional<AssetManager::BlobLocation> AssetManager::Locate(AssetId id) const
+    {
+        // The precedence Find resolves with: the newest memory mount, then the on-disk mounts in
+        // mount order.
+        for (auto it = m_MemoryMounts.rbegin(); it != m_MemoryMounts.rend(); ++it)
+        {
+            if (optional<ArchiveEntry> stored = it->Reader.FindStored(id))
+            {
+                return BlobLocation{.Reader = &it->Reader, .Stored = *stored};
+            }
+        }
+        for (const MountedArchive& mount : m_Mounts)
+        {
+            if (optional<ArchiveEntry> stored = mount.Reader.FindStored(id))
+            {
+                return BlobLocation{.Reader = &mount.Reader, .Stored = *stored};
+            }
+        }
+        return std::nullopt;
+    }
+
+    AssetParseContext AssetManager::MakeParseContext(const bool async) const
+    {
+        return AssetParseContext{
+            .Context = m_Context,
+            .Tasks = m_Tasks,
+            .Types = m_Types,
+            .AssetTypes = m_AssetTypes,
+            .TextureQualityMipSkip = m_TextureQualityMipSkip,
+            .Async = async,
+        };
     }
 
     AssetResult<ArchiveEntry> AssetManager::FindTyped(AssetTypeId type, AssetId id) const
@@ -432,6 +476,59 @@ namespace Veng
             return it->second;
         }
 
+        // A two-phase loader parses on a worker: the entry is handed out pending now, and the
+        // parse lands in PumpFinalizes. Only the TOC is read here — the blob's inflate runs on the
+        // worker with its decode.
+        const auto loaderIt = m_Loaders.find(type);
+        if (loaderIt != m_Loaders.end() && loaderIt->second->ParsesOffThread())
+        {
+            const optional<BlobLocation> location = Locate(id);
+            if (!location)
+            {
+                Log::Error("AssetManager::Load: asset {} not found in any mounted archive",
+                           id.Value);
+                return nullptr;
+            }
+            if (location->Stored.Type != type)
+            {
+                Log::Error("AssetManager::Load: asset {} is asset type {}, not {}", id.Value,
+                           TypeName(location->Stored.Type), TypeName(type));
+                return nullptr;
+            }
+
+            Ref<Detail::AssetCacheEntry> entry =
+                CreateRef<Detail::AssetCacheEntry>(Detail::AssetCacheEntry{
+                    .Id = id,
+                    .Type = type,
+                    .Resource = nullptr,
+                });
+            m_Cache[id] = entry;
+
+            const AssetLoader* const loader = loaderIt->second.get();
+            const ArchiveReader* const reader = location->Reader;
+            const AssetParseContext context = MakeParseContext(true);
+            m_Parsing.push_back(InFlightParse{
+                .Id = id,
+                .Entry = entry,
+                .Parse = m_Tasks.Submit(
+                    [loader, reader, context, id]() -> AssetResult<Detail::ParsedAsset>
+                    {
+                        const optional<ArchiveEntry> found = reader->Find(id);
+                        if (!found)
+                        {
+                            return std::unexpected(AssetLoadError{
+                                .Kind = AssetError::Corrupt,
+                                .Id = id,
+                                .Detail = fmt::format("asset {}'s blob does not inflate", id.Value),
+                            });
+                        }
+                        return loader->Parse(context, id, found->Blob);
+                    },
+                    "Asset/Parse"),
+            });
+            return entry;
+        }
+
         // The blob lives in the mounted archive reader's storage, so the span outlives the call.
         AssetResult<Detail::LoadJob> job = RunLoader(type, id, true);
         if (!job)
@@ -470,28 +567,158 @@ namespace Veng
             return entry;
         }
 
-        if (job->Finalize)
+        EnqueueLoadJob(id, entry, std::move(*job));
+        return entry;
+    }
+
+    void AssetManager::EnqueueLoadJob(const AssetId id, const Ref<Detail::AssetCacheEntry>& entry,
+                                      Detail::LoadJob job)
+    {
+        if (job.Finalize)
         {
             m_Pending.push_back(PendingLoad{
                 .Id = id,
                 .Entry = entry,
-                .Resource = std::move(job->Resource),
-                .Dependencies = std::move(job->Dependencies),
-                .Finalize = std::move(job->Finalize),
+                .Resource = std::move(job.Resource),
+                .Dependencies = std::move(job.Dependencies),
+                .Finalize = std::move(job.Finalize),
             });
+            return;
         }
-        else
+        // No finalize: the resource is resident the moment its job exists.
+        entry->Resource = std::move(job.Resource);
+    }
+
+    void AssetManager::FailLoad(const AssetId id, const Ref<Detail::AssetCacheEntry>& entry,
+                                const string& detail)
+    {
+        Log::Error("AssetManager: async load of asset {} failed: {}", id.Value, detail);
+        entry->Failed = true;
+        // The id is dropped from the cache so a later load of it starts over rather than handing
+        // back an entry that will never become resident.
+        if (const auto it = m_Cache.find(id); it != m_Cache.end() && it->second == entry)
         {
-            // No finalize (Raw/Mesh/Shader/VertexLayout): the resource is resident
-            // the moment its worker phase returns — swap it in immediately.
-            entry->Resource = std::move(job->Resource);
+            m_Cache.erase(it);
+        }
+    }
+
+    void AssetManager::WaitForParses()
+    {
+        for (InFlightParse& parse : m_Parsing)
+        {
+            if (!parse.Outcome)
+            {
+                parse.Outcome = parse.Parse.Get();
+            }
+        }
+    }
+
+    void AssetManager::LandParses(const bool wait)
+    {
+        // By index over a list landing may grow: a landed parse loads its dependencies, and each one
+        // that parses off-thread joins the end. Each parse is taken out of the list before it lands,
+        // so a load landing a parse re-entrantly (a LoadSync from a completion) cannot disturb it.
+        for (usize i = 0; i < m_Parsing.size();)
+        {
+            InFlightParse& candidate = m_Parsing[i];
+            if (!candidate.Outcome)
+            {
+                if (!wait && !candidate.Parse.IsReady())
+                {
+                    ++i;
+                    continue;
+                }
+                candidate.Outcome = candidate.Parse.Get();
+            }
+            InFlightParse parse = std::move(candidate);
+            m_Parsing.erase(m_Parsing.begin() + static_cast<std::ptrdiff_t>(i));
+            LandParse(std::move(parse));
+        }
+    }
+
+    void AssetManager::LandParse(InFlightParse parse)
+    {
+        Result<AssetResult<Detail::ParsedAsset>>& outcome = *parse.Outcome;
+        if (!outcome)
+        {
+            FailLoad(parse.Id, parse.Entry, outcome.error());
+            return;
+        }
+        if (!*outcome)
+        {
+            FailLoad(parse.Id, parse.Entry, outcome->error().Detail);
+            return;
+        }
+        const Detail::ParsedAsset& parsed = **outcome;
+
+        vector<Ref<Detail::AssetCacheEntry>> dependencies;
+        dependencies.reserve(parsed.Dependencies.size());
+        for (const Detail::AssetDependency& dependency : parsed.Dependencies)
+        {
+            Ref<Detail::AssetCacheEntry> entry = LoadUntyped(dependency.Type, dependency.Id);
+            if (entry == nullptr)
+            {
+                FailLoad(parse.Id, parse.Entry,
+                         fmt::format("dependency {} did not resolve", dependency.Id.Value));
+                return;
+            }
+            dependencies.push_back(std::move(entry));
         }
 
-        return entry;
+        VE_ASSERT(parsed.Complete != nullptr, "AssetManager: asset {}'s parse set no Complete",
+                  parse.Id.Value);
+        AssetResult<Detail::LoadJob> job = parsed.Complete(*this, dependencies);
+        if (!job)
+        {
+            FailLoad(parse.Id, parse.Entry, job.error().Detail);
+            return;
+        }
+        VE_ASSERT(!job->AsyncResource.has_value(),
+                  "AssetManager: asset {}'s completion yielded an AsyncResource", parse.Id.Value);
+        EnqueueLoadJob(parse.Id, parse.Entry, std::move(*job));
+    }
+
+    AssetResult<Detail::LoadJob> AssetManager::RunParseInline(const AssetLoader& loader,
+                                                              const AssetTypeId type,
+                                                              const AssetId id)
+    {
+        const AssetResult<ArchiveEntry> found = FindTyped(type, id);
+        if (!found)
+        {
+            return std::unexpected(found.error());
+        }
+
+        AssetResult<Detail::ParsedAsset> parsed =
+            loader.Parse(MakeParseContext(false), id, found->Blob);
+        if (!parsed)
+        {
+            return std::unexpected(std::move(parsed.error()));
+        }
+
+        vector<Ref<Detail::AssetCacheEntry>> dependencies;
+        dependencies.reserve(parsed->Dependencies.size());
+        for (const Detail::AssetDependency& dependency : parsed->Dependencies)
+        {
+            AssetResult<Ref<Detail::AssetCacheEntry>> entry =
+                LoadSyncUntyped(dependency.Type, dependency.Id);
+            if (!entry)
+            {
+                return std::unexpected(std::move(entry.error()));
+            }
+            dependencies.push_back(std::move(*entry));
+        }
+
+        VE_ASSERT(parsed->Complete != nullptr, "AssetManager: asset {}'s parse set no Complete",
+                  id.Value);
+        return parsed->Complete(*this, dependencies);
     }
 
     void AssetManager::PumpFinalizes()
     {
+        // Parses that finished on a worker land first, so a load whose dependencies are already
+        // resident finalizes in this same pump.
+        LandParses(false);
+
         // Finalize every pending load whose dependencies are resident. A material whose textures
         // finalize this same pump waits one more iteration; the loop terminates because each
         // pass makes monotonic progress (at least one entry finalizes per pass).
@@ -502,50 +729,60 @@ namespace Veng
 
             for (usize i = 0; i < m_Pending.size();)
             {
-                PendingLoad& pending = m_Pending[i];
+                const PendingLoad& candidate = m_Pending[i];
 
                 // A pending-Adopt keep-alive rides this list with no Finalize; its own
                 // factory continuation resolves the entry, so step over it here.
-                if (!pending.Finalize)
+                if (!candidate.Finalize)
                 {
                     ++i;
                     continue;
                 }
 
                 bool depsReady = true;
-                for (const Ref<Detail::AssetCacheEntry>& dep : pending.Dependencies)
+                bool depFailed = false;
+                for (const Ref<Detail::AssetCacheEntry>& dep : candidate.Dependencies)
                 {
+                    if (dep != nullptr && dep->Failed)
+                    {
+                        depFailed = true;
+                        break;
+                    }
                     if (dep == nullptr || dep->Resource == nullptr)
                     {
                         depsReady = false;
-                        break;
                     }
                 }
 
-                if (!depsReady)
+                if (!depFailed && !depsReady)
                 {
                     ++i;
+                    continue;
+                }
+
+                // Taken out of the list before its Finalize runs, which may itself load (and so
+                // pump) re-entrantly.
+                PendingLoad pending = std::move(m_Pending[i]);
+                m_Pending.erase(m_Pending.begin() + static_cast<std::ptrdiff_t>(i));
+                progressed = true;
+
+                if (depFailed)
+                {
+                    FailLoad(pending.Id, pending.Entry, "a dependency failed to load");
                     continue;
                 }
 
                 const VoidResult finalized = pending.Finalize();
                 if (!finalized)
                 {
-                    // A deferred failure leaves the entry permanently pending;
-                    // log and drop the PendingLoad so it isn't retried forever.
-                    Log::Error("AssetManager: async finalize of asset {} failed: {}",
-                               pending.Id.Value, finalized.error());
-                }
-                else
-                {
-                    // The decode → upload → continuation chain lands back on the main thread here;
-                    // the instant marks where an async load becomes resident.
-                    VE_PROFILE_INSTANT("Asset/Finalize");
-                    pending.Entry->Resource = std::move(pending.Resource);
+                    FailLoad(pending.Id, pending.Entry, finalized.error());
+                    continue;
                 }
 
-                m_Pending.erase(m_Pending.begin() + static_cast<std::ptrdiff_t>(i));
-                progressed = true;
+                // The decode → upload → continuation chain lands back on the main thread here;
+                // the instant marks where an async load becomes resident.
+                VE_PROFILE_INSTANT("Asset/Finalize");
+                pending.Entry->Resource = std::move(pending.Resource);
             }
         }
     }
@@ -573,8 +810,15 @@ namespace Veng
                                          const string& error)
     {
         Log::Error("AssetManager: async Adopt factory failed: {}", error);
+        entry->Failed = true;
         std::erase_if(m_Pending,
                       [&entry](const PendingLoad& pending) { return pending.Entry == entry; });
+        // An id-keyed entry (a single-phase loader's AsyncResource) leaves the cache as any failed
+        // load does, so a later load of the id starts over.
+        if (const auto it = m_Cache.find(entry->Id); it != m_Cache.end() && it->second == entry)
+        {
+            m_Cache.erase(it);
+        }
     }
 
     AssetResult<Ref<Detail::AssetCacheEntry>> AssetManager::LoadSyncUntyped(AssetTypeId type,
@@ -595,13 +839,26 @@ namespace Veng
                 });
             }
 
-            // The id was already Load()ed async and is still pending. A sync
-            // handle must be resident, so drain the finalize queue now (it
-            // finalizes dependencies before dependents) to land it inline.
-            if (it->second->Resource == nullptr)
+            // The id was already Load()ed async and is still pending. A sync handle must be
+            // resident, so wait out every parse still running, then drain the finalize queue (it
+            // finalizes dependencies before dependents) to land it inline. The entry is held
+            // rather than the iterator, which the landing's own cache inserts invalidate, and so
+            // it stays observable even if the landing fails it out of the cache.
+            const Ref<Detail::AssetCacheEntry> cached = it->second;
+            if (cached->Resource == nullptr)
             {
+                const Ref<Detail::AssetCacheEntry>& pending = cached;
+                LandParses(true);
                 PumpFinalizes();
-                if (it->second->Resource == nullptr)
+                if (pending->Failed)
+                {
+                    return std::unexpected(AssetLoadError{
+                        .Kind = AssetError::LoadFailed,
+                        .Id = id,
+                        .Detail = fmt::format("asset {}'s async load failed", id.Value),
+                    });
+                }
+                if (pending->Resource == nullptr)
                 {
                     return std::unexpected(AssetLoadError{
                         .Kind = AssetError::LoadFailed,
@@ -611,10 +868,14 @@ namespace Veng
                 }
             }
 
-            return it->second;
+            return cached;
         }
 
-        AssetResult<Detail::LoadJob> job = RunLoader(type, id, false);
+        const auto loaderIt = m_Loaders.find(type);
+        AssetResult<Detail::LoadJob> job =
+            loaderIt != m_Loaders.end() && loaderIt->second->ParsesOffThread()
+                ? RunParseInline(*loaderIt->second, type, id)
+                : RunLoader(type, id, false);
         if (!job)
         {
             return std::unexpected(job.error());

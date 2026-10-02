@@ -25,6 +25,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/Buffer.h>
+#include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/DescriptorSetLayout.h>
@@ -43,6 +44,30 @@ namespace Veng::Renderer
 {
     namespace
     {
+        /// @brief Stages @p bytes for @p view's image and records the copy as setup work.
+        ///
+        /// The copy lands in the frame (or the next one) rather than an immediate submit, so a
+        /// renderer built mid-frame does not wait behind the frame in flight. The staging buffer
+        /// rides the recording's lambda and retires with the command buffer it was recorded into.
+        void UploadAsSetup(Context& context, const Ref<ImageView>& view, std::span<const u8> bytes)
+        {
+            const Ref<Image> image = view->GetImage();
+            const Ref<Buffer> staging =
+                Buffer::Create(context, {
+                                            .Name = image->GetName() + " (Upload)",
+                                            .Size = bytes.size(),
+                                            .Usage = BufferUsage::TransferSrc,
+                                        });
+            staging->UploadSync(bytes);
+            context.RecordSetupCommands(
+                [view, staging](CommandBuffer& cmd)
+                {
+                    cmd.PrepareForAccess(view, AccessKind::TransferDst);
+                    cmd.CopyBufferToImage(staging, view->GetImage());
+                    cmd.PrepareForAccess(view, AccessKind::SampleAny);
+                });
+        }
+
         // The engine core pack's fullscreen shaders (the AssetManager auto-mounts the core pack).
         constexpr AssetId DeferredLightingFragId{0x6569EBAC0810CC1FULL};
         constexpr AssetId DeferredLightingSsaoFragId{0x6EEF5D26BAF2849FULL};
@@ -65,7 +90,7 @@ namespace Veng::Renderer
     // Loads the two LTC lookup tables (RGBA32F, LtcLut::Size²) from the baked core-pack Raw asset
     // and uploads them into textures registered into bindless. The fit is a fixed GGX-only constant
     // baked offline (data/ltc_lut.bin: the matrix table then the magnitude table), so the runtime
-    // pays no fit — just a small synchronous load and upload at setup.
+    // pays no fit — just a small load at setup and a copy recorded as setup work.
     void SceneRenderer::CreateLtcResources()
     {
         BindlessRegistry& bindless = m_Context.GetBindlessRegistry();
@@ -91,9 +116,9 @@ namespace Veng::Renderer
                                          .Format = Format::RGBA32Sfloat,
                                          .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
                                      });
-        m_LtcMatImage->UploadSync(matBytes);
         m_LtcMatView = ImageView::Create(
             m_Context, {.Name = "SceneRenderer LTC Matrix LUT View", .Image = m_LtcMatImage});
+        UploadAsSetup(m_Context, m_LtcMatView, matBytes);
         m_LtcMatHandle = bindless.Register(m_LtcMatView);
 
         m_LtcMagImage =
@@ -103,9 +128,9 @@ namespace Veng::Renderer
                                          .Format = Format::RGBA32Sfloat,
                                          .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
                                      });
-        m_LtcMagImage->UploadSync(magBytes);
         m_LtcMagView = ImageView::Create(
             m_Context, {.Name = "SceneRenderer LTC Magnitude LUT View", .Image = m_LtcMagImage});
+        UploadAsSetup(m_Context, m_LtcMagView, magBytes);
         m_LtcMagHandle = bindless.Register(m_LtcMagView);
     }
 

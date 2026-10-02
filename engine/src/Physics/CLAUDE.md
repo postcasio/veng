@@ -239,7 +239,11 @@ sensor in one tick is therefore reported on the *next* tick, once the step begin
 `RegisterBuiltinSystems` makes it *resolvable*, not ordered — so **a level that wants physics names
 `PhysicsSystem` in its own `systems` array**, placed after the systems that produce motion, so a
 kinematic body's target pose for the tick is already written. A level that does not name it runs no
-solver, which is what keeps the "absent by default costs nothing" claim honest.
+solver, which is what keeps the "absent by default costs nothing" claim honest. Its `OnStop` clears
+the world (`PhysicsWorld::DestroyAllBodies`) through the solver's batched calls — one constraint
+removal, one body removal and one destruction for the whole set — so a closing world's stop costs
+three calls, not three per body. Destroying the `PhysicsWorld` itself removes nothing body by body:
+the solver's teardown frees every body it still holds.
 
 **The two-writer hazard.** A consumer whose `Transform` is driven by its own per-frame pass must not
 also carry a `Dynamic` `RigidBody`: both write the same field and the last writer each frame wins.

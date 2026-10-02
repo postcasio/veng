@@ -101,7 +101,28 @@ engine *mounts* archives and resolves assets against them.
   queue, no frame stall); poll `IsLoaded()` before using it. `AssetManager::LoadSync<T>(AssetId)`
   is the **blocking** sibling — it runs the whole pipeline inline and returns a resident handle or
   a structured error, `AssetResult<AssetHandle<T>>` (`std::expected<…, AssetLoadError>` — branch
-  on `AssetError::Kind`, not a string).
+  on `AssetError::Kind`, not a string). A failure an async load meets after returning its handle —
+  a corrupt blob, a dependency that does not resolve, a failed finalize — is logged, sets the
+  handle's `HasFailed()`, and drops the id from the cache so a later load starts over; a caller
+  waiting on `IsLoaded()` stops on it.
+- **An async load costs its caller a cache lookup, not a parse.** A loader is either
+  **two-phase** — `ParsesOffThread()` true, implementing `AssetLoader::Parse` — or **single-phase**,
+  implementing `Load`. Every builtin loader is two-phase. For one, `Load` reads only the archive's
+  table of contents on the calling thread and hands the pending entry back; a worker inflates the
+  blob (`ArchiveReader::Find` is thread-safe for this) and runs `Parse`, which decodes, validates,
+  creates the worker-legal resources (buffers, images, an upload's submit) and returns a
+  `Detail::ParsedAsset` — the dependencies the blob names, by `(type, id)`, and a `Complete` step.
+  `PumpFinalizes` lands each finished parse on the main thread: it loads the named dependencies
+  (each parsing on a worker in turn, so a dependency tree's decode never runs on the main thread),
+  runs `Complete` with their cache entries to build the `LoadJob`, and finalizes it as before once
+  its dependencies are resident. `Parse` touches nothing main-thread-only — not the manager, not the
+  bindless registry, not the pipeline cache — and `Complete` and `Finalize` do that half (a shader
+  module, a material's pipeline, a texture's bindless slot, a font's face). `LoadSync` runs the same
+  `Parse` inline with blocking uploads (`AssetParseContext::Async` false) and loads the dependencies
+  synchronously; a `LoadSync` of an id an async load still has pending waits out the running
+  parses first. A mount or unmount waits for running parses too, since each reads its blob through
+  a mounted reader. A single-phase loader — a module's, unless it opts in — runs on the calling
+  thread exactly as before.
 - **`AssetManager::MountMemory(vector<u8>, string) → MountHandle`** shadow-mounts an **in-memory
   archive** over the on-disk mounts: a later resolve of an `AssetId` the in-memory archive carries
   hits it first. The returned `MountHandle` is **RAII** — drop it to unmount and reveal the
@@ -297,9 +318,9 @@ level from the resolve seam's global facet (`GraphicsGlobalFacet::TextureQuality
 - **A mesh owns its materials; submeshes index them.** A `Mesh` holds a resident
   `vector<AssetHandle<Material>>` (`GetMaterials()`) and each `SubMesh` carries a `u32
   MaterialIndex` into it (`SubMesh::NoMaterial` = unassigned). The cooked on-disk mesh format
-  stores u64 material ids; `MeshLoader` eager-resolves those ids into material instances and
-  builds the list, exactly as `Material` resolves its own texture/shader dependencies — so every
-  asset eager-loads its dependencies. A draw iterates submeshes, binding
+  stores u64 material ids; `MeshLoader` names those ids as dependencies and builds the list from
+  them, exactly as `Material` resolves its own texture/shader dependencies — so a mesh is resident
+  only once its materials (and a skinned mesh's skeleton) are. A draw iterates submeshes, binding
   `GetMaterials()[MaterialIndex]` per range. **The list is the mesh asset's, so every entity drawing
   that mesh shares one instance per submesh** — a `SetParam`/`SetTextureHandle` on one is seen by all.
   A single entity draws differently through **`MeshRenderer::InstanceMaterials`** (a runtime,
@@ -334,7 +355,7 @@ level from the resolve seam's global facet (`GraphicsGlobalFacet::TextureQuality
 - **Skinned meshes carry a skeleton and animate through GPU skinning.** A `Mesh` with a
   `SkeletonId` is **skinned** (`Mesh::IsSkinned()`): its vertices use the skinned layout
   (`Mesh::SkinnedLayout()` — canonical attributes plus `RGBA16Uint` bone indices + `RGBA32Sfloat`
-  weights) and it eager-resolves an `AssetHandle<Skeleton>` (`Skeleton` and `Animation` are
+  weights) and it resolves an `AssetHandle<Skeleton>` as a dependency (`Skeleton` and `Animation` are
   CPU-only assets, loaded by `AssetId` like any other, no GPU resource). An **`Animator`**
   component (`AssetHandle<Animation>` + time/speed/loop/playing) plays a clip; the View-phase
   **`AnimationSystem`** samples it against the mesh's `Skeleton` each tick into a transient

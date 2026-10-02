@@ -5,6 +5,7 @@
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/SceneCapture.h>
+#include <Veng/Renderer/SceneCapturePool.h>
 
 namespace Veng::Renderer
 {
@@ -25,6 +26,8 @@ namespace Veng::Renderer
 
         /// @brief The owned capture, self-unregistering from the drive-list on destruction.
         Unique<SceneCapture> Capture;
+        /// @brief Where Capture goes when the surface releases it; expired or empty drops it instead.
+        std::weak_ptr<SceneCapturePool> Pool;
         /// @brief Bindless slot of the point sampler the material reads the distance map through.
         ///
         /// Declared before SamplerHandle, whose member name shadows the type from that point on.
@@ -176,7 +179,15 @@ namespace Veng::Renderer
 
         // The sampler slot is not released: it is the registry's shared clamp sampler, named by
         // every other surface and pass wanting the same settings, so returning it here would free a
-        // slot still being drawn through. The capture releases the texture slots it took.
+        // slot still being drawn through. The capture releases the texture slots it took — unless
+        // it goes back to the pool it came from, which keeps them for the next owner.
+        if (Capture != nullptr)
+        {
+            if (const Ref<SceneCapturePool> pool = Pool.lock(); pool != nullptr)
+            {
+                pool->Return(std::move(Capture));
+            }
+        }
     }
 
     vec4 PackCaptureOrientation(const mat3& faceBasis)
@@ -229,6 +240,65 @@ namespace Veng::Renderer
         return !Runtime || Runtime->PendingFaces > 0;
     }
 
+    SceneCaptureInfo CaptureSurface::GetCaptureInfo(Context& context, AssetManager& assets) const
+    {
+        return SceneCaptureInfo{
+            .Context = context,
+            .Assets = assets,
+            .FaceResolution = Resolution,
+            .Settings = CaptureSettings(Shadows),
+            // The distance map is opt-in: an empty DepthTextureSlot builds none, so the depth
+            // atlas, the distance map, and their pipelines and slots do not exist.
+            .CaptureDistance = !DepthTextureSlot.empty(),
+            .DistanceResolution = DepthResolution,
+        };
+    }
+
+    void CaptureSurface::Materialize(Context& context, Unique<SceneCapture> capture,
+                                     std::weak_ptr<SceneCapturePool> pool) const
+    {
+        VE_ASSERT(capture != nullptr, "CaptureSurface::Materialize: no capture to install");
+        if (!Runtime)
+        {
+            Runtime = CreateUnique<CaptureSurfaceRuntime>();
+        }
+        CaptureSurfaceRuntime& runtime = *Runtime;
+        VE_ASSERT(runtime.Capture == nullptr,
+                  "CaptureSurface::Materialize: the surface already holds a capture");
+        runtime.Capture = std::move(capture);
+        runtime.Pool = std::move(pool);
+
+        // The sampler the output is read through: a clamp sampler over the octahedral map — the
+        // same edge-clamp the capture's own resample uses, and the same one every other clamped blit
+        // in the engine reads through.
+        runtime.SamplerHandle = context.GetBindlessRegistry()
+                                    .AcquireSampler({
+                                        .Name = "CaptureSurface Sampler",
+                                        .MagFilter = Filter::Linear,
+                                        .MinFilter = Filter::Linear,
+                                        .AddressModeU = AddressMode::ClampToEdge,
+                                        .AddressModeV = AddressMode::ClampToEdge,
+                                        .AddressModeW = AddressMode::ClampToEdge,
+                                    })
+                                    .Handle;
+        if (!DepthTextureSlot.empty())
+        {
+            // A point sampler for the distance map — a bilinear tap across a depth discontinuity
+            // yields a distance at which nothing is.
+            runtime.DepthSamplerHandle = context.GetBindlessRegistry()
+                                             .AcquireSampler({
+                                                 .Name = "CaptureSurface Depth Sampler",
+                                                 .MagFilter = Filter::Nearest,
+                                                 .MinFilter = Filter::Nearest,
+                                                 .MipmapMode = MipmapMode::Nearest,
+                                                 .AddressModeU = AddressMode::ClampToEdge,
+                                                 .AddressModeV = AddressMode::ClampToEdge,
+                                                 .AddressModeW = AddressMode::ClampToEdge,
+                                             })
+                                             .Handle;
+        }
+    }
+
     SceneCapture* CaptureSurface::Drive(Context& context, AssetManager& assets, const Scene& world,
                                         const Entity entity, const vec3& position, const f32 alpha,
                                         const mat3& faceBasis,
@@ -243,48 +313,10 @@ namespace Veng::Renderer
         }
         CaptureSurfaceRuntime& runtime = *Runtime;
 
-        // Build the capture on first use and take the sampler its output is read through. That is a
-        // clamp sampler over the octahedral map — the same edge-clamp the capture's own resample
-        // uses, and the same one every other clamped blit in the engine reads through.
+        // Build the capture on first use when no driver installed one ahead of this drive.
         if (!runtime.Capture)
         {
-            // The distance map is opt-in: an empty DepthTextureSlot builds none, so the depth atlas,
-            // the distance map, and their pipelines and slots do not exist.
-            const bool captureDistance = !DepthTextureSlot.empty();
-            runtime.Capture = SceneCapture::Create({
-                .Context = context,
-                .Assets = assets,
-                .FaceResolution = Resolution,
-                .Settings = CaptureSettings(Shadows),
-                .CaptureDistance = captureDistance,
-                .DistanceResolution = DepthResolution,
-            });
-            runtime.SamplerHandle = context.GetBindlessRegistry()
-                                        .AcquireSampler({
-                                            .Name = "CaptureSurface Sampler",
-                                            .MagFilter = Filter::Linear,
-                                            .MinFilter = Filter::Linear,
-                                            .AddressModeU = AddressMode::ClampToEdge,
-                                            .AddressModeV = AddressMode::ClampToEdge,
-                                            .AddressModeW = AddressMode::ClampToEdge,
-                                        })
-                                        .Handle;
-            if (captureDistance)
-            {
-                // A point sampler for the distance map — a bilinear tap across a depth discontinuity
-                // yields a distance at which nothing is.
-                runtime.DepthSamplerHandle = context.GetBindlessRegistry()
-                                                 .AcquireSampler({
-                                                     .Name = "CaptureSurface Depth Sampler",
-                                                     .MagFilter = Filter::Nearest,
-                                                     .MinFilter = Filter::Nearest,
-                                                     .MipmapMode = MipmapMode::Nearest,
-                                                     .AddressModeU = AddressMode::ClampToEdge,
-                                                     .AddressModeV = AddressMode::ClampToEdge,
-                                                     .AddressModeW = AddressMode::ClampToEdge,
-                                                 })
-                                                 .Handle;
-            }
+            Materialize(context, SceneCapture::Create(GetCaptureInfo(context, assets)), {});
         }
 
         // Push this frame's capture source when the refresh policy calls for it. EveryFrame always

@@ -216,36 +216,19 @@ namespace Veng::Renderer
         // only when this frame's Atmosphere differs from the last generated set — the once-per-change
         // contract (the sun direction is a runtime push, not a precompute input). Gated on the
         // resolved sky being an atmosphere so the cost is absent on the shipping path. Recorded here,
-        // before the atmosphere bake below and before the graph the direct pass samples them
-        // through, so the LUTs are resident for either display mode. A baked atmosphere generates
-        // them through a self-contained immediate submit, so they are device-resident before the
-        // bake's own immediate-submit readback samples them (the frame command buffer has not been
-        // submitted at that point); a direct atmosphere records into the frame command buffer, which
-        // the direct sky pass samples through in-order later this frame.
+        // into the frame command buffer, before the atmosphere bake below and before the graph the
+        // direct pass samples them through, so the LUTs are resident for either display mode: the
+        // direct pass reads them later in this same buffer, and the bake's ticks run in a later
+        // frame's generated-texture pump, which this buffer precedes in submission order.
         m_AtmosphereRegeneratedLastFrame = false;
         if (m_ResolvedSkyKind == SkySourceKind::Atmosphere)
         {
             const bool regenerate =
                 !m_AtmosphereGenerated || !AtmosphereEquals(view.Atmosphere, m_LastAtmosphere);
-            if (m_ResolvedSkyBaked)
+            m_Atmosphere->EnsureInitialized(cmd);
+            if (regenerate)
             {
-                m_Context.ImmediateCommands(
-                    [&](CommandBuffer& lutCmd)
-                    {
-                        m_Atmosphere->EnsureInitialized(lutCmd);
-                        if (regenerate)
-                        {
-                            m_Atmosphere->Generate(lutCmd, view.Atmosphere);
-                        }
-                    });
-            }
-            else
-            {
-                m_Atmosphere->EnsureInitialized(cmd);
-                if (regenerate)
-                {
-                    m_Atmosphere->Generate(cmd, view.Atmosphere);
-                }
+                m_Atmosphere->Generate(cmd, view.Atmosphere);
             }
             if (regenerate)
             {

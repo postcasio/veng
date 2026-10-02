@@ -45,9 +45,9 @@ namespace Template
         return it != Markers.end() ? &*it : nullptr;
     }
 
-    AssetResult<Detail::LoadJob> MarkerSetLoader::Load(AssetManager&, Renderer::Context&,
-                                                       TaskSystem&, TypeRegistry&, const AssetId id,
-                                                       const std::span<const u8> cooked, bool) const
+    AssetResult<Detail::ParsedAsset> MarkerSetLoader::Parse(const AssetParseContext& /*context*/,
+                                                            const AssetId id,
+                                                            const std::span<const u8> cooked) const
     {
         // A cooked blob is a build artifact, not untrusted input — but a stale or truncated one is
         // recoverable, so every bound is checked and reported rather than asserted.
@@ -104,10 +104,11 @@ namespace Template
                 .Position = vec3(record.Position[0], record.Position[1], record.Position[2])});
         }
 
-        return Detail::LoadJob{
+        // Nothing is left for the main thread: no dependency to load, no registration to make.
+        return Detail::ParsedJob(Detail::LoadJob{
             .Resource = std::static_pointer_cast<void>(std::move(set)),
             .Dependencies = {},
             .Finalize = {},
-        };
+        });
     }
 }

@@ -16,11 +16,12 @@ namespace Veng
         /// @brief Returns AssetTypes::VertexLayout.
         [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::VertexLayout; }
 
-        /// @brief Decodes the cooked vertex-layout blob into a LoadJob producing a resident Veng::VertexLayout.
-        [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,
-                                                        Renderer::Context& context,
-                                                        TaskSystem& tasks, TypeRegistry& types,
-                                                        AssetId id, std::span<const u8> cooked,
-                                                        bool async) const override;
+        /// @brief Returns true: the decode runs on a worker for an asynchronous load.
+        [[nodiscard]] bool ParsesOffThread() const override { return true; }
+
+        /// @brief Decodes the cooked vertex-layout blob into a resident Veng::VertexLayout.
+        [[nodiscard]] AssetResult<Detail::ParsedAsset>
+        Parse(const AssetParseContext& context, AssetId id,
+              std::span<const u8> cooked) const override;
     };
 }

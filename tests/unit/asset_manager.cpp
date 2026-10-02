@@ -8,9 +8,11 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <thread>
 #include "support/TempPath.h"
 
 #include <Veng/Asset/Archive.h>
+#include <Veng/Asset/AssetLoaderRegistry.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/RawAsset.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -24,6 +26,50 @@ namespace
     vector<u8> Bytes(std::initializer_list<u8> values)
     {
         return vector<u8>(values.begin(), values.end());
+    }
+
+    // An asset type of the test's own, whose loader records the thread its Parse ran on.
+    constexpr AssetTypeId ThreadProbeType{0xE8DE86358953938FULL};
+
+    struct ThreadProbe
+    {
+        std::thread::id ParsedOn;
+    };
+
+    // A two-phase loader that stamps the parsing thread onto its resource, and fails an empty blob
+    // the way a corrupt one fails.
+    class ThreadProbeLoader final : public AssetLoader
+    {
+    public:
+        [[nodiscard]] AssetTypeId Type() const override { return ThreadProbeType; }
+
+        [[nodiscard]] bool ParsesOffThread() const override { return true; }
+
+        [[nodiscard]] AssetResult<Detail::ParsedAsset>
+        Parse(const AssetParseContext& /*context*/, const AssetId id,
+              const std::span<const u8> cooked) const override
+        {
+            if (cooked.empty())
+            {
+                return std::unexpected(AssetLoadError{
+                    .Kind = AssetError::Corrupt, .Id = id, .Detail = "thread probe blob is empty"});
+            }
+            auto probe = CreateRef<ThreadProbe>();
+            probe->ParsedOn = std::this_thread::get_id();
+            return Detail::ParsedJob(Detail::LoadJob{.Resource = Detail::RefAny(probe)});
+        }
+    };
+
+    path WriteThreadProbeArchive()
+    {
+        ArchiveWriter writer;
+        writer.Add(AssetId{0x4D1}, ThreadProbeType, Bytes({1}));
+        writer.Add(AssetId{0x4D2}, ThreadProbeType, {});
+
+        const path archivePath = Veng::TestSupport::TempDir() / "veng_asset_manager_parse.vengpack";
+        const VoidResult written = writer.Write(archivePath);
+        REQUIRE(written.has_value());
+        return archivePath;
     }
 
     path WriteFixtureArchive()
@@ -251,6 +297,72 @@ TEST_CASE("AssetManager: dropping the last AssetHandle makes the entry evictable
     manager.CollectGarbage();
     CHECK_FALSE(manager.Get<RawAsset>(AssetId{0x3E9}).has_value());
     CHECK_FALSE(weak.Lock().has_value());
+
+    std::filesystem::remove(archivePath);
+}
+
+TEST_CASE("AssetManager: an async load parses on a worker and lands through the finalize pump")
+{
+    const path archivePath = WriteThreadProbeArchive();
+
+    Renderer::Context context;
+    TaskSystem tasks;
+    TypeRegistry types;
+    AssetLoaderRegistry loaders;
+    loaders.Register(ThreadProbeType,
+                     [] { return Unique<AssetLoader>(CreateUnique<ThreadProbeLoader>()); });
+    AssetManager manager(context, tasks, types, AssetManagerInfo{.Loaders = &loaders});
+    REQUIRE(manager.Mount(archivePath).has_value());
+
+    // The load hands its entry back before the parse has landed, whatever the worker has done.
+    const Ref<Detail::AssetCacheEntry> entry = manager.LoadUntyped(ThreadProbeType, AssetId{0x4D1});
+    REQUIRE(entry != nullptr);
+    CHECK(entry->Resource == nullptr);
+    CHECK(manager.GetParsingCount() == 1);
+
+    tasks.WaitForAll();
+    manager.PumpFinalizes();
+    REQUIRE(entry->Resource != nullptr);
+    CHECK(manager.GetParsingCount() == 0);
+    CHECK(std::static_pointer_cast<ThreadProbe>(entry->Resource)->ParsedOn !=
+          std::this_thread::get_id());
+
+    // A blocking load of an uncached asset parses on the calling thread instead.
+    const AssetResult<Ref<Detail::AssetCacheEntry>> loadedSync =
+        manager.LoadSyncUntyped(ThreadProbeType, AssetId{0x4D1});
+    REQUIRE(loadedSync.has_value());
+    CHECK(*loadedSync == entry);
+
+    std::filesystem::remove(archivePath);
+}
+
+TEST_CASE("AssetManager: a failed async parse marks the entry failed and frees the id to retry")
+{
+    const path archivePath = WriteThreadProbeArchive();
+
+    Renderer::Context context;
+    TaskSystem tasks;
+    TypeRegistry types;
+    AssetLoaderRegistry loaders;
+    loaders.Register(ThreadProbeType,
+                     [] { return Unique<AssetLoader>(CreateUnique<ThreadProbeLoader>()); });
+    AssetManager manager(context, tasks, types, AssetManagerInfo{.Loaders = &loaders});
+    REQUIRE(manager.Mount(archivePath).has_value());
+
+    const Ref<Detail::AssetCacheEntry> entry = manager.LoadUntyped(ThreadProbeType, AssetId{0x4D2});
+    REQUIRE(entry != nullptr);
+    tasks.WaitForAll();
+    manager.PumpFinalizes();
+
+    CHECK(entry->Failed);
+    CHECK(entry->Resource == nullptr);
+    CHECK(manager.CachedEntry(AssetId{0x4D2}) == nullptr);
+
+    // A blocking load of the same id runs again and reports the decode error.
+    const AssetResult<Ref<Detail::AssetCacheEntry>> retried =
+        manager.LoadSyncUntyped(ThreadProbeType, AssetId{0x4D2});
+    REQUIRE_FALSE(retried.has_value());
+    CHECK(retried.error().Kind == AssetError::Corrupt);
 
     std::filesystem::remove(archivePath);
 }

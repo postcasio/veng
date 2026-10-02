@@ -18,10 +18,9 @@ namespace Veng
         }
     }
 
-    AssetResult<Detail::LoadJob>
-    AnimationLoader::Load(AssetManager& /*manager*/, Renderer::Context& /*context*/,
-                          TaskSystem& /*tasks*/, TypeRegistry& /*types*/, AssetId id,
-                          std::span<const u8> cooked, bool /*async*/) const
+    AssetResult<Detail::ParsedAsset> AnimationLoader::Parse(const AssetParseContext& /*context*/,
+                                                            const AssetId id,
+                                                            const std::span<const u8> cooked) const
     {
         if (cooked.size() < sizeof(CookedAnimationHeader))
         {
@@ -116,6 +115,6 @@ namespace Veng
         }
 
         animation->RootMotionBone = FindAnimatedRootBone(*animation);
-        return Detail::LoadJob{.Resource = Detail::RefAny(animation)};
+        return Detail::ParsedJob(Detail::LoadJob{.Resource = Detail::RefAny(animation)});
     }
 }

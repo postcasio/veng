@@ -80,8 +80,9 @@ namespace Veng::Renderer
     }
 
     SceneCapture::SceneCapture(const SceneCaptureInfo& info)
-        : m_Context(info.Context), m_FaceResolution(info.FaceResolution), m_CaptureCube(info.Cube),
-          m_CaptureDistance(info.CaptureDistance), m_DistanceResolution(info.DistanceResolution)
+        : m_Context(info.Context), m_FaceResolution(info.FaceResolution), m_Settings(info.Settings),
+          m_CaptureCube(info.Cube), m_CaptureDistance(info.CaptureDistance),
+          m_DistanceResolution(info.DistanceResolution)
     {
         VE_ASSERT(info.FaceResolution > 0, "SceneCapture FaceResolution must be > 0");
         VE_ASSERT(!info.CaptureDistance || info.DistanceResolution > 0,
@@ -369,6 +370,36 @@ namespace Veng::Renderer
         VE_ASSERT(m_DriveList == nullptr,
                   "SceneCapture is already registered to an Application's capture drive-list");
         m_DriveList = &driveList;
+    }
+
+    void SceneCapture::DetachFromDriveList()
+    {
+        if (m_DriveList != nullptr)
+        {
+            std::erase(*m_DriveList, this);
+            m_DriveList = nullptr;
+        }
+    }
+
+    bool SceneCapture::IsConfiguredFor(const SceneCaptureInfo& info) const
+    {
+        if (info.FaceResolution != m_FaceResolution || info.Cube != m_CaptureCube ||
+            info.CaptureDistance != m_CaptureDistance || !(info.Settings == m_Settings))
+        {
+            return false;
+        }
+        // The distance resolution sizes nothing while the distance path is off.
+        return !m_CaptureDistance || info.DistanceResolution == m_DistanceResolution;
+    }
+
+    void SceneCapture::ResetForReuse()
+    {
+        m_View = {};
+        m_ViewFresh = false;
+        m_NextFace = 0;
+        m_AtlasCleared = false;
+        m_DepthAtlasCleared = false;
+        m_Renderer->ReleaseScene();
     }
 
     void SceneCapture::Render(CommandBuffer& cmd)

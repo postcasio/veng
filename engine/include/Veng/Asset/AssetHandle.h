@@ -40,6 +40,11 @@ namespace Veng
             AssetTypeId Type;
             /// @brief Null until load + finalize completes.
             RefAny Resource;
+            /// @brief Set when an asynchronous load gave up after the entry was handed out.
+            ///
+            /// A failed entry never becomes resident; the manager drops it from its cache so a later
+            /// load of the same id tries again with a fresh entry.
+            bool Failed = false;
         };
     }
 
@@ -78,6 +83,13 @@ namespace Veng
         /// the bool conversion, which is residency) — treating a not-yet-resident handle as absent
         /// discards it permanently, and the asset landing a frame later cannot undo that.
         [[nodiscard]] bool IsValid() const { return m_Entry != nullptr; }
+
+        /// @brief Returns true when the asynchronous load behind this handle failed.
+        ///
+        /// A Load returns its handle before the asset is parsed, so a corrupt blob, a dependency that
+        /// does not resolve, or a failed finalize surfaces only later — logged, and recorded here.
+        /// A failed handle never becomes resident, so a caller waiting on IsLoaded() can stop.
+        [[nodiscard]] bool HasFailed() const { return m_Entry != nullptr && m_Entry->Failed; }
 
         /// @brief Returns the asset's id (may be invalid for runtime-adopted resources).
         [[nodiscard]] AssetId Id() const { return m_Id; }

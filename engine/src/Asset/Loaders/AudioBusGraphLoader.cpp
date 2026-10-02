@@ -20,11 +20,11 @@ namespace Veng
         }
     }
 
-    AssetResult<Detail::LoadJob>
-    AudioBusGraphLoader::Load(AssetManager& /*manager*/, Renderer::Context& /*context*/,
-                              TaskSystem& /*tasks*/, TypeRegistry& types, AssetId id,
-                              std::span<const u8> cooked, bool /*async*/) const
+    AssetResult<Detail::ParsedAsset>
+    AudioBusGraphLoader::Parse(const AssetParseContext& context, const AssetId id,
+                               const std::span<const u8> cooked) const
     {
+        const TypeRegistry& types = context.Types;
         if (cooked.size() < sizeof(CookedAudioBusGraphHeader))
         {
             return std::unexpected(
@@ -60,6 +60,6 @@ namespace Veng
         }
 
         const Ref<Audio::AudioBusGraph> graph = Audio::AudioBusGraph::Create(std::move(data));
-        return Detail::LoadJob{.Resource = Detail::RefAny(graph)};
+        return Detail::ParsedJob(Detail::LoadJob{.Resource = Detail::RefAny(graph)});
     }
 }

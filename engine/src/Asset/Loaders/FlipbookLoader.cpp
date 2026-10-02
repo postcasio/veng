@@ -20,11 +20,9 @@ namespace Veng
         }
     }
 
-    AssetResult<Detail::LoadJob> FlipbookLoader::Load(AssetManager& manager,
-                                                      Renderer::Context& context, TaskSystem& tasks,
-                                                      TypeRegistry& types, const AssetId id,
-                                                      const std::span<const u8> cooked,
-                                                      const bool async) const
+    AssetResult<Detail::ParsedAsset> FlipbookLoader::Parse(const AssetParseContext& context,
+                                                           const AssetId id,
+                                                           const std::span<const u8> cooked) const
     {
         if (cooked.size() < sizeof(CookedFlipbookHeader))
         {
@@ -59,9 +57,8 @@ namespace Veng
                 Corrupt(id, "flipbook: cooked blob smaller than header + embedded texture"));
         }
 
-        AssetResult<Detail::LoadJob> textureJob =
-            TextureLoader{}.Load(manager, context, tasks, types, id,
-                                 cooked.subspan(sizeof(header), header.TextureBytes), async);
+        AssetResult<Detail::LoadJob> textureJob = TextureLoader::PrepareTexture(
+            context, id, cooked.subspan(sizeof(header), header.TextureBytes));
         if (!textureJob)
         {
             return std::unexpected(textureJob.error());
@@ -89,10 +86,10 @@ namespace Veng
         }
         const Ref<Flipbook> flipbook = Flipbook::Create(info);
 
-        return Detail::LoadJob{
+        return Detail::ParsedJob(Detail::LoadJob{
             .Resource = Detail::RefAny(flipbook),
             .Dependencies = {},
             .Finalize = std::move(textureJob->Finalize),
-        };
+        });
     }
 }

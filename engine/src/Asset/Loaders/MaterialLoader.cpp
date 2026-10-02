@@ -60,6 +60,15 @@ namespace Veng
             return string(name, strnlen(name, N));
         }
 
+        /// @brief The decoded param block and field table a material's completion builds it from.
+        struct MaterialParts
+        {
+            /// @brief The cooked param block.
+            vector<std::byte> Block;
+            /// @brief The cooked field table.
+            vector<Veng::MaterialField> Fields;
+        };
+
         AssetLoadError Corrupt(AssetId id, string detail)
         {
             return AssetLoadError{
@@ -274,11 +283,9 @@ namespace Veng
                                     *skinnedVs->Get(), fragmentShader, cullMode);
     }
 
-    AssetResult<Detail::LoadJob> MaterialLoader::Load(AssetManager& manager,
-                                                      Renderer::Context& context,
-                                                      TaskSystem& /*tasks*/,
-                                                      TypeRegistry& /*types*/, AssetId id,
-                                                      std::span<const u8> cooked, bool async) const
+    AssetResult<Detail::ParsedAsset> MaterialLoader::Parse(const AssetParseContext& /*context*/,
+                                                           const AssetId id,
+                                                           const std::span<const u8> cooked) const
     {
         // ── 1. CookedMaterialHeader ──────────────────────────────────────────
         if (cooked.size() < sizeof(CookedMaterialHeader))
@@ -358,52 +365,20 @@ namespace Veng
         }
         cursor += header.BlockBytes;
 
-        // ── 4. Fan out shader sub-loads ──────────────────────────────────────
+        // ── 4. The shaders are the first two dependencies ────────────────────
         // Finalize runs only once both shaders are resident (dependencies finalize before the parent).
-        vector<Ref<Detail::AssetCacheEntry>> dependencies;
+        Detail::ParsedAsset parsed;
+        parsed.Dependencies.push_back(
+            {.Type = AssetTypes::Shader, .Id = AssetId{header.VertexShaderId}});
+        parsed.Dependencies.push_back(
+            {.Type = AssetTypes::Shader, .Id = AssetId{header.FragmentShaderId}});
 
-        auto loadShader = [&](u64 shaderId) -> AssetResult<AssetHandle<Veng::Shader>>
-        {
-            if (async)
-            {
-                AssetHandle<Veng::Shader> handle = manager.Load<Veng::Shader>(AssetId{shaderId});
-                if (!AssetManager::EntryOf(handle))
-                {
-                    return std::unexpected(AssetLoadError{
-                        .Kind = AssetError::MissingDependency,
-                        .Id = AssetId{shaderId},
-                        .Detail = fmt::format("material {}: shader dependency {} did not resolve",
-                                              id.Value, shaderId)});
-                }
-                return handle;
-            }
-            return manager.LoadSync<Veng::Shader>(AssetId{shaderId});
-        };
-
-        const AssetResult<AssetHandle<Veng::Shader>> vsResult = loadShader(header.VertexShaderId);
-        if (!vsResult)
-        {
-            return std::unexpected(vsResult.error());
-        }
-
-        const AssetResult<AssetHandle<Veng::Shader>> fsResult = loadShader(header.FragmentShaderId);
-        if (!fsResult)
-        {
-            return std::unexpected(fsResult.error());
-        }
-
-        const AssetHandle<Veng::Shader> vsHandle = *vsResult;
-        const AssetHandle<Veng::Shader> fsHandle = *fsResult;
-        dependencies.push_back(AssetManager::EntryOf(vsHandle));
-        dependencies.push_back(AssetManager::EntryOf(fsHandle));
-
-        // ── 5. Build MaterialField table + fan out texture sub-loads ─────────
+        // ── 5. Build MaterialField table; each distinct texture is a dependency ─
         vector<Veng::MaterialField> fields;
         fields.reserve(header.FieldCount);
 
         // Track textures by AssetId to deduplicate.
         vector<u64> textureIds;
-        vector<AssetHandle<Veng::Texture>> textures;
 
         for (u32 i = 0; i < header.FieldCount; ++i)
         {
@@ -483,49 +458,13 @@ namespace Veng
                     continue;
                 }
 
-                // Load (or reuse) the texture asset. The resolved bindless index
-                // is patched into params by Material::Finalize, once the texture
-                // is registered — not here.
-                bool known = false;
-                for (const u64 existing : textureIds)
+                // Name the texture asset once. The resolved bindless index is patched into params
+                // by Material::Finalize, once the texture is registered — not here.
+                if (std::ranges::find(textureIds, cf.TextureId) == textureIds.end())
                 {
-                    if (existing == cf.TextureId)
-                    {
-                        known = true;
-                        break;
-                    }
-                }
-
-                if (!known)
-                {
-                    AssetHandle<Veng::Texture> texHandle;
-                    if (async)
-                    {
-                        texHandle = manager.Load<Veng::Texture>(AssetId{cf.TextureId});
-                        if (!AssetManager::EntryOf(texHandle))
-                        {
-                            return std::unexpected(AssetLoadError{
-                                .Kind = AssetError::MissingDependency,
-                                .Id = AssetId{cf.TextureId},
-                                .Detail = fmt::format(
-                                    "material {}: texture dependency {} did not resolve", id.Value,
-                                    cf.TextureId)});
-                        }
-                    }
-                    else
-                    {
-                        const AssetResult<AssetHandle<Veng::Texture>> texResult =
-                            manager.LoadSync<Veng::Texture>(AssetId{cf.TextureId});
-                        if (!texResult)
-                        {
-                            return std::unexpected(texResult.error());
-                        }
-                        texHandle = *texResult;
-                    }
-
                     textureIds.push_back(cf.TextureId);
-                    textures.push_back(texHandle);
-                    dependencies.push_back(AssetManager::EntryOf(texHandle));
+                    parsed.Dependencies.push_back(
+                        {.Type = AssetTypes::Texture, .Id = AssetId{cf.TextureId}});
                 }
             }
 
@@ -540,62 +479,91 @@ namespace Veng
             });
         }
 
-        // ── 6. Construct the unregistered Material ───────────────────────────
-        const Veng::MaterialInfo info{
-            .Name = fmt::format("Material {}", id.Value),
-            .Id = id,
-            .Context = &context,
-            .Domain = domain,
-            .CullMode = cullMode,
-            .SortPriority = header.SortPriority,
-            .WritesBloomMask = header.BloomMask != 0,
-            .HalfResolution = header.HalfResolution != 0,
-            .Blend = blend,
-            .Pipeline = nullptr,
-            .VertexShader = vsHandle,
-            .FragmentShader = fsHandle,
-            .Textures = std::move(textures),
+        // ── 6. Construct the unregistered Material on the main thread ────────
+        auto parts = CreateRef<MaterialParts>(MaterialParts{
             .Block = std::move(block),
             .Fields = std::move(fields),
-            .SelectorOffset = SelectorPushOffsetFor(domain),
-        };
-
-        const Ref<Veng::Material> material = Veng::Material::Prepare(info);
-
-        // ── 7. The main-thread finalize ──────────────────────────────────────
-        return Detail::LoadJob{
-            .Resource = Detail::RefAny(material),
-            .Dependencies = std::move(dependencies),
-            .Finalize = [&manager, &context, id, domain, cullMode, vsHandle, fsHandle,
-                         material]() -> VoidResult
+        });
+        const auto sortPriority = header.SortPriority;
+        const bool bloomMask = header.BloomMask != 0;
+        const bool halfResolution = header.HalfResolution != 0;
+        parsed.Complete = [parts, id, domain, cullMode, blend, sortPriority, bloomMask,
+                           halfResolution](AssetManager& manager,
+                                           std::span<const Ref<Detail::AssetCacheEntry>> resolved)
+            -> AssetResult<Detail::LoadJob>
+        {
+            Renderer::Context& context = manager.GetContext();
+            const AssetHandle<Veng::Shader> vsHandle =
+                AssetManager::HandleOf<Veng::Shader>(resolved[0]);
+            const AssetHandle<Veng::Shader> fsHandle =
+                AssetManager::HandleOf<Veng::Shader>(resolved[1]);
+            vector<AssetHandle<Veng::Texture>> textures;
+            textures.reserve(resolved.size() - 2);
+            for (usize i = 2; i < resolved.size(); ++i)
             {
-                Result<Ref<Renderer::PipelineLayout>> layout =
-                    BuildPipelineLayout(context, id, domain, *vsHandle.Get(), *fsHandle.Get());
-                if (!layout)
-                {
-                    return std::unexpected(layout.error());
-                }
+                textures.push_back(AssetManager::HandleOf<Veng::Texture>(resolved[i]));
+            }
 
-                Ref<Renderer::GraphicsPipeline> pipeline;
-                if (domain == MaterialDomain::Surface)
+            const Veng::MaterialInfo info{
+                .Name = fmt::format("Material {}", id.Value),
+                .Id = id,
+                .Context = &context,
+                .Domain = domain,
+                .CullMode = cullMode,
+                .SortPriority = sortPriority,
+                .WritesBloomMask = bloomMask,
+                .HalfResolution = halfResolution,
+                .Blend = blend,
+                .Pipeline = nullptr,
+                .VertexShader = vsHandle,
+                .FragmentShader = fsHandle,
+                .Textures = std::move(textures),
+                .Block = std::move(parts->Block),
+                .Fields = std::move(parts->Fields),
+                .SelectorOffset = SelectorPushOffsetFor(domain),
+            };
+
+            const Ref<Veng::Material> material = Veng::Material::Prepare(info);
+
+            // ── 7. The main-thread finalize ──────────────────────────────────
+            return Detail::LoadJob{
+                .Resource = Detail::RefAny(material),
+                .Dependencies =
+                    vector<Ref<Detail::AssetCacheEntry>>(resolved.begin(), resolved.end()),
+                .Finalize = [manager = &manager, &context, id, domain, cullMode, vsHandle, fsHandle,
+                             material]() -> VoidResult
                 {
-                    Result<Ref<Renderer::GraphicsPipeline>> built = Detail::BuildSurfacePipeline(
-                        manager, context, fmt::format("Material {} Pipeline", id.Value), *layout,
-                        *vsHandle.Get(), *fsHandle.Get(), cullMode);
-                    if (!built)
+                    Result<Ref<Renderer::PipelineLayout>> layout =
+                        BuildPipelineLayout(context, id, domain, *vsHandle.Get(), *fsHandle.Get());
+                    if (!layout)
                     {
-                        return std::unexpected(built.error());
+                        return std::unexpected(layout.error());
                     }
-                    pipeline = std::move(*built);
-                }
 
-                // A Surface material's skinned g-buffer sibling is built lazily, the first time the
-                // material is drawn on a skinned mesh (Material::EnsureSkinnedPipeline) — a material
-                // never skinned never pays for it, and one whose fragment does not consume the full
-                // surface interpolant set (a static-only material) still loads.
-                material->Finalize(std::move(*layout), std::move(pipeline));
-                return {};
-            },
+                    Ref<Renderer::GraphicsPipeline> pipeline;
+                    if (domain == MaterialDomain::Surface)
+                    {
+                        Result<Ref<Renderer::GraphicsPipeline>> built =
+                            Detail::BuildSurfacePipeline(
+                                *manager, context, fmt::format("Material {} Pipeline", id.Value),
+                                *layout, *vsHandle.Get(), *fsHandle.Get(), cullMode);
+                        if (!built)
+                        {
+                            return std::unexpected(built.error());
+                        }
+                        pipeline = std::move(*built);
+                    }
+
+                    // A Surface material's skinned g-buffer sibling is built lazily, the first time
+                    // the material is drawn on a skinned mesh (Material::EnsureSkinnedPipeline) — a
+                    // material never skinned never pays for it, and one whose fragment does not
+                    // consume the full surface interpolant set (a static-only material) still
+                    // loads.
+                    material->Finalize(std::move(*layout), std::move(pipeline));
+                    return {};
+                },
+            };
         };
+        return parsed;
     }
 }

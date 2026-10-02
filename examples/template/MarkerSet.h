@@ -116,14 +116,18 @@ namespace Template
         /// @brief Returns MarkerSetAssetType, the type this loader is dispatched for.
         [[nodiscard]] Veng::AssetTypeId Type() const override { return MarkerSetAssetType; }
 
+        /// @brief Returns true: the decode is pure CPU work, so it runs on a worker for an
+        ///        asynchronous load.
+        [[nodiscard]] bool ParsesOffThread() const override { return true; }
+
         /// @brief Decodes the blob into a MarkerSet; needs no dependency load and no finalize.
+        /// @param context The parse context; unused — the decode needs nothing from it.
         /// @param id      The asset being loaded, named in a decode error.
         /// @param cooked  The cooked blob bytes from the archive.
         /// @return The decoded set, or a structured load error on a malformed blob.
-        [[nodiscard]] Veng::AssetResult<Veng::Detail::LoadJob>
-        Load(Veng::AssetManager& manager, Veng::Renderer::Context& context, Veng::TaskSystem& tasks,
-             Veng::TypeRegistry& types, Veng::AssetId id, std::span<const Veng::u8> cooked,
-             bool async) const override;
+        [[nodiscard]] Veng::AssetResult<Veng::Detail::ParsedAsset>
+        Parse(const Veng::AssetParseContext& context, Veng::AssetId id,
+              std::span<const Veng::u8> cooked) const override;
     };
 }
 

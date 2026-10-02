@@ -6,6 +6,8 @@
 #include <Veng/Asset/Path.h>
 
 #include <map>
+#include <memory>
+#include <mutex>
 #include <span>
 
 // The .vengpack archive container:
@@ -264,8 +266,9 @@ namespace Veng
         /// @param id  The asset id to find.
         /// @return The entry (blob view into the reader's storage or inflate cache) if found, or
         ///         nullopt.
-        /// @warning Find is not thread-safe: the lazy inflate mutates the reader's cache. Resolve
-        ///          on a single thread (the render thread, as every loader does).
+        /// Safe to call from several threads at once — the lazy inflate's cache is guarded, and the
+        /// decompression itself runs outside the guard, so two threads inflating different entries
+        /// do not wait on each other. Not safe against the reader being moved or destroyed.
         [[nodiscard]] optional<ArchiveEntry> Find(AssetId id) const;
 
         /// @brief Looks up an asset by id and returns a view of its stored (on-disk) bytes.
@@ -326,6 +329,10 @@ namespace Veng
         /// stays valid when a later Find() inflates a different entry. Populated lazily by Find()
         /// (hence mutable on a const method) and never evicted.
         mutable std::map<AssetId, vector<u8>> m_InflateCache;
+        /// @brief Guards m_InflateCache, held for its lookups and inserts only.
+        ///
+        /// Owned through a pointer so the reader stays movable.
+        std::unique_ptr<std::mutex> m_InflateMutex = std::make_unique<std::mutex>();
         /// @brief Public view of the TOC in the same order as m_Toc.
         vector<ArchiveTocEntry> m_Entries;
         /// @brief Stored archive digest (from the header).

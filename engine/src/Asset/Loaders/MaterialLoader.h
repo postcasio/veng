@@ -17,11 +17,13 @@ namespace Veng
         /// @brief Returns AssetTypes::Material.
         [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Material; }
 
-        /// @brief Decodes the cooked material blob into a LoadJob producing a resident Veng::Material.
-        [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,
-                                                        Renderer::Context& context,
-                                                        TaskSystem& tasks, TypeRegistry& types,
-                                                        AssetId id, std::span<const u8> cooked,
-                                                        bool async) const override;
+        /// @brief Returns true: the decode runs on a worker for an asynchronous load.
+        [[nodiscard]] bool ParsesOffThread() const override { return true; }
+
+        /// @brief Decodes the cooked material, naming its two shaders and its textures as
+        ///        dependencies; the pipeline is built in the main-thread finalize.
+        [[nodiscard]] AssetResult<Detail::ParsedAsset>
+        Parse(const AssetParseContext& context, AssetId id,
+              std::span<const u8> cooked) const override;
     };
 }

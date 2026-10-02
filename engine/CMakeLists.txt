@@ -91,6 +91,7 @@ add_library(veng SHARED
         src/Behavior/BehaviorTree.cpp
         src/Capture/RecorderCore.cpp
         src/Capture/VideoRecorder.cpp
+        src/Asset/AssetLoader.cpp
         src/Asset/AssetLoaderRegistry.cpp
         src/Asset/AssetManager.cpp
         src/Asset/DataTable.cpp
@@ -319,6 +320,7 @@ add_library(veng SHARED
         src/Renderer/GeneratedTextureService.cpp
         src/Renderer/RenderGraph.cpp
         src/Renderer/SceneCapture.cpp
+        src/Renderer/SceneCapturePool.cpp
         src/Render/DisplayResolve.cpp
         src/Settings/SettingsSchema.cpp
         src/Settings/SettingsStore.cpp

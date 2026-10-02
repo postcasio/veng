@@ -7,6 +7,7 @@
 
 namespace Veng
 {
+    class AssetManager;
     class Scene;
     class WorldRunner;
 
@@ -45,4 +46,14 @@ namespace Veng
     /// @return True once both tests pass.
     [[nodiscard]] bool IsWorldPresentable(const WorldRunner& runner, WorldInstanceId world,
                                           const WorldPresentReadyGate& gate);
+
+    /// @brief Instantiates the documents of a waiting world's visible overlays, without blocking.
+    ///
+    /// Run each frame a present-on-ready rebind waits on @p scene's world, so the frame that swaps it
+    /// in does not also load and instantiate its overlays' documents (GuiOverlay::Prepare). A hidden
+    /// overlay is skipped: it draws nothing when presented, so nothing waits on it.
+    /// @param scene   The destination scene whose overlays are prepared.
+    /// @param assets  The asset manager the documents load through.
+    /// @return True once every visible overlay's document is live, has failed, or names none.
+    [[nodiscard]] bool PrepareWorldOverlays(const Scene& scene, AssetManager& assets);
 }

@@ -346,3 +346,40 @@ TEST_CASE("a scene with no physics world steps as a no-op")
     CHECK(scene->Get<Transform>(entity).Position.y == doctest::Approx(4.0f));
     CHECK_FALSE(scene->Has<PhysicsPose>(entity));
 }
+
+TEST_CASE("stopping a world's physics with many bodies and constraints leaves none behind")
+{
+    const PhysicsFixture fixture;
+    fixture.SpawnGround();
+
+    // Enough bodies that the batched removal covers a real set, every one of them dynamic so the
+    // constraints between neighbours are live.
+    constexpr u32 BoxCount = 64;
+    vector<Entity> boxes;
+    for (u32 i = 0; i < BoxCount; ++i)
+    {
+        boxes.push_back(fixture.SpawnBox(
+            vec3(static_cast<f32>(i % 8) * 2.0f, 4.0f, static_cast<f32>(i / 8) * 2.0f)));
+    }
+    for (u32 i = 1; i < BoxCount; i += 2)
+    {
+        fixture.World->Add<FixedConstraint>(boxes[i], FixedConstraint{.Target = boxes[i - 1]});
+    }
+
+    fixture.Step(1);
+    REQUIRE(fixture.Physics().GetBodyCount() == BoxCount + 1);
+    REQUIRE(fixture.Physics().GetConstraintCount() == BoxCount / 2);
+
+    ContextStorage storage;
+    PhysicsSystem system;
+    system.OnStop(*fixture.World, storage.Make());
+
+    CHECK(fixture.Physics().GetBodyCount() == 0);
+    CHECK(fixture.Physics().GetConstraintCount() == 0);
+    CHECK_FALSE(fixture.Physics().HasBody(boxes.front()));
+
+    // The world outlives the stop: the next step builds every body and constraint again.
+    fixture.Step(1);
+    CHECK(fixture.Physics().GetBodyCount() == BoxCount + 1);
+    CHECK(fixture.Physics().GetConstraintCount() == BoxCount / 2);
+}

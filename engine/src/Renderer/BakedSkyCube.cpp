@@ -313,9 +313,6 @@ namespace Veng::Renderer
                                          .Format = Format::R32Sfloat,
                                          .Usage = ImageUsage::Sampled | ImageUsage::TransferDst,
                                      });
-        constexpr f32 farPlane = 0.0f;
-        m_DepthImage->UploadSync(
-            std::span<const u8>(reinterpret_cast<const u8*>(&farPlane), sizeof(farPlane)));
         m_DepthView = ImageView::Create(
             m_Context, {.Name = "Sky Bake Stand-in Depth View", .Image = m_DepthImage});
         m_DepthHandle = m_Context.GetBindlessRegistry().Register(m_DepthView);
@@ -347,21 +344,37 @@ namespace Veng::Renderer
 
         // Clear the displayed cube to black and leave it sampled, so the skybox pass samples a
         // defined cube from the very first frame — the amortized fill lands a bake into it a few
-        // frames later, and before that there is nothing baked to show.
-        m_Context.ImmediateCommands(
-            [&](CommandBuffer& cmd)
+        // frames later, and before that there is nothing baked to show. The stand-in depth is
+        // cleared to the far-plane value (reverse-Z: 0.0) the same way. Both are setup work, so a
+        // cube built mid-frame records them into the frame rather than waiting behind it.
+        m_Context.RecordSetupCommands(
+            [cubeImage = m_CubeImage, cubeView = m_CubeView, depthImage = m_DepthImage,
+             depthView = m_DepthView](CommandBuffer& cmd)
             {
-                cmd.PrepareForAccess(m_CubeView, AccessKind::TransferDst);
+                const vk::ImageSubresourceRange cubeRange{.aspectMask =
+                                                              vk::ImageAspectFlagBits::eColor,
+                                                          .baseMipLevel = 0,
+                                                          .levelCount = 1,
+                                                          .baseArrayLayer = 0,
+                                                          .layerCount = CubeFaces};
+                const vk::ImageSubresourceRange depthRange{.aspectMask =
+                                                               vk::ImageAspectFlagBits::eColor,
+                                                           .baseMipLevel = 0,
+                                                           .levelCount = 1,
+                                                           .baseArrayLayer = 0,
+                                                           .layerCount = 1};
+                cmd.PrepareForAccess(cubeView, AccessKind::TransferDst);
+                cmd.PrepareForAccess(depthView, AccessKind::TransferDst);
                 const vk::ClearColorValue black{std::array<f32, 4>{0.0f, 0.0f, 0.0f, 1.0f}};
-                const vk::ImageSubresourceRange range{.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                                      .baseMipLevel = 0,
-                                                      .levelCount = 1,
-                                                      .baseArrayLayer = 0,
-                                                      .layerCount = CubeFaces};
-                GetVkCommandBuffer(cmd).clearColorImage(GetVkImage(*m_CubeImage),
+                const vk::ClearColorValue farPlane{std::array<f32, 4>{0.0f, 0.0f, 0.0f, 0.0f}};
+                GetVkCommandBuffer(cmd).clearColorImage(GetVkImage(*cubeImage),
                                                         vk::ImageLayout::eTransferDstOptimal,
-                                                        &black, 1, &range);
-                cmd.PrepareForAccess(m_CubeView, AccessKind::SampleAny);
+                                                        &black, 1, &cubeRange);
+                GetVkCommandBuffer(cmd).clearColorImage(GetVkImage(*depthImage),
+                                                        vk::ImageLayout::eTransferDstOptimal,
+                                                        &farPlane, 1, &depthRange);
+                cmd.PrepareForAccess(cubeView, AccessKind::SampleAny);
+                cmd.PrepareForAccess(depthView, AccessKind::SampleAny);
             });
     }
 

@@ -3044,6 +3044,11 @@ namespace Veng::Renderer
         }
     }
 
+    void SceneRenderer::ReleaseScene()
+    {
+        m_Broadphase.Reset();
+    }
+
     bool SceneRenderer::DidBroadphaseRebuildLastFrame() const
     {
         return m_Broadphase.DidRebuildLastSync();

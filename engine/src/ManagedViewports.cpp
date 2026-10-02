@@ -84,6 +84,19 @@ namespace Veng
         return !gate || gate(*runner.ResolveWorld(world));
     }
 
+    bool PrepareWorldOverlays(const Scene& scene, AssetManager& assets)
+    {
+        bool prepared = true;
+        for (auto [entity, overlay] : scene.View<GuiOverlay>())
+        {
+            if (overlay.Visible && !overlay.Prepare(assets))
+            {
+                prepared = false;
+            }
+        }
+        return prepared;
+    }
+
     ManagedViewportSet::ManagedViewportSet(Renderer::Context& context, AssetManager& assets,
                                            Renderer::ViewportCompositor& compositor,
                                            InputRouter& router, GuiDriverRegistry* const drivers,
@@ -230,7 +243,8 @@ namespace Veng
         // destination does not strand the viewport on the old world forever.
         for (auto it = m_PendingReadyRebinds.begin(); it != m_PendingReadyRebinds.end();)
         {
-            if (runner.ResolveWorld(it->World) == nullptr)
+            const World* const destination = runner.ResolveWorld(it->World);
+            if (destination == nullptr)
             {
                 // The destination vanished while still waiting — idle-reaped or closed out from under
                 // the wait. A deliberate supersession never reaches here: a later rebind of this index
@@ -245,7 +259,11 @@ namespace Veng
                 it = m_PendingReadyRebinds.erase(it);
                 continue;
             }
-            if (IsWorldPresentable(runner, it->World, m_PresentReadyGate))
+            // The destination's overlay documents are instantiated while it waits, and the swap
+            // waits for them, so the frame that presents it does not pay to build them.
+            const bool overlaysPrepared = destination->LiveScene == nullptr ||
+                                          PrepareWorldOverlays(destination->GetScene(), m_Assets);
+            if (overlaysPrepared && IsWorldPresentable(runner, it->World, m_PresentReadyGate))
             {
                 ApplyCompleteRebind(it->Index, it->World, runner, knobs);
                 it = m_PendingReadyRebinds.erase(it);

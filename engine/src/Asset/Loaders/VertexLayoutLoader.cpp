@@ -54,10 +54,9 @@ namespace Veng
         }
     }
 
-    AssetResult<Detail::LoadJob>
-    VertexLayoutLoader::Load(AssetManager& /*manager*/, Renderer::Context& /*context*/,
-                             TaskSystem& /*tasks*/, TypeRegistry& /*types*/, AssetId id,
-                             std::span<const u8> cooked, bool /*async*/) const
+    AssetResult<Detail::ParsedAsset>
+    VertexLayoutLoader::Parse(const AssetParseContext& /*context*/, const AssetId id,
+                              const std::span<const u8> cooked) const
     {
         if (cooked.size() < sizeof(CookedVertexLayoutHeader))
         {
@@ -102,6 +101,6 @@ namespace Veng
             .Layout = Renderer::VertexBufferLayout(elements),
         });
 
-        return Detail::LoadJob{.Resource = Detail::RefAny(asset)};
+        return Detail::ParsedJob(Detail::LoadJob{.Resource = Detail::RefAny(asset)});
     }
 }

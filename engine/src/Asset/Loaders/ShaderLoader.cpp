@@ -68,11 +68,9 @@ namespace Veng
         }
     }
 
-    AssetResult<Detail::LoadJob> ShaderLoader::Load(AssetManager& manager,
-                                                    Renderer::Context& context,
-                                                    TaskSystem& /*tasks*/, TypeRegistry& /*types*/,
-                                                    AssetId id, std::span<const u8> cooked,
-                                                    bool /*async*/) const
+    AssetResult<Detail::ParsedAsset> ShaderLoader::Parse(const AssetParseContext& /*context*/,
+                                                         const AssetId id,
+                                                         const std::span<const u8> cooked) const
     {
         if (cooked.size() < sizeof(CookedShaderHeader))
         {
@@ -189,36 +187,52 @@ namespace Veng
                             header.InterfaceBytes, expectedInterfaceBytes)));
         }
 
-        // A missing vertex layout is a fatal load error — catches a missing or corrupt core pack.
-        if (interfaceHeader.VertexLayoutAssetId != 0)
-        {
-            const AssetResult<AssetHandle<Veng::VertexLayout>> layout =
-                manager.LoadSync<Veng::VertexLayout>(AssetId{interfaceHeader.VertexLayoutAssetId});
-            if (!layout)
-            {
-                return std::unexpected(layout.error());
-            }
-        }
-
         if (cooked.size() < cursor + header.SpirvBytes)
         {
             return std::unexpected(Corrupt(id, "shader: cooked blob smaller than header + SPIR-V"));
         }
 
-        const std::span<const u8> spirv = cooked.subspan(cursor, header.SpirvBytes);
+        // A missing vertex layout fails the load — catches a missing or corrupt core pack. The
+        // shader waits for it, so a material building its pipeline finds it resident.
+        Detail::ParsedAsset parsed;
+        if (interfaceHeader.VertexLayoutAssetId != 0)
+        {
+            parsed.Dependencies.push_back({.Type = AssetTypes::VertexLayout,
+                                           .Id = AssetId{interfaceHeader.VertexLayoutAssetId}});
+        }
 
-        const Ref<Renderer::ShaderModule> shader =
-            Renderer::ShaderModule::Create(context, {
-                                                        .Name = fmt::format("Shader {}", id.Value),
-                                                        .Binary = spirv,
-                                                        .EntryPoint = BridgeName(header.EntryPoint),
-                                                    });
+        // The module itself is created on the main thread; the SPIR-V is copied out of the blob for
+        // it, since the completion may run after the archive is gone.
+        auto spirv = CreateRef<vector<u8>>(
+            cooked.begin() + static_cast<std::ptrdiff_t>(cursor),
+            cooked.begin() + static_cast<std::ptrdiff_t>(cursor + header.SpirvBytes));
+        auto parsedInterface = CreateRef<Renderer::ShaderInterface>(std::move(shaderInterface));
+        parsed.Complete = [spirv, parsedInterface, entryPoint = BridgeName(header.EntryPoint),
+                           id](AssetManager& manager,
+                               std::span<const Ref<Detail::AssetCacheEntry>> resolved)
+            -> AssetResult<Detail::LoadJob>
+        {
+            const Ref<Renderer::ShaderModule> shader = Renderer::ShaderModule::Create(
+                manager.GetContext(), {
+                                          .Name = fmt::format("Shader {}", id.Value),
+                                          .Binary = *spirv,
+                                          .EntryPoint = entryPoint,
+                                      });
 
-        const Ref<Veng::Shader> asset = CreateRef<Veng::Shader>(Veng::Shader{
-            .Module = shader,
-            .Interface = std::move(shaderInterface),
-        });
+            const Ref<Veng::Shader> asset = CreateRef<Veng::Shader>(Veng::Shader{
+                .Module = shader,
+                .Interface = std::move(*parsedInterface),
+            });
 
-        return Detail::LoadJob{.Resource = Detail::RefAny(asset)};
+            // The empty finalize is what holds the shader pending until its vertex layout is
+            // resident.
+            return Detail::LoadJob{
+                .Resource = Detail::RefAny(asset),
+                .Dependencies =
+                    vector<Ref<Detail::AssetCacheEntry>>(resolved.begin(), resolved.end()),
+                .Finalize = []() -> VoidResult { return {}; },
+            };
+        };
+        return parsed;
     }
 }

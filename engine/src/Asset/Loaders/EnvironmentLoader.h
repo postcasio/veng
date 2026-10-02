@@ -16,11 +16,12 @@ namespace Veng
         /// @brief Returns AssetTypes::Environment.
         [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Environment; }
 
-        /// @brief Decodes the cooked environment blob into a LoadJob producing a resident Veng::EnvironmentMap.
-        [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,
-                                                        Renderer::Context& context,
-                                                        TaskSystem& tasks, TypeRegistry& types,
-                                                        AssetId id, std::span<const u8> cooked,
-                                                        bool async) const override;
+        /// @brief Returns true: the decode, image creation and upload submit run on a worker.
+        [[nodiscard]] bool ParsesOffThread() const override { return true; }
+
+        /// @brief Decodes the cooked environment map into its image, whose Finalize registers it.
+        [[nodiscard]] AssetResult<Detail::ParsedAsset>
+        Parse(const AssetParseContext& context, AssetId id,
+              std::span<const u8> cooked) const override;
     };
 }

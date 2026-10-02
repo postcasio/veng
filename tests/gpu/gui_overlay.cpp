@@ -11,6 +11,7 @@
 #include <filesystem>
 
 #include <doctest/doctest.h>
+#include <fmt/format.h>
 
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Cook/BuiltinImporters.h>
@@ -384,6 +385,50 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(overlay != nullptr);
     CHECK(overlay->GetDocument() == nullptr);
     CHECK(viewport->GetAttachedDocuments().empty());
+
+    std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui overlay: Prepare instantiates the document ahead of the first drive")
+{
+    RegisterBuiltinTypes(Types);
+
+    const path archive = CookUiPack();
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(archive).has_value());
+
+    // Authored by id alone, so nothing is loaded until Prepare asks.
+    const nlohmann::json authored = {
+        {"Document", fmt::format("0x{:016X}", UIDocumentId.Value)},
+        {"Layer", 0},
+        {"Interactive", false},
+        {"TargetSeat", nullptr},
+    };
+    const TypeInfo& info = Types.Info(Types.IdOf<GuiOverlay>());
+    GuiOverlay overlay;
+    REQUIRE(JsonReadFields(&overlay, info, authored, Types, OverlayHooks()));
+
+    bool instantiated = false;
+    overlay.SetOnInstantiate([&instantiated](Gui::Document&) { instantiated = true; });
+
+    // The first call starts the recipe's load and does not wait for it.
+    CHECK_FALSE(overlay.Prepare(assets));
+    CHECK(overlay.GetDocument() == nullptr);
+
+    bool prepared = false;
+    for (int i = 0; i < 100 && !prepared; ++i)
+    {
+        Tasks.WaitForAll();
+        Tasks.PumpMainThread();
+        assets.PumpFinalizes();
+        prepared = overlay.Prepare(assets);
+    }
+
+    // Once the recipe is resident the document is live and bound, with no drive having run.
+    REQUIRE(prepared);
+    CHECK(overlay.GetDocument() != nullptr);
+    CHECK(instantiated);
 
     std::filesystem::remove(archive);
 }

@@ -332,6 +332,16 @@ namespace Veng
         document->Drive(docExtent, delta, out);
     }
 
+    bool GuiOverlay::Prepare(AssetManager& assets) const
+    {
+        if (!Document.Id().IsValid())
+        {
+            return true;
+        }
+        EnsureHost(assets);
+        return Runtime->Host->Prepare();
+    }
+
     void GuiOverlay::Detach(Renderer::Viewport& viewport) const
     {
         // An overlay that never drove holds no document, so there is nothing to detach.

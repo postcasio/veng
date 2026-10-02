@@ -7,21 +7,22 @@ namespace Veng
 {
     /// @brief AssetTypes::Font loader.
     ///
-    /// Decodes a CookedFontHeader + glyph/kerning tables + MSDF atlas texels into a Veng::Font.
-    /// The atlas image is created and uploaded through the ordinary texture path (worker-legal);
-    /// its bindless registration is deferred to the main-thread Finalize so the handle is assigned
-    /// on the correct thread.
+    /// Decodes a CookedFontHeader, the face bytes, the hot-set codepoints and the fallback chain
+    /// into a Veng::Font. The fallbacks are dependencies kept resident; loading the face into the
+    /// shared rasterizer and warming the hot set into the shared atlas are main-thread steps, run in
+    /// the Finalize once the fallbacks are resident.
     class FontLoader final : public AssetLoader
     {
     public:
         /// @brief Returns AssetTypes::Font.
         [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Font; }
 
-        /// @brief Decodes the cooked font blob into a LoadJob producing a resident Veng::Font.
-        [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,
-                                                        Renderer::Context& context,
-                                                        TaskSystem& tasks, TypeRegistry& types,
-                                                        AssetId id, std::span<const u8> cooked,
-                                                        bool async) const override;
+        /// @brief Returns true: the decode runs on a worker for an asynchronous load.
+        [[nodiscard]] bool ParsesOffThread() const override { return true; }
+
+        /// @brief Decodes the cooked font blob, naming its fallback fonts as dependencies.
+        [[nodiscard]] AssetResult<Detail::ParsedAsset>
+        Parse(const AssetParseContext& context, AssetId id,
+              std::span<const u8> cooked) const override;
     };
 }

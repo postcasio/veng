@@ -21,12 +21,11 @@ namespace Veng
         }
     }
 
-    AssetResult<Detail::LoadJob> InputMapLoader::Load(AssetManager& /*manager*/,
-                                                      Renderer::Context& /*context*/,
-                                                      TaskSystem& /*tasks*/, TypeRegistry& types,
-                                                      AssetId id, std::span<const u8> cooked,
-                                                      bool /*async*/) const
+    AssetResult<Detail::ParsedAsset> InputMapLoader::Parse(const AssetParseContext& parse,
+                                                           const AssetId id,
+                                                           const std::span<const u8> cooked) const
     {
+        const TypeRegistry& types = parse.Types;
         if (cooked.size() < sizeof(CookedInputMapHeader))
         {
             return std::unexpected(
@@ -63,6 +62,6 @@ namespace Veng
         const Ref<InputMappingContext> context = InputMappingContext::Create(
             std::move(data.Actions), std::move(data.Bindings), data.RequiresGameplayFocus);
 
-        return Detail::LoadJob{.Resource = Detail::RefAny(context)};
+        return Detail::ParsedJob(Detail::LoadJob{.Resource = Detail::RefAny(context)});
     }
 }

@@ -6,6 +6,8 @@
 #include <Veng/Asset/Mesh.h>
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Renderer/CaptureSurface.h>
+#include <Veng/Renderer/SceneCapture.h>
+#include <Veng/Renderer/SceneCapturePool.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
@@ -66,6 +68,10 @@ namespace Veng
     {
         VE_ASSERT(m_Types != nullptr, "WorldRunner requires a TypeRegistry");
         VE_ASSERT(m_Systems != nullptr, "WorldRunner requires a SystemRegistry");
+        if (m_Context != nullptr && m_Assets != nullptr)
+        {
+            m_CapturePool = CreateRef<Renderer::SceneCapturePool>();
+        }
     }
 
     WorldRunner::~WorldRunner() = default;
@@ -77,6 +83,7 @@ namespace Veng
 
     WorldInstanceId WorldRunner::OpenWorld(const WorldOpenInfo& info)
     {
+        VE_PROFILE_SCOPE("World/Open");
         auto world = CreateUnique<World>();
         world->Id = MintId();
         world->Clock = SimClock(SimClockInfo{
@@ -96,6 +103,7 @@ namespace Veng
         {
             VE_ASSERT(m_Assets != nullptr, "WorldRunner: opening a cooked-level world needs an "
                                            "AssetManager");
+            VE_PROFILE_SCOPE("World/Load");
             LevelInstance instance = info.Source.Get()->LoadInto(*m_Assets, *m_Systems, info.Load);
             world->OwnedScene = std::move(instance.World);
             world->Pending = std::move(instance.Pending);
@@ -118,6 +126,7 @@ namespace Veng
 
         if (info.OnLoaded)
         {
+            VE_PROFILE_SCOPE("World/OnLoaded");
             info.OnLoaded(id, scene, pending);
         }
 
@@ -125,6 +134,7 @@ namespace Veng
         {
             VE_ASSERT(info.MakeStartContext != nullptr,
                       "WorldRunner: StartSimulation needs a MakeStartContext");
+            VE_PROFILE_SCOPE("World/Start");
             scene.StartSimulation(info.MakeStartContext());
         }
 
@@ -418,6 +428,7 @@ namespace Veng
             "WorldRunner::DriveCaptureSurfaces needs both a Register and an IsPresented hook");
 
         WorldCaptureDriveResult result;
+        u32 built = 0;
 
         // Pause is not what gates capture driving: a paused world a viewport still presents drives its
         // mirrors. Presentation is — a capture feeds a material sampled by a mesh drawn in some view,
@@ -439,6 +450,21 @@ namespace Veng
 
             for (auto [entity, surface] : scene.View<Renderer::CaptureSurface>())
             {
+                // A capture installed this pass — built or taken from the pool — is registered
+                // below; one the surface already held is on the drive-list.
+                const bool fresh = surface.GetCapture() == nullptr;
+                if (fresh)
+                {
+                    VE_ASSERT(m_Context != nullptr && m_Assets != nullptr,
+                              "WorldRunner::DriveCaptureSurfaces: driving a presented world's "
+                              "capture surface needs a context and asset manager");
+                    if (!MaterializeCapture(surface, info.MaxNewCaptures, built, result))
+                    {
+                        ++result.SurfacesDeferred;
+                        continue;
+                    }
+                }
+
                 // The capture renders from the pose the entity is *drawn* at (a probe centered on it,
                 // a mirror placed at it) — the same pose the mesh it feeds is drawn at, since the
                 // renderer blends a drawn transform between the last two Sim ticks by this alpha.
@@ -497,11 +523,10 @@ namespace Veng
                 VE_ASSERT(m_Context != nullptr && m_Assets != nullptr,
                           "WorldRunner::DriveCaptureSurfaces: driving a presented world's capture "
                           "surface needs a context and asset manager");
-                const bool hadCapture = surface.GetCapture() != nullptr;
                 Renderer::SceneCapture* capture = surface.Drive(
                     *m_Context, *m_Assets, scene, entity, position, alpha, faceBasis, material);
                 ++result.SurfacesDriven;
-                if (capture != nullptr && !hadCapture)
+                if (capture != nullptr && fresh)
                 {
                     info.Register(*capture);
                 }
@@ -509,6 +534,31 @@ namespace Veng
         }
 
         return result;
+    }
+
+    bool WorldRunner::MaterializeCapture(const Renderer::CaptureSurface& surface, const u32 maxNew,
+                                         u32& built, WorldCaptureDriveResult& result)
+    {
+        const Renderer::SceneCaptureInfo captureInfo =
+            surface.GetCaptureInfo(*m_Context, *m_Assets);
+        Unique<Renderer::SceneCapture> capture = m_CapturePool->Take(captureInfo);
+        if (capture != nullptr)
+        {
+            ++result.CapturesReused;
+        }
+        else
+        {
+            if (built >= maxNew)
+            {
+                return false;
+            }
+            VE_PROFILE_SCOPE("Capture/Materialize");
+            capture = Renderer::SceneCapture::Create(captureInfo);
+            ++built;
+            ++result.CapturesBuilt;
+        }
+        surface.Materialize(*m_Context, std::move(capture), m_CapturePool);
+        return true;
     }
 
     u32 WorldRunner::ReArmCaptureSurfaces(const World& world)

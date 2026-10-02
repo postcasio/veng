@@ -66,10 +66,32 @@ namespace Veng
 }
 ```
 
-The loader is an `AssetLoader` subclass. It returns a `Detail::LoadJob` carrying the decoded
-resource; a type with no GPU resource needs no `Finalize` and no dependencies, which is the
-simplest shape. Treat a malformed blob as **recoverable** — return an `AssetLoadError`, do not
-assert. A cooked blob is a build artifact, but a stale one is a normal thing to meet.
+The loader is an `AssetLoader` subclass. Make it **two-phase**: return true from
+`ParsesOffThread()` and implement `Parse`, which the manager runs on a worker for an asynchronous
+load (and inline for `LoadSync`), so decoding your blob never costs the thread that asked for it.
+`Parse` returns a `Detail::ParsedAsset`: the assets your blob depends on, by type and id, and a
+`Complete` step the manager runs on the main thread with their cache entries to build the
+`Detail::LoadJob`. A type with no GPU resource and no dependencies — the simplest shape — wraps its
+finished job in `Detail::ParsedJob` and is done:
+
+```cpp
+class MarkerSetLoader final : public Veng::AssetLoader
+{
+public:
+    Veng::AssetTypeId Type() const override { return MarkerSetAssetType; }
+    bool ParsesOffThread() const override { return true; }
+
+    Veng::AssetResult<Veng::Detail::ParsedAsset>
+    Parse(const Veng::AssetParseContext& context, Veng::AssetId id,
+          std::span<const Veng::u8> cooked) const override;
+};
+```
+
+`Parse` touches nothing main-thread-only — not the `AssetManager`, not the bindless registry, not
+the pipeline cache; work that needs those belongs in `Complete` or the job's `Finalize`. A loader
+whose decode cannot be separated from such work implements `Load` instead and runs on the calling
+thread. Treat a malformed blob as **recoverable** — return an `AssetLoadError`, do not assert. A
+cooked blob is a build artifact, but a stale one is a normal thing to meet.
 
 ## 3. Write the importer
 

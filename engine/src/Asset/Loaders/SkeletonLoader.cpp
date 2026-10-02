@@ -4,10 +4,9 @@
 
 namespace Veng
 {
-    AssetResult<Detail::LoadJob>
-    SkeletonLoader::Load(AssetManager& /*manager*/, Renderer::Context& /*context*/,
-                         TaskSystem& /*tasks*/, TypeRegistry& /*types*/, AssetId id,
-                         std::span<const u8> cooked, bool /*async*/) const
+    AssetResult<Detail::ParsedAsset> SkeletonLoader::Parse(const AssetParseContext& /*context*/,
+                                                           const AssetId id,
+                                                           const std::span<const u8> cooked) const
     {
         Result<Skeleton> decoded = ParseCookedSkeleton(cooked);
         if (!decoded)
@@ -15,7 +14,7 @@ namespace Veng
             return std::unexpected(AssetLoadError{
                 .Kind = AssetError::Corrupt, .Id = id, .Detail = std::move(decoded.error())});
         }
-        return Detail::LoadJob{.Resource =
-                                   Detail::RefAny(CreateRef<Skeleton>(std::move(*decoded)))};
+        return Detail::ParsedJob(
+            Detail::LoadJob{.Resource = Detail::RefAny(CreateRef<Skeleton>(std::move(*decoded)))});
     }
 }

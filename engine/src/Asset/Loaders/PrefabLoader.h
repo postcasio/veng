@@ -29,11 +29,13 @@ namespace Veng
         /// @brief Returns AssetTypes::Prefab.
         [[nodiscard]] AssetTypeId Type() const override { return AssetTypes::Prefab; }
 
-        /// @brief Decodes the cooked prefab blob into a LoadJob producing a resident Veng::Prefab.
-        [[nodiscard]] AssetResult<Detail::LoadJob> Load(AssetManager& manager,
-                                                        Renderer::Context& context,
-                                                        TaskSystem& tasks, TypeRegistry& types,
-                                                        AssetId id, std::span<const u8> cooked,
-                                                        bool async) const override;
+        /// @brief Returns true: the decode runs on a worker for an asynchronous load.
+        [[nodiscard]] bool ParsesOffThread() const override { return true; }
+
+        /// @brief Decodes the cooked prefab blob and reflects each component record to name the
+        ///        assets its handle fields reference, which become the prefab's dependencies.
+        [[nodiscard]] AssetResult<Detail::ParsedAsset>
+        Parse(const AssetParseContext& context, AssetId id,
+              std::span<const u8> cooked) const override;
     };
 }

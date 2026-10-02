@@ -161,6 +161,13 @@ namespace Veng::Renderer
         /// @param view  Per-frame scene input; the renderer overwrites its output fields.
         void Execute(CommandBuffer& cmd, const SceneView& view);
 
+        /// @brief Forgets the scene the last Execute gathered, for a renderer about to change hands.
+        ///
+        /// The broadphase holds pointers into the scene it gathered, valid only while that scene
+        /// lives; a renderer whose next Execute may name a different scene — one set aside for reuse
+        /// by another owner — drops them here so that Execute gathers from scratch.
+        void ReleaseScene();
+
         /// @brief Returns the sampleable view of the owned result.
         ///
         /// The image is the post-resolve allocation and the tail writes all of it at any render

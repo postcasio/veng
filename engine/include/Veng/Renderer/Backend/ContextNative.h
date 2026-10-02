@@ -270,6 +270,13 @@ namespace Veng::Renderer
         /// @brief True between BeginFrame and EndFrame, so Retire targets the recording slot's
         /// bin; false otherwise, so Retire targets PendingRetire.
         bool FrameRecording = false;
+        /// @brief True while the frame's command buffer is begun and accepting commands.
+        ///
+        /// Narrower than FrameRecording, which turns on before BeginFrame begins the buffer:
+        /// RecordSetupCommands records into the frame only while this holds.
+        bool FrameCommandsOpen = false;
+        /// @brief The one-shot buffer an ImmediateCommands callback is recording into, or null.
+        CommandBuffer* ActiveImmediateCommands = nullptr;
         bool Disposed = false;
 
         RetireBin& CurrentRetireBin();

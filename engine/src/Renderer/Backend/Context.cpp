@@ -413,6 +413,8 @@ namespace Veng::Renderer
         // Pending bindless acquires that never reached a frame retire into the
         // current bin; the drain below reclaims them while the device is alive.
         m_PendingBindlessAcquires.clear();
+        // Held setup work holds Refs to what it would have initialized; drop them the same way.
+        m_PendingSetupCommands.clear();
 
         // The capture mirror retires like any owned image, so it must be dropped ahead of the
         // drain below rather than with Native, which outlives the Disposed tripwire.
@@ -1015,6 +1017,11 @@ namespace Veng::Renderer
             m_GpuScopeRecording = true;
         }
 
+        // Setup work handed over while no command buffer was open records first, ahead of every
+        // pass that could use what it initializes.
+        m_Native->FrameCommandsOpen = true;
+        DrainSetupCommands(*commandBuffer);
+
         // Transition any resources that went resident since last frame into Sample
         // layout before passes record. The RenderGraph cannot derive this transition
         // — bindless resources are invisible to it (sampled through set 0).
@@ -1074,6 +1081,7 @@ namespace Veng::Renderer
             m_GpuScopeRecording = false;
         }
 
+        m_Native->FrameCommandsOpen = false;
         commandBuffer->End();
 
         {
@@ -1322,7 +1330,11 @@ namespace Veng::Renderer
                 .resetQueryPool(native.ImmediateTimestampPool, 0, 2 * Native::MaxGpuScopes);
         }
 
+        CommandBuffer* const outerImmediate = native.ActiveImmediateCommands;
+        native.ActiveImmediateCommands = commandBuffer.get();
+        self.DrainSetupCommands(*commandBuffer);
         function(*commandBuffer);
+        native.ActiveImmediateCommands = outerImmediate;
 
         VE_ASSERT(!timed || native.ImmediateOpenScopeStack.empty(),
                   "ImmediateCommands: {} GPU scope(s) left open by the recording",
@@ -1426,6 +1438,39 @@ namespace Veng::Renderer
     void Context::EnqueueBindlessAcquire(const Ref<ImageView>& view)
     {
         m_PendingBindlessAcquires.push_back(view);
+    }
+
+    void Context::RecordSetupCommands(std::function<void(CommandBuffer&)> commands)
+    {
+        if (m_Native->ActiveImmediateCommands != nullptr)
+        {
+            commands(*m_Native->ActiveImmediateCommands);
+            return;
+        }
+        if (m_Native->FrameCommandsOpen)
+        {
+            commands(GetCurrentCommandBuffer());
+            return;
+        }
+        m_PendingSetupCommands.push_back(std::move(commands));
+    }
+
+    void Context::DrainSetupCommands(CommandBuffer& commandBuffer)
+    {
+        if (m_PendingSetupCommands.empty())
+        {
+            return;
+        }
+        // Swapped out first: a recording may itself hand over more setup work, which records
+        // directly now that a buffer is open.
+        vector<std::function<void(CommandBuffer&)>> pending;
+        pending.swap(m_PendingSetupCommands);
+        BeginGpuScope(commandBuffer, "Setup Commands");
+        for (const std::function<void(CommandBuffer&)>& commands : pending)
+        {
+            commands(commandBuffer);
+        }
+        EndGpuScope(commandBuffer);
     }
 
     vector<const char*>& Context::Native::GetRequiredExtensions()

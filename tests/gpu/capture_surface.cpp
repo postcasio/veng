@@ -43,6 +43,7 @@
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/SceneCapture.h>
+#include <Veng/Renderer/SceneCapturePool.h>
 #include <Veng/Renderer/Viewport.h>
 #include <Veng/Renderer/ViewportCompositor.h>
 #include <Veng/Scene/BuiltinTypes.h>
@@ -1335,6 +1336,145 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(SurfaceOf(first, firstEntity).IsRefreshing());
     CHECK(SurfaceOf(second, secondEntity).GetCapture() != nullptr);
     CHECK(registered == 2);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "capture surface: a pass builds one capture, and a second surface waits a pass")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> probe =
+        assets.LoadSync<MaterialInstance>(ProbeInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> backdrop =
+        assets.LoadSync<MaterialInstance>(BackdropInstance);
+    REQUIRE(probe.has_value());
+    REQUIRE(backdrop.has_value());
+
+    SystemRegistry systems;
+    WorldRunner runner({
+        .Types = &Types,
+        .Systems = &systems,
+        .Assets = &assets,
+        .Context = &Context,
+    });
+
+    // Two surfaces arriving in one frame — the shape of a world presented for the first time.
+    vector<Ref<Mesh>> meshes;
+    Entity firstEntity;
+    Entity secondEntity;
+    const WorldInstanceId first = runner.OpenWorld(WorldOpenInfo{.StartSimulation = false});
+    runner.InstallScene(first, BuildCaptureScene(Context, assets, Types, *probe, *backdrop,
+                                                 CaptureRefresh::EveryFrame, meshes, firstEntity));
+    const WorldInstanceId second = runner.OpenWorld(WorldOpenInfo{.StartSimulation = false});
+    runner.InstallScene(second,
+                        BuildCaptureScene(Context, assets, Types, *probe, *backdrop,
+                                          CaptureRefresh::EveryFrame, meshes, secondEntity));
+
+    u32 registered = 0;
+    const auto Drive = [&]
+    {
+        return runner.DriveCaptureSurfaces({
+            .Register = [&registered](SceneCapture&) { ++registered; },
+            .IsPresented = [](WorldInstanceId) { return true; },
+        });
+    };
+    const auto CaptureOf = [&](const WorldInstanceId world, const Entity entity)
+    { return runner.ResolveWorld(world)->GetScene().Get<CaptureSurface>(entity).GetCapture(); };
+
+    // The first pass builds one capture and leaves the other surface unmaterialized and undriven.
+    const WorldCaptureDriveResult firstPass = Drive();
+    CHECK(firstPass.CapturesBuilt == 1);
+    CHECK(firstPass.SurfacesDeferred == 1);
+    CHECK(firstPass.SurfacesDriven == 1);
+    CHECK(registered == 1);
+    CHECK((CaptureOf(first, firstEntity) == nullptr) !=
+          (CaptureOf(second, secondEntity) == nullptr));
+
+    // The next pass builds the second, and drives both.
+    const WorldCaptureDriveResult secondPass = Drive();
+    CHECK(secondPass.CapturesBuilt == 1);
+    CHECK(secondPass.SurfacesDeferred == 0);
+    CHECK(secondPass.SurfacesDriven == 2);
+    CHECK(registered == 2);
+    CHECK(CaptureOf(first, firstEntity) != nullptr);
+    CHECK(CaptureOf(second, secondEntity) != nullptr);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "capture surface: a released capture is reused by a surface of the same "
+                  "configuration, and only by one")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> probe =
+        assets.LoadSync<MaterialInstance>(ProbeInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> backdrop =
+        assets.LoadSync<MaterialInstance>(BackdropInstance);
+    REQUIRE(probe.has_value());
+    REQUIRE(backdrop.has_value());
+
+    SystemRegistry systems;
+    WorldRunner runner({
+        .Types = &Types,
+        .Systems = &systems,
+        .Assets = &assets,
+        .Context = &Context,
+    });
+    REQUIRE(runner.GetCapturePool() != nullptr);
+
+    const auto Drive = [&]
+    {
+        return runner.DriveCaptureSurfaces({
+            .Register = [](SceneCapture&) {},
+            .IsPresented = [](WorldInstanceId) { return true; },
+        });
+    };
+
+    vector<Ref<Mesh>> meshes;
+    Entity departingEntity;
+    const WorldInstanceId departing = runner.OpenWorld(WorldOpenInfo{.StartSimulation = false});
+    runner.InstallScene(departing,
+                        BuildCaptureScene(Context, assets, Types, *probe, *backdrop,
+                                          CaptureRefresh::EveryFrame, meshes, departingEntity));
+    REQUIRE(Drive().CapturesBuilt == 1);
+    const SceneCapture* const released = runner.ResolveWorld(departing)
+                                             ->GetScene()
+                                             .Get<CaptureSurface>(departingEntity)
+                                             .GetCapture();
+    REQUIRE(released != nullptr);
+
+    // Closing the world destroys its surface, which hands its capture to the pool.
+    runner.CloseWorld(departing);
+    CHECK(runner.GetCapturePool()->GetHeldCount() == 1);
+
+    // An arriving surface of the same configuration takes it — building nothing — while one of a
+    // different resolution builds its own.
+    Entity sameEntity;
+    const WorldInstanceId same = runner.OpenWorld(WorldOpenInfo{.StartSimulation = false});
+    runner.InstallScene(same, BuildCaptureScene(Context, assets, Types, *probe, *backdrop,
+                                                CaptureRefresh::EveryFrame, meshes, sameEntity));
+    Entity otherEntity;
+    const WorldInstanceId other = runner.OpenWorld(WorldOpenInfo{.StartSimulation = false});
+    runner.InstallScene(other, BuildCaptureScene(Context, assets, Types, *probe, *backdrop,
+                                                 CaptureRefresh::EveryFrame, meshes, otherEntity));
+    runner.ResolveWorld(other)->GetScene().Get<CaptureSurface>(otherEntity).Resolution = 64;
+
+    const WorldCaptureDriveResult arrival = Drive();
+    CHECK(arrival.CapturesReused == 1);
+    CHECK(arrival.CapturesBuilt == 1);
+    CHECK(runner.GetCapturePool()->GetHeldCount() == 0);
+    CHECK(runner.ResolveWorld(same)->GetScene().Get<CaptureSurface>(sameEntity).GetCapture() ==
+          released);
+    const SceneCapture* const built =
+        runner.ResolveWorld(other)->GetScene().Get<CaptureSurface>(otherEntity).GetCapture();
+    REQUIRE(built != nullptr);
+    CHECK(built != released);
 }
 
 TEST_CASE_FIXTURE(
