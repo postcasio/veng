@@ -566,16 +566,19 @@ set_source_files_properties(
         src/Vendor/StbVorbis.cpp
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
-# The engine's hot paths: the translation units doing per-entity or per-draw work, which a crowded
-# frame multiplies by its entity or draw count. Under VENG_OPTIMIZE_HOT_PATHS (root CMakeLists.txt)
-# they compile with VENG_DEBUG_OPT, so a Debug tree runs them at -O2; turn the option off to step
-# through one. A unit qualifies by the shape of its work, not by how slow it measured once: a loop
-# over entities, bodies, agents, joints or draw slots belongs here, and setup, asset loading and
-# per-frame orchestration do not. The scene passes listed are the ones whose recording walks the
-# draw plan slot by slot or culls casters one at a time; passes recording a fixed number of
-# full-screen or overlay draws are left out. Header templates (Scene::Get<T>, View<Ts...>) compile in
-# the calling unit, so this reaches the out-of-line store and the systems below, never a
-# consumer's own loops.
+# The engine's hot paths: the translation units doing per-entity, per-draw or per-element work, which
+# a crowded frame multiplies by its entity, draw or GUI element count. Under VENG_OPTIMIZE_HOT_PATHS
+# (root CMakeLists.txt) they compile with VENG_DEBUG_OPT, so a Debug tree runs them at -O2; turn the
+# option off to step through one. A unit qualifies by the shape of its work, not by how slow it
+# measured once: a loop over entities, bodies, agents, joints, draw slots, GUI elements, vertices or
+# glyphs belongs here, and setup, asset loading and per-frame orchestration do not. The scene passes
+# listed are the ones whose recording walks the draw plan slot by slot, culls casters one at a time,
+# or walks a GUI draw list's runs and vertices; passes recording a fixed number of full-screen draws
+# are left out. The GUI is taken whole along a document's path: every unit its drive, its
+# instantiation, its presenters and its text shaping run through, so the path steps or optimizes
+# together; only input routing (per event, not per frame) and render-target allocation stay out.
+# Header templates (Scene::Get<T>, View<Ts...>) compile in the calling unit, so this reaches the
+# out-of-line store and the systems below, never a consumer's own loops.
 set(VENG_HOT_PATH_SOURCES
         # The component store.
         src/Scene/Scene.cpp
@@ -611,6 +614,32 @@ set(VENG_HOT_PATH_SOURCES
         src/Renderer/Passes/ShadowScenePass.cpp
         src/Renderer/Passes/PunctualShadowScenePass.cpp
         src/Renderer/Passes/TranslucentScenePass.cpp
+        # The GUI: the document's update, style resolution, layout and draw-list build, its host,
+        # recipe and bindings (with the type lookups a binding refresh makes per path segment), and
+        # the presenters that drive it on screen, as an HDR overlay and on a world surface, and the
+        # two scene passes that walk its draw list.
+        src/Gui/BindingContext.cpp
+        src/Gui/Document.cpp
+        src/Gui/DocumentHost.cpp
+        src/Gui/DocumentLayer.cpp
+        src/Gui/DocumentTexture.cpp
+        src/Gui/DrawList.cpp
+        src/Gui/DriverRegistry.cpp
+        src/Gui/Overlay.cpp
+        src/Gui/Placement.cpp
+        src/Gui/StyleProperty.cpp
+        src/Gui/StyleSheet.cpp
+        src/Gui/Surface.cpp
+        src/Gui/UIDocument.cpp
+        src/Gui/YogaTree.cpp
+        src/Reflection/TypeRegistry.cpp
+        src/Renderer/Passes/GuiScenePass.cpp
+        src/Renderer/Passes/GuiHdrOverlayScenePass.cpp
+        # Text: the shaper, and the glyph atlas with its packer and rasterizer.
+        src/Asset/Font.cpp
+        src/Text/GlyphAtlas.cpp
+        src/Text/GlyphPacker.cpp
+        src/Text/GlyphSource.cpp
 )
 # clang refuses a precompiled header whose __OPTIMIZE__ differs from the unit's, and both PCHs here
 # (veng's, and the backend object library's for CommandBuffer.cpp) are built unoptimized, so these

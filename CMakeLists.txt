@@ -155,8 +155,9 @@ if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     message(STATUS "build type not specified; defaulting to ${VENG_DEFAULT_BUILD_TYPE} (VE_DEBUG=${VE_DEBUG})")
 endif ()
 
-# The optimization a Debug tree applies to code nobody steps through: Jolt, the cooker's codec loops,
-# and the engine's per-entity hot paths (VENG_OPTIMIZE_HOT_PATHS below). The tree's -g still applies,
+# The optimization a Debug tree applies to code nobody steps through: third-party libraries on a hot
+# path (Jolt, Yoga, fmt, FreeType, msdfgen), the cooker's codec loops, and the engine's hot paths
+# (VENG_OPTIMIZE_HOT_PATHS below). The tree's -g still applies,
 # so backtraces through these units resolve. MSVC's /O2 is rejected alongside the /RTC1 runtime
 # checks its Debug flags carry, so the flag is emitted only for compilers that accept optimization
 # in a Debug build; under MSVC Debug these units stay unoptimized. Release supplies its own -O3.
@@ -372,6 +373,11 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(fmt)
 
+# fmt's formatting core (vformat, the float and integer writers) is compiled code, and a Debug
+# tree's GUI binding refresh formats every bound numeric leaf through it each frame. Nobody steps
+# through it, so it compiles at -O2 in every Debug tree, as Jolt does below.
+target_compile_options(fmt PRIVATE ${VENG_DEBUG_OPT})
+
 # VulkanMemoryAllocator
 set(VMA_ENABLE_INSTALL ON CACHE BOOL "" FORCE)
 FetchContent_Declare(
@@ -499,6 +505,11 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(yoga)
 
+# The flexbox solve runs over a document's whole tree whenever its layout is dirty, which a live
+# document's writes make it every frame. Nobody steps through Yoga, so it compiles at -O2 in every
+# Debug tree, as Jolt does below.
+target_compile_options(yogacore PRIVATE ${VENG_DEBUG_OPT})
+
 # Jolt Physics — the rigid-body solver behind Veng::PhysicsWorld. Linked PRIVATE into
 # libveng: its <Jolt/*.h> headers are confined to engine/src/Physics/, so no public header
 # names a JPH type (the include_hygiene test proves it) and the dependency stays out of
@@ -625,6 +636,17 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(msdf_atlas_gen)
 
+# The runtime glyph rasterizer loads outlines through FreeType and renders each new glyph's distance
+# field through msdfgen, so a Debug tree's first frame of new text pays for both, as does a debug
+# cook's font import. Nobody steps through either, so they compile at -O2 in every Debug tree, as
+# Jolt does above.
+target_compile_options(freetype PRIVATE ${VENG_DEBUG_OPT})
+foreach (msdfgen_target IN ITEMS msdfgen-core msdfgen-ext)
+    if (TARGET ${msdfgen_target})
+        target_compile_options(${msdfgen_target} PRIVATE ${VENG_DEBUG_OPT})
+    endif ()
+endforeach ()
+
 # ---------------------------------------------------------------------------
 # clang-tidy (opt-in)
 # ---------------------------------------------------------------------------
@@ -675,9 +697,9 @@ endif ()
 # Debug-tree optimization of the engine's hot paths
 # ---------------------------------------------------------------------------
 
-# Compiles the engine's per-entity and per-draw translation units (VENG_HOT_PATH_SOURCES in
-# engine/CMakeLists.txt) with VENG_DEBUG_OPT, so a Debug tree's crowded frame does not pay -O0 for
-# work it multiplies by every entity or draw. Turn it off to step through one of those units. It
+# Compiles the engine's per-entity, per-draw and per-element translation units (VENG_HOT_PATH_SOURCES
+# in engine/CMakeLists.txt) with VENG_DEBUG_OPT, so a Debug tree's crowded frame does not pay -O0 for
+# work it multiplies by every entity, draw or GUI element. Turn it off to step through one of those units. It
 # defaults OFF in a coverage build, where optimization distorts the line mapping gcov reports, and
 # ON everywhere else; it is not fixed by the canonical tree name, so any tree may flip it. A Release
 # build is unaffected either way: the expression applies under the Debug configuration only.
@@ -686,7 +708,7 @@ if (VENG_ENABLE_COVERAGE)
 else ()
     set(VENG_OPTIMIZE_HOT_PATHS_DEFAULT ON)
 endif ()
-option(VENG_OPTIMIZE_HOT_PATHS "Compile the engine's per-entity hot paths at -O2 in Debug builds"
+option(VENG_OPTIMIZE_HOT_PATHS "Compile the engine's hot paths at -O2 in Debug builds"
         ${VENG_OPTIMIZE_HOT_PATHS_DEFAULT})
 
 # ---------------------------------------------------------------------------

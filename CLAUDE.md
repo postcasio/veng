@@ -103,14 +103,17 @@ compiler but MSVC (whose `/O2` is rejected beside the Debug `/RTC1` checks); `-g
 so backtraces through these units resolve. It reaches two kinds of code:
 
 - **Third-party code, in every Debug tree.** Jolt compiles at `-O2` (its math types are written
-  to be inlined, and at `-O0` each vector operation is a call), as do the cooker's codec hot
-  loops, so a debug cook does not run its encoders unoptimized. Jolt keeps its asserts
+  to be inlined, and at `-O0` each vector operation is a call), as do Yoga (the GUI's flexbox
+  solve), fmt (the binding refresh formats every bound number through it), FreeType and msdfgen
+  (the runtime glyph rasterizer), and the cooker's codec hot loops, so a debug cook does not run
+  its encoders unoptimized. Jolt keeps its asserts
   (`USE_ASSERTS` follows `VE_DEBUG`), and its results do not move: `CROSS_PLATFORM_DETERMINISTIC`
   builds it without fast-math or FP contraction, so they are independent of optimization level.
 - **The engine's hot paths, unless `VENG_OPTIMIZE_HOT_PATHS` is off.** The units doing
-  per-entity or per-draw work that a crowded frame multiplies — the component store, transforms
-  and visibility, animation, the physics wrappers, the behaviour runtime, and the draw path —
-  are listed in `VENG_HOT_PATH_SOURCES` (`engine/CMakeLists.txt`, with the criterion for joining
+  per-entity, per-draw or per-element work that a crowded frame multiplies — the component
+  store, transforms and visibility, animation, the physics wrappers, the behaviour runtime, the
+  draw path, and the GUI and text path (the document, its style, layout, draw list, host and
+  presenters, the GUI scene passes, the shaper and the glyph atlas) — are listed in `VENG_HOT_PATH_SOURCES` (`engine/CMakeLists.txt`, with the criterion for joining
   it). The option defaults **ON**, and **OFF** under `VENG_ENABLE_COVERAGE`, where optimization
   distorts the line mapping; it is not fixed by the tree name, so configure a tree with
   `-DVENG_OPTIMIZE_HOT_PATHS=OFF` to step through one of those units. They compile without the
@@ -333,8 +336,8 @@ until you have seen it flag something.
 `VENG_ENABLE_COVERAGE` (default `OFF`) adds the gcov flags (`--coverage -O0 -g`) to
 veng's own targets, wired at the same boundary as the clang-tidy option so third-party
 sources are never instrumented. It turns `VENG_OPTIMIZE_HOT_PATHS` off by default, so
-the engine's hot paths compile at `-O0` like the rest of veng; Jolt, which is never
-instrumented, stays at `-O2`. It also sets `CMAKE_DISABLE_PRECOMPILE_HEADERS` — a
+the engine's hot paths compile at `-O0` like the rest of veng; the third-party libraries above
+(Jolt, Yoga, fmt, FreeType, msdfgen), which are never instrumented, stay at `-O2`. It also sets `CMAKE_DISABLE_PRECOMPILE_HEADERS` — a
 force-included PCH blurs gcov's line mapping, and the coverage flags defeat the object
 cache the primary build is tuned for.
 
