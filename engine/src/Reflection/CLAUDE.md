@@ -27,6 +27,15 @@ persisted directly (a scene stores a component's `TypeId`, never its name), and 
 across the module boundary (so the cooker reflecting a module reads the same ids the runtime does);
 two types claiming one id is a **fatal collision assert**.
 
+**Beside its `TypeId`, a registered type carries a dense `TypeInfo::Ordinal`** — its position in
+registration order, assigned on insertion. It is per registry (two registries may number one type
+differently) and exists so a `Scene` can index its component pools by an array position instead of
+hashing a `TypeId` on every access. `TypeRegistry::OrdinalOf<T>()` is the hot lookup: a per-type
+cache (`Detail::g_TypeOrdinalCache<T>`, one relaxed atomic) keyed by the registry's process-unique
+serial, so while one registry is in use a lookup is a load and a compare; a miss falls back to
+`OrdinalOf(TypeId)` and refills. A move gives the source registry a fresh serial, so a cache entry
+never answers for a table it was not resolved against.
+
 **Every reflect-macro site must spell its type fully qualified** (a leading `::`) — a hard rule the
 macros enforce with a `static_assert` (`Detail::IsFullyQualifiedSpelling`; a fundamental type like
 `bool`, which has no namespace and cannot be `::`-prefixed, is the sole exception) — so the

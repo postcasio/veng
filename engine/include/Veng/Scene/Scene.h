@@ -3,6 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Assert.h>
 #include <Veng/Result.h>
+#include <Veng/Scene/ComponentPool.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -44,15 +45,15 @@ namespace Veng
 
     /// @brief Runtime ECS world: a generational entity free-list plus one type-erased sparse-set pool per component type.
     ///
-    /// The templated Add/Remove/Get/Has façade resolves T to TypeId through the
-    /// TypeRegistry and forwards to the erased pool, created lazily on first Add
-    /// of a type. Scene is Unique — single owner; the app owns it and a renderer
-    /// reads it per frame as a `const Scene&`. The TypeRegistry it was created
-    /// with must outlive it and must already have every component type registered.
+    /// The templated Add/Remove/Get/Has façade finds T's pool by T's ordinal in the TypeRegistry
+    /// (an array index, no hash) and works on the erased pool, created lazily on first Add of a
+    /// type. Scene is Unique — single owner; the app owns it and a renderer reads it per frame as a
+    /// `const Scene&`. The TypeRegistry it was created with must outlive it and must already have
+    /// every component type registered.
     class Scene
     {
-        /// @brief Defined in the impl TU; the public surface never names it.
-        class ComponentPool;
+        /// @brief The erased per-type store; Scene is its only user.
+        using ComponentPool = Detail::ComponentPool;
 
         /// @brief Slot in the entity table tracking generation and liveness.
         struct EntitySlot
@@ -157,7 +158,15 @@ namespace Veng
         void ForEachChild(Entity entity, const function<void(Entity)>& fn) const;
 
         /// @brief Returns true if the entity handle is live (not destroyed or stale).
-        [[nodiscard]] bool IsAlive(Entity entity) const;
+        [[nodiscard]] bool IsAlive(const Entity entity) const
+        {
+            if (entity.Index >= m_Slots.size())
+            {
+                return false;
+            }
+            const EntitySlot& slot = m_Slots[entity.Index];
+            return slot.Alive && slot.Generation == entity.Generation;
+        }
 
         /// @brief Returns the live entity occupying slot @p index, or Entity::Null if none.
         ///
@@ -187,7 +196,9 @@ namespace Veng
         /// A broadphase compares it against the version it last built against:
         /// equal means nothing spatial moved; changed means rebuild. A non-const
         /// access bumps it even when it was a read, so the bump never misses a
-        /// write. Read-only consumers use the const View/Each path to avoid bumping.
+        /// write; a non-const View or Each over a spatial type bumps it once, when it
+        /// is created over a non-empty driving pool, not once per entity it visits.
+        /// Read-only consumers use the const View/Each path to avoid bumping.
         [[nodiscard]] u64 GetSpatialVersion() const { return m_SpatialVersion; }
 
         /// @brief The lowest tick a write can stamp; a Scene's change tick never falls below it.
@@ -488,11 +499,14 @@ namespace Veng
         }
 
         /// @brief Returns a pointer to component T on the entity, or nullptr if absent.
+        ///
+        /// A non-const access: it moves the spatial version when T is a spatial type and stamps the
+        /// component's change tick when present.
         template <class T>
         [[nodiscard]] T* TryGet(Entity entity)
         {
             VE_ASSERT(IsAlive(entity), "TryGet on a {} entity", Detail::NotAliveKind(entity));
-            return static_cast<T*>(TryGetRaw(entity, m_Registry->IdOf<T>()));
+            return static_cast<T*>(AccessMutable(TryPoolOf<T>(), m_Registry->IdOf<T>(), entity));
         }
 
         /// @brief Returns a const pointer to component T on the entity, or nullptr if absent.
@@ -500,7 +514,8 @@ namespace Veng
         [[nodiscard]] const T* TryGet(Entity entity) const
         {
             VE_ASSERT(IsAlive(entity), "TryGet on a {} entity", Detail::NotAliveKind(entity));
-            return static_cast<const T*>(TryGetRaw(entity, m_Registry->IdOf<T>()));
+            const ComponentPool* pool = TryPoolOf<T>();
+            return pool != nullptr ? static_cast<const T*>(pool->TryGet(entity)) : nullptr;
         }
 
         /// @brief Returns the first component of type T in the scene, or nullptr if none exists.
@@ -515,12 +530,14 @@ namespace Veng
         template <class T>
         [[nodiscard]] T* TryGetFirst()
         {
-            const TypeId id = m_Registry->IdOf<T>();
-            if (PoolCount(id) == 0)
+            ComponentPool* pool = TryPoolOf<T>();
+            if (pool == nullptr || pool->Count() == 0)
             {
                 return nullptr;
             }
-            return static_cast<T*>(TryGetRaw(DensePtr(id)[0], id));
+            NoteMutableAccess(*pool);
+            pool->StampSlot(0, m_ChangeTick);
+            return static_cast<T*>(pool->SlotData(0));
         }
 
         /// @brief Returns a const pointer to the first component of type T, or nullptr if none.
@@ -532,12 +549,12 @@ namespace Veng
         template <class T>
         [[nodiscard]] const T* TryGetFirst() const
         {
-            const TypeId id = m_Registry->IdOf<T>();
-            if (PoolCount(id) == 0)
+            const ComponentPool* pool = TryPoolOf<T>();
+            if (pool == nullptr || pool->Count() == 0)
             {
                 return nullptr;
             }
-            return static_cast<const T*>(TryGetRaw(DensePtr(id)[0], id));
+            return static_cast<const T*>(pool->SlotData(0));
         }
 
         /// @brief Returns a reference to component T on the entity; fatal assert if absent.
@@ -554,7 +571,8 @@ namespace Veng
         [[nodiscard]] bool Has(Entity entity) const
         {
             VE_ASSERT(IsAlive(entity), "Has on a {} entity", Detail::NotAliveKind(entity));
-            return HasRaw(entity, m_Registry->IdOf<T>());
+            const ComponentPool* pool = TryPoolOf<T>();
+            return pool != nullptr && pool->Contains(entity);
         }
 
         /// @brief Visits every entity holding all of Ts..., calling fn(entity, Ts&...).
@@ -562,101 +580,73 @@ namespace Veng
         /// Drives from the smallest participating pool (no archetype bookkeeping).
         /// Iteration order is the driver pool's dense order. Mutating a component
         /// through its Ts& reference is fine; structural changes (adding/removing
-        /// components or destroying entities) during iteration are illegal.
+        /// components or destroying entities) during iteration are illegal. The pools
+        /// are resolved once, the spatial version moves once (when a T is spatial and the
+        /// driving pool is non-empty), and each visited component's change tick is stamped.
         template <class... Ts, class Fn>
         void Each(Fn&& fn)
         {
             static_assert(sizeof...(Ts) > 0, "Each requires at least one component type");
+            constexpr usize Arity = sizeof...(Ts);
 
-            const std::array<TypeId, sizeof...(Ts)> ids = {m_Registry->IdOf<Ts>()...};
-
-            // Pick the smallest pool to drive iteration. A missing pool has
-            // count 0, so the query is empty and visits nothing.
-            TypeId driver = ids[0];
-            usize best = PoolCount(ids[0]);
-            for (usize i = 1; i < ids.size(); ++i)
+            const std::array<ComponentPool*, Arity> pools = {TryPoolOf<Ts>()...};
+            const usize driver = Detail::SelectDriver(pools);
+            if (driver == Arity || pools[driver]->Count() == 0)
             {
-                const usize count = PoolCount(ids[i]);
-                if (count < best)
-                {
-                    best = count;
-                    driver = ids[i];
-                }
+                return;
+            }
+            for (const ComponentPool* pool : pools)
+            {
+                NoteMutableAccess(*pool);
             }
 
-            const Entity* dense = DensePtr(driver);
-            for (usize i = 0; i < best; ++i)
+            const usize count = pools[driver]->Count();
+            const Entity* dense = pools[driver]->DenseData();
+            std::array<u32, Arity> slots{};
+            for (usize i = 0; i < count; ++i)
             {
                 const Entity entity = dense[i];
-
-                // Fetch each component's storage; resolving all Ts uniformly
-                // (including the driver) keeps the code flat.
-                std::array<void*, sizeof...(Ts)> slots{};
-                bool complete = true;
-                for (usize t = 0; t < ids.size(); ++t)
-                {
-                    slots[t] = TryGetRaw(entity, ids[t]);
-                    if (slots[t] == nullptr)
-                    {
-                        complete = false;
-                        break;
-                    }
-                }
-                if (!complete)
+                if (!Detail::FindQuerySlots(pools, driver, static_cast<u32>(i), entity, slots))
                 {
                     continue;
                 }
-
-                InvokeEach<Ts...>(fn, entity, slots, std::index_sequence_for<Ts...>{});
+                for (usize t = 0; t < Arity; ++t)
+                {
+                    pools[t]->StampSlot(slots[t], m_ChangeTick);
+                }
+                InvokeEach<Ts...>(fn, entity, pools, slots, std::index_sequence_for<Ts...>{});
             }
         }
 
         /// @brief Read-only Each: visits every entity holding all of Ts..., calling fn(entity, const Ts&...).
         ///
-        /// Routes through the const TryGetRaw overload only, so a const iteration
-        /// never bumps the spatial version. Same intersection and in-iteration
+        /// Reads through the const pool path only, so a const iteration never bumps the
+        /// spatial version or stamps a change tick. Same intersection and in-iteration
         /// structural-change constraints as the non-const Each.
         template <class... Ts, class Fn>
         void Each(Fn&& fn) const
         {
             static_assert(sizeof...(Ts) > 0, "Each requires at least one component type");
+            constexpr usize Arity = sizeof...(Ts);
 
-            const std::array<TypeId, sizeof...(Ts)> ids = {m_Registry->IdOf<Ts>()...};
-
-            TypeId driver = ids[0];
-            usize best = PoolCount(ids[0]);
-            for (usize i = 1; i < ids.size(); ++i)
+            const std::array<const ComponentPool*, Arity> pools = {TryPoolOf<Ts>()...};
+            const usize driver = Detail::SelectDriver(pools);
+            if (driver == Arity)
             {
-                const usize count = PoolCount(ids[i]);
-                if (count < best)
-                {
-                    best = count;
-                    driver = ids[i];
-                }
+                return;
             }
 
-            const Entity* dense = DensePtr(driver);
-            for (usize i = 0; i < best; ++i)
+            const usize count = pools[driver]->Count();
+            const Entity* dense = pools[driver]->DenseData();
+            std::array<u32, Arity> slots{};
+            for (usize i = 0; i < count; ++i)
             {
                 const Entity entity = dense[i];
-
-                std::array<const void*, sizeof...(Ts)> slots{};
-                bool complete = true;
-                for (usize t = 0; t < ids.size(); ++t)
+                if (Detail::FindQuerySlots(pools, driver, static_cast<u32>(i), entity, slots))
                 {
-                    slots[t] = TryGetRaw(entity, ids[t]);
-                    if (slots[t] == nullptr)
-                    {
-                        complete = false;
-                        break;
-                    }
+                    InvokeEach<const Ts...>(fn, entity, pools, slots,
+                                            std::index_sequence_for<Ts...>{});
                 }
-                if (!complete)
-                {
-                    continue;
-                }
-
-                InvokeEachConst<Ts...>(fn, entity, slots, std::index_sequence_for<Ts...>{});
             }
         }
 
@@ -718,45 +708,116 @@ namespace Veng
     private:
         explicit Scene(TypeRegistry& registry);
 
-        /// @brief Unpacks slots into typed references and invokes fn.
-        template <class... Ts, class Fn, usize... Is>
-        static void InvokeEach(Fn&& fn, Entity entity,
-                               const std::array<void*, sizeof...(Ts)>& slots,
+        /// @brief Unpacks the slots a query found into typed references and invokes fn.
+        /// @tparam Ts     The component types, const-qualified for a read-only query.
+        /// @tparam Fn     The visitor's type.
+        /// @tparam Pools  The query's pool array, const-qualified pools for a read-only query.
+        /// @param fn      The visitor.
+        /// @param entity  The visited entity.
+        /// @param pools   The query's pools.
+        /// @param slots   The entity's dense slot in each pool.
+        template <class... Ts, class Fn, class Pools, usize... Is>
+        static void InvokeEach(Fn& fn, const Entity entity, const Pools& pools,
+                               const std::array<u32, sizeof...(Ts)>& slots,
                                std::index_sequence<Is...>)
         {
-            fn(entity, *static_cast<Ts*>(slots[Is])...);
-        }
-
-        /// @brief Const overload of InvokeEach: unpacks slots into const typed references.
-        template <class... Ts, class Fn, usize... Is>
-        static void InvokeEachConst(Fn&& fn, Entity entity,
-                                    const std::array<const void*, sizeof...(Ts)>& slots,
-                                    std::index_sequence<Is...>)
-        {
-            fn(entity, *static_cast<const Ts*>(slots[Is])...);
+            fn(entity, *static_cast<Ts*>(pools[Is]->SlotData(slots[Is]))...);
         }
 
         /// @brief Returns the element count of the pool for id, or 0 if no pool exists.
-        ///
-        /// Keyed by TypeId so the impl-only ComponentPool stays out of this header.
         [[nodiscard]] usize PoolCount(TypeId id) const;
         /// @brief Returns a pointer to the dense entity array for the pool of id, or nullptr if absent.
         [[nodiscard]] const Entity* DensePtr(TypeId id) const;
 
-        // Type-erased façade; templated members resolve T → TypeId and forward here.
+        // Type-erased façade for the TypeId-keyed public members.
         // IsAlive is asserted by the caller before each of these.
         void* AddRaw(Entity entity, TypeId id);
         VoidResult RemoveRaw(Entity entity, TypeId id);
-        void* TryGetRaw(Entity entity, TypeId id);
-        [[nodiscard]] const void* TryGetRaw(Entity entity, TypeId id) const;
-        [[nodiscard]] bool HasRaw(Entity entity, TypeId id) const;
+
+        /// @brief Non-const erased fetch: moves the versions and stamps the change tick like TryGet\<T\>.
+        void* TryGetRaw(const Entity entity, const TypeId id)
+        {
+            return AccessMutable(TryPoolFor(id), id, entity);
+        }
+
+        /// @brief Const erased fetch: the component's storage, or nullptr; moves and stamps nothing.
+        [[nodiscard]] const void* TryGetRaw(const Entity entity, const TypeId id) const
+        {
+            const ComponentPool* pool = TryPoolFor(id);
+            return pool != nullptr ? pool->TryGet(entity) : nullptr;
+        }
+
+        /// @brief The non-const access path: moves the versions @p pool's type moves, then stamps
+        ///        and returns the entity's component.
+        /// @param pool    The type's pool, or null when the scene has none.
+        /// @param id      The type's TypeId, read only when @p pool is null.
+        /// @param entity  The entity to fetch.
+        /// @return The component's storage, or nullptr when the entity lacks it.
+        void* AccessMutable(ComponentPool* pool, const TypeId id, const Entity entity)
+        {
+            if (pool == nullptr)
+            {
+                NoteMutableAccess(id);
+                return nullptr;
+            }
+            NoteMutableAccess(*pool);
+            const u32 slot = pool->FindSlot(entity);
+            if (slot == ComponentPool::Absent)
+            {
+                return nullptr;
+            }
+            pool->StampSlot(slot, m_ChangeTick);
+            return pool->SlotData(slot);
+        }
+
+        /// @brief Moves the versions a non-const access to @p pool's components moves.
+        void NoteMutableAccess(const ComponentPool& pool)
+        {
+            switch (pool.GetAccessVersion())
+            {
+            case ComponentPool::AccessVersion::Spatial:
+                BumpSpatial();
+                break;
+            case ComponentPool::AccessVersion::Topology:
+                BumpTopology();
+                break;
+            case ComponentPool::AccessVersion::None:
+                break;
+            }
+        }
+
+        /// @brief Moves the versions a non-const access to type @p id moves, for a type with no pool.
+        void NoteMutableAccess(TypeId id);
+
+        /// @brief Returns how a non-const access to a component of type @p id moves the versions.
+        [[nodiscard]] static ComponentPool::AccessVersion AccessVersionOf(TypeId id);
 
         /// @brief Resolves (creating on first use) the pool for a registered TypeId.
         ComponentPool& PoolFor(TypeId id);
-        /// @brief Returns the pool for id, or nullptr if none exists.
-        ComponentPool* TryPoolFor(TypeId id);
-        /// @brief Returns the pool for id, or nullptr if none exists (const overload).
-        const ComponentPool* TryPoolFor(TypeId id) const;
+
+        /// @brief Returns the pool at @p ordinal, or nullptr when the scene has none for it.
+        ///
+        /// Const and handing out a mutable pool, because the const and non-const paths share it;
+        /// a const member only reads through the result.
+        /// @param ordinal  A type ordinal from the scene's registry, or InvalidTypeOrdinal.
+        [[nodiscard]] ComponentPool* PoolAt(const u32 ordinal) const
+        {
+            return ordinal < m_PoolTable.size() ? m_PoolTable[ordinal] : nullptr;
+        }
+
+        /// @brief Returns T's pool, or nullptr if none exists. The per-access lookup: no hash.
+        /// @tparam T  The component type.
+        template <class T>
+        [[nodiscard]] ComponentPool* TryPoolOf() const
+        {
+            return PoolAt(m_Registry->OrdinalOf<std::remove_const_t<T>>());
+        }
+
+        /// @brief Returns the pool for id, or nullptr if none exists; resolves the ordinal by TypeId.
+        [[nodiscard]] ComponentPool* TryPoolFor(const TypeId id) const
+        {
+            return PoolAt(m_Registry->OrdinalOf(id));
+        }
 
         /// @brief Returns true if id names a spatial pool (Transform, Hierarchy, or MeshRenderer).
         [[nodiscard]] static bool IsSpatialId(TypeId id);
@@ -804,8 +865,10 @@ namespace Veng
         /// Starts at the floor rather than zero, which is reserved for *before any tick*.
         u64 m_ChangeTick = MinChangeTick;
 
-        /// @brief Component pools, keyed by TypeId, created lazily.
-        unordered_map<TypeId, Unique<ComponentPool>> m_Pools;
+        /// @brief Component pools in creation order, created lazily; owns them.
+        vector<Unique<ComponentPool>> m_Pools;
+        /// @brief The pools indexed by type ordinal; null where the scene pools nothing of a type.
+        vector<ComponentPool*> m_PoolTable;
 
         /// @brief One entity's local TRS captured for a history tick, with the capture it belongs to.
         ///
@@ -998,40 +1061,53 @@ namespace Veng
     /// `break` stops early. The same in-iteration structural-change constraint
     /// as Each applies.
     ///
+    /// The view resolves each type's pool once, at construction; the iterator keeps
+    /// the dense slots its match test found, so dereferencing looks nothing up again.
+    /// A mutable view moves the spatial version once at construction (when a T is
+    /// spatial and the driving pool is non-empty) and stamps each component's change
+    /// tick as it is dereferenced.
+    ///
     /// Ts may be const-qualified: Scene::View\<Ts...\>() const yields
-    /// SceneView\<const Ts...\>, which resolves each component through the const
-    /// TryGetRaw and dereferences to `const Ts&` — so a const iteration never
-    /// bumps the spatial version.
+    /// SceneView\<const Ts...\>, which reads through the const pool path and
+    /// dereferences to `const Ts&` — so a const iteration never bumps the spatial
+    /// version.
     template <class... Ts>
     class SceneView
     {
         static_assert(sizeof...(Ts) > 0, "View requires at least one component type");
 
-        // const Scene when any Ts is const (the read-only path binds the const
-        // TryGetRaw); a mutable Scene otherwise.
+        /// @brief The number of component types the view intersects.
+        static constexpr usize Arity = sizeof...(Ts);
+
+        // const Scene when any Ts is const (the read-only path); a mutable Scene otherwise.
         static constexpr bool AnyConst = (std::is_const_v<Ts> || ...);
         using SceneRef = std::conditional_t<AnyConst, const Scene, Scene>;
+        using Pool =
+            std::conditional_t<AnyConst, const Detail::ComponentPool, Detail::ComponentPool>;
 
     public:
-        /// @brief Constructs the view and picks the smallest pool as the iteration driver.
+        /// @brief Constructs the view, resolving each pool and picking the smallest as the driver.
         explicit SceneView(SceneRef& scene)
-            : m_Scene(&scene), m_Ids{scene.m_Registry->template IdOf<std::remove_const_t<Ts>>()...}
+            : m_Pools{scene.template TryPoolOf<Ts>()...}, m_Tick(scene.GetChangeTick())
         {
-            // Drive from the smallest pool; a missing pool (count 0) yields an
-            // empty range.
-            m_Driver = m_Ids[0];
-            usize best = scene.PoolCount(m_Ids[0]);
-            for (usize i = 1; i < m_Ids.size(); ++i)
+            // A missing pool leaves the range empty.
+            m_Driver = Detail::SelectDriver(m_Pools);
+            if (m_Driver == Arity)
             {
-                const usize count = scene.PoolCount(m_Ids[i]);
-                if (count < best)
+                return;
+            }
+            m_Count = m_Pools[m_Driver]->Count();
+            m_Dense = m_Pools[m_Driver]->DenseData();
+            if constexpr (!AnyConst)
+            {
+                if (m_Count > 0)
                 {
-                    best = count;
-                    m_Driver = m_Ids[i];
+                    for (const Pool* pool : m_Pools)
+                    {
+                        scene.NoteMutableAccess(*pool);
+                    }
                 }
             }
-            m_Count = best;
-            m_Dense = scene.DensePtr(m_Driver);
         }
 
         /// @brief Forward iterator over entities matching all Ts... component types.
@@ -1044,11 +1120,17 @@ namespace Veng
                 SkipToMatch();
             }
 
-            /// @brief Dereferences to (Entity, Ts&...).
+            /// @brief Dereferences to (Entity, Ts&...), stamping each component's change tick for a mutable view.
             std::tuple<Entity, Ts&...> operator*() const
             {
-                const Entity entity = m_View->m_Dense[m_Index];
-                return Resolve(entity, std::index_sequence_for<Ts...>{});
+                if constexpr (!AnyConst)
+                {
+                    for (usize t = 0; t < Arity; ++t)
+                    {
+                        m_View->m_Pools[t]->StampSlot(m_Slots[t], m_View->m_Tick);
+                    }
+                }
+                return Resolve(m_View->m_Dense[m_Index], std::index_sequence_for<Ts...>{});
             }
 
             /// @brief Advances to the next matching entity.
@@ -1067,7 +1149,10 @@ namespace Veng
             // landing on the next full match (or on m_Count, the end).
             void SkipToMatch()
             {
-                while (m_Index < m_View->m_Count && !m_View->Matches(m_View->m_Dense[m_Index]))
+                while (m_Index < m_View->m_Count &&
+                       !Detail::FindQuerySlots(m_View->m_Pools, m_View->m_Driver,
+                                               static_cast<u32>(m_Index), m_View->m_Dense[m_Index],
+                                               m_Slots))
                 {
                     ++m_Index;
                 }
@@ -1077,12 +1162,15 @@ namespace Veng
             std::tuple<Entity, Ts&...> Resolve(Entity entity, std::index_sequence<Is...>) const
             {
                 return std::tuple<Entity, Ts&...>(
-                    entity,
-                    *static_cast<Ts*>(m_View->m_Scene->TryGetRaw(entity, m_View->m_Ids[Is]))...);
+                    entity, *static_cast<Ts*>(m_View->m_Pools[Is]->SlotData(m_Slots[Is]))...);
             }
 
+            /// @brief The view being iterated.
             const SceneView* m_View;
+            /// @brief The current dense index in the driving pool.
             usize m_Index;
+            /// @brief The current entity's dense slot in each pool, as the match test found them.
+            std::array<u32, Arity> m_Slots{};
         };
 
         /// @brief Returns an iterator to the first matching entity.
@@ -1091,25 +1179,12 @@ namespace Veng
         [[nodiscard]] Iterator end() const { return Iterator(this, m_Count); }
 
     private:
-        /// @brief Returns true if the entity holds all Ts... component types.
-        [[nodiscard]] bool Matches(Entity entity) const
-        {
-            for (const TypeId id : m_Ids)
-            {
-                if (m_Scene->TryGetRaw(entity, id) == nullptr)
-                {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        /// @brief The scene being iterated.
-        SceneRef* m_Scene;
-        /// @brief TypeId of each Ts (unqualified).
-        std::array<TypeId, sizeof...(Ts)> m_Ids;
-        /// @brief The smallest pool's TypeId, driving iteration.
-        TypeId m_Driver = InvalidTypeId;
+        /// @brief Each Ts's pool, resolved once; all non-null unless the view is empty.
+        std::array<Pool*, Arity> m_Pools;
+        /// @brief The change tick a mutable dereference stamps.
+        u64 m_Tick;
+        /// @brief Index of the driving (smallest) pool in m_Pools; Arity when a pool is missing.
+        usize m_Driver = Arity;
         /// @brief Driver pool element count.
         usize m_Count = 0;
         /// @brief Driver pool's dense entity array.

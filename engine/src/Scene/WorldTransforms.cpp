@@ -8,8 +8,6 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Transforms.h>
 
-#include "ComponentPool.h"
-
 #include <algorithm>
 
 namespace Veng
@@ -40,7 +38,7 @@ namespace Veng
         }
         cache.Placed.clear();
 
-        const ComponentPool* hierarchies = TryPoolFor(TypeIdOf<Hierarchy>());
+        const ComponentPool* hierarchies = TryPoolOf<Hierarchy>();
         u32 maxDepth = 0;
 
         // Places an entity and every unplaced ancestor above it. The walk stops at a root or at an
@@ -108,7 +106,7 @@ namespace Veng
                 }
             }
         };
-        placePool(TryPoolFor(TypeIdOf<Transform>()));
+        placePool(TryPoolOf<Transform>());
         placePool(hierarchies);
 
         // Counting sort by depth: every parent lands before its children, and placement order
@@ -147,7 +145,7 @@ namespace Veng
             RebuildWorldOrder();
         }
 
-        const ComponentPool* transforms = TryPoolFor(TypeIdOf<Transform>());
+        const ComponentPool* transforms = TryPoolOf<Transform>();
         for (const WorldPassNode& node : cache.Order)
         {
             const auto* transform =
@@ -181,8 +179,8 @@ namespace Veng
             RebuildWorldOrder();
         }
 
-        const ComponentPool* transforms = TryPoolFor(TypeIdOf<Transform>());
-        const ComponentPool* viewPoses = TryPoolFor(TypeIdOf<ViewPose>());
+        const ComponentPool* transforms = TryPoolOf<Transform>();
+        const ComponentPool* viewPoses = TryPoolOf<ViewPose>();
         for (const WorldPassNode& node : cache.Order)
         {
             const mat4 local = InterpolatedLocalMatrix(node.Owner, alpha, transforms, viewPoses);

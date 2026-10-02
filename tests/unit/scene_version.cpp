@@ -196,6 +196,64 @@ TEST_CASE("Non-const spatial access is a write proxy — it bumps")
     }
 }
 
+TEST_CASE(
+    "A mutable query over many spatial entities moves the version once; a const one not at all")
+{
+    TypeRegistry types = MakeRegistry();
+    Unique<Scene> scene = Scene::Create(types);
+
+    constexpr int Count = 16;
+    for (int i = 0; i < Count; ++i)
+    {
+        scene->Add<Transform>(scene->CreateEntity());
+    }
+    scene->SetChangeTick(7);
+
+    SUBCASE("View")
+    {
+        const u64 before = scene->GetSpatialVersion();
+        int stamped = 0;
+        for (auto [entity, transform] : scene->View<Transform>())
+        {
+            transform.Position.x = 1.0f;
+            stamped += scene->GetComponentChangeTick(entity, TypeIdOf<Transform>()) == 7 ? 1 : 0;
+        }
+        CHECK(scene->GetSpatialVersion() == before + 1);
+        // Each visited component is still stamped, so the net layer's delta gate sees the write.
+        CHECK(stamped == Count);
+    }
+
+    SUBCASE("Each")
+    {
+        const u64 before = scene->GetSpatialVersion();
+        int stamped = 0;
+        scene->Each<Transform>(
+            [&](const Entity entity, Transform& transform)
+            {
+                transform.Position.x = 1.0f;
+                stamped +=
+                    scene->GetComponentChangeTick(entity, TypeIdOf<Transform>()) == 7 ? 1 : 0;
+            });
+        CHECK(scene->GetSpatialVersion() == before + 1);
+        CHECK(stamped == Count);
+    }
+
+    SUBCASE("const View and Each")
+    {
+        const Scene& constScene = *scene;
+        const u64 before = scene->GetSpatialVersion();
+        int visited = 0;
+        for (auto [entity, transform] : constScene.View<Transform>())
+        {
+            (void)transform;
+            visited += scene->GetComponentChangeTick(entity, TypeIdOf<Transform>()) == 7 ? 0 : 1;
+        }
+        constScene.Each<Transform>([&](Entity, const Transform&) { ++visited; });
+        CHECK(scene->GetSpatialVersion() == before);
+        CHECK(visited == 2 * Count);
+    }
+}
+
 TEST_CASE("Non-const View<Light> does not bump — Light is not spatial")
 {
     TypeRegistry types = MakeRegistry();

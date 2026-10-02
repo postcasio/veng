@@ -6,14 +6,28 @@
 #include <Veng/Reflection/FieldDescriptor.h>
 #include <Veng/Reflection/FieldDisplay.h>
 
+#include <atomic>
 #include <new>
 #include <string_view>
 #include <utility>
 
 namespace Veng
 {
+    /// @brief The ordinal no registered type carries: what TypeRegistry::OrdinalOf reports for an unregistered type.
+    inline constexpr u32 InvalidTypeOrdinal = ~0u;
+
     namespace Detail
     {
+        /// @brief Per-type cache of T's ordinal in the registry that last resolved it.
+        ///
+        /// Packs that registry's serial in the high 32 bits and the ordinal in the low 32, so one
+        /// relaxed load answers both which registry the entry is for and what the ordinal is. No
+        /// registry has serial zero, so an unfilled cache always misses. It is a cache, not state:
+        /// each module image may hold its own copy, and every copy resolves to the same value.
+        /// @tparam T  The type whose ordinal is cached.
+        template <class T>
+        inline std::atomic<u64> g_TypeOrdinalCache{0};
+
         /// @brief Detects whether VengReflect\<T\> exposes the VE_ENUM Enumerators() accessor.
         ///
         /// True only for an enum authored with VE_ENUM (which adds the accessor); a bare
@@ -151,6 +165,12 @@ namespace Veng
         void (*MoveConstruct)(void* dst, void* src) = nullptr;
         /// @brief The authored stable type identity.
         TypeId Id = InvalidTypeId;
+        /// @brief The type's dense position in its registry: 0 for the first type registered, counting up.
+        ///
+        /// A Scene indexes its component pools by it, so finding a pool is an array index rather
+        /// than a hash. The registry assigns it on insertion, so every scene built from one registry
+        /// agrees on it; another registry may number the same type differently.
+        u32 Ordinal = InvalidTypeOrdinal;
         /// @brief The meta-kind — Struct for components, others for leaves.
         FieldClass Class = FieldClass::Struct;
         /// @brief Whether the type replicates over the wire, authored via VE_REPLICATED.
@@ -304,6 +324,37 @@ namespace Veng
             return TypeIdOf<T>();
         }
 
+        /// @brief Returns T's ordinal in this registry, or InvalidTypeOrdinal when T is not registered.
+        ///
+        /// The per-access pool lookup a Scene makes: a hit in T's cache costs one relaxed atomic load
+        /// and a compare, so a component access never hashes while one registry is in use. A miss
+        /// (first use, or a different registry used last) resolves through OrdinalOf(TypeId) and
+        /// refills the cache. Safe to call from several threads.
+        /// @tparam T  The type to look up.
+        /// @return T's ordinal, or InvalidTypeOrdinal.
+        template <class T>
+        [[nodiscard]] u32 OrdinalOf() const
+        {
+            std::atomic<u64>& cache = Detail::g_TypeOrdinalCache<T>;
+            const u64 cached = cache.load(std::memory_order_relaxed);
+            if (static_cast<u32>(cached >> 32) == m_Serial)
+            {
+                return static_cast<u32>(cached);
+            }
+            const u32 ordinal = OrdinalOf(TypeIdOf<T>());
+            // An unregistered type is not cached, so registering it later is seen.
+            if (ordinal != InvalidTypeOrdinal)
+            {
+                cache.store((u64{m_Serial} << 32) | ordinal, std::memory_order_relaxed);
+            }
+            return ordinal;
+        }
+
+        /// @brief Returns the ordinal of the type registered under @p id, or InvalidTypeOrdinal when none is.
+        /// @param id  The TypeId to look up.
+        /// @return The type's ordinal, or InvalidTypeOrdinal.
+        [[nodiscard]] u32 OrdinalOf(TypeId id) const;
+
         /// @brief Returns the TypeInfo for the given id; fatal assert if not registered.
         [[nodiscard]] const TypeInfo& Info(TypeId id) const;
 
@@ -386,6 +437,12 @@ namespace Veng
 
         /// @brief The owned storage, held by pointer so an including TU sees no table.
         Unique<Impl> m_Impl;
+
+        /// @brief This registry's process-unique identity, which keys the per-type ordinal caches.
+        ///
+        /// Never zero. A move hands it to the destination and gives the source a fresh one, so a
+        /// cache entry never matches a registry whose table it was not resolved against.
+        u32 m_Serial;
     };
 
     /// @brief True when `key` is the fully-qualified name of `info`, ignoring a leading "::".

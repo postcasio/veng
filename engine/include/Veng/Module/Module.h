@@ -206,10 +206,15 @@ extern "C"
 /// Version 46 grows SceneView with the punctual shadow face mask, SceneRendererSettings with the
 /// cascade caster size threshold, and SceneRenderer with its shadow-view count. A module builds
 /// SceneViews and settings and holds a renderer, so a stale module lays all three out short.
+/// Version 47 grows TypeInfo with its registry ordinal and TypeRegistry with its serial, replaces
+/// Scene's hashed pool map with an ordinal-indexed table, and moves the component pool into a
+/// public header so a component access inlines into the calling unit. A module registers types
+/// and reads components through those inline paths, so a stale module lays all three out at the
+/// old layout and looks its pools up in a table the host no longer has.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 46u
+#define VENG_MODULE_ABI_VERSION 47u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

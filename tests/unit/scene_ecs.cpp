@@ -305,6 +305,53 @@ TEST_CASE("TypeRegistry Register/IdOf/Info round-trip")
     CHECK(info.MoveConstruct != nullptr);
 }
 
+TEST_CASE(
+    "Registration numbers types densely, and each registry's scenes resolve by their own numbering")
+{
+    TypeRegistry first;
+    first.Register<Position>("Position");
+    first.Register<Label>("Label");
+    TypeRegistry second;
+    second.Register<Label>("Label");
+    second.Register<Position>("Position");
+
+    CHECK(first.Info(first.IdOf<Position>()).Ordinal == 0);
+    CHECK(first.Info(first.IdOf<Label>()).Ordinal == 1);
+    CHECK(second.OrdinalOf<Label>() == 0);
+    CHECK(second.OrdinalOf<Position>() == 1);
+    CHECK(second.OrdinalOf<Velocity>() == InvalidTypeOrdinal);
+
+    const Unique<Scene> a = Scene::Create(first);
+    const Unique<Scene> b = Scene::Create(second);
+    const Entity ea = a->CreateEntity();
+    const Entity eb = b->CreateEntity();
+    a->Add<Position>(ea, Position{.X = 1.0f});
+    a->Add<Label>(ea, Label{"a"});
+    b->Add<Position>(eb, Position{.X = 2.0f});
+    b->Add<Label>(eb, Label{"b"});
+
+    // Alternating between the two numberings is what would expose a stale per-type cache.
+    bool matched = true;
+    for (int round = 0; round < 3; ++round)
+    {
+        matched = matched && a->Get<Position>(ea).X == 1.0f && b->Get<Position>(eb).X == 2.0f;
+        matched = matched && a->Get<Label>(ea).Text == "a" && b->Get<Label>(eb).Text == "b";
+    }
+    CHECK(matched);
+
+    // A type the registry never registered has no pool: absent, not an assert.
+    CHECK_FALSE(b->Has<Velocity>(eb));
+    CHECK(b->TryGet<Velocity>(eb) == nullptr);
+    int velocities = 0;
+    for (auto [entity, velocity] : b->View<Velocity>())
+    {
+        (void)entity;
+        (void)velocity;
+        ++velocities;
+    }
+    CHECK(velocities == 0);
+}
+
 TEST_CASE("IdOf equals the authored literal and is constexpr-usable")
 {
     const TypeRegistry registry;

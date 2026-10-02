@@ -169,6 +169,7 @@
 
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Camera.h>
+#include <Veng/Scene/ComponentPool.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/InputMappingSystem.h>

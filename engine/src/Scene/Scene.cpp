@@ -14,8 +14,6 @@
 #include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/Transforms.h>
 
-#include "ComponentPool.h"
-
 #include <algorithm>
 #include <cstring>
 #include <utility>
@@ -124,6 +122,34 @@ namespace Veng
     {
         // Whether an entity carries one of these decides whether the world-transform pass visits it.
         return id == TypeIdOf<Transform>() || id == TypeIdOf<Hierarchy>();
+    }
+
+    Scene::ComponentPool::AccessVersion Scene::AccessVersionOf(const TypeId id)
+    {
+        // A non-const access is a potential in-place edit the ECS never sees, so it moves the
+        // version conservatively (over-bump, never under). A Hierarchy edit can reparent, so it
+        // moves the topology too.
+        if (id == TypeIdOf<Hierarchy>())
+        {
+            return ComponentPool::AccessVersion::Topology;
+        }
+        return IsSpatialId(id) ? ComponentPool::AccessVersion::Spatial
+                               : ComponentPool::AccessVersion::None;
+    }
+
+    void Scene::NoteMutableAccess(const TypeId id)
+    {
+        switch (AccessVersionOf(id))
+        {
+        case ComponentPool::AccessVersion::Spatial:
+            BumpSpatial();
+            break;
+        case ComponentPool::AccessVersion::Topology:
+            BumpTopology();
+            break;
+        case ComponentPool::AccessVersion::None:
+            break;
+        }
     }
 
     Scene::Scene(TypeRegistry& registry) : m_Registry(&registry) {}
@@ -268,8 +294,8 @@ namespace Veng
 
     mat4 Scene::InterpolatedLocalMatrix(const Entity entity, const f32 alpha) const
     {
-        return InterpolatedLocalMatrix(entity, alpha, TryPoolFor(TypeIdOf<Transform>()),
-                                       TryPoolFor(TypeIdOf<ViewPose>()));
+        return InterpolatedLocalMatrix(entity, alpha, TryPoolOf<Transform>(),
+                                       TryPoolOf<ViewPose>());
     }
 
     mat4 Scene::InterpolatedLocalMatrix(const Entity entity, const f32 alpha,
@@ -381,8 +407,11 @@ namespace Veng
         //    to empty — copy the live cache-entry Ref straight across instead, so a
         //    cloned scene still renders its already-resident meshes.
         vector<u8> record;
-        for (const auto& [typeId, pool] : m_Pools)
+        for (const Unique<ComponentPool>& pool : m_Pools)
         {
+            const TypeInfo& typeInfo = pool->GetInfo();
+            const TypeId typeId = typeInfo.Id;
+
             // Hierarchy is a derived component: only its Parent edge persists, and the
             // sibling/child links are rebuilt from the parent edges in pass 3. Copying
             // it here would pre-set Parent without consistent links, so the SetParent
@@ -392,7 +421,6 @@ namespace Veng
                 continue;
             }
 
-            const TypeInfo& typeInfo = registry.Info(typeId);
             const usize count = pool->Count();
             const Entity* dense = pool->DenseData();
 
@@ -400,7 +428,7 @@ namespace Veng
             {
                 const Entity source = dense[i];
                 const Entity target = remap.at(source);
-                const void* sourceComponent = pool->TryGet(source);
+                const void* sourceComponent = pool->SlotData(static_cast<u32>(i));
 
                 record.clear();
                 WriteFields(record, sourceComponent, typeInfo, registry);
@@ -511,17 +539,11 @@ namespace Veng
         // NextSibling links to collect it in O(subtree), then tear down — never
         // iterating-and-destroying a pool (a structural change mid-iteration is
         // illegal).
-        const TypeId hierarchyId = TypeIdOf<Hierarchy>();
-
         vector<Entity> collected;
         collected.push_back(entity);
-        for (usize scanned = 0; scanned < collected.size(); ++scanned)
+        const ComponentPool* pool = TryPoolOf<Hierarchy>();
+        for (usize scanned = 0; pool != nullptr && scanned < collected.size(); ++scanned)
         {
-            const ComponentPool* pool = TryPoolFor(hierarchyId);
-            if (pool == nullptr)
-            {
-                break;
-            }
             const auto* link = static_cast<const Hierarchy*>(pool->TryGet(collected[scanned]));
             if (link == nullptr)
             {
@@ -538,11 +560,11 @@ namespace Veng
         bool spatialTouched = false;
         for (const Entity dead : collected)
         {
-            for (auto& [id, pool] : m_Pools)
+            for (const Unique<ComponentPool>& pool : m_Pools)
             {
                 if (pool->Contains(dead))
                 {
-                    spatialTouched = spatialTouched || IsSpatialId(id);
+                    spatialTouched = spatialTouched || IsSpatialId(pool->GetInfo().Id);
                     pool->Remove(dead);
                 }
             }
@@ -566,20 +588,19 @@ namespace Veng
         // Resolve through the pool directly, not the templated TryGet/Add, so the
         // structural ops bump the spatial version exactly once each (explicitly),
         // never per link touched.
-        const TypeId id = TypeIdOf<Hierarchy>();
-        if (ComponentPool* pool = TryPoolFor(id))
+        if (ComponentPool* pool = TryPoolOf<Hierarchy>())
         {
             if (void* slot = pool->TryGet(entity))
             {
                 return *static_cast<Hierarchy*>(slot);
             }
         }
-        return *static_cast<Hierarchy*>(PoolFor(id).Add(entity));
+        return *static_cast<Hierarchy*>(PoolFor(TypeIdOf<Hierarchy>()).Add(entity));
     }
 
     const Hierarchy* Scene::TryHierarchy(Entity entity) const
     {
-        if (const ComponentPool* pool = TryPoolFor(TypeIdOf<Hierarchy>()))
+        if (const ComponentPool* pool = TryPoolOf<Hierarchy>())
         {
             return static_cast<const Hierarchy*>(pool->TryGet(entity));
         }
@@ -589,7 +610,7 @@ namespace Veng
     void Scene::UnlinkFromSiblings(Entity child)
     {
         Hierarchy* link = nullptr;
-        if (ComponentPool* pool = TryPoolFor(TypeIdOf<Hierarchy>()))
+        if (ComponentPool* pool = TryPoolOf<Hierarchy>())
         {
             link = static_cast<Hierarchy*>(pool->TryGet(child));
         }
@@ -748,16 +769,6 @@ namespace Veng
         }
     }
 
-    bool Scene::IsAlive(Entity entity) const
-    {
-        if (entity.IsNull() || entity.Index >= m_Slots.size())
-        {
-            return false;
-        }
-        const EntitySlot& slot = m_Slots[entity.Index];
-        return slot.Alive && slot.Generation == entity.Generation;
-    }
-
     Entity Scene::GetLiveEntityAtIndex(const u32 index) const
     {
         if (index >= m_Slots.size())
@@ -797,7 +808,7 @@ namespace Veng
         ComponentPool& pool = PoolFor(id);
         void* slot = pool.Add(entity);
         // Adding a component is a write: stamp it with the current tick so it reads dirty.
-        pool.Stamp(entity, m_ChangeTick);
+        pool.StampSlot(static_cast<u32>(pool.Count() - 1), m_ChangeTick);
         return slot;
     }
 
@@ -805,16 +816,16 @@ namespace Veng
     {
         VE_ASSERT(IsAlive(entity), "FindRequirer on a {} entity", Detail::NotAliveKind(entity));
 
-        for (const auto& [poolId, pool] : m_Pools)
+        for (const Unique<ComponentPool>& pool : m_Pools)
         {
-            if (poolId == id || !pool->Contains(entity))
+            const TypeInfo& info = pool->GetInfo();
+            if (info.Id == id || !pool->Contains(entity))
             {
                 continue;
             }
-            const vector<TypeId>& required = m_Registry->Info(poolId).Requires;
-            if (std::ranges::find(required, id) != required.end())
+            if (std::ranges::find(info.Requires, id) != info.Requires.end())
             {
-                return poolId;
+                return info.Id;
             }
         }
         return InvalidTypeId;
@@ -855,69 +866,20 @@ namespace Veng
         return {};
     }
 
-    void* Scene::TryGetRaw(Entity entity, TypeId id)
-    {
-        // A non-const access is a potential in-place edit the ECS never sees,
-        // so bump the version conservatively (over-bump, never under). A Hierarchy
-        // edit can reparent, so it moves the topology too.
-        if (id == TypeIdOf<Hierarchy>())
-        {
-            BumpTopology();
-        }
-        else if (IsSpatialId(id))
-        {
-            BumpSpatial();
-        }
-        if (ComponentPool* pool = TryPoolFor(id))
-        {
-            void* slot = pool->TryGet(entity);
-            // The same access-as-write discipline, per entity: a non-const fetch of a present
-            // component stamps it with the current tick so the net layer sees it as dirty.
-            if (slot != nullptr)
-            {
-                pool->Stamp(entity, m_ChangeTick);
-            }
-            return slot;
-        }
-        return nullptr;
-    }
-
-    const void* Scene::TryGetRaw(Entity entity, TypeId id) const
-    {
-        if (const ComponentPool* pool = TryPoolFor(id))
-        {
-            return pool->TryGet(entity);
-        }
-        return nullptr;
-    }
-
-    bool Scene::HasRaw(Entity entity, TypeId id) const
-    {
-        const ComponentPool* pool = TryPoolFor(id);
-        return pool != nullptr && pool->Contains(entity);
-    }
-
     void Scene::ForEachComponent(Entity entity, const function<void(TypeId, void*)>& fn)
     {
         VE_ASSERT(IsAlive(entity), "ForEachComponent on a {} entity", Detail::NotAliveKind(entity));
 
-        for (auto& [id, pool] : m_Pools)
+        for (const Unique<ComponentPool>& pool : m_Pools)
         {
-            if (void* component = pool->TryGet(entity))
+            const u32 slot = pool->FindSlot(entity);
+            if (slot != ComponentPool::Absent)
             {
-                // The erased pointer is a mutable edit funnel (the inspector's),
-                // so visiting a spatial pool bumps the version like a non-const
-                // access, and stamps the component's change tick per entity.
-                if (id == TypeIdOf<Hierarchy>())
-                {
-                    BumpTopology();
-                }
-                else if (IsSpatialId(id))
-                {
-                    BumpSpatial();
-                }
-                pool->Stamp(entity, m_ChangeTick);
-                fn(id, component);
+                // The erased pointer is a mutable edit funnel (the inspector's), so a visit moves
+                // the versions and stamps the change tick exactly as a non-const access does.
+                NoteMutableAccess(*pool);
+                pool->StampSlot(slot, m_ChangeTick);
+                fn(pool->GetInfo().Id, pool->SlotData(slot));
             }
         }
     }
@@ -944,29 +906,18 @@ namespace Veng
 
     Scene::ComponentPool& Scene::PoolFor(TypeId id)
     {
-        const auto it = m_Pools.find(id);
-        if (it != m_Pools.end())
+        const TypeInfo& info = m_Registry->Info(id);
+        if (info.Ordinal >= m_PoolTable.size())
         {
-            return *it->second;
+            m_PoolTable.resize(std::max<usize>(info.Ordinal + 1, m_Registry->Count()), nullptr);
         }
 
-        VE_ASSERT(m_Registry->IsRegistered(id), "component TypeId {:#018x} is not registered", id);
-
-        auto pool = Unique<ComponentPool>(new ComponentPool(m_Registry->Info(id)));
-        ComponentPool& ref = *pool;
-        m_Pools.emplace(id, std::move(pool));
-        return ref;
-    }
-
-    Scene::ComponentPool* Scene::TryPoolFor(TypeId id)
-    {
-        const auto it = m_Pools.find(id);
-        return it != m_Pools.end() ? it->second.get() : nullptr;
-    }
-
-    const Scene::ComponentPool* Scene::TryPoolFor(TypeId id) const
-    {
-        const auto it = m_Pools.find(id);
-        return it != m_Pools.end() ? it->second.get() : nullptr;
+        ComponentPool*& entry = m_PoolTable[info.Ordinal];
+        if (entry == nullptr)
+        {
+            m_Pools.push_back(std::make_unique<ComponentPool>(info, AccessVersionOf(id)));
+            entry = m_Pools.back().get();
+        }
+        return *entry;
     }
 }

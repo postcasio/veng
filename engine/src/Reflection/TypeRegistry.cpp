@@ -2,11 +2,22 @@
 
 #include <Veng/Assert.h>
 
+#include <atomic>
 #include <memory>
 #include <utility>
 
 namespace Veng
 {
+    namespace
+    {
+        /// @brief Returns a registry serial no other registry in the process has held; never zero.
+        u32 NextRegistrySerial()
+        {
+            static std::atomic<u32> s_Next{1};
+            return s_Next.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
     /// @brief The registry's type table, so no header-including TU instantiates it.
     struct TypeRegistry::Impl
     {
@@ -14,13 +25,24 @@ namespace Veng
         unordered_map<TypeId, TypeInfo> Types;
     };
 
-    TypeRegistry::TypeRegistry() : m_Impl(std::make_unique<Impl>()) {}
+    TypeRegistry::TypeRegistry() : m_Impl(std::make_unique<Impl>()), m_Serial(NextRegistrySerial())
+    {
+    }
 
     TypeRegistry::~TypeRegistry() = default;
 
-    TypeRegistry::TypeRegistry(TypeRegistry&& other) noexcept = default;
+    TypeRegistry::TypeRegistry(TypeRegistry&& other) noexcept
+        : m_Impl(std::move(other.m_Impl)),
+          m_Serial(std::exchange(other.m_Serial, NextRegistrySerial()))
+    {
+    }
 
-    TypeRegistry& TypeRegistry::operator=(TypeRegistry&& other) noexcept = default;
+    TypeRegistry& TypeRegistry::operator=(TypeRegistry&& other) noexcept
+    {
+        m_Impl = std::move(other.m_Impl);
+        m_Serial = std::exchange(other.m_Serial, NextRegistrySerial());
+        return *this;
+    }
 
     void TypeRegistry::Insert(TypeId id, TypeInfo info)
     {
@@ -29,7 +51,14 @@ namespace Veng
                   "TypeId collision: '{}' and '{}' both claim TypeId {:#018x}", info.QualifiedName,
                   existing == m_Impl->Types.end() ? string{} : existing->second.Name, id);
 
+        info.Ordinal = static_cast<u32>(m_Impl->Types.size());
         m_Impl->Types.emplace(id, std::move(info));
+    }
+
+    u32 TypeRegistry::OrdinalOf(TypeId id) const
+    {
+        const auto it = m_Impl->Types.find(id);
+        return it != m_Impl->Types.end() ? it->second.Ordinal : InvalidTypeOrdinal;
     }
 
     const TypeInfo& TypeRegistry::Info(TypeId id) const

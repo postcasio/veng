@@ -33,6 +33,15 @@ reflected type a `Scene` pools** — see [../Reflection/CLAUDE.md](../Reflection
 `TypeId` and registration; pools are made lazily on first `Add` of a type, and there is no
 separate component-id space.
 
+**A component access never hashes.** The scene keeps its pools in a table indexed by the type's
+registry ordinal (`TypeInfo::Ordinal`, see [../Reflection/CLAUDE.md](../Reflection/CLAUDE.md)), so
+`Get`/`TryGet`/`Has` resolve their pool by array index and then do one sparse-set membership check
+(index → dense slot → whole-handle compare), inlined into the calling unit from
+`Veng/Scene/ComponentPool.h`. A `View`/`Each` resolves every participating pool once, when it is
+created; its iterator keeps the dense slots its match test found, so dereferencing looks nothing up
+again. The pool stores its components at the type's alignment and relocates them through the type's
+move constructor, so a component that points into itself is safe to pool.
+
 **A component declares the siblings it resolves, and removal honours the declaration.**
 `VE_REQUIRES(::Ns::Component, ::Ns::Sibling, …)` beside a describe block records the required
 `TypeId`s in `TypeInfo::Requires`, and `Scene::RemoveComponent` / `Remove<T>` then return a
@@ -108,8 +117,10 @@ A `Scene` carries a monotonic **spatial version counter** (`GetSpatialVersion()`
 change to a **spatial pool** (`Transform`/`Hierarchy`/`MeshRenderer`) — a structural
 `Add`/`Remove`, a `DestroyEntity` touching one, a **non-`const`** access (the mutable
 `Get`/`View`/`Each` path, a potential in-place edit), or a `ForEachComponent` visit (the editor
-inspector's erased-`void*` edit path). A **`const`** `View`/`Each` does **not** bump it, so a
-read-only consumer iterates without forcing a version move. This is the access-as-write
+inspector's erased-`void*` edit path). A mutable `View`/`Each` over a spatial type bumps it **once**,
+when it is created over a non-empty driving pool, not once per entity it visits; each component it
+hands out is still stamped with the change tick below. A **`const`** `View`/`Each` does **not** bump
+it, so a read-only consumer iterates without forcing a version move. This is the access-as-write
 change-tick a consumer (the `SceneBroadphase`) gates its re-gather on: it caches the version it
 last built against and re-gathers only when the version moved. A narrower **topology version**
 moves (with the spatial version) only on a change to which entities carry a `Transform` or
