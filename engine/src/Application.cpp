@@ -653,6 +653,8 @@ namespace Veng
         {
             m_ManagedWorld = m_WorldRunner->OpenWorld(WorldOpenInfo{
                 .SimTickRate = m_Info.World->SimTickRate,
+                .MaxTicksPerFrame = m_Info.World->MaxTicksPerFrame,
+                .MaxSimMillisecondsPerFrame = m_Info.World->MaxSimMillisecondsPerFrame,
                 .StartSimulation = false,
             });
             // Bind managed viewport #0 to world #0: the per-frame pull presents this world's scene
@@ -680,6 +682,8 @@ namespace Veng
         m_ManagedWorld = m_WorldRunner->OpenWorld(WorldOpenInfo{
             .Source = m_WorldLevel,
             .SimTickRate = m_Info.World->SimTickRate,
+            .MaxTicksPerFrame = m_Info.World->MaxTicksPerFrame,
+            .MaxSimMillisecondsPerFrame = m_Info.World->MaxSimMillisecondsPerFrame,
             .StartSimulation = true,
             // Seed the viewport and hand the world to the subclass before the simulation starts, so a
             // game can read its config from the scene, wait on residency, or capture input focus.
@@ -1300,8 +1304,11 @@ namespace Veng
         // Open a fresh runner world the join's reply installs its scene into (LoadClientLevel), started
         // once the reply loads it. It ticks Client-tier and carries its own input send window, so a
         // joined gameplay world never collides with the managed world or another join.
+        const GameWorldInfo clock = m_Info.World.value_or(GameWorldInfo{});
         const WorldInstanceId world = m_WorldRunner->OpenWorld(WorldOpenInfo{
-            .SimTickRate = m_Info.World ? m_Info.World->SimTickRate : 60u,
+            .SimTickRate = clock.SimTickRate,
+            .MaxTicksPerFrame = clock.MaxTicksPerFrame,
+            .MaxSimMillisecondsPerFrame = clock.MaxSimMillisecondsPerFrame,
             .StartSimulation = false,
         });
         m_Net->WorldRoles[world.Value] = NetRole::Client;
@@ -1929,8 +1936,11 @@ namespace Veng
             m_Net->PendingJoinWorlds.pop_front();
             return target;
         }
+        const GameWorldInfo clock = m_Info.World.value_or(GameWorldInfo{});
         const WorldInstanceId target = m_WorldRunner->OpenWorld(WorldOpenInfo{
-            .SimTickRate = m_Info.World ? m_Info.World->SimTickRate : 60u,
+            .SimTickRate = clock.SimTickRate,
+            .MaxTicksPerFrame = clock.MaxTicksPerFrame,
+            .MaxSimMillisecondsPerFrame = clock.MaxSimMillisecondsPerFrame,
             .StartSimulation = false,
         });
         m_Net->WorldRoles[target.Value] = NetRole::Client;

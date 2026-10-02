@@ -108,6 +108,15 @@ namespace Veng
         /// monotonic tick number, decoupling simulation from the frame rate; the View phase and render
         /// still run per frame, interpolating between the last two ticks. Must be positive.
         u32 SimTickRate = 60;
+        /// @brief The most Sim steps a world the engine opens runs in one frame (see
+        /// WorldOpenInfo::MaxTicksPerFrame). Must be positive.
+        u32 MaxTicksPerFrame = 5;
+        /// @brief The wall-clock budget for one frame's Sim steps in a world the engine opens, in
+        /// milliseconds; unset runs every step MaxTicksPerFrame allows.
+        ///
+        /// See WorldOpenInfo::MaxSimMillisecondsPerFrame: an overloaded world then dilates time at a
+        /// bounded frame cost.
+        optional<f32> MaxSimMillisecondsPerFrame;
         /// @brief Whether the bootstrap restores the local account's session once world #0 is bound.
         ///
         /// True (the default) is the continue-style posture: the bootstrap consults the local

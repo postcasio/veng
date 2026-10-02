@@ -359,7 +359,16 @@ world opened or closed stamps a request component a system acts on from its tick
 
 The world drive is an accumulator: each world's Sim phase steps at its own fixed `SimTickRate`
 (`GameWorldInfo`, default 60 Hz) with a monotonic tick, its View phase runs once per frame, and the
-render gather blends transforms between the last two ticks — see
+render gather blends transforms between the last two ticks. **A frame's steps are bounded twice**:
+by `MaxTicksPerFrame` (default 5) and, when set, by `MaxSimMillisecondsPerFrame`, a wall-clock
+budget (both on `WorldOpenInfo` and forwarded from `GameWorldInfo`). The backlog either bound leaves
+is dropped, not chased, so a world whose step costs more than the time it simulates **dilates
+time at a bounded frame cost** instead of paying the cap's worth of steps every frame; the dropped
+time is the `WorldRunner/DroppedMs` profiler counter. `SimClock::Run` decides each step's
+`SimStepInfo` before it runs — first, last, and whether its pose is one of the frame's final two —
+and the runner snapshots transform history only after those two, the only ones interpolation
+reads. A driven frame clock disables the budget, so a driven run's step count depends only on its
+frame deltas — see
 [src/Net/CLAUDE.md](src/Net/CLAUDE.md) for the tick model and the `ApplicationInfo::Net` wiring
 (`--server` / `--dedicated` / `--join` / `--netsim`, `PumpNet`, and the runtime `StartHosting()` /
 `Connect()` / `StopNet()` operations that mount the same hosts after boot). **Pause is a refcount, not
@@ -482,7 +491,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 42** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 43** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the

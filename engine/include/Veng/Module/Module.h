@@ -188,10 +188,16 @@ extern "C"
 /// Version 42 grows Animation with its cached root-motion bone and SkinnedPose with its change
 /// counter and input key. A module that builds an Animation in code, or reads a SkinnedPose, lays
 /// the struct out short, so the engine would read the new members past its end.
+/// Version 43 adds the SceneSystem::GetTickPolicy virtual after GetPhase, grows SystemContext with
+/// LastStepThisFrame, WorldOpenInfo and GameWorldInfo with the per-frame step cap and wall-clock
+/// budget, and SimClock (held by World) with its budget and step-cost estimate. A module subclasses
+/// SceneSystem, builds SystemContexts and both info structs, and reads a world through inline
+/// accessors, so a stale module carries a vtable short of the slot the simulation dispatches through
+/// and lays every one of those structs out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 42u
+#define VENG_MODULE_ABI_VERSION 43u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

@@ -59,6 +59,19 @@ namespace Veng
         LevelLoadInfo Load;
         /// @brief Fixed simulation ticks per second this world's clock steps its Sim phase at.
         u32 SimTickRate = 60;
+        /// @brief The most Sim steps this world runs in one frame; the backlog past it is dropped.
+        ///
+        /// See SimClockInfo::MaxTicksPerFrame. Must be positive.
+        u32 MaxTicksPerFrame = 5;
+        /// @brief The wall-clock budget for this world's Sim steps in one frame, in milliseconds;
+        /// unset runs every step MaxTicksPerFrame allows.
+        ///
+        /// See SimClockInfo::MaxSimMillisecondsPerFrame: with a budget an overloaded world dilates
+        /// time at a bounded frame cost rather than spending MaxTicksPerFrame steps every frame. The
+        /// time it drops is reported as the `WorldRunner/DroppedMs` profiler counter. Not applied
+        /// while the frame clock is driven (Time::IsDriven), so a driven run's step count stays a
+        /// function of its frame deltas.
+        optional<f32> MaxSimMillisecondsPerFrame;
         /// @brief Whether to start the world's simulation now; false defers it (the client join target).
         bool StartSimulation = true;
         /// @brief For an empty-scene world, the ordered system set its SceneSimulation runs.
@@ -104,7 +117,8 @@ namespace Veng
         /// @param tick       The tick number to stamp (the Sim step, or the last completed tick in View).
         /// @param alpha      The interpolation fraction (0 in Sim, the frame residual in View).
         /// @param firstStep  True on the frame's first Sim step (false in View); resets a per-frame
-        ///                   accumulator (see SystemContext::FirstStepThisFrame).
+        ///                   accumulator (see SystemContext::FirstStepThisFrame). The runner sets
+        ///                   SystemContext::LastStepThisFrame on the returned context itself.
         function<SystemContext(WorldInstanceId world, const Scene& scene, u64 tick, f32 alpha,
                                bool firstStep)>
             BuildContext;
@@ -282,8 +296,10 @@ namespace Veng
         ///
         /// Serial on the render thread: for each started, unpaused world, folds the frame delta (times
         /// its net slew) into its clock, runs the accumulated fixed Sim steps then one View pass,
-        /// driving the caller's per-step hooks. A paused or unstarted world resets its accumulator so
-        /// resuming chases no backlog.
+        /// driving the caller's per-step hooks. A world's steps stop at its MaxTicksPerFrame and, when
+        /// set, its MaxSimMillisecondsPerFrame; transform history is recorded only after the steps
+        /// interpolation reads (SimStepInfo::RecordsHistory). A paused or unstarted world resets its
+        /// accumulator so resuming chases no backlog.
         ///
         /// A system may open and close worlds from its own update: an open lands at once and first
         /// ticks next frame, a close is deferred to the end of the walk (see OpenWorld and

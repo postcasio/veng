@@ -253,9 +253,9 @@ namespace VengEditor
             m_Simulation != nullptr)
         {
             // Adopt the launcher's fixed-timestep accumulator: this frame's whole Sim steps at the
-            // fixed delta and shared tick numbers (snapshotting transform history after each), then
-            // one View pass carrying the interpolation alpha the viewport push reads.
-            const SimStep step = m_PlaySimClock.Advance(Time::GetDeltaTime());
+            // fixed delta and shared tick numbers (snapshotting transform history after the steps
+            // interpolation reads), then one View pass carrying the interpolation alpha the viewport
+            // push reads.
             const auto context = [this](const u64 tick, const f32 alpha)
             {
                 return SystemContext{.Assets = m_Assets,
@@ -266,13 +266,22 @@ namespace VengEditor
                                      .Tick = tick,
                                      .Alpha = alpha};
             };
-            for (u32 tickIndex = 0; tickIndex < step.Steps; ++tickIndex)
-            {
-                const u64 tick = step.FirstTick + tickIndex;
-                m_Simulation->UpdatePhase(*m_PlayScene, SceneSystem::Phase::Sim, step.SimDelta,
-                                          context(tick, 0.0f));
-                m_PlayScene->SnapshotTransformHistory();
-            }
+            const SimStep step = m_PlaySimClock.Run(
+                Time::GetDeltaTime(),
+                [&](const SimStepInfo& simStep)
+                {
+                    SystemContext stepContext = context(simStep.Tick, 0.0f);
+                    stepContext.FirstStepThisFrame = simStep.First;
+                    stepContext.LastStepThisFrame = simStep.Last;
+                    m_Simulation->UpdatePhase(*m_PlayScene, SceneSystem::Phase::Sim, simStep.Delta,
+                                              stepContext);
+                    if (simStep.RecordsHistory)
+                    {
+                        m_PlayScene->SnapshotTransformHistory();
+                    }
+                    return true;
+                },
+                [] { return 0.0; });
             m_Simulation->UpdatePhase(*m_PlayScene, SceneSystem::Phase::View, Time::GetDeltaTime(),
                                       context(m_PlaySimClock.GetTick(), step.Alpha));
             m_Context.PlayAlpha = step.Alpha;

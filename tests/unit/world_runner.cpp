@@ -10,9 +10,12 @@
 
 #include <doctest/doctest.h>
 
+#include <iterator>
 #include <map>
+#include <utility>
 
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/SceneSystem.h>
@@ -160,6 +163,44 @@ namespace
     };
 }
 
+namespace
+{
+    // A Sim-phase probe placing every Transform at x = tick², so the pose a frame interpolates names
+    // the two ticks its history recorded.
+    struct MotionProbe final : SceneSystem
+    {
+        void OnUpdate(Scene& scene, f32, const SystemContext& context) override
+        {
+            const f32 tick = static_cast<f32>(context.Tick);
+            for (auto [entity, transform] : scene.View<Transform>())
+            {
+                transform.Position = vec3(tick * tick, 0.0f, 0.0f);
+            }
+        }
+    };
+
+    // A Sim-phase probe declaring the tick policy its tag is reset to, recording the tick and the
+    // delta of every step it runs on.
+    template <int Tag>
+    struct PolicyProbe final : SceneSystem
+    {
+        static inline TickPolicy Policy;
+        static inline vector<std::pair<u64, f32>> Runs;
+
+        static void Reset(const TickPolicy policy)
+        {
+            Policy = policy;
+            Runs.clear();
+        }
+
+        [[nodiscard]] TickPolicy GetTickPolicy() const override { return Policy; }
+        void OnUpdate(Scene&, const f32 delta, const SystemContext& context) override
+        {
+            Runs.emplace_back(context.Tick, delta);
+        }
+    };
+}
+
 namespace Veng
 {
     template <>
@@ -202,6 +243,34 @@ namespace Veng
     {
         static constexpr SystemId Id = 0x27AEAA4E6CCF4A71ULL;
         static string Name() { return "OpenProbe"; }
+    };
+
+    template <>
+    struct VengSystem<MotionProbe>
+    {
+        static constexpr SystemId Id = 0x3864A0AC7DE8CDFBULL;
+        static string Name() { return "MotionProbe"; }
+    };
+
+    template <>
+    struct VengSystem<PolicyProbe<0>>
+    {
+        static constexpr SystemId Id = 0xEFBA282B498C078DULL;
+        static string Name() { return "PolicyProbe0"; }
+    };
+
+    template <>
+    struct VengSystem<PolicyProbe<1>>
+    {
+        static constexpr SystemId Id = 0x1330E3AA24A7ED37ULL;
+        static string Name() { return "PolicyProbe1"; }
+    };
+
+    template <>
+    struct VengSystem<PolicyProbe<2>>
+    {
+        static constexpr SystemId Id = 0x7AD882136A4CE064ULL;
+        static string Name() { return "PolicyProbe2"; }
     };
 }
 
@@ -270,6 +339,25 @@ namespace
             .StartSimulation = true,
             .Systems = std::move(systems),
             .MakeStartContext = [&storage] { return storage.Make(); },
+        };
+    }
+
+    // A tick info folding @p delta into every world and stamping each context with its tick, alpha
+    // and first-step flag, as the application's context builder does.
+    WorldTickInfo Frame(ContextStorage& storage, const f32 delta)
+    {
+        return WorldTickInfo{
+            .Delta = delta,
+            .BuildContext =
+                [&storage](WorldInstanceId, const Scene&, const u64 tick, const f32 alpha,
+                           const bool firstStep)
+            {
+                SystemContext context = storage.Make();
+                context.Tick = tick;
+                context.Alpha = alpha;
+                context.FirstStepThisFrame = firstStep;
+                return context;
+            },
         };
     }
 
@@ -860,4 +948,179 @@ TEST_CASE("A close issued outside a tick applies before the call returns")
     runner.CloseWorld(a);
     CHECK(StopProbe::Stops[scene] == 1);
     CHECK(runner.ResolveWorld(a) == nullptr);
+}
+
+TEST_CASE("OpenWorld's MaxTicksPerFrame caps the Sim steps a world runs in one frame")
+{
+    TickProbe::Reset();
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<TickProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+
+    ContextStorage storage;
+    WorldOpenInfo info = EmptyWorld(storage);
+    info.MaxTicksPerFrame = 2;
+    const WorldInstanceId world = runner.OpenWorld(info);
+
+    // A one-second frame owes sixty steps; the world runs its own cap of two.
+    runner.Tick(Frame(storage, 1.0f));
+    CHECK(TickProbe::Updates[&runner.ResolveWorld(world)->GetScene()] == 2);
+    CHECK(runner.ResolveWorld(world)->Clock.GetTick() == 2);
+}
+
+TEST_CASE(
+    "A world records only a frame's final two poses, and interpolates as a two-step frame does")
+{
+    TypeRegistry types;
+    types.Register<Transform>("Transform");
+    SystemRegistry systems;
+    systems.Register<MotionProbe>();
+    ContextStorage storage;
+    constexpr f32 Step = 1.0f / 60.0f;
+
+    // Opens a world holding one Transform the motion probe moves, returning the world and entity.
+    const auto open = [&](WorldRunner& runner)
+    {
+        Entity entity;
+        const WorldInstanceId world = runner.OpenWorld(WorldOpenInfo{
+            .SimTickRate = 60,
+            .StartSimulation = true,
+            .Systems = vector<SystemId>{SystemIdOf<MotionProbe>()},
+            .OnLoaded =
+                [&entity](WorldInstanceId, Scene& scene, ResidencyBatch&)
+            {
+                entity = scene.CreateEntity();
+                scene.Add<Transform>(entity, Transform{});
+            },
+            .MakeStartContext = [&storage] { return storage.Make(); },
+        });
+        return std::pair{world, entity};
+    };
+
+    // Five steps (ticks 1..5) against two steps over the same final ticks (4, 5), both half a step
+    // into the next tick.
+    WorldRunner fiveRunner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    const auto [five, fiveEntity] = open(fiveRunner);
+    fiveRunner.Tick(Frame(storage, Step * 5.5f));
+
+    WorldRunner twoRunner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    const auto [two, twoEntity] = open(twoRunner);
+    twoRunner.ResolveWorld(two)->Clock.SetTick(3);
+    twoRunner.Tick(Frame(storage, Step * 2.5f));
+
+    const World& fiveWorld = *fiveRunner.ResolveWorld(five);
+    const World& twoWorld = *twoRunner.ResolveWorld(two);
+    REQUIRE(fiveWorld.Clock.GetTick() == 5);
+    REQUIRE(twoWorld.Clock.GetTick() == 5);
+    REQUIRE(fiveWorld.LastAlpha == doctest::Approx(0.5f));
+    REQUIRE(twoWorld.LastAlpha == doctest::Approx(0.5f));
+
+    // Both blend tick 4 (x = 16) into tick 5 (x = 25).
+    Scene& fiveScene = fiveWorld.GetScene();
+    const f32 fiveX = fiveScene.GetInterpolatedWorldTransform(fiveEntity, 0.5f)[3].x;
+    const f32 twoX = twoWorld.GetScene().GetInterpolatedWorldTransform(twoEntity, 0.5f)[3].x;
+    CHECK(fiveX == doctest::Approx(20.5f));
+    CHECK(twoX == doctest::Approx(fiveX));
+
+    // A step told not to record leaves the history where it was; one told to record rolls it.
+    SystemContext context = storage.Make();
+    context.Tick = 6;
+    fiveScene.TickSimulationPhase(SceneSystem::Phase::Sim, Step, context, false);
+    CHECK(fiveScene.GetInterpolatedWorldTransform(fiveEntity, 0.5f)[3].x == doctest::Approx(20.5f));
+    fiveScene.TickSimulationPhase(SceneSystem::Phase::Sim, Step, context, true);
+    CHECK(fiveScene.GetInterpolatedWorldTransform(fiveEntity, 0.5f)[3].x == doctest::Approx(30.5f));
+}
+
+TEST_CASE("An EveryNth system runs on the ticks its period selects, however frames group the steps")
+{
+    using TickPolicy = SceneSystem::TickPolicy;
+    PolicyProbe<0>::Reset(TickPolicy::EveryNth(4, 1));
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<PolicyProbe<0>>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    ContextStorage storage;
+    const WorldInstanceId world =
+        runner.OpenWorld(WorldOf(storage, {SystemIdOf<PolicyProbe<0>>()}));
+    constexpr f32 Step = 1.0f / 60.0f;
+
+    // Frames of uneven step counts, until sixty ticks have run.
+    constexpr f32 Pattern[] = {1.25f, 3.25f, 0.5f, 4.25f, 2.25f};
+    for (usize frame = 0; runner.ResolveWorld(world)->Clock.GetTick() < 60; ++frame)
+    {
+        runner.Tick(Frame(storage, Step * Pattern[frame % std::size(Pattern)]));
+    }
+
+    vector<u64> expected;
+    for (u64 tick = 1; tick <= runner.ResolveWorld(world)->Clock.GetTick(); tick += 4)
+    {
+        expected.push_back(tick);
+    }
+    vector<u64> ran;
+    u32 wrongDelta = 0;
+    for (const auto& [tick, delta] : PolicyProbe<0>::Runs)
+    {
+        ran.push_back(tick);
+        wrongDelta += delta == doctest::Approx(4.0f * Step) ? 0u : 1u;
+    }
+    CHECK(ran == expected);
+    CHECK(wrongDelta == 0);
+}
+
+TEST_CASE("Frame-keyed systems run once per frame and are handed the time since they last ran")
+{
+    using TickPolicy = SceneSystem::TickPolicy;
+    PolicyProbe<1>::Reset(TickPolicy::FirstStepOfFrame());
+    PolicyProbe<2>::Reset(TickPolicy::LastStepOfFrame());
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<PolicyProbe<1>>();
+    systems.Register<PolicyProbe<2>>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    ContextStorage storage;
+    const WorldInstanceId world = runner.OpenWorld(
+        WorldOf(storage, {SystemIdOf<PolicyProbe<1>>(), SystemIdOf<PolicyProbe<2>>()}));
+    constexpr f32 Step = 1.0f / 60.0f;
+
+    // Each stepping frame's first and last tick, read off the clock around it.
+    constexpr f32 Pattern[] = {1.25f, 3.25f, 0.5f, 4.25f, 2.25f, 0.25f};
+    vector<u64> firstTicks;
+    vector<u64> lastTicks;
+    for (usize frame = 0; frame < 18; ++frame)
+    {
+        const u64 before = runner.ResolveWorld(world)->Clock.GetTick();
+        runner.Tick(Frame(storage, Step * Pattern[frame % std::size(Pattern)]));
+        const u64 after = runner.ResolveWorld(world)->Clock.GetTick();
+        if (after > before)
+        {
+            firstTicks.push_back(before + 1);
+            lastTicks.push_back(after);
+        }
+    }
+
+    vector<u64> firstRan;
+    f32 firstTime = 0.0f;
+    for (const auto& [tick, delta] : PolicyProbe<1>::Runs)
+    {
+        firstRan.push_back(tick);
+        firstTime += delta;
+    }
+    vector<u64> lastRan;
+    f32 lastTime = 0.0f;
+    for (const auto& [tick, delta] : PolicyProbe<2>::Runs)
+    {
+        lastRan.push_back(tick);
+        lastTime += delta;
+    }
+
+    CHECK(firstRan == firstTicks);
+    CHECK(lastRan == lastTicks);
+    // The deltas handed add up to the time simulated through each system's last run.
+    REQUIRE_FALSE(firstRan.empty());
+    CHECK(firstTime == doctest::Approx(static_cast<f32>(firstRan.back()) * Step));
+    CHECK(lastTime == doctest::Approx(static_cast<f32>(lastRan.back()) * Step));
 }

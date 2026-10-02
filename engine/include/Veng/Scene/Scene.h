@@ -334,17 +334,22 @@ namespace Veng
         /// and View systems can interpolate between the last two ticks, and clears the seat release log
         /// the tick has read. A no-op when no simulation is attached (the snapshot and the clear still
         /// run, capturing the static pose).
-        /// @param phase    The phase whose systems run.
-        /// @param delta    Time in seconds forwarded to each system's OnUpdate.
-        /// @param context  Per-tick services forwarded to each system.
-        void TickSimulationPhase(SceneSystem::Phase phase, f32 delta, const SystemContext& context);
+        /// @param phase          The phase whose systems run.
+        /// @param delta          Time in seconds forwarded to each system's OnUpdate.
+        /// @param context        Per-tick services forwarded to each system.
+        /// @param recordHistory  Whether a Sim phase snapshots transform history. Interpolation reads
+        ///                       only a frame's final two ticks, so a drive that knows which steps
+        ///                       those are (SimStepInfo::RecordsHistory) skips the snapshot on the
+        ///                       others; ignored for the View phase.
+        void TickSimulationPhase(SceneSystem::Phase phase, f32 delta, const SystemContext& context,
+                                 bool recordHistory = true);
 
         /// @brief Snapshots every Transform entity's local TRS into the two-tick history ring.
         ///
-        /// Called at the end of each Sim tick (through TickSimulationPhase). Rolls the previous
-        /// snapshot to make room for the current one, keyed off the spatial version so a static scene
-        /// copies nothing after it converges. GetInterpolatedWorldTransform blends the two by a
-        /// frame's alpha.
+        /// Called at the end of a Sim tick whose pose interpolation may read (through
+        /// TickSimulationPhase). Rolls the previous snapshot to make room for the current one, keyed
+        /// off the spatial version so a static scene copies nothing after it converges.
+        /// GetInterpolatedWorldTransform blends the two by a frame's alpha.
         void SnapshotTransformHistory();
 
         /// @brief Returns an entity's world matrix, interpolating its TRS between the last two Sim ticks.
@@ -756,7 +761,7 @@ namespace Veng
         /// @brief Component pools, keyed by TypeId, created lazily.
         unordered_map<TypeId, Unique<ComponentPool>> m_Pools;
 
-        /// @brief One entity's local TRS captured for a history tick (Transform without the reflection weight).
+        /// @brief One entity's local TRS captured for a history tick, with the capture it belongs to.
         ///
         /// A plain value the history ring stores so Scene.h needs no Components.h; it mirrors
         /// Transform's Position/Rotation/Scale and converts to it for the interpolation blend.
@@ -768,14 +773,43 @@ namespace Veng
             quat Rotation{1.0f, 0.0f, 0.0f, 0.0f};
             /// @brief Local scale in parent space.
             vec3 Scale{1.0f};
+            /// @brief The generation of the entity captured into this slot.
+            u32 Generation = 0;
+            /// @brief The capture that wrote this entry; an entry from an older capture is absent.
+            u32 Capture = 0;
+        };
+
+        /// @brief One history tick: an entry per entity slot, valid where its capture is the buffer's.
+        ///
+        /// Indexed by Entity::Index, so a lookup is an index plus a generation and capture check, and
+        /// a capture overwrites only the slots holding a Transform without clearing the rest.
+        struct TransformHistoryBuffer
+        {
+            /// @brief Entries indexed by entity slot; grown to the slot count, never shrunk.
+            vector<TransformSnapshot> Entries;
+            /// @brief The capture this buffer holds; 0 for a buffer never captured into.
+            u32 Capture = 0;
+
+            /// @brief Returns @p entity's entry in this buffer, or null when it was not captured.
+            /// @param entity  The entity to look up.
+            [[nodiscard]] const TransformSnapshot* Find(const Entity entity) const
+            {
+                if (Capture == 0 || entity.Index >= Entries.size())
+                {
+                    return nullptr;
+                }
+                const TransformSnapshot& entry = Entries[entity.Index];
+                return entry.Capture == Capture && entry.Generation == entity.Generation ? &entry
+                                                                                         : nullptr;
+            }
         };
 
         /// @brief Captures every Transform entity's local TRS into @p out, in pool order.
         ///
         /// Iterates the const Transform view (no spatial-version bump); the history snapshot fills the
         /// current ring slot through this.
-        /// @param out  Destination map, cleared then filled.
-        void CaptureTransforms(unordered_map<Entity, TransformSnapshot>& out) const;
+        /// @param out  Destination buffer, stamped with a fresh capture then filled.
+        void CaptureTransforms(TransformHistoryBuffer& out);
 
         /// @brief Returns an entity's interpolated local matrix from the history ring, or its live one.
         ///
@@ -787,10 +821,12 @@ namespace Veng
         /// @return The entity's interpolated (or live) local matrix.
         [[nodiscard]] mat4 InterpolatedLocalMatrix(Entity entity, f32 alpha) const;
 
-        /// @brief Previous Sim tick's transform snapshot, keyed by entity.
-        unordered_map<Entity, TransformSnapshot> m_TransformPrev;
-        /// @brief Current Sim tick's transform snapshot, keyed by entity.
-        unordered_map<Entity, TransformSnapshot> m_TransformCur;
+        /// @brief Previous Sim tick's transform snapshot.
+        TransformHistoryBuffer m_TransformPrev;
+        /// @brief Current Sim tick's transform snapshot.
+        TransformHistoryBuffer m_TransformCur;
+        /// @brief The last capture number stamped on a history buffer; 0 is never stamped.
+        u32 m_HistoryCapture = 0;
         /// @brief The spatial version the last history snapshot was taken at; != any real version initially.
         u64 m_HistoryVersion = ~0ULL;
         /// @brief True while the ring holds two differing ticks (motion to interpolate); false once converged.

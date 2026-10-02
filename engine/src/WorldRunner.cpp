@@ -10,8 +10,10 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSimulation.h>
+#include <Veng/Time.h>
 
 #include <algorithm>
+#include <chrono>
 #include <string>
 #include <utility>
 
@@ -77,7 +79,11 @@ namespace Veng
     {
         auto world = CreateUnique<World>();
         world->Id = MintId();
-        world->Clock = SimClock(SimClockInfo{.TickRate = info.SimTickRate});
+        world->Clock = SimClock(SimClockInfo{
+            .TickRate = info.SimTickRate,
+            .MaxTicksPerFrame = info.MaxTicksPerFrame,
+            .MaxSimMillisecondsPerFrame = info.MaxSimMillisecondsPerFrame,
+        });
         if (Diagnostics::Profiler* profiler = Diagnostics::GetActiveProfiler(); profiler != nullptr)
         {
             // Named with the world's identity so several worlds read side by side rather than summed.
@@ -257,6 +263,15 @@ namespace Veng
         m_Ticking = true;
 
         WorldTickResult result;
+        // A driven frame clock reads a constant wall time, which leaves every world's budget unspent.
+        const bool driven = Time::IsDriven();
+        const auto budgetClock = [driven]
+        {
+            return driven ? 0.0
+                          : std::chrono::duration<f64>(
+                                std::chrono::steady_clock::now().time_since_epoch())
+                                .count();
+        };
         // By index over the count captured at entry, holding the heap World rather than a reference
         // into the vector: a world opened from inside a system's update appends to m_Worlds, which
         // can reallocate and move every Unique slot — the World it points at does not move. The
@@ -286,39 +301,40 @@ namespace Veng
             result.AnyActive = true;
 
             const f32 scale = info.SimScale ? info.SimScale(world->Id) : 1.0f;
-            const SimStep step = world->Clock.Advance(info.Delta * scale);
+            SimStep step;
+            {
+                VE_PROFILE_SCOPE_ID(world->SimScopeName);
+                step = world->Clock.Run(
+                    info.Delta * scale,
+                    [&](const SimStepInfo& simStep)
+                    {
+                        if (info.BeforeSimStep)
+                        {
+                            info.BeforeSimStep(world->Id, scene, simStep.Tick);
+                        }
+                        SystemContext context =
+                            info.BuildContext(world->Id, scene, simStep.Tick, 0.0f, simStep.First);
+                        context.LastStepThisFrame = simStep.Last;
+                        scene.TickSimulationPhase(SceneSystem::Phase::Sim, simStep.Delta, context,
+                                                  simStep.RecordsHistory);
+                        if (info.AfterSimStep)
+                        {
+                            info.AfterSimStep(world->Id, scene, simStep.Tick);
+                        }
+                        // A system closed this world from the step it just ran: no further step.
+                        return !IsCloseQueued(world->Id);
+                    },
+                    budgetClock);
+                // The step counter distinguishes a heavy simulation from a frame that spiralled into
+                // multiple fixed-step catch-up steps; the dropped time is how far it dilated.
+                VE_PROFILE_COUNTER("WorldRunner/SimSteps", static_cast<f64>(step.Steps));
+                VE_PROFILE_COUNTER("WorldRunner/DroppedMs",
+                                   static_cast<f64>(step.DroppedSeconds) * 1000.0);
+            }
             world->LastAlpha = step.Alpha;
             if (step.Steps > 0)
             {
                 result.AnyTicked = true;
-            }
-
-            {
-                // The step counter distinguishes a heavy simulation from a frame that spiralled into
-                // multiple fixed-step catch-up steps.
-                VE_PROFILE_SCOPE_ID(world->SimScopeName);
-                VE_PROFILE_COUNTER("WorldRunner/SimSteps", static_cast<f64>(step.Steps));
-
-                for (u32 tickIndex = 0; tickIndex < step.Steps; ++tickIndex)
-                {
-                    const u64 tick = step.FirstTick + tickIndex;
-                    if (info.BeforeSimStep)
-                    {
-                        info.BeforeSimStep(world->Id, scene, tick);
-                    }
-                    scene.TickSimulationPhase(
-                        SceneSystem::Phase::Sim, step.SimDelta,
-                        info.BuildContext(world->Id, scene, tick, 0.0f, tickIndex == 0));
-                    if (info.AfterSimStep)
-                    {
-                        info.AfterSimStep(world->Id, scene, tick);
-                    }
-                    if (IsCloseQueued(world->Id))
-                    {
-                        // A system closed this world from the step it just ran: no further step.
-                        break;
-                    }
-                }
             }
 
             if (info.RunViewPhase && !IsCloseQueued(world->Id))

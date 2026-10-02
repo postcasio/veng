@@ -214,6 +214,13 @@ namespace Veng
         /// in the View phase, which is not a Sim step.
         bool FirstStepThisFrame = false;
 
+        /// @brief Whether this is the last Sim step of the frame's fixed-step sequence.
+        ///
+        /// The counterpart of FirstStepThisFrame: true only on the frame's final step, decided before
+        /// that step runs (see SimStepInfo::Last). A frame of one step is both first and last. False
+        /// in the View phase and on a reconciliation replay.
+        bool LastStepThisFrame = false;
+
         /// @brief Whether this Sim step is a client reconciliation replay, not a live tick.
         ///
         /// A client that mispredicts restores its predicted set to the authoritative state and
@@ -364,6 +371,65 @@ namespace Veng
             View,
         };
 
+        /// @brief Which of its phase's Sim steps a system runs on, and the delta it is handed.
+        ///
+        /// Governs the Sim phase only; a View system runs once per frame whatever it declares. A
+        /// system that runs less often than every step is handed the simulation time since it last
+        /// ran, so time it integrates still adds up to the time simulated. EveryNth keys on the tick
+        /// number, so it picks the same ticks on every peer and on a reconciliation replay; the two
+        /// frame-keyed cadences depend on how a frame's steps fall, so a system declaring one should
+        /// not advance state a client predicts. Built through the named factories.
+        struct TickPolicy
+        {
+            /// @brief The cadence a policy selects.
+            enum class Cadence : u8
+            {
+                /// @brief Every Sim step, handed the fixed step delta.
+                EveryStep,
+                /// @brief The frame's first Sim step, handed the steps since it last ran times the step
+                /// delta.
+                FirstStepOfFrame,
+                /// @brief The frame's last Sim step, handed the steps since it last ran times the step
+                /// delta.
+                LastStepOfFrame,
+                /// @brief Each tick where `Tick % N == Offset`, handed N times the step delta.
+                EveryNth,
+            };
+
+            /// @brief The cadence this policy selects.
+            Cadence Kind = Cadence::EveryStep;
+            /// @brief The tick period of an EveryNth policy (positive); 1 otherwise.
+            u32 N = 1;
+            /// @brief The tick phase of an EveryNth policy, in [0, N); 0 otherwise.
+            u32 Offset = 0;
+
+            /// @brief Returns the policy running a system on every Sim step (the default).
+            [[nodiscard]] static constexpr TickPolicy EveryStep() { return TickPolicy{}; }
+
+            /// @brief Returns the policy running a system once per frame, on the frame's first Sim step.
+            [[nodiscard]] static constexpr TickPolicy FirstStepOfFrame()
+            {
+                return TickPolicy{.Kind = Cadence::FirstStepOfFrame};
+            }
+
+            /// @brief Returns the policy running a system once per frame, on the frame's last Sim step.
+            [[nodiscard]] static constexpr TickPolicy LastStepOfFrame()
+            {
+                return TickPolicy{.Kind = Cadence::LastStepOfFrame};
+            }
+
+            /// @brief Returns the policy running a system on each tick where `Tick % n == offset`.
+            ///
+            /// Staggering several such systems across offsets spreads their cost over the ticks of
+            /// a period instead of landing it on one.
+            /// @param n       The tick period; must be positive.
+            /// @param offset  The tick phase within the period; must be below @p n.
+            [[nodiscard]] static constexpr TickPolicy EveryNth(const u32 n, const u32 offset = 0)
+            {
+                return TickPolicy{.Kind = Cadence::EveryNth, .N = n, .Offset = offset};
+            }
+        };
+
         /// @brief Virtual destructor; systems are owned through SceneSystem pointers.
         virtual ~SceneSystem() = default;
 
@@ -373,6 +439,14 @@ namespace Veng
         /// unless it overrides this to Phase::View.
         /// @return The system's phase.
         [[nodiscard]] virtual Phase GetPhase() const { return Phase::Sim; }
+
+        /// @brief Returns which Sim steps this system runs on.
+        ///
+        /// Defaults to TickPolicy::EveryStep. Read on every Sim step, so a system may derive its
+        /// policy from state it set up in OnStart. A system's documentation states its policy;
+        /// changing one changes how often, and with what delta, the system advances.
+        /// @return The system's tick policy.
+        [[nodiscard]] virtual TickPolicy GetTickPolicy() const { return TickPolicy::EveryStep(); }
 
         /// @brief Called once when play/simulation begins, before the first OnUpdate.
         ///

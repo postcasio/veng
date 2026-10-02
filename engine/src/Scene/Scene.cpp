@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <utility>
 
 namespace Veng
 {
@@ -187,7 +188,7 @@ namespace Veng
     }
 
     void Scene::TickSimulationPhase(const SceneSystem::Phase phase, const f32 delta,
-                                    const SystemContext& context)
+                                    const SystemContext& context, const bool recordHistory)
     {
         SetChangeTick(context.Tick);
         if (m_Simulation)
@@ -200,7 +201,10 @@ namespace Veng
         // finalized state and writes no new tick, so it does not snapshot.
         if (phase == SceneSystem::Phase::Sim)
         {
-            SnapshotTransformHistory();
+            if (recordHistory)
+            {
+                SnapshotTransformHistory();
+            }
             // This tick's Sim systems have read the releases recorded before it.
             if (m_SeatReleaseLog)
             {
@@ -209,14 +213,25 @@ namespace Veng
         }
     }
 
-    void Scene::CaptureTransforms(unordered_map<Entity, TransformSnapshot>& out) const
+    void Scene::CaptureTransforms(TransformHistoryBuffer& out)
     {
-        out.clear();
-        for (auto [entity, transform] : View<Transform>())
+        // Zero marks a never-captured buffer, so the stamp skips it on wrap.
+        if (++m_HistoryCapture == 0)
         {
-            out.emplace(entity, TransformSnapshot{.Position = transform.Position,
-                                                  .Rotation = transform.Rotation,
-                                                  .Scale = transform.Scale});
+            ++m_HistoryCapture;
+        }
+        out.Capture = m_HistoryCapture;
+        if (out.Entries.size() < m_Slots.size())
+        {
+            out.Entries.resize(m_Slots.size());
+        }
+        for (auto [entity, transform] : std::as_const(*this).View<Transform>())
+        {
+            out.Entries[entity.Index] = TransformSnapshot{.Position = transform.Position,
+                                                          .Rotation = transform.Rotation,
+                                                          .Scale = transform.Scale,
+                                                          .Generation = entity.Generation,
+                                                          .Capture = m_HistoryCapture};
         }
     }
 
@@ -239,7 +254,7 @@ namespace Veng
 
         // Something moved: roll the ring so the prior current becomes previous, then recapture the
         // live transforms into current. The blend interpolates previous → current.
-        m_TransformPrev.swap(m_TransformCur);
+        std::swap(m_TransformPrev, m_TransformCur);
         CaptureTransforms(m_TransformCur);
         m_HistoryVersion = version;
         m_HistoryDirty = true;
@@ -250,17 +265,14 @@ namespace Veng
         // A ViewPose transform is authored per frame, after the tick snapshot: its live pose is
         // already this frame's pose, and the history ring holds earlier frames' writes — blending
         // those would render the entity a frame stale against the anchor it follows.
-        const auto prevIt = m_TransformPrev.find(entity);
-        const auto curIt = m_TransformCur.find(entity);
-        if (prevIt != m_TransformPrev.end() && curIt != m_TransformCur.end() &&
-            !Has<ViewPose>(entity))
+        const TransformSnapshot* prev = m_TransformPrev.Find(entity);
+        const TransformSnapshot* cur = m_TransformCur.Find(entity);
+        if (prev != nullptr && cur != nullptr && !Has<ViewPose>(entity))
         {
-            const Transform from{.Position = prevIt->second.Position,
-                                 .Rotation = prevIt->second.Rotation,
-                                 .Scale = prevIt->second.Scale};
-            const Transform to{.Position = curIt->second.Position,
-                               .Rotation = curIt->second.Rotation,
-                               .Scale = curIt->second.Scale};
+            const Transform from{
+                .Position = prev->Position, .Rotation = prev->Rotation, .Scale = prev->Scale};
+            const Transform to{
+                .Position = cur->Position, .Rotation = cur->Rotation, .Scale = cur->Scale};
             return LocalMatrix(InterpolateTransform(from, to, alpha));
         }
 

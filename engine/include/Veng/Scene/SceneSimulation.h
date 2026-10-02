@@ -57,7 +57,9 @@ namespace Veng
         /// The fixed-timestep drive runs the Sim phase once per fixed step (0..N times a frame) and
         /// the View phase once per frame, so it dispatches each phase separately rather than through
         /// Update. Sim carries the fixed step delta and the tick number; View carries the frame delta
-        /// and the interpolation alpha.
+        /// and the interpolation alpha. In the Sim phase each system runs only on the steps its
+        /// SceneSystem::TickPolicy selects, keyed on the context's Tick, FirstStepThisFrame and
+        /// LastStepThisFrame, and is handed the simulation time since it last ran.
         /// @param scene    The scene the systems operate over.
         /// @param phase    The phase whose systems run.
         /// @param delta    Time in seconds forwarded to each system's OnUpdate.
@@ -137,6 +139,13 @@ namespace Veng
         /// allocation. Zero when no profiler was installed at construction. Empty under VE_PROFILE=OFF
         /// carries no cost; the per-system scope compiles out there.
         vector<Diagnostics::NameId> m_SystemProfileNames;
+
+        /// @brief Live Sim steps each frame-keyed system has let pass since it last ran, parallel to
+        /// m_Systems.
+        ///
+        /// The multiple of the step delta a FirstStepOfFrame or LastStepOfFrame system is handed,
+        /// counting the step it runs on. A reconciliation replay neither counts nor runs them.
+        vector<u32> m_StepsSinceRun;
 
         /// @brief Whether the engine skips this simulation's per-frame tick (see SetPaused).
         bool m_Paused = false;

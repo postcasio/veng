@@ -607,6 +607,18 @@ consult before touching an entity; an entity with no `Authority` defaults to `Se
 [../Net/CLAUDE.md](../Net/CLAUDE.md)). The two-pass split is the whole scheduling mechanism: no
 dependency graph, no parallelism.
 
+**A Sim system can run less often than every step.** `SceneSystem::GetTickPolicy()` returns a
+`TickPolicy` — `EveryStep()` (the default), `FirstStepOfFrame()`, `LastStepOfFrame()`, or
+`EveryNth(n, offset)` — and `SceneSimulation::UpdatePhase` runs a Sim system only on the steps it
+selects. `EveryNth` runs where `Tick % n == offset` and hands the system `n × delta`; it keys on the
+tick, not the frame, so every peer and a reconciliation replay pick the same ticks, and staggering
+offsets spreads several such systems across a period. The two frame-keyed cadences read
+`SystemContext::FirstStepThisFrame` / `LastStepThisFrame`, hand the system the live steps since it
+last ran times the step delta, and neither count nor run on a replayed tick — so a system whose
+state a client predicts declares `EveryStep` or `EveryNth`. A View system runs once per frame
+whatever it declares. Each system documents its policy, and changing one is a behaviour change made
+in the system's own repo.
+
 ## Game modes & world config
 
 **A game mode is mode-state components + rule systems — no object, no registry.** A

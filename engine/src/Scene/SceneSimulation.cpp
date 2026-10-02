@@ -1,5 +1,6 @@
 #include <Veng/Scene/SceneSimulation.h>
 
+#include <Veng/Assert.h>
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Scene/SystemRegistry.h>
 
@@ -14,6 +15,50 @@ namespace Veng
         {
             Diagnostics::Profiler* profiler = Diagnostics::GetActiveProfiler();
             return profiler != nullptr ? profiler->InternName(name) : 0;
+        }
+
+        // Whether a Sim system with @p policy runs on this step, scaling @p delta to the simulation
+        // time it is handed when it does. @p stepsSinceRun is the system's frame-keyed step counter.
+        bool RunsThisStep(const SceneSystem::TickPolicy& policy, const SystemContext& context,
+                          u32& stepsSinceRun, f32& delta)
+        {
+            using Cadence = SceneSystem::TickPolicy::Cadence;
+            switch (policy.Kind)
+            {
+            case Cadence::EveryStep:
+                return true;
+            case Cadence::EveryNth:
+                VE_ASSERT(policy.N > 0 && policy.Offset < policy.N,
+                          "TickPolicy::EveryNth needs N > 0 and Offset < N (N {}, Offset {})",
+                          policy.N, policy.Offset);
+                if (context.Tick % policy.N != policy.Offset)
+                {
+                    return false;
+                }
+                delta *= static_cast<f32>(policy.N);
+                return true;
+            case Cadence::FirstStepOfFrame:
+            case Cadence::LastStepOfFrame:
+            {
+                // A replayed tick re-derives predicted state; a frame-keyed system is not part of it.
+                if (context.IsReplay)
+                {
+                    return false;
+                }
+                ++stepsSinceRun;
+                const bool runs = policy.Kind == Cadence::FirstStepOfFrame
+                                      ? context.FirstStepThisFrame
+                                      : context.LastStepThisFrame;
+                if (!runs)
+                {
+                    return false;
+                }
+                delta *= static_cast<f32>(stepsSinceRun);
+                stepsSinceRun = 0;
+                return true;
+            }
+            }
+            return true;
         }
     }
 
@@ -77,6 +122,7 @@ namespace Veng
     void SceneSimulation::Start(Scene& scene, const SystemContext& context)
     {
         m_Started = true;
+        m_StepsSinceRun.assign(m_Systems.size(), 0);
         for (const Unique<SceneSystem>& system : m_Systems)
         {
             system->OnStart(scene, context);
@@ -95,17 +141,32 @@ namespace Veng
     void SceneSimulation::UpdatePhase(Scene& scene, const SceneSystem::Phase phase, const f32 delta,
                                       const SystemContext& context)
     {
+        // Sized here as well as in Start: a caller may drive the phases of a simulation it never started.
+        if (m_StepsSinceRun.size() != m_Systems.size())
+        {
+            m_StepsSinceRun.assign(m_Systems.size(), 0);
+        }
         // The one deliberate high-cardinality instrumentation site: the systems are the phases here,
         // and their per-frame breakdown is the reason to profile a simulation. Each scope names the
         // system through the id interned once at construction.
         for (usize i = 0; i < m_Systems.size(); ++i)
         {
             const Unique<SceneSystem>& system = m_Systems[i];
-            if (system->GetPhase() == phase)
+            if (system->GetPhase() != phase)
             {
-                VE_PROFILE_SCOPE_ID(m_SystemProfileNames[i]);
-                system->OnUpdate(scene, delta, context);
+                continue;
             }
+            f32 systemDelta = delta;
+            if (phase == SceneSystem::Phase::Sim)
+            {
+                const SceneSystem::TickPolicy policy = system->GetTickPolicy();
+                if (!RunsThisStep(policy, context, m_StepsSinceRun[i], systemDelta))
+                {
+                    continue;
+                }
+            }
+            VE_PROFILE_SCOPE_ID(m_SystemProfileNames[i]);
+            system->OnUpdate(scene, systemDelta, context);
         }
     }
 
