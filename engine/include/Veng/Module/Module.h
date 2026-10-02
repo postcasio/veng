@@ -228,10 +228,14 @@ extern "C"
 /// overridable rather than pure, AssetCacheEntry with Failed, WorldRunner with its capture pool, and
 /// WorldCaptureDriveInfo/Result with the capture build budget. A module subclasses AssetLoader, so a
 /// stale one carries a vtable short of the slots the manager dispatches through.
+/// Version 53 adds the Application::IsImGuiFrameWanted virtual, ImGuiLayer's frame-skip state,
+/// the presented-frame request latch in Context::Native, and McpTool::BeforeFrame. A module
+/// subclasses Application and registers MCP tools by value, so a stale one carries a vtable short of
+/// the slot the frame dispatches through and hands the server a short tool.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 52u
+#define VENG_MODULE_ABI_VERSION 53u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

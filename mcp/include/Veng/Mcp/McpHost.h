@@ -178,10 +178,10 @@ namespace Veng::Mcp
         /// tool report the capture unavailable rather than no-op silently.
         ///
         /// A presented image cannot be read back — it belongs to the presentation engine until it
-        /// is acquired again — so registering the render tools arms the context's presented-frame
-        /// mirror (Context::ArmPresentedFrameCapture) and the capture reads that copy, which each
-        /// frame takes while it still owns the swap chain image. The closure is therefore invoked
-        /// once at server construction as well as on the render thread during Pump().
+        /// is acquired again — so the capture asks the context for a presented-frame mirror
+        /// (Context::RequestPresentedFrameCapture) at the pump that receives the call, and reads the
+        /// copy that frame takes, while it still owns the swap chain image, at the next pump. The
+        /// closure is invoked on the render thread during Pump().
         function<Renderer::Context*()> RenderContext;
 
         /// @brief Resolves the profiler the capture tools drive, or null when unsupported.

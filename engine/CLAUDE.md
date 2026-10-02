@@ -478,7 +478,10 @@ overlay and runs the **managed tail**: the `GatherPass` assembles the registered
 viewports into one full-window assembly target and `SwapChainCompositePass` composites it behind
 the ImGui overlay. The gather runs only when placements need assembling — one viewport covering the
 window is sampled by the composite directly, and none composites a black stand-in — and an ImGui
-frame that draws nothing records no overlay pass. The managed tail's gather + composite graphs
+frame that draws nothing records no overlay pass. An app with nothing to draw runs no ImGui frame at
+all: `IsImGuiFrameWanted()` (default true) is consulted before the ImGui frame would begin, and a
+false answer skips NewFrame and Render outright (`ImGuiLayer::SkipFrame`), so `OnRender` checks
+`ImGuiLayer::IsFrameOpen()` before building UI. The managed tail's gather + composite graphs
 re-`Compile()` on swapchain resize, and the composite re-targets the swapchain
 (`SetSwapChainTarget`) on a format change.
 
@@ -501,7 +504,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 52** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 53** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the

@@ -933,10 +933,11 @@ namespace Veng::Renderer
 
         commandBuffer->Begin();
 
-        // GPU timing: read back the queries this slot wrote on its previous cycle (its fence
-        // was just waited by AcquireNextFrame, so the results are ready), then reset the slot's
-        // whole query run and write the frame-start timestamp. The slot is read only after it
-        // has been written once.
+        // GPU timing: read back the queries this slot wrote on its previous cycle, then reset the
+        // slot's whole query run and write the frame-start timestamp. The slot is read only after
+        // it has been written once. The read never waits: the fence AcquireNextFrame just waited
+        // covers every query the slot wrote, and a result the implementation has not yet published
+        // costs one frame's timings (the previous frame time stands) rather than a stall.
         if (m_GpuTimingSupported)
         {
             VE_PROFILE_SCOPE("Render/TimestampReadback");
@@ -956,7 +957,7 @@ namespace Veng::Renderer
                 std::array<u64, 2> frameStamps{};
                 const vk::Result frameResult = m_Native->Device.getQueryPoolResults(
                     m_Native->TimestampPool, frameBase, 2, sizeof(frameStamps), frameStamps.data(),
-                    sizeof(u64), vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
+                    sizeof(u64), vk::QueryResultFlagBits::e64);
                 u64 frameStartTick = 0;
                 bool haveFrameStart = false;
                 if (frameResult == vk::Result::eSuccess)
@@ -968,8 +969,8 @@ namespace Veng::Renderer
                 }
 
                 // The scope names recorded into this slot last cycle give both the count of
-                // scope pairs to read (only the written ones — an eWait read of an unwritten
-                // query would hang) and the label for each measured pass.
+                // scope pairs to read (only the written ones — an unwritten query never becomes
+                // available) and the label for each measured pass.
                 const vector<string>& names = m_Native->ScopeNames[slot];
                 const vector<u32>& depths = m_Native->ScopeDepths[slot];
                 m_GpuPassTimings.clear();
@@ -979,7 +980,7 @@ namespace Veng::Renderer
                     const vk::Result scopeResult = m_Native->Device.getQueryPoolResults(
                         m_Native->TimestampPool, scopeBase, static_cast<u32>(scopeStamps.size()),
                         scopeStamps.size() * sizeof(u64), scopeStamps.data(), sizeof(u64),
-                        vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
+                        vk::QueryResultFlagBits::e64);
                     if (scopeResult == vk::Result::eSuccess)
                     {
                         // Place each pass relative to the frame's GPU start (else the earliest
@@ -1020,6 +1021,7 @@ namespace Veng::Renderer
         // Setup work handed over while no command buffer was open records first, ahead of every
         // pass that could use what it initializes.
         m_Native->FrameCommandsOpen = true;
+        VE_PROFILE_SCOPE("Render/FrameSetup");
         DrainSetupCommands(*commandBuffer);
 
         // Transition any resources that went resident since last frame into Sample
@@ -1056,10 +1058,7 @@ namespace Veng::Renderer
         {
             // The capture copy is taken here, before the present hands the image to the
             // presentation engine — after that the image is no longer the frame's to read.
-            {
-                VE_PROFILE_SCOPE("Render/MirrorFrame");
-                MirrorPresentedFrame(*commandBuffer);
-            }
+            MirrorPresentedFrame(*commandBuffer);
 
             Backend::TransitionImage(*commandBuffer, *GetCurrentSwapChainImage(),
                                      ImageLayout::PresentSrc);
@@ -1215,9 +1214,18 @@ namespace Veng::Renderer
         return m_Native->SwapChain && m_Native->SwapChain->IsCaptureSupported();
     }
 
-    void Context::ArmPresentedFrameCapture()
+    void Context::RequestPresentedFrameCapture()
     {
-        m_Native->MirrorPresentedFrames = true;
+        // Never taken where no frame end could service it, so a pending request always resolves.
+        if (IsSwapChainCaptureSupported())
+        {
+            m_Native->PresentedFrameCapture.Request();
+        }
+    }
+
+    bool Context::IsPresentedFrameCapturePending() const
+    {
+        return m_Native->PresentedFrameCapture.IsPending();
     }
 
     Ref<Image> Context::GetPresentedFrameMirror() const
@@ -1227,10 +1235,12 @@ namespace Veng::Renderer
 
     void Context::MirrorPresentedFrame(CommandBuffer& commandBuffer)
     {
-        if (!m_Native->MirrorPresentedFrames || !IsSwapChainCaptureSupported())
+        // Taken first, so a request a recreated swap chain can no longer service still clears.
+        if (!m_Native->PresentedFrameCapture.TakeForFrame() || !IsSwapChainCaptureSupported())
         {
             return;
         }
+        VE_PROFILE_SCOPE("Render/MirrorFrame");
 
         const Ref<Image> presented = GetCurrentSwapChainImage();
         Ref<Image>& mirror = m_Native->PresentedFrameMirror;
@@ -1776,12 +1786,18 @@ namespace Veng::Renderer
                 .Wait();
         }
 
-        // Fence signalled: GPU finished the work from the last use of this frame
-        // index — everything retired then is safe to destroy now.
-        m_Native->DrainRetireBin(m_Native->RetireBins[m_Native->CurrentFrameInFlight]);
+        {
+            // Scoped apart from the fence wait: a frame retiring a departed world's resources
+            // destroys them here, and that cost is the frame's own rather than the GPU's.
+            VE_PROFILE_SCOPE("Render/RetireDrain");
 
-        // Reclaim upload scratch whose transfer-timeline value the GPU has now reached.
-        m_Native->DrainTransferRetireList();
+            // Fence signalled: GPU finished the work from the last use of this frame
+            // index — everything retired then is safe to destroy now.
+            m_Native->DrainRetireBin(m_Native->RetireBins[m_Native->CurrentFrameInFlight]);
+
+            // Reclaim upload scratch whose transfer-timeline value the GPU has now reached.
+            m_Native->DrainTransferRetireList();
+        }
 
         m_Native->Bindless->OnFrameAcquired(m_Native->CurrentFrameInFlight);
 

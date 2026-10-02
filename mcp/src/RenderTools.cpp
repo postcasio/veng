@@ -571,16 +571,6 @@ namespace Veng::Mcp
         // render.screenshot_window — the presented frame, the only surface carrying the app's
         // own UI overlay.
         {
-            // The capture reads the context's presented-frame mirror, so it must be armed before a
-            // frame that is to be captured ends. Arming at registration — which precedes the first
-            // Pump, and so the listener thread that could carry a call — means the first call
-            // already finds a mirrored frame.
-            if (Renderer::Context* const context =
-                    host.RenderContext ? host.RenderContext() : nullptr)
-            {
-                context->ArmPresentedFrameCapture();
-            }
-
             McpTool tool;
             tool.Name = "render.screenshot_window";
             tool.Description =
@@ -594,6 +584,21 @@ namespace Veng::Mcp
                 "where the surface did not grant transfer-source usage on its swap chain images.";
             tool.InputSchemaJson = R"({"type":"object","properties":{}})";
             tool.ReturnsContentBlocks = true;
+            // The presented frame is copied out only by a frame end that was asked to, so the call
+            // asks at its first pump and reads the copy at the next, once that frame has ended.
+            tool.BeforeFrame = [&host](string_view) -> VoidResult
+            {
+                Renderer::Context* const context =
+                    host.RenderContext ? host.RenderContext() : nullptr;
+                if (context == nullptr)
+                {
+                    return std::unexpected(
+                        string("presented-frame capture is unavailable: this host exposes no "
+                               "render context"));
+                }
+                context->RequestPresentedFrameCapture();
+                return {};
+            };
             tool.Handler = [&host](string_view) -> Result<string>
             {
                 Renderer::Context* const context =

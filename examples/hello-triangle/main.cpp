@@ -1145,7 +1145,15 @@ protected:
         PollProfileCaptureDemo();
         PollAudioDemo(delta);
         SyncDemoChannel();
+
+        // F1 hides the debug panel; with nothing to draw the frame runs no ImGui frame at all.
+        if (GetInput().WasKeyPressed(Key::F1))
+        {
+            m_ShowInterface = !m_ShowInterface;
+        }
     }
+
+    [[nodiscard]] bool IsImGuiFrameWanted() const override { return m_ShowInterface; }
 
     // The consumer-side profiler hotkey recipe: the engine exposes the capture verbs, and a binding is
     // a call site over them — there is no engine hotkey registry. F5 toggles a triggered capture, F6
@@ -1365,7 +1373,7 @@ protected:
 
     void OnRender() override
     {
-        if (GetImGuiLayer())
+        if (GetImGuiLayer() != nullptr && GetImGuiLayer()->IsFrameOpen())
         {
             RenderUserInterface();
         }
@@ -1898,6 +1906,9 @@ private:
 
     // Pauses the managed world's simulation so the broadphase reads `static`; never set in smoke.
     bool m_PauseSpin = false;
+
+    // Whether the debug panel is drawn (F1 toggles it); shown by default, as the smoke capture reads.
+    bool m_ShowInterface = true;
 
     // Default-off debug demo: a procedural CPU-noise nebula built through VolumeField::BuildSync and
     // attached to the managed scene via the VolumeField component, toggled from the debug panel. Off

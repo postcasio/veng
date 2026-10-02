@@ -10,6 +10,7 @@
 #include <Veng/Renderer/Backend/Vulkan.h>
 #include <Veng/Renderer/Backend/CommandPool.h>
 #include <Veng/Renderer/Backend/DescriptorPool.h>
+#include <Veng/Renderer/Backend/PresentedFrameCapture.h>
 #include <Veng/Renderer/Backend/SwapChain.h>
 #include <Veng/Renderer/Backend/SwapChainSupport.h>
 #include <Veng/Renderer/Backend/SynchronizationFrame.h>
@@ -68,12 +69,12 @@ namespace Veng::Renderer
         Unique<DescriptorPool> DescriptorPool;
         Unique<BindlessRegistry> Bindless;
 
-        /// @brief Whether each frame blits its finished composite into PresentedFrameMirror.
+        /// @brief Which frame ends blit their finished composite into PresentedFrameMirror.
         ///
-        /// Set by Context::ArmPresentedFrameCapture and never cleared: a presented image cannot be
-        /// read back, so a consumer that wants the finished frame needs the copy taken while the
-        /// frame still owns the image.
-        bool MirrorPresentedFrames = false;
+        /// Set by Context::RequestPresentedFrameCapture and taken by the EndFrame that services
+        /// it: a presented image cannot be read back, so a consumer that wants the finished frame
+        /// needs the copy taken while the frame still owns the image, and only that frame pays it.
+        Backend::PresentedFrameCaptureLatch PresentedFrameCapture;
 
         /// @brief Engine-owned copy of the most recently presented composite, or null.
         ///

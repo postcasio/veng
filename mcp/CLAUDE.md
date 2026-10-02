@@ -132,6 +132,19 @@ of the wiring.
   and joins. It sets the off-pump cancellation flag *first*, because a running off-pump
   handler is in no queue to drain and stopping the listener joins the pool it runs on.
 
+## A pumped tool may read what the next frame produces
+
+Some state exists only once a frame has *ended* — the presented-frame mirror is the case: a frame
+copies its finished composite out as it ends, and only when asked. A pumped `Handler` runs inside a
+frame that has not ended, so it cannot both ask and read. **`McpTool::BeforeFrame`** splits such a
+call across two pumps: the server runs the step at the pump that receives the call (it asks), keeps
+the request queued, and runs `Handler` at the next `Pump()` (it reads). A host pumps once per frame,
+so a frame ends between the two; both pumps fall inside the call's one `RequestTimeout`, and a step
+that fails is the call's result with `Handler` never run. It is a pumped-path feature only —
+`RegisterTool` refuses it beside `RunsOffPump` — and a `Handler` reading frame-end state still
+checks that the frame it asked for has ended rather than trusting the cadence
+(`render.screenshot_window` checks `Context::IsPresentedFrameCapturePending()`).
+
 ## A tool may declare it runs off the pump
 
 The pumped path is right for the great majority of tools and wrong for exactly one class: a
@@ -304,13 +317,12 @@ family registers from the editor side.
   colour alone and no UI, so this is the capture an agent drives an interface by. **A presented
   image is not readable** — it belongs to the presentation engine until it is acquired again, so
   transitioning it for a readback after the present is a write-after-present hazard the
-  synchronization validation layer reports as an error. So registering the render tools **arms the
-  context's presented-frame mirror** (`Context::ArmPresentedFrameCapture`) and the tool reads that:
-  an engine-owned image each frame blits its finished composite into at the end of the frame, the
-  last point at which the frame still owns the swap chain image. Arming at registration — ahead of
-  the first `Pump`, which is what starts the listener thread — means the first call already finds a
-  mirrored frame; the mirror then costs one full-window blit per frame for the context's lifetime,
-  which is why it stays unarmed until a consumer asks. Requires the surface to grant
+  synchronization validation layer reports as an error. So the tool **requests the context's
+  presented-frame mirror** (`Context::RequestPresentedFrameCapture`) in its `BeforeFrame` step, at the
+  pump that receives the call, and its `Handler` reads the copy at the next pump: an engine-owned
+  image the requested frame blits its finished composite into at its end, the last point at which
+  the frame still owns the swap chain image. The request is one-shot, so only the frame a call asked
+  for pays the full-window blit. Requires the surface to grant
   transfer-source usage on its swap chain images, and is unavailable headless — where there is
   no swap chain and, because ImGui needs a window, no UI overlay to capture),
   `render.list_viewports` (over `McpHost::ViewportNames`), `render.stats` (cull counts +

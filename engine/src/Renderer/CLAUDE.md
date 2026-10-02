@@ -1593,22 +1593,27 @@ and, when the draw data is empty (no command lists or no vertices), records no p
 transition — the full-window RGBA16F layer image is neither cleared nor stored — and
 `HasDrawnOutput()` reports it. The compositor then blends a 1×1 transparent image in its place
 (`SwapChainCompositePass::SetOverlaySource`), so `lerp(scene, ui, ui.a)` returns the scene with no
-shader or graph change, and swaps back when the layer draws again.
+shader or graph change, and swaps back when the layer draws again. A frame the app declares it draws
+no immediate-mode UI in (`Application::IsImGuiFrameWanted`) goes further and runs no ImGui frame at
+all — `ImGuiLayer::SkipFrame` stands in for NewFrame and Render, and reports no drawn output the
+same way.
 
 **A presented frame is read back through a mirror, never off the swap chain.** The finished
 composite — scene plus whatever overlay was drawn over it — exists only in the swap chain image, and
 `vkQueuePresentKHR` hands that image to the presentation engine: it is not the application's again
 until it is re-acquired, so transitioning it for a readback afterwards is a **write-after-present
 hazard** the synchronization validation layer reports as an error (and, on MoltenVK, a readback that
-can stall on the held drawable). So `Context::ArmPresentedFrameCapture()` arms a mirror instead:
-`EndFrame` blits the composite into an engine-owned image **immediately before the present
-transition**, the last point at which the frame still owns the swap chain image, and
-`GetPresentedFrameMirror()` hands that copy back to be downloaded as an ordinary owned image. The
-mirror follows the swap chain's format and extent (rebuilt when either moves), needs the surface to
-have granted transfer-source usage (`IsSwapChainCaptureSupported()`), is inert headless, and costs
-one full-window blit per frame — which is why it is armed on demand rather than always on, and why
-nothing arms it unless a consumer asks (`veng::mcp`'s `render.screenshot_window` is the one that
-does).
+can stall on the held drawable). So `Context::RequestPresentedFrameCapture()` asks for a mirror
+instead: the next `EndFrame` blits the composite into an engine-owned image **immediately before the
+present transition**, the last point at which the frame still owns the swap chain image, and
+`GetPresentedFrameMirror()` hands that copy back to be downloaded as an ordinary owned image. A
+request is **one-shot** — serviced by one frame end, with any requests before it coalescing into it
+(`IsPresentedFrameCapturePending()` is true until then) — so the full-window blit is paid only by a
+frame something asked to read, never by every frame once some consumer exists. The mirror follows
+the swap chain's format and extent (rebuilt when either moves), needs the surface to have granted
+transfer-source usage (`IsSwapChainCaptureSupported()`), and is inert headless. `veng::mcp`'s
+`render.screenshot_window` is the consumer: it requests at the pump that receives the call and reads
+at the next (`McpTool::BeforeFrame`).
 
 **A `CaptureSink` composites the frame a second time, into an image somebody else owns.** The mirror
 above copies the display's pixels; a consumer that wants the *frame* — at its own encoding, without

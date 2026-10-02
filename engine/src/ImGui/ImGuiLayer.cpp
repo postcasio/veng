@@ -2,6 +2,7 @@
 
 #include <filesystem>
 
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Event.h>
 #include <Veng/InputEvents.h>
 #include <Veng/Window.h>
@@ -381,7 +382,7 @@ namespace Veng
         m_Image.reset();
     }
 
-    void ImGuiLayer::BeginFrame()
+    void ImGuiLayer::DrainTextureRemovals()
     {
         // The free runs outside the erase_if predicate: a hardened STL may evaluate
         // the predicate more than once per element, which would free the same set twice.
@@ -401,16 +402,40 @@ namespace Veng
         {
             ImGui_ImplVulkan_RemoveTexture(set);
         }
+    }
+
+    void ImGuiLayer::BeginFrame()
+    {
+        DrainTextureRemovals();
 
         if (!m_RenderedThisFrame)
         {
             ImGui::EndFrame();
         }
 
+        ImGuiIO& io = ImGui::GetIO();
+        if (m_Skipped)
+        {
+            // A key or button released while no frame ran never reached ImGui; this frame's own
+            // events are still queued and apply on top of the cleared state.
+            io.ClearInputKeys();
+            io.ClearInputMouse();
+            m_Skipped = false;
+        }
+
         m_RenderedThisFrame = false;
-        ImGui_ImplVulkan_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
+        m_FrameOpen = true;
+        {
+            // The platform half issues the per-frame window-system queries (size, focus, hover,
+            // cursor), apart from ImGui's own NewFrame so a capture attributes the two separately.
+            VE_PROFILE_SCOPE("ImGui/PlatformNewFrame");
+            ImGui_ImplVulkan_NewFrame();
+            ImGui_ImplGlfw_NewFrame();
+        }
+        {
+            VE_PROFILE_SCOPE("ImGui/NewFrame");
+            ImGui::NewFrame();
+        }
 
         // The GLFW backend re-applies the OS cursor shape each NewFrame for a free cursor,
         // which would undo Window::SetCursorVisible(false); defaulting this frame's cursor to
@@ -516,11 +541,27 @@ namespace Veng
         }
     }
 
+    void ImGuiLayer::SkipFrame()
+    {
+        DrainTextureRemovals();
+
+        ImGuiIO& io = ImGui::GetIO();
+        io.ClearEventsQueue();
+        io.WantCaptureMouse = false;
+        io.WantCaptureKeyboard = false;
+        io.WantTextInput = false;
+
+        m_DrewOutput = false;
+        m_FrameOpen = false;
+        m_Skipped = true;
+    }
+
     void ImGuiLayer::Render(Renderer::CommandBuffer& commandBuffer)
     {
         using namespace Renderer;
 
         m_RenderedThisFrame = true;
+        m_FrameOpen = false;
 
         ImGui::Render();
         ImDrawData* drawData = ImGui::GetDrawData();

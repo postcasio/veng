@@ -175,11 +175,10 @@ namespace Veng::Mcp
         // read through the mirror the frame blitted it into before presenting — never directly,
         // which would be a write-after-present hazard on the transition the readback needs.
         const Ref<Renderer::Image> image = context.GetPresentedFrameMirror();
-        if (!image)
+        if (!image || context.IsPresentedFrameCapturePending())
         {
             return std::unexpected(
-                string("no presented frame has been captured yet: the capture mirror is armed but "
-                       "no frame has completed since"));
+                string("no frame has ended since the presented-frame capture was requested"));
         }
         const u32 width = image->GetWidth();
         const u32 height = image->GetHeight();

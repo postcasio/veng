@@ -2852,10 +2852,15 @@ namespace Veng
             m_Input->BeginFrame(!m_PreviousFrameLatchedInput);
             if (m_Window)
             {
-                m_Window->Update();
+                {
+                    // The platform event pump, apart from the routing so a capture tells a slow
+                    // window-system turn from the engine's own dispatch.
+                    VE_PROFILE_SCOPE("Input/PollEvents");
+                    m_Window->Update();
+                }
                 m_Window->DrainEvents([this](Event& event) { m_InputRouter->Dispatch(event); });
 
-                // Poll every joystick slot into the snapshot after BeginFrame's roll: gamepads are
+                // Poll the connected pads into the snapshot after BeginFrame's roll: gamepads are
                 // polled per frame, unlike the callback-driven keyboard/mouse folded via DrainEvents.
                 std::array<GamepadState, 16> pads{};
                 m_Window->PollGamepads(pads);
@@ -2868,11 +2873,19 @@ namespace Veng
             m_InputRouter->DrainInjectedEvents();
         }
 
-        // After the events are forwarded: ImGui's NewFrame consumes them this frame.
+        // After the events are forwarded: ImGui's NewFrame consumes them this frame. A frame the
+        // app draws no immediate-mode UI in runs no ImGui frame at all.
         if (m_ImGuiLayer)
         {
-            VE_PROFILE_SCOPE("Frame/ImGui");
-            m_ImGuiLayer->BeginFrame();
+            if (IsImGuiFrameWanted())
+            {
+                VE_PROFILE_SCOPE("Frame/ImGui");
+                m_ImGuiLayer->BeginFrame();
+            }
+            else
+            {
+                m_ImGuiLayer->SkipFrame();
+            }
         }
 
         // Once the immediate-mode layer's mouse claim is this frame's: hide the OS cursor where a
@@ -3066,7 +3079,10 @@ namespace Veng
         if (m_ImGuiLayer)
         {
             VE_PROFILE_SCOPE("Frame/Composite");
-            m_ImGuiLayer->Render(cmd);
+            if (m_ImGuiLayer->IsFrameOpen())
+            {
+                m_ImGuiLayer->Render(cmd);
+            }
             m_Compositor.Composite(cmd);
         }
 

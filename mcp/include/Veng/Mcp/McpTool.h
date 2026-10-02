@@ -109,6 +109,20 @@ namespace Veng::Mcp
         /// or a located error carrying the reason alone.
         function<Result<string>(const McpOffPumpRequest& request)> OffPumpHandler;
 
+        /// @brief Optional pumped step run one pump ahead of Handler, so a frame ends between them.
+        ///
+        /// A pumped tool whose answer only a finished frame holds — a copy a frame takes as it
+        /// ends — cannot produce it at the pump that receives the call, because the frame that
+        /// pump runs inside has not ended yet. Setting this splits the call across two pumps: the
+        /// server runs it at the pump that receives the call (where it asks for what Handler will
+        /// read), then runs Handler at the next Pump(). A host pumps once per frame, so a frame
+        /// ends between the two. A located error it returns is the call's result and Handler does
+        /// not run. Both pumps fall inside the call's one request timeout.
+        ///
+        /// Pumped tools only; an off-pump tool takes its render-thread snapshot through
+        /// PumpedPrologue instead.
+        function<VoidResult(string_view argsJson)> BeforeFrame;
+
         /// @brief Runs the tool on the render thread and produces its result.
         ///
         /// Receives the `arguments` object as a JSON string and returns the tool

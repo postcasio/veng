@@ -71,6 +71,8 @@ namespace Veng::Mcp
     /// and so are illegal under -fno-exceptions (the shutdown drain is such a path).
     struct PendingRequest
     {
+        /// @brief The tool's BeforeFrame step, or empty; run at the first pump, Handler at the next.
+        function<VoidResult(string_view)> BeforeFrame;
         /// @brief The tool handler to run on the render thread.
         function<Result<string>(string_view)> Handler;
         /// @brief The `arguments` object as a JSON string, passed to the handler.
@@ -213,14 +215,17 @@ namespace Veng::Mcp
         /// push a request slot, block on its condvar for RequestTimeout, and return what
         /// Pump() wrote there. On expiry the handler is *not* cancelled — the next pump still
         /// runs it — so the caller has abandoned a result that will still be produced.
-        /// @param native     The server state owning the queue.
-        /// @param handler    The work to run on the render thread.
-        /// @param arguments  The JSON string handed to @p handler.
+        /// @param native       The server state owning the queue.
+        /// @param handler      The work to run on the render thread.
+        /// @param arguments    The JSON string handed to @p handler.
+        /// @param beforeFrame  A step run one pump ahead of @p handler, or empty (McpTool::BeforeFrame).
         /// @return The handler's result, or a located host-busy / shutting-down error.
         Result<string> RunAtPump(McpServer::Native& native,
-                                 function<Result<string>(string_view)> handler, string arguments)
+                                 function<Result<string>(string_view)> handler, string arguments,
+                                 function<VoidResult(string_view)> beforeFrame = {})
         {
             auto request = CreateRef<PendingRequest>();
+            request->BeforeFrame = std::move(beforeFrame);
             request->Handler = std::move(handler);
             request->Arguments = std::move(arguments);
 
@@ -378,9 +383,9 @@ namespace Veng::Mcp
                     params.contains("arguments") ? params.at("arguments") : Json::object();
                 const string argsJson = arguments.dump();
 
-                const Result<string> value = tool.RunsOffPump
-                                                 ? RunOffPump(native, tool, name, argsJson)
-                                                 : RunAtPump(native, tool.Handler, argsJson);
+                const Result<string> value =
+                    tool.RunsOffPump ? RunOffPump(native, tool, name, argsJson)
+                                     : RunAtPump(native, tool.Handler, argsJson, tool.BeforeFrame);
                 return MakeResult(id, MakeToolResult(name, value, returnsContentBlocks));
             }
 
@@ -581,6 +586,10 @@ namespace Veng::Mcp
                       "pumped tool already runs at the pump point",
                       tool.Name);
         }
+        VE_ASSERT(!tool.RunsOffPump || !tool.BeforeFrame,
+                  "MCP tool '{}' declares RunsOffPump and sets BeforeFrame — an off-pump tool "
+                  "takes its render-thread snapshot through PumpedPrologue",
+                  tool.Name);
 
         const string name = tool.Name;
         const auto [_, inserted] = m_Native->Tools.emplace(name, std::move(tool));
@@ -599,6 +608,10 @@ namespace Veng::Mcp
 
         m_Native->EnsureStarted();
 
+        // Calls whose BeforeFrame step ran this pump; requeued once the loop ends, so their
+        // Handler runs at the next pump rather than this one.
+        vector<Ref<PendingRequest>> nextPump;
+
         for (;;)
         {
             Ref<PendingRequest> request;
@@ -612,13 +625,37 @@ namespace Veng::Mcp
                 m_Native->Queue.pop_front();
             }
 
-            Result<string> result = request->Handler(request->Arguments);
+            Result<string> result = Result<string>(string{});
+            if (request->BeforeFrame)
+            {
+                const VoidResult asked = request->BeforeFrame(request->Arguments);
+                request->BeforeFrame = nullptr;
+                if (asked)
+                {
+                    nextPump.push_back(std::move(request));
+                    continue;
+                }
+                result = std::unexpected(asked.error());
+            }
+            else
+            {
+                result = request->Handler(request->Arguments);
+            }
             {
                 const std::scoped_lock lock(request->Mutex);
                 request->Value = std::move(result);
                 request->Done = true;
             }
             request->Ready.notify_one();
+        }
+
+        if (!nextPump.empty())
+        {
+            const std::scoped_lock lock(m_Native->QueueMutex);
+            for (Ref<PendingRequest>& request : nextPump)
+            {
+                m_Native->Queue.push_back(std::move(request));
+            }
         }
     }
 }

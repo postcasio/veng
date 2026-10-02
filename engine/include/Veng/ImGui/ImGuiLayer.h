@@ -72,8 +72,24 @@ namespace Veng
         /// @brief Begins a new ImGui frame.
         ///
         /// Call once per frame before building any UI, after the frame's events are forwarded
-        /// (ImGui's NewFrame consumes the events ForwardEvent queued into the backend).
+        /// (ImGui's NewFrame consumes the events ForwardEvent queued into the backend). The first
+        /// frame after a run of SkipFrame calls clears ImGui's held key and mouse state, since the
+        /// releases that arrived while it ran no frame were discarded.
         void BeginFrame();
+
+        /// @brief Runs no ImGui frame this frame, in place of BeginFrame and Render.
+        ///
+        /// The frame pays nothing for ImGui: no platform or ImGui NewFrame, no Render, no overlay
+        /// pass. HasDrawnOutput reports false, so a compositor blends a transparent overlay, and
+        /// ImGui's capture flags read false, so nothing treats the layer as holding the mouse or
+        /// keyboard while it is not running. Events forwarded this frame are discarded.
+        void SkipFrame();
+
+        /// @brief Whether an ImGui frame is open — BeginFrame has run and Render has not.
+        ///
+        /// False on a frame SkipFrame stood in for, when no ImGui call may be made.
+        /// @return True while UI may be built for this frame.
+        [[nodiscard]] bool IsFrameOpen() const { return m_FrameOpen; }
 
         /// @brief Forwards one window event into the ImGui GLFW backend.
         ///
@@ -179,5 +195,14 @@ namespace Veng
 
         /// @brief Whether the last Render recorded drawing into the output image.
         bool m_DrewOutput = false;
+
+        /// @brief True between BeginFrame and Render.
+        bool m_FrameOpen = false;
+
+        /// @brief Set by SkipFrame; the next BeginFrame clears held input state and resets it.
+        bool m_Skipped = false;
+
+        /// @brief Frees the descriptor sets whose deferred-removal window has elapsed this frame.
+        void DrainTextureRemovals();
     };
 }

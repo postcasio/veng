@@ -1007,6 +1007,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/audio_device_driven.cpp
             tests/unit/pure_logic.cpp
             tests/unit/frame_clock.cpp
+            tests/unit/presented_frame_capture.cpp
             tests/unit/task_system.cpp
             tests/unit/parallel_for.cpp
             tests/unit/parallel_for_pool.cpp

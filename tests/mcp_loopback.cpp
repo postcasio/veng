@@ -19,6 +19,8 @@
 //     a second call to a tool already running is refused even with a slot free.
 //   - Shutdown does not wait on a walk: ~McpServer returns promptly while an off-pump handler
 //     polling its cancellation token is mid-run.
+//   - The BeforeFrame step: a pumped tool's step runs at one pump and its handler at a later one,
+//     both on the pumping thread, and a failing step is the result with the handler never run.
 //
 // The httplib client is the same vendored header compiled here (this TU builds with
 // exceptions, like the rest of the test suite), so it needs no new dependency.
@@ -265,6 +267,44 @@ int main()
     server->RegisterTool(makeGate("off.gate_b"));
     server->RegisterTool(makeGate("off.gate_c"));
 
+    // The BeforeFrame pair: each body records which pump it ran in, counted by the pump loop.
+    std::atomic<u64> pumpsCompleted{0};
+    std::atomic<u64> beforeFramePump{0};
+    std::atomic<u64> afterFramePump{0};
+    ThreadMark beforeFrameThread;
+    ThreadMark afterFrameThread;
+    Mcp::McpTool framed;
+    framed.Name = "pumped.framed";
+    framed.Description = "Asks at one pump, answers at the next.";
+    framed.InputSchemaJson = R"({"type":"object"})";
+    framed.BeforeFrame = [&](string_view) -> VoidResult
+    {
+        beforeFrameThread.Mark();
+        beforeFramePump.store(pumpsCompleted.load());
+        return {};
+    };
+    framed.Handler = [&](string_view) -> Result<string>
+    {
+        afterFrameThread.Mark();
+        afterFramePump.store(pumpsCompleted.load());
+        return std::string(R"({"ran":"framed"})");
+    };
+    server->RegisterTool(std::move(framed));
+
+    std::atomic<bool> refusedFrameHandlerRan{false};
+    Mcp::McpTool refusedFrame;
+    refusedFrame.Name = "pumped.refused_frame";
+    refusedFrame.Description = "Its BeforeFrame step always fails.";
+    refusedFrame.InputSchemaJson = R"({"type":"object"})";
+    refusedFrame.BeforeFrame = [](string_view) -> VoidResult
+    { return std::unexpected(std::string("frame refused")); };
+    refusedFrame.Handler = [&refusedFrameHandlerRan](string_view) -> Result<string>
+    {
+        refusedFrameHandlerRan.store(true);
+        return std::string("{}");
+    };
+    server->RegisterTool(std::move(refusedFrame));
+
     const u16 port = server->GetPort();
     Check(port != 0, "GetPort resolved an ephemeral port");
 
@@ -280,6 +320,7 @@ int main()
                 if (pumping.load())
                 {
                     server->Pump();
+                    pumpsCompleted.fetch_add(1);
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
@@ -400,6 +441,24 @@ int main()
         Check(ResultText(badCall).find("prologue refused") != std::string::npos,
               "the prologue's own reason is what the client is told");
         Check(!badPrologueHandlerRan.load(), "a failing prologue does not run the handler");
+
+        // ---- the BeforeFrame step --------------------------------------------------------
+        const Json framedCall = Post(client, CallMessage(15, "pumped.framed"));
+        Check(framedCall.contains("result") && framedCall["result"].value("isError", true) == false,
+              "a tool with a BeforeFrame step returned its handler's result");
+        Check(beforeFrameThread.WasMarked() && beforeFrameThread.Id == pumpThreadId &&
+                  afterFrameThread.WasMarked() && afterFrameThread.Id == pumpThreadId,
+              "the BeforeFrame step and its handler both ran on the pumping thread");
+        Check(afterFramePump.load() > beforeFramePump.load(),
+              "the handler ran at a later pump than the BeforeFrame step");
+
+        const Json refusedCall = Post(client, CallMessage(16, "pumped.refused_frame"));
+        Check(refusedCall.contains("result") &&
+                  refusedCall["result"].value("isError", false) == true &&
+                  ResultText(refusedCall).find("frame refused") != std::string::npos,
+              "a failing BeforeFrame step is the call's result, with its own reason");
+        Check(!refusedFrameHandlerRan.load(),
+              "a failing BeforeFrame step does not run the handler");
 
         // ---- the two-in-flight bound -----------------------------------------------------
         gateReleased.store(false);

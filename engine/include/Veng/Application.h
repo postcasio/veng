@@ -1594,7 +1594,21 @@ namespace Veng
         virtual void OnUpdate(f32 delta) {}
 
         /// @brief Called once per frame to record draw commands.
+        ///
+        /// Builds the frame's immediate-mode UI when one is open — check
+        /// `GetImGuiLayer()->IsFrameOpen()`, which is false on a frame IsImGuiFrameWanted declined.
         virtual void OnRender() {}
+
+        /// @brief Whether this frame runs an immediate-mode UI (ImGui) frame.
+        ///
+        /// Consulted once per frame when the app has an ImGuiLayer, after the frame's input is
+        /// routed and before the worlds tick, so a change made during a frame (a panel toggled in
+        /// OnUpdate) takes effect from the next. Returning false skips the ImGui frame outright —
+        /// no NewFrame, no Render, no overlay pass, nothing composited over the scene — so an app
+        /// whose debug UI is closed pays nothing for ImGui; OnRender must then make no ImGui call
+        /// that frame. Default is true: every frame runs one.
+        /// @return True when OnRender will build immediate-mode UI this frame.
+        [[nodiscard]] virtual bool IsImGuiFrameWanted() const { return true; }
 
         /// @brief Runs the app's shutdown operations while every engine service is still alive.
         ///

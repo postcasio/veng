@@ -7,6 +7,9 @@
 #include <Veng/Renderer/Native.h>
 #include <nfd.h>
 
+#include <algorithm>
+#include <bit>
+
 #include "Render/DisplayResolve.h"
 #include "WindowCocoa.h"
 
@@ -210,17 +213,29 @@ namespace Veng
                     return;
                 }
                 const auto id = static_cast<GamepadId>(jid);
+                const u32 bit = 1U << static_cast<u32>(jid);
                 if (event == GLFW_CONNECTED)
                 {
+                    s_JoystickEventWindow->m_ConnectedJoysticks |= bit;
                     s_JoystickEventWindow->m_Events.push_back(
                         CreateUnique<GamepadConnectedEvent>(id));
                 }
                 else if (event == GLFW_DISCONNECTED)
                 {
+                    s_JoystickEventWindow->m_ConnectedJoysticks &= ~bit;
                     s_JoystickEventWindow->m_Events.push_back(
                         CreateUnique<GamepadDisconnectedEvent>(id));
                 }
             });
+
+        // A device connected before the window existed raised no connect event.
+        for (int jid = GLFW_JOYSTICK_1; jid <= GLFW_JOYSTICK_LAST; ++jid)
+        {
+            if (glfwJoystickPresent(jid) == GLFW_TRUE)
+            {
+                m_ConnectedJoysticks |= 1U << static_cast<u32>(jid);
+            }
+        }
 
         {
             int width, height;
@@ -378,15 +393,18 @@ namespace Veng
 
     void Window::PollGamepads(const std::span<GamepadState> states) const
     {
-        for (usize slot = 0; slot < states.size(); ++slot)
+        std::ranges::fill(states, GamepadState{});
+        for (u32 connected = m_ConnectedJoysticks; connected != 0; connected &= connected - 1)
         {
+            const auto slot = static_cast<usize>(std::countr_zero(connected));
+            if (slot >= states.size())
+            {
+                break;
+            }
             GamepadState& state = states[slot];
-            state = GamepadState{};
 
-            const auto jid = static_cast<int>(slot);
             GLFWgamepadstate raw;
-            if (glfwJoystickPresent(jid) != GLFW_TRUE ||
-                glfwGetGamepadState(jid, &raw) != GLFW_TRUE)
+            if (glfwGetGamepadState(static_cast<int>(slot), &raw) != GLFW_TRUE)
             {
                 continue;
             }
