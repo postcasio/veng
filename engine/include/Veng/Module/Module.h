@@ -203,10 +203,13 @@ extern "C"
 /// and changes SceneRenderer's per-entity frame state from hashed maps to flat tables. A module reads
 /// visible meshes through a SceneView, holds a renderer, and records through a CommandBuffer whose
 /// inline bind helpers it instantiates, so a stale module lays all four out at the old layout.
+/// Version 46 grows SceneView with the punctual shadow face mask, SceneRendererSettings with the
+/// cascade caster size threshold, and SceneRenderer with its shadow-view count. A module builds
+/// SceneViews and settings and holds a renderer, so a stale module lays all three out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 45u
+#define VENG_MODULE_ABI_VERSION 46u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

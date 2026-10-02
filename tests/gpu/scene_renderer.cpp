@@ -2634,6 +2634,110 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// Instanced shadow casters. A shadow view sorts its survivors by (mesh, submesh) and draws each
+// submesh once, instanced over its casters, so the shadow pass's draw count follows the meshes in
+// a tile, not the casters. The shadow pass's draws are the frame's draws with shadows on less the
+// same frame's with them off; one cascade makes one tile, so ten casters of one mesh over a plane
+// record exactly the draws one caster does.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: many casters of one mesh record one instanced draw per tile")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_instanced_casters.vengpack");
+
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(material.has_value());
+
+    const Ref<Mesh> plane = Mesh::BuildSync(
+        Context, Primitives::Plane(vec2(10.0f), uvec2(1), *material), "Instanced Receiver");
+    const Ref<Mesh> caster =
+        Mesh::BuildSync(Context, Primitives::Cube(0.5f, *material), "Instanced Caster");
+    const AssetHandle<Mesh> casterHandle = assets.Adopt(caster);
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity planeEntity = scene->CreateEntity();
+    scene->Add<Transform>(planeEntity);
+    scene->Add<MeshRenderer>(planeEntity).Mesh = assets.Adopt(plane);
+    auto AddCaster = [&](const vec3 position)
+    {
+        const Entity entity = scene->CreateEntity();
+        scene->Add<Transform>(entity).Position = position;
+        scene->Add<MeshRenderer>(entity).Mesh = casterHandle;
+    };
+
+    const Entity lightEntity = scene->CreateEntity();
+    scene->Add<Light>(lightEntity) = Light{
+        .Type = LightType::Directional,
+        .Direction = vec3(0.0f, -1.0f, 0.0f),
+        .Color = vec3(1.0f),
+        .Intensity = DirectionalLux(3.0f),
+    };
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 6.0f, 6.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const SceneRendererSettings shadowsOn{
+        .Mode = DebugView::Final, .Bloom = false, .Shadows = true, .CascadeCount = 1};
+    SceneRendererSettings shadowsOff = shadowsOn;
+    shadowsOff.Shadows = false;
+
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = uvec2(64, 64),
+        .Settings = shadowsOn,
+    });
+
+    // The draw commands one Execute records, read off the command buffer's counter.
+    auto RenderCountingDraws = [&]() -> u32
+    {
+        u32 draws = 0;
+        Context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                const u32 before = cmd.GetDrawCallCount();
+                renderer->Execute(
+                    cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 0.0f});
+                draws = cmd.GetDrawCallCount() - before;
+            });
+        return draws;
+    };
+    // Each configuration is measured on its second frame, past any first-frame setup work.
+    auto ShadowPassDraws = [&]() -> u32
+    {
+        renderer->Configure(shadowsOn);
+        RenderCountingDraws();
+        const u32 on = RenderCountingDraws();
+        CHECK(renderer->GetLastShadowViewCount() == 1);
+        renderer->Configure(shadowsOff);
+        RenderCountingDraws();
+        const u32 off = RenderCountingDraws();
+        REQUIRE(on > off);
+        return on - off;
+    };
+
+    AddCaster(vec3(0.0f, 1.6f, 0.0f));
+    const u32 single = ShadowPassDraws();
+    // The receiver plane and the one caster, a draw each.
+    CHECK(single == 2);
+
+    for (const f32 x : {-3.0f, -1.5f, 1.5f, 3.0f})
+    {
+        AddCaster(vec3(x, 1.6f, -1.5f));
+        AddCaster(vec3(x, 1.6f, 1.5f));
+    }
+    AddCaster(vec3(0.0f, 1.6f, 1.5f));
+
+    CHECK(ShadowPassDraws() == single);
+
+    std::filesystem::remove(outArchive);
+}
+
 // The surface-flags channel (ORM alpha) declining shadow-map reception. The scene above,
 // measured three ways at the one texel the cast shadow falls on: shadowed (the flag clear),
 // with the flag set, and with the shadow system off entirely. Setting the flag must lift that

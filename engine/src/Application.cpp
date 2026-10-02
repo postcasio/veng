@@ -3113,6 +3113,8 @@ namespace Veng
                                static_cast<f64>(renderer.GetLastGpuSurvivorCount()));
         }
         VE_PROFILE_COUNTER("Render/Drawn", static_cast<f64>(renderer.GetLastDrawnCount()));
+        VE_PROFILE_COUNTER("Render/ShadowViews",
+                           static_cast<f64>(renderer.GetLastShadowViewCount()));
 
         const Renderer::PointFieldStats pointFields = renderer.GetPointFieldStats();
         VE_PROFILE_COUNTER("Render/PointFieldCells", static_cast<f64>(pointFields.CellsInFrustum));

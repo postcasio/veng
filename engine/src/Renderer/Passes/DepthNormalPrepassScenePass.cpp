@@ -44,18 +44,16 @@ namespace Veng::Renderer
         constexpr Format NormalFormat = GBuffer::NormalFormat;
         constexpr Format DepthFormat = GBuffer::DepthFormat;
 
-        // The static push block: camera MVP then the world normal matrix as three column vectors
-        // (matching depth_normal_prepass.vert; a second mat4 would overflow the 128-byte push range).
+        // The instanced static push block: the camera view-projection, matching
+        // depth_normal_prepass.vert. Each instance's world and normal matrices ride its caster record.
         struct DepthNormalPushConstants
         {
-            mat4 MVP;
-            vec4 NormalColumn0;
-            vec4 NormalColumn1;
-            vec4 NormalColumn2;
+            mat4 ViewProj;
         };
 
-        // The skinned push block: adds the instance's PaletteBase, matching
-        // depth_normal_prepass_skinned.vert's push block.
+        // The skinned push block: the camera MVP, the world normal matrix as three column vectors (a
+        // second mat4 would overflow the 128-byte push range), and the instance's PaletteBase,
+        // matching depth_normal_prepass_skinned.vert's push block.
         struct DepthNormalSkinnedPushConstants
         {
             mat4 MVP;
@@ -94,9 +92,12 @@ namespace Veng::Renderer
     }
 
     DepthNormalPrepassScenePass::DepthNormalPrepassScenePass(Context& context, AssetManager& assets,
+                                                             const CasterRecordRing& records,
                                                              uvec2 extent, ResourceId normalId,
                                                              ResourceId depthId)
-        : m_Context(context), m_Extent(extent), m_NormalId(normalId), m_DepthId(depthId)
+        : m_Context(context), m_Records(records), m_Extent(extent), m_NormalId(normalId),
+          m_DepthId(depthId),
+          m_Batch(context, "Depth+Normal Prepass", context.GetMaxFramesInFlight())
     {
         const AssetResult<AssetHandle<Veng::Shader>> vs =
             assets.LoadSync<Veng::Shader>(DepthNormalVertId);
@@ -110,11 +111,12 @@ namespace Veng::Renderer
                   fs.error().Detail);
         m_FragmentShader = *fs;
 
-        // Set 0 reserved for the bindless registry; one vertex push range for the camera MVP + world
-        // normal matrix. One color target (the world normal) plus depth.
+        // The caster records at the first author set; one vertex push range for the camera
+        // view-projection. One color target (the world normal) plus depth.
         m_Layout = PipelineLayout::Create(
             m_Context, {
                            .Name = "DepthNormalPrepass Layout",
+                           .DescriptorSetLayouts = {m_Records.GetSetLayout()},
                            .PushConstantRanges = {PushConstantRange::Of<DepthNormalPushConstants>(
                                ShaderStage::Vertex)},
                        });
@@ -138,6 +140,7 @@ namespace Veng::Renderer
                 .ColorAttachments = {{.Format = NormalFormat}},
                 .DepthAttachmentFormat = DepthFormat,
                 .VertexBufferLayout = vertexBufferLayout,
+                .InstanceCandidateId = true,
                 .PipelineLayout = m_Layout,
                 .ShaderStages =
                     {
@@ -268,88 +271,80 @@ namespace Veng::Renderer
                         }
                     }
 
-                    // Static opaque submeshes: the canonical normal-passing pipeline.
-                    cmd.BindPipeline(m_Pipeline);
-                    registry.Bind(cmd);
-                    const Mesh* lastBound = nullptr;
-                    const VisibleMesh* lastPushed = nullptr;
+                    // Triage the survivors: static opaque submeshes into the instance batch, skinned
+                    // ones into the per-draw list. A Translucent submesh writes no depth here, as in
+                    // the shadow caster.
+                    const bool skinnedPosed =
+                        view.SkinningPalette != nullptr && view.SkinnedPaletteBases != nullptr;
+                    m_Batch.Begin(candidates);
+                    m_Skinned.clear();
                     for (const u32 id : m_CullScratch)
                     {
                         const SubMeshCandidate& c = candidates[id];
                         const VisibleMesh& item = view.Visible[c.MeshCandidate];
                         const Mesh& mesh = *item.Mesh;
-                        if (mesh.IsSkinned())
-                        {
-                            continue;
-                        }
-                        // Draw a resident, non-Translucent submesh — the opaque-geometry test the
-                        // shadow caster uses; a Translucent submesh writes no depth here either.
                         if (!DrawsInPrepass(item.Materials, mesh, c.SubMeshIndex))
                         {
                             continue;
                         }
-                        const SubMesh& subMesh = mesh.GetSubMeshes()[c.SubMeshIndex];
+                        if (!mesh.IsSkinned())
+                        {
+                            m_Batch.Add(id, mesh, c.SubMeshIndex);
+                        }
+                        else if (skinnedPosed)
+                        {
+                            m_Skinned.push_back(id);
+                        }
+                    }
+                    m_Batch.EndView();
 
-                        // Submeshes are contiguous in GatherMeshes order, but consecutive entities
-                        // may share a mesh: buffers bind per mesh, the transform per entity.
-                        if (lastBound != &mesh)
+                    // Static opaque submeshes: the instanced normal-passing pipeline.
+                    if (!m_Batch.IsEmpty())
+                    {
+                        const u32 frameIndex = m_Context.GetCurrentFrameInFlight();
+                        m_Batch.Upload(frameIndex);
+                        cmd.BindPipeline(m_Pipeline);
+                        registry.Bind(cmd);
+                        cmd.BindDescriptorSets({&m_Records.GetSet(frameIndex)},
+                                               BindlessRegistry::FirstUserSet);
+                        m_Batch.BindInstanceIds(cmd);
+                        cmd.PushConstants(DepthNormalPushConstants{.ViewProj = viewProj});
+                        m_Batch.RecordView(cmd, 0);
+                    }
+
+                    // Skinned opaque submeshes: the skinned normal-passing pipeline + the palette set,
+                    // posing each mesh through its entity's palette base.
+                    if (m_Skinned.empty())
+                    {
+                        return;
+                    }
+                    cmd.BindPipeline(m_SkinnedPipeline);
+                    cmd.BindDescriptorSets({view.SkinningPalette.get()},
+                                           BindlessRegistry::FirstUserSet);
+                    const Mesh* lastSkinned = nullptr;
+                    for (const u32 id : m_Skinned)
+                    {
+                        const SubMeshCandidate& c = candidates[id];
+                        const VisibleMesh& item = view.Visible[c.MeshCandidate];
+                        const u32* paletteBase = view.SkinnedPaletteBases->Find(item.Owner);
+                        if (paletteBase == nullptr)
+                        {
+                            continue;
+                        }
+                        const Mesh& mesh = *item.Mesh;
+                        if (lastSkinned != &mesh)
                         {
                             cmd.BindVertexBuffer(mesh.GetVertexBuffer());
                             cmd.BindIndexBuffer(mesh.GetIndexBuffer());
-                            lastBound = &mesh;
+                            lastSkinned = &mesh;
                         }
-                        if (lastPushed != &item)
-                        {
-                            DepthNormalPushConstants push{.MVP = viewProj * item.World};
-                            WorldNormalColumns(item.NormalMatrix, push.NormalColumn0,
-                                               push.NormalColumn1, push.NormalColumn2);
-                            cmd.PushConstants(push);
-                            lastPushed = &item;
-                        }
+                        const SubMesh& subMesh = mesh.GetSubMeshes()[c.SubMeshIndex];
+                        DepthNormalSkinnedPushConstants push{.MVP = viewProj * item.World};
+                        WorldNormalColumns(item.NormalMatrix, push.NormalColumn0,
+                                           push.NormalColumn1, push.NormalColumn2);
+                        push.PaletteBase = *paletteBase;
+                        cmd.PushConstants(push);
                         cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
-                    }
-
-                    // Skinned opaque submeshes: the skinned normal-passing pipeline + the palette set
-                    // (set 3), posing each mesh through its DrawData PaletteBase.
-                    if (view.SkinningPalette != nullptr && view.SkinnedPaletteBases != nullptr)
-                    {
-                        cmd.BindPipeline(m_SkinnedPipeline);
-                        cmd.BindDescriptorSets({view.SkinningPalette.get()}, 3);
-                        const Mesh* lastSkinned = nullptr;
-                        for (const u32 id : m_CullScratch)
-                        {
-                            const SubMeshCandidate& c = candidates[id];
-                            const VisibleMesh& item = view.Visible[c.MeshCandidate];
-                            const Mesh& mesh = *item.Mesh;
-                            if (!mesh.IsSkinned())
-                            {
-                                continue;
-                            }
-                            if (!DrawsInPrepass(item.Materials, mesh, c.SubMeshIndex))
-                            {
-                                continue;
-                            }
-                            const SubMesh& subMesh = mesh.GetSubMeshes()[c.SubMeshIndex];
-
-                            const u32* paletteBase = view.SkinnedPaletteBases->Find(item.Owner);
-                            if (paletteBase == nullptr)
-                            {
-                                continue;
-                            }
-
-                            if (lastSkinned != &mesh)
-                            {
-                                cmd.BindVertexBuffer(mesh.GetVertexBuffer());
-                                cmd.BindIndexBuffer(mesh.GetIndexBuffer());
-                                lastSkinned = &mesh;
-                            }
-                            DepthNormalSkinnedPushConstants push{.MVP = viewProj * item.World};
-                            WorldNormalColumns(item.NormalMatrix, push.NormalColumn0,
-                                               push.NormalColumn1, push.NormalColumn2);
-                            push.PaletteBase = *paletteBase;
-                            cmd.PushConstants(push);
-                            cmd.DrawIndexed(subMesh.IndexCount, 1, subMesh.IndexOffset, 0, 0);
-                        }
                     }
                 });
     }

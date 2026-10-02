@@ -5,6 +5,7 @@
 #include "AutoExposureMeter.h"
 #include "BloomPyramid.h"
 #include "DebugBlitPipelines.h"
+#include "DepthInstancing.h"
 #include "DrawGather.h"
 #include "DrawPlan.h"
 #include "EnvironmentIbl.h"
@@ -170,6 +171,9 @@ namespace Veng::Renderer
     struct SceneRenderer::Internal
     {
         Unique<CompiledGraph> Graph;
+        // Every visible mesh's world and normal matrices, written once per frame by PrepareDraws
+        // and read by every instanced depth pass (the shadow views and the depth+normal prepass).
+        Unique<CasterRecordRing> CasterRecords;
         // The per-frame geometry submission plan PrepareDraws fills before each replay and
         // the geometry pass reads at record time (the pass holds a pointer to it).
         GBufferDrawPlan Plan;
@@ -230,6 +234,7 @@ namespace Veng::Renderer
         // so seed it before those are allocated below. Each subsystem derives its own ring depth
         // from the context independently.
         m_FramesInFlight = m_Context.GetMaxFramesInFlight();
+        m_Internal->CasterRecords = CreateUnique<CasterRecordRing>(m_Context, m_FramesInFlight);
         m_Shadows = ShadowSystem::Create(m_Context, m_Settings);
         // The sky-resolve subsystem owns the IBL maps, the atmosphere LUTs, and the baked-sky cube;
         // their consumer set layouts must exist before CreatePipelines reserves sets (the lighting
@@ -643,8 +648,9 @@ namespace Veng::Renderer
         Ref<ImageView> shadowAtlasView;
         if (m_Topology->ShadowActive)
         {
-            auto shadowPass = CreateUnique<ShadowScenePass>(
-                m_Context, m_Assets, m_Settings.ShadowResolution, m_Settings.CascadeCount);
+            auto shadowPass =
+                CreateUnique<ShadowScenePass>(m_Context, m_Assets, *m_Internal->CasterRecords,
+                                              m_Settings.ShadowResolution, m_Settings.CascadeCount);
             m_ShadowPass = shadowPass.get();
             shadowAtlasView = shadowPass->GetShadowView();
             m_Passes.push_back(std::move(shadowPass));
@@ -655,7 +661,8 @@ namespace Veng::Renderer
         if (m_Topology->PunctualShadowActive)
         {
             auto punctualPass = CreateUnique<PunctualShadowScenePass>(
-                m_Context, m_Assets, m_Settings.PunctualShadowResolution);
+                m_Context, m_Assets, *m_Internal->CasterRecords,
+                m_Settings.PunctualShadowResolution);
             m_PunctualShadowPass = punctualPass.get();
             m_Passes.push_back(std::move(punctualPass));
         }
@@ -1366,7 +1373,8 @@ namespace Veng::Renderer
         m_IblCubeDebugPass = nullptr;
 
         auto prepass = CreateUnique<DepthNormalPrepassScenePass>(
-            m_Context, m_Assets, m_RenderAllocExtent, m_LeanNormalId, m_LeanDepthId);
+            m_Context, m_Assets, *m_Internal->CasterRecords, m_RenderAllocExtent, m_LeanNormalId,
+            m_LeanDepthId);
         prepass->Configure(m_Settings);
         m_Passes.push_back(std::move(prepass));
 
@@ -1814,6 +1822,10 @@ namespace Veng::Renderer
             }
         }
 
+        // The depth passes place their instanced static draws by these records, indexed by the
+        // visible mesh, so each mesh's matrices are written once however many views draw it.
+        m_Internal->CasterRecords->Write(frameIndex, view.Visible);
+
         const DrawGatherInput gatherInput{
             .Candidates = candidates,
             .View = view,
@@ -2135,9 +2147,12 @@ namespace Veng::Renderer
         // record rides set-1 binding 3. The caster bound both fits each spot/area light's
         // shadow frustum to the geometry it must shadow and supplies the point the
         // contribution estimate is evaluated at.
-        const PackedSceneLights packed =
-            PackSceneLights(view.World, m_Settings.PunctualShadows,
-                            m_Settings.PunctualShadowResolution, casterBounds);
+        // The camera frustum withholds a punctual slot from a light that lights nothing visible and
+        // a cube face from a view no visible pixel samples; FrustumCull off renders them all.
+        const Frustum cameraFrustum = Frustum::FromViewProjection(view.Camera.ViewProjection());
+        const PackedSceneLights packed = PackSceneLights(
+            view.World, m_Settings.PunctualShadows, m_Settings.PunctualShadowResolution,
+            casterBounds, m_Settings.FrustumCull ? &cameraFrustum : nullptr);
         ReportDeniedCascades(packed.DeniedDirectionalCount);
 
         // Mirror filled records into the GPU block (unused slots stay zeroed → type 0 = "no map").
@@ -2184,10 +2199,28 @@ namespace Veng::Renderer
             resolvedView.CascadeCullViewProj[s] = cascadeSets[s].CullViewProj;
         }
         resolvedView.CascadeCount = cascadeSets[0].Count;
-        resolvedView.CascadeSetCount = cascadeSetCount;
+        // Only the granted sets: set 0's fallback fit is never sampled, so it is never rendered.
+        resolvedView.CascadeSetCount = packed.CascadeSetCount;
         resolvedView.PunctualShadows = packed.PunctualRecords;
         resolvedView.PunctualShadowCount = packed.PunctualCount;
         resolvedView.PunctualShadowRawViewProj = packed.PunctualRawViewProj;
+        resolvedView.PunctualShadowFaceMask = packed.PunctualFaceMask;
+
+        // The shadow views the depth passes render this frame: each granted set's cascades, and
+        // each slotted punctual light's unmasked faces.
+        m_LastShadowViewCount = 0;
+        if (m_Topology->ShadowActive)
+        {
+            m_LastShadowViewCount += packed.CascadeSetCount * resolvedView.CascadeCount;
+        }
+        if (m_Topology->PunctualShadowActive)
+        {
+            for (u32 s = 0; s < packed.PunctualCount; ++s)
+            {
+                m_LastShadowViewCount +=
+                    static_cast<u32>(std::popcount(packed.PunctualFaceMask[s]));
+            }
+        }
         resolvedView.Visible = m_Broadphase.GetCandidates();
         resolvedView.Broadphase = &m_Broadphase;
 
@@ -2904,6 +2937,11 @@ namespace Veng::Renderer
     u32 SceneRenderer::GetLastDrawnCount() const
     {
         return m_LastDrawnCount;
+    }
+
+    u32 SceneRenderer::GetLastShadowViewCount() const
+    {
+        return m_LastShadowViewCount;
     }
     DrawBudgetStats SceneRenderer::GetDrawBudgetStats() const
     {

@@ -4,6 +4,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Math/AABB.h>
+#include <Veng/Math/Frustum.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/PunctualShadows.h>
 #include <Veng/Renderer/SceneRenderer.h>
@@ -145,6 +146,12 @@ namespace Veng::Renderer
         std::array<std::array<mat4, CubeFaceCount>, MaxShadowedPunctual> PunctualRawViewProj{};
         /// @brief Number of shadowed punctual lights, capped at MaxShadowedPunctual.
         u32 PunctualCount = 0;
+        /// @brief Per record, the views the depth pass renders: bit f set renders face f.
+        ///
+        /// A spot or area record carries bit 0 alone. A point record carries one bit per cube face
+        /// whose frustum can reach the camera frustum — a face that cannot is never sampled by a
+        /// visible pixel, so its tile is left at the clear. All six without a camera frustum.
+        std::array<u8, MaxShadowedPunctual> PunctualFaceMask{};
 
         /// @brief Number of cascade sets granted this frame, capped at MaxCascadeSets.
         ///
@@ -189,14 +196,23 @@ namespace Veng::Renderer
     /// A Directional has no such fallback, so it is packed with LightFlags::CascadeDenied and
     /// counted in DeniedDirectionalCount — it shades unshadowed, and says so.
     ///
+    /// **A punctual slot goes only to a light that can shadow something visible.** Given the
+    /// camera frustum, a point/spot/area light whose range sphere misses it takes no slot (it
+    /// lights no visible pixel, so its map would never be sampled) and leaves the slot to the next
+    /// light in the ranking; a point light's cube faces whose frustums miss it are left out of
+    /// PunctualFaceMask, and a point light none of whose faces survive takes no slot either.
+    ///
     /// @param world                    Scene whose Light entities are packed.
     /// @param punctualShadows          Whether point/spot lights are assigned shadow slots.
     /// @param punctualShadowResolution Per-tile edge length, used to scale the depth bias.
     /// @param sceneBounds              Caster bound the spot/area shadow frustums are fit to; the
     ///                                 empty box (the default) leaves each frustum at its light's
     ///                                 own range and cone.
+    /// @param cameraFrustum            The view's camera frustum the slot and face tests use; null
+    ///                                 (the default) grants slots and faces without testing.
     /// @return The packed lights, shadow records, and cascade-set selection for this frame.
     [[nodiscard]] PackedSceneLights PackSceneLights(const Scene& world, bool punctualShadows,
                                                     u32 punctualShadowResolution,
-                                                    const AABB& sceneBounds = AABB::Empty());
+                                                    const AABB& sceneBounds = AABB::Empty(),
+                                                    const Frustum* cameraFrustum = nullptr);
 }

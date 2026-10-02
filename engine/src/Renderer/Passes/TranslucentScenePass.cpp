@@ -14,7 +14,6 @@
 #include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/GBuffer.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
-#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/ShaderInterface.h>
 
@@ -208,8 +207,7 @@ namespace Veng::Renderer
 
         // The instance-rate candidate-id buffer (binding 1) is bound once; each draw's
         // firstInstance selects the candidate id that indexes DrawData.
-        cmd.GetNative().CommandBuffer.bindVertexBuffers(1, GetVkBuffer(*plan.CandidateIdBuffer),
-                                                        {0});
+        cmd.BindInstanceBuffer(plan.CandidateIdBuffer);
 
         // Back-to-front: bind each draw's material pipeline (rebound only on a change, since
         // sorting interleaves materials by depth), the bindless registry, and the shared

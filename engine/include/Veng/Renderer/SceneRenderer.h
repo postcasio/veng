@@ -214,6 +214,14 @@ namespace Veng::Renderer
         /// commands). Zero before the first Execute.
         [[nodiscard]] u32 GetLastDrawnCount() const;
 
+        /// @brief Returns the number of shadow views the depth passes rendered in the last Execute.
+        ///
+        /// Each cascade of every cascade set a light was granted, plus each punctual light's views
+        /// — a spot's one, a point's cube faces that can reach the camera frustum. A light whose
+        /// range misses the camera frustum takes no slot and adds none. Zero before the first
+        /// Execute, and on the lean depth+normal path, which renders no shadow.
+        [[nodiscard]] u32 GetLastShadowViewCount() const;
+
         /// @brief Returns the per-frame draw-budget accounting from the last Execute.
         ///
         /// The slot limit in force, the slots the three gather phases claimed, and the submeshes
@@ -1114,6 +1122,9 @@ namespace Veng::Renderer
         /// The terminal funnel stage: every frustum survivor is a draw under CullMode::CPU.
         /// Zero before the first Execute.
         u32 m_LastDrawnCount = 0;
+
+        /// @brief Shadow views the depth passes rendered in the last Execute.
+        u32 m_LastShadowViewCount = 0;
 
         /// @brief The last Execute's draw-slot / palette budget accounting.
         DrawBudgetStats m_DrawBudgetStats;

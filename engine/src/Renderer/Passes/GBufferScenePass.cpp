@@ -6,7 +6,6 @@
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DescriptorSet.h>
-#include <Veng/Renderer/Native.h>
 
 namespace Veng::Renderer
 {
@@ -115,8 +114,7 @@ namespace Veng::Renderer
         // fetched as the instance attribute that indexes DrawData.
         if (!plan.Slots.empty() || !plan.SkinnedSlots.empty())
         {
-            cmd.GetNative().CommandBuffer.bindVertexBuffers(1, GetVkBuffer(*plan.CandidateIdBuffer),
-                                                            {0});
+            cmd.BindInstanceBuffer(plan.CandidateIdBuffer);
         }
 
         if (!plan.Slots.empty())

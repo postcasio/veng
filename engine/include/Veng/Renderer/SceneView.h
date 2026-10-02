@@ -414,7 +414,10 @@ namespace Veng::Renderer
         std::array<std::array<mat4, MaxCascades>, MaxCascadeSets> CascadeCullViewProj{};
         /// @brief Number of valid cascades per set; set by the renderer each Execute.
         u32 CascadeCount = 0;
-        /// @brief Number of valid cascade sets; set by the renderer each Execute, at least 1.
+        /// @brief Number of cascade sets a light was granted; set by the renderer each Execute.
+        ///
+        /// Zero when no light took the cascade arm: the matrices still hold set 0's straight-down
+        /// fit, but nothing samples it, so the shadow pass renders no tile.
         u32 CascadeSetCount = 0;
 
         /// @brief Shadowed punctual lights selected this frame (the first MaxShadowedPunctual shadow-casting lights).
@@ -435,6 +438,12 @@ namespace Veng::Renderer
         /// caller's values are overwritten.
         std::array<std::array<mat4, CubeFaceCount>, MaxShadowedPunctual>
             PunctualShadowRawViewProj{};
+        /// @brief Per record, the views the punctual shadow pass renders: bit f renders face f.
+        ///
+        /// Parallel to PunctualShadows; computed by the renderer on every Execute
+        /// (PackedSceneLights::PunctualFaceMask). A face left out cannot reach the camera frustum,
+        /// so its tile keeps the clear. A caller's values are overwritten.
+        std::array<u8, MaxShadowedPunctual> PunctualShadowFaceMask{};
 
         /// @brief Resident mesh candidates for this frame; set by the renderer on every Execute.
         ///

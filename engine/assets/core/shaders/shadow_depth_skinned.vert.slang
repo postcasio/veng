@@ -3,7 +3,7 @@
 // MVP, so a skinned mesh casts its posed (animated) shadow. VSInput matches the skinned vertex
 // layout (Mesh::SkinnedLayout); no fragment stage and no color output, only depth.
 //
-// The palette is bound on set 1 (set 0 stays the reserved bindless slot); the push block adds
+// The palette is bound on set 3 (sets 0-2 are the bindless registry's); the push block adds
 // PaletteBase, the base offset of this instance's bone matrices within the palette.
 struct VSInput
 {

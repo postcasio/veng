@@ -12,9 +12,11 @@
 
 #include <cmath>
 
+#include <Veng/Math/Frustum.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/LightPacking.h>
 #include <Veng/Renderer/SceneRenderer.h>
+#include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 
@@ -773,4 +775,42 @@ TEST_CASE("PackSceneLights: a Sphere's lighting radius and its shadow source rad
     REQUIRE(spotPacked.LightCount == 1);
     CHECK(spotPacked.Lights[0].Area.x == doctest::Approx(2.0f));
     CHECK(spotPacked.Lights[0].AreaNormal.w == 0.0f);
+}
+
+TEST_CASE("PackSceneLights: a punctual slot and a cube face go only where the camera can see")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+    const Unique<Scene> scene = Scene::Create(types);
+
+    // A 90° camera at the origin looking down -Z: at z = -10 the frustum spans x in [-10, 10].
+    CameraView camera;
+    camera.SetPerspective(glm::radians(90.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f), vec3(0.0f, 0.0f, -1.0f), vec3(0.0f, 1.0f, 0.0f));
+    const Frustum frustum = Frustum::FromViewProjection(camera.ViewProjection());
+
+    // Packed first, so without the frustum it would take slot 0: it sits 20 units right of the
+    // frustum's edge, about 14 from its side plane, and reaches 3.
+    AddLight(*scene, Light{.Type = LightType::Point, .Range = 3.0f}, vec3(30.0f, 0.0f, -10.0f));
+    // 2 units past the same edge, about 1.4 from the plane, so its range straddles it.
+    AddLight(*scene, Light{.Type = LightType::Point, .Range = 3.0f}, vec3(12.0f, 0.0f, -10.0f));
+
+    const PackedSceneLights packed = PackSceneLights(*scene, true, 1024, AABB::Empty(), &frustum);
+
+    REQUIRE(packed.LightCount == 2);
+    REQUIRE(packed.PunctualCount == 1);
+    CHECK(packed.Lights[0].Cone.z == doctest::Approx(-1.0f));
+    CHECK(packed.Lights[1].Cone.z == doctest::Approx(0.0f));
+
+    // CubeFace order is +X, -X, +Y, -Y, +Z, -Z. The +X face looks away from the frustum and is
+    // skipped; the -X face looks into it and is rendered.
+    const u8 mask = packed.PunctualFaceMask[0];
+    CHECK((mask & (1u << 0)) == 0);
+    CHECK((mask & (1u << 1)) != 0);
+
+    // Without a camera frustum both lights take a slot and every face renders.
+    const PackedSceneLights untested = PackSceneLights(*scene, true, 1024);
+    REQUIRE(untested.PunctualCount == 2);
+    CHECK(untested.PunctualFaceMask[0] == 0x3F);
+    CHECK(untested.PunctualFaceMask[1] == 0x3F);
 }

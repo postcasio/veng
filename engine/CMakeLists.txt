@@ -324,6 +324,7 @@ add_library(veng SHARED
         src/Settings/SettingsStore.cpp
         src/Renderer/CaptureSurface.cpp
         src/Renderer/CompositeSource.cpp
+        src/Renderer/DepthInstancing.cpp
         src/Renderer/DrawGather.cpp
         src/Renderer/FrameTopology.cpp
         src/Renderer/SceneRenderer.cpp
@@ -600,6 +601,7 @@ set(VENG_HOT_PATH_SOURCES
         src/Behavior/BehaviorTree.cpp
         src/Behavior/BehaviorSystem.cpp
         # The draw path: gather, light packing, command recording, and the per-draw scene passes.
+        src/Renderer/DepthInstancing.cpp
         src/Renderer/DrawGather.cpp
         src/Renderer/LightPacking.cpp
         src/Renderer/Backend/CommandBuffer.cpp

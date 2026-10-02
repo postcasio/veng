@@ -269,10 +269,67 @@ namespace Veng::Renderer
             remap[3][1] = sy * (2.0f * row + 1.0f) - 1.0f;
             return remap * viewProj;
         }
+
+        // Whether a sphere reaches inside a frustum: no plane has it wholly behind. Conservative
+        // near a frustum edge, where a sphere outside two planes at once still passes.
+        bool SphereMeetsFrustum(const Frustum& frustum, const vec3& center, const f32 radius)
+        {
+            for (const vec4& plane : frustum.Planes)
+            {
+                const f32 length = glm::length(vec3(plane));
+                if (length > 0.0f && glm::dot(vec3(plane), center) + plane.w < -radius * length)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // Whether a cube face's view can reach the camera frustum. The face's frustum is the hull
+        // of its view-projection's clip-space corners plus the light itself (the apex the near
+        // plane truncates); it misses when every one of those points is behind a single camera
+        // plane. Conservative — two disjoint convex volumes no single plane separates pass.
+        bool FaceMeetsFrustum(const Frustum& camera, const mat4& faceViewProj, const vec3& apex)
+        {
+            const mat4 inverse = glm::inverse(faceViewProj);
+            std::array<vec3, 9> points{};
+            u32 count = 0;
+            for (const f32 z : {0.0f, 1.0f})
+            {
+                for (const f32 y : {-1.0f, 1.0f})
+                {
+                    for (const f32 x : {-1.0f, 1.0f})
+                    {
+                        const vec4 world = inverse * vec4(x, y, z, 1.0f);
+                        points[count++] = vec3(world) / world.w;
+                    }
+                }
+            }
+            points[count++] = apex;
+
+            for (const vec4& plane : camera.Planes)
+            {
+                bool allBehind = true;
+                for (const vec3& point : points)
+                {
+                    if (glm::dot(vec3(plane), point) + plane.w >= 0.0f)
+                    {
+                        allBehind = false;
+                        break;
+                    }
+                }
+                if (allBehind)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
     }
 
     PackedSceneLights PackSceneLights(const Scene& world, const bool punctualShadows,
-                                      const u32 punctualShadowResolution, const AABB& sceneBounds)
+                                      const u32 punctualShadowResolution, const AABB& sceneBounds,
+                                      const Frustum* cameraFrustum)
     {
         VE_PROFILE_SCOPE("Render/PackLights");
         PackedSceneLights result;
@@ -367,6 +424,15 @@ namespace Veng::Renderer
                 continue;
             }
 
+            // A light whose reach misses the camera frustum lights no visible pixel, so a map of
+            // it would never be sampled: it takes no slot and leaves it to the next light.
+            if (cameraFrustum != nullptr &&
+                !SphereMeetsFrustum(*cameraFrustum, candidate.WorldPos,
+                                    light.Range + EmitterReach(light, candidate.World)))
+            {
+                continue;
+            }
+
             const u32 slot = result.PunctualCount;
             PunctualShadowRecord& record = result.PunctualRecords[slot];
             const f32 invResolution = 1.0f / static_cast<f32>(punctualShadowResolution);
@@ -400,11 +466,28 @@ namespace Veng::Renderer
                 const f32 worldPerTexel =
                     2.0f * spotView.Far * std::tan(spotView.Fovy * 0.5f) * invResolution;
                 record.Params = vec4(2.0f, spotView.Near, spotView.Far, texelBias(worldPerTexel));
+                result.PunctualFaceMask[slot] = 1u;
             }
             else
             {
                 const PointShadowView pointView =
                     ComputePointShadowView(candidate.WorldPos, light.Range);
+                // A visible pixel samples the face its direction from the light falls in, so a
+                // face whose view misses the camera frustum is never sampled and goes unrendered.
+                u8 faceMask = 0;
+                for (u32 f = 0; f < CubeFaceCount; ++f)
+                {
+                    if (cameraFrustum == nullptr ||
+                        FaceMeetsFrustum(*cameraFrustum, pointView.ViewProj[f], candidate.WorldPos))
+                    {
+                        faceMask = static_cast<u8>(faceMask | (1u << f));
+                    }
+                }
+                if (faceMask == 0)
+                {
+                    continue;
+                }
+                result.PunctualFaceMask[slot] = faceMask;
                 for (u32 f = 0; f < CubeFaceCount; ++f)
                 {
                     record.ViewProj[f] = ComposePunctualTileRemap(pointView.ViewProj[f], slot, f);

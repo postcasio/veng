@@ -6,6 +6,8 @@
 #include <Veng/Renderer/ScenePass.h>
 #include <Veng/Renderer/Types.h>
 
+#include "../DepthInstancing.h"
+
 namespace Veng
 {
     class AssetManager;
@@ -26,9 +28,12 @@ namespace Veng::Renderer
     /// running no material shader, no lighting, and no tonemap — the whole cost saving. It follows
     /// the depth-only rasterization approach of the shadow caster (ShadowScenePass) and shares the
     /// canonical/skinned vertex buffer layouts with it, but is a distinct pipeline: its vertex
-    /// shaders pass a world-space normal varying (skinned meshes skin the normal too), its push
-    /// block carries the camera MVP and a world normal matrix, its fragment writes the normal as one
-    /// MRT, and it culls back faces (CullMode::Back) rather than the shadow caster's front faces.
+    /// shaders pass a world-space normal varying (skinned meshes skin the normal too), its fragment
+    /// writes the normal as one MRT, and it culls back faces (CullMode::Back) rather than the shadow
+    /// caster's front faces. Static meshes draw instanced as the shadow caster's do: the survivors
+    /// sorted by (mesh, submesh), one instanced draw per submesh, each instance's world and normal
+    /// matrices read from its caster record and the camera view-projection pushed once. Skinned
+    /// meshes draw one at a time with their transform in the push block.
     ///
     /// Opaque geometry only, as the shadow caster is — a Translucent submesh writes no depth here.
     class DepthNormalPrepassScenePass final : public ScenePass
@@ -38,10 +43,12 @@ namespace Veng::Renderer
         ///        building the static and skinned pipelines with back-face culling.
         /// @param context   Renderer context for pipeline and bindless access.
         /// @param assets    Asset manager for the core-pack shader loads.
+        /// @param records   The renderer's caster records, read by the static draws.
         /// @param extent    Initial render extent; updated via Resize.
         /// @param normalId  Imported world-normal target the pass writes as its one MRT.
         /// @param depthId   Imported depth attachment the pass writes.
-        DepthNormalPrepassScenePass(Context& context, AssetManager& assets, uvec2 extent,
+        DepthNormalPrepassScenePass(Context& context, AssetManager& assets,
+                                    const CasterRecordRing& records, uvec2 extent,
                                     ResourceId normalId, ResourceId depthId);
         ~DepthNormalPrepassScenePass() override;
 
@@ -60,6 +67,8 @@ namespace Veng::Renderer
 
         /// @brief Renderer context for pipeline and bindless access.
         Context& m_Context;
+        /// @brief The renderer's caster records the static draws place their instances by.
+        const CasterRecordRing& m_Records;
         /// @brief Current render extent.
         uvec2 m_Extent;
         /// @brief Imported world-normal target id (one MRT).
@@ -70,10 +79,14 @@ namespace Veng::Renderer
         bool m_FrustumCull = true;
         /// @brief Frustum-query scratch — candidate indices into SceneView::Visible; reused per frame.
         vector<u32> m_CullScratch;
+        /// @brief The static survivors, as instanced runs.
+        DepthInstanceBatch m_Batch;
+        /// @brief The skinned survivors' candidate ids.
+        vector<u32> m_Skinned;
 
         /// @brief Static (canonical layout) normal-passing pipeline and its layout.
         Ref<GraphicsPipeline> m_Pipeline;
-        /// @brief Layout for m_Pipeline (set 0 reserved, one vertex push range).
+        /// @brief Layout for m_Pipeline (the caster records at set 3, one vertex push range).
         Ref<PipelineLayout> m_Layout;
         /// @brief The static normal-passing vertex shader.
         AssetHandle<Veng::Shader> m_VertexShader;

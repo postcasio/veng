@@ -326,6 +326,14 @@ namespace Veng::Renderer
         /// not the atlas size or topology.
         f32 MinShadowDistance = 0.0f;
 
+        /// @brief Projected size in texels below which a caster is left out of a cascade.
+        ///
+        /// A caster whose world bound spans fewer texels than this in a cascade's tile cannot
+        /// move that cascade's depth meaningfully, so the cascade skips it. The far cascades,
+        /// whose texels are largest, are where it trips. 0 draws every caster. Recompile-safe: it
+        /// changes which casters a cascade draws, not the atlas or the topology.
+        f32 ShadowCasterMinTexels = 1.0f;
+
         /// @brief Whether screen-space reflections run.
         ///
         /// A topology change: it inserts the SSR min-Z reduction, trace, blur, and composite

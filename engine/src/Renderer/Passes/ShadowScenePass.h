@@ -7,6 +7,8 @@
 #include <Veng/Renderer/ShadowCascades.h>
 #include <Veng/Renderer/Types.h>
 
+#include "../DepthInstancing.h"
+
 namespace Veng
 {
     class AssetManager;
@@ -31,6 +33,11 @@ namespace Veng::Renderer
     /// matrix pushed. A tile beyond the frame's cascade or set count keeps the clear and is never
     /// selected.
     ///
+    /// Static casters draw instanced: each tile's survivors are sorted by (mesh, submesh) and drawn
+    /// one instanced draw per submesh, each instance placed by its caster record. A caster whose
+    /// bound spans fewer than ShadowCasterMinTexels texels in a tile is skipped there. Skinned
+    /// casters draw one at a time, posed through the skinning palette.
+    ///
     /// The atlas is off bindless: it is a closed producer→consumer resource delivered to the lighting
     /// pass through a dedicated descriptor set (set 1). GetShadowView exposes the Ref<ImageView>
     /// for that handoff. The graph derives the write→sample barrier from the lighting pass's
@@ -41,7 +48,13 @@ namespace Veng::Renderer
     public:
         /// @brief Constructs the pass, loading the depth-only vertex shader, building the pipeline,
         ///        and allocating the atlas at the given resolution × cascade-count grid.
-        ShadowScenePass(Context& context, AssetManager& assets, u32 resolution, u32 cascadeCount);
+        /// @param context      Renderer context.
+        /// @param assets       Asset manager for the core-pack shader loads.
+        /// @param records      The renderer's caster records, read by the static caster draws.
+        /// @param resolution   Per-cascade tile edge length in texels.
+        /// @param cascadeCount Cascades per set the atlas is sized for.
+        ShadowScenePass(Context& context, AssetManager& assets, const CasterRecordRing& records,
+                        u32 resolution, u32 cascadeCount);
         ~ShadowScenePass() override;
 
         /// @brief The atlas view, written into the shadow descriptor set (set 1 binding 0).
@@ -65,7 +78,7 @@ namespace Veng::Renderer
             return {m_Grid.Columns * m_Resolution, m_Grid.TotalRows() * m_Resolution};
         }
 
-        /// @brief Reallocates the atlas when the resolution or cascade count in the settings changed.
+        /// @brief Reads the frustum-cull toggle and the caster size threshold from the settings.
         void Configure(const SceneRendererSettings& settings) override;
 
         /// @brief Contributes the cascaded depth pass into the graph, writing the atlas.
@@ -76,18 +89,31 @@ namespace Veng::Renderer
         void CreateAtlas();
 
         /// @brief Loads the skinned depth shader and builds the skinned caster pipeline.
-        void BuildSkinnedPipeline(AssetManager& assets, bool hasStaticLayout);
+        void BuildSkinnedPipeline(AssetManager& assets);
+
+        /// @brief Culls and sorts every tile's casters into the instance batch and the skinned list.
+        void BuildTiles(const SceneView& view, u32 tileCount, u32 cascadeCount);
 
         Context& m_Context;
+        /// @brief The renderer's caster records the static draws place their instances by.
+        const CasterRecordRing& m_Records;
         u32 m_Resolution;
         u32 m_CascadeCount;
         /// @brief The atlas tile grid: one set's columns/rows plus the stacked set count.
         ShadowAtlasGrid m_Grid;
         bool m_FrustumCull = true;
+        /// @brief A caster spanning fewer texels than this in a tile is skipped there.
+        f32 m_MinCasterTexels = 1.0f;
         /// @brief Frustum-query scratch — candidate indices into SceneView::Visible.
         ///
         /// Cleared and refilled per cascade; reused across frames to avoid per-frame allocation.
         vector<u32> m_CullScratch;
+        /// @brief Every tile's static casters, as instanced runs.
+        DepthInstanceBatch m_Batch;
+        /// @brief Every tile's skinned caster candidate ids, tile after tile.
+        vector<u32> m_Skinned;
+        /// @brief Per tile, the end of its range in m_Skinned.
+        vector<u32> m_SkinnedTileEnds;
 
         Ref<Image> m_ShadowImage;
         Ref<ImageView> m_ShadowView;
@@ -97,7 +123,7 @@ namespace Veng::Renderer
         AssetHandle<Veng::Shader> m_VertexShader;
 
         // The skinned caster path: a parallel depth pipeline driven by the skinned vertex stage,
-        // with the per-instance palette bound at set 1 and PaletteBase in the push block.
+        // with the per-instance palette bound at set 3 and PaletteBase in the push block.
         Ref<GraphicsPipeline> m_SkinnedPipeline;
         Ref<PipelineLayout> m_SkinnedLayout;
         Ref<DescriptorSetLayout> m_PaletteSetLayout;

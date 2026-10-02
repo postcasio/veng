@@ -488,6 +488,26 @@ beside `ShadowCascades.h`. Each shadow view culls its casters through `SceneBroa
 against **its own** frustum — the camera frustum for the g-buffer, each cascade's light frustum,
 each spot's frustum, each cube face's frustum.
 
+**A shadow view draws only what it can show.** `PackSceneLights` takes the camera frustum: a
+punctual light whose range sphere misses it takes no slot (it lights no visible pixel), and a point
+light's cube face whose frustum misses it is left out of `PunctualFaceMask` (a visible pixel samples
+the face its direction from the light falls in, so that face is never sampled) — its tile keeps the
+clear. A frame where no light took a cascade set renders no cascade tile. Within a cascade, a caster
+whose world bound spans fewer than `ShadowCasterMinTexels` texels is skipped; the far cascades are
+where that trips. `FrustumCull` off renders every slot, face and caster. `GetLastShadowViewCount()`
+reports the views rendered (the `Render/ShadowViews` counter).
+
+**Depth passes draw instanced.** `PrepareDraws` writes every visible mesh's world and normal matrices
+once per frame into a `CasterRecordRing` (`DepthInstancing.h`), record *i* belonging to
+`SceneView::Visible[i]`. Each depth pass — the cascade pass, the punctual pass and the depth+normal
+prepass — feeds each view's static survivors to a `DepthInstanceBatch`, which orders them with
+`SortDrawKeys` (no pipeline in the key), appends each draw's record index to a per-frame instance-id
+buffer so a submesh's instances are contiguous, and cuts them with `GroupContiguousSlots`; the pass
+then records one `RecordInstanceRuns` draw per submesh per view. The ids ride per-instance vertex
+binding 1 as `a_CandidateId` (`Veng/depth_caster.slang` reads the record at set 3), and the view's
+view-projection rides the push block, so it changes per view, not per draw. Skinned casters keep one
+draw each, posed through `SkinnedPaletteBases`.
+
 **Both arms are opt-out per light, through `Light::CastsShadows`.** It defaults true, so a light
 shadows unless it says otherwise; cleared, the light scores zero and is passed over for every arm.
 The reason it exists is that the slots are scarce: only `MaxShadowedPunctual` lights get one and

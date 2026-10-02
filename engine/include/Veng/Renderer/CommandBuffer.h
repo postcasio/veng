@@ -146,6 +146,12 @@ namespace Veng::Renderer
         /// @brief Binds a raw buffer as the vertex buffer.
         void BindVertexBuffer(const Ref<Buffer>& buffer);
 
+        /// @brief Binds a raw buffer as the per-instance vertex buffer (binding 1).
+        ///
+        /// The binding a pipeline built with GraphicsPipelineInfo::InstanceCandidateId reads one
+        /// uint per instance from, at the draw's firstInstance + instance.
+        void BindInstanceBuffer(const Ref<Buffer>& buffer);
+
         /// @brief Binds a raw buffer as the index buffer.
         /// @param buffer The index buffer.
         /// @param type   Index element type (default U32).

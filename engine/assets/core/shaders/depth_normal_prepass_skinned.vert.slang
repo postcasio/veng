@@ -23,8 +23,8 @@ struct VSOutput
     float3 v_WorldNormal : TEXCOORD0;
 };
 
-// The world normal matrix is carried as three column vectors (see depth_normal_prepass.vert); with
-// the added PaletteBase this keeps the push block within the 128-byte range.
+// The world normal matrix is carried as three column vectors rather than a float4x4: with the
+// added PaletteBase that keeps the push block within the 128-byte range.
 struct DepthNormalSkinnedPushConstants
 {
     float4x4 MVP;         // camera world -> clip
