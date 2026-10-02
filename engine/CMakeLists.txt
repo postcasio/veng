@@ -292,6 +292,7 @@ add_library(veng SHARED
         src/Renderer/Passes/HalfResDepthReduceScenePass.cpp
         src/Renderer/Passes/SceneColorCopyScenePass.cpp
         src/Renderer/Passes/SceneColorDownsampleScenePass.cpp
+        src/Renderer/Passes/SceneColorDownsampleTailScenePass.cpp
         src/Renderer/Passes/DeferredLightingScenePass.cpp
         src/Renderer/Passes/TaaScenePass.cpp
         src/Renderer/Passes/SceneUpscaleScenePass.cpp

@@ -18,6 +18,17 @@ namespace Veng::Renderer::Backend
                          const u32 baseLayer, const u32 layerCount, const u32 baseMip,
                          const u32 mipCount)
     {
+        BarrierBatch batch;
+        batch.AddImage(cmd, image, newLayout, dstStage, dstAccess, baseLayer, layerCount, baseMip,
+                       mipCount);
+        batch.Record(cmd);
+    }
+
+    void BarrierBatch::AddImage(CommandBuffer& cmd, Image& image, const vk::ImageLayout newLayout,
+                                const vk::PipelineStageFlags dstStage,
+                                const vk::AccessFlags dstAccess, const u32 baseLayer,
+                                const u32 layerCount, const u32 baseMip, const u32 mipCount)
+    {
         auto& native = image.GetNative();
 
         // The base subresource stands in for the whole declared range; views the
@@ -60,7 +71,24 @@ namespace Veng::Renderer::Backend
 
         if (decision.NeedsBarrier)
         {
-            const vk::ImageMemoryBarrier barrier{
+            // A pending barrier on an overlapping range of this image must be recorded first, or
+            // one command would carry two transitions of the same subresource in no defined order.
+            for (const vk::ImageMemoryBarrier& pending : m_Images)
+            {
+                const vk::ImageSubresourceRange& range = pending.subresourceRange;
+                const bool overlaps = pending.image == native.Image &&
+                                      baseMip < range.baseMipLevel + range.levelCount &&
+                                      range.baseMipLevel < baseMip + mipCount &&
+                                      baseLayer < range.baseArrayLayer + range.layerCount &&
+                                      range.baseArrayLayer < baseLayer + layerCount;
+                if (overlaps)
+                {
+                    Record(cmd);
+                    break;
+                }
+            }
+
+            m_Images.push_back(vk::ImageMemoryBarrier{
                 .srcAccessMask = decision.Src.Access,
                 .dstAccessMask = decision.Dst.Access,
                 .oldLayout = decision.Src.Layout,
@@ -76,11 +104,9 @@ namespace Veng::Renderer::Backend
                         .baseArrayLayer = baseLayer,
                         .layerCount = layerCount,
                     },
-            };
-
-            cmd.GetNative().CommandBuffer.pipelineBarrier(decision.Src.Stage, decision.Dst.Stage,
-                                                          vk::DependencyFlags{}, 0, nullptr, 0,
-                                                          nullptr, 1, &barrier);
+            });
+            m_SrcStages |= decision.Src.Stage;
+            m_DstStages |= decision.Dst.Stage;
         }
 
         // Update tracked state across the range: a barrier resets it to the desired
@@ -103,6 +129,40 @@ namespace Veng::Renderer::Backend
         }
     }
 
+    void BarrierBatch::AddBuffer(Buffer& buffer, const vk::PipelineStageFlags srcStage,
+                                 const vk::AccessFlags srcAccess,
+                                 const vk::PipelineStageFlags dstStage,
+                                 const vk::AccessFlags dstAccess)
+    {
+        m_Buffers.push_back(vk::BufferMemoryBarrier{
+            .srcAccessMask = srcAccess,
+            .dstAccessMask = dstAccess,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .buffer = GetVkBuffer(buffer),
+            .offset = 0,
+            .size = VK_WHOLE_SIZE,
+        });
+        m_SrcStages |= srcStage;
+        m_DstStages |= dstStage;
+    }
+
+    void BarrierBatch::Record(CommandBuffer& cmd)
+    {
+        if (m_Images.empty() && m_Buffers.empty())
+        {
+            return;
+        }
+        cmd.GetNative().CommandBuffer.pipelineBarrier(
+            m_SrcStages, m_DstStages, vk::DependencyFlags{}, 0, nullptr,
+            static_cast<u32>(m_Buffers.size()), m_Buffers.data(), static_cast<u32>(m_Images.size()),
+            m_Images.data());
+        m_Images.clear();
+        m_Buffers.clear();
+        m_SrcStages = {};
+        m_DstStages = {};
+    }
+
     void TransitionImage(CommandBuffer& cmd, Image& image, const ImageLayout newLayout,
                          const u32 baseLayer, const u32 layerCount, const u32 baseMip,
                          const u32 mipCount)
@@ -116,18 +176,9 @@ namespace Veng::Renderer::Backend
                           const vk::AccessFlags srcAccess, const vk::PipelineStageFlags dstStage,
                           const vk::AccessFlags dstAccess)
     {
-        const vk::BufferMemoryBarrier barrier{
-            .srcAccessMask = srcAccess,
-            .dstAccessMask = dstAccess,
-            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .buffer = GetVkBuffer(buffer),
-            .offset = 0,
-            .size = VK_WHOLE_SIZE,
-        };
-
-        cmd.GetNative().CommandBuffer.pipelineBarrier(srcStage, dstStage, vk::DependencyFlags{}, 0,
-                                                      nullptr, 1, &barrier, 0, nullptr);
+        BarrierBatch batch;
+        batch.AddBuffer(buffer, srcStage, srcAccess, dstStage, dstAccess);
+        batch.Record(cmd);
     }
 
     void MarkProducedOn(Image& image, const u32 producingFamily, const u64 transferValue)

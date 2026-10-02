@@ -1073,6 +1073,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/hi_z_history.cpp
             tests/unit/frame_topology.cpp
             tests/unit/bloom_mips.cpp
+            tests/unit/mip_tail.cpp
             tests/unit/render_layer.cpp
             tests/unit/post_process_effect.cpp
             tests/unit/surface_claim.cpp
@@ -1819,6 +1820,7 @@ if (VENG_BUILD_TESTS)
             tests/gpu/dynamic_mesh.cpp
             tests/gpu/async_build.cpp
             tests/gpu/transient_aliasing.cpp
+            tests/gpu/render_graph_skip.cpp
             tests/gpu/indirect_draw.cpp
             tests/gpu/adopt.cpp
             tests/gpu/create_async.cpp

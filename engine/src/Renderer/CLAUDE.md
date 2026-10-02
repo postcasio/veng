@@ -38,6 +38,20 @@ changed); per-frame data never recompiles. See `BuildCompositeGraph` (compile) a
 `CompositeToSwapChain` (replay) in the hello-triangle `main.cpp` for the pattern — a member
 compiled graph held across frames, imports bound per frame, re-compiled on resize.
 
+**A pass's transitions record as one barrier command**, however many resources it declares
+(`Backend::BarrierBatch`): each is still decided against the image's live tracked state; only the
+recording is batched, into one command whose stage masks are the union of its barriers'.
+
+**A pass with nothing to record some frames says so instead of rendering empty** —
+`PassBuilder::SkipWhen(predicate)`, evaluated each `Execute`. A skipped frame records no render
+pass, callback or GPU scope; its image transitions fall to the next pass using each resource
+(decided against live state, so nothing is lost), and its baked buffer barriers still record. A
+skippable pass must load and store every attachment it declares (asserted at `Compile`), since a
+skipped clear or discard would change what the next pass reads. The debug-draw pass with nothing
+queued, and the sprite, ribbon and half-resolution composite passes idling inside their
+deactivation windows, are the users: on a tile-based GPU an empty render pass still loads and stores
+its targets.
+
 ## SceneRenderer: the deferred über-pipeline
 
 `SceneRenderer` is a long-lived, configurable render pipeline on top of `RenderGraph`: it owns an
@@ -663,9 +677,11 @@ resolution and any render scale. Frosted glass, ground glass, a backdrop blur be
   roughly an 8-pixel edge, which at 1080p is a very wide blur and is still not a global one.
 - **Graph resources, not a manual barrier sweep.** Each level is its own `Import`, written by its own
   fullscreen halving pass and sampled by the next, so the transitions between them are the graph's.
-  Level 0 *is* the grab, so it is that id rather than a second import of it. Bloom's chain is compute
-  with hand-placed barriers because it also *writes* storage images; this one only ever renders into
-  an attachment and reads the level above, which the graph already orders.
+  Level 0 *is* the grab, so it is that id rather than a second import of it. **The coarse tail is
+  one compute dispatch** (`SceneColorDownsampleTailScenePass`, `scene_color_downsample_tail.comp`):
+  the smallest levels that fit one workgroup's shared memory (`MipTailFirstLevel`) are halved in
+  order by a single workgroup, each exactly as the per-level pass would — clear outside the sub-rect
+  included — so the image carries `Storage` usage whenever the chain has such a tail.
 - **Every level renders the sub-rect its parent occupied, halved**, and clamps its reads inside the
   parent's valid region — the copy's dynamic-resolution discipline applied at every level, so the
   cleared area outside the sub-rect never works its way inward. The valid fraction is therefore the
@@ -704,8 +720,9 @@ allocates the targets and rebuilds the pass set) and drops it only after the gat
 empty for `HalfResTranslucentIdleFrameLimit` consecutive Executes — deactivation hysteresis,
 because a capture probe renders one cube face per frame and a scene whose opted-in material sits
 in some faces and not others would otherwise recompile the graph every frame. An idle wired
-layer's passes skip their draws on an empty plan, so the window costs only the targets' memory.
-A renderer that never sees an opted-in material carries no targets and no passes. `HalfResTranslucency`
+layer draws nothing on an empty plan: the composite skips its frame (`SkipWhen`), while the depth
+reduce and the layer pass clear their targets and so still run. A renderer that never sees an opted-in material carries no
+targets and no passes. `HalfResTranslucency`
 (`src/Renderer/HalfResTranslucency.h`) owns the vertical slice; `HalfResExtent` is the one
 rounding rule every consumer derives the half extent through.
 
@@ -892,7 +909,12 @@ full-resolution intermediate holds the sum, and with bloom inactive the intensit
 the add is skipped. The whole sweep is **compute**: per-level dispatches with a barrier between
 levels, mirroring the hi-Z reduction's mip-chain shape (one image with N mip levels, one single-mip
 view per level serving as storage destination and sampled source, a clamp-to-edge linear sampler for
-the bilinear taps, per-level descriptor sets, all off bindless). **The pyramid exists only while
+the bilinear taps, per-level descriptor sets, all off bindless). **The coarse tail is one dispatch**
+(`bloom_tail.comp`): the smallest levels — the longest suffix, never level 0, that fits one
+workgroup's shared memory (`MipTailFirstLevel`, `MipTail.h`) — are down-swept and then up-swept by
+a single workgroup that synchronizes between levels instead of dispatching per level, each level
+held at the precision its RGBA16F mip stores and filtered by the same kernels with the bilinear taps
+evaluated by hand, so the result matches the per-level sweep to within a unit in the last place. **The pyramid exists only while
 bloom is active** (`ResolveBloomActive` — the setting on the Final path, or `DebugView::Bloom`): a
 renderer with bloom off allocates no chain, and a reconfigure at an unchanged extent keeps it.
 The filter kernel is a `BloomKernel { Cod, Kawase }` topology knob — the COD/Jimenez 13-tap-down /
@@ -1182,7 +1204,12 @@ hi-Z pyramid is a **min-Z mip chain** (the farthest depth per texel under the en
 reduced from the depth target by compute into a
 renderer-owned, cross-frame-persisted resource (temporal hi-Z: the test reads last frame's chain,
 so a history-invalid frame — frame 0, the frame after a `Resize`/`Configure`, or a large view
-delta — is frustum-only, never a stale false-cull). `SceneRendererSettings::Occlusion` gates the
+delta — is frustum-only, never a stale false-cull). Its coarse tail — the smallest levels that fit
+one workgroup's shared memory (`MipTailFirstLevel`) — is reduced by one dispatch
+(`hi_z_reduce_tail.comp`), bit-identical to the per-level reduction. **The reduction runs only while
+the test reads it** — under `CullMode::GPU` with `Occlusion` on (`GpuCullSystem::IsHiZReduced`); any other setting
+declares none of its per-mip passes, and the frame that starts reducing again counts as
+history-invalid, since the pyramid went stale meanwhile. `SceneRendererSettings::Occlusion` gates the
 occlusion test within the GPU path; with it off the GPU path issues every camera-frustum survivor.
 The submission shape is the **`drawIndirectCount`-free** form MoltenVK supports
 (`multiDrawIndirect` + `drawIndirectFirstInstance`, the candidate id carried in each command's
@@ -1989,7 +2016,14 @@ The round trip in both directions, and where each half runs:
   and has its worker read the levels it wants straight into that buffer). The next pump after that copies the buffer into the
   targets ahead of the tick loop, marks the job resident, and fires its completion. A restored
   job's texels are therefore sampleable by the same frame's passes, exactly as one whose last tick
-  ran that pump, and `TicksLastPump` never counts a restore.
+  ran that pump, and `TicksLastPump` never counts a restore. **A restore spends the budget**: it is
+  charged one tick of its job's cost, in the order ticks are selected and under the same
+  first-one-always rule, and the tick loop spends what the restores left. So a world's worth of
+  cache hits staged together lands over as many frames as its ticks would have spread over, never
+  as one frame of copies; a restore past the budget stays staged, its job still held. Inside the
+  pump's `Generated Textures` GPU scope, the restores record under `Generated Texture Restores` and
+  each tick under its request's `Name`, and the pump samples the `GeneratedTextures/Ticks` and
+  `GeneratedTextures/Restores` counters, so a capture says which job a frame's generation went to.
 - **The store.** A cached job that completes the ordinary way is read back into **one** host-mapped
   buffer — one `CopyImageToBuffer` per target, one region per mip covering every layer, at the
   offset that target's levels occupy — recorded into the same pump's command buffer and readable

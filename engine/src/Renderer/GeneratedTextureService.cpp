@@ -5,6 +5,7 @@
 #include <fmt/format.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Log.h>
 #include <Veng/Persistence/DerivedDataCache.h>
 #include <Veng/Renderer/Buffer.h>
@@ -263,6 +264,7 @@ namespace Veng::Renderer
 
         auto job = CreateUnique<Job>();
         job->Key = request.Key;
+        job->Name = request.Name;
         job->Serial = m_NextSerial++;
         job->OnTick = std::move(request.OnTick);
         job->OnComplete = std::move(request.OnComplete);
@@ -632,15 +634,50 @@ namespace Veng::Renderer
         job->Restore->Staged = true;
     }
 
-    void GeneratedTextureService::ApplyRestores(CommandBuffer& cmd,
-                                                vector<GeneratedTextureKey>& restored)
+    u64 GeneratedTextureService::ApplyRestores(CommandBuffer& cmd, const u32 budget,
+                                               vector<GeneratedTextureKey>& restored)
     {
+        // A restore is a copy of the whole result, so a burst of cache hits landing together — a
+        // world's worth of bakes probed on its arrival — would otherwise put every one of them into
+        // a single frame. Each is charged as one tick of its job, in the order ticks are selected.
+        vector<std::pair<const GeneratedTextureJobRecord*, Job*>> staged;
         for (const Unique<Job>& job : m_Jobs)
         {
-            if (!job->Restore.has_value() || !job->Restore->Staged)
+            if (job->Restore.has_value() && job->Restore->Staged)
             {
-                continue;
+                const GeneratedTextureJobRecord* record = m_Queue->Find(job->Key);
+                VE_ASSERT(record != nullptr, "generated-texture job {} has no queue record",
+                          job->Key);
+                staged.emplace_back(record, job.get());
             }
+        }
+        std::ranges::sort(staged,
+                          [](const auto& a, const auto& b)
+                          {
+                              if (a.first->Priority != b.first->Priority)
+                              {
+                                  return a.first->Priority > b.first->Priority;
+                              }
+                              return a.first->Sequence < b.first->Sequence;
+                          });
+
+        if (staged.empty())
+        {
+            return 0;
+        }
+        m_Context.BeginGpuScope(cmd, "Generated Texture Restores");
+        u64 spent = 0;
+        u32 applied = 0;
+        for (const auto& [record, job] : staged)
+        {
+            const u64 cost = record->Cost;
+            const bool untouched = spent == 0 && budget > 0;
+            if (!untouched && spent + cost > budget)
+            {
+                break;
+            }
+            spent += cost;
+
             for (usize i = 0; i < job->Targets.size(); i++)
             {
                 const GeneratedTexture& target = *job->Targets[i];
@@ -659,7 +696,11 @@ namespace Veng::Renderer
             m_CompletedTotal++;
             m_RestoredTotal++;
             restored.push_back(job->Key);
+            applied++;
         }
+        m_Context.EndGpuScope(cmd);
+        VE_PROFILE_COUNTER("GeneratedTextures/Restores", static_cast<f64>(applied));
+        return spent;
     }
 
     void GeneratedTextureService::SubmitStore(CommandBuffer& cmd, const Job& job)
@@ -909,8 +950,9 @@ namespace Veng::Renderer
         vector<GeneratedTextureKey> completed;
 
         // A restored job's texels land ahead of the tick loop, so its targets are sampleable by the
-        // same frame's passes, exactly as a job whose last tick ran this pump.
-        ApplyRestores(cmd, completed);
+        // same frame's passes, exactly as a job whose last tick ran this pump. Restores and ticks
+        // share the one budget.
+        const u64 restoreCost = ApplyRestores(cmd, budget, completed);
 
         m_TicksLastPump = m_Queue->Spend(
             budget,
@@ -934,9 +976,13 @@ namespace Veng::Renderer
                     .TickCount = tickCount,
                     .Targets = job->Targets,
                 };
+                // Each tick is scoped by its job, so a capture names which job a frame's
+                // generation time went to.
+                m_Context.BeginGpuScope(cmd, job->Name);
                 m_InTick = true;
                 job->OnTick(cmd, context);
                 m_InTick = false;
+                m_Context.EndGpuScope(cmd);
             },
             [&](const GeneratedTextureKey key)
             {
@@ -948,7 +994,9 @@ namespace Veng::Renderer
                 }
                 m_CompletedTotal++;
                 completed.push_back(key);
-            });
+            },
+            restoreCost);
+        VE_PROFILE_COUNTER("GeneratedTextures/Ticks", static_cast<f64>(m_TicksLastPump));
 
         // Completions run outside the tick loop so one may request or cancel a job — the prefetch
         // ladder's next rung — without mutating the set the loop is selecting from.

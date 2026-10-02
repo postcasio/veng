@@ -107,10 +107,22 @@ namespace Veng::Renderer
         /// @brief Declares the max-Z reduction compute chain into the graph after the tail passes.
         ///
         /// One dispatch per mip: mip 0 reads @p depthId, mip n>0 reads pyramid mip n-1, each writing
-        /// its hi-Z mip. Declared last so it reduces this frame's completed depth.
+        /// its hi-Z mip — except the coarse tail (MipTailFirstLevel), which one dispatch reduces in a
+        /// single workgroup. Declared last so it reduces this frame's completed depth. Declares nothing
+        /// unless the GPU occlusion test reads the pyramid (IsHiZReduced); the Rebuild that starts
+        /// reducing again marks the history invalid, since the pyramid then holds stale depth.
         /// @param graph   The renderer's internal graph being rebuilt.
         /// @param depthId The depth import the mip-0 reduction reads.
         void DeclareHiZReduction(RenderGraph& graph, ResourceId depthId);
+
+        /// @brief Whether the reduction is declared: the GPU cull is active with the occlusion test on.
+        ///
+        /// Nothing else reads the pyramid, so under CullMode::CPU or with Settings.Occlusion off the
+        /// chain is not run at all.
+        [[nodiscard]] bool IsHiZReduced() const
+        {
+            return m_ActiveCull == SceneRendererSettings::CullMode::GPU && m_OcclusionEnabled;
+        }
 
         /// @brief Returns the mapped candidate span for @p frameIndex's ring region, or null under CPU.
         ///
@@ -210,6 +222,10 @@ namespace Veng::Renderer
         SceneRendererSettings::CullMode m_ActiveCull = SceneRendererSettings::CullMode::CPU;
         /// @brief Set once the GPU-unsupported fallback has logged, so the WARN fires only once.
         bool m_GpuCullWarned = false;
+        /// @brief Settings.Occlusion as last resolved; with it off nothing tests against the pyramid.
+        bool m_OcclusionEnabled = true;
+        /// @brief Whether the last Rebuild declared the reduction, to detect it starting again.
+        bool m_HiZReductionDeclared = false;
 
         /// @brief The pyramid extent (set by ResizeHiZ); drives the reduction dispatch sizing.
         uvec2 m_Extent{1};
@@ -231,6 +247,16 @@ namespace Veng::Renderer
         TextureHandle m_HiZSampleHandle;
         /// @brief One reduction descriptor set per destination mip, written on ResizeHiZ.
         vector<Ref<DescriptorSet>> m_HiZReduceSets;
+        /// @brief The coarse-tail reduction pipeline: the smallest levels in one workgroup.
+        Ref<ComputePipeline> m_HiZTailPipeline;
+        /// @brief Layout for the tail pipeline: the tail set + its push block.
+        Ref<PipelineLayout> m_HiZTailLayout;
+        /// @brief Tail set layout: the source level sampled (0), a storage view per tail slot (1 on).
+        Ref<DescriptorSetLayout> m_HiZTailSetLayout;
+        /// @brief The tail's set for the current pyramid, or null when the pyramid has no tail.
+        Ref<DescriptorSet> m_HiZTailSet;
+        /// @brief The tail's first level (MipTailFirstLevel), meaningful while m_HiZTailSet is set.
+        u32 m_HiZTailFirst = 0;
         /// @brief The hi-Z pyramid mip chain import id.
         MipChainId m_HiZChainId;
 

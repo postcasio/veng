@@ -7,6 +7,8 @@
 #include <Veng/Renderer/Backend/Vulkan.h>
 #include <Veng/Renderer/Types.h>
 
+#include <vector>
+
 namespace Veng::Renderer
 {
     class CommandBuffer;
@@ -33,6 +35,63 @@ namespace Veng::Renderer::Backend
     void TransitionImage(CommandBuffer& cmd, Image& image, vk::ImageLayout newLayout,
                          vk::PipelineStageFlags dstStage, vk::AccessFlags dstAccess, u32 baseLayer,
                          u32 layerCount, u32 baseMip, u32 mipCount);
+
+    /// @brief Collects a run of image and buffer barriers and records them as one
+    /// vkCmdPipelineBarrier.
+    ///
+    /// The render graph replays a pass's transitions through one batch, so a pass costs one
+    /// barrier command however many resources it transitions. Each add decides its barrier
+    /// against the image's tracked state and updates that state immediately, exactly as
+    /// TransitionImage does, so a later add sees the earlier one. The recorded command's stage
+    /// masks are the union of every barrier's, which orders each barrier at least as strongly as
+    /// its own scopes would. An add whose subresource range overlaps a barrier still pending on the
+    /// same image records the pending batch first, so two transitions of one subresource keep their
+    /// order.
+    class BarrierBatch
+    {
+    public:
+        /// @brief Adds the transition of an image subresource range to a declared use.
+        ///
+        /// Same decision and tracked-state update as the explicit TransitionImage overload; a
+        /// read-after-read that needs no barrier adds nothing.
+        /// @param cmd        Command buffer a forced early flush is recorded into.
+        /// @param image      The image to transition.
+        /// @param newLayout  The destination layout.
+        /// @param dstStage   The destination stage(s) of the declared use.
+        /// @param dstAccess  The destination access of the declared use.
+        /// @param baseLayer  First array layer of the range.
+        /// @param layerCount Number of array layers in the range.
+        /// @param baseMip    First mip level of the range.
+        /// @param mipCount   Number of mip levels in the range.
+        void AddImage(CommandBuffer& cmd, Image& image, vk::ImageLayout newLayout,
+                      vk::PipelineStageFlags dstStage, vk::AccessFlags dstAccess, u32 baseLayer,
+                      u32 layerCount, u32 baseMip, u32 mipCount);
+
+        /// @brief Adds a whole-buffer memory barrier between two stage/access scopes.
+        /// @param buffer    The buffer to barrier.
+        /// @param srcStage  Pipeline stage(s) of the producing access.
+        /// @param srcAccess Access flags of the producing access.
+        /// @param dstStage  Pipeline stage(s) of the consuming access.
+        /// @param dstAccess Access flags of the consuming access.
+        void AddBuffer(Buffer& buffer, vk::PipelineStageFlags srcStage, vk::AccessFlags srcAccess,
+                       vk::PipelineStageFlags dstStage, vk::AccessFlags dstAccess);
+
+        /// @brief Records every pending barrier as one command and empties the batch.
+        ///
+        /// Records nothing when no add needed a barrier.
+        /// @param cmd Command buffer the barrier is recorded into.
+        void Record(CommandBuffer& cmd);
+
+    private:
+        /// @brief Pending image barriers, in add order.
+        std::vector<vk::ImageMemoryBarrier> m_Images;
+        /// @brief Pending buffer barriers, in add order.
+        std::vector<vk::BufferMemoryBarrier> m_Buffers;
+        /// @brief Union of the pending barriers' source stages.
+        vk::PipelineStageFlags m_SrcStages;
+        /// @brief Union of the pending barriers' destination stages.
+        vk::PipelineStageFlags m_DstStages;
+    };
 
     /// @brief Marks every subresource of an image as produced on @p producingFamily,
     /// carrying the transfer-timeline value its copy signalled.

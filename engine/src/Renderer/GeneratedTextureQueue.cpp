@@ -121,12 +121,12 @@ namespace Veng::Renderer
     }
 
     u32 GeneratedTextureQueue::Spend(const u32 budget, const function<void(u64, u32, u32)>& tick,
-                                     const function<void(u64)>& complete)
+                                     const function<void(u64)>& complete, const u64 spent)
     {
         u32 ticks = 0;
         // u64 so an UnlimitedCost budget (~0u) never overflows the running sum, however many cheap
         // ticks a pump runs.
-        u64 spentCost = 0;
+        u64 spentCost = spent;
         while (true)
         {
             const optional<u64> key = NextKey();
@@ -144,7 +144,7 @@ namespace Veng::Renderer
             // tick dearer than the whole budget still advances one-a-frame rather than stalling;
             // after that, and always for a zero budget, a tick runs only while its cost fits.
             const u64 cost = record->Cost;
-            const bool untouched = ticks == 0 && budget > 0;
+            const bool untouched = ticks == 0 && spent == 0 && budget > 0;
             if (!untouched && spentCost + cost > budget)
             {
                 break;

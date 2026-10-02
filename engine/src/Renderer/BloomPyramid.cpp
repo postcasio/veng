@@ -22,6 +22,7 @@
 
 #include "AutoExposureMeter.h"
 #include "BloomMips.h"
+#include "MipTail.h"
 
 namespace Veng::Renderer
 {
@@ -33,6 +34,14 @@ namespace Veng::Renderer
         constexpr AssetId BloomUpCompId{0x4F28282A720BC9F2ULL};
         constexpr AssetId BloomDownKawaseCompId{0xCB1AA796A1E3BBEFULL};
         constexpr AssetId BloomUpKawaseCompId{0x0C269FA0D5F353D2ULL};
+        constexpr AssetId BloomTailCompId{0x797EE8100DA96F4AULL};
+
+        // Texels the tail dispatch's shared memory holds: RGB as halves, eight bytes a texel, within
+        // a 32 KiB workgroup budget. Matches TAIL_CAPACITY in bloom_tail.comp.
+        constexpr u32 BloomTailTexelCapacity = 3584;
+
+        // The tail's first storage binding; one binding per tail slot follows.
+        constexpr u32 BloomTailFirstStorageBinding = 2;
 
         // Linear float HDR format for the bloom pyramid; matches the lighting target format.
         constexpr Format HdrFormat = Format::RGBA16Sfloat;
@@ -65,6 +74,19 @@ namespace Veng::Renderer
             vec2 SourceMaxUV;
             f32 Radius;
         };
+
+        // The coarse-tail push: the pyramid's valid and allocated level-0 extents (every tail
+        // level's map is derived from them), the tail's first level and length, the spread, and the
+        // kernel. Matches bloom_tail.comp.
+        struct BloomTailPush
+        {
+            uvec2 ValidBase;
+            uvec2 AllocBase;
+            u32 FirstLevel;
+            u32 LevelCount;
+            f32 Radius;
+            u32 Kawase;
+        };
     }
 
     Unique<BloomPyramid> BloomPyramid::Create(Context& context, AssetManager& assets,
@@ -95,6 +117,7 @@ namespace Veng::Renderer
             LoadShader(BloomDownKawaseCompId, "bloom downsample (Kawase)");
         const AssetHandle<Veng::Shader> bloomUpKawaseCs =
             LoadShader(BloomUpKawaseCompId, "bloom upsample (Kawase)");
+        const AssetHandle<Veng::Shader> bloomTailCs = LoadShader(BloomTailCompId, "bloom tail");
 
         m_DownUpSetLayout = DescriptorSetLayout::Create(
             m_Context, {
@@ -150,6 +173,42 @@ namespace Veng::Renderer
                            .ShaderStage = {.Stage = ShaderStage::Compute,
                                            .Module = bloomUpKawaseCs.Get()->Module},
                        });
+
+        // The coarse tail: the source level's sampled view and sampler, then one storage binding
+        // per tail slot.
+        vector<DescriptorBinding> tailBindings{
+            {.Binding = 0,
+             .Type = DescriptorType::SampledImage,
+             .Count = 1,
+             .Stages = ShaderStage::Compute},
+            {.Binding = 1,
+             .Type = DescriptorType::Sampler,
+             .Count = 1,
+             .Stages = ShaderStage::Compute},
+        };
+        for (u32 slot = 0; slot < MipTailMaxLevels; slot++)
+        {
+            tailBindings.push_back({.Binding = BloomTailFirstStorageBinding + slot,
+                                    .Type = DescriptorType::StorageImage,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Compute});
+        }
+        m_TailSetLayout = DescriptorSetLayout::Create(
+            m_Context, {.Name = "SceneRenderer Bloom Tail Set Layout", .Bindings = tailBindings});
+        m_TailLayout = PipelineLayout::Create(
+            m_Context,
+            {
+                .Name = "SceneRenderer Bloom Tail Layout",
+                .DescriptorSetLayouts = {m_TailSetLayout},
+                .PushConstantRanges = {PushConstantRange::Of<BloomTailPush>(ShaderStage::Compute)},
+            });
+        m_TailPipeline = ComputePipeline::Create(
+            m_Context,
+            {
+                .Name = "SceneRenderer Bloom Tail Pipeline",
+                .PipelineLayout = m_TailLayout,
+                .ShaderStage = {.Stage = ShaderStage::Compute, .Module = bloomTailCs.Get()->Module},
+            });
     }
 
     BloomPyramid::~BloomPyramid()
@@ -260,6 +319,23 @@ namespace Veng::Renderer
                 m_UpSets.push_back(std::move(set));
             }
         }
+
+        // The coarse tail reads the level before it through the sampler and writes each of its
+        // levels; the slots past its length repeat its last level, bound but never written.
+        m_TailFirst = MipTailFirstLevel(m_Extent, mipCount, 1, BloomTailTexelCapacity);
+        m_TailSet.reset();
+        if (m_TailFirst < mipCount)
+        {
+            m_TailSet = DescriptorSet::Create(
+                m_Context, {.Name = "SceneRenderer Bloom Tail Set", .Layout = m_TailSetLayout});
+            m_TailSet->Write(0, m_Mips[m_TailFirst - 1]);
+            m_TailSet->Write(1, m_Sampler);
+            for (u32 slot = 0; slot < MipTailMaxLevels; slot++)
+            {
+                m_TailSet->Write(BloomTailFirstStorageBinding + slot,
+                                 m_Mips[std::min(m_TailFirst + slot, mipCount - 1)]);
+            }
+        }
     }
 
     void BloomPyramid::Release()
@@ -269,6 +345,8 @@ namespace Veng::Renderer
         m_Mip0Handle = TextureHandle{};
         m_DownSets.clear();
         m_UpSets.clear();
+        m_TailSet.reset();
+        m_TailFirst = 0;
         m_Mips.clear();
         m_Image.reset();
         m_SceneExtent = uvec2(0);
@@ -311,11 +389,15 @@ namespace Veng::Renderer
         // resolved; without it level 0 is the luminance bright-pass alone.
         const bool maskActive = maskId.IsValid() && maskHandle.IsValid() && maskSampler.IsValid();
 
+        // The levels from tailFirst on are computed by one dispatch (DeclareTail); the rest are
+        // a dispatch each.
+        const u32 tailFirst = m_TailSet != nullptr ? m_TailFirst : mipCount;
+
         // Down-sweep: dispatch k samples level k's source (HDR for k=0, mip k-1 otherwise)
         // and writes mip k. Mip 0 fuses the bright-pass + Karis; deeper levels are the plain
         // 13-tap. The per-mip graph surface derives the read-after-write barrier between
         // dispatch k's write and dispatch k+1's read.
-        for (u32 level = 0; level < mipCount; level++)
+        for (u32 level = 0; level < tailFirst; level++)
         {
             RenderGraph::PassBuilder builder =
                 graph.AddComputePass(fmt::format("Bloom Down Mip {}", level));
@@ -388,13 +470,19 @@ namespace Veng::Renderer
                 });
         }
 
+        if (tailFirst < mipCount)
+        {
+            DeclareTail(graph, chainId, tailFirst, mipCount);
+        }
+
         // Up-sweep: from the coarsest finer level down to mip 0, dispatch k samples the
         // coarser mip k+1 (ShaderReadOnly) and read-modify-writes mip k (General) — two
         // subresources of one image in one pass. The pass declares both a Sample on mip k+1
         // and a StorageWrite on mip k; the StorageWrite orders it after the down-sweep that
         // wrote mip k (a General→General write-after-write barrier the graph derives), and a
-        // per-level barrier before the next finer up-step reads mip k.
-        for (u32 level = mipCount - 1; level-- > 0;)
+        // per-level barrier before the next finer up-step reads mip k. The tail's levels are
+        // already final.
+        for (u32 level = std::min(tailFirst, mipCount - 1); level-- > 0;)
         {
             RenderGraph::PassBuilder builder =
                 graph.AddComputePass(fmt::format("Bloom Up Mip {}", level));
@@ -429,5 +517,44 @@ namespace Veng::Renderer
                     cmd.Dispatch((dst.ValidExtent.x + 7) / 8, (dst.ValidExtent.y + 7) / 8, 1);
                 });
         }
+    }
+
+    void BloomPyramid::DeclareTail(RenderGraph& graph, const MipChainId chainId,
+                                   const u32 tailFirst, const u32 mipCount)
+    {
+        RenderGraph::PassBuilder builder =
+            graph.AddComputePass(fmt::format("Bloom Tail Mips {}-{}", tailFirst, mipCount - 1));
+        builder.Sample(chainId.Level(tailFirst - 1));
+        for (u32 level = tailFirst; level < mipCount; level++)
+        {
+            builder.StorageWrite(chainId.Level(level));
+        }
+
+        const Ref<ComputePipeline> pipeline = m_TailPipeline;
+        const Ref<DescriptorSet> set = m_TailSet;
+        const uvec2 allocExtent = m_Extent;
+        const bool kawase = m_Kernel == BloomKernel::Kawase;
+        builder.Execute(
+            [pipeline, set, allocExtent, tailFirst, mipCount, kawase](PassContext& inner)
+            {
+                const auto* view = static_cast<const SceneView*>(inner.UserData());
+                VE_ASSERT(view != nullptr, "Bloom tail pass: null SceneView");
+                CommandBuffer& cmd = inner.Cmd();
+                cmd.BindPipeline(pipeline);
+                cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                    .Sets = {set},
+                    .FirstSet = 3,
+                    .PipelineBindPoint = PipelineBindPoint::Compute,
+                });
+                cmd.PushConstants(BloomTailPush{
+                    .ValidBase = BloomPyramidBase(view->PostResolveExtent),
+                    .AllocBase = allocExtent,
+                    .FirstLevel = tailFirst,
+                    .LevelCount = mipCount - tailFirst,
+                    .Radius = view->BloomRadius,
+                    .Kawase = kawase ? 1u : 0u,
+                });
+                cmd.Dispatch(1, 1, 1);
+            });
     }
 }

@@ -18,7 +18,11 @@ namespace Veng::Renderer
     class Image;
     class ImageView;
     class GraphicsPipeline;
+    class ComputePipeline;
+    class DescriptorSet;
+    class DescriptorSetLayout;
     class PipelineLayout;
+    class Sampler;
     class ScenePass;
     struct SceneRendererSettings;
 
@@ -134,10 +138,23 @@ namespace Veng::Renderer
         /// @brief The chain sampler's shared slot: clamp-to-edge, linear between levels, no LOD
         ///        clamp. Shared, so it is never released.
         SamplerHandle m_SamplerHandle;
+        /// @brief The chain sampler itself, which the coarse-tail set binds.
+        Ref<Sampler> m_Sampler;
         /// @brief The downsample pipeline that halves one level into the next.
         Ref<GraphicsPipeline> m_DownsamplePipeline;
         /// @brief Layout for m_DownsamplePipeline: a texture + sampler + sub-rect push block.
         Ref<PipelineLayout> m_DownsampleLayout;
+        /// @brief The coarse-tail pipeline: the chain's smallest levels halved in one workgroup.
+        Ref<ComputePipeline> m_TailPipeline;
+        /// @brief Layout for m_TailPipeline: the tail set + its push block.
+        Ref<PipelineLayout> m_TailLayout;
+        /// @brief Tail set layout: the level before the tail sampled (0), the chain sampler (1), a
+        ///        storage view per tail slot (2 on).
+        Ref<DescriptorSetLayout> m_TailSetLayout;
+        /// @brief The tail's set for the current chain, or null when the chain has no tail.
+        Ref<DescriptorSet> m_TailSet;
+        /// @brief The tail's first level (MipTailFirstLevel), meaningful while m_TailSet is set.
+        u32 m_TailFirst = 0;
         /// @brief Refraction scene-depth intermediate: the opaque depth copied beside the scene color.
         Ref<Image> m_DepthImage;
         /// @brief View over m_DepthImage.

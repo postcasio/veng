@@ -145,6 +145,12 @@ namespace Veng::Renderer
         return *this;
     }
 
+    RenderGraph::PassBuilder& RenderGraph::PassBuilder::SkipWhen(function<bool()> skip)
+    {
+        m_Pass.Skip = std::move(skip);
+        return *this;
+    }
+
     ResourceId RenderGraph::CreateTransient(const TransientDesc& desc)
     {
         const u32 index = static_cast<u32>(m_Resources.size());
@@ -258,6 +264,7 @@ namespace Veng::Renderer
             vector<Backend::ScheduledBufferBarrier> BufferBarriers;
             vector<Backend::ScheduledAttachment> Attachments; // graphics passes only
             function<void(PassContext&)> Execute;
+            function<bool()> Skip;
         };
 
         // The compiled graph and its transients must not outlive the context.
@@ -420,6 +427,26 @@ namespace Veng::Renderer
         vector<Backend::ScheduledPass> schedule =
             Backend::DeriveRenderGraphSchedule(scheduleResources, schedulePasses);
 
+        // A skipped frame must leave every resource as the pass would have, which a clear or a
+        // discard would not.
+        for (const Unique<Pass>& pass : m_Passes)
+        {
+            if (!pass->Skip)
+            {
+                continue;
+            }
+            for (const Access& access : pass->Accesses)
+            {
+                const bool attachment = access.Kind == AccessKind::ColorAttachment ||
+                                        access.Kind == AccessKind::DepthAttachment;
+                VE_ASSERT(!attachment ||
+                              (access.Load == LoadOp::Load && access.Store == StoreOp::Store),
+                          "RenderGraph::Compile: skippable pass '{}' clears or discards an "
+                          "attachment",
+                          pass->Name);
+            }
+        }
+
         Diagnostics::Profiler* profiler = Diagnostics::GetActiveProfiler();
         for (usize i = 0; i < m_Passes.size(); i++)
         {
@@ -430,6 +457,7 @@ namespace Veng::Renderer
             baked.LayerCount = m_Passes[i]->LayerCount;
             baked.ViewMask = m_Passes[i]->ViewMask;
             baked.Execute = m_Passes[i]->Execute;
+            baked.Skip = m_Passes[i]->Skip;
             baked.Transitions = std::move(schedule[i].Transitions);
             baked.BufferBarriers = std::move(schedule[i].BufferBarriers);
             baked.Attachments = std::move(schedule[i].Attachments);
@@ -504,9 +532,22 @@ namespace Veng::Renderer
                       "CompiledGraph::Execute: import '{}' has no supplied binding", resource.Name);
         }
 
+        Backend::BarrierBatch barriers;
         for (const Native::Pass& pass : native.Passes)
         {
             VE_PROFILE_SCOPE_ID(pass.ProfileName);
+
+            if (pass.Skip && pass.Skip())
+            {
+                for (const Backend::ScheduledBufferBarrier& barrier : pass.BufferBarriers)
+                {
+                    barriers.AddBuffer(*resolvedBuffers[barrier.Slot], barrier.SrcStage,
+                                       barrier.SrcAccess, barrier.DstStage, barrier.DstAccess);
+                }
+                barriers.Record(cmd);
+                continue;
+            }
+
             // Bracket the pass's GPU work — transitions included, so a barrier stall counts
             // against the pass that waited — with a timestamp scope. Inert unless the device
             // supports timestamps; the timestamps sit outside BeginRendering/EndRendering.
@@ -519,19 +560,22 @@ namespace Veng::Renderer
             {
                 const Ref<ImageView>& view = resolved[transition.Slot];
 
-                Backend::TransitionImage(cmd, *view->GetImage(), transition.Dst.Layout,
-                                         transition.Dst.Stage, transition.Dst.Access,
-                                         view->GetBaseArrayLayer(), view->GetArrayLayers(),
-                                         view->GetBaseMipLevel(), view->GetMipLevels());
+                barriers.AddImage(cmd, *view->GetImage(), transition.Dst.Layout,
+                                  transition.Dst.Stage, transition.Dst.Access,
+                                  view->GetBaseArrayLayer(), view->GetArrayLayers(),
+                                  view->GetBaseMipLevel(), view->GetMipLevels());
             }
 
             // 1b. Replay the baked buffer barriers. A buffer carries no tracked state,
             // so both scopes were derived at compile from the producing/consuming passes.
             for (const Backend::ScheduledBufferBarrier& barrier : pass.BufferBarriers)
             {
-                Backend::TransitionBuffer(cmd, *resolvedBuffers[barrier.Slot], barrier.SrcStage,
-                                          barrier.SrcAccess, barrier.DstStage, barrier.DstAccess);
+                barriers.AddBuffer(*resolvedBuffers[barrier.Slot], barrier.SrcStage,
+                                   barrier.SrcAccess, barrier.DstStage, barrier.DstAccess);
             }
+
+            // One barrier command per pass, however many resources it transitions.
+            barriers.Record(cmd);
 
             // 2. Graphics passes begin dynamic rendering from baked attachments;
             // compute/transfer passes run their callback directly.

@@ -308,6 +308,25 @@ TEST_CASE("GeneratedTextureQueue: a tick dearer than the whole budget still runs
     CHECK(third.Log == std::vector<std::string>{"1.2", "1!"});
 }
 
+TEST_CASE("GeneratedTextureQueue: cost already spent this pump counts against the budget")
+{
+    // A pump that spent part of its budget elsewhere (cache restores) is no longer untouched: the
+    // one-tick minimum no longer applies, and the ticks fit what remains.
+    GeneratedTextureQueue queue;
+    queue.Add(1, 4, 0, 2);
+
+    Recorder exhausted;
+    CHECK(queue.Spend(4, exhausted.Tick(), exhausted.Complete(), 4) == 0u);
+    CHECK(exhausted.Log.empty());
+
+    Recorder dear;
+    CHECK(queue.Spend(1, dear.Tick(), dear.Complete(), 1) == 0u);
+
+    Recorder partial;
+    CHECK(queue.Spend(4, partial.Tick(), partial.Complete(), 2) == 1u);
+    CHECK(partial.Log == std::vector<std::string>{"1.0"});
+}
+
 TEST_CASE("GeneratedTextureQueue: cost does not change selection order")
 {
     // Selection is priority then request order; a job's cost feeds the budget alone and never the

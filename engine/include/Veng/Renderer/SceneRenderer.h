@@ -372,8 +372,10 @@ namespace Veng::Renderer
 
         /// @brief Returns the whole-chain sampled view of the hi-Z depth pyramid.
         ///
-        /// The max-Z mip chain reduced from the depth target each Execute. Renderer-owned and
-        /// persisted across frames; invalidated by Resize and Configure. Exposed for tests.
+        /// The max-Z mip chain reduced from the depth target each Execute while the GPU cull's
+        /// occlusion test reads it (CullMode::GPU with Occlusion on); under any other setting it
+        /// is not reduced. Renderer-owned and persisted across frames; invalidated by Resize and
+        /// Configure. Exposed for tests.
         [[nodiscard]] Ref<ImageView> GetHiZView() const;
 
         /// @brief Returns the storage view of hi-Z mip @p level (one mip per view).

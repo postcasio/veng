@@ -19,15 +19,12 @@ namespace Veng::Renderer
             .Sample(m_LayerId)
             .Sample(m_HalfDepthId)
             .Sample(m_DepthId)
+            // An idle wired layer (deactivation hysteresis) drew nothing this frame, so there is
+            // nothing to lay under the full-res translucents.
+            .SkipWhen([this] { return m_Plan->Draws.empty(); })
             .Execute(
                 [this](PassContext& inner)
                 {
-                    // An idle wired layer (deactivation hysteresis) drew nothing this frame, so
-                    // there is nothing to lay under the full-res translucents.
-                    if (m_Plan->Draws.empty())
-                    {
-                        return;
-                    }
                     CommandBuffer& cmd = inner.Cmd();
                     cmd.BindPipeline(m_Pipeline);
                     const uvec2 validExtent = Wrap(inner).View().RenderExtent;

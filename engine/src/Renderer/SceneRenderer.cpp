@@ -1356,9 +1356,8 @@ namespace Veng::Renderer
             pass->Declare(graph, io);
         }
 
-        // The hi-Z reduction runs last so it reduces this frame's completed depth.
-        // Nothing samples the pyramid yet — it is built and persisted for the
-        // next-frame occlusion test — so it changes no rendered pixel.
+        // The hi-Z reduction runs last so it reduces this frame's completed depth, and only where
+        // the next frame's GPU occlusion test reads it; it changes no rendered pixel.
         m_GpuCull->DeclareHiZReduction(graph, m_DepthId);
 
         m_Internal->Graph = graph.Compile();

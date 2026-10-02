@@ -291,15 +291,12 @@ namespace Veng::Renderer
                 .Store = StoreOp::Store,
             })
             .Sample(depthId)
+            // A frame with nothing queued pays no load and store of the output.
+            .SkipWhen([this] { return m_Accumulator == nullptr || m_Accumulator->IsEmpty(); })
             .Execute(
                 [this, depthHandle, samplerHandle](PassContext& inner)
                 {
                     CommandBuffer& cmd = inner.Cmd();
-
-                    if (m_Accumulator == nullptr || m_Accumulator->IsEmpty())
-                    {
-                        return;
-                    }
 
                     const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
                     const u32 lineCount = UploadLines();

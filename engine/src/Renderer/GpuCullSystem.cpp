@@ -2,6 +2,7 @@
 
 #include "DrawPlan.h"
 #include "GpuBlocks.h"
+#include "MipTail.h"
 #include "SceneRendererIds.h"
 
 #include <algorithm>
@@ -32,6 +33,23 @@ namespace Veng::Renderer
     {
         // The hi-Z min-Z reduction compute shader.
         constexpr AssetId HiZReduceCompId{0xCB20C4EF8A20ADBCULL};
+        constexpr AssetId HiZReduceTailCompId{0xB9FFDDCA3144D470ULL};
+
+        // Texels the tail dispatch's shared memory holds: one float each, within a 32 KiB
+        // workgroup budget. Matches TAIL_CAPACITY in hi_z_reduce_tail.comp.
+        constexpr u32 HiZTailTexelCapacity = 7168;
+
+        // The tail's first storage binding; one binding per tail slot follows.
+        constexpr u32 HiZTailFirstStorageBinding = 1;
+
+        // The tail push: the pyramid's level-0 extent, the tail's first level and its length.
+        // Matches hi_z_reduce_tail.comp.
+        struct HiZReduceTailPush
+        {
+            uvec2 Extent;
+            u32 FirstLevel;
+            u32 LevelCount;
+        };
 
         // The GPU occlusion-cull → indirect-draw compute shader.
         constexpr AssetId OcclusionCullCompId{0x5FE19B500FD44B52ULL};
@@ -116,6 +134,39 @@ namespace Veng::Renderer
                 .Name = "SceneRenderer HiZ Reduce Pipeline",
                 .PipelineLayout = m_HiZReduceLayout,
                 .ShaderStage = {.Stage = ShaderStage::Compute, .Module = hiZReduceCs.Get()->Module},
+            });
+
+        // The coarse tail: its source level sampled, then one storage binding per tail slot.
+        const AssetHandle<Veng::Shader> hiZTailCs =
+            LoadShader(HiZReduceTailCompId, "hi-Z reduce tail compute");
+        vector<DescriptorBinding> tailBindings{
+            {.Binding = 0,
+             .Type = DescriptorType::SampledImage,
+             .Count = 1,
+             .Stages = ShaderStage::Compute},
+        };
+        for (u32 slot = 0; slot < MipTailMaxLevels; slot++)
+        {
+            tailBindings.push_back({.Binding = HiZTailFirstStorageBinding + slot,
+                                    .Type = DescriptorType::StorageImage,
+                                    .Count = 1,
+                                    .Stages = ShaderStage::Compute});
+        }
+        m_HiZTailSetLayout = DescriptorSetLayout::Create(
+            m_Context, {.Name = "SceneRenderer HiZ Tail Set Layout", .Bindings = tailBindings});
+        m_HiZTailLayout = PipelineLayout::Create(
+            m_Context, {
+                           .Name = "SceneRenderer HiZ Tail Layout",
+                           .DescriptorSetLayouts = {m_HiZTailSetLayout},
+                           .PushConstantRanges = {PushConstantRange::Of<HiZReduceTailPush>(
+                               ShaderStage::Compute)},
+                       });
+        m_HiZTailPipeline = ComputePipeline::Create(
+            m_Context,
+            {
+                .Name = "SceneRenderer HiZ Tail Pipeline",
+                .PipelineLayout = m_HiZTailLayout,
+                .ShaderStage = {.Stage = ShaderStage::Compute, .Module = hiZTailCs.Get()->Module},
             });
 
         // The GPU cull path's buffers + pipeline build only where the device supports it.
@@ -257,6 +308,23 @@ namespace Veng::Renderer
             m_HiZReduceSets.push_back(std::move(set));
         }
 
+        // The coarse tail reads the level before it (the depth target when the whole pyramid fits)
+        // and writes each of its levels; the slots past its length repeat its last level, bound but
+        // never written.
+        m_HiZTailFirst = MipTailFirstLevel(m_Extent, mipCount, 0, HiZTailTexelCapacity);
+        m_HiZTailSet.reset();
+        if (m_HiZTailFirst < mipCount)
+        {
+            m_HiZTailSet = DescriptorSet::Create(
+                m_Context, {.Name = "SceneRenderer HiZ Tail Set", .Layout = m_HiZTailSetLayout});
+            m_HiZTailSet->Write(0, m_HiZTailFirst == 0 ? depthView : m_HiZMips[m_HiZTailFirst - 1]);
+            for (u32 slot = 0; slot < MipTailMaxLevels; slot++)
+            {
+                m_HiZTailSet->Write(HiZTailFirstStorageBinding + slot,
+                                    m_HiZMips[std::min(m_HiZTailFirst + slot, mipCount - 1)]);
+            }
+        }
+
         // The freshly created pyramid carries no last-frame depth; the next Execute must
         // skip occlusion rather than test against an undefined/stale chain.
         m_HiZHistoryReset = true;
@@ -298,6 +366,7 @@ namespace Veng::Renderer
 
         m_ActiveCull = (gpuRequested && gpuSupported) ? SceneRendererSettings::CullMode::GPU
                                                       : SceneRendererSettings::CullMode::CPU;
+        m_OcclusionEnabled = settings.Occlusion;
     }
 
     ResourceId GpuCullSystem::ImportIndirect(RenderGraph& graph)
@@ -369,14 +438,27 @@ namespace Veng::Renderer
 
     void GpuCullSystem::DeclareHiZReduction(RenderGraph& graph, const ResourceId depthId)
     {
-        const u32 mipCount = static_cast<u32>(m_HiZMips.size());
+        const bool reduce = IsHiZReduced();
+        if (reduce && !m_HiZReductionDeclared)
+        {
+            // The pyramid went unreduced while nothing read it, so it holds stale depth.
+            m_HiZHistoryReset = true;
+        }
+        m_HiZReductionDeclared = reduce;
+        if (!reduce)
+        {
+            return;
+        }
 
-        // One compute dispatch per mip. Dispatch k reads mip k's source and writes mip
-        // k; the per-mip graph surface derives the read-after-write barrier between
-        // dispatch k's write of mip k and dispatch k+1's read of it. Mip 0's source is
-        // the depth target (declared .Sample, reusing the depth import so the barrier
-        // chains off the lighting pass's read); a source mip n-1 is declared .Sample.
-        for (u32 level = 0; level < mipCount; level++)
+        const u32 mipCount = static_cast<u32>(m_HiZMips.size());
+        const u32 tailFirst = m_HiZTailSet != nullptr ? m_HiZTailFirst : mipCount;
+
+        // One compute dispatch per mip above the coarse tail, and one for the tail. Dispatch k
+        // reads mip k's source and writes mip k; the per-mip graph surface derives the
+        // read-after-write barrier between dispatch k's write of mip k and dispatch k+1's read of
+        // it. Mip 0's source is the depth target (declared .Sample, reusing the depth import so the
+        // barrier chains off the lighting pass's read); a source mip n-1 is declared .Sample.
+        for (u32 level = 0; level < tailFirst; level++)
         {
             // Mip extents (image extent >> level, floored at 1).
             const u32 dstW = std::max(m_Extent.x >> level, 1u);
@@ -421,6 +503,38 @@ namespace Veng::Renderer
                     cmd.Dispatch((push.DestExtent.x + 7) / 8, (push.DestExtent.y + 7) / 8, 1);
                 });
         }
+
+        if (tailFirst == mipCount)
+        {
+            return;
+        }
+        RenderGraph::PassBuilder tail = graph.AddComputePass(
+            fmt::format("HiZ Reduce Tail Mips {}-{}", tailFirst, mipCount - 1));
+        tail.Sample(tailFirst == 0 ? depthId : m_HiZChainId.Level(tailFirst - 1));
+        for (u32 level = tailFirst; level < mipCount; level++)
+        {
+            tail.StorageWrite(m_HiZChainId.Level(level));
+        }
+        const Ref<ComputePipeline> pipeline = m_HiZTailPipeline;
+        const Ref<DescriptorSet> set = m_HiZTailSet;
+        const HiZReduceTailPush push{
+            .Extent = m_Extent,
+            .FirstLevel = tailFirst,
+            .LevelCount = mipCount - tailFirst,
+        };
+        tail.Execute(
+            [pipeline, set, push](PassContext& inner)
+            {
+                CommandBuffer& cmd = inner.Cmd();
+                cmd.BindPipeline(pipeline);
+                cmd.BindDescriptorSets(DescriptorSetBindInfo{
+                    .Sets = {set},
+                    .FirstSet = 3,
+                    .PipelineBindPoint = PipelineBindPoint::Compute,
+                });
+                cmd.PushConstants(push);
+                cmd.Dispatch(1, 1, 1);
+            });
     }
 
     GpuCullCandidate* GpuCullSystem::BeginFrameUpload(const u32 frameIndex)

@@ -132,10 +132,13 @@ namespace Veng::Renderer
         /// the caller defers any such reaction until Spend has returned.
         /// @param tick     Invoked per tick as (key, tickIndex, tickCount).
         /// @param complete Invoked once per job, on the tick that exhausts it.
-        /// @param budget   Maximum summed tick cost to spend.
+        /// @param budget   Maximum summed tick cost to spend, including @p spent.
+        /// @param spent    Cost this pump has already spent on other work (cache restores); a
+        ///                 non-zero value means the budget is no longer untouched, so no tick runs
+        ///                 past it.
         /// @return The number of ticks run.
         u32 Spend(u32 budget, const function<void(u64, u32, u32)>& tick,
-                  const function<void(u64)>& complete);
+                  const function<void(u64)>& complete, u64 spent = 0);
 
     private:
         /// @brief The mutable record for a key, or null when the key is not live.

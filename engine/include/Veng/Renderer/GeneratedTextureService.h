@@ -445,6 +445,8 @@ namespace Veng::Renderer
         {
             /// @brief The caller's key.
             GeneratedTextureKey Key = 0;
+            /// @brief The request's debug name; each of the job's ticks records a GPU scope under it.
+            string Name;
             /// @brief Distinguishes this job from a later one re-using the same key.
             ///
             /// A probe resolving after its job was cancelled and the key re-requested would
@@ -548,10 +550,17 @@ namespace Veng::Renderer
         /// @brief Hands every readable staged store to a worker that encodes and writes it.
         void FlushStores();
 
-        /// @brief Copies every staged restore into its targets and marks those jobs resident.
+        /// @brief Copies staged restores into their targets within the pump's budget and marks
+        /// those jobs resident.
+        ///
+        /// Each restore charges one tick of its job's cost, in priority-then-request order, under
+        /// the tick loop's rule: the first runs on any positive budget, the rest only while they
+        /// fit. A restore left over stays staged for a later pump, its job still held.
         /// @param cmd       The frame's command buffer the copies are recorded into.
+        /// @param budget    The pump's cost budget.
         /// @param restored  Receives the keys whose completions the caller must fire.
-        void ApplyRestores(CommandBuffer& cmd, vector<GeneratedTextureKey>& restored);
+        /// @return The cost the applied restores charged.
+        u64 ApplyRestores(CommandBuffer& cmd, u32 budget, vector<GeneratedTextureKey>& restored);
 
         /// @brief The context targets are created on.
         Context& m_Context;

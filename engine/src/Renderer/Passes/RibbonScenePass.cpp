@@ -335,6 +335,9 @@ namespace Veng::Renderer
             .Load = LoadOp::Load,
             .Store = StoreOp::Store,
         });
+        // An idle wired pass (deactivation hysteresis) skips its frame rather than loading and
+        // storing its targets around no draws.
+        builder.SkipWhen([this] { return m_Plan == nullptr || m_Plan->IsEmpty(); });
         builder.Execute([this](PassContext& inner) { Record(Wrap(inner)); });
     }
 

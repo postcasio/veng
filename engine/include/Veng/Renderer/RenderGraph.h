@@ -233,6 +233,8 @@ namespace Veng::Renderer
             u32 ViewMask = 0;
             /// @brief Record-time callback.
             function<void(PassContext&)> Execute;
+            /// @brief Record-time predicate skipping the pass for a frame (unset = never skipped).
+            function<bool()> Skip;
         };
 
         /// @brief Fluent builder for configuring a declared pass.
@@ -272,6 +274,18 @@ namespace Veng::Renderer
             PassBuilder& ViewMask(u32 viewMask);
             /// @brief Sets the record-time callback that binds and draws.
             PassBuilder& Execute(function<void(PassContext&)> execute);
+            /// @brief Sets a record-time predicate that skips the pass for a frame it returns true.
+            ///
+            /// For a pass with nothing to record some frames — no lines queued, an empty draw plan —
+            /// so such a frame pays no render pass, and on a tile-based GPU no attachment load and
+            /// store. A skipped frame records no rendering, no callback and no GPU scope, and its
+            /// image transitions are left to the next pass that uses each resource (every
+            /// transition is decided against the image's live state); its buffer barriers, which
+            /// are baked rather than tracked, still record. Skipping must leave every resource as
+            /// the pass would have, so the pass may not clear or discard an attachment (asserted
+            /// at Compile).
+            /// @param skip Evaluated once per Execute, before the pass records.
+            PassBuilder& SkipWhen(function<bool()> skip);
 
         private:
             /// @brief The pass slot being built.

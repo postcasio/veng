@@ -25,6 +25,7 @@
 //
 // Skips cleanly (exit 77) on a machine with no Vulkan ICD, like the rest of the gpu band.
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <filesystem>
@@ -537,6 +538,60 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // Detach before the fixture tears the cache down beneath the service.
     service.SetCache(nullptr, nullptr);
     CHECK(service.Release(EvictedKey));
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "generated texture: cache restores spend the per-frame budget")
+{
+    const TempCacheRoot root;
+    const Result<Unique<DerivedDataCache>> cache =
+        DerivedDataCache::Open({.Root = root.Dir, .Generation = "gpu-case"});
+    REQUIRE(cache.has_value());
+
+    GeneratedTextureService& service = Context.GetGeneratedTextures();
+    service.SetCache(cache->get(), &Tasks);
+    service.SetCostBudget(GeneratedTextureService::UnlimitedCostBudget);
+
+    constexpr string_view CacheKey = "stripe/budget";
+    constexpr GeneratedTextureKey ColdKey = 0x5721'CC01ull;
+    const std::vector<GeneratedTextureKey> warmKeys{0x5721'CC02ull, 0x5721'CC03ull, 0x5721'CC04ull};
+
+    GeneratedTextureRequest cold = StripeJob(ColdKey, "BudgetBake");
+    cold.CacheKey = string(CacheKey);
+    REQUIRE(service.Request(std::move(cold)));
+    DriveWithTasks(Context, Tasks, [&] { return (*cache)->Contains(string(CacheKey)); });
+    REQUIRE((*cache)->Contains(string(CacheKey)));
+    CHECK(service.Release(ColdKey));
+
+    // Three hits on one entry stage together; a budget of one job's cost lets one land per frame.
+    service.SetCostBudget(1);
+    for (const GeneratedTextureKey key : warmKeys)
+    {
+        GeneratedTextureRequest warm = StripeJob(key, "BudgetBake");
+        warm.CacheKey = string(CacheKey);
+        REQUIRE(service.Request(std::move(warm)));
+    }
+
+    u64 previous = service.GetStats().RestoredTotal;
+    u64 mostInOnePump = 0;
+    const auto allResident = [&]
+    {
+        const u64 restored = service.GetStats().RestoredTotal;
+        mostInOnePump = std::max(mostInOnePump, restored - previous);
+        previous = restored;
+        return std::ranges::all_of(warmKeys, [&](const GeneratedTextureKey key)
+                                   { return service.IsResident(key); });
+    };
+    DriveWithTasks(Context, Tasks, allResident);
+    CHECK(allResident());
+    CHECK(service.GetStats().RestoredTotal == warmKeys.size());
+    CHECK(mostInOnePump == 1u);
+
+    service.SetCache(nullptr, nullptr);
+    for (const GeneratedTextureKey key : warmKeys)
+    {
+        CHECK(service.Release(key));
+    }
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,

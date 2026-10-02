@@ -202,6 +202,11 @@
       "source": "shaders/bloom_up_kawase.comp.shader.json"
     },
     {
+      "id": "0x797EE8100DA96F4A",
+      "type": "Shader",
+      "source": "shaders/bloom_tail.comp.shader.json"
+    },
+    {
       "id": "0x9BF9CB926D0595B1",
       "type": "Shader",
       "source": "shaders/auto_exposure.comp.shader.json"
@@ -220,6 +225,11 @@
       "id": "0xCB20C4EF8A20ADBC",
       "type": "Shader",
       "source": "shaders/hi_z_reduce.comp.shader.json"
+    },
+    {
+      "id": "0xB9FFDDCA3144D470",
+      "type": "Shader",
+      "source": "shaders/hi_z_reduce_tail.comp.shader.json"
     },
     {
       "id": "0x40A58AE8E1B3135E",
@@ -255,6 +265,11 @@
       "id": "0xBB7BE54192883F09",
       "type": "Shader",
       "source": "shaders/scene_color_downsample.frag.shader.json"
+    },
+    {
+      "id": "0x8CD110A72061F09B",
+      "type": "Shader",
+      "source": "shaders/scene_color_downsample_tail.comp.shader.json"
     },
     {
       "id": "0x8A1DD0C15A953B2D",

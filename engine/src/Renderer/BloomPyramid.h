@@ -27,8 +27,9 @@ namespace Veng::Renderer
     /// @brief Owns the compute mip-pyramid bloom battery — resources, pipelines, and sweep.
     ///
     /// The post-lighting bloom vertical the renderer wires ahead of tonemap: the HDR mip-chain
-    /// pyramid image with its per-level views, the clamp linear sampler, the four compute pipelines (Cod/Kawase down/up) with their set layout and
-    /// per-level descriptor sets, and the mip-0 bindless slot. Declare contributes the down/up
+    /// pyramid image with its per-level views, the clamp linear sampler, the four compute pipelines
+    /// (Cod/Kawase down/up) with their set layout and per-level descriptor sets, the coarse-tail
+    /// pipeline with its set, and the mip-0 bindless slot. Declare contributes the down/up
     /// sweep; the tonemap adds the accumulated mip 0 into the scene colour itself, sampling it
     /// through GetMip0Handle and GetMip0SampleMap. The down-pass threshold divides by the frame's
     /// resolved exposure, the one cross-battery read (from AutoExposureMeter). The filter kernel
@@ -89,7 +90,9 @@ namespace Veng::Renderer
         /// @brief Declares the down/up compute sweep into the graph ahead of tonemap.
         ///
         /// Down-sweep (level 0..N-1, barrier between levels), then the in-place tent up-sweep
-        /// (level N-2..0, barrier between levels), leaving the accumulated bloom in mip 0. Per-frame
+        /// (level N-2..0, barrier between levels), leaving the accumulated bloom in mip 0. The
+        /// pyramid's coarse tail — the smallest levels that fit one workgroup's shared memory
+        /// (MipTailFirstLevel) — is down- and up-swept by a single dispatch between the two. Per-frame
         /// Threshold / Radius ride the compute push, read from the SceneView at record time; the
         /// down-pass threshold divides by @p autoExposure's resolved exposure.
         ///
@@ -138,6 +141,13 @@ namespace Veng::Renderer
     private:
         BloomPyramid(Context& context, AssetManager& assets, BloomKernel kernel);
 
+        /// @brief Declares the one dispatch that down- and up-sweeps the coarse tail.
+        /// @param graph     The renderer's internal graph being rebuilt.
+        /// @param chainId   The per-mip pyramid import.
+        /// @param tailFirst The tail's first level (at least 1).
+        /// @param mipCount  The pyramid's level count.
+        void DeclareTail(RenderGraph& graph, MipChainId chainId, u32 tailFirst, u32 mipCount);
+
         Context& m_Context;
 
         /// @brief The down/up filter kernel choice, read by Declare at record time.
@@ -173,5 +183,17 @@ namespace Veng::Renderer
         std::vector<Ref<DescriptorSet>> m_DownSets;
         /// @brief One upsample set per finer level k, binding the coarser source (k+1) and dest (k).
         std::vector<Ref<DescriptorSet>> m_UpSets;
+
+        /// @brief The coarse-tail pipeline: the smallest levels' down and up sweep in one workgroup.
+        Ref<ComputePipeline> m_TailPipeline;
+        /// @brief Layout for the tail pipeline: the tail set + its push block.
+        Ref<PipelineLayout> m_TailLayout;
+        /// @brief Tail set layout: the source level sampled (0), the sampler (1), a storage view per
+        ///        tail slot (2 on).
+        Ref<DescriptorSetLayout> m_TailSetLayout;
+        /// @brief The tail's set for the current pyramid, or null when the pyramid has no tail.
+        Ref<DescriptorSet> m_TailSet;
+        /// @brief The tail's first level (MipTailFirstLevel), meaningful while m_TailSet is set.
+        u32 m_TailFirst = 0;
     };
 }
