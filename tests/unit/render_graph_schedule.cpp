@@ -194,7 +194,7 @@ TEST_CASE("Schedule: compute storage-write to a fragment storage-buffer read wai
     CHECK(schedule[2].BufferBarriers[0].SrcStage == vk::PipelineStageFlagBits::eFragmentShader);
 }
 
-TEST_CASE("Schedule: a read-after-read on a buffer emits no barrier")
+TEST_CASE("Schedule: a same-stage read-after-read on a buffer emits no barrier")
 {
     const vector<ScheduleResource> resources{ImportBuffer("Params")};
 
@@ -210,6 +210,43 @@ TEST_CASE("Schedule: a read-after-read on a buffer emits no barrier")
     REQUIRE(schedule.size() == 2);
     CHECK(schedule[0].BufferBarriers.empty());
     CHECK(schedule[1].BufferBarriers.empty()); // read-after-read is not a hazard
+}
+
+TEST_CASE("Schedule: a buffer read in a stage outside the tracked read scope derives a barrier")
+{
+    // The barrier into the compute read names only the compute stage, so a fragment read of the
+    // same contents is unordered against the write until a barrier chains after that one.
+    const vector<ScheduleResource> resources{ImportBuffer("Masks")};
+
+    const vector<RenderGraph::Access> write{Access(0, AccessKind::StorageBufferWrite)};
+    const vector<RenderGraph::Access> readCompute{Access(0, AccessKind::StorageBufferRead)};
+    const vector<RenderGraph::Access> readFragment{
+        Access(0, AccessKind::StorageBufferReadGraphics)};
+    const vector<SchedulePass> passes{
+        {.Name = "Write", .Accesses = write},
+        {.Name = "ReadCompute", .Accesses = readCompute},
+        {.Name = "ReadFragment", .Accesses = readFragment},
+        {.Name = "ReadFragmentAgain", .Accesses = readFragment},
+        {.Name = "WriteAgain", .Accesses = write},
+    };
+
+    const auto schedule = DeriveRenderGraphSchedule(resources, passes);
+
+    REQUIRE(schedule.size() == 5);
+    REQUIRE(schedule[2].BufferBarriers.size() == 1);
+    const ScheduledBufferBarrier& chain = schedule[2].BufferBarriers[0];
+    CHECK((chain.SrcStage & vk::PipelineStageFlagBits::eComputeShader));
+    CHECK_FALSE(IsWriteAccess(chain.SrcAccess));
+    CHECK((chain.DstStage & vk::PipelineStageFlagBits::eFragmentShader));
+    CHECK((chain.DstAccess & vk::AccessFlagBits::eShaderRead));
+
+    // A read in an already-tracked stage needs nothing.
+    CHECK(schedule[3].BufferBarriers.empty());
+
+    // The tracked scope covers both readers, so the next write waits on each.
+    REQUIRE(schedule[4].BufferBarriers.size() == 1);
+    CHECK(schedule[4].BufferBarriers[0].SrcStage ==
+          (vk::PipelineStageFlagBits::eComputeShader | vk::PipelineStageFlagBits::eFragmentShader));
 }
 
 TEST_CASE("Schedule: a write after two reads waits on both reads' stages")
@@ -232,7 +269,8 @@ TEST_CASE("Schedule: a write after two reads waits on both reads' stages")
 
     REQUIRE(schedule.size() == 3);
     CHECK(schedule[0].BufferBarriers.empty());
-    CHECK(schedule[1].BufferBarriers.empty()); // read-after-read
+    // The indirect read is in a new stage, so it chains after the storage read.
+    CHECK(schedule[1].BufferBarriers.size() == 1);
     REQUIRE(schedule[2].BufferBarriers.size() == 1);
     const ScheduledBufferBarrier& barrier = schedule[2].BufferBarriers[0];
     CHECK(barrier.SrcStage ==

@@ -6809,4 +6809,94 @@ TEST_CASE_FIXTURE(
     std::filesystem::remove(outArchive);
 }
 
+// The light-tile cull reads the frame's own depth. SSAO samples the g-buffer depth in a fragment
+// shader first, so the depth reaches the cull already in the shader-read layout, and only a barrier
+// chained into the compute stage orders the cull after this frame's depth writes; without one the
+// cull can read the previous frame's depth, and a panel and its lamp moved since then lose the lamp
+// over whole tiles for a frame. So the first frame showing each new position must equal the same
+// scene rendered again. Whether the unordered read lands on stale depth is timing-dependent, so a
+// pass here proves less than a failure does; the DecideBarrier unit cases are the reliable guard.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: the light-tile cull reads this frame's depth after SSAO "
+                  "sampled it")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_light_tile_depth_order.vengpack");
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(material.has_value());
+    const Ref<Mesh> cube = Mesh::BuildSync(Context, Primitives::Cube(1.0f, *material), "Panel");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity panel = scene->CreateEntity();
+    scene->Add<Transform>(panel) =
+        Transform{.Position = vec3(-0.8f, 0.0f, -2.0f), .Scale = vec3(0.7f, 0.7f, 0.05f)};
+    scene->Add<MeshRenderer>(panel).Mesh = assets.Adopt(cube);
+    const Entity lamp = scene->CreateEntity();
+    scene->Add<Transform>(lamp).Position = vec3(-0.8f, 0.0f, -1.5f);
+    scene->Add<Light>(lamp) = Light{.Type = LightType::Point,
+                                    .Color = vec3(0.2f, 0.4f, 1.0f),
+                                    .Intensity = PointLumens(4.0f),
+                                    .Range = 1.5f,
+                                    .CastsShadows = false};
+    // A shadow-casting sun puts the cascade passes ahead of the g-buffer, which is what delays the
+    // depth store enough for an unordered cull to overtake it.
+    const Entity sun = scene->CreateEntity();
+    scene->Add<Light>(sun) = Light{.Type = LightType::Directional,
+                                   .Direction = glm::normalize(vec3(-0.3f, -0.4f, -1.0f)),
+                                   .Intensity = DirectionalLux(0.2f)};
+
+    constexpr uvec2 extent{256, 128};
+    CameraView camera;
+    camera.SetPerspective(glm::radians(70.0f), 2.0f, 0.1f, 20000.0f);
+    camera.SetView(vec3(0.0f), vec3(0.0f, 0.0f, -1.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    const SceneRendererSettings settings{
+        .Mode = DebugView::Final, .Bloom = false, .AO = true, .LightTileCulling = true};
+    const Unique<SceneRenderer> renderer =
+        SceneRenderer::Create({.Context = Context,
+                               .Assets = assets,
+                               .OutputFormat = Context.GetOutputFormat(),
+                               .Extent = extent,
+                               .Settings = settings});
+    auto frame = [&]() -> vector<u8>
+    {
+        CommandBuffer& cmd = Context.BeginFrame();
+        renderer->Execute(
+            cmd, Renderer::SceneView{.World = *scene, .Camera = camera, .Delta = 1.0f / 60.0f});
+        Context.EndFrame();
+        Context.WaitIdle();
+        return renderer->GetOutput()->GetImage()->Download();
+    };
+    for (int warm = 0; warm < 4; ++warm)
+    {
+        (void)frame();
+    }
+
+    int movedFramesDiffering = 0;
+    for (int step = 0; step < 10; ++step)
+    {
+        const f32 x = (step % 2) != 0 ? 0.8f : -0.8f;
+        scene->Get<Transform>(panel).Position.x = x;
+        scene->Get<Transform>(lamp).Position.x = x;
+        const vector<u8> moved = frame();
+        const vector<u8> repeat = frame();
+        bool differs = false;
+        for (u32 y = 0; y < extent.y && !differs; ++y)
+        {
+            for (u32 px = 0; px < extent.x && !differs; ++px)
+            {
+                const vec3 delta = glm::abs(DecodeTexel(moved, extent.x, px, y) -
+                                            DecodeTexel(repeat, extent.x, px, y));
+                differs = std::max(delta.x, std::max(delta.y, delta.z)) > 0.01f;
+            }
+        }
+        movedFramesDiffering += differs ? 1 : 0;
+    }
+    CHECK(movedFramesDiffering == 0);
+
+    std::filesystem::remove(outArchive);
+}
+
 #endif // GPU_GBUFFER_FIXTURE_DIR

@@ -64,18 +64,45 @@ TEST_CASE("DecideBarrier: first use from Undefined is a layout-change barrier")
     CHECK(d.DstQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED);
 }
 
-TEST_CASE("DecideBarrier: read-after-read, same layout, needs no barrier and widens scope")
+TEST_CASE("DecideBarrier: a read inside the tracked read scope needs no barrier")
 {
+    const auto d = DecideSameQueue(ShaderRead, vk::ImageLayout::eShaderReadOnlyOptimal,
+                                   vk::PipelineStageFlagBits::eFragmentShader,
+                                   vk::AccessFlagBits::eShaderRead);
+
+    CHECK_FALSE(d.NeedsBarrier);
+    CHECK(d.NewState.Layout == vk::ImageLayout::eShaderReadOnlyOptimal);
+    CHECK(d.NewState.Stage == vk::PipelineStageFlagBits::eFragmentShader);
+    CHECK(d.NewState.Access == vk::AccessFlagBits::eShaderRead);
+}
+
+TEST_CASE("DecideBarrier: a read in a stage outside the tracked read scope needs a barrier")
+{
+    // The barrier that ordered the fragment read after the producing write names only the
+    // fragment stage, so a compute read of the same layout is unordered against that write until
+    // a barrier chains after it: source the earlier readers' stage, destination the new one.
     const auto d =
         DecideSameQueue(ShaderRead, vk::ImageLayout::eShaderReadOnlyOptimal,
                         vk::PipelineStageFlagBits::eComputeShader, vk::AccessFlagBits::eShaderRead);
 
-    CHECK_FALSE(d.NeedsBarrier);
-    // Layout unchanged; stage/access are the OR of current and desired.
+    CHECK(d.NeedsBarrier);
+    CHECK(d.Src.Layout == vk::ImageLayout::eShaderReadOnlyOptimal);
+    CHECK(d.Dst.Layout == vk::ImageLayout::eShaderReadOnlyOptimal); // no transition
+    CHECK((d.Src.Stage & vk::PipelineStageFlagBits::eFragmentShader));
+    CHECK((d.Dst.Stage & vk::PipelineStageFlagBits::eComputeShader));
+    CHECK((d.Dst.Access & vk::AccessFlagBits::eShaderRead));
+    CHECK_FALSE(IsWriteAccess(d.Src.Access));
+    // The tracked scope covers both readers, so a later write waits on each.
     CHECK(d.NewState.Layout == vk::ImageLayout::eShaderReadOnlyOptimal);
     CHECK(d.NewState.Stage ==
           (vk::PipelineStageFlagBits::eFragmentShader | vk::PipelineStageFlagBits::eComputeShader));
-    CHECK(d.NewState.Access == vk::AccessFlagBits::eShaderRead); // read | read == read
+    CHECK(d.NewState.Access == vk::AccessFlagBits::eShaderRead);
+
+    // Once both stages are tracked, a further read in either needs nothing.
+    const auto again =
+        DecideSameQueue(d.NewState, vk::ImageLayout::eShaderReadOnlyOptimal,
+                        vk::PipelineStageFlagBits::eComputeShader, vk::AccessFlagBits::eShaderRead);
+    CHECK_FALSE(again.NeedsBarrier);
 }
 
 TEST_CASE("DecideBarrier: read -> write at same layout is a write hazard")
@@ -177,14 +204,21 @@ TEST_CASE("DecideBarrier: graphics-produced read-after-read is unchanged by the 
     // graphics-produced) takes the plain hazard path even with a discrete
     // transfer family present — no acquire, no spurious barrier.
     const auto d = DecideBarrier(ShaderRead, vk::ImageLayout::eShaderReadOnlyOptimal,
-                                 vk::PipelineStageFlagBits::eComputeShader,
+                                 vk::PipelineStageFlagBits::eFragmentShader,
                                  vk::AccessFlagBits::eShaderRead, TransferFamily, GraphicsFamily);
 
     CHECK_FALSE(d.NeedsBarrier);
     CHECK(d.SrcQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED);
     CHECK(d.DstQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED);
-    CHECK(d.NewState.Stage ==
-          (vk::PipelineStageFlagBits::eFragmentShader | vk::PipelineStageFlagBits::eComputeShader));
+
+    // A read in a new stage takes its chaining barrier, still with no ownership transfer.
+    const auto compute =
+        DecideBarrier(ShaderRead, vk::ImageLayout::eShaderReadOnlyOptimal,
+                      vk::PipelineStageFlagBits::eComputeShader, vk::AccessFlagBits::eShaderRead,
+                      TransferFamily, GraphicsFamily);
+    CHECK(compute.NeedsBarrier);
+    CHECK(compute.SrcQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED);
+    CHECK(compute.DstQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED);
 }
 
 TEST_CASE("DecideBarrier: per-mip storage write -> sampled read of the same mip is a RAW barrier")

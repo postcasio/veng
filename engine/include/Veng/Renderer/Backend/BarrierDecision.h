@@ -65,9 +65,16 @@ namespace Veng::Renderer::Backend
     /// @brief Decides whether a barrier is needed to transition a subresource
     /// from @p current state to the desired layout/stage/access.
     ///
-    /// - No hazard (same layout, read-after-read): NeedsBarrier=false; NewState
-    ///   keeps the current layout and widens the read scope (Stage/Access OR'd with
-    ///   the desired) so a later write waits on every prior read.
+    /// - Read-after-read in the same layout, inside the tracked read scope (every
+    ///   desired stage and access bit already in @p current): NeedsBarrier=false.
+    /// - Read-after-read in the same layout that names a stage or access outside the
+    ///   tracked read scope: NeedsBarrier=true, a layout-preserving barrier from the
+    ///   earlier readers' stages (no source access) to the desired stage/access. A
+    ///   barrier whose destination was the earlier readers does not order the new one
+    ///   after the last write; this one chains after that barrier instead.
+    /// - In both read-after-read cases NewState keeps the layout and widens the read
+    ///   scope (Stage/Access OR'd with the desired), so a later write waits on every
+    ///   prior read.
     /// - Hazard (layout change, or either side writes): NeedsBarrier=true; the
     ///   barrier goes current → desired, and the new tracked state is the desired.
     ///

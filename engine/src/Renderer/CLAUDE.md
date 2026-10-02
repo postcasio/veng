@@ -42,6 +42,14 @@ compiled graph held across frames, imports bound per frame, re-compiled on resiz
 (`Backend::BarrierBatch`): each is still decided against the image's live tracked state; only the
 recording is batched, into one command whose stage masks are the union of its barriers'.
 
+**A read in a new pipeline stage takes a barrier even when the layout already matches.** A barrier
+orders only the stages it names, so after the depth's attachment→sampled transition into fragment
+reads, a compute read of the same depth is unordered against the depth writes. `DecideBarrier` (and
+the buffer schedule) therefore skip a read-after-read only when the new read's stages and accesses
+are already in the tracked read scope; otherwise they record a layout-preserving barrier whose source
+is the earlier readers' stages — chaining after the barrier that ordered them, which is also what
+orders the new read after that barrier's layout transition — and widen the scope to cover both.
+
 **A pass with nothing to record some frames says so instead of rendering empty** —
 `PassBuilder::SkipWhen(predicate)`, evaluated each `Execute`. A skipped frame records no render
 pass, callback or GPU scope; its image transitions fall to the next pass using each resource
@@ -524,7 +532,10 @@ Reflections, CoC), never the cascade-tint or IBL-only variants that discard it.
 The masks live in a device-local storage buffer with **one region per frame in flight** (a renderer
 executes once per frame, so a frame never writes a region an in-flight frame reads), laid out
 row-major over the tile grid of the render allocation, so a dynamic-resolution sub-rect needs no
-reallocation. The buffer is registered in the set-0 storage-buffer array, and the view block's
+reallocation. The cull writes through a set binding its frame's region alone (one set per frame in
+flight, the region stride rounded up to the storage-buffer offset alignment), so its write is scoped
+to the words that frame owns — which is also the range synchronization validation checks it over.
+The buffer is registered in the set-0 storage-buffer array, and the view block's
 `LightTiles` names it — slot, row stride, this frame's first word, or `LightTilesNone` when no cull
 ran — so any pass can find a pixel's mask through `Veng/light_tiles.slang`. It is imported into the
 graph: the cull's `StorageBufferWrite` and the lighting pass's `StorageBufferRead` (which, on a

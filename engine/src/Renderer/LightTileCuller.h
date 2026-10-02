@@ -116,11 +116,14 @@ namespace Veng::Renderer
         Ref<PipelineLayout> m_Layout;
         /// @brief Set-3 layout: the mask buffer as a writable storage buffer (binding 0).
         Ref<DescriptorSetLayout> m_SetLayout;
-        /// @brief The cull's set binding the current mask buffer.
-        Ref<DescriptorSet> m_Set;
+        /// @brief The cull's sets, one per frame in flight, each binding that frame's region.
+        vector<Ref<DescriptorSet>> m_Sets;
 
-        /// @brief The mask ring: one region of m_Grid.x * m_Grid.y words per frame in flight.
+        /// @brief The mask ring: one region of m_RegionWords words per frame in flight, the first
+        ///        m_Grid.x * m_Grid.y of them the masks.
         Ref<Buffer> m_Buffer;
+        /// @brief Words per region: the grid's, rounded up to the storage-buffer offset alignment.
+        u32 m_RegionWords = 0;
         /// @brief The mask buffer's slot in the set-0 storage-buffer array.
         StorageBufferHandle m_Handle;
         /// @brief The tile grid of the render allocation the ring is sized for.

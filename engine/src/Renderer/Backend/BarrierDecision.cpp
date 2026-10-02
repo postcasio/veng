@@ -34,14 +34,33 @@ namespace Veng::Renderer::Backend
 
         if (!hazard && !acquire)
         {
-            // Read-after-read, same layout, same queue: no barrier. Widen the
-            // tracked read scope so a later write waits on every prior read; keep
-            // the layout. The subresource stays graphics-produced.
+            // Read-after-read, same layout, same queue. The tracked scope is the union of every
+            // read since the last write, each of which sat in the destination scope of a barrier
+            // chained after that write, so a read inside that union is already ordered and
+            // visible. Widen the scope either way, so a later write waits on every read.
+            const SubresourceState widened{.Layout = current.Layout,
+                                           .Stage = current.Stage | dstStage,
+                                           .Access = current.Access | dstAccess,
+                                           .ProducingFamily = current.ProducingFamily};
+            const bool covered = !(dstStage & ~current.Stage) && !(dstAccess & ~current.Access);
+            if (covered)
+            {
+                return {.NeedsBarrier = false, .NewState = widened};
+            }
+
+            // A read in a stage (or access) no earlier barrier named is unordered against the
+            // last write: a barrier into fragment-shader reads does not order a later compute
+            // read. The source is the earlier readers' stages rather than the write's own stage
+            // — those stages are the previous barrier's destination, so this one chains after
+            // it, and that chain is the only thing ordering the new read after the previous
+            // barrier's layout transition, which a source naming just the writing stage would
+            // not reach. That barrier already made the write available, so the source needs no
+            // access; the destination makes it visible to the new read.
             return {
-                .NeedsBarrier = false,
-                .NewState = {.Layout = current.Layout,
-                             .Stage = current.Stage | dstStage,
-                             .Access = current.Access | dstAccess},
+                .NeedsBarrier = true,
+                .NewState = widened,
+                .Src = {.Layout = current.Layout, .Stage = current.Stage, .Access = {}},
+                .Dst = {.Layout = current.Layout, .Stage = dstStage, .Access = dstAccess},
             };
         }
 

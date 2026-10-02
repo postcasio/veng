@@ -72,12 +72,18 @@ namespace Veng::Renderer::Backend
                         }
                     }
 
-                    // Emit a barrier only on a hazard: the prior access wrote, or this
-                    // access writes. A read-after-read needs none; the scope is OR'd so a
-                    // later write waits on every prior read.
+                    // A barrier is due on a hazard (the prior access wrote, or this access
+                    // writes), and on a read in a stage or access no earlier read named: the
+                    // barrier that ordered those reads after the write reaches only its own
+                    // destination scope, so the new read chains after it from the earlier
+                    // readers' stages, as DecideBarrier does for images. A read inside the
+                    // tracked read scope needs none. The scope is OR'd across reads so a later
+                    // write waits on every prior read.
                     const SubresourceState& prior = bufferScope[slot];
                     const bool hadPriorAccess = static_cast<bool>(prior.Stage);
                     const bool hazard = IsWriteAccess(prior.Access) || IsWriteAccess(scope.Access);
+                    const bool newReadScope = static_cast<bool>(scope.Stage & ~prior.Stage) ||
+                                              static_cast<bool>(scope.Access & ~prior.Access);
 
                     if (hadPriorAccess && hazard)
                     {
@@ -92,6 +98,16 @@ namespace Veng::Renderer::Backend
                     }
                     else
                     {
+                        if (hadPriorAccess && newReadScope)
+                        {
+                            baked.BufferBarriers.push_back({
+                                .Slot = slot,
+                                .SrcStage = prior.Stage,
+                                .SrcAccess = {},
+                                .DstStage = scope.Stage,
+                                .DstAccess = scope.Access,
+                            });
+                        }
                         bufferScope[slot] = {.Stage = prior.Stage | scope.Stage,
                                              .Access = prior.Access | scope.Access};
                     }

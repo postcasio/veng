@@ -26,7 +26,7 @@
 
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 
-// The renderer's ring of per-tile masks; LightTileWord places this frame's.
+// This frame's region of the renderer's ring of per-tile masks.
 [[vk::binding(0, 3)]] RWByteAddressBuffer g_TileMasks;
 
 struct PushConstants
@@ -173,6 +173,6 @@ void csMain(uint3 tile : SV_GroupID, uint3 local : SV_GroupThreadID, uint groupI
 
     if (groupIndex == 0u)
     {
-        g_TileMasks.Store(LightTileWord(vc, tile.xy) * 4u, s_Mask);
+        g_TileMasks.Store((LightTileWord(vc, tile.xy) - vc.LightTiles.z) * 4u, s_Mask);
     }
 }

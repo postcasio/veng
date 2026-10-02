@@ -57,8 +57,9 @@ namespace Veng::Renderer::Backend
     ///
     /// A buffer carries no runtime tracked state, so the source (the prior pass's
     /// declared scope on this slot) and the destination (this pass's declared scope)
-    /// both bake at derivation. Emitted only on a hazard — the prior access wrote or
-    /// this access writes.
+    /// both bake at derivation. Emitted on a hazard — the prior access wrote or this
+    /// access writes — and on a read in a stage or access outside the slot's tracked
+    /// read scope, whose source is then the earlier readers' stages with no access.
     struct ScheduledBufferBarrier
     {
         /// @brief Resource-table slot the barrier applies to.
@@ -105,8 +106,9 @@ namespace Veng::Renderer::Backend
     /// order, tracks each slot's write history and (for buffers) its last declared
     /// scope, and produces the schedule a CompiledGraph replays. The same per-edge
     /// rules BarrierDecision.h documents drive it: an image access bakes a transition
-    /// to its scope; a buffer access bakes a barrier only on a hazard, OR-accumulating
-    /// the scope across reads so a later write waits on every prior read.
+    /// to its scope; a buffer access bakes a barrier on a hazard or on a read outside
+    /// the slot's tracked read scope, OR-accumulating the scope across reads so a later
+    /// write waits on every prior read.
     ///
     /// It also runs the structural validation Compile relies on, asserting fatally on:
     /// an access whose buffer/image axis disagrees with its resource; a transient read

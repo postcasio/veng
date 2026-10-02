@@ -11,6 +11,7 @@
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/DescriptorSet.h>
 #include <Veng/Renderer/DescriptorSetLayout.h>
+#include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Renderer/SceneView.h>
 #include <Veng/Renderer/Types.h>
@@ -88,7 +89,7 @@ namespace Veng::Renderer
         bindless.Release(m_Handle);
         m_Handle = StorageBufferHandle{};
         m_Buffer.reset();
-        m_Set.reset();
+        m_Sets.clear();
         m_Grid = grid;
         m_LastTiles = uvec2(0);
         if (grid.x * grid.y == 0)
@@ -96,7 +97,15 @@ namespace Veng::Renderer
             return;
         }
 
-        const u64 regionBytes = static_cast<u64>(grid.x) * grid.y * sizeof(u32);
+        // Each frame's set binds its own region alone, so the cull's write is scoped to the words
+        // that frame owns rather than the whole ring a frame still in flight is reading; the
+        // region stride is therefore a multiple of the storage-buffer offset alignment.
+        const u64 gridBytes = static_cast<u64>(grid.x) * grid.y * sizeof(u32);
+        const u64 minAlign =
+            GetVkPhysicalDevice(m_Context).getProperties().limits.minStorageBufferOffsetAlignment;
+        const u64 alignment = std::max<u64>(minAlign, sizeof(u32));
+        const u64 regionBytes = (gridBytes + alignment - 1) / alignment * alignment;
+        m_RegionWords = static_cast<u32>(regionBytes / sizeof(u32));
         m_Buffer = Buffer::Create(m_Context, {
                                                  .Name = "SceneRenderer Light Tile Masks",
                                                  .Size = regionBytes * m_FramesInFlight,
@@ -105,11 +114,17 @@ namespace Veng::Renderer
                                              });
         m_Handle = bindless.Register(m_Buffer);
 
-        m_Set = DescriptorSet::Create(m_Context, {
+        m_Sets.reserve(m_FramesInFlight);
+        for (u32 slot = 0; slot < m_FramesInFlight; ++slot)
+        {
+            const Ref<DescriptorSet> set =
+                DescriptorSet::Create(m_Context, {
                                                      .Name = "SceneRenderer Light Tile Set",
                                                      .Layout = m_SetLayout,
                                                  });
-        m_Set->Write(0, m_Buffer);
+            set->Write(0, m_Buffer, slot * regionBytes, gridBytes);
+            m_Sets.push_back(set);
+        }
     }
 
     ResourceId LightTileCuller::Import(RenderGraph& graph, const bool active)
@@ -154,7 +169,7 @@ namespace Veng::Renderer
                 cmd.BindPipeline(m_Pipeline);
                 registry.Bind(cmd, PipelineBindPoint::Compute);
                 cmd.BindDescriptorSets(DescriptorSetBindInfo{
-                    .Sets = {m_Set},
+                    .Sets = {m_Sets[m_LastRegion]},
                     .FirstSet = 3, // sets 0-2 are the typed bindless registries
                     .PipelineBindPoint = PipelineBindPoint::Compute,
                 });
@@ -172,7 +187,7 @@ namespace Veng::Renderer
         {
             return {LightTilesNone, 0u, 0u, 0u};
         }
-        return {m_Handle.Index, m_Grid.x, frameSlot * m_Grid.x * m_Grid.y, 0u};
+        return {m_Handle.Index, m_Grid.x, frameSlot * m_RegionWords, 0u};
     }
 
     LightTileMasks LightTileCuller::Readback() const
@@ -184,7 +199,7 @@ namespace Veng::Renderer
         }
 
         const vector<u8> bytes = m_Buffer->Download();
-        const usize regionWords = static_cast<usize>(m_Grid.x) * m_Grid.y;
+        const usize regionWords = m_RegionWords;
         VE_ASSERT(bytes.size() >= (m_LastRegion + 1) * regionWords * sizeof(u32),
                   "LightTileCuller::Readback: the mask ring is smaller than its regions");
 

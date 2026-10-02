@@ -30,8 +30,9 @@ namespace Veng::Renderer::Backend
     /// the destination layout/stage/access for a declared use.
     ///
     /// The source side comes from the image's tracked state. No barrier is
-    /// emitted for a read-after-read that needs none — the tracked read scope is
-    /// widened instead.
+    /// emitted for a read-after-read inside the tracked read scope — the scope is
+    /// widened instead; a read in a stage outside it takes a layout-preserving
+    /// barrier (DecideBarrier).
     void TransitionImage(CommandBuffer& cmd, Image& image, vk::ImageLayout newLayout,
                          vk::PipelineStageFlags dstStage, vk::AccessFlags dstAccess, u32 baseLayer,
                          u32 layerCount, u32 baseMip, u32 mipCount);
@@ -53,7 +54,7 @@ namespace Veng::Renderer::Backend
         /// @brief Adds the transition of an image subresource range to a declared use.
         ///
         /// Same decision and tracked-state update as the explicit TransitionImage overload; a
-        /// read-after-read that needs no barrier adds nothing.
+        /// read-after-read inside the tracked read scope adds nothing.
         /// @param cmd        Command buffer a forced early flush is recorded into.
         /// @param image      The image to transition.
         /// @param newLayout  The destination layout.

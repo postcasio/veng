@@ -685,6 +685,13 @@ the default and catches more. Do not build both routinely.
   fails on any unallowlisted `Vulkan validation` ERROR line
   (`cmake/ValidationGate.cmake`; allowlist currently empty). The benign MoltenVK
   "buffer robustness" warning is logged at `WARN`, not `ERROR`, and is ignored.
+- **Synchronization validation cannot see a shader access through the bindless sets.** The
+  context turns on its shader-access analysis (`syncval_shader_accesses_heuristic`), without which
+  it checks no descriptor access a draw or dispatch makes at all; with it, accesses through an
+  ordinary set (set 3 and up) are checked against the range each descriptor binds. But set 0's
+  arrays are partially bound, update-after-bind and dynamically indexed, so a hazard on anything a
+  shader samples through a `TextureHandle` is invisible to the layer — the barrier-decision unit
+  cases, not the gate, are what guard those.
 
 ### Tests assert properties, not portraits
 

@@ -174,13 +174,29 @@ namespace Veng::Renderer
                            vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance,
             .pfnUserCallback = DebugCallback};
 
-        // Turn on synchronization validation so missing/incorrect barriers from
-        // the render graph are caught at runtime.
+        // Synchronization validation, with its shader-access analysis on: without it the layer
+        // validates attachments, copies and layout transitions but no access a draw or dispatch
+        // makes through a descriptor. Accesses through the bindless sets (partially bound,
+        // update-after-bind, dynamically indexed) stay unvalidated either way, since the layer
+        // cannot know which elements a shader reaches.
+        constexpr vk::Bool32 syncvalShaderAccesses = vk::True;
+        const vk::LayerSettingEXT layerSettings[] = {{
+            .pLayerName = "VK_LAYER_KHRONOS_validation",
+            .pSettingName = "syncval_shader_accesses_heuristic",
+            .type = vk::LayerSettingTypeEXT::eBool32,
+            .valueCount = 1,
+            .pValues = &syncvalShaderAccesses,
+        }};
+        const vk::LayerSettingsCreateInfoEXT layerSettingsInfo{
+            .pNext = &debugCreateInfo,
+            .settingCount = static_cast<u32>(std::size(layerSettings)),
+            .pSettings = layerSettings,
+        };
         constexpr vk::ValidationFeatureEnableEXT enabledValidationFeatures[] = {
             vk::ValidationFeatureEnableEXT::eSynchronizationValidation,
         };
         const vk::ValidationFeaturesEXT validationFeatures{
-            .pNext = &debugCreateInfo,
+            .pNext = &layerSettingsInfo,
             .enabledValidationFeatureCount = static_cast<u32>(std::size(enabledValidationFeatures)),
             .pEnabledValidationFeatures = enabledValidationFeatures,
         };
