@@ -385,10 +385,11 @@ namespace Veng::Renderer
     void EnvironmentIbl::RecordEquirectToCube(CommandBuffer& cmd,
                                               const Veng::EnvironmentMap& environment)
     {
-        // Equirect panorama -> radiance cube. The panorama is sampled through set-0 bindless.
-        m_Context.GetBindlessRegistry().Bind(cmd, PipelineBindPoint::Compute);
+        // Equirect panorama -> radiance cube. The panorama is sampled through set-0 bindless, bound
+        // against this pipeline's layout: a set binds through the last bound pipeline's.
         cmd.PrepareForAccess(m_RadianceStorageView, AccessKind::StorageWrite);
         cmd.BindPipeline(m_EquirectPipeline);
+        m_Context.GetBindlessRegistry().Bind(cmd, PipelineBindPoint::Compute);
         cmd.BindDescriptorSets(DescriptorSetBindInfo{
             .Sets = {m_EquirectSet},
             .FirstSet = 3,
