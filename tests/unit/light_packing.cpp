@@ -11,6 +11,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <cmath>
+#include <limits>
 
 #include <Veng/Math/Frustum.h>
 #include <Veng/Reflection/TypeRegistry.h>
@@ -789,7 +790,7 @@ TEST_CASE("PackSceneLights: a punctual slot and a cube face go only where the ca
     camera.SetView(vec3(0.0f), vec3(0.0f, 0.0f, -1.0f), vec3(0.0f, 1.0f, 0.0f));
     const Frustum frustum = Frustum::FromViewProjection(camera.ViewProjection());
 
-    // Packed first, so without the frustum it would take slot 0: it sits 20 units right of the
+    // Iterated first, so without the frustum it would take slot 0: it sits 20 units right of the
     // frustum's edge, about 14 from its side plane, and reaches 3.
     AddLight(*scene, Light{.Type = LightType::Point, .Range = 3.0f}, vec3(30.0f, 0.0f, -10.0f));
     // 2 units past the same edge, about 1.4 from the plane, so its range straddles it.
@@ -797,10 +798,11 @@ TEST_CASE("PackSceneLights: a punctual slot and a cube face go only where the ca
 
     const PackedSceneLights packed = PackSceneLights(*scene, true, 1024, AABB::Empty(), &frustum);
 
-    REQUIRE(packed.LightCount == 2);
+    // The light out of the frustum's reach lights no visible pixel, so it is not packed at all.
+    REQUIRE(packed.LightCount == 1);
     REQUIRE(packed.PunctualCount == 1);
-    CHECK(packed.Lights[0].Cone.z == doctest::Approx(-1.0f));
-    CHECK(packed.Lights[1].Cone.z == doctest::Approx(0.0f));
+    CHECK(packed.Lights[0].PositionRange.x == doctest::Approx(12.0f));
+    CHECK(packed.Lights[0].Cone.z == doctest::Approx(0.0f));
 
     // CubeFace order is +X, -X, +Y, -Y, +Z, -Z. The +X face looks away from the frustum and is
     // skipped; the -X face looks into it and is rendered.
@@ -808,9 +810,77 @@ TEST_CASE("PackSceneLights: a punctual slot and a cube face go only where the ca
     CHECK((mask & (1u << 0)) == 0);
     CHECK((mask & (1u << 1)) != 0);
 
-    // Without a camera frustum both lights take a slot and every face renders.
+    // Without a camera frustum both lights are packed, both take a slot, and every face renders.
     const PackedSceneLights untested = PackSceneLights(*scene, true, 1024);
+    REQUIRE(untested.LightCount == 2);
     REQUIRE(untested.PunctualCount == 2);
     CHECK(untested.PunctualFaceMask[0] == 0x3F);
     CHECK(untested.PunctualFaceMask[1] == 0x3F);
+}
+
+TEST_CASE("PackSceneLights: a light that cannot contribute is not packed")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+    const Unique<Scene> scene = Scene::Create(types);
+
+    // Each of these adds exactly nothing to any pixel, so each would only spend a slot.
+    AddLight(*scene, Light{.Type = LightType::Point, .Intensity = 0.0f});
+    AddLight(*scene, Light{.Type = LightType::Spot, .Color = vec3(0.0f)});
+    AddLight(*scene, Light{.Type = LightType::Point, .Range = 0.0f});
+    AddLight(*scene, Light{.Type = LightType::Rect, .Width = 0.0f});
+    AddLight(*scene, Light{.Type = LightType::Sphere, .Radius = 0.0f});
+    AddLight(*scene, Light{.Type = LightType::Polygon,
+                           .PolygonVertices = {vec3(0.0f), vec3(1.0f, 0.0f, 0.0f),
+                                               vec3(2.0f, 0.0f, 0.0f)}});
+
+    // A directional has no range, so a zero one does not stop it lighting everything.
+    AddLight(*scene, Light{.Type = LightType::Directional, .Range = 0.0f});
+
+    const PackedSceneLights packed = PackSceneLights(*scene, true, 1024);
+
+    REQUIRE(packed.LightCount == 1);
+    CHECK(packed.Lights[0].DirectionType.w == doctest::Approx(0.0f)); // LightType::Directional
+    CHECK(packed.DroppedLightCount == 0);
+}
+
+TEST_CASE("PackSceneLights: past the cap, the nearest bright light is packed and a dark one never")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+    const Unique<Scene> scene = Scene::Create(types);
+
+    const vec3 viewpoint(0.0f);
+    // A dark light at the viewpoint, iterated first: nearest of all, and contributing nothing.
+    AddLight(*scene, Light{.Type = LightType::Point, .Intensity = 0.0f, .Range = 100.0f},
+             viewpoint);
+    // Four more bright lights than the cap, iterated farthest first, so the nearest comes last
+    // and a pack that kept the first MaxLights would drop it.
+    const u32 bright = Renderer::SceneView::MaxLights + 4;
+    for (u32 i = 0; i < bright; ++i)
+    {
+        AddLight(*scene, Light{.Type = LightType::Point, .Intensity = 1000.0f, .Range = 100.0f},
+                 vec3(static_cast<f32>(2 * (bright - i)), 0.0f, 0.0f));
+    }
+
+    const PackedSceneLights packed =
+        PackSceneLights(*scene, true, 1024, AABB::Empty(), nullptr, &viewpoint);
+
+    REQUIRE(packed.LightCount == Renderer::SceneView::MaxLights);
+    CHECK(packed.DroppedLightCount == bright - Renderer::SceneView::MaxLights);
+
+    f32 dimmestPacked = std::numeric_limits<f32>::max();
+    f32 farthestPacked = 0.0f;
+    bool nearestPacked = false;
+    for (u32 i = 0; i < packed.LightCount; ++i)
+    {
+        const PackedLight& light = packed.Lights[i];
+        dimmestPacked = std::min(dimmestPacked, light.ColorIntensity.a);
+        farthestPacked = std::max(farthestPacked, light.PositionRange.x);
+        nearestPacked = nearestPacked || light.PositionRange.x == 2.0f;
+    }
+    CHECK(dimmestPacked > 0.0f);
+    CHECK(nearestPacked);
+    // The packed set is the nearest MaxLights, not merely one that contains the nearest.
+    CHECK(farthestPacked == doctest::Approx(2.0f * Renderer::SceneView::MaxLights));
 }

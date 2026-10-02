@@ -130,10 +130,17 @@ namespace Veng::Renderer
     /// cull), and the cascade sets granted this frame.
     struct PackedSceneLights
     {
-        /// @brief Lights packed in iteration order, valid in [0, LightCount).
+        /// @brief The selected lights in scene iteration order, valid in [0, LightCount).
         std::array<PackedLight, SceneView::MaxLights> Lights{};
         /// @brief Number of packed lights, capped at SceneView::MaxLights.
         u32 LightCount = 0;
+        /// @brief Lights that could contribute but ranked below the MaxLights packed this frame.
+        ///
+        /// Nonzero means the scene offered more contributing lights than one view carries; the
+        /// excess shades nothing this frame. Lights skipped because they cannot contribute (zero
+        /// radiance, zero range, a degenerate emitter, or out of the camera frustum's reach) are
+        /// not counted.
+        u32 DroppedLightCount = 0;
 
         /// @brief World-space polygon vertices for Rect/Polygon area lights, valid in [0, AreaVertexCount).
         std::array<vec4, BindlessRegistry::MaxAreaVertices> AreaVertices{};
@@ -173,13 +180,28 @@ namespace Veng::Renderer
         u32 DeniedDirectionalCount = 0;
     };
 
-    /// @brief Packs every Light entity in @p world into the renderer's GPU light layout.
+    /// @brief Packs the Light entities in @p world that can light this view into the renderer's GPU light layout.
     ///
-    /// Iterates the scene's Light entities (capped at SceneView::MaxLights) and packs each in
-    /// iteration order; spot cone half-angles are stored as cosines for the shader's dot-product
-    /// compare and the punctual shadow slot (or -1) rides Cone.z.
+    /// **Only a light that can contribute is packed.** A light is skipped when its radiance is
+    /// zero, when it is positioned and its range is not positive, when it is an area light whose
+    /// emitter has no area (a Rect with no extent, a Polygon of fewer than three non-collinear
+    /// vertices, a Sphere of zero radius), or — given @p cameraFrustum — when its range sphere,
+    /// grown by its emitter's reach, misses the frustum: such a light lights no visible pixel.
     ///
-    /// **The two shadow budgets are spent by contribution, not by arrival.** Every
+    /// **Past the cap, the lights that look brightest from the camera win.** The remaining lights
+    /// are ranked by the radiance each delivers at @p viewpoint — a directional's unattenuated
+    /// radiance, a positioned light's radiance under the inverse square from its emitter's
+    /// surface, clamped at its value one world unit out — and the top SceneView::MaxLights are
+    /// packed, the rest counted in DroppedLightCount. The ranking leaves out the range cutoff
+    /// deliberately: a light whose range ends short of the camera still lights what the camera
+    /// sees, and the cutoff would score it zero. Equal scores keep scene iteration order, and the
+    /// packed lights are laid out in scene iteration order, so a scene of at most MaxLights
+    /// contributing lights packs exactly as it iterates.
+    ///
+    /// Spot cone half-angles are stored as cosines for the shader's dot-product compare and the
+    /// punctual shadow slot (or -1) rides Cone.z.
+    ///
+    /// **The two shadow budgets are spent by contribution, not by arrival.** Every packed
     /// shadow-casting light is scored by the radiance the lighting pass would apply to the point
     /// of @p sceneBounds nearest it — a directional's unattenuated radiance, or a punctual
     /// light's radiance under the shader's own range falloff and inverse-square, the latter
@@ -196,11 +218,10 @@ namespace Veng::Renderer
     /// A Directional has no such fallback, so it is packed with LightFlags::CascadeDenied and
     /// counted in DeniedDirectionalCount — it shades unshadowed, and says so.
     ///
-    /// **A punctual slot goes only to a light that can shadow something visible.** Given the
-    /// camera frustum, a point/spot/area light whose range sphere misses it takes no slot (it
-    /// lights no visible pixel, so its map would never be sampled) and leaves the slot to the next
-    /// light in the ranking; a point light's cube faces whose frustums miss it are left out of
-    /// PunctualFaceMask, and a point light none of whose faces survive takes no slot either.
+    /// **A punctual slot goes only to a light that can shadow something visible.** A point
+    /// light's cube faces whose frustums miss @p cameraFrustum are left out of PunctualFaceMask,
+    /// and a point light none of whose faces survive takes no slot, leaving it to the next light
+    /// in the ranking.
     ///
     /// @param world                    Scene whose Light entities are packed.
     /// @param punctualShadows          Whether point/spot lights are assigned shadow slots.
@@ -208,11 +229,14 @@ namespace Veng::Renderer
     /// @param sceneBounds              Caster bound the spot/area shadow frustums are fit to; the
     ///                                 empty box (the default) leaves each frustum at its light's
     ///                                 own range and cone.
-    /// @param cameraFrustum            The view's camera frustum the slot and face tests use; null
-    ///                                 (the default) grants slots and faces without testing.
+    /// @param cameraFrustum            The view's camera frustum the light, slot and face tests
+    ///                                 use; null (the default) packs and grants without testing.
+    /// @param viewpoint                The camera position the cap's ranking is measured from;
+    ///                                 null (the default) ranks by radiance alone.
     /// @return The packed lights, shadow records, and cascade-set selection for this frame.
     [[nodiscard]] PackedSceneLights PackSceneLights(const Scene& world, bool punctualShadows,
                                                     u32 punctualShadowResolution,
                                                     const AABB& sceneBounds = AABB::Empty(),
-                                                    const Frustum* cameraFrustum = nullptr);
+                                                    const Frustum* cameraFrustum = nullptr,
+                                                    const vec3* viewpoint = nullptr);
 }

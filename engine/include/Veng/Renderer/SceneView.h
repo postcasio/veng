@@ -109,9 +109,9 @@ namespace Veng::Renderer
     /// — a caller's values in those fields are ignored.
     ///
     /// The renderer reads the scene's lights itself: on every Execute it walks
-    /// View<Transform, Light> up to MaxLights, packs each into the ring-buffered light
-    /// buffer, and the lighting pass loops over the live count. A scene with no Light
-    /// renders flat-ambient.
+    /// View<Transform, Light>, packs up to MaxLights of those that can light the view into the
+    /// ring-buffered light buffer (see Renderer::PackSceneLights), and the lighting pass loops
+    /// over the live count. A scene with no Light renders flat-ambient.
     struct SceneView
     {
         /// @brief The scene to render.
@@ -190,8 +190,9 @@ namespace Veng::Renderer
 
         /// @brief Live light count this frame; set by the renderer on every Execute.
         ///
-        /// The number of (Transform, Light) entities packed, capped at MaxLights. The
-        /// lighting pass loops [0, LightCount). A caller's value is overwritten.
+        /// The number of (Transform, Light) entities packed, capped at MaxLights; a light that
+        /// cannot light the view is not packed. The lighting pass loops [0, LightCount). A
+        /// caller's value is overwritten.
         u32 LightCount = 0;
 
         /// @brief Maximum number of lights the renderer packs per frame.

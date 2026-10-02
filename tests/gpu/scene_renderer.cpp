@@ -2064,6 +2064,103 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// A pixel no light reaches receives exactly the ambient term. A face-on brick cube is rendered
+// with no light, then with a point, a spot, a Rect and a Sphere light, each bright, inside the
+// camera frustum (so each is packed and reaches the lighting loop) and each with its range ending
+// short of the cube. The two renders match byte for byte: every light outside its range adds
+// exactly nothing, shadow lookup included. The point light moved within reach then brightens the
+// face, so the lights are bright enough for a leak to register.
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "scene renderer: a pixel outside every light's range receives exactly the "
+                  "ambient term")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_out_of_range.vengpack");
+
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(material.has_value());
+
+    const Ref<Mesh> cube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *material), "Out-of-Range Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
+
+    constexpr uvec2 extent{128, 128};
+
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    // Bloom and SSAO are off: neither is bit-stable across renders on MoltenVK, and the claim is
+    // byte equality. Shadows stay on, so each slotted light's shadow lookup is in play.
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .AO = false},
+    });
+
+    const vector<u8> ambientOnly = RenderOutput(Context, *renderer, *scene, camera);
+    REQUIRE(ambientOnly.size() == static_cast<size_t>(extent.x) * extent.y * 8);
+
+    // The cube's front face is at z = 0.7; every light sits nearer the camera than its range
+    // reaches toward the cube.
+    const Entity point = scene->CreateEntity();
+    scene->Add<Transform>(point).Position = vec3(0.0f, 0.0f, 2.2f);
+    scene->Add<Light>(point) =
+        Light{.Type = LightType::Point, .Intensity = PointLumens(1000.0f), .Range = 1.0f};
+
+    const Entity spot = scene->CreateEntity();
+    scene->Add<Transform>(spot).Position = vec3(0.3f, 0.0f, 2.2f);
+    scene->Add<Light>(spot) = Light{.Type = LightType::Spot,
+                                    .Direction = vec3(0.0f, 0.0f, -1.0f),
+                                    .Intensity = SpotLumens(1000.0f, 0.5f),
+                                    .Range = 1.0f,
+                                    .OuterCone = 0.5f};
+
+    // A half turn about +Y faces the panel's emitting +Z toward the cube.
+    const Entity rect = scene->CreateEntity();
+    scene->Add<Transform>(rect) =
+        Transform{.Position = vec3(0.0f, 0.3f, 2.0f),
+                  .Rotation = glm::angleAxis(glm::pi<f32>(), vec3(0.0f, 1.0f, 0.0f))};
+    scene->Add<Light>(rect) = Light{.Type = LightType::Rect,
+                                    .Intensity = AreaNits(1000.0f),
+                                    .Range = 0.8f,
+                                    .Width = 0.2f,
+                                    .Height = 0.2f,
+                                    .TwoSided = true};
+
+    const Entity sphere = scene->CreateEntity();
+    scene->Add<Transform>(sphere).Position = vec3(-0.3f, 0.0f, 2.0f);
+    scene->Add<Light>(sphere) = Light{
+        .Type = LightType::Sphere, .Intensity = AreaNits(1000.0f), .Range = 0.9f, .Radius = 0.1f};
+
+    // Every one of them is packed, so the loop itself is what leaves the cube unlit.
+    const Frustum frustum = Frustum::FromViewProjection(camera.ViewProjection());
+    const vec3 cameraPosition = camera.GetPosition();
+    REQUIRE(
+        PackSceneLights(*scene, true, 1024, AABB::Empty(), &frustum, &cameraPosition).LightCount ==
+        4);
+
+    const vector<u8> outOfRange = RenderOutput(Context, *renderer, *scene, camera);
+    CHECK(outOfRange == ambientOnly);
+
+    scene->Get<Light>(point).Range = 3.0f;
+    const vector<u8> inRange = RenderOutput(Context, *renderer, *scene, camera);
+    const vec3 litCenter = DecodeTexel(inRange, extent.x, extent.x / 2, extent.y / 2);
+    const vec3 ambientCenter = DecodeTexel(ambientOnly, extent.x, extent.x / 2, extent.y / 2);
+    CHECK(litCenter.r > ambientCenter.r * 2.0f);
+
+    std::filesystem::remove(outArchive);
+}
+
 // The bloom property assertion (this plan's dedicated property pin beyond the
 // re-blessed golden — which, regenerated in the same commit, carries no regression
 // power). A smooth, metallic brick cube under a strong white light produces a tight,

@@ -464,8 +464,23 @@ a set is the atlas's expensive unit — at the default 1024² tile and four casc
 every caster through four more cascade viewports, where a punctual tile costs a sixth of the
 memory and one traversal.
 
+**A view packs only the lights that can light it, and past the cap the brightest.** One view
+carries `MaxLights` (16) lights, and every pixel of the lighting pass loops all of them, so a slot
+spent on a light that adds nothing costs every pixel. `PackSceneLights` skips a light of zero
+radiance, a positioned light of non-positive range, an area light whose emitter has no area, and —
+given the camera frustum — a positioned light whose range sphere (grown by its emitter's reach)
+misses it. The rest are ranked by the radiance each delivers at the camera position (inverse square
+from the emitter's surface, clamped one world unit out; deliberately without the range cutoff, which
+would score zero every light whose range ends short of the camera but not of what it sees), the top
+`MaxLights` are packed in scene iteration order, and the excess is counted in `DroppedLightCount`.
+**The loop skips what cannot light a pixel** (`EvaluateDirectLighting`, `Veng/lighting.slang`): a
+light of zero radiance, a pixel at or past a light's range (for an area light, tested before the LTC
+integral), a pixel outside a spot's cone, and a punctual or directional light behind the surface
+each `continue` before the shadow lookup and the BRDF. Each skip is exact — the term it skips is
+zero — so it changes cost, never the image.
+
 **Both budgets are spent by estimated contribution, never by arrival.** `PackSceneLights` scores
-every shadow-casting light by the radiance the lighting pass would apply at the point of the caster
+every packed shadow-casting light by the radiance the lighting pass would apply at the point of the caster
 bound nearest it — a directional's unattenuated radiance, or a punctual light's radiance under the
 shader's own range falloff and inverse square, clamped at its value one world unit out — then walks
 the ranking from the top, handing out cascade sets and atlas slots. **Equal scores keep scene
@@ -489,12 +504,12 @@ against **its own** frustum — the camera frustum for the g-buffer, each cascad
 each spot's frustum, each cube face's frustum.
 
 **A shadow view draws only what it can show.** `PackSceneLights` takes the camera frustum: a
-punctual light whose range sphere misses it takes no slot (it lights no visible pixel), and a point
+light whose range sphere misses it is not packed at all, so takes no slot, and a point
 light's cube face whose frustum misses it is left out of `PunctualFaceMask` (a visible pixel samples
 the face its direction from the light falls in, so that face is never sampled) — its tile keeps the
 clear. A frame where no light took a cascade set renders no cascade tile. Within a cascade, a caster
 whose world bound spans fewer than `ShadowCasterMinTexels` texels is skipped; the far cascades are
-where that trips. `FrustumCull` off renders every slot, face and caster. `GetLastShadowViewCount()`
+where that trips. `FrustumCull` off packs every light and renders every slot, face and caster. `GetLastShadowViewCount()`
 reports the views rendered (the `Render/ShadowViews` counter).
 
 **Depth passes draw instanced.** `PrepareDraws` writes every visible mesh's world and normal matrices

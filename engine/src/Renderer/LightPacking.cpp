@@ -35,13 +35,17 @@ namespace Veng::Renderer
         // area light, where the direction genuinely diverges, keeps the perspective tile.
         constexpr f32 CascadeParallaxThreshold = 0.2f;
 
-        // One gathered scene light: what the packing pass resolved from the entity, plus the
-        // shadow arms the contribution ranking then assigned it. Gathered in scene iteration
-        // order (which is the packing order), ranked separately.
+        // One selected scene light: what the packing pass resolved from the entity, plus the
+        // shadow arms the contribution ranking then assigned it. Laid out in scene iteration
+        // order, ranked separately.
         struct LightCandidate
         {
             /// @brief The scene's Light component; the scene is not mutated while these live.
             const Light* Source = nullptr;
+            /// @brief The light's position in scene iteration order, the ranking's tie-break.
+            u32 Order = 0;
+            /// @brief Estimated radiance at the viewpoint, which decides the MaxLights packed.
+            f32 ViewScore = 0.0f;
             /// @brief The entity's resolved world matrix.
             mat4 World{1.0f};
             /// @brief The light's world position, the translation of World.
@@ -141,19 +145,6 @@ namespace Veng::Renderer
             return light.Intensity * anchor;
         }
 
-        // A light's estimated contribution to the frame: the radiance the lighting pass would
-        // apply at the point of the caster bound nearest the light — the brightest this light
-        // can be anywhere in the drawn scene, which is the right question for "does it deserve
-        // a shadow". The falloff is the shader's own: a Directional carries none, and everything
-        // else takes the smooth range cutoff times the inverse square.
-        //
-        // The inverse square is clamped at its value one world unit out. Without it a light
-        // standing inside the bound divides by ~0 and outranks every other by an arbitrary
-        // factor; with it a co-located light ranks exactly as a directional of the same
-        // radiance, which is the most it can honestly claim. An area light is scored the same
-        // way even though its LTC integral carries the inverse square internally — the estimate
-        // only has to order lights, and irradiance from a finite emitter falls the same way
-        // past its own size.
         // The world distance from an area light's position to the farthest point of its emitter;
         // zero for a punctual light. Subtracted from the ranking distance, it measures the range
         // cutoff from the emitter's surface as the shader does, without exceeding what it can reach.
@@ -189,6 +180,19 @@ namespace Veng::Renderer
             }
         }
 
+        // A light's estimated contribution to the frame: the radiance the lighting pass would
+        // apply at the point of the caster bound nearest the light — the brightest this light
+        // can be anywhere in the drawn scene, which is the right question for "does it deserve
+        // a shadow". The falloff is the shader's own: a Directional carries none, and everything
+        // else takes the smooth range cutoff times the inverse square.
+        //
+        // The inverse square is clamped at its value one world unit out. Without it a light
+        // standing inside the bound divides by ~0 and outranks every other by an arbitrary
+        // factor; with it a co-located light ranks exactly as a directional of the same
+        // radiance, which is the most it can honestly claim. An area light is scored the same
+        // way even though its LTC integral carries the inverse square internally — the estimate
+        // only has to order lights, and irradiance from a finite emitter falls the same way
+        // past its own size.
         f32 EstimateContribution(const Light& light, const mat4& world, const vec3& worldPos,
                                  const AABB& sceneBounds)
         {
@@ -211,6 +215,61 @@ namespace Veng::Renderer
             f32 rangeFactor = std::clamp(1.0f - std::pow(distance / range, 4.0f), 0.0f, 1.0f);
             rangeFactor *= rangeFactor;
             return radiance * rangeFactor / std::max(distance * distance, 1.0f);
+        }
+
+        // A light's radiance at the viewpoint, which decides the MaxLights a view packs: the
+        // inverse square from the emitter's surface, clamped one world unit out exactly as
+        // EstimateContribution clamps it. The range cutoff is left out — a light whose range ends
+        // short of the camera still lights what the camera sees, and the cutoff would score it
+        // zero beside every other such light.
+        f32 EstimateViewRadiance(const Light& light, const mat4& world, const vec3& worldPos,
+                                 const vec3* viewpoint)
+        {
+            const f32 radiance = IntensityToRadiance(light) * Luminance(light.Color);
+            if (light.Type == LightType::Directional || viewpoint == nullptr)
+            {
+                return radiance;
+            }
+            const f32 distance =
+                std::max(glm::length(*viewpoint - worldPos) - EmitterReach(light, world), 0.0f);
+            return radiance / std::max(distance * distance, 1.0f);
+        }
+
+        // Whether an area light's emitter has any area once placed in the world: the shader's
+        // integral over a zero-area emitter is zero, so such a light only spends a slot.
+        bool HasEmittingArea(const Light& light, const mat4& world)
+        {
+            const mat3 basis(world);
+            switch (light.Type)
+            {
+            case LightType::Sphere:
+                return light.Radius * glm::length(basis[0]) > 0.0f;
+            case LightType::Rect:
+                return glm::length(glm::cross(basis * vec3(light.Width, 0.0f, 0.0f),
+                                              basis * vec3(0.0f, light.Height, 0.0f))) > 0.0f;
+            case LightType::Polygon:
+            {
+                // Newell's normal: twice the polygon's vector area, zero when every vertex is
+                // collinear.
+                const std::span<const vec3> local = light.PolygonVertices;
+                if (local.size() < 3)
+                {
+                    return false;
+                }
+                vec3 twiceArea{0.0f};
+                for (usize i = 0; i < local.size(); ++i)
+                {
+                    twiceArea +=
+                        glm::cross(basis * local[i], basis * local[(i + 1) % local.size()]);
+                }
+                return glm::length(twiceArea) > 0.0f;
+            }
+            case LightType::Directional:
+            case LightType::Point:
+            case LightType::Spot:
+                break;
+            }
+            return true;
         }
 
         // Whether an area light is near-parallel over the scene: the direction to it barely
@@ -329,29 +388,79 @@ namespace Veng::Renderer
 
     PackedSceneLights PackSceneLights(const Scene& world, const bool punctualShadows,
                                       const u32 punctualShadowResolution, const AABB& sceneBounds,
-                                      const Frustum* cameraFrustum)
+                                      const Frustum* cameraFrustum, const vec3* viewpoint)
     {
         VE_PROFILE_SCOPE("Render/PackLights");
         PackedSceneLights result;
 
-        // Gather the scene's lights in iteration order — the order they are packed in below, and
-        // the order the ranking falls back to on a tie.
+        // Select the lights this view packs: every light that can light a visible pixel, and of
+        // those past the cap the MaxLights brightest at the viewpoint. Selection keeps a fixed
+        // array of the best so far and replaces its weakest, so it allocates nothing.
         std::array<LightCandidate, SceneView::MaxLights> candidates;
         u32 candidateCount = 0;
+        // Whether a ranks below b: lower radiance at the viewpoint, or equal and later in scene
+        // iteration order.
+        const auto ranksBelow = [](const LightCandidate& a, const LightCandidate& b)
+        { return a.ViewScore < b.ViewScore || (a.ViewScore == b.ViewScore && a.Order > b.Order); };
+        u32 order = 0;
         for (auto [entity, light] : world.View<Light>())
         {
-            if (candidateCount >= SceneView::MaxLights)
+            const u32 lightOrder = order++;
+            const bool positioned = light.Type != LightType::Directional;
+            if (light.Color * IntensityToRadiance(light) == vec3(0.0f) ||
+                (positioned && !(light.Range > 0.0f)))
             {
-                break;
+                continue;
             }
 
-            LightCandidate& candidate = candidates[candidateCount];
+            LightCandidate candidate;
             candidate.Source = &light;
+            candidate.Order = lightOrder;
             candidate.World = WorldMatrix(world, entity);
             candidate.WorldPos = vec3(candidate.World[3]);
-            candidate.AimDir = ResolveAimDirection(light, candidate.World);
             candidate.IsArea = light.Type == LightType::Rect || light.Type == LightType::Sphere ||
                                light.Type == LightType::Polygon;
+            if (candidate.IsArea && !HasEmittingArea(light, candidate.World))
+            {
+                continue;
+            }
+            if (positioned && cameraFrustum != nullptr &&
+                !SphereMeetsFrustum(*cameraFrustum, candidate.WorldPos,
+                                    light.Range + EmitterReach(light, candidate.World)))
+            {
+                continue;
+            }
+            candidate.ViewScore =
+                EstimateViewRadiance(light, candidate.World, candidate.WorldPos, viewpoint);
+
+            if (candidateCount < SceneView::MaxLights)
+            {
+                candidates[candidateCount++] = candidate;
+                continue;
+            }
+            ++result.DroppedLightCount;
+            LightCandidate* weakest = &candidates[0];
+            for (LightCandidate& kept : std::span(candidates).subspan(1))
+            {
+                if (ranksBelow(kept, *weakest))
+                {
+                    weakest = &kept;
+                }
+            }
+            if (ranksBelow(*weakest, candidate))
+            {
+                *weakest = candidate;
+            }
+        }
+
+        // Lay the selection out in scene iteration order — the order the shadow ranking below
+        // falls back to on a tie — and resolve what selection did not need.
+        const std::span<LightCandidate> selected(candidates.data(), candidateCount);
+        std::ranges::sort(selected, {}, &LightCandidate::Order);
+        for (LightCandidate& candidate : selected)
+        {
+            const Light& light = *candidate.Source;
+            candidate.AimDir = ResolveAimDirection(light, candidate.World);
             // A light that declines shadows scores zero: it is passed over for every arm, since
             // aiming the scene's cascade at a light that then shades unshadowed would waste the
             // arm — which is the point of declining.
@@ -359,7 +468,6 @@ namespace Veng::Renderer
                 light.CastsShadows
                     ? EstimateContribution(light, candidate.World, candidate.WorldPos, sceneBounds)
                     : 0.0f;
-            ++candidateCount;
         }
 
         // Rank by estimated contribution, descending. The sort is *stable*, which is what makes
@@ -420,15 +528,6 @@ namespace Veng::Renderer
             if (!punctualShadows || result.PunctualCount >= MaxShadowedPunctual ||
                 !(light.Type == LightType::Point || light.Type == LightType::Spot ||
                   candidate.IsArea))
-            {
-                continue;
-            }
-
-            // A light whose reach misses the camera frustum lights no visible pixel, so a map of
-            // it would never be sampled: it takes no slot and leaves it to the next light.
-            if (cameraFrustum != nullptr &&
-                !SphereMeetsFrustum(*cameraFrustum, candidate.WorldPos,
-                                    light.Range + EmitterReach(light, candidate.World)))
             {
                 continue;
             }
@@ -502,8 +601,8 @@ namespace Veng::Renderer
             ++result.PunctualCount;
         }
 
-        // Lay the gathered lights out in scene iteration order; the ranking above decided only
-        // which arm shadows which light, never where a light sits in the buffer.
+        // The shadow ranking above decided only which arm shadows which light, never where a
+        // light sits in the buffer.
         result.LightCount = candidateCount;
         for (u32 i = 0; i < candidateCount; ++i)
         {

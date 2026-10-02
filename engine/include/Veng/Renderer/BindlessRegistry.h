@@ -697,7 +697,8 @@ namespace Veng::Renderer
         /// @brief The fixed cap on lights the deferred lighting pass loops per pixel.
         ///
         /// The light SSBO holds framesInFlight * MaxViewsPerFrame copies of MaxLights
-        /// entries; the pass evaluates the full Cook-Torrance BRDF per light up to the live count.
+        /// entries; the pass loops the live count, skipping a light that cannot reach the pixel
+        /// before its shadow lookup and BRDF.
         static constexpr u32 MaxLights = 16;
 
         /// @brief The fixed cap on distinct viewport renders sharing one frame-in-flight.

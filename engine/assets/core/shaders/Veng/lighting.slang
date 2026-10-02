@@ -353,7 +353,9 @@ float AreaShadowVisibility(GpuLight light, float3 worldPos, float3 N)
 
 // The Cook-Torrance response of the surface to every live light in this view's light region,
 // shadowed. Directional lights have no attenuation; point/spot fall off with distance, and spot
-// adds a cone factor; area lights integrate analytically through LTC.
+// adds a cone factor; area lights integrate analytically through LTC. A light whose contribution
+// here is exactly zero — zero radiance, the pixel at or past its range or outside its cone, or the
+// light behind the surface — is skipped before its shadow lookup and BRDF.
 LightingResult EvaluateDirectLighting(ViewConstants vc, LightingSurface s)
 {
     float3 N = s.Normal;
@@ -371,16 +373,25 @@ LightingResult EvaluateDirectLighting(ViewConstants vc, LightingSurface s)
 
         float type = light.DirectionType.w;
         float3 radiance = light.ColorIntensity.rgb * light.ColorIntensity.a;
+        if (all(radiance == float3(0.0)))
+        {
+            continue;
+        }
 
         // Rect/Sphere/Polygon are area lights: shade analytically through the LTC path and fall
         // off with a smooth range cutoff only — the solid-angle integral already carries the
         // inverse-square, so no separate distance term. The cutoff is measured from the emitter's
-        // surface, not its center. (Area shadowing is applied below.)
+        // surface, not its center, and is zero at the range, so the integral is skipped past it.
+        // (Area shadowing is applied below.)
         if (type > LightTypeSpot + 0.5)
         {
-            LightingResult area = EvaluateAreaLight(vc, s, light);
             float dist = AreaLightSurfaceDistance(vc, light, worldPos);
             float range = max(light.PositionRange.w, 1e-4);
+            if (dist >= range)
+            {
+                continue;
+            }
+            LightingResult area = EvaluateAreaLight(vc, s, light);
             float rangeFactor = saturate(1.0 - pow(dist / range, 4.0));
             rangeFactor *= rangeFactor;
             // A near-parallel area light is shadowed by the cascade set fit to it — parallel
@@ -421,6 +432,11 @@ LightingResult EvaluateDirectLighting(ViewConstants vc, LightingSurface s)
             // surface toward the light.
             float3 toLight = light.PositionRange.xyz - worldPos;
             float dist = length(toLight);
+            float range = max(light.PositionRange.w, 1e-4);
+            if (dist >= range)
+            {
+                continue;
+            }
             L = dist > 1e-4 ? toLight / dist : float3(0.0, 0.0, 1.0);
 
             // Inverse-square falloff with a smooth cutoff at Range: physically
@@ -435,7 +451,6 @@ LightingResult EvaluateDirectLighting(ViewConstants vc, LightingSurface s)
             // perturbs the falloff at every distance, not only near the singularity, so it
             // cannot be read as absolute radiance under a fixed exposure. L still comes from the
             // true toLight — the clamp bounds the magnitude of the response, not its direction.
-            float range = max(light.PositionRange.w, 1e-4);
             float sourceRadius = light.Area.x;
             float distanceFactor = 1.0 / max(max(dist * dist, sourceRadius * sourceRadius), 1e-4);
             float rangeFactor = saturate(1.0 - pow(dist / range, 4.0));
@@ -451,7 +466,17 @@ LightingResult EvaluateDirectLighting(ViewConstants vc, LightingSurface s)
                 float cosInner = light.Cone.x;
                 float cosOuter = light.Cone.y;
                 attenuation *= smoothstep(cosOuter, cosInner, cosAngle);
+                if (attenuation <= 0.0)
+                {
+                    continue;
+                }
             }
+        }
+
+        // EvaluateLight scales by the clamped N·L, so a light behind the surface adds exactly zero.
+        if (dot(N, L) <= 0.0)
+        {
+            continue;
         }
 
         // A directional light is shadowed by the cascade set fit to its direction, unless the

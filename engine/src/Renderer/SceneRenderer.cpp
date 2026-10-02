@@ -2141,18 +2141,19 @@ namespace Veng::Renderer
         const AABB sceneBounds = m_Broadphase.GetSceneBounds();
         const AABB casterBounds = m_Broadphase.GetCasterBounds();
 
-        // Pack every Light entity into the GPU light layout: cascade-set and punctual
-        // shadow-slot assignment by estimated contribution, and the std430 per-light records.
-        // A slotted point/spot light carries its slot in Cone.z (-1 = unshadowed) and its
-        // record rides set-1 binding 3. The caster bound both fits each spot/area light's
-        // shadow frustum to the geometry it must shadow and supplies the point the
-        // contribution estimate is evaluated at.
-        // The camera frustum withholds a punctual slot from a light that lights nothing visible and
-        // a cube face from a view no visible pixel samples; FrustumCull off renders them all.
+        // Pack the lights that can light this view into the GPU light layout: cascade-set and
+        // punctual shadow-slot assignment by estimated contribution, and the std430 per-light
+        // records. A slotted point/spot light carries its slot in Cone.z (-1 = unshadowed) and
+        // its record rides set-1 binding 3. The caster bound both fits each spot/area light's
+        // shadow frustum to the geometry it must shadow and supplies the point the shadow
+        // ranking is evaluated at; the camera position is where the light cap's ranking is.
+        // The camera frustum withholds a light that lights nothing visible and a cube face from a
+        // view no visible pixel samples; FrustumCull off packs and renders them all.
         const Frustum cameraFrustum = Frustum::FromViewProjection(view.Camera.ViewProjection());
+        const vec3 cameraPosition = view.Camera.GetPosition();
         const PackedSceneLights packed = PackSceneLights(
             view.World, m_Settings.PunctualShadows, m_Settings.PunctualShadowResolution,
-            casterBounds, m_Settings.FrustumCull ? &cameraFrustum : nullptr);
+            casterBounds, m_Settings.FrustumCull ? &cameraFrustum : nullptr, &cameraPosition);
         ReportDeniedCascades(packed.DeniedDirectionalCount);
 
         // Mirror filled records into the GPU block (unused slots stay zeroed → type 0 = "no map").
