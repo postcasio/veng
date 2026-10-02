@@ -68,6 +68,7 @@ namespace
     struct DecodedEvent
     {
         u8 Type = 0;
+        bool Idle = false;
         u32 Track = 0;
         NameId Name = 0;
         u64 Frame = 0;
@@ -215,6 +216,7 @@ namespace
             const u8 tag = p[o++];
             DecodedEvent e;
             e.Type = tag & 0x03;
+            e.Idle = (tag & 0x08) != 0;
             if ((tag & 0x04) != 0)
             {
                 e.Track = static_cast<u32>(ReadVar(p, o));
@@ -350,7 +352,8 @@ namespace
     // ----- The committed reference fixture, built deterministically from clean synthetic values. ---
     //
     // No absolute path, no host-specific field, no game-derived string: the fixture is a public
-    // binary and plan 07 byte-scans it, so every string it carries is generic and hand-chosen here.
+    // binary and the leak check below byte-scans it, so every string it carries is generic and
+    // hand-chosen here.
 
     struct Fixture
     {
@@ -408,6 +411,11 @@ namespace
                                .EndTicks = begin,
                                .Value = value};
         };
+        auto idle = [](EventRecord record)
+        {
+            record.Idle = true;
+            return record;
+        };
         auto instant = [](NameId name, u64 frame, u64 begin)
         {
             return EventRecord{.Type = static_cast<u8>(TraceFormat::RecordType::Instant),
@@ -430,7 +438,8 @@ namespace
             counter(5, 10, TickBase + 110, -7.0),   // ZigzagI64
             counter(6, 10, TickBase + 120, 3.5),    // RawF64
             instant(9, 10, TickBase + 150),
-            scope(2, 11, TickBase + 200'000, TickBase + 200'100), // wide begin delta, next frame
+            idle(scope(2, 11, TickBase + 200'000, TickBase + 200'100)), // wide begin delta, next
+                                                                        // frame, idle-marked
         };
         writer.WriteChunk(chunkA);
 
@@ -552,6 +561,33 @@ TEST_CASE("trace format: every record type round-trips to identity")
     CHECK(e[2].Type == 2);
     CHECK(e[2].BeginTicks == 1030);
     CHECK(t.Resolve(e[2].Name) == "instant");
+}
+
+TEST_CASE("trace format: a scope's idle mark round-trips and marks nothing else")
+{
+    TraceWriter writer(CaptureMode::Triggered, BuildConfig::Debug, true, 24'000'000, 0);
+    ChunkData chunk;
+    chunk.Thread = 1;
+    chunk.TimestampBase = 1000;
+    chunk.Records = {
+        EventRecord{.Type = 0, .Name = 1, .Frame = 5, .BeginTicks = 1000, .EndTicks = 1010},
+        EventRecord{
+            .Type = 0, .Idle = true, .Name = 2, .Frame = 5, .BeginTicks = 1010, .EndTicks = 1090},
+        EventRecord{
+            .Type = 0, .Track = 3, .Name = 1, .Frame = 4, .BeginTicks = 1000, .EndTicks = 1050},
+    };
+    writer.WriteChunk(chunk);
+    writer.WriteTrailer();
+
+    const DecodedTrace t = Decode(writer.GetBytes());
+    REQUIRE(t.Chunks.size() == 1);
+    const auto& e = t.Chunks[0].Events;
+    REQUIRE(e.size() == 3);
+    CHECK_FALSE(e[0].Idle);
+    CHECK(e[1].Idle);
+    CHECK(e[1].EndTicks == 1090); // the mark moves no other field
+    CHECK_FALSE(e[2].Idle);
+    CHECK(e[2].Track == 3);
 }
 
 TEST_CASE("trace format: counter values pick the narrowest exact encoding")
@@ -846,6 +882,8 @@ TEST_CASE("trace format: the committed reference fixture matches the writer and 
     CHECK(first.Events[4].ValueTag == CounterValueTag::RawF64);
     CHECK(first.Events[4].Value == doctest::Approx(3.5));
     CHECK(first.Events[5].Type == static_cast<u8>(TraceFormat::RecordType::Instant));
+    CHECK(first.Events[6].Idle);
+    CHECK_FALSE(first.Events[0].Idle);
 
     // The back-dated GPU span in the second chunk.
     const auto& second = t.Chunks[1];
@@ -973,6 +1011,9 @@ TEST_CASE("FileTraceSink: a live profiler capture writes a decodable file")
             {
                 VE_PROFILE_SCOPE("LiveScope");
             }
+            {
+                VE_PROFILE_SCOPE_IDLE("LiveIdle");
+            }
             VE_PROFILE_COUNTER("live.counter", static_cast<f64>(i));
         }
     }
@@ -981,19 +1022,24 @@ TEST_CASE("FileTraceSink: a live profiler capture writes a decodable file")
     const DecodedTrace t = Decode(bytes);
     CHECK(t.Complete);
     CHECK_FALSE(t.Truncated);
-    // The scope name interned during the live run resolves in the written string table.
+    // The scope name interned during the live run resolves in the written string table, and the
+    // idle mark travels from the macro to the file on its own scope only.
     bool sawScope = false;
+    u32 idleScopes = 0;
+    u32 markedElsewhere = 0;
     for (const DecodedChunk& chunk : t.Chunks)
     {
         for (const DecodedEvent& e : chunk.Events)
         {
-            if (t.Resolve(e.Name) == "LiveScope")
-            {
-                sawScope = true;
-            }
+            const bool isIdleScope = t.Resolve(e.Name) == "LiveIdle";
+            sawScope = sawScope || t.Resolve(e.Name) == "LiveScope";
+            idleScopes += (isIdleScope && e.Idle) ? 1 : 0;
+            markedElsewhere += (!isIdleScope && e.Idle) ? 1 : 0;
         }
     }
     CHECK(sawScope);
+    CHECK(idleScopes == 3);
+    CHECK(markedElsewhere == 0);
 }
 
 TEST_CASE("FileTraceSink: a back-dated span keeps its timestamps through a capture")

@@ -1,14 +1,18 @@
 #include "Cli.h"
 #include <Veng/Path.h>
 
+#include <charconv>
 #include <fstream>
 #include <ostream>
 #include <span>
+#include <variant>
 
 #include <fmt/format.h>
 #include <fmt/ostream.h>
 
 #include "ChromeTraceConverter.h"
+#include "Summary.h"
+#include "SummaryReport.h"
 #include "TraceDecoder.h"
 
 namespace Veng::VengTrace
@@ -17,17 +21,29 @@ namespace Veng::VengTrace
     {
         void PrintUsage(std::ostream& sink)
         {
-            fmt::print(sink,
-                       "usage:\n"
-                       "  vengtrace convert <capture> --out <file.json> [--pretty] "
-                       "[--events complete|pair]\n"
-                       "\n"
-                       "Converts a veng binary capture to Chrome Trace Event JSON, readable in\n"
-                       "ui.perfetto.dev and speedscope.app. The JSON is a lossy viewer-facing\n"
-                       "projection; the binary capture is the native form.\n"
-                       "\n"
-                       "exit codes: 0 ok (a truncated capture still converts) | 1 usage |\n"
-                       "  2 unreadable input | 3 unknown format version | 4 write failure\n");
+            fmt::print(
+                sink,
+                "usage:\n"
+                "  vengtrace convert <capture> --out <file.json> [--pretty] "
+                "[--events complete|pair]\n"
+                "  vengtrace summary <capture> [--top N] [--hitches N] [--idle <scope>]... "
+                "[--json]\n"
+                "  vengtrace compare <a> <b> [--top N] [--json]\n"
+                "\n"
+                "convert: writes a veng binary capture as Chrome Trace Event JSON, readable\n"
+                "  in ui.perfetto.dev and speedscope.app. The JSON is a lossy viewer-facing\n"
+                "  projection; the binary capture is the native form.\n"
+                "summary: aggregates a capture per frame over its whole frames: the frame\n"
+                "  period and work, the steady-state scopes by median exclusive cost, the\n"
+                "  longest frames broken down, counters, the GPU's untimed time and where it\n"
+                "  falls, and each world's simulation steps. --idle names a scope to leave\n"
+                "  out of a frame's work, for a capture older than the idle mark.\n"
+                "compare: the per-call median of every scope both captures recorded, with\n"
+                "  the ratio a/b. A uniform ratio across unrelated scopes is the signature of\n"
+                "  a slowed machine rather than of a code change.\n"
+                "\n"
+                "exit codes: 0 ok (a truncated capture still converts) | 1 usage |\n"
+                "  2 unreadable input | 3 unknown format version | 4 write failure\n");
         }
 
         int Fail(std::ostream& err, ExitCode code, const string& message)
@@ -47,6 +63,180 @@ namespace Veng::VengTrace
             }
             return vector<u8>((std::istreambuf_iterator<char>(in)),
                               std::istreambuf_iterator<char>());
+        }
+
+        // Reads and decodes a capture, or reports why it could not on err and returns the exit
+        // code. A truncated capture decodes, with a warning naming what the caller does with it.
+        std::variant<DecodedTrace, int> LoadCapture(const path& capture, string_view onTruncated,
+                                                    std::ostream& err)
+        {
+            const optional<vector<u8>> bytes = ReadAllBytes(capture);
+            if (!bytes)
+            {
+                return Fail(err, ExitCode::Unreadable,
+                            fmt::format("cannot read '{}'", capture.string()));
+            }
+            DecodeResult decoded = Decode(std::span<const u8>(*bytes));
+            switch (decoded.Status)
+            {
+            case DecodeStatus::NotACapture:
+                return Fail(err, ExitCode::Unreadable,
+                            fmt::format("'{}' is not a veng capture", capture.string()));
+            case DecodeStatus::UnknownVersion:
+                return Fail(
+                    err, ExitCode::UnknownVersion,
+                    fmt::format("'{}' is format version {}, which this tool does not support",
+                                capture.string(), decoded.FormatVersion));
+            case DecodeStatus::Ok:
+                break;
+            }
+            if (decoded.Trace.Truncated)
+            {
+                fmt::print(err, "vengtrace: '{}' is truncated (no trailer); {}\n", capture.string(),
+                           onTruncated);
+            }
+            return std::move(decoded.Trace);
+        }
+
+        // Parses a positive count option's value, reporting a bad one as a usage error.
+        optional<u32> ParseCount(const string& option, const string& value, std::ostream& err)
+        {
+            u32 count = 0;
+            const auto [end, error] =
+                std::from_chars(value.data(), value.data() + value.size(), count);
+            if (error != std::errc() || end != value.data() + value.size())
+            {
+                fmt::print(err, "vengtrace: {} expects a count, got '{}'\n", option, value);
+                return std::nullopt;
+            }
+            return count;
+        }
+
+        // The options summary and compare share — --top, --json and positional captures — and the
+        // two only summary takes, --hitches and --idle.
+        struct ReportArgs
+        {
+            vector<path> Captures;
+            SummaryOptions Options;
+            bool TopGiven = false;
+            bool Json = false;
+        };
+
+        // Parses a report subcommand's arguments; returns an exit code when parsing ends the run.
+        optional<int> ParseReportArgs(const vector<string>& args, bool isSummary,
+                                      ReportArgs& parsed, std::ostream& out, std::ostream& err)
+        {
+            for (usize i = 1; i < args.size(); ++i)
+            {
+                const string& arg = args[i];
+                const bool isTop = arg == "--top";
+                if (isTop || (isSummary && arg == "--hitches"))
+                {
+                    if (i + 1 >= args.size())
+                    {
+                        PrintUsage(err);
+                        return static_cast<int>(ExitCode::Usage);
+                    }
+                    const optional<u32> count = ParseCount(arg, args[++i], err);
+                    if (!count)
+                    {
+                        return static_cast<int>(ExitCode::Usage);
+                    }
+                    (isTop ? parsed.Options.Top : parsed.Options.Hitches) = *count;
+                    parsed.TopGiven = parsed.TopGiven || isTop;
+                }
+                else if (arg == "--json")
+                {
+                    parsed.Json = true;
+                }
+                else if (isSummary && arg == "--idle")
+                {
+                    if (i + 1 >= args.size())
+                    {
+                        PrintUsage(err);
+                        return static_cast<int>(ExitCode::Usage);
+                    }
+                    parsed.Options.IdleScopes.push_back(args[++i]);
+                }
+                else if (arg == "--help" || arg == "-h")
+                {
+                    PrintUsage(out);
+                    return static_cast<int>(ExitCode::Ok);
+                }
+                else if (arg.rfind("--", 0) == 0)
+                {
+                    fmt::print(err, "vengtrace: unknown option '{}'\n", arg);
+                    return static_cast<int>(ExitCode::Usage);
+                }
+                else
+                {
+                    parsed.Captures.emplace_back(arg);
+                }
+            }
+            return std::nullopt;
+        }
+
+        int RunSummary(const vector<string>& args, std::ostream& out, std::ostream& err)
+        {
+            ReportArgs parsed;
+            if (const optional<int> exit = ParseReportArgs(args, true, parsed, out, err))
+            {
+                return *exit;
+            }
+            if (parsed.Captures.size() != 1)
+            {
+                PrintUsage(err);
+                return static_cast<int>(ExitCode::Usage);
+            }
+            std::variant<DecodedTrace, int> loaded =
+                LoadCapture(parsed.Captures[0], "summarizing the recovered sections", err);
+            if (const int* exit = std::get_if<int>(&loaded))
+            {
+                return *exit;
+            }
+            const CaptureSummary summary =
+                Summarize(std::get<DecodedTrace>(loaded), parsed.Options);
+            const string label = parsed.Captures[0].string();
+            fmt::print(out, "{}",
+                       parsed.Json ? SummaryToJson(summary, label) : FormatSummary(summary, label));
+            return static_cast<int>(ExitCode::Ok);
+        }
+
+        int RunCompare(const vector<string>& args, std::ostream& out, std::ostream& err)
+        {
+            ReportArgs parsed;
+            if (const optional<int> exit = ParseReportArgs(args, false, parsed, out, err))
+            {
+                return *exit;
+            }
+            if (parsed.Captures.size() != 2)
+            {
+                PrintUsage(err);
+                return static_cast<int>(ExitCode::Usage);
+            }
+            std::variant<DecodedTrace, int> a =
+                LoadCapture(parsed.Captures[0], "comparing the recovered sections", err);
+            if (const int* exit = std::get_if<int>(&a))
+            {
+                return *exit;
+            }
+            std::variant<DecodedTrace, int> b =
+                LoadCapture(parsed.Captures[1], "comparing the recovered sections", err);
+            if (const int* exit = std::get_if<int>(&b))
+            {
+                return *exit;
+            }
+            const Comparison comparison =
+                Compare(std::get<DecodedTrace>(a), std::get<DecodedTrace>(b));
+            const string labelA = parsed.Captures[0].string();
+            const string labelB = parsed.Captures[1].string();
+            // Every common scope by default: a comparison is read for its uniformity, which a
+            // trimmed table would hide.
+            fmt::print(out, "{}",
+                       parsed.Json ? ComparisonToJson(comparison, labelA, labelB)
+                                   : FormatComparison(comparison, labelA, labelB,
+                                                      parsed.TopGiven ? parsed.Options.Top : 0));
+            return static_cast<int>(ExitCode::Ok);
         }
 
         int RunConvert(const vector<string>& args, std::ostream& out, std::ostream& err)
@@ -188,6 +378,14 @@ namespace Veng::VengTrace
         if (subcommand == "convert")
         {
             return RunConvert(args, out, err);
+        }
+        if (subcommand == "summary")
+        {
+            return RunSummary(args, out, err);
+        }
+        if (subcommand == "compare")
+        {
+            return RunCompare(args, out, err);
         }
         if (subcommand == "--help" || subcommand == "-h" || subcommand == "help")
         {

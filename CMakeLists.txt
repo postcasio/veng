@@ -782,7 +782,8 @@ add_subdirectory(mcp)
 
 add_subdirectory(cooker)
 
-# vengtrace — the binary-capture -> Chrome Trace JSON converter, a sibling of vengc. Builds
+# vengtrace — the binary-capture reader (a Chrome Trace JSON converter and a per-frame summary), a
+# sibling of vengc. Builds
 # unconditionally from source (veng is the tools) and joins the SDK export set. It links only
 # veng::veng, so it comes after engine.
 add_subdirectory(vengtrace)
@@ -1558,18 +1559,21 @@ if (VENG_BUILD_TESTS)
     add_test(NAME mcp_cli COMMAND veng_test_mcp_cli)
     set_tests_properties(mcp_cli PROPERTIES LABELS mcp)
 
-    # ---- vengtrace converter conformance (device-free, fast band) -----------
-    # The binary-capture -> Chrome Trace JSON converter, decoded and projected against plan 01's
-    # committed reference fixture. It compiles vengtrace's own decoder/converter/CLI sources (the
-    # tool keeps them in the executable rather than an exported library) and drives them in-process:
-    # the record-type mapping, duration round-trips, the back-dated GPU-under-frame property, the
-    # truncation path, and the arg grammar + exit-code map (mirroring mcp_cli's RunClientCli proof).
+    # ---- vengtrace conformance (device-free, fast band) ----------------------
+    # The binary-capture -> Chrome Trace JSON converter, decoded and projected against the
+    # committed reference fixture, and the per-frame summary over a capture built in the test. It
+    # compiles vengtrace's own sources (the tool keeps them in the executable rather than an
+    # exported library) and drives them in-process: the record-type mapping, duration round-trips,
+    # the back-dated GPU-under-frame property, the truncation path, the summary's figures, and the
+    # arg grammar + exit-code map (mirroring mcp_cli's RunClientCli proof).
     # It parses the emitted JSON with nlohmann to assert on the projection, and reads the fixture by
     # absolute path so it runs from any working directory. No GPU, so it is in the fast band.
     add_executable(veng_test_vengtrace
             tests/vengtrace.cpp
             vengtrace/src/TraceDecoder.cpp
             vengtrace/src/ChromeTraceConverter.cpp
+            vengtrace/src/Summary.cpp
+            vengtrace/src/SummaryReport.cpp
             vengtrace/src/Cli.cpp)
     target_include_directories(veng_test_vengtrace PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/vengtrace/src ${CMAKE_CURRENT_SOURCE_DIR}/tests)

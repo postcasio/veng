@@ -122,6 +122,9 @@ namespace Veng::VengTrace
         u32 VirtualTrack = 0;
         /// @brief Whether the record carried a virtual-track override.
         bool HasVirtualTrack = false;
+        /// @brief Whether a scope is marked idle: a deliberate wait, part of a frame's period but not
+        /// of its work. Always false in a version-1 capture, which predates the mark.
+        bool Idle = false;
         /// @brief The interned name id (0 = no name).
         u32 Name = 0;
         /// @brief The frame this event measures (absolute).
@@ -189,7 +192,7 @@ namespace Veng::VengTrace
         Ok = 0,
         /// @brief The input is too small or lacks the magic — not a veng capture.
         NotACapture = 1,
-        /// @brief The format major version is one this decoder does not recognize.
+        /// @brief The format version is one this decoder does not recognize (it reads 1 and 2).
         UnknownVersion = 2,
     };
 

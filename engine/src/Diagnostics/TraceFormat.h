@@ -42,6 +42,12 @@ namespace Veng::Diagnostics::TraceFormat
     static_assert(sizeof(ChunkHeader) == 24,
                   "ChunkHeader layout is part of the provisional encoding");
 
+    /// @brief EventRecord::Flags bit: the scope measures time the application spent idle on purpose.
+    ///
+    /// Set by VE_PROFILE_SCOPE_IDLE, for a deliberate wait such as a frame-rate cap's sleep, so a
+    /// reader totalling a frame's work can leave it out without a list of names.
+    inline constexpr u8 RecordFlagIdle = 1u << 0;
+
     /// @brief One fixed-width event record.
     ///
     /// Timestamps are trace-clock tick deltas from the chunk's TimestampBase. For a
@@ -52,8 +58,8 @@ namespace Veng::Diagnostics::TraceFormat
     {
         /// @brief The record's RecordType.
         u8 Type = 0;
-        /// @brief Reserved for alignment.
-        u8 Reserved0 = 0;
+        /// @brief RecordFlag bits; a scope's RecordFlagIdle is the only one defined.
+        u8 Flags = 0;
         /// @brief Reserved for alignment.
         u16 Reserved1 = 0;
         /// @brief Track the record belongs to; 0 means the producing thread's own track.

@@ -13,7 +13,7 @@ namespace Veng::VengTrace
     /// @brief The documented process exit codes. Each nonzero value is a distinct, stable contract.
     enum class ExitCode : int
     {
-        /// @brief Success. A truncated capture still converts and exits Ok.
+        /// @brief Success. A truncated capture still converts, summarizes and compares, and exits Ok.
         Ok = 0,
         /// @brief A command-line usage error (bad subcommand, missing or unknown option).
         Usage = 1,
@@ -28,7 +28,7 @@ namespace Veng::VengTrace
     /// @brief Runs the vengtrace CLI over an argument vector, returning the process exit code.
     ///
     /// @param args  The arguments after the executable name; args[0] is the subcommand.
-    /// @param out   The stdout sink (a success confirmation).
+    /// @param out   The stdout sink (a conversion's confirmation, or a summary or comparison).
     /// @param err   The stderr sink (usage, errors, and the non-fatal truncation warning).
     /// @return The exit code, as an int, matching the ExitCode contract.
     [[nodiscard]] int RunVengtraceCli(const vector<string>& args, std::ostream& out,

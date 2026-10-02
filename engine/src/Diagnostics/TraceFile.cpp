@@ -159,6 +159,11 @@ namespace Veng::Diagnostics::TraceFileFormat
             {
                 tag |= 0x04;
             }
+            if (record.Idle &&
+                record.Type == static_cast<u8>(TraceFormat::RecordType::ScopeComplete))
+            {
+                tag |= 0x08;
+            }
             PutU8(tag);
             if (hasTrackOverride)
             {

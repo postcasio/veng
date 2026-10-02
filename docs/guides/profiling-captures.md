@@ -16,13 +16,13 @@ timeline, and query surface — with nothing to install.
 
 ## 1. Take a capture
 
-Build with the profiler enabled (`VE_PROFILE`, on by default under `VE_DEBUG`) and start
+Build with the profiler enabled (`VE_PROFILE`; the `build-debug-profiling` tree has it on) and start
 a capture from code, a hotkey, or over MCP — see the diagnostics and capture-control
 documentation for the API. Captures land in `<build-dir>/captures/` (gitignored and
 disposable with the build tree), so a run leaves its `.vtrace` files there:
 
 ```
-build-debug/captures/run.vtrace
+build-debug-profiling/captures/run.vtrace
 ```
 
 A capture from a run that ended badly — a crash, a killed process — has **no trailer** and
@@ -32,7 +32,7 @@ complete section and marks the result truncated.
 ## 2. Convert it
 
 ```sh
-vengtrace convert build-debug/captures/run.vtrace --out run.json
+vengtrace convert build-debug-profiling/captures/run.vtrace --out run.json
 ```
 
 Options:
@@ -95,3 +95,45 @@ Every event also carries its frame index in `args.frame`, so you can filter and 
 frame in Perfetto without interpretation. If the capture lost events (a ring wrap) or was
 truncated, that accounting travels into the JSON as process metadata and a process label,
 so a viewer shows a lossy capture as lossy rather than quietly short.
+
+## Summarize it without a viewer
+
+A viewer answers "what happened in this frame"; most performance questions are about all of them
+at once. `vengtrace summary` reads the binary capture directly and aggregates it per frame:
+
+```sh
+vengtrace summary build-debug-profiling/captures/run.vtrace [--top N] [--hitches N] [--idle <scope>]... [--json]
+vengtrace compare <a.vtrace> <b.vtrace> [--top N] [--json]
+```
+
+Every figure is taken over the capture's **whole frames**: the main thread's frames less the first
+(the capture began partway through it) and the last (no next frame bounds its period). A GPU frame
+counts when the frame that executed it does.
+
+- **Frames** — the frame period (start to start) as median, mean, p90, p99 and max, and the
+  frame's **work**: the union of its main-thread scopes less any scope marked idle. A frame-rate
+  cap's sleep is the idle scope the engine records (`Frame/FrameCap`, through
+  `VE_PROFILE_SCOPE_IDLE`); the capture carries the mark, so the summary needs no list of names.
+- **Steady state** — the main thread's top `N` scopes by **median** per-frame exclusive time,
+  beside the mean and the worst frame. A median well below the mean is a hitch, not a steady cost.
+- **Hitches** — the `N` longest frames, each with its largest exclusive scopes and its scope tree
+  down to 1 ms. *Unscoped* is the part of the period no main-thread scope covers.
+- **Counters** — each counter's sample count, min, median and max, its per-frame sum, and a
+  value histogram when every sample is a small non-negative integer.
+- **GPU** — the GPU frame's median and mean, each pass's median over the frames it ran in, the
+  **untimed** time (the frame less the union of its passes), and a tally of where each frame's
+  largest gap falls, named by the pass either side, the frame's start and end counting as passes.
+- **Simulation per world** — each world's fixed steps per frame as a histogram, and its cost per
+  step, read from the `WorldRunner/SimSteps` counter its sim scope samples.
+
+A capture of format version 1 predates the idle mark. Name its idle scopes on the command line,
+`--idle Frame/FrameCap`, and the summary treats them as the mark would have.
+
+`vengtrace compare <a> <b>` prints the per-call median of every scope both captures recorded, with
+the ratio a/b, and the spread of those ratios per lane (the CPU threads, and each virtual track
+such as the GPU). **A uniform ratio across unrelated scopes is the signature of a slowed machine**
+— a thermally throttled run, say — not of a code change; read it before trusting a regression.
+
+`--json` emits either report as a document with the same figures, in milliseconds. Both commands
+exit as `convert` does, with no write failure to report: a truncated capture is summarized from
+what it recovered, with a warning on stderr.

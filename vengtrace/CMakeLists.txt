@@ -1,10 +1,11 @@
-# vengtrace — the binary-capture -> Chrome Trace Event JSON converter.
+# vengtrace — the binary-capture reader: a Chrome Trace Event JSON converter and a per-frame
+# summary.
 #
 # A standalone CLI, a sibling of vengc: it builds unconditionally from source (veng is the
 # tools), joins the vengTargets export set so an installed SDK carries it, is recreated under its
 # unqualified name by veng-config so $<TARGET_FILE:vengtrace> resolves in every consumption mode,
-# and carries an INSTALL_RPATH like the other installed tools. The decoder and converter live in
-# the executable's own sources — the tool is small enough to need no separate library, and it is
+# and carries an INSTALL_RPATH like the other installed tools. The decoder, converter and summary
+# live in the executable's own sources — the tool is small enough to need no separate library, and it is
 # written against the normative format specification (docs/trace-format.md), sharing no code with
 # the engine's writer.
 
@@ -12,6 +13,8 @@ set(VENGTRACE_SOURCES
         tool/main.cpp
         src/TraceDecoder.cpp
         src/ChromeTraceConverter.cpp
+        src/Summary.cpp
+        src/SummaryReport.cpp
         src/Cli.cpp)
 
 add_executable(vengtrace ${VENGTRACE_SOURCES})

@@ -502,7 +502,14 @@ namespace Veng::Diagnostics::Detail
     [[nodiscard]] u64 EnterScope(ThreadState* state) noexcept;
 
     /// @brief Records a completed scope: aggregates it always, and buffers it while recording.
-    void CommitScope(ThreadState* state, NameId name, u64 beginTicks, u64 endTicks) noexcept;
+    /// @param state       The calling thread's state.
+    /// @param name        The scope's interned name id.
+    /// @param beginTicks  The scope's begin, from EnterScope.
+    /// @param endTicks    The scope's end.
+    /// @param idle        True when the scope measures a deliberate wait (VE_PROFILE_SCOPE_IDLE);
+    ///                    the capture carries the mark so a reader can leave it out of a frame's work.
+    void CommitScope(ThreadState* state, NameId name, u64 beginTicks, u64 endTicks,
+                     bool idle = false) noexcept;
 
     /// @brief Records a sampled counter value.
     void CommitCounter(ThreadState* state, NameId name, f64 value) noexcept;
@@ -526,6 +533,11 @@ namespace Veng::Diagnostics::Detail
     {
     };
 
+    /// @brief Tag selecting the idle-marked literal scope constructor.
+    struct IdleTag
+    {
+    };
+
     /// @brief RAII scope timer: records begin on construction and commits the span on destruction.
     ///
     /// Holds the thread state resolved once at construction, so entry and exit touch
@@ -537,6 +549,20 @@ namespace Veng::Diagnostics::Detail
         /// @brief Times a scope named by a call site's cached literal.
         /// @param name  The call site's ScopeName cache.
         explicit ScopeTimer(ScopeName& name) noexcept : m_State(CurrentThreadState())
+        {
+            if (m_State)
+            {
+                m_Name = ResolveLiteralName(m_State, name);
+                m_Begin = EnterScope(m_State);
+            }
+        }
+
+        /// @brief Times a scope named by a call site's cached literal, marked as idle time.
+        ///
+        /// The capture records the mark on the scope, so a reader totalling a frame's work leaves
+        /// a deliberate wait out by the scope's own say rather than by a list of names.
+        /// @param name  The call site's ScopeName cache.
+        ScopeTimer(ScopeName& name, IdleTag) noexcept : m_State(CurrentThreadState()), m_Idle(true)
         {
             if (m_State)
             {
@@ -576,7 +602,7 @@ namespace Veng::Diagnostics::Detail
         {
             if (m_State)
             {
-                CommitScope(m_State, m_Name, m_Begin, NowTicks());
+                CommitScope(m_State, m_Name, m_Begin, NowTicks(), m_Idle);
             }
         }
 
@@ -592,6 +618,8 @@ namespace Veng::Diagnostics::Detail
         NameId m_Name = 0;
         /// @brief The begin timestamp, in NowTicks() ticks.
         u64 m_Begin = 0;
+        /// @brief Whether the scope measures a deliberate wait (VE_PROFILE_SCOPE_IDLE).
+        bool m_Idle = false;
     };
 }
 
@@ -607,6 +635,18 @@ namespace Veng::Diagnostics::Detail
     const ::Veng::Diagnostics::Detail::ScopeTimer VE_PROFILE_DETAIL_UNIQUE(veProfScope_)           \
     {                                                                                              \
         VE_PROFILE_DETAIL_UNIQUE(veProfName_)                                                      \
+    }
+
+/// @brief Times the enclosing block under a compile-time name, marked as idle time.
+///
+/// For a deliberate wait — a frame-rate cap's sleep, a throttle — that is part of a frame's period
+/// but not of its work. The capture carries the mark, so a reader can tell idle from work without
+/// knowing the scope's name.
+#define VE_PROFILE_SCOPE_IDLE(name)                                                                \
+    static ::Veng::Diagnostics::Detail::ScopeName VE_PROFILE_DETAIL_UNIQUE(veProfName_){name};     \
+    const ::Veng::Diagnostics::Detail::ScopeTimer VE_PROFILE_DETAIL_UNIQUE(veProfScope_)           \
+    {                                                                                              \
+        VE_PROFILE_DETAIL_UNIQUE(veProfName_), ::Veng::Diagnostics::Detail::IdleTag {}             \
     }
 
 /// @brief Times the enclosing block under a runtime name; the more expensive interning path.
@@ -664,6 +704,7 @@ namespace Veng::Diagnostics::Detail
 #else // VE_PROFILE off — every macro body expands to nothing.
 
 #define VE_PROFILE_SCOPE(name)
+#define VE_PROFILE_SCOPE_IDLE(name)
 #define VE_PROFILE_SCOPE_DYNAMIC(name)
 #define VE_PROFILE_SCOPE_ID(nameId)
 #define VE_PROFILE_FUNCTION()

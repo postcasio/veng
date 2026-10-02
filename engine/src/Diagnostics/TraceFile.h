@@ -21,7 +21,10 @@ namespace Veng::Diagnostics::TraceFileFormat
     inline constexpr u8 Magic[8] = {'V', 'E', 'N', 'G', 'T', 'R', 'A', 'C'};
 
     /// @brief The format version stored in the preamble and checked on decode.
-    inline constexpr u32 FormatVersion = 1;
+    ///
+    /// Version 2 added the record tag's idle bit (bit 3); a version-1 stream is otherwise identical
+    /// and never sets it.
+    inline constexpr u32 FormatVersion = 2;
 
     /// @brief Size of the fixed preamble in bytes; a reader seeks past it to the first section.
     inline constexpr u32 PreambleSize = 40;
@@ -108,6 +111,8 @@ namespace Veng::Diagnostics::TraceFileFormat
     {
         /// @brief The record kind (matches TraceFormat::RecordType).
         u8 Type = 0;
+        /// @brief Whether a scope measures a deliberate wait; written as the record tag's idle bit.
+        bool Idle = false;
         /// @brief The virtual track id, or 0 for the enclosing chunk's thread track.
         u32 Track = 0;
         /// @brief The interned name id (0 = no name).

@@ -119,6 +119,7 @@ namespace Veng::Diagnostics
 
                 TraceFileFormat::EventRecord decoded;
                 decoded.Type = record.Type;
+                decoded.Idle = (record.Flags & TraceFormat::RecordFlagIdle) != 0;
                 decoded.Track = record.Track;
                 decoded.Name = record.Name;
                 decoded.Frame = record.Frame;

@@ -47,7 +47,7 @@ framing leaves room to wrap a section in a codec later without a format change.
 | field            | type      | notes                                                       |
 |------------------|-----------|-------------------------------------------------------------|
 | `Magic`          | `u8[8]`   | ASCII `VENGTRAC` (`56 45 4E 47 54 52 41 43`)                |
-| `FormatVersion`  | `u32`     | `1`. See [Versioning](#versioning-and-compatibility).       |
+| `FormatVersion`  | `u32`     | `2`. See [Versioning](#versioning-and-compatibility).       |
 | `PreambleSize`   | `u32`     | `40`. A reader seeks to the first section at this offset.   |
 | `TickFrequency`  | `u64`     | Ticks per second of the trace clock (`TraceTickFrequency`). |
 | `TickBase`       | `u64`     | A reference tick near capture start; informational anchor.  |
@@ -186,7 +186,7 @@ Each **record**:
 
 | field          | type            | notes                                                    |
 |----------------|-----------------|----------------------------------------------------------|
-| `Tag`          | `u8`            | bits 0–1 = record type; bit 2 = track override present.  |
+| `Tag`          | `u8`            | bits 0–1 = record type; bit 2 = track override present; bit 3 = idle (a `ScopeComplete` only). |
 | `TrackId`      | `varint`        | Present iff `Tag` bit 2 is set; the virtual track id.    |
 | `FrameDelta`   | `zigzag varint` | `record frame − BaseFrame`. See the frame contract.      |
 | `BeginDelta`   | `varint`        | `begin tick − TimestampBase`.                            |
@@ -202,6 +202,12 @@ Record types (`Tag` bits 0–1):
 
 `Name` is an interned string id (`0` = no name). `Duration` is stored rather than an end tick because
 it is small and non-negative in the common case, so its varint is a byte or two.
+
+**The idle bit.** A `ScopeComplete` whose `Tag` bit 3 is set measures time the application spent
+waiting on purpose — a frame-rate cap's sleep is the case it exists for. It is part of a frame's
+period but not of its work, and the mark rides the record so a reader can tell the two apart without
+a list of names. A writer sets it only on a scope; a reader ignores it on any other record type. Bits
+4–7 are zero.
 
 #### Counter values
 
@@ -271,6 +277,16 @@ Within a recognized version:
 - **The event record layout may not change without a version bump.** The record encoding, the chunk
   framing, the counter value tags, and the preamble's fixed fields are fixed for a version; a change
   to any of them is a new `FormatVersion`.
+
+Version history:
+
+| version | change |
+|---------|--------|
+| `1`     | The initial layout. |
+| `2`     | The record `Tag`'s bit 3 marks an idle scope. |
+
+A version-2 reader also reads version 1: the layouts are otherwise identical and a version-1 writer
+never set bit 3, so a version-1 capture reads as one with no idle marks.
 
 This file format's version is independent of the network `ProtocolVersion` and of the `.vengpack`
 archive version; the three are unrelated and move independently.

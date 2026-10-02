@@ -226,6 +226,17 @@ namespace Veng::VengTrace
             vector<AsyncEndpoint>& m_Endpoints;
         };
 
+        // A thread-lane scope's args: its frame, and the idle mark where the capture carries one.
+        Json ScopeArgs(const Event& event)
+        {
+            Json args{{"frame", event.Frame}};
+            if (event.Idle)
+            {
+                args["idle"] = true;
+            }
+            return args;
+        }
+
         // A counter's sample is emitted in its narrowest JSON form: an integer tag stays an integer
         // (a queue depth reads as 5, not 5.0), a raw-f64 tag stays a double.
         Json CounterValue(const Event& event)
@@ -523,7 +534,7 @@ namespace Veng::VengTrace
                     begin["pid"] = ProcessId;
                     begin["tid"] = tid;
                     begin["ts"] = toMicros(event.BeginTicks);
-                    begin["args"] = Json{{"frame", event.Frame}};
+                    begin["args"] = ScopeArgs(event);
                     events.push_back(std::move(begin));
 
                     Json end;
@@ -542,7 +553,7 @@ namespace Veng::VengTrace
                     span["tid"] = tid;
                     span["ts"] = toMicros(event.BeginTicks);
                     span["dur"] = durMicros(event.BeginTicks, event.EndTicks);
-                    span["args"] = Json{{"frame", event.Frame}};
+                    span["args"] = ScopeArgs(event);
                     events.push_back(std::move(span));
                 }
                 break;

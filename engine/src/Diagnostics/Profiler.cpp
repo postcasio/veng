@@ -500,7 +500,7 @@ namespace Veng::Diagnostics
             /// The record's timestamp deltas are computed against the chunk it actually lands in, so a
             /// commit that straddles a chunk boundary stays base-relative to its own chunk.
             void EmitEvent(ThreadState& state, RecordType type, u32 track, NameId name,
-                           u64 beginAbs, u64 endAbs, u64 valueBits, u64 frame)
+                           u64 beginAbs, u64 endAbs, u64 valueBits, u64 frame, u8 flags = 0)
             {
                 const ProfilerState& profiler = *state.Owner;
                 if (const u64 epoch = profiler.CaptureEpoch.load(std::memory_order_acquire);
@@ -534,6 +534,7 @@ namespace Veng::Diagnostics
 
                 EventRecord record;
                 record.Type = static_cast<u8>(type);
+                record.Flags = flags;
                 record.Track = track;
                 record.Name = name;
                 record.Frame = static_cast<u32>(frame);
@@ -1119,7 +1120,8 @@ namespace Veng::Diagnostics
             return begin;
         }
 
-        void CommitScope(ThreadState* state, NameId name, u64 beginTicks, u64 endTicks) noexcept
+        void CommitScope(ThreadState* state, NameId name, u64 beginTicks, u64 endTicks,
+                         bool idle) noexcept
         {
             const u64 inclusive = endTicks >= beginTicks ? endTicks - beginTicks : 0;
 
@@ -1157,7 +1159,7 @@ namespace Veng::Diagnostics
             {
                 const u64 frame = state->Owner->FrameIndex.load(std::memory_order_relaxed);
                 EmitEvent(*state, RecordType::ScopeComplete, 0, name, beginTicks, endTicks, 0,
-                          frame);
+                          frame, idle ? TraceFormat::RecordFlagIdle : u8{0});
             }
         }
 

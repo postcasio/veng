@@ -14,6 +14,9 @@ Call sites use only the `VE_PROFILE_*` macros; everything else is the subsystem 
 
 - `VE_PROFILE_SCOPE(name)` — an RAII scope over the enclosing block; `name` is a string **literal**.
   The cheapest and default form.
+- `VE_PROFILE_SCOPE_IDLE(name)` — `VE_PROFILE_SCOPE` for a deliberate wait (the frame cap's
+  `Frame/FrameCap` sleep). The capture marks the scope idle, so a reader totals a frame's work
+  without it by the scope's own say rather than by a list of names.
 - `VE_PROFILE_SCOPE_DYNAMIC(name)` — the `string_view` variant, for a name known only at runtime. It
   hashes its contents on every call and is the deliberately costlier path; prefer the literal form.
 - `VE_PROFILE_FUNCTION()` — `VE_PROFILE_SCOPE` over the enclosing function name.
@@ -160,9 +163,9 @@ than a cost fix.
 
 ### The gate
 
-`VE_PROFILE` is a CMake option, ON under `VE_DEBUG` and OFF otherwise, and a **`PUBLIC` compile
-definition on the `veng` target** — owned by the engine, propagated to every consumer, **never set by
-a consumer** (a consumer whose macro expansion disagrees with the engine it links is an ABI split over
+`VE_PROFILE` is a CMake option, OFF by default and ON in the `build-debug-profiling` tree, and a
+**`PUBLIC` compile definition on the `veng` target** — owned by the engine, propagated to every
+consumer, **never set by a consumer** (a consumer whose macro expansion disagrees with the engine it links is an ABI split over
 shared profiler state). Under `OFF` the `Profiler` lifecycle surface remains as documented no-ops so
 consumers and tools build unchanged, but **no event-recording or buffer code compiles or links** and
 the class holds no recording storage.
@@ -192,6 +195,11 @@ number, so it decodes standalone — and a ring dump's first chunk is not sequen
 how a discarded span reads as a gap rather than silence. Per-record timestamps are variable-width
 tick deltas from the chunk base; per-record frame indices are zigzag deltas from a chunk base frame,
 so a **back-dated GPU span** (an earlier frame than the chunk's) encodes as a small negative.
+
+**An idle scope carries its mark.** `VE_PROFILE_SCOPE_IDLE` sets the internal record's
+`RecordFlagIdle`, and the writer turns it into the record tag's idle bit (format version 2). The
+mark changes nothing the profiler aggregates; it is for a reader that separates a frame's work from
+its period.
 
 **Counter values are lossless and compact.** A one-byte tag selects `varint u64`, `zigzag varint
 i64`, or raw `f64`, and the writer picks the narrowest form that round-trips the `f64` **bit-for-bit**
@@ -231,7 +239,8 @@ The call sites that make a capture worth taking, plus the seam and bridge that p
   `Frame/RequestDrain`, `TaskSystem/PumpMainThread`, `Frame/AssetFinalize`, `Frame/Input`,
   `Frame/ImGui`, `WorldRunner/Tick`, the net pumps, `Frame/Update`, `Frame/ViewPush`,
   `Frame/RenderBegin`, `Frame/Render`, `Frame/OnRender`, `Frame/Composite`,
-  `Frame/RenderEnd`. **The names are stable strings** — the HUD and the flamegraph key on them.
+  `Frame/RenderEnd`, then the frame cap's idle-marked `Frame/FrameCap`. **The names are stable
+  strings** — the HUD and the flamegraph key on them.
   `Frame/RequestDrain` splits into one scope per stage (`Frame/ApplyReconfigure`,
   `Frame/WorldArrivals`, `Frame/PresentationHooks`, `Frame/PresentationPins`, `Frame/ReapDirectory`,
   `Frame/Checkpoint`, `Frame/DrainRequests`, `Frame/DeliverMessages`), and a world's teardown is

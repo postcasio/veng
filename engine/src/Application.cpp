@@ -3096,7 +3096,7 @@ namespace Veng
             const f64 sleep = m_FrameLimiter.AcquireSleepSeconds(now);
             if (sleep > 0.0)
             {
-                VE_PROFILE_SCOPE("Frame/FrameCap");
+                VE_PROFILE_SCOPE_IDLE("Frame/FrameCap");
                 std::this_thread::sleep_for(std::chrono::duration<f64>(sleep));
             }
         }

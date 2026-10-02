@@ -89,7 +89,8 @@ symbol: build the Doxygen reference with `cmake --build build --target docs`
   binary `.vtrace` capture to Chrome Trace Event JSON with `vengtrace` and opening
   it in Perfetto or speedscope: the `convert` command and its options, the exit-code
   map, what each track (frames, CPU threads, GPU, counters, instants) means, and why
-  the JSON is a lossy viewer-facing projection nothing in veng reads.
+  the JSON is a lossy viewer-facing projection nothing in veng reads; and `summary` and
+  `compare`, which aggregate a capture per frame and set two captures side by side.
 
 ## Reference data
 

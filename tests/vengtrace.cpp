@@ -1,18 +1,21 @@
-// vengtrace conformance: the binary-capture -> Chrome Trace JSON converter, exercised over plan
-// 01's committed reference fixture. The decoder is written against docs/trace-format.md (not the
-// engine's writer), so these cases pin the projection: every record type maps with the right shape,
-// event counts and durations round-trip with no drop or duplication, a back-dated GPU pass lands
-// under the frame it measured, the frame ruler and the virtual lanes emit async slices whose
+// vengtrace conformance: the binary-capture reader. The decoder and converter are exercised over
+// the committed reference fixture: the decoder is written against docs/trace-format.md (not the
+// engine's writer), so these cases pin the projection — every record type maps with the right
+// shape, event counts and durations round-trip with no drop or duplication, a back-dated GPU pass
+// lands under the frame it measured, the frame ruler and the virtual lanes emit async slices whose
 // cookies keep same-cookie slices properly nested, drop/truncation accounting travels into the
 // JSON, a truncated capture converts to valid partial JSON with its trailing frame left open, an
-// unknown section is skipped, an unknown version is rejected, and the CLI arg grammar + exit-code
-// map are asserted in-process (mirroring how mcp_cli drives RunClientCli).
+// unknown section is skipped, an unknown version is rejected, a version-1 capture reads with no
+// idle marks, and the CLI arg grammar + exit-code map are asserted in-process (mirroring how
+// mcp_cli drives RunClientCli). The per-frame summary and the comparison are exercised over a
+// capture built in the test, whose every figure follows from its construction.
 //
 // Device-free pure logic + a committed fixture, so it runs in the default (fast) band.
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <span>
@@ -22,6 +25,7 @@
 
 #include "ChromeTraceConverter.h"
 #include "Cli.h"
+#include "Summary.h"
 #include "TraceDecoder.h"
 #include "support/TempPath.h"
 
@@ -299,7 +303,7 @@ TEST_CASE("vengtrace: drop and provenance accounting travel into the JSON")
     CHECK_FALSE(other.at("truncated").get<bool>());
     CHECK(other.at("droppedEvents").get<u64>() == 42);
     CHECK(other.at("droppedThreads").get<u64>() == 1);
-    CHECK(other.at("formatVersion").get<u32>() == 1);
+    CHECK(other.at("formatVersion").get<u32>() == 2);
     CHECK(other.at("tickFrequency").get<u64>() == 24'000'000);
     CHECK(other.at("captureMode").get<string>() == "ring");
     CHECK(other.at("engineVersion").get<string>() == "0.0.0-fixture");
@@ -540,4 +544,354 @@ TEST_CASE("vengtrace CLI: an unwritable output exits 4")
     const CliRun run =
         RunCli({"convert", CompleteFixture().string(), "--out", "/no/such/directory/out.json"});
     CHECK(run.Code == static_cast<int>(ExitCode::WriteFailure));
+}
+
+TEST_CASE("vengtrace: an idle-marked scope decodes as idle, and a version-1 capture has none")
+{
+    const vector<u8> bytes = ReadBytes(CompleteFixture());
+    const DecodeResult current = Decode(std::span<const u8>(bytes));
+    REQUIRE(current.Status == DecodeStatus::Ok);
+    usize idle = 0;
+    for (const Event& event : current.Trace.Events)
+    {
+        idle += event.Idle ? 1 : 0;
+    }
+    CHECK(idle == 1); // the fixture marks one scope
+
+    // The idle mark rides the converted JSON on that scope alone.
+    const Json document = Json::parse(ConvertToChromeTrace(current.Trace, {}), nullptr, false);
+    usize idleArgs = 0;
+    for (const Json& event : EventsWithPhase(document, "X"))
+    {
+        idleArgs += event.at("args").value("idle", false) ? 1 : 0;
+    }
+    CHECK(idleArgs == 1);
+
+    // Version 1 predates the mark: the same bytes read under it decode, with no scope idle.
+    vector<u8> versionOne = bytes;
+    versionOne[8] = 1;
+    const DecodeResult older = Decode(std::span<const u8>(versionOne));
+    REQUIRE(older.Status == DecodeStatus::Ok);
+    CHECK(older.Trace.Events.size() == current.Trace.Events.size());
+    CHECK(std::ranges::none_of(older.Trace.Events, [](const Event& event) { return event.Idle; }));
+
+    vector<u8> versionThree = bytes;
+    versionThree[8] = 3;
+    CHECK(Decode(std::span<const u8>(versionThree)).Status == DecodeStatus::UnknownVersion);
+}
+
+namespace
+{
+    // A capture built in memory at a 1 MHz clock, so a tick is a microsecond and a figure in
+    // milliseconds is a tick count over a thousand.
+    //
+    // The main thread records frames 0-5, each starting 10 ms after the last except frame 4, 40 ms
+    // after frame 3: frame 3 is the hitch. The window is frames 1-4, the first and last left out.
+    // A normal frame is Update [0, 4) enclosing World 1 Sim [1, 3), whose step counter reads 2;
+    // Render [4, 6); and an idle-marked Sleep [6, 10). So its work is 6 ms, its idle 4, and
+    // Update's exclusive time 2. The hitch is Update [0, 30) enclosing World 1 Sim [1, 6) at 5
+    // steps and Load [6, 29); then Render [30, 32) and no sleep, leaving 8 ms unscoped.
+    //
+    // The GPU track carries one frame per window frame: a 10 ms frame span enclosing Shadow [3, 5),
+    // Render [5, 6) and Post [8, 9), so 4 ms of passes and 6 untimed, and the largest gap is the
+    // 3 ms before Shadow. Frame 3's passes sit at Shadow [1, 3), Render [3, 4), Post [8, 9), which
+    // moves its largest gap to the 4 ms between Render and Post. A GPU frame stamped 0 lies outside
+    // the window and counts toward nothing.
+    constexpr u32 MainThread = 1;
+    constexpr u32 GpuTrack = 1;
+
+    struct SyntheticCapture
+    {
+        DecodedTrace Trace;
+
+        u32 Intern(string_view name)
+        {
+            for (usize index = 0; index < Trace.Strings.size(); ++index)
+            {
+                if (Trace.Strings[index] == name)
+                {
+                    return static_cast<u32>(index + 1);
+                }
+            }
+            Trace.Strings.emplace_back(name);
+            return static_cast<u32>(Trace.Strings.size());
+        }
+
+        void Scope(string_view name, u64 frame, u64 beginMs, u64 endMs, bool idle = false)
+        {
+            Trace.Events.push_back(Event{.Type = RecordType::ScopeComplete,
+                                         .Thread = MainThread,
+                                         .Idle = idle,
+                                         .Name = Intern(name),
+                                         .Frame = frame,
+                                         .BeginTicks = beginMs * 1000,
+                                         .EndTicks = endMs * 1000});
+        }
+
+        void Pass(string_view name, u64 frame, u64 beginMs, u64 endMs)
+        {
+            Trace.Events.push_back(Event{.Type = RecordType::ScopeComplete,
+                                         .Thread = MainThread,
+                                         .VirtualTrack = GpuTrack,
+                                         .HasVirtualTrack = true,
+                                         .Name = Intern(name),
+                                         .Frame = frame,
+                                         .BeginTicks = beginMs * 1000,
+                                         .EndTicks = endMs * 1000});
+        }
+
+        void Counter(string_view name, u64 frame, u64 atMs, f64 value)
+        {
+            Trace.Events.push_back(Event{.Type = RecordType::Counter,
+                                         .Thread = MainThread,
+                                         .Name = Intern(name),
+                                         .Frame = frame,
+                                         .BeginTicks = atMs * 1000,
+                                         .EndTicks = atMs * 1000,
+                                         .Value = value});
+        }
+    };
+
+    DecodedTrace BuildSyntheticCapture()
+    {
+        SyntheticCapture capture;
+        capture.Trace.FormatVersion = 2;
+        capture.Trace.TickFrequency = 1'000'000;
+        capture.Trace.Complete = true;
+        capture.Trace.Tracks = {
+            Track{.Kind = TrackKind::Thread,
+                  .Id = MainThread,
+                  .Role = TrackRole::Cpu,
+                  .Name = "Main"},
+            Track{
+                .Kind = TrackKind::Virtual, .Id = GpuTrack, .Role = TrackRole::Gpu, .Name = "GPU"},
+        };
+
+        const u64 starts[] = {0, 10, 20, 30, 70, 80};
+        for (u64 frame = 0; frame < 6; ++frame)
+        {
+            const u64 t = starts[frame];
+            // Each scope commits after the scopes it encloses, as a profiler records them.
+            if (frame == 3)
+            {
+                capture.Counter("WorldRunner/SimSteps", frame, t + 5, 5.0);
+                capture.Scope("World 1 Sim", frame, t + 1, t + 6);
+                capture.Scope("Load", frame, t + 6, t + 29);
+                capture.Scope("Update", frame, t, t + 30);
+                capture.Scope("Render", frame, t + 30, t + 32);
+                continue;
+            }
+            capture.Counter("WorldRunner/SimSteps", frame, t + 2, 2.0);
+            capture.Scope("World 1 Sim", frame, t + 1, t + 3);
+            capture.Scope("Update", frame, t, t + 4);
+            capture.Scope("Render", frame, t + 4, t + 6);
+            capture.Scope("Sleep", frame, t + 6, t + 10, /*idle=*/true);
+        }
+
+        for (u64 frame = 0; frame < 5; ++frame)
+        {
+            const u64 g = 1000 + frame * 20; // back-dated, on a timeline of its own
+            capture.Pass("GPU Frame", frame, g, g + 10);
+            if (frame == 3)
+            {
+                capture.Pass("Shadow", frame, g + 1, g + 3);
+                capture.Pass("Render", frame, g + 3, g + 4);
+            }
+            else
+            {
+                capture.Pass("Shadow", frame, g + 3, g + 5);
+                capture.Pass("Render", frame, g + 5, g + 6);
+            }
+            capture.Pass("Post", frame, g + 8, g + 9);
+        }
+        return std::move(capture.Trace);
+    }
+
+    const ScopeCost* FindCost(const CaptureSummary& summary, string_view name)
+    {
+        const auto found = std::ranges::find(summary.SteadyState, name, &ScopeCost::Name);
+        return found != summary.SteadyState.end() ? &*found : nullptr;
+    }
+}
+
+TEST_CASE("vengtrace summary: the window, period and work follow from the frames")
+{
+    const CaptureSummary summary = Summarize(BuildSyntheticCapture(), {});
+    CHECK(summary.FirstFrame == 1);
+    CHECK(summary.LastFrame == 4);
+    CHECK(summary.MainThread == "Main");
+    CHECK(summary.HasIdleMarks);
+
+    // Periods 10, 10, 40, 10; work 6, 6, 32, 6; idle 4, 4, 0, 4.
+    CHECK(summary.Frames.Period.Count == 4);
+    CHECK(summary.Frames.Period.Median == doctest::Approx(10.0));
+    CHECK(summary.Frames.Period.Max == doctest::Approx(40.0));
+    CHECK(summary.Frames.Work.Median == doctest::Approx(6.0));
+    CHECK(summary.Frames.Work.Max == doctest::Approx(32.0));
+    CHECK(summary.Frames.Idle.Median == doctest::Approx(4.0));
+}
+
+TEST_CASE("vengtrace summary: steady state ranks exclusive cost and leaves idle scopes out")
+{
+    const CaptureSummary summary = Summarize(BuildSyntheticCapture(), {});
+    CHECK(FindCost(summary, "Sleep") == nullptr);
+
+    // Update encloses the sim in every frame and Load in the hitch, so its own time is 2 ms in all.
+    const ScopeCost* update = FindCost(summary, "Update");
+    REQUIRE(update != nullptr);
+    CHECK(update->MedianMs == doctest::Approx(2.0));
+    CHECK(update->WorstMs == doctest::Approx(2.0));
+
+    // Load runs once: a median of nothing, a worst of 23 ms in the hitch frame.
+    const ScopeCost* load = FindCost(summary, "Load");
+    REQUIRE(load != nullptr);
+    CHECK(load->MedianMs == doctest::Approx(0.0));
+    CHECK(load->WorstMs == doctest::Approx(23.0));
+    CHECK(load->WorstFrame == 3);
+    CHECK(load->Frames == 1);
+
+    REQUIRE_FALSE(summary.SteadyState.empty());
+    CHECK(summary.SteadyState.back().MedianMs <= summary.SteadyState.front().MedianMs);
+}
+
+TEST_CASE("vengtrace summary: the hitch is the longest frame, broken down")
+{
+    const CaptureSummary summary = Summarize(BuildSyntheticCapture(), {.Hitches = 1});
+    REQUIRE(summary.Hitches.size() == 1);
+    const Hitch& hitch = summary.Hitches.front();
+    CHECK(hitch.Frame == 3);
+    CHECK(hitch.PeriodMs == doctest::Approx(40.0));
+    CHECK(hitch.WorkMs == doctest::Approx(32.0));
+    CHECK(hitch.UnscopedMs == doctest::Approx(8.0));
+    REQUIRE_FALSE(hitch.TopExclusive.empty());
+    CHECK(hitch.TopExclusive.front().Name == "Load");
+    CHECK(hitch.TopExclusive.front().Ms == doctest::Approx(23.0));
+
+    // The tree runs in time order, nested by depth: Update, its sim and Load, then Render.
+    REQUIRE(hitch.Tree.size() == 4);
+    CHECK(hitch.Tree[0].Name == "Update");
+    CHECK(hitch.Tree[0].Depth == 0);
+    CHECK(hitch.Tree[1].Name == "World 1 Sim");
+    CHECK(hitch.Tree[1].Depth == 1);
+    CHECK(hitch.Tree[2].Name == "Load");
+    CHECK(hitch.Tree[3].Name == "Render");
+    CHECK(hitch.Tree[3].Depth == 0);
+}
+
+TEST_CASE("vengtrace summary: the GPU's untimed time and where its largest gap falls")
+{
+    const CaptureSummary summary = Summarize(BuildSyntheticCapture(), {});
+    REQUIRE(summary.Gpu.size() == 1);
+    const GpuSummary& gpu = summary.Gpu.front();
+    CHECK(gpu.Frame.Count == 4); // the frame stamped 0 is outside the window
+    CHECK(gpu.Frame.Median == doctest::Approx(10.0));
+    CHECK(gpu.PassUnion.Median == doctest::Approx(4.0));
+    CHECK(gpu.Untimed.Median == doctest::Approx(6.0));
+
+    REQUIRE(gpu.LargestGaps.size() == 2);
+    CHECK(gpu.LargestGaps[0].Before == "start");
+    CHECK(gpu.LargestGaps[0].After == "Shadow");
+    CHECK(gpu.LargestGaps[0].Frames == 3);
+    CHECK(gpu.LargestGaps[1].Before == "Render");
+    CHECK(gpu.LargestGaps[1].After == "Post");
+    CHECK(gpu.LargestGaps[1].Frames == 1);
+
+    // The frame span is not a pass.
+    CHECK(std::ranges::find(gpu.Passes, "GPU Frame", &GpuPassCost::Name) == gpu.Passes.end());
+}
+
+TEST_CASE("vengtrace summary: counters and each world's steps")
+{
+    const CaptureSummary summary = Summarize(BuildSyntheticCapture(), {});
+    const auto steps =
+        std::ranges::find(summary.Counters, "WorldRunner/SimSteps", &CounterSummary::Name);
+    REQUIRE(steps != summary.Counters.end());
+    CHECK(steps->Samples.Count == 4);
+    REQUIRE(steps->Histogram.size() == 2); // a small integer, so a histogram: 2 three times, 5 once
+    CHECK(steps->Histogram[0].Value == 2);
+    CHECK(steps->Histogram[0].Count == 3);
+    CHECK(steps->Histogram[1].Value == 5);
+
+    // The counter is sampled inside World 1 Sim, at 1 ms a step in every frame.
+    REQUIRE(summary.Sim.size() == 1);
+    const SimWorldSummary& world = summary.Sim.front();
+    CHECK(world.Scope == "World 1 Sim");
+    CHECK(world.Steps == 11);
+    CHECK(world.MeanMsPerStep == doctest::Approx(1.0));
+    CHECK(world.MedianMsPerStep == doctest::Approx(1.0));
+}
+
+TEST_CASE("vengtrace summary: a scope named idle on the command line reads as one")
+{
+    // Stripped of its marks, the capture is a version-1 one: Sleep counts as work until named.
+    DecodedTrace unmarked = BuildSyntheticCapture();
+    for (Event& event : unmarked.Events)
+    {
+        event.Idle = false;
+    }
+    CHECK(Summarize(unmarked, {}).Frames.Work.Median == doctest::Approx(10.0));
+
+    const CaptureSummary named = Summarize(unmarked, {.IdleScopes = {"Sleep"}});
+    CHECK_FALSE(named.HasIdleMarks);
+    CHECK(named.Frames.Work.Median == doctest::Approx(6.0));
+    CHECK(FindCost(named, "Sleep") == nullptr);
+}
+
+TEST_CASE("vengtrace compare: a machine twice as slow reads as a uniform ratio, per lane")
+{
+    // The same capture at half the clock rate takes every tick twice as long.
+    const DecodedTrace fast = BuildSyntheticCapture();
+    DecodedTrace slow = fast;
+    slow.TickFrequency /= 2;
+
+    const Comparison comparison = Compare(slow, fast);
+    CHECK(comparison.OnlyInA == 0);
+    CHECK(comparison.OnlyInB == 0);
+    REQUIRE(comparison.Ratios.size() == 2);
+    for (const LaneRatio& lane : comparison.Ratios)
+    {
+        CHECK(lane.Ratio.Min == doctest::Approx(2.0));
+        CHECK(lane.Ratio.Max == doctest::Approx(2.0));
+    }
+
+    // The CPU's Render and the GPU's Render are compared apart.
+    usize renders = 0;
+    for (const ScopeComparison& scope : comparison.Scopes)
+    {
+        if (scope.Name == "Render")
+        {
+            ++renders;
+            CHECK(scope.MedianMsB == doctest::Approx(scope.Lane.empty() ? 2.0 : 1.0));
+        }
+    }
+    CHECK(renders == 2);
+}
+
+TEST_CASE("vengtrace CLI: summary and compare run over a capture and reject a bad grammar")
+{
+    const string fixture = CompleteFixture().string();
+
+    // The fixture records too few frames for a window, which a summary says rather than fails on.
+    const CliRun summary = RunCli({"summary", fixture});
+    CHECK(summary.Code == static_cast<int>(ExitCode::Ok));
+    CHECK(summary.Out.find("none whole") != string::npos);
+
+    const CliRun json = RunCli({"summary", fixture, "--json", "--top", "3", "--hitches", "2"});
+    CHECK(json.Code == static_cast<int>(ExitCode::Ok));
+    const Json document = Json::parse(json.Out, nullptr, false);
+    REQUIRE_FALSE(document.is_discarded());
+    CHECK(document.at("formatVersion").get<u32>() == 2);
+
+    const CliRun compare = RunCli({"compare", fixture, fixture, "--json"});
+    CHECK(compare.Code == static_cast<int>(ExitCode::Ok));
+    CHECK_FALSE(Json::parse(compare.Out, nullptr, false).is_discarded());
+
+    CHECK(RunCli({"summary"}).Code == static_cast<int>(ExitCode::Usage));
+    CHECK(RunCli({"summary", fixture, fixture}).Code == static_cast<int>(ExitCode::Usage));
+    CHECK(RunCli({"summary", fixture, "--top", "many"}).Code == static_cast<int>(ExitCode::Usage));
+    CHECK(RunCli({"compare", fixture}).Code == static_cast<int>(ExitCode::Usage));
+    CHECK(RunCli({"compare", fixture, fixture, "--hitches", "2"}).Code ==
+          static_cast<int>(ExitCode::Usage));
+    CHECK(RunCli({"summary", "/no/such/capture.vtrace"}).Code ==
+          static_cast<int>(ExitCode::Unreadable));
 }

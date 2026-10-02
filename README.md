@@ -181,14 +181,15 @@ of this — application, scene setup, assets, and build wiring.
 
 ### Profiling
 
-When built with the diagnostics profiler (`VE_PROFILE`, on by default under
-`VE_DEBUG`), the engine can write a compact binary capture of a run's CPU and GPU
-timing. The `vengtrace` tool converts a capture to Chrome Trace Event JSON, which
-opens in [ui.perfetto.dev](https://ui.perfetto.dev) or
+When built with the diagnostics profiler (`VE_PROFILE`, on in the
+`build-debug-profiling` tree), the engine can write a compact binary capture of a run's
+CPU and GPU timing. The `vengtrace` tool summarizes a capture per frame, and converts it
+to Chrome Trace Event JSON, which opens in [ui.perfetto.dev](https://ui.perfetto.dev) or
 [speedscope.app](https://speedscope.app):
 
 ```sh
-vengtrace convert build-debug/captures/run.vtrace --out run.json
+vengtrace summary build-debug-profiling/captures/run.vtrace
+vengtrace convert build-debug-profiling/captures/run.vtrace --out run.json
 ```
 
 See [docs/guides/profiling-captures.md](docs/guides/profiling-captures.md) for the

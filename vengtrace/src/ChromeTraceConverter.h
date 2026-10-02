@@ -10,12 +10,12 @@
 // or viz ever reads this JSON, and a field the JSON cannot carry is recovered by reading the binary,
 // never by extending the projection.
 //
-// The mapping is fixed: a thread lane's scopes become complete (X) events, counters become C events,
-// instants become thread-scoped i events, each track becomes a process thread with a name and a
-// role-ordered sort index, the GPU virtual track becomes its own pseudo-thread carrying the
-// back-dated passes, every frame becomes a span on a dedicated frame track (so a back-dated GPU pass
-// sits under the frame it measured), and drop/truncation accounting travels into the output as
-// process metadata.
+// The mapping is fixed: a thread lane's scopes become complete (X) events, an idle-marked one
+// carrying args.idle; counters become C events, instants become thread-scoped i events, each track
+// becomes a process thread with a name and a role-ordered sort index, the GPU virtual track becomes
+// its own pseudo-thread carrying the back-dated passes, every frame becomes a span on a dedicated
+// frame track (so a back-dated GPU pass sits under the frame it measured), and drop/truncation
+// accounting travels into the output as process metadata.
 //
 // The frame ruler and the virtual lanes are emitted as nestable async slices (b/e) rather than
 // complete events. A complete event carries no parenthood, so a viewer infers nesting from timestamp

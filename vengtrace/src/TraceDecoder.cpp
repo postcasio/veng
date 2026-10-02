@@ -7,7 +7,11 @@ namespace Veng::VengTrace
     namespace
     {
         constexpr u8 Magic[8] = {'V', 'E', 'N', 'G', 'T', 'R', 'A', 'C'};
-        constexpr u32 KnownFormatVersion = 1;
+        // Version 2 added the record tag's idle bit; version 1 is otherwise identical and reads as
+        // a capture with no idle marks.
+        constexpr u32 OldestFormatVersion = 1;
+        constexpr u32 NewestFormatVersion = 2;
+        constexpr u32 FirstVersionWithIdle = 2;
         constexpr usize PreambleFixedSize = 40;
 
         enum class SectionType : u32
@@ -190,6 +194,7 @@ namespace Veng::VengTrace
 
         void DecodeChunk(std::span<const u8> payload, DecodedTrace& trace)
         {
+            const bool readsIdle = trace.FormatVersion >= FirstVersionWithIdle;
             Cursor cursor{.Data = payload};
             const u32 threadId = static_cast<u32>(cursor.ReadVarint());
             (void)cursor.ReadVarint(); // SequenceNumber: viewer JSON carries no gap concept.
@@ -203,6 +208,8 @@ namespace Veng::VengTrace
                 Event event;
                 event.Type = static_cast<RecordType>(tag & 0x03);
                 event.Thread = threadId;
+                event.Idle =
+                    readsIdle && event.Type == RecordType::ScopeComplete && (tag & 0x08) != 0;
                 if ((tag & 0x04) != 0)
                 {
                     event.HasVirtualTrack = true;
@@ -269,7 +276,7 @@ namespace Veng::VengTrace
         Cursor cursor{.Data = data, .Offset = sizeof(Magic)};
         const u32 formatVersion = cursor.ReadU32();
         result.FormatVersion = formatVersion;
-        if (formatVersion != KnownFormatVersion)
+        if (formatVersion < OldestFormatVersion || formatVersion > NewestFormatVersion)
         {
             result.Status = DecodeStatus::UnknownVersion;
             return result;
