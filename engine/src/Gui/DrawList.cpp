@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <functional>
 #include <limits>
 
 #include <Veng/Assert.h>
@@ -111,10 +112,148 @@ namespace Veng::Gui
         m_Vertices.clear();
         m_Indices.clear();
         m_Runs.clear();
+        m_RunTextureKeys.clear();
         m_Gradients.clear();
+        m_GlyphUses.clear();
         m_ClipStack.clear();
         m_TransformStack.clear();
         m_ArcStack.clear();
+    }
+
+    bool DrawState::Matches(const DrawState& other) const
+    {
+        if (HasClip != other.HasClip || HasArc != other.HasArc || Linear != other.Linear ||
+            Translation != other.Translation)
+        {
+            return false;
+        }
+        if (HasClip && (Clip.Min != other.Clip.Min || Clip.Size != other.Clip.Size))
+        {
+            return false;
+        }
+        return !HasArc || (Arc.Center == other.Arc.Center && Arc.Radius == other.Arc.Radius &&
+                           Arc.StartRadians == other.Arc.StartRadians &&
+                           Arc.SweepRadians == other.Arc.SweepRadians &&
+                           Arc.Thickness == other.Arc.Thickness && Arc.Cap == other.Arc.Cap);
+    }
+
+    DrawMark DrawList::Mark() const
+    {
+        return DrawMark{.Vertex = static_cast<u32>(m_Vertices.size()),
+                        .Index = static_cast<u32>(m_Indices.size()),
+                        .Gradient = static_cast<u32>(m_Gradients.size()),
+                        .Glyph = static_cast<u32>(m_GlyphUses.size())};
+    }
+
+    DrawState DrawList::GetState() const
+    {
+        DrawState state;
+        if (!m_ClipStack.empty())
+        {
+            state.HasClip = true;
+            state.Clip = m_ClipStack.back();
+        }
+        if (!m_TransformStack.empty())
+        {
+            state.Linear = m_TransformStack.back().Linear;
+            state.Translation = m_TransformStack.back().Translation;
+        }
+        if (!m_ArcStack.empty())
+        {
+            state.HasArc = true;
+            state.Arc = m_ArcStack.back();
+        }
+        return state;
+    }
+
+    bool DrawList::EnsureGlyphs(const DrawMark& begin, const DrawMark& end) const
+    {
+        VE_ASSERT(end.Glyph <= m_GlyphUses.size(),
+                  "DrawList::EnsureGlyphs past the recorded glyphs");
+        bool unmoved = true;
+        // Every glyph is ensured even after one is found moved: the caller re-emits the range, and
+        // that draw would ensure the same glyphs, so pinning them all here costs nothing extra.
+        for (u32 i = begin.Glyph; i < end.Glyph; ++i)
+        {
+            const GlyphUse& use = m_GlyphUses[i];
+            const FontGlyph glyph = use.Source->GetGlyph(use.Codepoint, use.PixelSize);
+            if (glyph.Page.Index != use.Page || (glyph.Page.IsValid() && glyph.UvMin != use.UvMin))
+            {
+                unmoved = false;
+            }
+        }
+        return unmoved;
+    }
+
+    void DrawList::AppendRange(const DrawList& src, const DrawMark& begin, const DrawMark& end)
+    {
+        VE_ASSERT(&src != this, "DrawList::AppendRange from itself");
+        // A range can hold recorded glyphs and no geometry (each glyph missing from the atlas when
+        // it was drawn), and those still copy, so the next check finds them.
+        if (end.Index == begin.Index && end.Vertex == begin.Vertex &&
+            end.Gradient == begin.Gradient && end.Glyph == begin.Glyph)
+        {
+            return;
+        }
+
+        const auto vertexBase = static_cast<u32>(m_Vertices.size());
+        const auto gradientBase = static_cast<u32>(m_Gradients.size());
+
+        // Vertices copy verbatim except for the gradient reference, which is (record index + 1) and
+        // shifts with the record's new position; a range's gradient vertices only reference records
+        // the same range appended, since each Gradient() call appends its own.
+        m_Vertices.insert(m_Vertices.end(), src.m_Vertices.begin() + begin.Vertex,
+                          src.m_Vertices.begin() + end.Vertex);
+        if (end.Gradient != begin.Gradient)
+        {
+            for (usize i = vertexBase; i < m_Vertices.size(); ++i)
+            {
+                if (m_Vertices[i].GradientSelector != 0)
+                {
+                    m_Vertices[i].GradientSelector =
+                        m_Vertices[i].GradientSelector - begin.Gradient + gradientBase;
+                }
+            }
+            m_Gradients.insert(m_Gradients.end(), src.m_Gradients.begin() + begin.Gradient,
+                               src.m_Gradients.begin() + end.Gradient);
+        }
+        if (m_RecordsGlyphs && end.Glyph != begin.Glyph)
+        {
+            m_GlyphUses.insert(m_GlyphUses.end(), src.m_GlyphUses.begin() + begin.Glyph,
+                               src.m_GlyphUses.begin() + end.Glyph);
+        }
+
+        // Re-partition the copied indices over the source's runs: each source run overlapping the
+        // range contributes its overlap under its own key, merging into the trailing run exactly when
+        // a primitive emitted here with that key would have.
+        auto run = std::ranges::upper_bound(src.m_Runs, begin.Index, std::less{},
+                                            [](const DrawRun& r) { return r.FirstIndex; });
+        if (run != src.m_Runs.begin())
+        {
+            --run;
+        }
+        for (; run != src.m_Runs.end() && run->FirstIndex < end.Index; ++run)
+        {
+            const u32 lo = std::max(begin.Index, run->FirstIndex);
+            const u32 hi = std::min(end.Index, run->FirstIndex + run->IndexCount);
+            if (hi <= lo)
+            {
+                continue;
+            }
+            const auto runIndex = static_cast<usize>(run - src.m_Runs.begin());
+            EnsureRunKeyed(run->Pipeline, src.m_RunTextureKeys[runIndex], run->Material,
+                           run->HasClip ? optional<Rect>{run->Clip} : std::nullopt);
+            for (u32 i = lo; i < hi; ++i)
+            {
+                m_Indices.push_back(src.m_Indices[i] - begin.Vertex + vertexBase);
+            }
+            m_Runs.back().IndexCount += hi - lo;
+        }
+    }
+
+    void DrawList::Append(const DrawList& src)
+    {
+        AppendRange(src, DrawMark{}, src.Mark());
     }
 
     vec2 DrawList::ApplyTransform(vec2 point) const
@@ -138,7 +277,13 @@ namespace Veng::Gui
 
     void DrawList::EnsureRun(GuiPipeline pipeline, u32 textureKey, const MaterialInstance* material)
     {
-        const optional<Rect> clip = CurrentClip();
+        EnsureRunKeyed(pipeline, textureKey, material, CurrentClip());
+    }
+
+    void DrawList::EnsureRunKeyed(const GuiPipeline pipeline, const u32 textureKey,
+                                  const MaterialInstance* const material,
+                                  const optional<Rect>& clip)
+    {
         const u32 firstIndex = static_cast<u32>(m_Indices.size());
 
         if (!m_Runs.empty())
@@ -166,6 +311,7 @@ namespace Veng::Gui
             .Clip = clip.value_or(Rect{}),
             .HasClip = clip.has_value(),
         });
+        m_RunTextureKeys.push_back(textureKey);
         m_RunTextureKey = textureKey;
         m_RunMaterial = material;
     }
@@ -533,30 +679,44 @@ namespace Veng::Gui
         {
             VE_PROFILE_SCOPE("Gui/ShapeText");
             Counters::CountShapedRun();
-            return font.ShapeRun(codepoints, pixelSize, maxWidth, TextShapeMode::Draw);
+            return font.ShapeRun(codepoints, pixelSize, maxWidth, TextShapeMode::Measure);
         }();
-        if (shaped.Glyphs.empty())
-        {
-            return;
-        }
+        Text(pen, font, shaped, pixelSize, color);
+    }
 
-        // The glyphs were ensured resident in the shared dynamic atlas by ShapeRun; the atlas owns
-        // the one shared sampler and the single distance-range constant both field types encode. A
-        // font loaded without the shared glyph systems (a headless manager) has no atlas, so its
-        // text draws nothing.
+    void DrawList::Text(const vec2 pen, const Font& font, const ShapeResult& shaped,
+                        const f32 pixelSize, const vec4 color)
+    {
+        // The atlas owns the one shared sampler and the single distance-range constant both field
+        // types encode. A font loaded without the shared glyph systems (a headless manager) has no
+        // atlas, so its text draws nothing.
         const Text::GlyphAtlas* const atlas = font.GetGlyphAtlas();
-        if (atlas == nullptr)
+        if (atlas == nullptr || shaped.Glyphs.empty())
         {
             return;
         }
         const f32 distanceRange = atlas->GetDistanceRange();
         const Renderer::SamplerHandle sampler = atlas->GetSamplerHandle();
 
-        for (const ShapedGlyph& glyph : shaped.Glyphs)
+        for (const ShapedGlyph& shapedGlyph : shaped.Glyphs)
         {
+            // Ensuring the glyph pins it in the shared atlas for the frame and names the slot it
+            // samples; the rendition's bounds are its own (padded for the distance field), so the
+            // quad is placed from them about the pen the shaping recorded.
+            const FontGlyph glyph = font.GetGlyph(shapedGlyph.Codepoint, pixelSize);
+            if (m_RecordsGlyphs)
+            {
+                m_GlyphUses.push_back(GlyphUse{.Source = &font,
+                                               .Codepoint = shapedGlyph.Codepoint,
+                                               .PixelSize = pixelSize,
+                                               .Page = glyph.Page.Index,
+                                               .UvMin = glyph.UvMin});
+            }
+
             // A glyph not resident this frame (the atlas over capacity) carries an invalid page and
             // no quad; its advance already sized the run, so skipping it leaves the layout intact.
-            if (!glyph.Page.IsValid())
+            if (!glyph.Page.IsValid() || glyph.PlaneMax.x <= glyph.PlaneMin.x ||
+                glyph.PlaneMax.y <= glyph.PlaneMin.y)
             {
                 continue;
             }
@@ -569,8 +729,11 @@ namespace Veng::Gui
             const vec4 params{distanceRange, static_cast<f32>(static_cast<u32>(glyph.FieldType)),
                               static_cast<f32>(glyph.Page.Index), static_cast<f32>(sampler.Index)};
 
-            const vec2 min = pen + glyph.Min;
-            const vec2 max = pen + glyph.Max;
+            // Plane bounds are baseline-relative with y up, so the quad's top is the baseline less
+            // the upper bound and its bottom the baseline less the lower one.
+            const vec2 origin = pen + shapedGlyph.Pen;
+            const vec2 min = origin + vec2(glyph.PlaneMin.x, -glyph.PlaneMax.y) * pixelSize;
+            const vec2 max = origin + vec2(glyph.PlaneMax.x, -glyph.PlaneMin.y) * pixelSize;
             const std::array<vec2, 4> corners = {min, vec2(max.x, min.y), max, vec2(min.x, max.y)};
             const std::array<vec2, 4> uvs = {glyph.UvMin, vec2(glyph.UvMax.x, glyph.UvMin.y),
                                              glyph.UvMax, vec2(glyph.UvMin.x, glyph.UvMax.y)};
@@ -720,6 +883,12 @@ namespace Veng::Gui
             }
             m_Runs.push_back(copy);
         }
+        m_RunTextureKeys.insert(m_RunTextureKeys.end(), src.m_RunTextureKeys.begin(),
+                                src.m_RunTextureKeys.end());
+        // The trailing run is now the source's last, so a primitive emitted next merges against its
+        // key rather than against whatever this list's own last run carried.
+        m_RunTextureKey = src.m_RunTextureKeys.back();
+        m_RunMaterial = src.m_Runs.back().Material;
         return true;
     }
 }

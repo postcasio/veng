@@ -20,6 +20,7 @@
 #include <Veng/Asset/HexId.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
+#include <Veng/Gui/Document.h>
 #include <Veng/Gui/DrawList.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
@@ -310,6 +311,74 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const vector<u8> rgb = RenderList(Context, assets, list);
     const BandStats band = ScanBand(rgb, 0, Extent.y);
     CHECK(band.AnyLit);
+
+    std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui text fields: a document shapes an unchanged run once, for its measure and "
+                  "its paint")
+{
+    const path dir = CaseDir("shaped_once");
+    std::string assetList;
+    AddFont(dir, assetList, MsdfFontId, "msdf", "msdf.font.json", std::nullopt);
+    WriteFile(dir / "pack.json", "{\"version\": 1, \"assets\": [" + assetList + "]}");
+    const path archive = dir / "fields.vengpack";
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker.CookPack(dir / "pack.json", archive).has_value());
+
+    Text::GlyphSource source;
+    Text::GlyphAtlas atlas(Context, source);
+    AssetManager assets(Context, Tasks, Types);
+    assets.SetGlyphSystems(&source, &atlas);
+    REQUIRE(assets.Mount(archive).has_value());
+    const AssetResult<AssetHandle<Font>> font = assets.LoadSync<Font>(MsdfFontId);
+    REQUIRE(font.has_value());
+
+    // A readout under a root that names the font once, as a document authors it; the size is the
+    // readout's own, since only the font inherits.
+    Gui::Document doc;
+    Gui::Style root;
+    root.TextFont = *font;
+    root.AlignItems = Gui::Align::FlexStart;
+    doc.SetStyle(doc.Root(), root);
+    Gui::Element& readout = doc.Add(doc.Root(), Gui::ElementKind::Text);
+    doc.SetText(readout, "SPEED 120");
+
+    const vec2 available(Extent);
+    Gui::DrawList out;
+    const auto frame = [&]
+    {
+        atlas.BeginFrame();
+        out.Clear();
+        doc.Drive(available, 0.016f, out);
+    };
+
+    // The first frame shapes the run once: the measure shapes it and the paint finds it.
+    frame();
+    CHECK(doc.GetStats().ShapedRuns == 1);
+
+    // Unchanged, it is never shaped again.
+    frame();
+    frame();
+    CHECK(doc.GetStats().ShapedRuns == 1);
+
+    // The paint is the run a fresh shaping of the same string draws at the same pen.
+    Gui::DrawList fresh;
+    fresh.Text(readout.Layout.Min, *font->Get(), "SPEED 120", readout.ComputedStyle.TextSize,
+               vec4(1.0f));
+    REQUIRE(out.GetVertices().size() == fresh.GetVertices().size());
+    for (usize i = 0; i < fresh.GetVertices().size(); ++i)
+    {
+        CHECK(out.GetVertices()[i].Position == fresh.GetVertices()[i].Position);
+        CHECK(out.GetVertices()[i].Uv == fresh.GetVertices()[i].Uv);
+    }
+
+    // A ticking readout reshapes itself, once.
+    doc.SetText(readout, "SPEED 121");
+    frame();
+    CHECK(doc.GetStats().ShapedRuns == 2);
 
     std::filesystem::remove(archive);
 }

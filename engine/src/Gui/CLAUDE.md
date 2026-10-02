@@ -90,6 +90,42 @@ computed rect back into `Element::Layout`) → `Build(DrawList&)` (walk the laid
 background/border/text/image/widget primitives, clip-pushed where an element clips). A clean
 `Solve` at an unchanged extent is a no-op.
 
+**A frame costs what changed in it.** An in-scene HUD changes every frame — markers track, readouts
+tick — so skipping an unchanged frame saves nothing; what shrinks is the cost of each change. Every
+write through a `Document` setter records what it moved, on the element (`Element::Retained`, the
+`ElementRetained` bookkeeping the document owns), and a write of the value already held records
+nothing — so a driver that sets every readout and visibility each frame pays only for the ones that
+differ:
+
+- **`Update` visits only the elements owed a resolve:** those a write queued since the last frame,
+  and those with an in-flight tween or a live animation. `SetState` still re-resolves its element
+  (and, for an inheritable bit, the subtree) immediately.
+- **`Solve` pushes only the changed elements' layout inputs.** A layout write marks the path from
+  the element to the root; the push walks only marked paths, Yoga re-lays out only the nodes it
+  finds dirty (and caches the rest), and the read-back reads only what Yoga revisited, what sits on
+  a marked path, or what moved with a new origin. A Table re-measures its columns only when its
+  subtree changed or its width moved.
+- **An absolute move skips the solve.** `SetPlacement`/`SetPinnedPosition` moving an already-pinned
+  element at the same size shift its rect and its subtree's directly: an absolute inset moves no
+  sibling's or ancestor's box. Insets reach the layout tree on whole pixels (`PixelInset`) — the
+  solve snaps every box to whole pixels anyway — which is what makes the move an exact translation,
+  landing where a solve would put it. The move declines (and dirties the layout instead) whenever it
+  might not be one: a variant, tween or animation on the element, a scrolling or hidden ancestor, an
+  open popup, or a non-whole parent border plus margin.
+- **Text is shaped once per run.** Each element keeps its last two shaped runs, keyed by the string,
+  font, size and wrap width; the layout measure and the paint share them, so an unchanged label is
+  never shaped again and a ticking readout reshapes only itself. The paint still ensures every glyph
+  resident each frame (`DrawList::Text` over a `ShapeResult`), which pins it against eviction.
+- **`Drive` re-emits only the marked subtrees.** The document keeps last frame's geometry and records
+  each element's range in it; an unmarked subtree under the same opacity, clip, transform and arc is
+  copied as one range (`DrawList::AppendRange`), after its glyphs are re-pinned and found unmoved in
+  the atlas. A copied subtree is byte-identical to a fresh `Build`.
+
+The bookkeeping is honest only through the setters. A caller writing an `Element`'s fields directly
+(its `Variants`, an Image's texture slots) calls `Document::MarkChanged`. `Document::GetStats` counts
+the work done — runs shaped, elements resolved and pushed, solves, direct moves, elements emitted and
+subtrees reused — which is how a test pins that a change cost only what it reached.
+
 ## One box model: the element's rect is its border box
 
 **`Element::Layout` is the element's border box.** Margin lies outside it; **border and padding lie
@@ -793,10 +829,11 @@ paths that support them are paint-only where they can be: `SetText` early-outs o
 size)` writes an absolute position *and* a fixed `Points` extent; `SetPinnedPosition(element,
 topLeft)` writes the position and leaves `Width`/`Height` alone, so an element declaring neither is
 sized from its content the way any in-flow element is, and one whose style authored a length keeps
-it. Both re-dirty layout only on a real change, but the tests differ: the rect form compares
-position *and* the size it wrote, while the position form compares **position and position type
-only** — an auto-sized element has no written size to compare, so folding one in would re-dirty
-every frame and cost a full re-solve on a caller that re-pins each frame. Their writes both land in
+it. Both cost nothing on an unchanged pin, but the tests differ: the rect form compares position
+*and* the size it wrote, while the position form compares **position and position type only** — an
+auto-sized element has no written size to compare, so folding one in would count every frame as a
+change on a caller that re-pins each frame. A changed position on an already-pinned element (at the
+same size, for the rect form) is a direct move with no solve; see the per-frame pipeline above. Their writes both land in
 `BaseStyle`, which makes them **not interchangeable on one element**: an element pinned once by rect
 carries that `Points` size forever, and switching it to content sizing takes a `SetStyle`. A caller
 that needs the resulting extent reads `Element::Layout` after the next `Solve` — the measurement

@@ -1164,6 +1164,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/gui_nested_repeater.cpp
             tests/unit/gui_scroll.cpp
             tests/unit/gui_document_api.cpp
+            tests/unit/gui_frame_cost.cpp
             tests/unit/gui_presence.cpp
             tests/unit/gui_placement.cpp
             tests/unit/gui_popup.cpp

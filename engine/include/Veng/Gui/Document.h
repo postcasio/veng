@@ -99,6 +99,30 @@ namespace Veng::Gui
         bool LightDismiss = true;
     };
 
+    /// @brief Running totals of the work a Document has done, for telling what a frame cost.
+    ///
+    /// Each count only grows. Read it before and after a stretch of frames and the difference is
+    /// what that stretch did — how many runs it shaped, how many elements it re-resolved or re-laid
+    /// out, how much geometry it rebuilt rather than reused. A document whose input did not change
+    /// does none of it.
+    struct DocumentStats
+    {
+        /// @brief Text runs shaped through a font: a measure or paint whose run was not cached.
+        u64 ShapedRuns = 0;
+        /// @brief Element style resolves: variants folded, tweens and animations advanced.
+        u64 StyleResolves = 0;
+        /// @brief Solves that ran rather than finding the tree clean.
+        u64 Solves = 0;
+        /// @brief Elements whose layout inputs were pushed into the layout tree.
+        u64 StylePushes = 0;
+        /// @brief Absolute moves applied to an element's rect directly, with no solve.
+        u64 DirectMoves = 0;
+        /// @brief Elements whose own geometry a Drive emitted afresh.
+        u64 ElementsEmitted = 0;
+        /// @brief Subtrees whose geometry a Drive copied from its previous build.
+        u64 SubtreesReused = 0;
+    };
+
     /// @brief A retained tree of UI elements with flexbox layout, drawn through a DrawList.
     ///
     /// A Document single-owns a persistent tree rooted at Root(). It mirrors the tree into an
@@ -108,6 +132,14 @@ namespace Veng::Gui
     /// clip-pushed when the element clips). Structure and style are mutated only through the
     /// Document so the mirror stays in sync and the layout is marked dirty. A Document survives
     /// across frames; a clean Solve at an unchanged available size is a no-op.
+    ///
+    /// A frame costs what changed in it. Each write records what it moved: a style write queues the
+    /// one element for re-resolve, a layout write marks the path from the element to the root, and
+    /// every write marks the element's geometry for re-emission. So Update visits only the queued
+    /// elements and those with a live tween or animation, Solve pushes only the marked elements'
+    /// layout inputs and reads back only the rects the solver moved, and Drive re-emits only the
+    /// marked subtrees, copying the rest from its previous build. A write that stores the value
+    /// already held marks nothing.
     ///
     /// The tree is not thread-safe; construct, mutate, Solve, and Build it on one thread.
     class Document
@@ -211,14 +243,20 @@ namespace Veng::Gui
         void SetText(Element& element, string_view text);
 
         /// @brief Sets whether an element (and its subtree) participates in layout and drawing.
+        ///
+        /// Re-dirties the layout only on a real change, so a per-frame write of the visibility an
+        /// element already has costs nothing.
         /// @param element  The element to show or hide.
         /// @param visible  True to lay out and draw it, false to skip it.
         void SetVisible(Element& element, bool visible);
 
-        /// @brief Replaces an element's resolved style and marks layout dirty.
+        /// @brief Replaces an element's resolved style, marking only what the change moved.
         ///
         /// Sets both the element's live ComputedStyle and its BaseStyle, so a later variant/
-        /// transition resolve folds active variants over this new base. Marks layout dirty.
+        /// transition resolve folds active variants over this new base. Re-dirties the layout only
+        /// when a layout input moved, re-measures text only when the typography did, and is a
+        /// no-op — in-flight tweens included — when the style equals the base already held, so a
+        /// driver writing a whole style each frame pays only for the frames it differs.
         /// @param element  The element whose style to set.
         /// @param style    The new resolved style.
         void SetStyle(Element& element, const Style& style);
@@ -313,12 +351,13 @@ namespace Veng::Gui
         /// @param points   The new points, in order; fewer than two draw no line.
         void SetPolylinePoints(Element& element, std::span<const vec2> points);
 
-        /// @brief Pins an element absolutely at a rect, dirtying layout only on a real change.
+        /// @brief Pins an element absolutely at a rect, dirtying layout only when its size moved.
         ///
         /// The one-call form of the pin-at-rect idiom: absolute position, Left/Top insets at
-        /// topLeft (Right/Bottom left unset), and a fixed pixel size. Layout is marked dirty
-        /// only when the placement actually moved, so re-pinning an unchanged rect each frame
-        /// costs no re-solve.
+        /// topLeft (Right/Bottom left unset), and a fixed pixel size. Re-pinning an unchanged rect
+        /// costs nothing, and moving an already-pinned element at the same size moves its rect, and
+        /// its subtree's, at once with no solve — an absolute inset moves no sibling or ancestor box.
+        /// Insets land on whole pixels, as every solved box does.
         /// @param element  The element to pin; its position type becomes Absolute.
         /// @param topLeft  The element's top-left corner, in parent-space pixels.
         /// @param size     The element's fixed size, in pixels.
@@ -330,9 +369,10 @@ namespace Veng::Gui
         /// The position-only form of the pin idiom: absolute position, Left/Top insets at topLeft
         /// (Right/Bottom left unset), and Width/Height untouched — so an element declaring neither
         /// is sized from its content, and one whose style authored a length keeps that length.
-        /// Layout is marked dirty only when the position or the position type moved; the size is
-        /// no part of that test, since an auto-sized element has no written size to compare. Read
-        /// the resulting extent back from Element::Layout after the next Solve.
+        /// Re-pinning an unchanged position costs nothing, and moving an already-pinned element moves
+        /// its rect, and its subtree's, at once with no solve; only a first pin (the position type
+        /// changing) marks layout dirty. The size is no part of the test, since an auto-sized element
+        /// has no written size to compare. Read the extent back from Element::Layout after a Solve.
         ///
         /// @warning The two pin forms are not interchangeable on one element. SetPlacement writes
         /// a fixed Points size into the base style, so an element pinned through it once keeps
@@ -379,13 +419,14 @@ namespace Veng::Gui
 
         /// @brief Advances the style pipeline one frame: variants, transitions, then animations.
         ///
-        /// For every element it re-selects the active variants over the base style, advances any
-        /// in-flight property tween by delta, and applies each live style animation at its
-        /// advanced clock, writing the resolved values into ComputedStyle. A resolved,
-        /// transitioned, or animated change to a layout input re-dirties the layout so the
-        /// following Solve re-runs; a pure paint change (color/opacity) does not force a
-        /// re-solve. Call this once per frame before Solve. A delta of zero resolves variants
-        /// without advancing tweens or animation clocks.
+        /// For each element a write queued since the last Update, and each with an in-flight tween
+        /// or a live animation, it re-selects the active variants over the base style, advances the
+        /// tweens by delta, and applies each animation at its advanced clock, writing the resolved
+        /// values into ComputedStyle. Every other element is unchanged and is not visited. A
+        /// resolved, transitioned, or animated change to a layout input re-dirties the layout so the
+        /// following Solve re-runs; a pure paint change (color/opacity) does not force a re-solve.
+        /// Call this once per frame before Solve. A delta of zero resolves variants without
+        /// advancing tweens or animation clocks.
         /// @param delta  The frame time step, in seconds.
         void Update(f32 delta);
 
@@ -405,10 +446,11 @@ namespace Veng::Gui
 
         /// @brief Lays out the tree to fill the available size, filling every Element::Layout.
         ///
-        /// Pushes each element's layout style into the mirror, runs the flexbox solve at the
-        /// available extent, and reads each computed rect back. It is a no-op when the tree is clean
-        /// and the available size is unchanged since the last Solve; a structural or style change,
-        /// or a changed available size, re-runs it.
+        /// Pushes the layout style of each element whose layout input changed into the mirror, runs
+        /// the flexbox solve at the available extent — which re-lays out only the changed nodes and
+        /// what they move — and reads back the rects the solve moved. It is a no-op when the tree is
+        /// clean and the available size is unchanged since the last Solve; a structural or style
+        /// change, or a changed available size, re-runs it.
         /// @param available  The available layout region, in framebuffer pixels.
         void Solve(vec2 available);
 
@@ -424,10 +466,15 @@ namespace Veng::Gui
         ///
         /// Runs the three per-frame stages in order — Update(delta) to re-select style variants
         /// and advance transitions and animations, Solve(available) to lay the tree out at the
-        /// target extent, then Build(out) to emit its draw primitives — so a host recording the
-        /// result into any sink (a viewport composite, a persistent render target) drives a document
-        /// through one shared pipeline rather than re-sequencing the stages at each call site. Any
-        /// data-binding refresh (UpdateBindings) is the caller's, ahead of this call.
+        /// target extent, then the build — so a host recording the result into any sink (a viewport
+        /// composite, a persistent render target) drives a document through one shared pipeline
+        /// rather than re-sequencing the stages at each call site. Any data-binding refresh
+        /// (UpdateBindings) is the caller's, ahead of this call.
+        ///
+        /// The build emits exactly what Build(out) would, but retained: the document keeps the
+        /// geometry it built last frame, re-emits only the subtrees a write marked, and copies every
+        /// other subtree as it stood. Into a list with a clip, transform, or arc still open it builds
+        /// afresh, since the kept geometry was recorded under none.
         /// @param available  The available layout region, in the document's layout space (the target
         ///                   extent) — framebuffer pixels at UI scale 1, logical points otherwise.
         /// @param delta      The frame time step, in seconds, forwarded to Update.
@@ -435,7 +482,19 @@ namespace Veng::Gui
         void Drive(vec2 available, f32 delta, DrawList& out);
 
         /// @brief Returns whether the tree needs a Solve (structure or style changed since the last).
-        [[nodiscard]] bool IsDirty() const { return m_Dirty; }
+        [[nodiscard]] bool IsDirty() const { return m_LayoutDirty; }
+
+        /// @brief Tells the document that an element's fields were written directly.
+        ///
+        /// The setters record what each write moved; a direct write to an Element's fields (its
+        /// Variants, an Image's texture slots, its base style) bypasses that. This records the
+        /// element as wholly changed: its style re-resolves at the next Update, its layout inputs
+        /// re-push and its text re-measures at the next Solve, and its geometry is re-emitted.
+        /// @param element  The element whose fields were written.
+        void MarkChanged(Element& element);
+
+        /// @brief Returns the running totals of the work this document has done.
+        [[nodiscard]] const DocumentStats& GetStats() const { return m_Stats; }
 
         /// @brief Returns whether a paint-only write has landed since the last Drive.
         ///
@@ -959,26 +1018,128 @@ namespace Veng::Gui
         /// @brief Re-resolves every descendant's live style after an inheritable state bit moved.
         void RefreshDescendantStyles(Element& element);
 
+        /// @brief Queues an element for a style re-resolve at the next Update.
+        void QueueResolve(Element& element);
+
+        /// @brief Queues an element whose overflow may have moved for the next scrollbar reconcile.
+        void QueueScrollCheck(Element& element);
+
+        /// @brief Adds an element to the set Update advances every frame, if it has a live tween or animation.
+        void TrackAnimating(Element& element);
+
+        /// @brief Records a layout change at an element: the next Solve runs and reads its rect.
+        /// @param element    The element whose layout moved.
+        /// @param pushStyle  Whether its layout inputs must be pushed into its node again.
+        void MarkLayoutDirty(Element& element, bool pushStyle);
+
+        /// @brief Records that an element's geometry must be re-emitted at the next Drive.
+        void MarkPaintDirty(const Element& element);
+
+        /// @brief Records a typography change over a subtree: every element re-measures, re-pushes, and re-emits.
+        ///
+        /// Typography inherits, so a font change on one element moves the measured size of every
+        /// descendant that takes its font from it, not just the element's own node.
+        void MarkSubtreeTypographyDirty(Element& element);
+
+        /// @brief Clears the re-emit marks of a subtree the build did not visit.
+        static void ClearPaintMarks(const Element& element);
+
         /// @brief Pushes one element's style layout inputs into its mirrored layout node.
         void ApplyStyle(Element& element);
 
-        /// @brief Reads each element's computed rect back into Element::Layout from the mirror.
+        /// @brief Pushes the layout inputs of every element marked pending, walking only the marked paths.
+        void ApplyPendingStyles(Element& element);
+
+        /// @brief Pushes the layout inputs of a whole subtree, marked or not.
+        void ApplyStyleSubtree(Element& element);
+
+        /// @brief Reads each moved element's computed rect back into Element::Layout from the mirror.
+        ///
+        /// Reads an element when the solver laid it out again, when its origin moved, or when it is
+        /// on a marked path, and skips the rest of the subtree otherwise: an element the solver did
+        /// not revisit, under an unmoved origin, is where it was.
         void ReadLayout(Element& element, vec2 origin);
 
-        /// @brief Widens every Table's cells to their solved per-column maxima.
+        /// @brief Places a widget part's rect directly, marking its geometry when it moved.
+        void SetPartLayout(Element& part, const Rect& rect);
+
+        /// @brief Shows or hides a widget part directly, marking its geometry when it changed.
+        void SetPartVisible(Element& part, bool visible);
+
+        /// @brief Moves an absolutely positioned element by its Left/Top inset without a solve.
         ///
-        /// Runs between the two layout passes of a Solve on a document holding a Table: reads each
-        /// cell's natural margin-box width from the first solve, takes the per-column maximum
-        /// across the table's rows, and raises each cell's layout-node min-width to its column's
-        /// width. Returns whether any node changed (the caller re-runs the layout when so).
-        bool AlignTableColumns();
+        /// An absolute element's inset moves neither a sibling's box nor an ancestor's, so when the
+        /// move is a whole-pixel translation the element and its subtree shift by exactly that much
+        /// and nothing else changes. Writes the inset into the layout node as well, so a later solve
+        /// agrees. Declines (returns false) when the move might not be a plain translation.
+        /// @param element  The element to move; its base style already holds the new inset.
+        /// @param from     The insets it held before.
+        /// @return True when the element was moved; false leaves the move to the next solve.
+        bool TryMoveAbsolute(Element& element, const PositionInsets& from);
+
+        /// @brief Resets a Table's cells to their styled min-widths, ahead of measuring its columns afresh.
+        void ResetTableCells(Element& table);
+
+        /// @brief Widens the given Tables' cells to their solved per-column maxima.
+        ///
+        /// Runs between the layout passes of a Solve: reads each cell's natural margin-box width
+        /// from the pass before, takes the per-column maximum across the table's rows, and raises
+        /// each cell's layout-node min-width to its column's width. Returns whether any node changed
+        /// (the caller re-runs the layout when so).
+        bool AlignTableColumns(std::span<Element* const> tables);
+
+        /// @brief The paint state an element opened, which its close must unwind.
+        struct OpenedPaint
+        {
+            /// @brief The composited opacity its children inherit.
+            f32 Opacity = 1.0f;
+            /// @brief Whether a rotation was pushed.
+            bool Rotated = false;
+            /// @brief Whether a clip was pushed.
+            bool Clipped = false;
+            /// @brief Whether its children are painted.
+            bool Children = true;
+        };
+
+        /// @brief Emits an element's own primitives and opens the clip and rotation its children draw under.
+        ///
+        /// The inherited opacity is the product of every ancestor's style opacity; it folds into
+        /// each primitive's alpha and multiplies down the subtree, so an element's opacity fades its
+        /// whole subtree as one. Returns nullopt when the element draws nothing — hidden, or a zero
+        /// opacity product — in which case nothing is opened.
+        optional<OpenedPaint> OpenElement(const Element& element, DrawList& list,
+                                          f32 inherited) const;
+
+        /// @brief Closes what OpenElement opened.
+        static void CloseElement(const OpenedPaint& opened, DrawList& list);
 
         /// @brief Emits one element's primitives, then recurses into its children.
-        ///
-        /// The inherited opacity is the product of every ancestor's style opacity; it folds
-        /// into each primitive's alpha and multiplies down the subtree, so an element's
-        /// opacity fades its whole subtree as one. A zero product skips the subtree entirely.
         void BuildElement(const Element& element, DrawList& list, f32 inherited) const;
+
+        /// @brief Builds the tree into the retained list, re-emitting only marked subtrees, then appends it.
+        void BuildRetained(DrawList& out);
+
+        /// @brief Builds one element retained: a copy of its last geometry when it is unmarked, else afresh.
+        /// @param element    The element to build.
+        /// @param next       The list being built.
+        /// @param inherited  The opacity its ancestors composite.
+        /// @param prevBase   Where its parent's segment began in the previous build.
+        /// @param prevValid  Whether its recorded segment is relative to prevBase.
+        /// @param nextBase   Where its parent's segment begins in this build.
+        void BuildRetainedElement(Element& element, DrawList& next, f32 inherited,
+                                  const DrawMark& prevBase, bool prevValid,
+                                  const DrawMark& nextBase);
+
+        /// @brief Returns an element's text run shaped, from its cache when the run was shaped before.
+        /// @param element  The element owning the cache.
+        /// @param run      The run to shape (after any case transform).
+        /// @param font     The font to shape through.
+        /// @param size     The em size, in pixels.
+        /// @param width    The width to wrap within, or nullopt.
+        /// @return The shaped run, valid until the element's next shaped-run request.
+        [[nodiscard]] const ShapeResult& ShapeElementRun(const Element& element, string_view run,
+                                                         const Font& font, f32 size,
+                                                         optional<f32> width) const;
 
         /// @brief Emits a DropdownArrow's downward chevron — two rotated bars in its fill color.
         /// @param element  The DropdownArrow part element, positioned by LayoutDropdownParts.
@@ -1131,11 +1292,12 @@ namespace Veng::Gui
         /// is what makes `ScrollBar { … }` and `ScrollBarThumb:hover { … }` reach it.
         void CascadeWidgetElement(Element& element);
 
-        /// @brief Re-syncs every element whose resolved overflow no longer matches its scrollbar parts.
+        /// @brief Re-syncs each element whose overflow may have moved, where it no longer matches its bars.
         ///
-        /// Runs as its own pass after the style resolve, never inside it: creating a bar appends to
-        /// the element store, which would strand a walk over it.
-        void SyncAllScrollBars();
+        /// The candidates are the elements a resolve or a style write queued since the last pass.
+        /// Runs as its own pass after the style resolve, never inside it: creating a bar adds
+        /// elements, which would strand a walk that queues them.
+        void SyncPendingScrollBars();
 
         /// @brief Creates, removes, and re-cascades an element's scrollbar parts to match its overflow.
         ///
@@ -1270,15 +1432,15 @@ namespace Veng::Gui
         /// @param emptyLineBox    Whether an empty run still reserves one line of the font's height,
         ///                        the line box a text-entry field holds open while it has no value.
         /// @return The measured text block size, in pixels.
+        /// @param owner           The element whose shaped-run cache serves the measure, or null to
+        ///                        shape uncached (a run no element keeps, like a caret's prefix).
         [[nodiscard]] vec2 MeasureRun(string_view text, const Font* font, const Style& style,
-                                      optional<f32> availableWidth, bool emptyLineBox) const;
+                                      optional<f32> availableWidth, bool emptyLineBox,
+                                      const Element* owner) const;
 
-        /// @brief Marks every text-measured node in an element's subtree for re-measurement.
-        ///
-        /// Typography inherits, so a font change on one element moves the measured size of every
-        /// descendant that takes its font from it, not just the element's own node.
-        /// @param element  The subtree root whose measured nodes to dirty.
-        void MarkSubtreeTextDirty(const Element& element);
+        /// @brief Marks an element's own text for re-measurement and its geometry for re-emission.
+        /// @param element  The element whose run changed.
+        void MarkTextDirty(Element& element);
 
         /// @brief Sets whether an element takes focus by kind, marking the interactive controls.
         void ApplyWidgetFocusability(Element& element);
@@ -1370,11 +1532,38 @@ namespace Veng::Gui
         /// font declaration unresolved, exactly as an empty resolver did.
         AssetManager* m_Assets = nullptr;
 
-        /// @brief Whether structure or style changed since the last Solve.
-        bool m_Dirty = true;
+        /// @brief Whether a layout input changed since the last Solve.
+        bool m_LayoutDirty = true;
 
-        /// @brief Whether a paint-only write landed since the last Drive.
+        /// @brief Whether anything that changes pixels landed since the last Drive.
         bool m_PaintDirty = true;
+
+        /// @brief The elements waiting for a style re-resolve at the next Update.
+        vector<Element*> m_ResolveQueue;
+
+        /// @brief The elements with a live tween or animation, which Update advances every frame.
+        vector<Element*> m_Animating;
+
+        /// @brief The elements whose overflow may have moved, checked for scrollbars at the next Update.
+        vector<Element*> m_ScrollCheck;
+
+        /// @brief Scratch for Update's visit list, kept to avoid an allocation per frame.
+        vector<Element*> m_UpdateVisit;
+
+        /// @brief How many Table elements the document holds, so a Solve without one skips the scan.
+        u32 m_TableCount = 0;
+
+        /// @brief The document's geometry as last built by Drive, which the next build copies from.
+        DrawList m_Built;
+
+        /// @brief The list the next build is written into, then swapped with m_Built.
+        DrawList m_BuildScratch;
+
+        /// @brief Whether m_Built holds a build every element's segment refers to.
+        bool m_HasBuilt = false;
+
+        /// @brief Running totals of the work done; mutable so the const measure and paint count too.
+        mutable DocumentStats m_Stats;
 
         /// @brief The available size the last Solve ran against; a change re-runs Solve.
         vec2 m_LastAvailable{-1.0f};

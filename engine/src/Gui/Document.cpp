@@ -119,6 +119,129 @@ namespace Veng::Gui
             }
         }
 
+        // Pushes a style's min-width onto its node: the styled floor a Table's column widening
+        // raises, and the one its re-measure resets to.
+        void PushMinWidth(const YGNodeRef node, const Style& style)
+        {
+            ApplyLength(
+                style.MinWidth, [&](f32 v) { YGNodeStyleSetMinWidth(node, v); },
+                [&](f32 v) { YGNodeStyleSetMinWidthPercent(node, v); },
+                [&] { YGNodeStyleSetMinWidth(node, YGUndefined); });
+        }
+
+        bool SameLength(const Length& a, const Length& b)
+        {
+            return a.Kind == b.Kind && a.Value == b.Value;
+        }
+
+        bool SameInsets(const Insets& a, const Insets& b)
+        {
+            return a.Left == b.Left && a.Top == b.Top && a.Right == b.Right && a.Bottom == b.Bottom;
+        }
+
+        // Whether two styles differ in anything the flexbox solve reads, or in where the solved rect
+        // is read back to. The border width is among them: the border is reserved by the solve, out
+        // of the content box. A change to one re-dirties the layout; a pure paint change does not.
+        bool LayoutInputsDiffer(const Style& a, const Style& b)
+        {
+            return a.Direction != b.Direction || a.JustifyContent != b.JustifyContent ||
+                   a.AlignItems != b.AlignItems || a.AlignSelf != b.AlignSelf || a.Wrap != b.Wrap ||
+                   a.FlexGrow != b.FlexGrow || a.FlexShrink != b.FlexShrink ||
+                   !SameLength(a.FlexBasis, b.FlexBasis) || !SameLength(a.Width, b.Width) ||
+                   !SameLength(a.Height, b.Height) || !SameLength(a.MinWidth, b.MinWidth) ||
+                   !SameLength(a.MinHeight, b.MinHeight) || !SameLength(a.MaxWidth, b.MaxWidth) ||
+                   !SameLength(a.MaxHeight, b.MaxHeight) || !SameInsets(a.Margin, b.Margin) ||
+                   !SameInsets(a.Padding, b.Padding) || a.Position != b.Position ||
+                   a.Inset.Left != b.Inset.Left || a.Inset.Top != b.Inset.Top ||
+                   a.Inset.Right != b.Inset.Right || a.Inset.Bottom != b.Inset.Bottom ||
+                   a.Origin != b.Origin || a.BorderStyle.Width != b.BorderStyle.Width ||
+                   !SameInsets(a.ImageSlice, b.ImageSlice) || a.OverflowX != b.OverflowX ||
+                   a.OverflowY != b.OverflowY || a.Scrollbar != b.Scrollbar;
+        }
+
+        // Whether two styles measure an element's own content differently: its text's size, case,
+        // and wrap, or an Image's slice (whose corner insets are its intrinsic size). The font is not
+        // among them: it inherits, so a font change moves a whole subtree and is tested on its own.
+        bool MeasureInputsDiffer(const Style& a, const Style& b)
+        {
+            return a.TextSize != b.TextSize || a.Casing != b.Casing || a.Wrapping != b.Wrapping ||
+                   !SameInsets(a.ImageSlice, b.ImageSlice);
+        }
+
+        bool SameGradient(const optional<ResolvedGradient>& a, const optional<ResolvedGradient>& b)
+        {
+            if (a.has_value() != b.has_value())
+            {
+                return false;
+            }
+            return !a.has_value() ||
+                   (a->Kind == b->Kind && a->P0 == b->P0 && a->P1 == b->P1 &&
+                    a->AngleOffset == b->AngleOffset && a->Ramp.Get() == b->Ramp.Get());
+        }
+
+        bool SameShadow(const optional<BoxShadow>& a, const optional<BoxShadow>& b)
+        {
+            if (a.has_value() != b.has_value())
+            {
+                return false;
+            }
+            return !a.has_value() ||
+                   (a->Offset == b->Offset && a->Blur == b->Blur && a->Spread == b->Spread &&
+                    a->Color == b->Color && a->Inset == b->Inset);
+        }
+
+        // Whether two styles are the same in every field — layout, typography, and paint — so a
+        // write of one over the other changes nothing at all.
+        bool SameStyle(const Style& a, const Style& b)
+        {
+            const auto sameRadii = [](const CornerRadii& x, const CornerRadii& y)
+            {
+                return x.TopLeft == y.TopLeft && x.TopRight == y.TopRight &&
+                       x.BottomRight == y.BottomRight && x.BottomLeft == y.BottomLeft;
+            };
+            return !LayoutInputsDiffer(a, b) && !MeasureInputsDiffer(a, b) &&
+                   a.TextFont.Get() == b.TextFont.Get() && a.Background == b.Background &&
+                   SameGradient(a.BackgroundGradient, b.BackgroundGradient) &&
+                   a.BackgroundMaterial.Get() == b.BackgroundMaterial.Get() &&
+                   a.BackgroundImage.Get() == b.BackgroundImage.Get() &&
+                   SameInsets(a.BackgroundSlice, b.BackgroundSlice) &&
+                   a.BackgroundFit == b.BackgroundFit && a.BackgroundRepeat == b.BackgroundRepeat &&
+                   a.ObjectFit == b.ObjectFit && a.ImageRepeatMode == b.ImageRepeatMode &&
+                   a.ImageMaterial.Get() == b.ImageMaterial.Get() && sameRadii(a.Radii, b.Radii) &&
+                   a.BorderStyle.Color == b.BorderStyle.Color && SameShadow(a.Shadow, b.Shadow) &&
+                   a.TextColor == b.TextColor && a.TextAlignment == b.TextAlignment &&
+                   a.Opacity == b.Opacity && a.Rotation == b.Rotation && a.Shape == b.Shape &&
+                   a.ArcStart == b.ArcStart && a.ArcSweep == b.ArcSweep &&
+                   a.ArcThickness == b.ArcThickness && a.ArcCapStyle == b.ArcCapStyle &&
+                   a.Stroke == b.Stroke && a.StrokeWidth == b.StrokeWidth &&
+                   a.StrokeTrim == b.StrokeTrim && a.Pointer == b.Pointer;
+        }
+
+        // Whether an element has anything Update must advance: an in-flight tween, or an animation
+        // that has not settled (a looping one never does; a play-once one settles at its last key).
+        bool HasLiveMotion(const Element& element)
+        {
+            if (!element.Tweens.empty())
+            {
+                return true;
+            }
+            return std::ranges::any_of(element.Animations,
+                                       [](const StyleAnimation& animation)
+                                       {
+                                           return animation.Mode != AnimationLoopMode::Once ||
+                                                  animation.Time < animation.Duration;
+                                       });
+        }
+
+        // An absolute inset as the layout tree takes it: whole pixels. The solve snaps every box to
+        // whole pixels anyway, and snapping the inset first is what makes an absolute move a pure
+        // whole-pixel translation — so a move can shift the element's solved rect directly and land
+        // exactly where a solve would put it.
+        f32 PixelInset(const f32 value)
+        {
+            return PositionInsets::IsSet(value) ? std::floor(value + 0.5f) : value;
+        }
+
         // Decodes UTF-8 into Unicode codepoints, emitting U+FFFD for a malformed byte so an
         // ill-formed string degrades to replacement glyphs rather than reading out of bounds.
         vector<u32> DecodeUtf8(string_view text)
@@ -288,6 +411,9 @@ namespace Veng::Gui
         m_Yoga = CreateUnique<YogaTree>();
         YGConfigSetContext(m_Yoga->Config, this);
         m_Root = &CreateElement(ElementKind::Panel);
+        // The retained build replays text out of these lists, so each keeps which glyphs it drew.
+        m_Built.SetRecordsGlyphs(true);
+        m_BuildScratch.SetRecordsGlyphs(true);
     }
 
     Document::~Document()
@@ -1076,8 +1202,8 @@ namespace Veng::Gui
             document->EnsureDropdownTemplate(*dropdown);
         }
 
-        // The cascaded base includes layout inputs, so the tree must re-solve.
-        document->m_Dirty = true;
+        // Every element was created marked, so the first Update resolves each and the first Solve
+        // lays the whole tree out; nothing further is owed here.
         return document;
     }
 
@@ -1185,6 +1311,16 @@ namespace Veng::Gui
 
         Element& element = *owned;
         m_Elements.push_back(std::move(owned));
+        if (kind == ElementKind::Table)
+        {
+            ++m_TableCount;
+        }
+
+        // A new element owes everything: a resolve, a layout push, and its geometry. Its parent,
+        // which gains a child, is marked by the caller that links it.
+        QueueResolve(element);
+        MarkLayoutDirty(element, true);
+        MarkPaintDirty(element);
 
         const YGNodeRef node = m_Yoga->Create(element);
         // Text, Button, and TextInput are text-sized leaves: each paints a run inside its own box,
@@ -1236,7 +1372,10 @@ namespace Veng::Gui
         YGNodeInsertChild(parentNode, childNode,
                           std::min(insertAt, YGNodeGetChildCount(parentNode)));
 
-        m_Dirty = true;
+        // The child was marked before it had a parent, so the path to the root is marked now.
+        child.Retained.LayoutPath = false;
+        MarkLayoutDirty(child, true);
+        MarkPaintDirty(parent);
         return child;
     }
 
@@ -1251,6 +1390,10 @@ namespace Veng::Gui
         }
 
         m_Yoga->Destroy(element);
+        if (element.Kind == ElementKind::Table)
+        {
+            --m_TableCount;
+        }
 
         // Drop any item template the element held: the map is keyed by element address, so a
         // stale entry would be re-adopted by whichever element the allocator next puts there.
@@ -1286,7 +1429,11 @@ namespace Veng::Gui
         }
 
         DestroySubtree(element);
-        m_Dirty = true;
+        if (parent != nullptr)
+        {
+            MarkLayoutDirty(*parent, false);
+            MarkPaintDirty(*parent);
+        }
     }
 
     void Document::SetText(Element& element, string_view text)
@@ -1301,36 +1448,96 @@ namespace Veng::Gui
         {
             YGNodeMarkDirty(node);
         }
-        m_Dirty = true;
+        // No layout input moved, but the path is marked so the solve knows where the text sits: a
+        // Table the element is a cell of re-measures its columns.
+        MarkLayoutDirty(element, false);
+        MarkPaintDirty(element);
     }
 
     void Document::SetVisible(Element& element, bool visible)
     {
+        if (element.Visible == visible)
+        {
+            return;
+        }
         element.Visible = visible;
-        m_Dirty = true;
+        MarkLayoutDirty(element, true);
+        MarkPaintDirty(element);
     }
 
     void Document::SetStyle(Element& element, const Style& style)
     {
+        if (SameStyle(element.BaseStyle, style))
+        {
+            return;
+        }
+
+        const bool layoutMoved = LayoutInputsDiffer(element.ComputedStyle, style);
+        const bool fontMoved = element.ComputedStyle.TextFont.Get() != style.TextFont.Get();
+        const bool measureMoved = MeasureInputsDiffer(element.ComputedStyle, style);
+
         element.BaseStyle = style;
         element.ComputedStyle = style;
         element.Tweens.clear();
-        MarkSubtreeTextDirty(element);
-        m_Dirty = true;
+
+        if (fontMoved)
+        {
+            MarkSubtreeTypographyDirty(element);
+        }
+        else if (measureMoved)
+        {
+            MarkTextDirty(element);
+        }
+        if (layoutMoved || fontMoved || measureMoved)
+        {
+            MarkLayoutDirty(element, true);
+        }
+        MarkPaintDirty(element);
+        // The variants fold over the new base at the next Update, and the overflow it carries may
+        // add or drop scrollbars there.
+        QueueResolve(element);
+        QueueScrollCheck(element);
+    }
+
+    namespace
+    {
+        // Whether a paint write onto the base style must be re-resolved: only when something folds
+        // over the base — a variant, an animation, or a transition easing toward it.
+        bool FoldsOverBase(const Element& element)
+        {
+            return !element.Variants.empty() || !element.Animations.empty() ||
+                   !element.Transitions.empty();
+        }
     }
 
     void Document::SetOpacity(Element& element, const f32 opacity)
     {
+        if (element.BaseStyle.Opacity == opacity && element.ComputedStyle.Opacity == opacity)
+        {
+            return;
+        }
         element.BaseStyle.Opacity = opacity;
         element.ComputedStyle.Opacity = opacity;
-        m_PaintDirty = true;
+        MarkPaintDirty(element);
+        if (FoldsOverBase(element))
+        {
+            QueueResolve(element);
+        }
     }
 
     void Document::SetRotation(Element& element, const f32 degrees)
     {
+        if (element.BaseStyle.Rotation == degrees && element.ComputedStyle.Rotation == degrees)
+        {
+            return;
+        }
         element.BaseStyle.Rotation = degrees;
         element.ComputedStyle.Rotation = degrees;
-        m_PaintDirty = true;
+        MarkPaintDirty(element);
+        if (FoldsOverBase(element))
+        {
+            QueueResolve(element);
+        }
     }
 
     void Document::SetArc(Element& element, const f32 startDegrees, const f32 sweepDegrees)
@@ -1346,40 +1553,73 @@ namespace Veng::Gui
         element.ComputedStyle.ArcStart = startDegrees;
         element.BaseStyle.ArcSweep = sweepDegrees;
         element.ComputedStyle.ArcSweep = sweepDegrees;
-        m_PaintDirty = true;
+        MarkPaintDirty(element);
+        if (FoldsOverBase(element))
+        {
+            QueueResolve(element);
+        }
     }
 
     void Document::SetBackground(Element& element, const vec4 color)
     {
+        if (element.BaseStyle.Background == color && element.ComputedStyle.Background == color)
+        {
+            return;
+        }
         element.BaseStyle.Background = color;
         element.ComputedStyle.Background = color;
-        m_PaintDirty = true;
+        MarkPaintDirty(element);
+        if (FoldsOverBase(element))
+        {
+            QueueResolve(element);
+        }
     }
 
     void Document::SetBackgroundGradient(Element& element, optional<ResolvedGradient> gradient)
     {
+        // A gradient is re-set each frame to animate it, so a write is always taken as a change.
         element.BaseStyle.BackgroundGradient = gradient;
         element.ComputedStyle.BackgroundGradient = std::move(gradient);
-        m_PaintDirty = true;
+        MarkPaintDirty(element);
+        if (FoldsOverBase(element))
+        {
+            QueueResolve(element);
+        }
     }
 
     void Document::SetTextColor(Element& element, const vec4 color)
     {
+        if (element.BaseStyle.TextColor == color && element.ComputedStyle.TextColor == color)
+        {
+            return;
+        }
         element.BaseStyle.TextColor = color;
         element.ComputedStyle.TextColor = color;
-        m_PaintDirty = true;
+        MarkPaintDirty(element);
+        if (FoldsOverBase(element))
+        {
+            QueueResolve(element);
+        }
     }
 
     void Document::SetImageUv(Element& element, const Rect& uv)
     {
+        if (element.ImageUv.Min == uv.Min && element.ImageUv.Size == uv.Size)
+        {
+            return;
+        }
         element.ImageUv = uv;
-        m_PaintDirty = true;
+        MarkPaintDirty(element);
     }
 
     void Document::SetImageTint(Element& element, const vec4 tint)
     {
+        if (element.ImageTint == tint)
+        {
+            return;
+        }
         element.ImageTint = tint;
-        m_PaintDirty = true;
+        MarkPaintDirty(element);
     }
 
     optional<vector<vec2>> ParsePolylinePoints(const string_view text)
@@ -1431,7 +1671,7 @@ namespace Veng::Gui
             return;
         }
         element.Points.assign(points.begin(), points.end());
-        m_PaintDirty = true;
+        MarkPaintDirty(element);
     }
 
     void Document::SetPlacement(Element& element, const vec2 topLeft, const vec2 size)
@@ -1448,6 +1688,13 @@ namespace Veng::Gui
             return;
         }
 
+        // Only the position moved when the element was already pinned at this size, which is the
+        // move an absolute element can take without a solve.
+        const bool sizeHeld = base.Position == PositionType::Absolute &&
+                              base.Width.Kind == LengthKind::Points && base.Width.Value == size.x &&
+                              base.Height.Kind == LengthKind::Points && base.Height.Value == size.y;
+        const PositionInsets from = base.Inset;
+
         const auto place = [&](Style& style)
         {
             style.Position = PositionType::Absolute;
@@ -1457,7 +1704,11 @@ namespace Veng::Gui
         };
         place(element.BaseStyle);
         place(element.ComputedStyle);
-        m_Dirty = true;
+        if (!sizeHeld || !TryMoveAbsolute(element, from))
+        {
+            MarkLayoutDirty(element, true);
+        }
+        MarkPaintDirty(element);
     }
 
     void Document::SetPinnedPosition(Element& element, const vec2 topLeft)
@@ -1474,6 +1725,9 @@ namespace Veng::Gui
             return;
         }
 
+        const bool wasPinned = base.Position == PositionType::Absolute;
+        const PositionInsets from = base.Inset;
+
         const auto place = [&](Style& style)
         {
             style.Position = PositionType::Absolute;
@@ -1481,96 +1735,103 @@ namespace Veng::Gui
         };
         place(element.BaseStyle);
         place(element.ComputedStyle);
-        m_Dirty = true;
+        if (!wasPinned || !TryMoveAbsolute(element, from))
+        {
+            MarkLayoutDirty(element, true);
+        }
+        MarkPaintDirty(element);
+    }
+
+    bool Document::TryMoveAbsolute(Element& element, const PositionInsets& from)
+    {
+        // The move is a plain translation only from a laid-out pin by the Left/Top edges alone, with
+        // nothing about the element waiting on the next solve.
+        const ElementRetained& retained = element.Retained;
+        if (!retained.LaidOut || retained.StylePending || element.Parent == nullptr ||
+            !PositionInsets::IsSet(from.Left) || !PositionInsets::IsSet(from.Top) ||
+            PositionInsets::IsSet(from.Right) || PositionInsets::IsSet(from.Bottom))
+        {
+            return false;
+        }
+        // Anything folding over the base could move the inset a solve would push (a variant, a
+        // tween, an animation), and an open popup places itself against rects in the tree.
+        if (!element.Variants.empty() || !element.Animations.empty() ||
+            !element.Transitions.empty() || !m_Popups.empty())
+        {
+            return false;
+        }
+        // A hidden box is not where its inset says, and a scroll container measures its range off
+        // the rects it holds, so the element and every ancestor must be shown and none may scroll.
+        for (const Element* cursor = &element; cursor != nullptr; cursor = cursor->Parent)
+        {
+            if (!cursor->Visible || (cursor != &element && IsScrollable(cursor->ComputedStyle)))
+            {
+                return false;
+            }
+        }
+
+        const YGNodeRef node = m_Yoga->Get(element);
+        const YGNodeRef parentNode = m_Yoga->Get(*element.Parent);
+        if (node == nullptr || parentNode == nullptr)
+        {
+            return false;
+        }
+
+        // The solve places a Left/Top-pinned element at its parent's border, plus its own margin,
+        // plus the inset. With that offset whole and the inset snapped to a whole pixel, the solved
+        // position is whole, so its rounding moves nothing and its box keeps its size: changing the
+        // inset translates the element and its subtree by exactly the change.
+        const vec2 offset(
+            YGNodeLayoutGetBorder(parentNode, YGEdgeLeft) + YGNodeLayoutGetMargin(node, YGEdgeLeft),
+            YGNodeLayoutGetBorder(parentNode, YGEdgeTop) + YGNodeLayoutGetMargin(node, YGEdgeTop));
+        if (offset != glm::floor(offset))
+        {
+            return false;
+        }
+
+        const PositionInsets& to = element.ComputedStyle.Inset;
+        const vec2 delta(PixelInset(to.Left) - PixelInset(from.Left),
+                         PixelInset(to.Top) - PixelInset(from.Top));
+
+        // The node takes the inset too, so a later solve — for whatever reason it runs — lays the
+        // element out where it now is rather than snapping it back.
+        YGNodeStyleSetPosition(node, YGEdgeLeft, PixelInset(to.Left));
+        YGNodeStyleSetPosition(node, YGEdgeTop, PixelInset(to.Top));
+        ++m_Stats.DirectMoves;
+
+        if (delta != vec2(0.0f))
+        {
+            const auto shift = [&](Element& moved, const bool root, auto&& self) -> void
+            {
+                moved.Layout.Min += delta;
+                // The root is read against its parent's origin, which did not move; everything
+                // under it is read against an origin the move carried along.
+                if (!root)
+                {
+                    moved.Retained.ReadOrigin += delta;
+                }
+                MarkPaintDirty(moved);
+                for (Element* const child : moved.Children)
+                {
+                    self(*child, false, self);
+                }
+            };
+            shift(element, true, shift);
+        }
+        return true;
     }
 
     void Document::SetAnimations(Element& element, vector<StyleAnimation> animations)
     {
         element.Animations = std::move(animations);
+        // An emptied list re-resolves the element back to its base; a live one joins the set Update
+        // advances.
+        QueueResolve(element);
+        TrackAnimating(element);
     }
 
     namespace
     {
-        // Whether a property feeds the flexbox solve (or the text measure that feeds it) — a change
-        // to one re-dirties the layout, where a pure paint change (color/opacity/radius) does not.
-        bool IsLayoutProperty(StyleProperty property)
-        {
-            switch (property)
-            {
-            case StyleProperty::FlexDirection:
-            case StyleProperty::JustifyContent:
-            case StyleProperty::AlignItems:
-            case StyleProperty::AlignSelf:
-            case StyleProperty::FlexWrap:
-            case StyleProperty::FlexGrow:
-            case StyleProperty::FlexShrink:
-            case StyleProperty::FlexBasis:
-            case StyleProperty::Width:
-            case StyleProperty::Height:
-            case StyleProperty::MinWidth:
-            case StyleProperty::MinHeight:
-            case StyleProperty::MaxWidth:
-            case StyleProperty::MaxHeight:
-            case StyleProperty::Margin:
-            case StyleProperty::Padding:
-            case StyleProperty::Position:
-            case StyleProperty::Inset:
-            case StyleProperty::InsetLeft:
-            case StyleProperty::InsetTop:
-            case StyleProperty::InsetRight:
-            case StyleProperty::InsetBottom:
-            case StyleProperty::Origin:
-            case StyleProperty::TextSize:
-            case StyleProperty::TextFont:
-                return true;
-            case StyleProperty::Background:
-            case StyleProperty::BackgroundGradient:
-            case StyleProperty::CornerRadius:
-            case StyleProperty::BorderWidth:
-            case StyleProperty::BorderColor:
-            case StyleProperty::TextColor:
-            case StyleProperty::Opacity:
-            case StyleProperty::Rotation:
-            case StyleProperty::PointerEvents:
-            case StyleProperty::Animation:
-            case StyleProperty::TextAlign:
-            case StyleProperty::TextWrap:
-            case StyleProperty::TextTransform:
-            case StyleProperty::BackgroundImage:
-            case StyleProperty::BackgroundSlice:
-            case StyleProperty::BackgroundFit:
-            case StyleProperty::BackgroundRepeat:
-            case StyleProperty::ObjectFit:
-            case StyleProperty::ImageRepeat:
-            case StyleProperty::BoxShadow:
-            case StyleProperty::BoxShadowColor:
-            case StyleProperty::BackgroundMaterial:
-            case StyleProperty::ImageMaterial:
-            case StyleProperty::Transition:
-            case StyleProperty::Shape:
-            case StyleProperty::ArcStart:
-            case StyleProperty::ArcSweep:
-            case StyleProperty::ArcThickness:
-            case StyleProperty::ArcCap:
-            case StyleProperty::Stroke:
-            case StyleProperty::StrokeWidth:
-            case StyleProperty::StrokeTrim:
-                return false;
-            // A slice makes an Image's intrinsic size the sum of its corner insets, so authoring or
-            // dropping one re-measures the leaf.
-            case StyleProperty::ImageSlice:
-                return true;
-            // An overflow axis and the scrollbar layout move layout inputs: a gutter takes its
-            // width out of the content box, and turning an axis scrollable re-clamps the offset.
-            case StyleProperty::Overflow:
-            case StyleProperty::OverflowX:
-            case StyleProperty::OverflowY:
-            case StyleProperty::ScrollbarLayout:
-                return true;
-            }
-            return false;
-        }
-
         // Whether a property's payload is a Length (value + kind ordinal), whose ease is valid only
         // within one kind — a Points→Percent change snaps rather than interpolating a mixed unit.
         bool IsLengthProperty(StyleProperty property)
@@ -1989,6 +2250,12 @@ namespace Veng::Gui
             static_cast<ElementState>(static_cast<u32>(element.State) ^ static_cast<u32>(state));
         element.State = state;
         UpdateElement(element, 0.0f);
+        // The paint reads a state bit directly as well as through the variants (a focused field's
+        // caret), so a moved bit re-emits the element even when no style moved with it.
+        if (moved != ElementState::None)
+        {
+            MarkPaintDirty(element);
+        }
 
         // An inheritable bit changes what every descendant resolves to, so the subtree re-resolves
         // with it rather than on the next Update(). A press whose ground inverts a frame before its
@@ -2017,13 +2284,102 @@ namespace Veng::Gui
     {
         element.Transitions = std::move(transitions);
         element.Tweens.clear();
+        // A dropped tween leaves the property short of its target until the element re-resolves.
+        QueueResolve(element);
+    }
+
+    void Document::QueueResolve(Element& element)
+    {
+        if (!element.Retained.ResolveQueued)
+        {
+            element.Retained.ResolveQueued = true;
+            m_ResolveQueue.push_back(&element);
+        }
+    }
+
+    void Document::QueueScrollCheck(Element& element)
+    {
+        if (!element.Retained.ScrollQueued)
+        {
+            element.Retained.ScrollQueued = true;
+            m_ScrollCheck.push_back(&element);
+        }
+    }
+
+    void Document::TrackAnimating(Element& element)
+    {
+        if (!element.Retained.Animating && HasLiveMotion(element))
+        {
+            element.Retained.Animating = true;
+            m_Animating.push_back(&element);
+        }
+    }
+
+    void Document::MarkLayoutDirty(Element& element, const bool pushStyle)
+    {
+        if (pushStyle)
+        {
+            element.Retained.StylePending = true;
+        }
+        // The path is marked up to the first ancestor already on one: every marked element's
+        // ancestors are marked too, since a solve clears the marks only on the way down.
+        for (Element* cursor = &element; cursor != nullptr && !cursor->Retained.LayoutPath;
+             cursor = cursor->Parent)
+        {
+            cursor->Retained.LayoutPath = true;
+        }
+        m_LayoutDirty = true;
+    }
+
+    void Document::MarkPaintDirty(const Element& element)
+    {
+        element.Retained.PaintDirty = true;
+        for (const Element* cursor = &element;
+             cursor != nullptr && !cursor->Retained.SubtreePaintDirty; cursor = cursor->Parent)
+        {
+            cursor->Retained.SubtreePaintDirty = true;
+        }
+        m_PaintDirty = true;
+    }
+
+    void Document::ClearPaintMarks(const Element& element)
+    {
+        if (!element.Retained.PaintDirty && !element.Retained.SubtreePaintDirty)
+        {
+            return;
+        }
+        element.Retained.PaintDirty = false;
+        element.Retained.SubtreePaintDirty = false;
+        for (const Element* child : element.Children)
+        {
+            ClearPaintMarks(*child);
+        }
+    }
+
+    void Document::MarkSubtreeTypographyDirty(Element& element)
+    {
+        // Typography inherits, so a font change reaches every descendant that takes its font from
+        // here: each re-measures, and each re-pushes and re-emits, since a Dropdown's line-box floor
+        // and every painted run read the inherited font.
+        MarkTextDirty(element);
+        MarkLayoutDirty(element, true);
+        for (Element* child : element.Children)
+        {
+            MarkSubtreeTypographyDirty(*child);
+        }
+    }
+
+    void Document::MarkChanged(Element& element)
+    {
+        QueueResolve(element);
+        MarkSubtreeTypographyDirty(element);
+        QueueScrollCheck(element);
     }
 
     void Document::UpdateElement(Element& element, f32 delta)
     {
+        ++m_Stats.StyleResolves;
         const Style target = ResolveTarget(element, m_Assets);
-
-        bool layoutMoved = false;
         Style live = target;
 
         // A property with a positive-duration transition eases; every other property snaps to the
@@ -2101,124 +2457,136 @@ namespace Veng::Gui
             ApplyAnimation(live, animation, m_Assets);
         }
 
-        // Detect a layout-input move against the currently-applied style before overwriting it.
-        for (u32 p = 0; p < StylePropertyCount; ++p)
-        {
-            const auto property = static_cast<StyleProperty>(p);
-            if (!IsLayoutProperty(property))
-            {
-                continue;
-            }
-            if (ReadProperty(element.ComputedStyle, property) != ReadProperty(live, property))
-            {
-                layoutMoved = true;
-                break;
-            }
-        }
-        // A font swap is a layout move ReadProperty does not see (a font has no numeric payload),
-        // and so is a case transform — capitals are wider than the lower case they replace.
-        const bool fontMoved =
-            element.ComputedStyle.TextFont.Id().Value != live.TextFont.Id().Value;
-        layoutMoved = layoutMoved || fontMoved || element.ComputedStyle.Casing != live.Casing;
+        // Classify the move against the currently-applied style before overwriting it. A font swap
+        // moves every descendant that inherits it; a size, case, or wrap change re-measures this
+        // element's own run (capitals are wider than the lower case they replace); a layout input
+        // re-pushes this element's node.
+        const bool fontMoved = element.ComputedStyle.TextFont.Get() != live.TextFont.Get();
+        const bool measureMoved = MeasureInputsDiffer(element.ComputedStyle, live);
+        const bool layoutMoved = LayoutInputsDiffer(element.ComputedStyle, live);
+        const bool changed = !SameStyle(element.ComputedStyle, live);
 
-        element.ComputedStyle = live;
+        element.ComputedStyle = std::move(live);
 
-        if (layoutMoved)
+        if (fontMoved)
         {
-            m_Dirty = true;
-            // A font moves every descendant that inherits it, so the whole subtree re-measures.
-            if (fontMoved)
-            {
-                MarkSubtreeTextDirty(element);
-            }
-            else if (const YGNodeRef node = m_Yoga->Get(element);
-                     node != nullptr && YGNodeHasMeasureFunc(node))
-            {
-                YGNodeMarkDirty(node);
-            }
+            MarkSubtreeTypographyDirty(element);
         }
+        else if (measureMoved)
+        {
+            MarkTextDirty(element);
+        }
+        if (layoutMoved || measureMoved)
+        {
+            MarkLayoutDirty(element, true);
+        }
+        if (changed)
+        {
+            MarkPaintDirty(element);
+        }
+
+        // A variant or transition can move the overflow, so the bars follow the resolved style
+        // rather than only the authored one; the next Update reconciles them.
+        if (!IsScrollBarPart(element.Kind) &&
+            IsScrollable(element.ComputedStyle) != element.Widget.HasScrollBars)
+        {
+            QueueScrollCheck(element);
+        }
+
+        // A tween just started, or an animation still running, keeps the element in the set Update
+        // advances every frame.
+        TrackAnimating(element);
     }
 
     void Document::Update(f32 delta)
     {
-        for (const Unique<Element>& owned : m_Elements)
+        // Visit each element owed a resolve once: the live tweens and animations, which advance by
+        // the delta, and the elements queued by a write since the last Update. Nothing else changed,
+        // so nothing else is visited.
+        m_UpdateVisit.assign(m_Animating.begin(), m_Animating.end());
+        for (Element* const element : m_ResolveQueue)
         {
-            UpdateElement(*owned, delta);
+            element->Retained.ResolveQueued = false;
+            if (!element->Retained.Animating)
+            {
+                m_UpdateVisit.push_back(element);
+            }
         }
-        SyncAllScrollBars();
+        m_ResolveQueue.clear();
+
+        for (Element* const element : m_UpdateVisit)
+        {
+            UpdateElement(*element, delta);
+        }
+        m_UpdateVisit.clear();
+
+        // A settled element leaves the set until a write or a state change starts it moving again.
+        std::erase_if(m_Animating,
+                      [](Element* const element)
+                      {
+                          if (HasLiveMotion(*element))
+                          {
+                              return false;
+                          }
+                          element->Retained.Animating = false;
+                          return true;
+                      });
+
+        SyncPendingScrollBars();
     }
 
-    void Document::SyncAllScrollBars()
+    void Document::SyncPendingScrollBars()
     {
-        // A variant or transition can move the overflow, so the bars follow the resolved style
-        // rather than only the authored one. Collect first: SyncScrollBars adds and removes
-        // elements, which reallocates m_Elements and would strand a walk over it — the same reason
-        // SyncLists collects its repeaters up front. The cached flag keeps the scan an O(1) test
-        // per element, so the child walk runs only on a frame an axis actually changes.
-        vector<Element*> moved;
-        for (const Unique<Element>& owned : m_Elements)
+        // Only the elements whose overflow may have moved since the last Update are checked.
+        // Collect first: SyncScrollBars adds and removes elements, and a part it adds may queue
+        // itself, so the walk runs over a list no call below can grow.
+        vector<Element*> pending;
+        pending.swap(m_ScrollCheck);
+        for (Element* const element : pending)
         {
+            element->Retained.ScrollQueued = false;
             // A scrollbar is never itself a scroll container, whatever style resolves onto it. The
             // exclusion is load-bearing rather than tidy: a part inherits its host's classes, so a
             // bare class rule carrying `overflow: scroll` matches the very bar its host created —
             // and without this the bar would take a bar of its own, whose parts inherit the classes
             // again, growing the tree a level per frame until the process dies. A stylesheet must
             // not be able to do that.
-            if (IsScrollBarPart(owned->Kind))
+            if (IsScrollBarPart(element->Kind) ||
+                IsScrollable(element->ComputedStyle) == element->Widget.HasScrollBars)
             {
                 continue;
             }
-            if (IsScrollable(owned->ComputedStyle) != owned->Widget.HasScrollBars)
-            {
-                moved.push_back(owned.get());
-            }
-        }
-        for (Element* element : moved)
-        {
             SyncScrollBars(*element);
             element->Widget.HasScrollBars = IsScrollable(element->ComputedStyle);
-            m_Dirty = true;
+            // A gutter's reservation follows the bars, so the host's padding is pushed again.
+            MarkLayoutDirty(*element, true);
+            MarkPaintDirty(*element);
         }
     }
 
     bool Document::IsAnimating() const
     {
-        return std::ranges::any_of(m_Elements,
-                                   [](const Unique<Element>& owned)
-                                   {
-                                       if (!owned->Tweens.empty())
-                                       {
-                                           return true;
-                                       }
-                                       // A looping animation never settles; a play-once one settles at its last key.
-                                       return std::ranges::any_of(
-                                           owned->Animations,
-                                           [](const StyleAnimation& animation)
-                                           {
-                                               return animation.Mode != AnimationLoopMode::Once ||
-                                                      animation.Time < animation.Duration;
-                                           });
-                                   });
+        return std::ranges::any_of(m_Animating, [](const Element* const element)
+                                   { return HasLiveMotion(*element); });
     }
 
     void Document::SetTextMeasurer(TextMeasurer measurer)
     {
         m_Measurer = std::move(measurer);
-        MarkSubtreeTextDirty(*m_Root);
-        m_Dirty = true;
+        MarkSubtreeTypographyDirty(*m_Root);
     }
 
-    void Document::MarkSubtreeTextDirty(const Element& element)
+    void Document::MarkTextDirty(Element& element)
     {
         if (const YGNodeRef node = m_Yoga->Get(element);
             node != nullptr && YGNodeHasMeasureFunc(node))
         {
             YGNodeMarkDirty(node);
         }
-        for (const Element* child : element.Children)
-        {
-            MarkSubtreeTextDirty(*child);
-        }
+        // The path is marked even with no input to push, so a Table holding the run re-measures
+        // its columns.
+        MarkLayoutDirty(element, false);
+        MarkPaintDirty(element);
     }
 
     const Font* Document::ResolveFont(const Element& element) const
@@ -2247,18 +2615,19 @@ namespace Veng::Gui
         // so the field reserves room for the run it paints at every value, empty included.
         string cased;
         return MeasureRun(RunOf(element, cased), ResolveFont(element), element.ComputedStyle,
-                          availableWidth, element.Kind == ElementKind::TextInput);
+                          availableWidth, element.Kind == ElementKind::TextInput, &element);
     }
 
     vec2 Document::MeasureStyledText(string_view text, const Style& style,
                                      const optional<f32> availableWidth) const
     {
         return MeasureRun(text, style.TextFont.IsLoaded() ? style.TextFont.Get() : nullptr, style,
-                          availableWidth, false);
+                          availableWidth, false, nullptr);
     }
 
     vec2 Document::MeasureRun(const string_view text, const Font* const font, const Style& style,
-                              const optional<f32> availableWidth, const bool emptyLineBox) const
+                              const optional<f32> availableWidth, const bool emptyLineBox,
+                              const Element* const owner) const
     {
         if (m_Measurer)
         {
@@ -2270,11 +2639,61 @@ namespace Veng::Gui
             return vec2(0.0f);
         }
 
+        // An empty line box is one line of the font's own height and no width — exactly what
+        // shaping an empty run yields, read straight off the metrics.
+        if (text.empty())
+        {
+            return vec2(0.0f, (font->GetAscender() - font->GetDescender()) * style.TextSize);
+        }
+
+        if (owner != nullptr)
+        {
+            return ShapeElementRun(*owner, text, *font, style.TextSize, availableWidth).Size;
+        }
+
         VE_PROFILE_SCOPE("Gui/ShapeText");
         Counters::CountShapedRun();
+        ++m_Stats.ShapedRuns;
         const vector<u32> codepoints = DecodeUtf8(text);
-        const ShapeResult shaped = font->ShapeRun(codepoints, style.TextSize, availableWidth);
-        return shaped.Size;
+        return font->ShapeRun(codepoints, style.TextSize, availableWidth).Size;
+    }
+
+    const ShapeResult& Document::ShapeElementRun(const Element& element, const string_view run,
+                                                 const Font& font, const f32 size,
+                                                 const optional<f32> width) const
+    {
+        ElementRetained& retained = element.Retained;
+        const auto matches = [&](const ShapedTextRun& cached)
+        {
+            return cached.Source == &font && cached.Size == size && cached.Width == width &&
+                   cached.Text == run;
+        };
+
+        // Most recent first: a hit in the second slot moves it to the front, so the two runs an
+        // element alternates between (an unwrapped alignment measure and a wrapped paint) both stay.
+        if (retained.RunValid[0] && matches(retained.Runs[0]))
+        {
+            return retained.Runs[0].Shape;
+        }
+        if (retained.RunValid[1] && matches(retained.Runs[1]))
+        {
+            std::swap(retained.Runs[0], retained.Runs[1]);
+            return retained.Runs[0].Shape;
+        }
+
+        VE_PROFILE_SCOPE("Gui/ShapeText");
+        Counters::CountShapedRun();
+        ++m_Stats.ShapedRuns;
+        std::swap(retained.Runs[0], retained.Runs[1]);
+        retained.RunValid[1] = retained.RunValid[0];
+        ShapedTextRun& slot = retained.Runs[0];
+        slot.Text.assign(run);
+        slot.Source = &font;
+        slot.Size = size;
+        slot.Width = width;
+        slot.Shape = font.ShapeRun(DecodeUtf8(run), size, width);
+        retained.RunValid[0] = true;
+        return slot.Shape;
     }
 
     namespace
@@ -2388,6 +2807,10 @@ namespace Veng::Gui
                 : ClampStep(value, element.Widget.Min, element.Widget.Max, element.Widget.Step);
         const bool changed = clamped != element.Widget.Value;
         element.Widget.Value = clamped;
+        if (changed)
+        {
+            MarkPaintDirty(element);
+        }
 
         // A Checkbox reflects its value into the Checked state bit so the `:checked` variant resolves.
         if (element.Kind == ElementKind::Checkbox)
@@ -2426,7 +2849,10 @@ namespace Veng::Gui
         if (next != element.Widget.ScrollOffset)
         {
             element.Widget.ScrollOffset = next;
-            m_Dirty = true;
+            // No layout input moved, but every rect under the element is read again against the
+            // shifted origin.
+            MarkLayoutDirty(element, false);
+            MarkPaintDirty(element);
         }
     }
 
@@ -2568,26 +2994,28 @@ namespace Veng::Gui
         {
             // A vertical slider fills from the bottom (Min) toward the top (Max).
             const f32 filled = box.Size.y * fraction;
-            fill->Layout = Rect{.Min = vec2(box.Min.x, box.Min.y + box.Size.y - filled),
-                                .Size = vec2(box.Size.x, filled)};
+            SetPartLayout(*fill, Rect{.Min = vec2(box.Min.x, box.Min.y + box.Size.y - filled),
+                                      .Size = vec2(box.Size.x, filled)});
             const f32 thumbW = SliderThumbExtent(thumb->ComputedStyle.Width, box.Size.x);
             const f32 thumbH = SliderThumbExtent(thumb->ComputedStyle.Height, box.Size.x);
-            thumb->Layout = Rect{
-                .Min = vec2(box.Min.x + (box.Size.x - thumbW) * 0.5f,
-                            box.Min.y + (1.0f - fraction) * std::max(box.Size.y - thumbH, 0.0f)),
-                .Size = vec2(thumbW, thumbH)};
+            SetPartLayout(*thumb,
+                          Rect{.Min = vec2(box.Min.x + (box.Size.x - thumbW) * 0.5f,
+                                           box.Min.y + (1.0f - fraction) *
+                                                           std::max(box.Size.y - thumbH, 0.0f)),
+                               .Size = vec2(thumbW, thumbH)});
         }
         else
         {
-            fill->Layout = Rect{.Min = box.Min, .Size = vec2(box.Size.x * fraction, box.Size.y)};
+            SetPartLayout(*fill,
+                          Rect{.Min = box.Min, .Size = vec2(box.Size.x * fraction, box.Size.y)});
             const f32 thumbW = SliderThumbExtent(thumb->ComputedStyle.Width, box.Size.y);
             const f32 thumbH = SliderThumbExtent(thumb->ComputedStyle.Height, box.Size.y);
-            thumb->Layout =
-                Rect{.Min = vec2(box.Min.x + fraction * std::max(box.Size.x - thumbW, 0.0f),
-                                 box.Min.y + (box.Size.y - thumbH) * 0.5f),
-                     .Size = vec2(thumbW, thumbH)};
+            SetPartLayout(
+                *thumb, Rect{.Min = vec2(box.Min.x + fraction * std::max(box.Size.x - thumbW, 0.0f),
+                                         box.Min.y + (box.Size.y - thumbH) * 0.5f),
+                             .Size = vec2(thumbW, thumbH)});
         }
-        fill->Visible = fraction > 0.0f;
+        SetPartVisible(*fill, fraction > 0.0f);
     }
 
     void Document::SyncDropdownParts(Element& element)
@@ -2621,9 +3049,28 @@ namespace Veng::Gui
         // The arrow sits inside the anchor's right edge, cleared of the border and of its own
         // styled right margin (`DropdownArrow { margin-right: … }`), so a chevron never abuts the frame.
         const f32 marginRight = arrow->ComputedStyle.Margin.Right;
-        arrow->Layout = Rect{.Min = vec2(box.Min.x + box.Size.x - size - border - marginRight,
-                                         box.Min.y + (box.Size.y - size) * 0.5f),
-                             .Size = vec2(size, size)};
+        SetPartLayout(*arrow, Rect{.Min = vec2(box.Min.x + box.Size.x - size - border - marginRight,
+                                               box.Min.y + (box.Size.y - size) * 0.5f),
+                                   .Size = vec2(size, size)});
+    }
+
+    void Document::SetPartLayout(Element& part, const Rect& rect)
+    {
+        if (part.Layout.Min != rect.Min || part.Layout.Size != rect.Size)
+        {
+            part.Layout = rect;
+            MarkPaintDirty(part);
+        }
+    }
+
+    void Document::SetPartVisible(Element& part, const bool visible)
+    {
+        // A part is placed by hand rather than by the flex flow, so its visibility is paint alone.
+        if (part.Visible != visible)
+        {
+            part.Visible = visible;
+            MarkPaintDirty(part);
+        }
     }
 
     Element* Document::FindScrollBar(const Element& element, const bool vertical) const
@@ -2747,7 +3194,7 @@ namespace Veng::Gui
             // the style, visibility by whether there is anything to scroll, so content growing past
             // the box reveals the bar with no structural change.
             const f32 travel = vertical ? range.y : range.x;
-            bar->Visible = travel > 0.0f;
+            SetPartVisible(*bar, travel > 0.0f);
             if (!bar->Visible)
             {
                 continue;
@@ -2760,17 +3207,17 @@ namespace Veng::Gui
             const f32 inset =
                 other != nullptr && other->Visible ? ScrollBarThickness(*other) : 0.0f;
 
-            bar->Layout = vertical ? Rect{.Min = vec2(box.Max().x - thickness, box.Min.y),
-                                          .Size = vec2(thickness, box.Size.y - inset)}
-                                   : Rect{.Min = vec2(box.Min.x, box.Max().y - thickness),
-                                          .Size = vec2(box.Size.x - inset, thickness)};
+            SetPartLayout(*bar, vertical ? Rect{.Min = vec2(box.Max().x - thickness, box.Min.y),
+                                                .Size = vec2(thickness, box.Size.y - inset)}
+                                         : Rect{.Min = vec2(box.Min.x, box.Max().y - thickness),
+                                                .Size = vec2(box.Size.x - inset, thickness)});
 
             if (bar->Children.empty())
             {
                 continue;
             }
             Element& thumb = *bar->Children.front();
-            thumb.Visible = true;
+            SetPartVisible(thumb, true);
 
             // The thumb's length is the visible fraction of the content, floored so a very long
             // list still leaves something grabbable; its travel maps the scroll offset onto the
@@ -2786,11 +3233,11 @@ namespace Veng::Gui
                 vertical ? element.Widget.ScrollOffset.y : element.Widget.ScrollOffset.x;
             const f32 slide = travel > 0.0f ? (offset / travel) * (track - length) : 0.0f;
 
-            thumb.Layout = vertical
-                               ? Rect{.Min = vec2(bar->Layout.Min.x, bar->Layout.Min.y + slide),
-                                      .Size = vec2(bar->Layout.Size.x, length)}
-                               : Rect{.Min = vec2(bar->Layout.Min.x + slide, bar->Layout.Min.y),
-                                      .Size = vec2(length, bar->Layout.Size.y)};
+            SetPartLayout(thumb,
+                          vertical ? Rect{.Min = vec2(bar->Layout.Min.x, bar->Layout.Min.y + slide),
+                                          .Size = vec2(bar->Layout.Size.x, length)}
+                                   : Rect{.Min = vec2(bar->Layout.Min.x + slide, bar->Layout.Min.y),
+                                          .Size = vec2(length, bar->Layout.Size.y)});
         }
     }
 
@@ -2902,7 +3349,7 @@ namespace Veng::Gui
             for (u32 i = 0; i < count; ++i)
             {
                 AppendUtf8(prefix, codepoints[i]);
-                const f32 x = MeasureRun(prefix, font, style, std::nullopt, false).x;
+                const f32 x = MeasureRun(prefix, font, style, std::nullopt, false, nullptr).x;
                 // The click sits before codepoint i once it falls left of glyph i's midpoint.
                 if (localX < (prevX + x) * 0.5f)
                 {
@@ -2911,7 +3358,11 @@ namespace Veng::Gui
                 }
                 prevX = x;
             }
-            element.Widget.Caret = caret;
+            if (element.Widget.Caret != caret)
+            {
+                element.Widget.Caret = caret;
+                MarkPaintDirty(element);
+            }
             return true;
         }
 
@@ -3111,6 +3562,7 @@ namespace Veng::Gui
             AppendUtf8(edited, cp);
         }
         element.Widget.Caret = caret;
+        MarkPaintDirty(element);
         SetText(element, edited);
         static_cast<void>(FireHandler(element, "onChange"));
         return true;
@@ -3158,6 +3610,10 @@ namespace Veng::Gui
         default:
             break;
         }
+        if (element.Widget.Caret != caret)
+        {
+            MarkPaintDirty(element);
+        }
         return true;
     }
 
@@ -3191,10 +3647,7 @@ namespace Veng::Gui
             style.Height, [&](f32 v) { YGNodeStyleSetHeight(node, v); }, [&](f32 v)
             { YGNodeStyleSetHeightPercent(node, v); }, [&] { YGNodeStyleSetHeightAuto(node); });
 
-        ApplyLength(
-            style.MinWidth, [&](f32 v) { YGNodeStyleSetMinWidth(node, v); },
-            [&](f32 v) { YGNodeStyleSetMinWidthPercent(node, v); },
-            [&] { YGNodeStyleSetMinWidth(node, YGUndefined); });
+        PushMinWidth(node, style);
         ApplyLength(
             style.MinHeight, [&](f32 v) { YGNodeStyleSetMinHeight(node, v); },
             [&](f32 v) { YGNodeStyleSetMinHeightPercent(node, v); },
@@ -3210,7 +3663,7 @@ namespace Veng::Gui
         {
             if (const Font* const font = ResolveFont(element))
             {
-                const f32 line = MeasureRun("", font, style, std::nullopt, true).y;
+                const f32 line = MeasureRun("", font, style, std::nullopt, true, nullptr).y;
                 const f32 border = BorderWidth(style);
                 YGNodeStyleSetMinHeight(node, line + style.Padding.Top + style.Padding.Bottom +
                                                   2.0f * border);
@@ -3245,11 +3698,12 @@ namespace Veng::Gui
         if (style.Position == PositionType::Absolute)
         {
             // Only set edges constrain; an Unset edge pushes YGUndefined so an anchored element
-            // keeps its own (styled or content) size instead of stretching between zero insets.
+            // keeps its own (styled or content) size instead of stretching between zero insets. A
+            // set edge lands on a whole pixel (PixelInset), the same one a direct move computes.
             const auto applyEdge = [&](YGEdge edge, f32 value)
             {
-                YGNodeStyleSetPosition(node, edge,
-                                       PositionInsets::IsSet(value) ? value : YGUndefined);
+                YGNodeStyleSetPosition(
+                    node, edge, PositionInsets::IsSet(value) ? PixelInset(value) : YGUndefined);
             };
             applyEdge(YGEdgeLeft, style.Inset.Left);
             applyEdge(YGEdgeTop, style.Inset.Top);
@@ -3260,9 +3714,33 @@ namespace Veng::Gui
         // A hidden subtree is removed from layout: its node measures as a zero box.
         YGNodeStyleSetDisplay(node, element.Visible ? YGDisplayFlex : YGDisplayNone);
 
-        for (Element* child : element.Children)
+        element.Retained.StylePending = false;
+        ++m_Stats.StylePushes;
+    }
+
+    void Document::ApplyPendingStyles(Element& element)
+    {
+        // Every pending element sits on a marked path, so the walk descends only along marks: a
+        // subtree with no change in it is never visited, and its nodes keep what was pushed before.
+        if (element.Retained.StylePending)
         {
-            ApplyStyle(*child);
+            ApplyStyle(element);
+        }
+        for (Element* const child : element.Children)
+        {
+            if (child->Retained.LayoutPath)
+            {
+                ApplyPendingStyles(*child);
+            }
+        }
+    }
+
+    void Document::ApplyStyleSubtree(Element& element)
+    {
+        ApplyStyle(element);
+        for (Element* const child : element.Children)
+        {
+            ApplyStyleSubtree(*child);
         }
     }
 
@@ -3274,15 +3752,36 @@ namespace Veng::Gui
             return;
         }
 
+        // The solver flags every node it laid out again. One it did not revisit, read against the
+        // origin it was read against before and on no marked path, is where it was — and so is
+        // everything under it, since a child is only revisited through its parent.
+        ElementRetained& retained = element.Retained;
+        if (!YGNodeGetHasNewLayout(node) && !retained.LayoutPath && retained.LaidOut &&
+            origin == retained.ReadOrigin)
+        {
+            return;
+        }
+        YGNodeSetHasNewLayout(node, false);
+        retained.LayoutPath = false;
+        retained.LaidOut = true;
+        retained.ReadOrigin = origin;
+
         const vec2 localMin(YGNodeLayoutGetLeft(node), YGNodeLayoutGetTop(node));
         const vec2 size(YGNodeLayoutGetWidth(node), YGNodeLayoutGetHeight(node));
         // The self-anchor: shift by -Origin · size so the solved position names the anchor point
         // rather than the top-left. Children recurse from the shifted min, so the subtree rides.
         const vec2 absoluteMin = origin + localMin - element.ComputedStyle.Origin * size;
-        element.Layout = Rect{
-            .Min = absoluteMin,
-            .Size = size,
-        };
+        // A widget part is placed by its host against the host's solved box (LayoutScrollBars and
+        // its siblings, below), never by the flow, so the solver's box for it is not its rect.
+        if (!IsWidgetPart(element.Kind) &&
+            (element.Layout.Min != absoluteMin || element.Layout.Size != size))
+        {
+            element.Layout = Rect{
+                .Min = absoluteMin,
+                .Size = size,
+            };
+            MarkPaintDirty(element);
+        }
 
         // A scrollable element shifts its content by its scroll offset, so the child origin is its
         // top-left minus the offset — the content slides under the clip it paints with. The shift
@@ -3316,28 +3815,76 @@ namespace Veng::Gui
 
     void Document::Solve(vec2 available)
     {
-        if (!m_Dirty && available == m_LastAvailable)
+        if (!m_LayoutDirty && available == m_LastAvailable)
         {
             return;
         }
         Counters::CountSolve();
+        ++m_Stats.Solves;
+        const bool resized = available != m_LastAvailable;
 
         {
             VE_PROFILE_SCOPE("Gui/ApplyStyle");
-            ApplyStyle(*m_Root);
+            ApplyPendingStyles(*m_Root);
         }
 
         {
             VE_PROFILE_SCOPE("Gui/Layout");
             const YGNodeRef rootNode = m_Yoga->Get(*m_Root);
+
+            // A Table's cells widen to their per-column maxima measured off a first pass. Columns
+            // are measured afresh only for a table whose subtree changed or whose extent may have:
+            // its cells' raised min-widths are reset to their styled ones before that pass, so the
+            // natural widths are what the columns are measured from. Every other table keeps its
+            // raised cells, which are already right, and the solver finds them clean.
+            vector<Element*> realign;
+            if (m_TableCount > 0)
+            {
+                for (const Unique<Element>& owned : m_Elements)
+                {
+                    if (owned->Kind == ElementKind::Table && owned->Visible &&
+                        (resized || owned->Retained.LayoutPath))
+                    {
+                        ResetTableCells(*owned);
+                        realign.push_back(owned.get());
+                    }
+                }
+            }
+
             YGNodeCalculateLayout(rootNode, available.x, available.y, YGDirectionLTR);
 
-            // A Table's cells widen to their per-column maxima measured off the first pass; a raised
-            // min-width re-runs the layout once. ApplyStyle re-pushes the styled min-widths on every
-            // Solve, so the natural (un-widened) widths above are what the columns are measured from.
-            if (AlignTableColumns())
+            // A table whose own width moved under a change elsewhere is measured afresh too, which
+            // takes one more pass with its cells reset.
+            if (m_TableCount > 0)
+            {
+                bool reset = false;
+                for (const Unique<Element>& owned : m_Elements)
+                {
+                    const YGNodeRef node = m_Yoga->Get(*owned);
+                    if (owned->Kind == ElementKind::Table && owned->Visible && node != nullptr &&
+                        std::ranges::find(realign, owned.get()) == realign.end() &&
+                        YGNodeLayoutGetWidth(node) != owned->Retained.AlignedWidth)
+                    {
+                        ResetTableCells(*owned);
+                        realign.push_back(owned.get());
+                        reset = true;
+                    }
+                }
+                if (reset)
+                {
+                    YGNodeCalculateLayout(rootNode, available.x, available.y, YGDirectionLTR);
+                }
+            }
+            if (AlignTableColumns(realign))
             {
                 YGNodeCalculateLayout(rootNode, available.x, available.y, YGDirectionLTR);
+            }
+            for (Element* const table : realign)
+            {
+                if (const YGNodeRef node = m_Yoga->Get(*table); node != nullptr)
+                {
+                    table->Retained.AlignedWidth = YGNodeLayoutGetWidth(node);
+                }
             }
 
             ReadLayout(*m_Root, vec2(0.0f));
@@ -3351,7 +3898,7 @@ namespace Veng::Gui
             }
         }
 
-        m_Dirty = false;
+        m_LayoutDirty = false;
         m_LastAvailable = available;
     }
 
@@ -3363,7 +3910,7 @@ namespace Veng::Gui
             return;
         }
 
-        ApplyStyle(*popup.Root);
+        ApplyStyleSubtree(*popup.Root);
         // Unconstrained on both axes, so the root sizes to its content unless its own style bounds
         // it — a menu is as wide as its widest item and as tall as its items, with `max-height`
         // (plus `overflow-y: scroll`) the way an author caps a long one.
@@ -3392,25 +3939,48 @@ namespace Veng::Gui
                                              popup.Options.Margin));
     }
 
-    bool Document::AlignTableColumns()
+    namespace
     {
-        bool changed = false;
-        for (const Unique<Element>& owned : m_Elements)
+        // A table row or cell is an in-flow, visible child; an absolutely-positioned child sits
+        // outside the flow (an overlay, a rule), so it neither contributes to nor receives a
+        // column width.
+        bool InTableFlow(const Element& element)
         {
-            if (owned->Kind != ElementKind::Table || !owned->Visible)
+            return element.Visible && element.ComputedStyle.Position != PositionType::Absolute;
+        }
+    }
+
+    void Document::ResetTableCells(Element& table)
+    {
+        for (const Element* row : ContentChildren(table))
+        {
+            if (!InTableFlow(*row))
             {
                 continue;
             }
+            for (const Element* cell : row->Children)
+            {
+                if (const YGNodeRef node = m_Yoga->Get(*cell);
+                    node != nullptr && InTableFlow(*cell))
+                {
+                    PushMinWidth(node, cell->ComputedStyle);
+                }
+            }
+        }
+    }
 
-            // A row is an in-flow, visible direct child; a cell is the same one level down. An
-            // absolutely-positioned child sits outside the flow (an overlay, a rule), so it
-            // neither contributes to nor receives a column width. A growing cell is an elastic
-            // filler, not a column: its first-pass width is its own row's slack (different per
-            // row), so measuring it would poison the column maximum and pinning it would defeat
-            // the grow — it keeps its column index but is otherwise left alone, absorbing
-            // per-row width differences so the fixed columns after it stay right-anchored.
-            const auto inFlow = [](const Element& element)
-            { return element.Visible && element.ComputedStyle.Position != PositionType::Absolute; };
+    bool Document::AlignTableColumns(const std::span<Element* const> tables)
+    {
+        bool changed = false;
+        for (Element* const owned : tables)
+        {
+
+            // A row is an in-flow direct child; a cell is the same one level down. A growing cell is
+            // an elastic filler, not a column: its first-pass width is its own row's slack
+            // (different per row), so measuring it would poison the column maximum and pinning it
+            // would defeat the grow — it keeps its column index but is otherwise left alone,
+            // absorbing per-row width differences so the fixed columns after it stay right-anchored.
+            const auto inFlow = [](const Element& element) { return InTableFlow(element); };
             const auto isFiller = [](const Element& element)
             { return element.ComputedStyle.FlexGrow > 0.0f; };
 
@@ -3448,7 +4018,7 @@ namespace Veng::Gui
             }
 
             // Raise each cell's min-width to its column's width less its own margins. The styled
-            // min-width was pushed by ApplyStyle, so only a genuinely wider column moves a node.
+            // min-width was pushed by ResetTableCells, so only a genuinely wider column moves a node.
             for (const Element* row : ContentChildren(*owned))
             {
                 if (!inFlow(*row))
@@ -3581,11 +4151,12 @@ namespace Veng::Gui
         }
     }
 
-    void Document::BuildElement(const Element& element, DrawList& list, const f32 inherited) const
+    optional<Document::OpenedPaint> Document::OpenElement(const Element& element, DrawList& list,
+                                                          const f32 inherited) const
     {
         if (!element.Visible)
         {
-            return;
+            return std::nullopt;
         }
 
         const Style& style = element.ComputedStyle;
@@ -3597,7 +4168,7 @@ namespace Veng::Gui
         const f32 opacity = inherited * style.Opacity;
         if (opacity <= 0.0f)
         {
-            return;
+            return std::nullopt;
         }
 
         // A rotation rigidly turns the element's whole subtree about its Origin anchor at paint: push
@@ -3646,7 +4217,7 @@ namespace Veng::Gui
             {
                 list.PopTransform();
             }
-            return;
+            return OpenedPaint{.Opacity = opacity, .Children = false};
         }
 
         if (silhouette)
@@ -3854,28 +4425,142 @@ namespace Veng::Gui
             textColor.a *= opacity;
             // Shaped against the same width the measure was taken at, so the run painted here is
             // the run the box was sized for. A wrapping element hands its content width down; a
-            // non-wrapping one hands nothing, which is what its measure did too.
-            list.Text(origin, *font, run, style.TextSize, textColor,
-                      style.Wrapping == TextWrap::Wrap
-                          ? optional<f32>{rect.Size.x - 2.0f * border - style.Padding.Left -
-                                          style.Padding.Right}
-                          : optional<f32>{});
+            // non-wrapping one hands nothing, which is what its measure did too — and so the paint
+            // finds the run the measure already shaped. Fetched after the alignment measures above,
+            // since the reference is only good until the element's next shaped-run request.
+            const optional<f32> wrap = style.Wrapping == TextWrap::Wrap
+                                           ? optional<f32>{rect.Size.x - 2.0f * border -
+                                                           style.Padding.Left - style.Padding.Right}
+                                           : optional<f32>{};
+            if (m_Measurer)
+            {
+                list.Text(origin, *font, run, style.TextSize, textColor, wrap);
+            }
+            else
+            {
+                list.Text(origin, *font, ShapeElementRun(element, run, *font, style.TextSize, wrap),
+                          style.TextSize, textColor);
+            }
         }
 
-        for (const Element* child : element.Children)
-        {
-            BuildElement(*child, list, opacity);
-        }
+        return OpenedPaint{.Opacity = opacity, .Rotated = rotated, .Clipped = clip};
+    }
 
-        if (clip)
+    void Document::CloseElement(const OpenedPaint& opened, DrawList& list)
+    {
+        if (opened.Clipped)
         {
             list.PopClip();
         }
-
-        if (rotated)
+        if (opened.Rotated)
         {
             list.PopTransform();
         }
+    }
+
+    void Document::BuildElement(const Element& element, DrawList& list, const f32 inherited) const
+    {
+        const optional<OpenedPaint> opened = OpenElement(element, list, inherited);
+        if (!opened.has_value())
+        {
+            return;
+        }
+        if (opened->Children)
+        {
+            for (const Element* child : element.Children)
+            {
+                BuildElement(*child, list, opened->Opacity);
+            }
+        }
+        CloseElement(*opened, list);
+    }
+
+    void Document::BuildRetainedElement(Element& element, DrawList& next, const f32 inherited,
+                                        const DrawMark& prevBase, const bool prevValid,
+                                        const DrawMark& nextBase)
+    {
+        ElementRetained& retained = element.Retained;
+
+        // A hidden element draws nothing and visits nothing; its marks are cleared all the way down,
+        // so every mark left standing has its ancestors marked too, and its children are not
+        // reusable when it shows again, since they were not recorded against it.
+        if (!element.Visible)
+        {
+            ClearPaintMarks(element);
+            retained.HasSegment = false;
+            retained.ChildrenRecorded = false;
+            return;
+        }
+
+        // Unmarked, under the same opacity, clip, transform, and arc it was recorded under, the
+        // element's subtree emits exactly what it did last frame — so that is copied, once its
+        // glyphs are pinned again in the slots its geometry samples.
+        if (prevValid && retained.HasSegment && !retained.PaintDirty &&
+            !retained.SubtreePaintDirty && retained.SegmentOpacity == inherited &&
+            next.GetState().Matches(retained.SegmentState))
+        {
+            const DrawMark begin = retained.SegmentBegin.After(prevBase);
+            const DrawMark end = retained.SegmentEnd.After(prevBase);
+            if (m_Built.EnsureGlyphs(begin, end))
+            {
+                const DrawMark landed = next.Mark();
+                next.AppendRange(m_Built, begin, end);
+                retained.SegmentBegin = landed.Since(nextBase);
+                retained.SegmentEnd = next.Mark().Since(nextBase);
+                ++m_Stats.SubtreesReused;
+                return;
+            }
+        }
+
+        // Emitted afresh. The children are measured against this element's old segment, which they
+        // were recorded inside only if it recorded them.
+        const bool childrenValid = prevValid && retained.HasSegment && retained.ChildrenRecorded;
+        const DrawMark oldBegin = retained.SegmentBegin.After(prevBase);
+        const DrawMark begin = next.Mark();
+        retained.SegmentState = next.GetState();
+        retained.SegmentOpacity = inherited;
+        retained.PaintDirty = false;
+        retained.SubtreePaintDirty = false;
+        ++m_Stats.ElementsEmitted;
+
+        const optional<OpenedPaint> opened = OpenElement(element, next, inherited);
+        if (opened.has_value() && opened->Children)
+        {
+            for (Element* const child : element.Children)
+            {
+                BuildRetainedElement(*child, next, opened->Opacity, oldBegin, childrenValid, begin);
+            }
+        }
+        else
+        {
+            for (const Element* const child : element.Children)
+            {
+                ClearPaintMarks(*child);
+            }
+        }
+        if (opened.has_value())
+        {
+            CloseElement(*opened, next);
+        }
+
+        retained.HasSegment = true;
+        retained.ChildrenRecorded = opened.has_value() && opened->Children;
+        retained.SegmentBegin = begin.Since(nextBase);
+        retained.SegmentEnd = next.Mark().Since(nextBase);
+    }
+
+    void Document::BuildRetained(DrawList& out)
+    {
+        m_BuildScratch.Clear();
+        BuildRetainedElement(*m_Root, m_BuildScratch, 1.0f, DrawMark{}, m_HasBuilt, DrawMark{});
+        // A popup is short-lived and built afresh each frame, after the main tree it paints over.
+        for (const Popup& popup : m_Popups)
+        {
+            BuildElement(*popup.Root, m_BuildScratch, 1.0f);
+        }
+        std::swap(m_Built, m_BuildScratch);
+        m_HasBuilt = true;
+        out.Append(m_Built);
     }
 
     void Document::BuildWidget(const Element& element, DrawList& list, const f32 opacity) const
@@ -3929,14 +4614,24 @@ namespace Veng::Gui
             rect.Min + vec2(inset + style.Padding.Left, inset + style.Padding.Top);
         const f32 contentHeight =
             rect.Size.y - 2.0f * inset - style.Padding.Top - style.Padding.Bottom;
-        const f32 line = MeasureRun("", font, style, std::nullopt, true).y;
+        const f32 line = MeasureRun("", font, style, std::nullopt, true, nullptr).y;
         const vec2 origin(contentMin.x, contentMin.y + std::max(contentHeight - line, 0.0f) * 0.5f);
 
         if (!element.Text.empty() && font != nullptr)
         {
             vec4 textColor = style.TextColor;
             textColor.a *= opacity;
-            list.Text(origin, *font, element.Text, style.TextSize, textColor);
+            if (m_Measurer)
+            {
+                list.Text(origin, *font, element.Text, style.TextSize, textColor);
+            }
+            else
+            {
+                list.Text(
+                    origin, *font,
+                    ShapeElementRun(element, element.Text, *font, style.TextSize, std::nullopt),
+                    style.TextSize, textColor);
+            }
         }
 
         // The caret marks the edit position while the field holds focus: a thin bar at the width of
@@ -3957,7 +4652,7 @@ namespace Veng::Gui
 
         vec4 caretColor = style.TextColor;
         caretColor.a *= opacity;
-        const f32 caretX = MeasureRun(prefix, font, style, std::nullopt, false).x;
+        const f32 caretX = MeasureRun(prefix, font, style, std::nullopt, false, nullptr).x;
         list.Quad(Rect{.Min = vec2(origin.x + caretX, origin.y), .Size = vec2(CaretWidth, line)},
                   caretColor);
     }
@@ -3988,9 +4683,18 @@ namespace Veng::Gui
         }
         {
             VE_PROFILE_SCOPE("Gui/Build");
-            Build(out);
+            // The retained build copies its own geometry under no enclosing state, so a caller that
+            // drives into a list with a clip or transform still open is built into afresh.
+            if (out.HasOpenState())
+            {
+                Build(out);
+            }
+            else
+            {
+                BuildRetained(out);
+            }
         }
-        // Build has just read every paint-only property into the draw list, so anything written
+        // The build has just read every paint-only property into the draw list, so anything written
         // before this point is now on screen. Solve clears the layout flag itself.
         m_PaintDirty = false;
     }
@@ -4155,7 +4859,9 @@ namespace Veng::Gui
             .Options = options,
             .RestoreFocus = m_Focused != nullptr ? GetHandle(*m_Focused) : ElementHandle{},
         });
-        m_Dirty = true;
+        // The root was marked when it was created; the solve lays it out beside the main tree.
+        m_LayoutDirty = true;
+        m_PaintDirty = true;
         return PopupId{.Value = m_Popups.back().Id};
     }
 
@@ -4219,7 +4925,8 @@ namespace Veng::Gui
         {
             SetFocus(previous);
         }
-        m_Dirty = true;
+        // Nothing in the main tree moved; the closed popups simply stop being drawn.
+        m_PaintDirty = true;
     }
 
     void Document::ForgetElement(const Element& element)
@@ -4235,6 +4942,20 @@ namespace Veng::Gui
                 ClosePopupsFrom(i);
                 break;
             }
+        }
+
+        // The element leaves every queue the document drives it through.
+        if (element.Retained.ResolveQueued)
+        {
+            std::erase(m_ResolveQueue, &element);
+        }
+        if (element.Retained.Animating)
+        {
+            std::erase(m_Animating, &element);
+        }
+        if (element.Retained.ScrollQueued)
+        {
+            std::erase(m_ScrollCheck, &element);
         }
 
         if (m_Focused == &element)
@@ -4503,10 +5224,17 @@ namespace Veng::Gui
                 {
                     if (const optional<vec4> value =
                             ResolveNumericLeaf(registry, data, dataType, expression);
-                        value.has_value())
+                        value.has_value() &&
+                        (ReadProperty(element.BaseStyle, *styleProperty) != *value ||
+                         ReadProperty(element.ComputedStyle, *styleProperty) != *value))
                     {
                         WriteProperty(element.BaseStyle, *styleProperty, *value);
                         WriteProperty(element.ComputedStyle, *styleProperty, *value);
+                        MarkPaintDirty(element);
+                        if (FoldsOverBase(element))
+                        {
+                            QueueResolve(element);
+                        }
                     }
                 }
                 continue;
@@ -4546,8 +5274,19 @@ namespace Veng::Gui
                 }
                 else
                 {
-                    element.Widget.Value = ClampStep(value, element.Widget.Min, element.Widget.Max,
-                                                     element.Widget.Step);
+                    const f32 clamped = ClampStep(value, element.Widget.Min, element.Widget.Max,
+                                                  element.Widget.Step);
+                    if (clamped != element.Widget.Value)
+                    {
+                        element.Widget.Value = clamped;
+                        MarkPaintDirty(element);
+                        // The parts are placed from the value against the solved box, which no solve
+                        // revisits for a value alone.
+                        if (element.Kind == ElementKind::Slider)
+                        {
+                            LayoutSliderParts(element);
+                        }
+                    }
                 }
             }
             else if (property == "value" && element.Kind == ElementKind::TextInput)
@@ -4727,6 +5466,11 @@ namespace Veng::Gui
         host.Children.erase(host.Children.begin(),
                             host.Children.begin() + static_cast<std::ptrdiff_t>(authored.size()));
         m_ListTemplates.emplace(&host, std::move(captured));
+        if (!authored.empty())
+        {
+            MarkLayoutDirty(host, false);
+            MarkPaintDirty(host);
+        }
     }
 
     bool Document::EnclosingItemSlot(const Element& element, Element*& outHost, u32& outIndex) const
@@ -5280,6 +6024,10 @@ namespace Veng::Gui
         // Free the live element's Yoga node (already unlinked from its parent) and drop it from live
         // storage. Children were unlinked and freed above, so this node has no live children.
         m_Yoga->Destroy(element);
+        if (element.Kind == ElementKind::Table)
+        {
+            --m_TableCount;
+        }
         const auto it = std::ranges::find_if(m_Elements, [&](const Unique<Element>& e)
                                              { return e.get() == &element; });
         if (it != m_Elements.end())
@@ -5323,10 +6071,17 @@ namespace Veng::Gui
                 {
                     if (const optional<vec4> value =
                             ResolveNumericLeaf(*m_Registry, itemBase, itemType, expression);
-                        value.has_value())
+                        value.has_value() &&
+                        (ReadProperty(element.BaseStyle, *styleProperty) != *value ||
+                         ReadProperty(element.ComputedStyle, *styleProperty) != *value))
                     {
                         WriteProperty(element.BaseStyle, *styleProperty, *value);
                         WriteProperty(element.ComputedStyle, *styleProperty, *value);
+                        MarkPaintDirty(element);
+                        if (FoldsOverBase(element))
+                        {
+                            QueueResolve(element);
+                        }
                     }
                 }
                 continue;
@@ -5346,9 +6101,14 @@ namespace Veng::Gui
                 f32 value = 0.0f;
                 static_cast<void>(
                     std::from_chars(resolved->data(), resolved->data() + resolved->size(), value));
-                element.Widget.Value = element.Kind == ElementKind::ProgressBar
-                                           ? std::clamp(value, 0.0f, 1.0f)
-                                           : value;
+                const f32 written = element.Kind == ElementKind::ProgressBar
+                                        ? std::clamp(value, 0.0f, 1.0f)
+                                        : value;
+                if (written != element.Widget.Value)
+                {
+                    element.Widget.Value = written;
+                    MarkPaintDirty(element);
+                }
             }
             else
             {
@@ -5385,6 +6145,9 @@ namespace Veng::Gui
             resolveScalar("step", element.Widget.Step);
             element.Widget.Value = ClampStep(element.Widget.Value, element.Widget.Min,
                                              element.Widget.Max, element.Widget.Step);
+            // The parts are placed from the value against the solved box, which no solve revisits
+            // for a value alone.
+            LayoutSliderParts(element);
         }
     }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/Asset/Font.h>
 #include <Veng/Gui/DrawList.h>
 #include <Veng/Gui/Style.h>
 #include <Veng/Gui/StyleProperty.h>
@@ -347,6 +348,78 @@ namespace Veng::Gui
         f32 Duration = 0.0f;
     };
 
+    /// @brief One shaped text run an element keeps, keyed by everything the shaping read.
+    struct ShapedTextRun
+    {
+        /// @brief The run as shaped, after any case transform.
+        string Text;
+        /// @brief The font it was shaped through.
+        const Veng::Font* Source = nullptr;
+        /// @brief The em size it was shaped at, in pixels.
+        f32 Size = 0.0f;
+        /// @brief The width it wrapped within, or nullopt when it did not wrap.
+        optional<f32> Width;
+        /// @brief The shaped glyphs, lines, and bounds.
+        ShapeResult Shape;
+    };
+
+    /// @brief What a Document keeps per element so that a frame costs what changed in it.
+    ///
+    /// Maintained by the owning Document and never authored: the text runs the element shaped (shared
+    /// by its layout measure and its paint, and reused for as long as the string, font, size, and
+    /// wrap width stand), whether its style awaits a re-resolve, its layout inputs a push, or its
+    /// geometry a re-emit, and where that geometry sat in the document's last build. It is `mutable`
+    /// because the measure and the paint fill the text cache from const paths.
+    ///
+    /// The bookkeeping is honest only while the element is mutated through its Document. A caller
+    /// writing an element's fields directly (its Variants, an Image's texture slots) says so with
+    /// Document::MarkChanged.
+    struct ElementRetained
+    {
+        /// @brief The runs most recently shaped for this element, most recent first.
+        ///
+        /// Two, because a wrapping label is measured unwrapped (for alignment) and painted wrapped,
+        /// and both are reused frame to frame.
+        std::array<ShapedTextRun, 2> Runs;
+        /// @brief Whether Runs[i] holds a shaped run at all.
+        std::array<bool, 2> RunValid{false, false};
+
+        /// @brief Whether the element waits in its document's re-resolve queue.
+        bool ResolveQueued = false;
+        /// @brief Whether the element is in its document's set of live tweens and animations.
+        bool Animating = false;
+        /// @brief Whether the element waits for its scrollbars to be reconciled with its overflow.
+        bool ScrollQueued = false;
+
+        /// @brief Whether the element's layout inputs must be pushed into the layout tree.
+        bool StylePending = false;
+        /// @brief Whether this element or a descendant has a layout change the next solve must read.
+        bool LayoutPath = false;
+        /// @brief Whether the element has been laid out since it was created.
+        bool LaidOut = false;
+        /// @brief The origin the element's rect was last read against.
+        vec2 ReadOrigin{0.0f};
+        /// @brief A Table's own width when its columns were last aligned.
+        f32 AlignedWidth = -1.0f;
+
+        /// @brief Whether the element's own geometry must be re-emitted at the next build.
+        bool PaintDirty = true;
+        /// @brief Whether this element or a descendant must be re-emitted at the next build.
+        bool SubtreePaintDirty = true;
+        /// @brief Whether Segment brackets this element's geometry in the document's last build.
+        bool HasSegment = false;
+        /// @brief Whether the children's segments were recorded against this element's segment.
+        bool ChildrenRecorded = false;
+        /// @brief The element's geometry in the last build, relative to its parent's segment start.
+        DrawMark SegmentBegin;
+        /// @brief The end of the element's geometry, relative to its parent's segment start.
+        DrawMark SegmentEnd;
+        /// @brief The clip, transform, and arc the segment was emitted under.
+        DrawState SegmentState;
+        /// @brief The opacity the segment inherited.
+        f32 SegmentOpacity = 1.0f;
+    };
+
     /// @brief One node of a retained document tree: a kind, a resolved style, and a computed rect.
     ///
     /// An element owns its children, held by the enclosing Document (which single-owns the whole
@@ -475,5 +548,8 @@ namespace Veng::Gui
         vector<Element*> Children;
         /// @brief The element's parent, or nullptr for the root.
         Element* Parent = nullptr;
+
+        /// @brief The work the owning Document caches across frames for this element.
+        mutable ElementRetained Retained;
     };
 }

@@ -298,6 +298,13 @@ TEST_CASE("gui layout: a table widens every cell to its column's widest")
     CHECK(nameA->Layout.Size.x == doctest::Approx(140.0f).epsilon(Eps));
     CHECK(statA->Layout.Min.x == doctest::Approx(140.0f).epsilon(Eps));
     CHECK(statB->Layout.Min.x == doctest::Approx(140.0f).epsilon(Eps));
+
+    // Shortening it narrows the column back: the columns are measured off the cells' natural
+    // widths, not off the widths they were raised to last time.
+    doc.SetText(*nameB, "AB");
+    doc.Solve(vec2(400.0f, 200.0f));
+    CHECK(nameA->Layout.Size.x == doctest::Approx(80.0f).epsilon(Eps));
+    CHECK(statB->Layout.Min.x == doctest::Approx(80.0f).epsilon(Eps));
 }
 
 TEST_CASE("gui layout: a growing table cell is an elastic filler, right-anchoring the rest")

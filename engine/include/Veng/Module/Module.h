@@ -220,10 +220,14 @@ extern "C"
 /// out short and reads every view block after the first at the wrong offset.
 /// Version 50 grows SceneRendererSettings with GBufferShadingOverride and SceneRenderer with the
 /// override's pipeline owner, so a stale module lays both out short.
+/// Version 51 grows Gui::Element with the work its Document caches across frames (ElementRetained),
+/// Gui::Document with its re-resolve queues and retained build, Gui::DrawList with per-run texture
+/// keys and recorded glyphs, and ShapedGlyph with its pen. A module drives documents and builds draw
+/// lists, so a stale one lays every element, document, and list out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 50u
+#define VENG_MODULE_ABI_VERSION 51u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

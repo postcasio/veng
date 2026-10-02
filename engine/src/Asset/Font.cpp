@@ -181,6 +181,7 @@ namespace Veng
                 // down: the quad top is baseline - PlaneMax.y, the bottom baseline - PlaneMin.y.
                 ShapedGlyph shaped;
                 shaped.Codepoint = pending.Codepoint;
+                shaped.Pen = {pending.PenX, baseline};
                 shaped.Min = {pending.PenX + glyph.PlaneMin.x * pixelSize,
                               baseline - glyph.PlaneMax.y * pixelSize};
                 shaped.Max = {pending.PenX + glyph.PlaneMax.x * pixelSize,

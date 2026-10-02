@@ -72,6 +72,14 @@ namespace Veng
     {
         /// @brief Codepoint this quad renders.
         u32 Codepoint = 0;
+        /// @brief Where the glyph was placed, in pixels relative to the run origin: x is the pen
+        ///        position, y the line's baseline.
+        ///
+        /// Min and Max are this point offset by the plane bounds of whichever rendition shaped the
+        /// run. A draw that ensures the glyph resident later places the atlas rendition's own,
+        /// padded bounds about this same point, so a run shaped once device-free still draws exactly
+        /// as a run shaped to draw.
+        vec2 Pen{0.0f};
         /// @brief Quad top-left corner, in pixels relative to the run origin.
         vec2 Min{0.0f};
         /// @brief Quad bottom-right corner, in pixels relative to the run origin.

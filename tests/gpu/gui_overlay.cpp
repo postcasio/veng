@@ -188,6 +188,41 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui overlay: a re-parented overlay keeps the tree it already built")
+{
+    RegisterBuiltinTypes(Types);
+
+    const path archive = CookUiPack();
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(archive).has_value());
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity first = scene->CreateEntity();
+    const Entity second = scene->CreateEntity();
+    scene->Add<Transform>(first, Transform{});
+    scene->Add<Transform>(second, Transform{});
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity, Transform{});
+    scene->SetParent(entity, first);
+    scene->Add<GuiOverlay>(entity).Document = *assets.LoadSync<Gui::UIDocument>(UIDocumentId);
+
+    const Unique<Viewport> viewport = MakeViewport(Context, assets);
+    viewport->SetViewState({.World = scene.get(), .Delta = 0.016f});
+    RenderOnce(Context, *viewport);
+    const Gui::Document* const built = scene->Get<GuiOverlay>(entity).GetDocument();
+    REQUIRE(built != nullptr);
+
+    // Moving the overlay's entity under another parent moves where it sits, not what it holds: the
+    // same document drives on, with nothing instantiated again.
+    scene->SetParent(entity, second);
+    RenderOnce(Context, *viewport);
+    CHECK(scene->Get<GuiOverlay>(entity).GetDocument() == built);
+    CHECK(viewport->GetAttachedDocuments().size() == 1);
+
+    std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "gui overlay: two seated viewports each claim only their seat's overlay, unbound "
                   "goes to the primary")
 {

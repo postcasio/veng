@@ -9,6 +9,7 @@ namespace Veng
 {
     class Font;
     class MaterialInstance;
+    struct ShapeResult;
 }
 
 /// @brief Device-free UI primitives: the draw list, its runs, and the shared value types.
@@ -367,6 +368,71 @@ namespace Veng::Gui
         bool HasClip = false;
     };
 
+    /// @brief A position in a draw list's streams: how much of each it held when the mark was taken.
+    ///
+    /// Two marks bracket the geometry emitted between them, which DrawList::AppendRange copies into
+    /// another list — how a retained UI re-emits an unchanged subtree from its last frame instead of
+    /// rebuilding it. Each count is measured from the list's start, so the difference of two marks
+    /// is the extent of what they bracket, and a mark rebases onto another list by adding the offset
+    /// its range landed at.
+    struct DrawMark
+    {
+        /// @brief Vertices emitted before the mark.
+        u32 Vertex = 0;
+        /// @brief Indices emitted before the mark.
+        u32 Index = 0;
+        /// @brief Gradient records emitted before the mark.
+        u32 Gradient = 0;
+        /// @brief Glyphs drawn before the mark, counted only while the list records glyphs.
+        u32 Glyph = 0;
+
+        /// @brief Returns the mark this one becomes when everything before `base` is removed.
+        /// @param base  A mark at or before this one.
+        [[nodiscard]] DrawMark Since(const DrawMark& base) const
+        {
+            return DrawMark{.Vertex = Vertex - base.Vertex,
+                            .Index = Index - base.Index,
+                            .Gradient = Gradient - base.Gradient,
+                            .Glyph = Glyph - base.Glyph};
+        }
+
+        /// @brief Returns this relative mark placed after `base`.
+        /// @param base  The absolute mark this one is measured from.
+        [[nodiscard]] DrawMark After(const DrawMark& base) const
+        {
+            return DrawMark{.Vertex = Vertex + base.Vertex,
+                            .Index = Index + base.Index,
+                            .Gradient = Gradient + base.Gradient,
+                            .Glyph = Glyph + base.Glyph};
+        }
+    };
+
+    /// @brief The clip, transform, and arc in force at a point of a draw list's build.
+    ///
+    /// The three stacks' tops, which are everything a primitive emitted at that point takes from its
+    /// surroundings: its run's scissor, its transformed positions, and its arc mask. Geometry
+    /// recorded under one state reproduces exactly only under an equal state, which is what a
+    /// retained replay checks before it copies a range rather than re-emitting it.
+    struct DrawState
+    {
+        /// @brief Whether a clip is open; Clip is meaningful only when it is.
+        bool HasClip = false;
+        /// @brief The effective (already intersected) clip rectangle.
+        Rect Clip;
+        /// @brief The linear part of the composed transform.
+        mat2 Linear{1.0f};
+        /// @brief The translation of the composed transform.
+        vec2 Translation{0.0f};
+        /// @brief Whether an arc silhouette is open; Arc is meaningful only when it is.
+        bool HasArc = false;
+        /// @brief The arc silhouette masking shape quads.
+        ArcShape Arc;
+
+        /// @brief Returns whether two states would emit identical geometry for identical primitives.
+        /// @param other  The state to compare against.
+        [[nodiscard]] bool Matches(const DrawState& other) const;
+    };
+
     /// @brief A device-free command buffer of UI primitives resolving to one geometry stream.
     ///
     /// Each primitive call (Quad / Line / Texture / NineSlice / Text) appends geometry to a single
@@ -515,6 +581,21 @@ namespace Veng::Gui
         void Text(vec2 pen, const Font& font, string_view text, f32 pixelSize, vec4 color,
                   optional<f32> maxWidth = {});
 
+        /// @brief Appends a run of text that was already shaped through the font.
+        ///
+        /// The run's glyph positions are used as they stand: nothing is shaped again. Each glyph is
+        /// only ensured resident, which pins it against eviction for the frame and fetches its atlas
+        /// page and UV rect, and its quad is placed from the glyph's Pen and the resident
+        /// rendition's own bounds. So a caller that keeps a ShapeResult across frames draws it every
+        /// frame without re-shaping, and a run shaped device-free (TextShapeMode::Measure) draws
+        /// exactly as one shaped to draw.
+        /// @param pen        Top-left origin of the shaped block, in framebuffer pixels.
+        /// @param font       The resident font the run was shaped through.
+        /// @param shaped     The shaped run.
+        /// @param pixelSize  The em size the run was shaped at, in pixels.
+        /// @param color      Text tint, linear straight-alpha RGBA.
+        void Text(vec2 pen, const Font& font, const ShapeResult& shaped, f32 pixelSize, vec4 color);
+
         /// @brief Appends another draw list's geometry with every vertex position remapped.
         ///
         /// Copies @p src's vertices (each position run through @p project), indices, runs, and
@@ -594,6 +675,55 @@ namespace Veng::Gui
         /// @brief Returns whether the draw list has no geometry.
         [[nodiscard]] bool IsEmpty() const { return m_Runs.empty(); }
 
+        /// @brief Returns the current position in every stream, for bracketing what is emitted next.
+        [[nodiscard]] DrawMark Mark() const;
+
+        /// @brief Returns the clip, transform, and arc currently in force.
+        [[nodiscard]] DrawState GetState() const;
+
+        /// @brief Returns whether any clip, transform, or arc is currently pushed.
+        [[nodiscard]] bool HasOpenState() const
+        {
+            return !m_ClipStack.empty() || !m_TransformStack.empty() || !m_ArcStack.empty();
+        }
+
+        /// @brief Sets whether drawn text records which glyphs it drew and where they sat.
+        ///
+        /// A recording list keeps, per glyph drawn, the font, codepoint, size, and the atlas slot
+        /// the glyph sampled, so EnsureGlyphs can later pin a range's glyphs again and tell whether
+        /// any of them moved in the atlas. Off by default: only a list that is replayed from needs it.
+        /// @param records  True to record each drawn glyph.
+        void SetRecordsGlyphs(bool records) { m_RecordsGlyphs = records; }
+
+        /// @brief Ensures every glyph a bracketed range drew is resident again, in the slot it drew from.
+        ///
+        /// Re-ensures each recorded glyph between the marks, which pins it for this frame exactly as
+        /// drawing it would. Returns false when any glyph now resolves to a different page or UV rect
+        /// — evicted and repacked since, or newly resident where it was missing — because the range's
+        /// copied geometry would then sample the wrong texels; the caller re-emits instead. Requires a
+        /// list that recorded glyphs while the range was emitted.
+        /// @param begin  The mark opening the range.
+        /// @param end    The mark closing the range.
+        /// @return True when every glyph in the range still sits where the range's geometry samples.
+        [[nodiscard]] bool EnsureGlyphs(const DrawMark& begin, const DrawMark& end) const;
+
+        /// @brief Appends the geometry another list emitted between two of its marks.
+        ///
+        /// Copies the bracketed vertices, indices, gradient records, and recorded glyphs, rebasing
+        /// every index and gradient reference, and re-partitions the copied indices into runs with
+        /// the same merge rule a primitive follows — so the result is the run table emitting the same
+        /// primitives here would have produced. The copied runs keep the clip they were recorded
+        /// under, so the range reproduces exactly only when this list's state Matches the state the
+        /// range began under; that check is the caller's.
+        /// @param src    The list to copy from; must not be this list.
+        /// @param begin  The mark in `src` opening the range.
+        /// @param end    The mark in `src` closing the range.
+        void AppendRange(const DrawList& src, const DrawMark& begin, const DrawMark& end);
+
+        /// @brief Appends another list's whole geometry, as AppendRange over all of it.
+        /// @param src  The list to copy from; must not be this list.
+        void Append(const DrawList& src);
+
     private:
         /// @brief An affine transform applied to vertex positions: a linear part and a translation.
         ///
@@ -629,6 +759,14 @@ namespace Veng::Gui
         /// @param material    The material instance keying the run (null for every non-material run).
         void EnsureRun(GuiPipeline pipeline, u32 textureKey,
                        const MaterialInstance* material = nullptr);
+
+        /// @brief EnsureRun against an explicit clip rather than the clip stack's top.
+        /// @param pipeline    The pipeline this primitive draws with.
+        /// @param textureKey  The bindless texture index keying the run.
+        /// @param material    The material instance keying the run.
+        /// @param clip        The absolute clip the run takes, or nullopt for none.
+        void EnsureRunKeyed(GuiPipeline pipeline, u32 textureKey, const MaterialInstance* material,
+                            const optional<Rect>& clip);
 
         /// @brief Appends one axis-aligned quad (four vertices, six indices) into the current run.
         /// @param corners   The four corner positions in framebuffer pixels (TL, TR, BR, BL order).
@@ -675,5 +813,26 @@ namespace Veng::Gui
         /// The run table does carry its material (the pass needs it to bind), so this mirrors the
         /// trailing run's value only to keep the merge test in EnsureRun uniform with the texture key.
         const MaterialInstance* m_RunMaterial = nullptr;
+        /// @brief Each run's texture key, parallel to m_Runs, so a copied range re-partitions exactly.
+        vector<u32> m_RunTextureKeys;
+
+        /// @brief One glyph a recording list drew, and the atlas slot it sampled.
+        struct GlyphUse
+        {
+            /// @brief The font the glyph was drawn through; resident while its run is replayed.
+            const Veng::Font* Source = nullptr;
+            /// @brief The glyph's codepoint.
+            u32 Codepoint = 0;
+            /// @brief The size it was drawn at, in pixels.
+            f32 PixelSize = 0.0f;
+            /// @brief The atlas page it sampled; Invalid when it was not resident and drew nothing.
+            u32 Page = Renderer::TextureHandle::Invalid;
+            /// @brief The UV corner it sampled from.
+            vec2 UvMin{0.0f};
+        };
+        /// @brief The glyphs drawn while recording, in draw order.
+        vector<GlyphUse> m_GlyphUses;
+        /// @brief Whether Text records each glyph it draws into m_GlyphUses.
+        bool m_RecordsGlyphs = false;
     };
 }

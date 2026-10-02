@@ -75,11 +75,16 @@ TEST_CASE("gui document: SetPlacement pins a rect and re-dirties layout only on 
     doc.SetPlacement(panel, vec2(20.0f, 30.0f), vec2(50.0f, 40.0f));
     CHECK(!doc.IsDirty());
 
-    // Moving it re-dirties and re-solves to the new rect.
+    // Moving it at the same size moves the rect at once, with nothing left for a solve to do.
     doc.SetPlacement(panel, vec2(60.0f, 30.0f), vec2(50.0f, 40.0f));
+    CHECK(!doc.IsDirty());
+    CheckRect(panel.Layout, 60.0f, 30.0f, 50.0f, 40.0f);
+
+    // Resizing it re-dirties and re-solves to the new rect.
+    doc.SetPlacement(panel, vec2(60.0f, 30.0f), vec2(70.0f, 40.0f));
     CHECK(doc.IsDirty());
     doc.Solve(vec2(200.0f, 200.0f));
-    CheckRect(panel.Layout, 60.0f, 30.0f, 50.0f, 40.0f);
+    CheckRect(panel.Layout, 60.0f, 30.0f, 70.0f, 40.0f);
 }
 
 TEST_CASE("gui document: SetPinnedPosition pins a position and sizes the element to its content")
@@ -118,11 +123,12 @@ TEST_CASE("gui document: SetPinnedPosition pins a position and sizes the element
     doc.Solve(vec2(200.0f, 200.0f));
     CheckRect(card.Layout, 20.0f, 30.0f, 118.0f, 38.0f);
 
-    // Moving the pin re-dirties and re-solves at the new corner, still content-sized.
+    // Moving the pin lands the card at the new corner at once, still content-sized, with no solve
+    // owed — and the content rides along.
     doc.SetPinnedPosition(card, vec2(50.0f, 30.0f));
-    CHECK(doc.IsDirty());
-    doc.Solve(vec2(200.0f, 200.0f));
+    CHECK(!doc.IsDirty());
     CheckRect(card.Layout, 50.0f, 30.0f, 118.0f, 38.0f);
+    CheckRect(label.Layout, 59.0f, 39.0f, 100.0f, 20.0f);
 }
 
 TEST_CASE("gui document: an authored size survives SetPinnedPosition, and SetPlacement replaces it")
