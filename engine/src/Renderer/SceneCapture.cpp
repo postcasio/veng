@@ -517,8 +517,10 @@ namespace Veng::Renderer
             // transition just it back to a sampled layout — the other five keep the sampled state
             // their own last render left them in. A whole-cube transition here would carry mixed
             // per-layer source layouts across the six separate submits and leave later faces in a
-            // color-attachment layout the convolution then samples.
-            cmd.PrepareForAccess(m_CubeFaceViews[face], AccessKind::SampleGraphics);
+            // color-attachment layout the convolution then samples. SampleAny, because that
+            // convolution is a compute dispatch and a fragment pass may sample the cube too: a
+            // release scoped to fragment reads leaves the dispatch unordered after this write.
+            cmd.PrepareForAccess(m_CubeFaceViews[face], AccessKind::SampleAny);
 
             // A full six-face sweep completes on the last face of the round-robin; the revision
             // advances only then, so a consumer never convolves a half-refreshed cube (mirrors

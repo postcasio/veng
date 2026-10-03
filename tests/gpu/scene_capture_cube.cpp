@@ -180,7 +180,6 @@ namespace
             [&](CommandBuffer& cmd)
             {
                 ibl.EnsureInitialized(cmd);
-                cmd.PrepareForAccess(cube, AccessKind::SampleGraphics);
                 ibl.GenerateFromCube(cmd, cube, capture->GetCubeFaceSize());
             });
         return DownloadIrradiance(context, ibl);

@@ -77,7 +77,10 @@ namespace Veng::Renderer
         /// @param radianceCube A cube-view of the source radiance, in a sampled layout.
         /// @param sourceFaceSize Edge length in texels of `radianceCube`'s faces.
         /// @pre EnsureInitialized has run (or runs in the same Execute before this), and
-        ///      `radianceCube` is resident + shader-readable when this records.
+        ///      `radianceCube` is resident + shader-readable when this records — released by its
+        ///      writer for **compute** sampling (`AccessKind::SampleAny` or `SampleCompute`), since
+        ///      the convolution declares no access of its own on it: a cube whose faces carry
+        ///      differing tracked states cannot be judged by one whole-view declaration.
         void GenerateFromCube(CommandBuffer& cmd, const Ref<ImageView>& radianceCube,
                               u32 sourceFaceSize);
 

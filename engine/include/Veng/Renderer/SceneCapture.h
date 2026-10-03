@@ -215,7 +215,9 @@ namespace Veng::Renderer
         ///
         /// A Cube-type ImageView over the six face layers, in a shader-read layout — the exact type
         /// EnvironmentIbl::GenerateFromCube convolves. Non-null only when the capture was created
-        /// with SceneCaptureInfo::Cube. It is a convolution input only and is **never** registered
+        /// with SceneCaptureInfo::Cube. Each face is released as `AccessKind::SampleAny` as it is
+        /// written, so the convolution's compute dispatches and a fragment sampler may both read it
+        /// with no barrier of their own. It is a convolution input only and is **never** registered
         /// into the set-0 bindless array (nothing hands it a bindless handle); do not "fix" it back
         /// to the octahedral map's 2D form, which exists solely because a material-sampled output
         /// must ride that array and a cube view cannot.
