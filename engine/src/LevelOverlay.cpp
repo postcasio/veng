@@ -11,7 +11,6 @@
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/Viewport.h>
 #include <Veng/Scene/Scene.h>
-#include <Veng/Scene/SceneViewport.h>
 #include <Veng/Window.h>
 
 #include <utility>
@@ -105,14 +104,19 @@ namespace Veng
         }
         Scene& scene = world.GetScene();
 
-        // Map the level's render settings onto the renderer topology and seed the per-frame view
-        // knobs carried into the engine's camera push.
-        Renderer::SceneRendererSettings settings;
+        // Resolve the level's render settings onto the renderer topology and the per-frame view knobs
+        // carried into the engine's camera push, through the same level-look funnel the managed
+        // viewports take, so the host's graphics resolve composes over this look too. A level
+        // authoring none resolves the default look.
+        ManagedViewportSet& managed = app.GetManagedViewports();
+        LevelRenderSettings look;
         if (const LevelRenderSettings* render = scene.TryGetFirst<LevelRenderSettings>())
         {
-            overlay.m_Render = *render;
+            look = *render;
         }
-        ApplyLevelRenderSettings(overlay.m_Render, settings, overlay.m_ViewKnobs);
+        Renderer::SceneRendererSettings settings;
+        Renderer::ViewState knobs;
+        managed.ResolveLevelLook(look, settings, knobs);
 
         // 2. Create a Presented viewport for the region and register it last, so it composites over
         //    the covered world. A zero-extent region tracks the window (carries a Layout the
@@ -143,9 +147,10 @@ namespace Veng
 
         // Bind the viewport to the overlay world so the managed-viewport presentation path pulls its
         // scene primary camera each frame (Entity::Null viewer) — the new home for what the manual
-        // per-frame push did, with no game call.
-        app.GetManagedViewports().RegisterBoundViewport(*overlay.m_Viewport, overlay.m_World,
-                                                        Entity::Null, overlay.m_ViewKnobs);
+        // per-frame push did, with no game call. The look is recorded so a settings apply
+        // re-resolves this viewport too.
+        managed.RegisterBoundViewport(*overlay.m_Viewport, overlay.m_World, Entity::Null, knobs,
+                                      look);
 
         // 3. Route input across the three seams, capturing what each must restore.
         InputRouter& router = app.GetInputRouter();
@@ -183,8 +188,6 @@ namespace Veng
         // 5. Start the simulation — each system's OnStart fires with the populated scene.
         scene.StartSimulation(OverlaySystemContext(app));
 
-        // Join the overlay stack so a higher overlay can resolve this one's scene from its seat.
-
         return overlay;
     }
 
@@ -192,8 +195,7 @@ namespace Veng
         : m_App(other.m_App), m_World(other.m_World), m_Viewport(std::move(other.m_Viewport)),
           m_Suspend(std::move(other.m_Suspend)),
           m_SuspendContext(std::move(other.m_SuspendContext)),
-          m_PauseScope(std::move(other.m_PauseScope)), m_Render(other.m_Render),
-          m_ViewKnobs(other.m_ViewKnobs), m_OverlaySeat(other.m_OverlaySeat),
+          m_PauseScope(std::move(other.m_PauseScope)), m_OverlaySeat(other.m_OverlaySeat),
           m_PriorCursorSeat(other.m_PriorCursorSeat)
     {
         other.m_App = nullptr;
@@ -210,8 +212,6 @@ namespace Veng
             m_Suspend = std::move(other.m_Suspend);
             m_SuspendContext = std::move(other.m_SuspendContext);
             m_PauseScope = std::move(other.m_PauseScope);
-            m_Render = other.m_Render;
-            m_ViewKnobs = other.m_ViewKnobs;
             m_OverlaySeat = other.m_OverlaySeat;
             m_PriorCursorSeat = other.m_PriorCursorSeat;
             other.m_App = nullptr;
@@ -275,5 +275,14 @@ namespace Veng
     {
         VE_ASSERT(m_Viewport != nullptr, "LevelOverlay::GetViewport on a closed overlay");
         return *m_Viewport;
+    }
+
+    const Renderer::ViewState& LevelOverlay::GetViewState() const
+    {
+        VE_ASSERT(m_App != nullptr, "LevelOverlay::GetViewState on a closed overlay");
+        const Renderer::ViewState* knobs =
+            m_App->GetManagedViewports().FindBoundViewState(*m_Viewport);
+        VE_ASSERT(knobs != nullptr, "LevelOverlay::GetViewState: the viewport is not bound");
+        return *knobs;
     }
 }

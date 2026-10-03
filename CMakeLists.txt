@@ -1930,6 +1930,12 @@ if (VENG_BUILD_TESTS)
             # managed viewport reconfigured, and an empty set a clean no-op (needs a Context for the
             # Application/viewports, so it rides the gpu band).
             tests/gpu/graphics_settings_apply.cpp
+            # level_look_resolve.cpp drives a headless Application through the level-look funnel: a
+            # consumer resolver surviving the world seed, a managed rebind (in one reconfigure) and a
+            # LevelOverlay open, the identity default leaving the authored look, and
+            # ApplyGraphicsSettings re-resolving managed and overlay viewports alike (needs a Context
+            # for the Application/viewports, so it rides the gpu band).
+            tests/gpu/level_look_resolve.cpp
             # application_settings_boot.cpp drives a headless managed-world Application through Run()
             # with a settings file already planted per domain, and pins what the settings boot has
             # finished by the time OnInitialize runs: the graphics, audio and language stores all

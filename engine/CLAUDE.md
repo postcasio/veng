@@ -212,8 +212,8 @@ there, else the scene's sole/first `Viewer`, else cleared), re-pointing the `Inp
 and — when the departed association owned it — **moving the cursor seat with the focus it holds**
 (`InputRouter::MoveCursorSeat`), and resetting `Info.Viewer`, and
 **re-seeds the viewport's render settings and per-frame view knobs** from the destination's authored
-`LevelRenderSettings` (the same seed the bootstrap world takes; a destination authoring none keeps
-the viewport's current settings). The carried focus is the user's, not the departed world's: a
+`LevelRenderSettings` (the same seed the bootstrap world takes, resolved through the same
+level-look funnel — see below; a destination authoring none keeps the viewport's current settings). The carried focus is the user's, not the departed world's: a
 captured cursor stays captured across the swap rather than releasing until the destination
 re-requests it, and a UI layer above it comes along too. Beyond that carry, input focus is left to
 the game. `GetManagedViewportWorld(index)` returns the applied binding and
@@ -308,6 +308,23 @@ the run — and acts on them before the first presented frame, with no first-upd
 **Applying them is the consumer's**, so `OnResolveGraphics` never runs before `OnInitialize` and an
 app with no settings opinion is unchanged; audio is the single exception the engine applies for it,
 once after `OnInitialize`, when the authored bus graph has been adopted.
+
+**Every viewport configured from a level's authored look resolves it through `OnResolveGraphics`.**
+The bootstrap world seed, a client-join world start, each managed rebind and a `LevelOverlay`'s open
+all pass the level's `LevelRenderSettings` through one funnel —
+`ManagedViewportSet::ResolveLevelLook`, whose resolver `Application` installs as its protected
+`ResolveLevelLook(store, authored, settings, view)` — before the single `Configure` that applies it.
+So a consumer's resolve composes over each look as it lands, and the player's choices are never
+reverted by a presentation change; the default `OnResolveGraphics` is the identity, so a consumer
+with no resolver sees the authored look exactly. It reuses the existing resolve virtual rather than
+adding a second one, because a level look *is* the authored input that seam already takes
+(`GraphicsResolveInput::AuthoredLook`) — one composition rule, run wherever a look is applied. Only
+the viewport-shaped topology and the view knobs are applied there; the dynamic-resolution choice and
+the `Global` facet stay `ApplyGraphicsSettings`'. When the choices change, **`ApplyGraphicsSettings`
+reaches every live level-configured viewport**: the managed set as before, then each overlay against
+its own level's look (`ManagedViewportSet::ReresolveBoundLevelLooks`, over the look a bound
+viewport records at `RegisterBoundViewport`). The editor's authoring previews map a level look
+directly (`ApplyLevelRenderSettings`) — they show what the author wrote, not a player's quality.
 
 **The boot session restore is opt-out, and the restore is consumer-triggerable.**
 `GameWorldInfo::RestoreLocalSessionOnBoot` (default `true`) has the bootstrap resume the local
@@ -462,8 +479,8 @@ start). **There is no `LevelOverlay::Update`:** the runner ticks the overlay's s
 engine pushes its camera each frame, so there is no per-frame game call and no hidden second
 scheduler. **Input focus and simulation pause are separate knobs:** taking the overlay's seat
 always suspends the covered seat's *input*, but a world simulates unless a `CoveredWorld` pause is
-held. An overlay's `GetViewState()` knobs are captured at open — retuning them takes a re-open, not
-an in-place per-frame edit. Dropping the handle (or `Close`) unwinds the policy LIFO, restoring
+held. An overlay's `GetViewState()` knobs are resolved from its level at open and again on every
+`ApplyGraphicsSettings` — not an in-place per-frame edit. Dropping the handle (or `Close`) unwinds the policy LIFO, restoring
 every router / cursor-seat / pause value to the state it captured at open, and closing the world;
 overlays **stack** (a dialog over a modal) and the handles drop LIFO. Results flow back through a
 game-owned channel (a component the opener drains, a callback) — no overlay system reaches into the
@@ -504,7 +521,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 54** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 55** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the

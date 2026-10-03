@@ -236,10 +236,15 @@ extern "C"
 /// grab, and RenderGraph::Pass with whether a skipped frame leaves its outputs unread. A module
 /// builds a MaterialInfo for a runtime material and declares graph passes, so a stale module lays
 /// both out short.
+/// Version 55 grows ManagedViewportSet with the level-look resolver every level-configured viewport
+/// resolves through and its bound-viewport record with the look it was resolved from, adds
+/// Application's level-look resolve core, and drops LevelOverlay's copies of its look and knobs. A
+/// module reaches the set through the Application it subclasses and holds LevelOverlay handles by
+/// value, so a stale module lays both out at the old layout.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 54u
+#define VENG_MODULE_ABI_VERSION 55u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

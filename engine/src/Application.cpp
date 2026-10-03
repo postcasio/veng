@@ -385,6 +385,24 @@ namespace Veng
             m_AudioDevice != nullptr ? &m_AudioDevice->GetEngine() : nullptr,
             m_GuiTranslator.get());
 
+        // Every viewport configured from a level's authored look resolves it through the graphics
+        // resolve seam, so a consumer's OnResolveGraphics composes over each look in the Configure
+        // that applies it — a world seed, a rebind, an overlay's open — instead of being reverted by
+        // it. Before the store exists (or without one) the look is mapped alone.
+        m_ManagedViewports->SetLevelLookResolver(
+            [this](const LevelRenderSettings& authored, Renderer::SceneRendererSettings& settings,
+                   Renderer::ViewState& view)
+            {
+                if (m_GraphicsSettings)
+                {
+                    ResolveLevelLook(*m_GraphicsSettings, authored, settings, view);
+                }
+                else
+                {
+                    ApplyLevelRenderSettings(authored, settings, view);
+                }
+            });
+
         // The opt-in managed viewport set: Presented viewports owned and driven by the engine so a
         // game pushes only a ViewState (or names a World/Viewer). Built before OnInitialize so a
         // subclass can Configure one and read its renderer there. The singular ManagedViewport is
@@ -443,7 +461,8 @@ namespace Veng
         // persisted choices — and tell a first run from a returning one — while initializing, and
         // act on them before the first presented frame. Applying them stays the consumer's: the
         // engine never calls ApplyGraphicsSettings on its behalf, so a consumer with no settings
-        // opinion sees the engine's own defaults.
+        // opinion sees the engine's own defaults. What the engine does do is resolve each level look
+        // it configures a viewport from through OnResolveGraphics (the default is the identity).
         {
             const GraphicsSchema* schema = nullptr;
             if (m_Info.GraphicsSchema)
@@ -837,15 +856,61 @@ namespace Veng
     {
         // Seed the managed viewport's topology and the per-frame view knobs from the scene, starting
         // from the configured initial settings: the level's post knobs (a seeded LevelRenderSettings
-        // component). The sky is the scene's Sky component, resolved by the renderer itself each
-        // Execute — no consumer seeding. Seeded once; the game owns later changes.
+        // component), resolved through the set's level-look funnel so the consumer's graphics resolve
+        // composes over them in this one Configure. The sky is the scene's Sky component, resolved by
+        // the renderer itself each Execute — no consumer seeding.
         Renderer::Viewport* primary = m_ManagedViewports->Get(0);
         Renderer::SceneRendererSettings settings = primary->GetSettings();
         if (const LevelRenderSettings* render = world.TryGetFirst<LevelRenderSettings>())
         {
-            ApplyLevelRenderSettings(*render, settings, m_WorldView);
+            m_ManagedViewports->ResolveLevelLook(*render, settings, m_WorldView);
         }
         primary->Configure(settings);
+    }
+
+    GraphicsResolveOutput Application::ResolveGraphicsOutput(
+        const GraphicsSettings& store, const LevelRenderSettings& authored,
+        const Renderer::SceneRendererSettings& settings, const Renderer::ViewState& view)
+    {
+        // Build the authored baseline: the authored look mapped onto the given topology and view
+        // knobs, plus the primary viewport's current dynamic-resolution choice. The resolver receives
+        // this pre-filled, so the identity default returns it unchanged.
+        GraphicsResolveOutput output;
+        output.Settings = settings;
+        output.View = view;
+        ApplyLevelRenderSettings(authored, output.Settings, output.View);
+        if (const Renderer::Viewport* primary =
+                m_ManagedViewports ? m_ManagedViewports->Get(0) : nullptr;
+            primary != nullptr)
+        {
+            const optional<Renderer::DynamicResolutionSettings>& dynamic =
+                primary->GetDynamicResolution();
+            output.DynamicResolutionEnabled = dynamic.has_value();
+            output.DynamicResolution = dynamic.value_or(Renderer::DynamicResolutionSettings{});
+        }
+
+        const GraphicsResolveInput input{
+            .Settings = store, .Display = store.GetDisplay(), .AuthoredLook = authored};
+        OnResolveGraphics(input, output);
+        return output;
+    }
+
+    void Application::ResolveLevelLook(const GraphicsSettings& store,
+                                       const LevelRenderSettings& authored,
+                                       Renderer::SceneRendererSettings& settings,
+                                       Renderer::ViewState& view)
+    {
+        // The display calibration is the engine's, last written by ApplyGraphicsSettings into the
+        // world view; every level-configured view carries that value rather than its own. Read
+        // before resolving, since @p view may be the world view itself.
+        const f32 brightness = m_WorldView.OutputBrightness;
+        const f32 gamma = m_WorldView.OutputGamma;
+
+        const GraphicsResolveOutput output = ResolveGraphicsOutput(store, authored, settings, view);
+        settings = output.Settings;
+        view = output.View;
+        view.OutputBrightness = brightness;
+        view.OutputGamma = gamma;
     }
 
     LevelRenderSettings Application::ResolveActiveAuthoredLook() const
@@ -879,31 +944,28 @@ namespace Veng
         // of the renderer surfaces — a no-op beyond the frame cap on a headless run.
         ApplyBuiltinDisplay(display);
 
-        // An empty managed set (the editor) has no renderer surface to reconfigure: the display group
-        // above is the whole apply there.
-        if (!m_ManagedViewports || m_ManagedViewports->Empty())
+        if (!m_ManagedViewports)
         {
             return;
         }
 
+        // An empty managed set (the editor) has no managed surface to reconfigure: the display group
+        // above and any level overlays are the whole apply there.
+        if (!m_ManagedViewports->Empty())
+        {
+            ApplyGraphicsToManagedViewports(display);
+        }
+
+        // Each overlay opened from a level re-resolves against its own authored look, after the
+        // managed apply so it carries the display calibration that apply just wrote.
+        m_ManagedViewports->ReresolveBoundLevelLooks();
+    }
+
+    void Application::ApplyGraphicsToManagedViewports(const BuiltinDisplayChoices& display)
+    {
         const LevelRenderSettings authored = ResolveActiveAuthoredLook();
-
-        // Build the authored baseline: the authored look mapped onto the primary viewport's current
-        // topology and the app's per-frame view knobs, plus the viewport's current dynamic-resolution
-        // choice. The resolver receives this pre-filled, so the identity default returns it unchanged.
-        Renderer::Viewport* primary = m_ManagedViewports->Get(0);
-        GraphicsResolveOutput output;
-        output.Settings = primary->GetSettings();
-        output.View = m_WorldView;
-        ApplyLevelRenderSettings(authored, output.Settings, output.View);
-        const optional<Renderer::DynamicResolutionSettings>& dynamic =
-            primary->GetDynamicResolution();
-        output.DynamicResolutionEnabled = dynamic.has_value();
-        output.DynamicResolution = dynamic.value_or(Renderer::DynamicResolutionSettings{});
-
-        const GraphicsResolveInput input{
-            .Settings = *m_GraphicsSettings, .Display = display, .AuthoredLook = authored};
-        OnResolveGraphics(input, output);
+        GraphicsResolveOutput output = ResolveGraphicsOutput(
+            *m_GraphicsSettings, authored, m_ManagedViewports->Get(0)->GetSettings(), m_WorldView);
 
         // Brightness/gamma are engine-owned display calibration, not preset-eligible and never the
         // game resolver's to set: this apply path is their single writer.

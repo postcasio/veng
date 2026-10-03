@@ -398,14 +398,16 @@ namespace Veng
 
             // The presented world's authored render settings govern the viewport that presents it —
             // the same seed the bootstrap world takes, re-applied here so a travel does not leave a
-            // destination rendering under the departed level's toggles. A destination authoring no
+            // destination rendering under the departed level's toggles. The look goes through the
+            // installed resolver before the one Configure, so what the host layers over it survives
+            // the travel instead of being reverted by it. A destination authoring no
             // LevelRenderSettings keeps the viewport's current settings (the editor and
             // engine-agnostic postures).
             if (const LevelRenderSettings* render =
                     destination->GetScene().TryGetFirst<LevelRenderSettings>())
             {
                 Renderer::SceneRendererSettings settings = managed.Viewport->GetSettings();
-                ApplyLevelRenderSettings(*render, settings, knobs);
+                ResolveLevelLook(*render, settings, knobs);
                 managed.Viewport->Configure(settings);
             }
         }
@@ -648,7 +650,8 @@ namespace Veng
 
     void ManagedViewportSet::RegisterBoundViewport(Renderer::Viewport& viewport,
                                                    WorldInstanceId world, Entity viewer,
-                                                   const Renderer::ViewState& knobs)
+                                                   const Renderer::ViewState& knobs,
+                                                   optional<LevelRenderSettings> look)
     {
         // A bound viewport is created by its caller (a LevelOverlay), not by this set, so it has none
         // of the engine services a set-created viewport is handed in ReconfigureManagedViewports.
@@ -660,14 +663,61 @@ namespace Veng
         viewport.SetGuiTranslator(m_GuiTranslator);
         viewport.SetLocalization(m_Localization);
 
-        m_Bound.push_back(
-            {.Viewport = &viewport, .World = world, .Viewer = viewer, .Knobs = knobs});
+        m_Bound.push_back({.Viewport = &viewport,
+                           .World = world,
+                           .Viewer = viewer,
+                           .Knobs = knobs,
+                           .Look = std::move(look)});
     }
 
     void ManagedViewportSet::UnregisterBoundViewport(const Renderer::Viewport& viewport)
     {
         std::erase_if(m_Bound, [&viewport](const BoundViewport& bound)
                       { return bound.Viewport == &viewport; });
+    }
+
+    void ManagedViewportSet::SetLevelLookResolver(LevelLookResolver resolver)
+    {
+        m_LevelLookResolver = std::move(resolver);
+    }
+
+    void ManagedViewportSet::ResolveLevelLook(const LevelRenderSettings& authored,
+                                              Renderer::SceneRendererSettings& settings,
+                                              Renderer::ViewState& view) const
+    {
+        if (m_LevelLookResolver)
+        {
+            m_LevelLookResolver(authored, settings, view);
+            return;
+        }
+        ApplyLevelRenderSettings(authored, settings, view);
+    }
+
+    void ManagedViewportSet::ReresolveBoundLevelLooks()
+    {
+        for (BoundViewport& bound : m_Bound)
+        {
+            if (!bound.Look.has_value())
+            {
+                continue;
+            }
+            Renderer::SceneRendererSettings settings = bound.Viewport->GetSettings();
+            ResolveLevelLook(*bound.Look, settings, bound.Knobs);
+            bound.Viewport->Configure(settings);
+        }
+    }
+
+    const Renderer::ViewState*
+    ManagedViewportSet::FindBoundViewState(const Renderer::Viewport& viewport) const
+    {
+        for (const BoundViewport& bound : m_Bound)
+        {
+            if (bound.Viewport == &viewport)
+            {
+                return &bound.Knobs;
+            }
+        }
+        return nullptr;
     }
 
     void ManagedViewportSet::SetRenderScaleHold(const bool held)

@@ -91,8 +91,10 @@ namespace Veng
         /// @brief Opens @p info's level as a secondary overlay over @p app's running frame.
         ///
         /// Sequences: open an owned world through the runner (spawning the source, running
-        /// info.Populate against the fresh scene, not started) → create and register a Presented
-        /// viewport for the region and bind it to the world for the per-frame camera pull → route
+        /// info.Populate against the fresh scene, not started) → resolve the level's render settings
+        /// through the managed set's level-look funnel (ManagedViewportSet::ResolveLevelLook, so the
+        /// host's graphics resolve composes over them) → create and register a Presented
+        /// viewport configured with the result for the region and bind it to the world for the per-frame camera pull → route
         /// input (pointer association to the overlay seat, cursor-seat handoff, and a viewport-less
         /// focus scope suspending info.SuspendSeat) → hold a PauseScope on info.CoveredWorld when
         /// valid → start the world's simulation. The returned handle is move-only.
@@ -118,10 +120,10 @@ namespace Veng
 
         /// @brief Closes the overlay now, restoring the captured router / cursor-seat / pause state.
         ///
-        /// Reverses the open in lifetime order: leaves the overlay stack, releases the covered-world
-        /// pause scope, pops the focus scope, restores the cursor seat and clears the viewport's
-        /// pointer association (while the viewport is still alive), unregisters and drops the
-        /// viewport, then closes the world (stopping its simulation and dropping its scene).
+        /// Reverses the open in lifetime order: releases the covered-world pause scope, pops the
+        /// focus scope, restores the cursor seat and clears the viewport's pointer association
+        /// (while the viewport is still alive), unregisters and drops the viewport, then closes the
+        /// world (stopping its simulation and dropping its scene).
         /// Idempotent — a second call, or a call on a moved-from handle, does nothing.
         void Close();
 
@@ -139,12 +141,14 @@ namespace Veng
         /// @brief Returns the overlay's world handle, for resolving it through the runner.
         [[nodiscard]] WorldInstanceId GetWorld() const { return m_World; }
 
-        /// @brief Returns the overlay's per-frame view knobs, seeded from the level at open.
+        /// @brief Returns the overlay's per-frame view knobs, as the engine carries them into each push.
         ///
-        /// The photometric half of the overlay's ViewState (exposure, bloom, SSR, …), mapped from the
-        /// level's LevelRenderSettings at open. The engine carries the knobs captured at open into
-        /// each per-frame push, so this getter reads the seed; retuning them takes a re-open.
-        [[nodiscard]] const Renderer::ViewState& GetViewState() const { return m_ViewKnobs; }
+        /// The photometric half of the overlay's ViewState (exposure, bloom, SSR, …), resolved from the
+        /// level's LevelRenderSettings at open through the managed set's level-look funnel, and again
+        /// on every Application::ApplyGraphicsSettings. The reference is live: it reads the knobs the
+        /// next push carries.
+        /// @pre IsOpen().
+        [[nodiscard]] const Renderer::ViewState& GetViewState() const;
 
         /// @brief Returns the overlay's own input seat, or a null-Viewer ref if its level seats none.
         [[nodiscard]] SeatRef GetSeat() const { return m_OverlaySeat; }
@@ -164,10 +168,6 @@ namespace Veng
         AssetHandle<InputMappingContext> m_SuspendContext;
         /// @brief The refcounted pause held on the covered world; inert when none was named.
         WorldPauseScope m_PauseScope;
-        /// @brief The overlay level's render knobs, seeding the topology and the view knobs at open.
-        LevelRenderSettings m_Render;
-        /// @brief The per-frame view knobs the engine carries into each push, seeded at open.
-        Renderer::ViewState m_ViewKnobs;
         /// @brief The overlay's own seat, taken as the cursor seat and the pointer-routing target.
         SeatRef m_OverlaySeat;
         /// @brief The cursor seat observed at open, restored on close.
