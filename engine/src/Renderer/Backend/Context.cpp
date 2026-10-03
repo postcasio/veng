@@ -1,7 +1,9 @@
 #define VMA_IMPLEMENTATION
 #include <Veng/Renderer/Context.h>
 
+#include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <set>
@@ -134,6 +136,22 @@ namespace Veng::Renderer
 
         auto extensions = m_Native->GetRequiredExtensions();
 
+        // VK_EXT_layer_settings carries settings into the layers and the driver at instance
+        // creation. The validation layer reads its struct either way, but MoltenVK honours one only
+        // when the extension is enabled, so it is enabled wherever the loader offers it.
+        const auto availableInstanceExtensions = vk::enumerateInstanceExtensionProperties().value;
+        const bool layerSettingsAvailable =
+            std::ranges::any_of(availableInstanceExtensions,
+                                [](const vk::ExtensionProperties& extension)
+                                {
+                                    return std::strcmp(extension.extensionName,
+                                                       VK_EXT_LAYER_SETTINGS_EXTENSION_NAME) == 0;
+                                });
+        if (layerSettingsAvailable)
+        {
+            extensions.push_back(VK_EXT_LAYER_SETTINGS_EXTENSION_NAME);
+        }
+
         const vk::ApplicationInfo appInfo{.pApplicationName = info.ApplicationName.c_str(),
                                           .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
                                           .pEngineName = info.EngineName.c_str(),
@@ -146,22 +164,15 @@ namespace Veng::Renderer
             .ppEnabledExtensionNames = extensions.data(),
         };
 
-#ifdef __APPLE__
-        // The Metal device and command queue are exportable only when the request is chained onto
-        // *instance* creation: MoltenVK also accepts the structs on the device create info and
-        // returns the objects anyway, but validation correctly rejects that placement. Instance
-        // creation precedes any physical device, so there is no advertise-check to consult and the
-        // request is made unconditionally; it costs nothing and is inert where the extension later
-        // proves unavailable. The pair is spliced onto the head of whatever chain the branches
-        // below built, once they have built it.
-        vk::ExportMetalObjectCreateInfoEXT exportMetalQueue{
-            .exportObjectType = vk::ExportMetalObjectTypeFlagBitsEXT::eMetalCommandQueue,
+        // Each struct below is pushed onto the head of the instance create info's chain.
+        const auto chain = [&instanceCreateInfo](auto& link)
+        {
+            link.pNext = instanceCreateInfo.pNext;
+            instanceCreateInfo.pNext = &link;
         };
-        const vk::ExportMetalObjectCreateInfoEXT exportMetalDevice{
-            .pNext = &exportMetalQueue,
-            .exportObjectType = vk::ExportMetalObjectTypeFlagBitsEXT::eMetalDevice,
-        };
-#endif
+
+        // One settings struct for every layer: MoltenVK reads the last one it finds in the chain.
+        vector<vk::LayerSettingEXT> layerSettings;
 
 #ifdef VE_ENABLE_VALIDATION_LAYERS
         Log::Info("Enabling validation layers");
@@ -173,6 +184,7 @@ namespace Veng::Renderer
                            vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
                            vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance,
             .pfnUserCallback = DebugCallback};
+        chain(debugCreateInfo);
 
         // Synchronization validation, with its shader-access analysis on: without it the layer
         // validates attachments, copies and layout transitions but no access a draw or dispatch
@@ -180,39 +192,80 @@ namespace Veng::Renderer
         // update-after-bind, dynamically indexed) stay unvalidated either way, since the layer
         // cannot know which elements a shader reaches.
         constexpr vk::Bool32 syncvalShaderAccesses = vk::True;
-        const vk::LayerSettingEXT layerSettings[] = {{
+        layerSettings.push_back({
             .pLayerName = "VK_LAYER_KHRONOS_validation",
             .pSettingName = "syncval_shader_accesses_heuristic",
             .type = vk::LayerSettingTypeEXT::eBool32,
             .valueCount = 1,
             .pValues = &syncvalShaderAccesses,
-        }};
-        const vk::LayerSettingsCreateInfoEXT layerSettingsInfo{
-            .pNext = &debugCreateInfo,
-            .settingCount = static_cast<u32>(std::size(layerSettings)),
-            .pSettings = layerSettings,
-        };
-        constexpr vk::ValidationFeatureEnableEXT enabledValidationFeatures[] = {
-            vk::ValidationFeatureEnableEXT::eSynchronizationValidation,
-        };
-        const vk::ValidationFeaturesEXT validationFeatures{
-            .pNext = &layerSettingsInfo,
-            .enabledValidationFeatureCount = static_cast<u32>(std::size(enabledValidationFeatures)),
-            .pEnabledValidationFeatures = enabledValidationFeatures,
-        };
+        });
 
-        instanceCreateInfo.pNext = &validationFeatures;
         instanceCreateInfo.enabledLayerCount = static_cast<u32>(m_Native->ValidationLayers.size());
         instanceCreateInfo.ppEnabledLayerNames = m_Native->ValidationLayers.data();
 #else
-        instanceCreateInfo.pNext = nullptr;
         instanceCreateInfo.enabledLayerCount = 0;
         instanceCreateInfo.ppEnabledLayerNames = nullptr;
 #endif
 
 #ifdef __APPLE__
-        exportMetalQueue.pNext = instanceCreateInfo.pNext;
-        instanceCreateInfo.pNext = &exportMetalDevice;
+        // MoltenVK reads its environment itself, and a setting passed here would override it, so
+        // the setting is passed only when the user has not chosen through the environment.
+        m_SubmitMode =
+            ResolveQueueSubmitMode(info.SubmitMode, std::getenv(QueueSubmitModeEnvironmentVariable),
+                                   layerSettingsAvailable);
+        const vk::Bool32 synchronousSubmits =
+            m_SubmitMode.Mode == QueueSubmitMode::Synchronous ? vk::True : vk::False;
+        if (m_SubmitMode.ApplySetting)
+        {
+            layerSettings.push_back({
+                .pLayerName = "MoltenVK",
+                .pSettingName = QueueSubmitModeEnvironmentVariable,
+                .type = vk::LayerSettingTypeEXT::eBool32,
+                .valueCount = 1,
+                .pValues = &synchronousSubmits,
+            });
+        }
+#else
+        m_SubmitMode = ResolveQueueSubmitMode(info.SubmitMode, nullptr, false);
+#endif
+        Log::Info("Queue submission: {} ({})", QueueSubmitModeName(m_SubmitMode.Mode),
+                  QueueSubmitModeSourceName(m_SubmitMode.Source));
+
+        vk::LayerSettingsCreateInfoEXT layerSettingsInfo{
+            .settingCount = static_cast<u32>(layerSettings.size()),
+            .pSettings = layerSettings.data(),
+        };
+        if (!layerSettings.empty())
+        {
+            chain(layerSettingsInfo);
+        }
+
+#ifdef VE_ENABLE_VALIDATION_LAYERS
+        constexpr vk::ValidationFeatureEnableEXT enabledValidationFeatures[] = {
+            vk::ValidationFeatureEnableEXT::eSynchronizationValidation,
+        };
+        vk::ValidationFeaturesEXT validationFeatures{
+            .enabledValidationFeatureCount = static_cast<u32>(std::size(enabledValidationFeatures)),
+            .pEnabledValidationFeatures = enabledValidationFeatures,
+        };
+        chain(validationFeatures);
+#endif
+
+#ifdef __APPLE__
+        // The Metal device and command queue are exportable only when the request is chained onto
+        // *instance* creation: MoltenVK also accepts the structs on the device create info and
+        // returns the objects anyway, but validation correctly rejects that placement. Instance
+        // creation precedes any physical device, so there is no advertise-check to consult and the
+        // request is made unconditionally; it costs nothing and is inert where the extension later
+        // proves unavailable.
+        vk::ExportMetalObjectCreateInfoEXT exportMetalQueue{
+            .exportObjectType = vk::ExportMetalObjectTypeFlagBitsEXT::eMetalCommandQueue,
+        };
+        vk::ExportMetalObjectCreateInfoEXT exportMetalDevice{
+            .exportObjectType = vk::ExportMetalObjectTypeFlagBitsEXT::eMetalDevice,
+        };
+        chain(exportMetalQueue);
+        chain(exportMetalDevice);
 #endif
 
         instanceCreateInfo.flags = vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR;
@@ -332,6 +385,19 @@ namespace Veng::Renderer
             Log::Info("Created {0} swap chain images ({1}x{2})",
                       m_Native->SwapChain->GetImageCount(), m_Native->SwapChain->GetWidth(),
                       m_Native->SwapChain->GetHeight());
+
+            // An image acquired again must have finished the encode of its last use, or the
+            // driver's encode thread and this one touch its drawable together. More images than
+            // frames in flight guarantees it: the image handed back is either one whose
+            // presentation completed or the least recently acquired, whose frame was fenced.
+            if (m_SubmitMode.Mode == QueueSubmitMode::Asynchronous &&
+                m_Native->SwapChain->GetImageCount() <= m_Native->MaxFramesInFlight)
+            {
+                Log::Warn(
+                    "Asynchronous queue submission with {} swap chain images and {} frames in "
+                    "flight: an image can be re-acquired before its last frame has encoded",
+                    m_Native->SwapChain->GetImageCount(), m_Native->MaxFramesInFlight);
+            }
 
             m_RenderExtent = m_Native->SwapChain->GetExtent();
         }
@@ -886,6 +952,11 @@ namespace Veng::Renderer
                                  vk::FormatFeatureFlagBits::eStorageImage);
     }
 
+    bool Context::IsRecordingFrame() const
+    {
+        return m_Native->FrameCommandsOpen && m_Native->ActiveImmediateCommands == nullptr;
+    }
+
     SynchronizationFrame& Context::GetCurrentFrame()
     {
         return m_Native->SynchronizationFrames[m_Native->CurrentFrameInFlight];
@@ -898,7 +969,17 @@ namespace Veng::Renderer
 
     CommandBuffer& Context::BeginFrame()
     {
+        // A minimized window parks here, pumping events, before anything waits on the GPU: a
+        // frame already queued may need a drawable the window system vends only once the window
+        // is visible again, and a restore is only seen while events are pumped. Blocking on that
+        // frame's fence instead would hold the main thread until the drawable request timed out.
+        if (!IsHeadless())
+        {
+            m_Window->WaitUntilPresentable();
+        }
+
         auto& frame = AcquireNextFrame();
+        ++m_FrameSerial;
 
         // AcquireNextFrame drained this slot's bin; fold in any handles retired since the last
         // EndFrame so they are protected by this frame's fence rather than the one just waited.
@@ -919,12 +1000,15 @@ namespace Veng::Renderer
         // Headless has no swapchain image to acquire.
         if (!IsHeadless())
         {
-            // Reconcile the swapchain to the live framebuffer before acquiring. A window resize
-            // must land here, ahead of submit: MoltenVK acquires the CAMetalDrawable lazily
-            // inside vkQueueSubmit, and a swapchain lagging the resized layer wedges nextDrawable
-            // there — the blocked render thread can then no longer drain presented drawables,
-            // deadlocking. SpinUntilValidSize also parks the loop while the window is minimized
-            // (zero extent) until it is restored.
+            // Reconcile the swapchain to the live framebuffer before acquiring, so no frame is
+            // submitted against a swapchain lagging the resized layer: MoltenVK acquires the
+            // CAMetalDrawable lazily, when it encodes the frame's first use of the image, and a
+            // stale swapchain can wedge that nextDrawable. The device wait drains the frames
+            // already queued for encoding (MoltenVK's waitIdle empties its submission queue
+            // first) before the old swapchain goes. Those frames cannot be waiting on this
+            // thread: each image releases its previous drawable when it is acquired, and the
+            // swapchain holds more images than frames in flight, so a queued encode's drawable
+            // depends only on the window system.
             if (m_Window->ConsumeFramebufferResized())
             {
                 m_RenderExtentChanged = true;
@@ -932,7 +1016,7 @@ namespace Veng::Renderer
 
             if (m_RenderExtentChanged)
             {
-                m_Window->SpinUntilValidSize();
+                m_Window->WaitUntilPresentable();
                 WaitIdle();
                 UpdateRenderExtent();
             }
@@ -1103,6 +1187,8 @@ namespace Veng::Renderer
             VE_PROFILE_SCOPE("Render/Submit");
             SubmitFrame(frame);
         }
+        VE_PROFILE_COUNTER("Render/AsyncSubmit",
+                           m_SubmitMode.Mode == QueueSubmitMode::Asynchronous ? 1.0 : 0.0);
 
         {
             VE_PROFILE_SCOPE("Render/Present");
@@ -1424,7 +1510,7 @@ namespace Veng::Renderer
         {
             Log::Warn("Out of date swap chain image!");
 
-            m_Window->SpinUntilValidSize();
+            m_Window->WaitUntilPresentable();
             WaitIdle();
             UpdateRenderExtent();
 
@@ -1820,6 +1906,24 @@ namespace Veng::Renderer
         return m_Native->SynchronizationFrames[m_Native->CurrentFrameInFlight];
     }
 
+    u32 Context::Native::GetReleaseSlot() const
+    {
+        if (FrameRecording)
+        {
+            return CurrentFrameInFlight;
+        }
+        return (CurrentFrameInFlight + MaxFramesInFlight - 1) % MaxFramesInFlight;
+    }
+
+    bool Context::Native::IsSlotWritable(const u32 slot) const
+    {
+        if (FrameRecording && slot == CurrentFrameInFlight)
+        {
+            return true;
+        }
+        return SynchronizationFrames[slot].GetInFlightFence().IsSignaled();
+    }
+
     Context::Native::RetireBin& Context::Native::CurrentRetireBin()
     {
         VE_ASSERT(!Disposed,
@@ -1881,6 +1985,11 @@ namespace Veng::Renderer
     {
         const std::scoped_lock lock(RetireMutex);
         CurrentRetireBin().DescriptorSets.push_back(descriptorSet);
+    }
+    void Context::Native::Retire(vk::DescriptorSetLayout descriptorSetLayout)
+    {
+        const std::scoped_lock lock(RetireMutex);
+        CurrentRetireBin().DescriptorSetLayouts.push_back(descriptorSetLayout);
     }
 
     void Context::Native::Retire(function<void()> teardown)
@@ -1950,6 +2059,10 @@ namespace Veng::Renderer
         {
             Device.destroyPipelineLayout(pipelineLayout);
         }
+        for (auto descriptorSetLayout : bin.DescriptorSetLayouts)
+        {
+            Device.destroyDescriptorSetLayout(descriptorSetLayout);
+        }
         for (auto sampler : bin.Samplers)
         {
             Device.destroySampler(sampler);
@@ -1994,6 +2107,7 @@ namespace Veng::Renderer
         move(bin.Pipelines, PendingRetire.Pipelines);
         move(bin.PipelineLayouts, PendingRetire.PipelineLayouts);
         move(bin.DescriptorSets, PendingRetire.DescriptorSets);
+        move(bin.DescriptorSetLayouts, PendingRetire.DescriptorSetLayouts);
         move(bin.Teardowns, PendingRetire.Teardowns);
         FrameRecording = true;
     }
@@ -2143,7 +2257,7 @@ namespace Veng::Renderer
         {
             m_RenderExtentChanged = false;
 
-            m_Window->SpinUntilValidSize();
+            m_Window->WaitUntilPresentable();
 
             WaitIdle();
 
@@ -2162,8 +2276,35 @@ namespace Veng::Renderer
     {
         const auto commandBufferHandle = commandBuffer.GetNative().CommandBuffer;
 
-        const vk::SubmitInfo submitInfo = {.commandBufferCount = 1,
-                                           .pCommandBuffers = &commandBufferHandle};
+        // A one-shot recording can be the first graphics use of an async upload (its acquire
+        // transition registered a transfer wait), so it waits every wait the next frame owes as
+        // well. They stay owed: a timeline wait does not consume the value, and the next frame's
+        // acquires need their own dependency on the copy.
+        vector<vk::Semaphore> waitSemaphores;
+        vector<vk::PipelineStageFlags> waitStages;
+        vector<u64> waitValues;
+        {
+            const std::scoped_lock lock(m_Native->SubmitMutex);
+            for (const auto& [semaphore, value] : m_Native->PendingFrameTransferWaits)
+            {
+                waitSemaphores.push_back(semaphore);
+                waitStages.emplace_back(vk::PipelineStageFlagBits::eAllCommands);
+                waitValues.push_back(value);
+            }
+        }
+        const vk::TimelineSemaphoreSubmitInfo timelineInfo{
+            .waitSemaphoreValueCount = static_cast<u32>(waitValues.size()),
+            .pWaitSemaphoreValues = waitValues.data(),
+        };
+
+        const vk::SubmitInfo submitInfo = {
+            .pNext = waitSemaphores.empty() ? nullptr : &timelineInfo,
+            .waitSemaphoreCount = static_cast<u32>(waitSemaphores.size()),
+            .pWaitSemaphores = waitSemaphores.data(),
+            .pWaitDstStageMask = waitStages.data(),
+            .commandBufferCount = 1,
+            .pCommandBuffers = &commandBufferHandle,
+        };
 
         // Block on this submission's own fence, not the whole device: an immediate
         // submit must outlive only its work, not drain every queue (a device-wide

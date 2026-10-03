@@ -1807,12 +1807,17 @@ namespace Veng::Renderer
         halfResPlan.CandidateIdBuffer = m_CandidateIdBuffer;
         halfResPlan.Draws.clear();
 
-        // The DrawData / candidate / palette / indirect buffers are renderer-owned and
-        // framesInFlight-deep, so they ring by the frame-in-flight index; only the shared
-        // view-constants push (viewConstantsIndex) rings per viewport render.
+        // The DrawData / candidate / indirect buffers are renderer-owned and framesInFlight-deep,
+        // so they ring by the frame-in-flight index; only the shared view-constants push
+        // (viewConstantsIndex) rings per viewport render.
         const u32 frameIndex = m_Context.GetCurrentFrameInFlight();
         const u32 frameBase = frameIndex * MaxCullCandidates;
-        const u32 paletteRegionBase = frameIndex * MaxSkinningMatricesPerFrame;
+        // The palette rings by Execute rather than by frame slot, one region deeper than the
+        // frames in flight: this Execute's draws also read the previous Execute's region (the
+        // previous pose, for velocity), so a region is reused only once both frames that read
+        // it have been fenced.
+        const u32 paletteRegionBase = m_PaletteRegion * MaxSkinningMatricesPerFrame;
+        m_PaletteRegion = (m_PaletteRegion + 1) % (m_FramesInFlight + 1);
         auto* paletteData = static_cast<mat4*>(m_PaletteBuffer->GetMappedData());
         plan.Push = SurfacePush{.FrameBase = frameBase, .ViewConstantsIndex = viewConstantsIndex};
         translucentPlan.Push = plan.Push;
@@ -2117,6 +2122,16 @@ namespace Veng::Renderer
 
     void SceneRenderer::Execute(CommandBuffer& cmd, const SceneView& view)
     {
+        // Every per-frame ring this renderer owns is sliced by frame slot with one slice per
+        // frame, so a second Execute in a frame would overwrite what the first one's draws read.
+        if (m_Context.IsRecordingFrame())
+        {
+            VE_ASSERT(m_Context.GetFrameSerial() != m_LastExecuteSerial,
+                      "SceneRenderer::Execute ran twice in one frame; its per-frame rings hold one "
+                      "Execute per frame");
+            m_LastExecuteSerial = m_Context.GetFrameSerial();
+        }
+
         // The DebugDrawScenePass consumes this frame's accumulator below; clear it after so the
         // next frame starts empty (immediate-mode: every primitive is re-pushed each frame).
         struct DebugDrawClearGuard

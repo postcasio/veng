@@ -305,23 +305,7 @@ namespace Veng::Renderer
             m_Context, {.Name = "IBL Equirect Set", .Layout = m_EquirectSetLayout});
         m_EquirectSet->Write(0, m_RadianceStorageView);
 
-        m_IrradianceSet = DescriptorSet::Create(
-            m_Context, {.Name = "IBL Irradiance Set", .Layout = m_ConvolveSetLayout});
-        m_IrradianceSet->Write(0, m_RadianceCubeView);
-        m_IrradianceSet->Write(1, m_Sampler);
-        m_IrradianceSet->Write(2, m_IrradianceStorageView);
-
-        m_PrefilterSets.reserve(PrefilterMips);
-        for (u32 mip = 0; mip < PrefilterMips; ++mip)
-        {
-            Ref<DescriptorSet> set =
-                DescriptorSet::Create(m_Context, {.Name = fmt::format("IBL Prefilter Set {}", mip),
-                                                  .Layout = m_ConvolveSetLayout});
-            set->Write(0, m_RadianceCubeView);
-            set->Write(1, m_Sampler);
-            set->Write(2, m_PrefilterStorageViews[mip]);
-            m_PrefilterSets.push_back(std::move(set));
-        }
+        BindConvolveSource(m_RadianceCubeView);
 
         m_BrdfSet =
             DescriptorSet::Create(m_Context, {.Name = "IBL BRDF Set", .Layout = m_BrdfSetLayout});
@@ -454,17 +438,43 @@ namespace Veng::Renderer
         return ProjectCubeToIrradianceSh(faces, RadianceCubeSize);
     }
 
+    void EnvironmentIbl::BindConvolveSource(const Ref<ImageView>& radianceCube)
+    {
+        if (radianceCube == m_ConvolveSource)
+        {
+            return;
+        }
+        m_ConvolveSource = radianceCube;
+
+        // Built afresh rather than rewritten: a frame still pending may have bound the current
+        // sets for its own convolution, and a set is not updated while bound by pending work. The
+        // replaced sets retire with that frame.
+        m_IrradianceSet = DescriptorSet::Create(
+            m_Context, {.Name = "IBL Irradiance Set", .Layout = m_ConvolveSetLayout});
+        m_IrradianceSet->Write(0, radianceCube);
+        m_IrradianceSet->Write(1, m_Sampler);
+        m_IrradianceSet->Write(2, m_IrradianceStorageView);
+
+        m_PrefilterSets.clear();
+        m_PrefilterSets.reserve(PrefilterMips);
+        for (u32 mip = 0; mip < PrefilterMips; ++mip)
+        {
+            Ref<DescriptorSet> set =
+                DescriptorSet::Create(m_Context, {.Name = fmt::format("IBL Prefilter Set {}", mip),
+                                                  .Layout = m_ConvolveSetLayout});
+            set->Write(0, radianceCube);
+            set->Write(1, m_Sampler);
+            set->Write(2, m_PrefilterStorageViews[mip]);
+            m_PrefilterSets.push_back(std::move(set));
+        }
+    }
+
     void EnvironmentIbl::GenerateFromCube(CommandBuffer& cmd, const Ref<ImageView>& radianceCube,
                                           const u32 sourceFaceSize)
     {
-        // Point the convolution sets at the supplied radiance cube. The generation sets' sampled
-        // binding (0) is repointed each call — a supplied cube may be the owned equirect cube or a
-        // foreign bake target; either way the convolution reads it in place, never a copy.
-        m_IrradianceSet->Write(0, radianceCube);
-        for (const Ref<DescriptorSet>& set : m_PrefilterSets)
-        {
-            set->Write(0, radianceCube);
-        }
+        // A supplied cube may be the owned equirect cube or a foreign bake target; either way the
+        // convolution reads it in place, never a copy.
+        BindConvolveSource(radianceCube);
 
         // Radiance cube -> irradiance cube (diffuse convolution).
         cmd.PrepareForAccess(m_IrradianceStorageView, AccessKind::StorageWrite);

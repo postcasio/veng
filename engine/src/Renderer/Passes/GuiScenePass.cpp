@@ -154,9 +154,9 @@ namespace Veng::Renderer
         // in one frame (the composite overlay path drives one per material overlay) each occupy a
         // distinct sub-range, so a later SetDrawList does not overwrite geometry an earlier draw
         // still reads at execute time — the memcpy lands at record time, the draws run later. The
-        // bump resets when the frame-in-flight index advances (once per frame), so a single draw
-        // list per frame starts at zero and reaches the exact base a frame-keyed region gave before.
-        u32 GeometryFrame = ~0u;
+        // bump resets once per frame (keyed on the context's frame serial), so a single draw list
+        // per frame starts at its region's base.
+        u64 GeometrySerial = ~0ull;
         u64 VertexSubOffset = 0;
         u64 IndexSubOffset = 0;
         u64 GradientSubOffset = 0;
@@ -636,12 +636,14 @@ namespace Veng::Renderer
     void GuiScenePass::SetDrawList(const Gui::DrawList& drawList)
     {
         const u32 frame = m_Impl->Context.GetCurrentFrameInFlight();
+        const u64 serial = m_Impl->Context.GetFrameSerial();
 
-        // A new frame-in-flight resets the intra-frame bump: the ring cycled back only after that
-        // region's prior fence was waited, so its geometry is free to overwrite from zero again.
-        if (frame != m_Impl->GeometryFrame)
+        // A new frame resets the intra-frame bump: the ring cycled back only after that region's
+        // prior fence was waited, so its geometry is free to overwrite from zero again. Keyed on
+        // the frame, not the slot, so a pass driven only every other frame still resets.
+        if (serial != m_Impl->GeometrySerial)
         {
-            m_Impl->GeometryFrame = frame;
+            m_Impl->GeometrySerial = serial;
             m_Impl->VertexSubOffset = 0;
             m_Impl->IndexSubOffset = 0;
             m_Impl->GradientSubOffset = 0;

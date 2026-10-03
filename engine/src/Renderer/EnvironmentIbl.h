@@ -157,6 +157,13 @@ namespace Veng::Renderer
         /// @brief Records the equirectangular panorama into the owned radiance cube.
         void RecordEquirectToCube(CommandBuffer& cmd, const Veng::EnvironmentMap& environment);
 
+        /// @brief Points the irradiance and prefilter sets at @p radianceCube.
+        ///
+        /// A no-op for the cube already bound; otherwise builds fresh sets and lets the replaced
+        /// ones retire, so no set a pending frame bound is rewritten.
+        /// @param radianceCube A cube view of the convolution source.
+        void BindConvolveSource(const Ref<ImageView>& radianceCube);
+
         Context& m_Context;
 
         Ref<Image> m_RadianceImage;
@@ -191,6 +198,8 @@ namespace Veng::Renderer
         Ref<PipelineLayout> m_PrefilterLayout;
         Ref<ComputePipeline> m_PrefilterPipeline;
         std::vector<Ref<DescriptorSet>> m_PrefilterSets; // one per mip
+        /// @brief The radiance cube the irradiance and prefilter sets read.
+        Ref<ImageView> m_ConvolveSource;
 
         Ref<DescriptorSetLayout> m_BrdfSetLayout;
         Ref<PipelineLayout> m_BrdfLayout;

@@ -153,9 +153,16 @@ namespace Veng::Renderer
         m_Cells = std::move(build.Cells);
         m_Bounds = build.Bounds;
 
-        // The buffer must hold the cell-sorted order the cells index into.
+        // The buffer must hold the cell-sorted order the cells index into. A fresh buffer, not an
+        // in-place rewrite: a submitted frame may still be reading the current one, which retires
+        // once that frame's fence has been waited.
         if (!build.Points.empty())
         {
+            m_PointBuffer = Buffer::Create(*m_Context, {
+                                                           .Name = m_PointBuffer->GetName(),
+                                                           .Size = m_PointBuffer->GetSize(),
+                                                           .Usage = BufferUsage::Storage,
+                                                       });
             m_PointBuffer->UploadSync(AsByteSpan(build.Points));
         }
     }

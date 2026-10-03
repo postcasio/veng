@@ -40,4 +40,9 @@ namespace Veng::Renderer
     {
         VK_ASSERT(GetVkDevice(m_Context).resetFences(m_Native->Fence), "failed to reset fence!");
     }
+
+    bool Fence::IsSignaled() const
+    {
+        return GetVkDevice(m_Context).getFenceStatus(m_Native->Fence) == vk::Result::eSuccess;
+    }
 }

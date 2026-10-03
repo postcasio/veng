@@ -1149,6 +1149,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/managed_viewports.cpp
             tests/unit/managed_rebind.cpp
             tests/unit/dynamic_resolution.cpp
+            tests/unit/queue_submit_mode.cpp
             tests/unit/dof_tile.cpp
             tests/unit/gui_draw_list.cpp
             tests/unit/gui_overlay_projection.cpp
@@ -1758,6 +1759,7 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/storage_image_range.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/area_shadow_size.comp.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/ltc_sphere.comp.slang
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/async_submit.frag.slang
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/invert.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/fullscreen.vert.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/sample.frag.shader.json
@@ -1773,7 +1775,8 @@ if (VENG_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/material_param.frag.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/storage_image_range.comp.shader.json
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/area_shadow_size.comp.shader.json
-                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/ltc_sphere.comp.shader.json)
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/ltc_sphere.comp.shader.json
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/shaders/async_submit.frag.shader.json)
 
     add_executable(veng_test_compute_dispatch tests/compute_dispatch.cpp)
     target_link_libraries(veng_test_compute_dispatch PRIVATE veng::veng veng_test_support)
@@ -1815,6 +1818,7 @@ if (VENG_BUILD_TESTS)
             # a frame wrote depends on: one announcement per slot per cycle, in order, stopping when
             # the handle is released — plus the headless no-op of a swap-chain invalidation.
             tests/gpu/frame_retired.cpp
+            tests/gpu/async_submit.cpp
             tests/gpu/async_upload.cpp
             tests/gpu/async_mesh_build.cpp
             tests/gpu/dynamic_mesh.cpp

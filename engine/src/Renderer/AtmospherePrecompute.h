@@ -124,11 +124,6 @@ namespace Veng::Renderer
         Ref<DescriptorSetLayout> m_ConsumerSetLayout;
         Ref<DescriptorSet> m_ConsumerSet;
 
-        // Which volume holds the running total after the last Generate (A after an even number of
-        // multiple-scattering passes, since single scattering seeds A). The consumer set rebinds
-        // to it each Generate.
-        bool m_TotalInA = true;
-
         bool m_Initialized = false;
     };
 }

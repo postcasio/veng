@@ -243,6 +243,7 @@ namespace Veng
                 .HeadlessExtent = m_Info.HeadlessExtent,
                 .RequestedDisplayMode = m_Info.RequestedDisplayMode,
                 .PipelineCachePath = m_Info.PipelineCachePath,
+                .SubmitMode = m_Info.SubmitMode,
             },
             m_Window.get());
 

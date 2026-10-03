@@ -80,6 +80,11 @@
       "id": "0x0000000000001F50",
       "type": "Shader",
       "source": "ltc_sphere.comp.shader.json"
+    },
+    {
+      "id": "0x403C93E063DBAA52",
+      "type": "Shader",
+      "source": "async_submit.frag.shader.json"
     }
   ]
 }

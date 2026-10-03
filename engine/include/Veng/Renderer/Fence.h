@@ -35,6 +35,9 @@ namespace Veng::Renderer
         /// @brief Resets the fence to the unsignaled state.
         void Reset() const;
 
+        /// @brief Returns whether the fence is signaled, without waiting.
+        [[nodiscard]] bool IsSignaled() const;
+
         /// @brief Opaque backend handle; defined in the matching .cpp.
         struct Native;
         /// @brief Returns the backend handle. Mutable ref from a const method by design — see Native.h.

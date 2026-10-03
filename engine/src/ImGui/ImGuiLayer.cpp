@@ -573,6 +573,9 @@ namespace Veng
             // their own command buffer, so they are caught up here with nothing recorded.
             if (drawData->Textures != nullptr)
             {
+                // The backend submits and idles the shared graphics queue for each upload, so it
+                // takes the lock every other queue user does.
+                const std::scoped_lock lock(m_Context.GetNative().SubmitMutex);
                 for (ImTextureData* texture : *drawData->Textures)
                 {
                     if (texture->Status != ImTextureStatus_OK)
@@ -596,7 +599,12 @@ namespace Veng
             }},
         });
 
-        ImGui_ImplVulkan_RenderDrawData(drawData, commandBuffer.GetNative().CommandBuffer);
+        {
+            // RenderDrawData uploads pending textures first, submitting and idling the shared
+            // graphics queue, so it takes the lock every other queue user does.
+            const std::scoped_lock lock(m_Context.GetNative().SubmitMutex);
+            ImGui_ImplVulkan_RenderDrawData(drawData, commandBuffer.GetNative().CommandBuffer);
+        }
 
         commandBuffer.EndRendering();
 

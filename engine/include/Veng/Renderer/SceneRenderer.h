@@ -159,6 +159,8 @@ namespace Veng::Renderer
         /// Records each pass unit's draws. Never reallocates or recompiles.
         /// @param cmd   Command buffer to record into.
         /// @param view  Per-frame scene input; the renderer overwrites its output fields.
+        /// @pre At most one Execute per frame between BeginFrame and EndFrame (asserted): the
+        ///      renderer's host-written rings hold one slice per frame in flight.
         void Execute(CommandBuffer& cmd, const SceneView& view);
 
         /// @brief Forgets the scene the last Execute gathered, for a renderer about to change hands.
@@ -311,6 +313,9 @@ namespace Veng::Renderer
         /// Blocks on a device read; exposed for tests and diagnostics. Empty when the cull did not
         /// run (Settings.LightTileCulling off, or a topology whose lighting pass shades no direct
         /// light).
+        /// @pre The command buffer that Execute recorded into has been submitted (after EndFrame,
+        ///      or once ImmediateCommands returns); the read is a submit of its own, ordered after
+        ///      only what was submitted before it.
         /// @return The masks over the tile grid of the last Execute's rendered extent.
         [[nodiscard]] LightTileMasks ReadbackLightTileMasks() const;
 
@@ -1358,6 +1363,18 @@ namespace Veng::Renderer
         /// Incremented every Execute (independent of the TAA toggle so toggling on does not
         /// snap the sequence). Folds into TaaJitterSampleCount.
         u64 m_FrameIndex = 0;
+
+        /// @brief The skinning-palette region the next PrepareDraws fills.
+        ///
+        /// Advances once per PrepareDraws over m_FramesInFlight + 1 regions, since an Execute's
+        /// draws read the previous Execute's region too.
+        u32 m_PaletteRegion = 0;
+
+        /// @brief The context frame serial of the last Execute recorded inside a frame.
+        ///
+        /// The renderer's per-frame rings hold one Execute per frame, so a second Execute in one
+        /// frame is asserted against.
+        u64 m_LastExecuteSerial = 0;
 
         /// @brief Previous frame's world matrix per entity.
         ///

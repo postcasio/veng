@@ -34,6 +34,10 @@ namespace Veng::Renderer
         // The multiple-scattering iteration count beyond single scattering. An even count
         // leaves the running total back in volume A (single scattering seeds A).
         constexpr u32 MultipleScatteringOrders = 4;
+        // The consumer and irradiance sets name volume A once, at construction, because a set
+        // bound by a pending frame may not be rewritten; an odd count would need them to move.
+        static_assert(MultipleScatteringOrders % 2 == 0,
+                      "the scattering total must end in volume A, which the sets read");
 
         constexpr u32 Groups2D(u32 extent)
         {
@@ -293,8 +297,8 @@ namespace Veng::Renderer
         m_MultiSetBtoA->Write(2, m_Sampler);
         m_MultiSetBtoA->Write(3, m_ScatteringStorageViewA);
 
-        // Irradiance: scattering total (sampled) + sampler + 2D destination. The source view is
-        // rebound per Generate to whichever volume holds the total; seed it to A.
+        // Irradiance: scattering total (sampled, volume A — where the total always ends) + sampler +
+        // 2D destination.
         m_IrradianceSetLayout = DescriptorSetLayout::Create(
             m_Context, {
                            .Name = "Atmosphere Irradiance Set Layout",
@@ -335,7 +339,6 @@ namespace Veng::Renderer
         m_IrradianceSet->Write(2, m_IrradianceStorageView);
 
         // The set the sky pass binds (set 1): scattering total, transmittance, linear sampler.
-        // The scattering slot is rebound per Generate to whichever volume holds the total.
         m_ConsumerSetLayout = DescriptorSetLayout::Create(
             m_Context, {
                            .Name = "Atmosphere Consumer Set Layout",
@@ -433,12 +436,6 @@ namespace Veng::Renderer
             cmd.PrepareForAccess(destSampled, AccessKind::SampleAny);
             totalInA = !totalInA;
         }
-        m_TotalInA = totalInA;
-
-        // Rebind the consumer + irradiance scattering slots to whichever volume holds the total.
-        const Ref<ImageView>& totalView = m_TotalInA ? m_ScatteringViewA : m_ScatteringViewB;
-        m_ConsumerSet->Write(0, totalView);
-        m_IrradianceSet->Write(0, totalView);
 
         // Ground irradiance from the scattering total.
         cmd.PrepareForAccess(m_IrradianceStorageView, AccessKind::StorageWrite);

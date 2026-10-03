@@ -9,6 +9,7 @@
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/QueueSubmitMode.h>
 #include <Veng/Renderer/ViewportRegistry.h>
 
 namespace Veng
@@ -81,6 +82,15 @@ namespace Veng::Renderer
         /// @brief When set, the pipeline cache is seeded from this file at init and written back
         /// at shutdown. nullopt keeps it in-memory only.
         optional<path> PipelineCachePath;
+
+        /// @brief Whether queue submits return before the driver has encoded the work.
+        ///
+        /// Asynchronous by default: the render thread starts the next frame while the driver
+        /// encodes the last. Synchronous is the debugging lever, for telling a race with the
+        /// driver's encode from any other fault. Applied where the driver can be told at instance
+        /// creation (MoltenVK); a user's MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS environment variable
+        /// overrides it. Context::GetQueueSubmitMode() reports what took effect.
+        QueueSubmitMode SubmitMode = QueueSubmitMode::Asynchronous;
     };
 
     /// @brief The Vulkan device context: owns the instance, device, queues, swap chain,
@@ -308,6 +318,17 @@ namespace Veng::Renderer
         /// answer, which is what IsFormatStorageImageSupported() gives.
         [[nodiscard]] bool IsExtendedStorageImageFormatsSupported() const;
 
+        /// @brief Returns the queue-submit mode the driver runs in, and what decided it.
+        ///
+        /// Resolved once at Initialize from ContextInfo::SubmitMode, the user's environment and
+        /// what the driver accepts (see ResolveQueueSubmitMode). Synchronous from a driver default
+        /// on any driver that offers no choice. Logged at Initialize and sampled every frame as the
+        /// `Render/AsyncSubmit` counter (1 asynchronous, 0 synchronous).
+        [[nodiscard]] const ResolvedQueueSubmitMode& GetQueueSubmitMode() const
+        {
+            return m_SubmitMode;
+        }
+
         /// @brief Returns the borrowed window.
         [[nodiscard]] Window& GetWindow() const { return *m_Window; }
 
@@ -316,6 +337,17 @@ namespace Veng::Renderer
 
         /// @brief Returns the synchronization frame that is currently being recorded.
         SynchronizationFrame& GetCurrentFrame();
+
+        /// @brief Returns the serial of the frame being recorded, or of the last frame begun.
+        ///
+        /// Every BeginFrame increments it, so the first frame is 1 and zero means none has begun.
+        /// Per-frame state that resets once per frame, rather than once per frame-in-flight slot,
+        /// keys on it: two frames share a slot, never a serial.
+        [[nodiscard]] u64 GetFrameSerial() const { return m_FrameSerial; }
+
+        /// @brief Whether a frame is recording: between BeginFrame and EndFrame, outside an
+        /// ImmediateCommands callback.
+        [[nodiscard]] bool IsRecordingFrame() const;
 
         /// @brief Returns the current frame's command buffer — the common case for recording.
         [[nodiscard]] CommandBuffer& GetCurrentCommandBuffer();
@@ -676,6 +708,12 @@ namespace Veng::Renderer
         ///        swapchain before acquire/submit (PresentFrame also recreates reactively on a
         ///        suboptimal/out-of-date result).
         bool m_RenderExtentChanged = false;
+
+        /// @brief The queue-submit mode resolved at Initialize.
+        ResolvedQueueSubmitMode m_SubmitMode;
+
+        /// @brief Serial of the frame being recorded or last begun; see GetFrameSerial.
+        u64 m_FrameSerial = 0;
 
         /// @brief True when the graphics queue supports timestamp queries (set in Initialize).
         bool m_GpuTimingSupported = false;

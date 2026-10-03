@@ -241,10 +241,13 @@ extern "C"
 /// Application's level-look resolve core, and drops LevelOverlay's copies of its look and knobs. A
 /// module reaches the set through the Application it subclasses and holds LevelOverlay handles by
 /// value, so a stale module lays both out at the old layout.
+/// Version 56 grows ApplicationInfo and ContextInfo with the queue-submit mode, and Context with
+/// the mode it resolved. A module builds the ApplicationInfo its Application is constructed from,
+/// so a stale module hands the host a short one.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 55u
+#define VENG_MODULE_ABI_VERSION 56u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

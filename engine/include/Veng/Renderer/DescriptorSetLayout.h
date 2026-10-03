@@ -57,7 +57,7 @@ namespace Veng::Renderer
             return Ref<DescriptorSetLayout>(new DescriptorSetLayout(context, info));
         }
 
-        /// @brief Destroys the Vulkan descriptor set layout.
+        /// @brief Retires the Vulkan descriptor set layout through the context's frame bins.
         ~DescriptorSetLayout();
 
         DescriptorSetLayout(const DescriptorSetLayout&) = delete;

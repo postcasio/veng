@@ -1337,6 +1337,58 @@ record on the single graphics queue. The TAA resolve needs neither a ring nor a 
 history is a renderer-owned persisted image written and read inside the renderer's own
 single-queue graph each frame, ordered by the graph's derived barriers.
 
+### Queue submission is asynchronous
+
+**`vkQueueSubmit` and `vkQueuePresentKHR` return before the driver has encoded the frame.**
+`ContextInfo::SubmitMode` (forwarded from `ApplicationInfo::SubmitMode`) defaults to
+`QueueSubmitMode::Asynchronous`, which the context passes to MoltenVK at instance creation through
+`VK_EXT_layer_settings` (`MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS = false`), so MoltenVK encodes each
+submitted command buffer into Metal on its own serial queue while the render thread records the next
+frame. A user's `MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS` environment variable wins over the request (the
+context then passes nothing, since a layer setting would override it), and a driver offering no choice
+runs its synchronous default; `ResolveQueueSubmitMode` (`Veng/Renderer/QueueSubmitMode.h`) is the
+device-free precedence, `Context::GetQueueSubmitMode()` reports what took effect, the log names it at
+init, and the `Render/AsyncSubmit` counter samples it every frame.
+
+What the mode changes is only *when the driver reads what a command buffer references* — execution
+order, fences and the device wait are unaffected (MoltenVK's `vkQueueWaitIdle`/`vkDeviceWaitIdle`
+drain its encode queue before they wait). So the rule every path keeps, and the one asynchronous
+encoding makes unforgiving, is the Vulkan one: **nothing a submitted frame references changes until
+that frame's fence has been waited.** How each kind of state keeps it:
+
+- **Destruction** goes through the retire bins, keyed to frame fences — never to a submit returning.
+  Descriptor set layouts retire too.
+- **Slot-keyed deferrals** — a bindless slot's `Release`, a material range — file under
+  `Context::Native::GetReleaseSlot()`: the recording slot inside a frame, the last *submitted* slot
+  outside one. Between `EndFrame` and the next `BeginFrame` (asset finalizes, the world tick,
+  `OnUpdate`) `GetCurrentFrameInFlight()` already names the slot about to be waited, whose frame is
+  the *older* one; filing a release there reclaimed the slot while the newest frame could still read it.
+- **Host-written per-frame rings** write only the recording slot's slice, from inside the frame. A
+  material update outside a frame skips the direct write while the current slot's frame may still run
+  (`IsSlotWritable`) and lands at that slot's acquire instead. A `SceneRenderer` executes at most once
+  per frame (asserted against `Context::GetFrameSerial()`), because its rings hold one slice per frame
+  in flight. The skinning palette is one region deeper, ringed per Execute, since a draw also reads the
+  previous Execute's region for velocity. A single-copy buffer a frame reads is replaced, not
+  rewritten (`PointField::Write`).
+- **Non-bindless descriptor sets** are written at creation, ringed per frame slot, or rebuilt fresh
+  with the old set retiring — never rewritten while a submitted frame may have bound them
+  (`EnvironmentIbl::BindConvolveSource`).
+- **Readbacks** are read only after the staging frame's fence: `AsyncReadback`, the picking readback
+  (more than frames-in-flight Executes after staging), and the timestamp queries (read at the slot's
+  next `BeginFrame`).
+- **Every queue user takes `SubmitMutex`**, including the ImGui backend's own texture uploads.
+- **The drawable.** MoltenVK acquires the `CAMetalDrawable` when it encodes the frame's first use of
+  the swap chain image, which is now on its own thread. The swap chain holds more images than frames in
+  flight (warned otherwise), so an image acquired again has finished its last encode and no queued
+  encode waits on this thread. A resize is reconciled at `BeginFrame` before acquire, behind a device
+  wait that drains the queued encodes, and a minimized window parks `BeginFrame` in
+  `Window::WaitUntilPresentable` — pumping events, before any fence wait — so a frame queued before
+  the minimize is never waited on while the window cannot be restored.
+
+`tests/gpu/async_submit.cpp` churns these paths windowed (bindless slots and textures created and
+released every frame, inside and between frames, a host-written ring, an output and window resize,
+and a minimize and restore) and requires every frame to read back identically in both modes.
+
 ### The deferred opaque material g-buffer contract
 
 An opaque (Surface-domain) material's **fragment shader outputs** are **g-buffer channels**, not

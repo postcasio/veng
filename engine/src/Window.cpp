@@ -421,20 +421,38 @@ namespace Veng
         }
     }
 
-    void Window::SpinUntilValidSize()
+    void Window::WaitUntilPresentable()
     {
-        while (m_Extent.x == 0 || m_Extent.y == 0)
+        // Polled on a timeout rather than waited indefinitely: a restore applied from outside the
+        // event stream (another queue's work on the main run loop) posts no event to wake on.
+        constexpr f64 ParkPollSeconds = 0.05;
+        while (true)
         {
-            int width, height;
+            int width = 0;
+            int height = 0;
             glfwGetFramebufferSize(m_Handle, &width, &height);
             m_Extent = {static_cast<u32>(width), static_cast<u32>(height)};
-            glfwWaitEvents();
+            if (m_Extent.x != 0 && m_Extent.y != 0 && !IsMinimized())
+            {
+                return;
+            }
+            glfwWaitEventsTimeout(ParkPollSeconds);
         }
     }
 
     bool Window::IsMinimized() const
     {
         return glfwGetWindowAttrib(m_Handle, GLFW_ICONIFIED) == GLFW_TRUE;
+    }
+
+    void Window::Minimize()
+    {
+        glfwIconifyWindow(m_Handle);
+    }
+
+    void Window::Restore()
+    {
+        glfwRestoreWindow(m_Handle);
     }
 
     bool Window::ConsumeFramebufferResized()

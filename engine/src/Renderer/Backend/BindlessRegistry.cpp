@@ -16,6 +16,7 @@
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Native.h>
 #include <Veng/Renderer/Sampler.h>
+#include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/Backend/TypeMapping.h>
 
 #include "MaterialArena.h"
@@ -572,10 +573,7 @@ namespace Veng::Renderer
         const auto bytes = static_cast<u32>(block.size());
         MarkMaterialDirty(entryIndex, 0, bytes);
 
-        // Also write the current frame's region immediately so a mid-frame update
-        // is visible to this frame's draws. The current region is safe to write —
-        // it is not yet submitted. This does not consume a dirty count.
-        WriteMaterialRegion(entryIndex, m_Context.GetCurrentFrameInFlight(), 0, bytes);
+        WriteCurrentMaterialRegion(entryIndex, 0, bytes);
     }
 
     void BindlessRegistry::UpdateMaterial(MaterialHandle handle, u32 offset,
@@ -595,7 +593,7 @@ namespace Veng::Renderer
 
         std::memcpy(entry.Block.data() + offset, bytes.data(), size);
         MarkMaterialDirty(entryIndex, offset, size);
-        WriteMaterialRegion(entryIndex, m_Context.GetCurrentFrameInFlight(), offset, size);
+        WriteCurrentMaterialRegion(entryIndex, offset, size);
     }
 
     u32 BindlessRegistry::MaterialEntryIndex(u32 offset)
@@ -642,6 +640,20 @@ namespace Veng::Renderer
         }
     }
 
+    void BindlessRegistry::WriteCurrentMaterialRegion(const u32 entryIndex, const u32 offset,
+                                                      const u32 bytes) const
+    {
+        // Written now so the recording frame's draws (or a one-shot recording's) see the update.
+        // Outside a frame the current slot's last frame may still be executing and reading this
+        // region, so the write is left to the flush at that slot's next acquire, after its fence.
+        // Neither consumes a dirty count.
+        const u32 slot = m_Context.GetCurrentFrameInFlight();
+        if (m_Context.GetNative().IsSlotWritable(slot))
+        {
+            WriteMaterialRegion(entryIndex, slot, offset, bytes);
+        }
+    }
+
     void BindlessRegistry::WriteMaterialRegion(u32 entryIndex, u32 frameInFlight, u32 offset,
                                                u32 bytes) const
     {
@@ -664,7 +676,7 @@ namespace Veng::Renderer
         {
             return;
         }
-        m_Textures.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
+        m_Textures.ReleaseDeferred(handle.Index, m_Context.GetNative().GetReleaseSlot());
     }
 
     void BindlessRegistry::Release(VolumeHandle handle)
@@ -673,7 +685,7 @@ namespace Veng::Renderer
         {
             return;
         }
-        m_Volumes.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
+        m_Volumes.ReleaseDeferred(handle.Index, m_Context.GetNative().GetReleaseSlot());
     }
 
     void BindlessRegistry::Release(CubeHandle handle)
@@ -682,7 +694,7 @@ namespace Veng::Renderer
         {
             return;
         }
-        m_Cubes.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
+        m_Cubes.ReleaseDeferred(handle.Index, m_Context.GetNative().GetReleaseSlot());
     }
 
     void BindlessRegistry::Release(SamplerHandle handle)
@@ -703,7 +715,7 @@ namespace Veng::Renderer
                       handle.Index, entry.Info.Name);
         }
 
-        m_Samplers.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
+        m_Samplers.ReleaseDeferred(handle.Index, m_Context.GetNative().GetReleaseSlot());
     }
 
     void BindlessRegistry::Release(StorageImageHandle handle)
@@ -712,7 +724,7 @@ namespace Veng::Renderer
         {
             return;
         }
-        m_StorageImages.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
+        m_StorageImages.ReleaseDeferred(handle.Index, m_Context.GetNative().GetReleaseSlot());
     }
 
     void BindlessRegistry::Release(StorageBufferHandle handle)
@@ -721,7 +733,7 @@ namespace Veng::Renderer
         {
             return;
         }
-        m_StorageBuffers.ReleaseDeferred(handle.Index, m_Context.GetCurrentFrameInFlight());
+        m_StorageBuffers.ReleaseDeferred(handle.Index, m_Context.GetNative().GetReleaseSlot());
     }
 
     void BindlessRegistry::Release(MaterialHandle handle)
@@ -736,7 +748,7 @@ namespace Veng::Renderer
 
         MaterialEntry& entry = m_MaterialEntries[entryIndex];
         m_MaterialArena->ReleaseDeferred(handle.Offset, entry.Capacity,
-                                         m_Context.GetCurrentFrameInFlight());
+                                         m_Context.GetNative().GetReleaseSlot());
 
         // Retire the entry with the range: an entry still owing flushes would write its stale
         // bytes into whatever material the range is reallocated to.

@@ -252,10 +252,11 @@ namespace Veng::Renderer
         {
             return std::nullopt;
         }
-        // The staged copy is safe to read once its frame's GPU work has retired — at least
-        // GetMaxFramesInFlight() Executes after it was recorded (the same deferral the retire
-        // path uses). Until then the readback is still pending.
-        if (frameIndex - m_StagedFrame < m_Context.GetMaxFramesInFlight())
+        // The staged copy is safe to read once its frame's fence has been waited, which the frame
+        // GetMaxFramesInFlight() frames later does at its BeginFrame — so from the Execute after
+        // that frame's, more than GetMaxFramesInFlight() Executes after staging (one per frame).
+        // Until then the readback is still pending, and may not even have been encoded.
+        if (frameIndex - m_StagedFrame <= m_Context.GetMaxFramesInFlight())
         {
             return std::nullopt;
         }

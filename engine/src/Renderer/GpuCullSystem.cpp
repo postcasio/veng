@@ -640,7 +640,9 @@ namespace Veng::Renderer
         }
 
         // Download the full indirect buffer and pull each candidate command's instanceCount
-        // from this frame's region; 1 = drawn, 0 = occluded.
+        // from this frame's region; 1 = drawn, 0 = occluded. The buffer is host-visible, so its
+        // download is a plain read: the device wait is what makes the cull's writes visible.
+        m_Context.WaitIdle();
         const vector<u8> bytes = m_IndirectBuffer->Download();
         const auto* commands = reinterpret_cast<const DrawIndexedIndirectCommand*>(bytes.data());
         const u32 base = m_GpuReadbackRegion * MaxCullCandidates;

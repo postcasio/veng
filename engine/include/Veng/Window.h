@@ -90,11 +90,26 @@ namespace Veng
         /// @brief Creates the Vulkan surface for this window on the given context.
         void CreateSurface(const Renderer::Context& context);
 
-        /// @brief Blocks until the window has a non-zero extent (resumes after un-minimize).
-        void SpinUntilValidSize();
+        /// @brief Blocks, pumping window events, until the window can present a frame.
+        ///
+        /// Presentable means a non-zero framebuffer and not minimized. A minimized window keeps
+        /// its size on some platforms (macOS), so the extent alone does not say whether a drawable
+        /// will be vended. Events are pumped while parked, so a restore is seen and the window
+        /// system can keep completing presentation of frames already submitted.
+        void WaitUntilPresentable();
 
         /// @brief Returns true if the window is currently minimized.
         [[nodiscard]] bool IsMinimized() const;
+
+        /// @brief Minimizes the window.
+        ///
+        /// The window system may apply it asynchronously; IsMinimized() reports it once applied.
+        void Minimize();
+
+        /// @brief Restores a minimized window.
+        ///
+        /// The window system may apply it asynchronously; IsMinimized() reports it once applied.
+        void Restore();
 
         /// @brief Returns whether the framebuffer was resized since the last call, then clears the flag.
         ///

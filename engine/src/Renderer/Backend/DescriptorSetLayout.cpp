@@ -114,7 +114,8 @@ namespace Veng::Renderer
 
     DescriptorSetLayout::~DescriptorSetLayout()
     {
-        GetVkDevice(m_Context).destroyDescriptorSetLayout(m_Native->Layout);
+        // Retired like the sets allocated from it, so it outlives the frames still using them.
+        m_Context.GetNative().Retire(m_Native->Layout);
     }
 
     DescriptorType DescriptorSetLayout::GetBindingType(u32 binding) const

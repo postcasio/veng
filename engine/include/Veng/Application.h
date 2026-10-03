@@ -548,6 +548,13 @@ namespace Veng
         /// When set, seeds the pipeline cache from this file at startup (if it exists)
         /// and writes it back at shutdown. veng does not choose the path.
         optional<path> PipelineCachePath = std::nullopt;
+        /// @brief Whether queue submits return before the driver has encoded the frame.
+        ///
+        /// Asynchronous by default, so the main thread starts the next frame while the driver
+        /// encodes the last; Synchronous forces the encode back inside the submit for debugging.
+        /// A user's MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS environment variable wins over this.
+        /// Forwarded to ContextInfo::SubmitMode; Context::GetQueueSubmitMode() reports the result.
+        Renderer::QueueSubmitMode SubmitMode = Renderer::QueueSubmitMode::Asynchronous;
         /// @brief Opt-in engine-owned managed primary viewport; nullopt leaves the app to own its views.
         ///
         /// When set, Application constructs one Presented viewport covering the window (default full

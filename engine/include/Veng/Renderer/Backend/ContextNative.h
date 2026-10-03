@@ -254,6 +254,8 @@ namespace Veng::Renderer
             vector<vk::ShaderModule> ShaderModules;
             vector<vk::Pipeline> Pipelines;
             vector<vk::PipelineLayout> PipelineLayouts;
+            /// @brief Descriptor set layouts, destroyed after the sets and pipeline layouts above.
+            vector<vk::DescriptorSetLayout> DescriptorSetLayouts;
             /// @brief Descriptor sets freed back to the descriptor pool.
             vector<vk::DescriptorSet> DescriptorSets;
             /// @brief Teardown callbacks run after the bin's handles are destroyed.
@@ -280,6 +282,22 @@ namespace Veng::Renderer
         CommandBuffer* ActiveImmediateCommands = nullptr;
         bool Disposed = false;
 
+        /// @brief The frame slot whose fence covers every command recorded so far.
+        ///
+        /// The recording slot while a frame records. Outside one — between EndFrame and the next
+        /// BeginFrame, where CurrentFrameInFlight already names the slot about to be waited — the
+        /// slot of the frame submitted last, since that frame may reference whatever is released
+        /// now. A slot-keyed deferral (a bindless slot, a material range) files under this slot so
+        /// it is reclaimed only once that fence has been waited.
+        [[nodiscard]] u32 GetReleaseSlot() const;
+
+        /// @brief Whether a host write into @p slot's per-frame region cannot race the GPU.
+        ///
+        /// True while the slot is the recording frame's (its previous use was fenced at
+        /// BeginFrame), and outside a frame when the slot's fence has signaled. False outside a
+        /// frame while the slot's last frame may still be executing.
+        [[nodiscard]] bool IsSlotWritable(u32 slot) const;
+
         RetireBin& CurrentRetireBin();
         void DrainRetireBin(RetireBin& bin);
         void DrainAllRetireBins();
@@ -299,6 +317,7 @@ namespace Veng::Renderer
         void Retire(vk::Pipeline pipeline);
         void Retire(vk::PipelineLayout pipelineLayout);
         void Retire(vk::DescriptorSet descriptorSet);
+        void Retire(vk::DescriptorSetLayout descriptorSetLayout);
 
         /// @brief Defers a teardown callback into the current frame's retire bin.
         ///

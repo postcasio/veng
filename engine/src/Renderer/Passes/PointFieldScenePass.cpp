@@ -865,8 +865,9 @@ namespace Veng::Renderer
                                                .FirstInstance = 0};
             *cursor = 0;
 
-            // Re-point the compute set's points binding (binding 0) at the resident buffer, only when
-            // it changed — the run/record/args/cursor bindings are region-fixed at allocation.
+            // Re-point this frame's compute set's points binding (binding 0) at the resident buffer;
+            // the run/record/args/cursor bindings are region-fixed at allocation. The set is this
+            // slot's, whose fence has been waited, so no pending command buffer references it.
             state.ComputeSets[region]->Write(0, field->GetPointBuffer(), 0,
                                              field->GetPointBuffer()->GetSize());
 

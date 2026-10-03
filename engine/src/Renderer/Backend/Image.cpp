@@ -165,26 +165,24 @@ namespace Veng::Renderer
 
         stagingBuffer->UploadSync(span);
 
-        auto commandBuffer = CommandBuffer::Create(m_Context);
+        // Through ImmediateCommands, so setup work held for a frame records ahead of the copy.
+        m_Context.ImmediateCommands(
+            [&](CommandBuffer& commandBuffer)
+            {
+                Backend::TransitionImage(commandBuffer, *this, ImageLayout::TransferDst, 0,
+                                         m_Layers, 0, m_MipLevels);
+                commandBuffer.CopyBufferToImage(stagingBuffer, shared_from_this());
 
-        commandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
-        Backend::TransitionImage(*commandBuffer, *this, ImageLayout::TransferDst, 0, m_Layers, 0,
-                                 m_MipLevels);
-        commandBuffer->CopyBufferToImage(stagingBuffer, shared_from_this());
-
-        if (m_MipLevels > 1)
-        {
-            GenerateMipmaps(*commandBuffer);
-        }
-        else
-        {
-            Backend::TransitionImage(*commandBuffer, *this, ImageLayout::ShaderReadOnly, 0,
-                                     m_Layers, 0, 1);
-        }
-
-        commandBuffer->End();
-
-        m_Context.SubmitImmediateCommands(*commandBuffer);
+                if (m_MipLevels > 1)
+                {
+                    GenerateMipmaps(commandBuffer);
+                }
+                else
+                {
+                    Backend::TransitionImage(commandBuffer, *this, ImageLayout::ShaderReadOnly, 0,
+                                             m_Layers, 0, 1);
+                }
+            });
     }
 
     /// @brief Uploads a precooked mip chain synchronously, one copy region per level.
@@ -204,18 +202,16 @@ namespace Veng::Renderer
 
         stagingBuffer->UploadSync(span);
 
-        auto commandBuffer = CommandBuffer::Create(m_Context);
-
-        commandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
-        Backend::TransitionImage(*commandBuffer, *this, ImageLayout::TransferDst, 0, m_Layers, 0,
-                                 m_MipLevels);
-        commandBuffer->CopyBufferToImage(stagingBuffer, shared_from_this(), regions);
-        Backend::TransitionImage(*commandBuffer, *this, ImageLayout::ShaderReadOnly, 0, m_Layers, 0,
-                                 m_MipLevels);
-
-        commandBuffer->End();
-
-        m_Context.SubmitImmediateCommands(*commandBuffer);
+        // Through ImmediateCommands, so setup work held for a frame records ahead of the copy.
+        m_Context.ImmediateCommands(
+            [&](CommandBuffer& commandBuffer)
+            {
+                Backend::TransitionImage(commandBuffer, *this, ImageLayout::TransferDst, 0,
+                                         m_Layers, 0, m_MipLevels);
+                commandBuffer.CopyBufferToImage(stagingBuffer, shared_from_this(), regions);
+                Backend::TransitionImage(commandBuffer, *this, ImageLayout::ShaderReadOnly, 0,
+                                         m_Layers, 0, m_MipLevels);
+            });
     }
 
     /// @brief Uploads pixel data asynchronously via the transfer queue.
@@ -344,27 +340,25 @@ namespace Veng::Renderer
                 .Usage = BufferUsage::TransferDst,
             });
 
-        const ImageLayout originalLayout = FromVk(m_Native->At(0, 0).Layout);
+        // Through ImmediateCommands, so setup work held for a frame — a clear or upload of this
+        // very image — records ahead of the copy, and the layout restored is the one it left.
+        m_Context.ImmediateCommands(
+            [&](CommandBuffer& commandBuffer)
+            {
+                const ImageLayout originalLayout = FromVk(m_Native->At(0, 0).Layout);
 
-        auto commandBuffer = CommandBuffer::Create(m_Context);
+                Backend::TransitionImage(commandBuffer, *this, ImageLayout::TransferSrc);
 
-        commandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
+                commandBuffer.CopyImageToBuffer(shared_from_this(), buffer);
 
-        Backend::TransitionImage(*commandBuffer, *this, ImageLayout::TransferSrc);
-
-        commandBuffer->CopyImageToBuffer(shared_from_this(), buffer);
-
-        // Restore the image to the layout it had on entry so callers see no
-        // change; skip if it was never transitioned (can't transition to
-        // Undefined).
-        if (originalLayout != ImageLayout::Undefined)
-        {
-            Backend::TransitionImage(*commandBuffer, *this, originalLayout);
-        }
-
-        commandBuffer->End();
-
-        m_Context.SubmitImmediateCommands(*commandBuffer);
+                // Restore the image to the layout it had on entry so callers see no
+                // change; skip if it was never transitioned (can't transition to
+                // Undefined).
+                if (originalLayout != ImageLayout::Undefined)
+                {
+                    Backend::TransitionImage(commandBuffer, *this, originalLayout);
+                }
+            });
 
         return buffer->Download();
     }

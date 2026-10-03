@@ -369,7 +369,9 @@ namespace Veng::Renderer
         /// request no free run can serve is fatal, and the message names the arena size, the live
         /// bytes, the largest free run and the request. Both cache the block CPU-side, mark it
         /// dirty for framesInFlight frames, and write the current frame's region directly
-        /// into the host-mapped, ring-buffered buffer — no staging, no WaitIdle.
+        /// into the host-mapped, ring-buffered buffer — no staging, no WaitIdle. Outside a frame
+        /// the direct write is skipped while the current slot's last frame may still be executing,
+        /// and that region is written at the slot's next acquire instead.
         /// A per-frame UpdateMaterial is cheap and frame-safe.
         /// @param block The serialized parameter block; must be <= MaxMaterialBlockBytes bytes.
         /// @return A handle naming the allocated range's byte offset.
@@ -403,6 +405,10 @@ namespace Veng::Renderer
         void UpdateMaterial(MaterialHandle handle, u32 offset, std::span<const std::byte> bytes);
 
         /// @brief Deferred release of a texture handle. A default-constructed (invalid) handle is a no-op.
+        ///
+        /// Every Release defers the reclaim until the fence of the last frame that could reference
+        /// the slot has been waited: the recording frame's while one records, otherwise the frame
+        /// submitted last. Until then the slot is neither reused nor rewritten.
         void Release(TextureHandle handle);
 
         /// @brief Deferred release of a volume handle. A default-constructed (invalid) handle is a no-op.
@@ -984,6 +990,16 @@ namespace Veng::Renderer
         /// @param offset        Byte offset of the range within the block.
         /// @param bytes         Length of the range; zero writes nothing.
         void WriteMaterialRegion(u32 entryIndex, u32 frameInFlight, u32 offset, u32 bytes) const;
+
+        /// @brief Writes one byte range of a material's cached block into the current slot's region
+        /// when no executing frame can be reading it.
+        ///
+        /// Skipped outside a frame while the current slot's last frame may still run; the dirty
+        /// flush writes the region at that slot's next acquire instead.
+        /// @param entryIndex The entry whose cached bytes are the source.
+        /// @param offset     Byte offset of the range within the block.
+        /// @param bytes      Length of the range; zero writes nothing.
+        void WriteCurrentMaterialRegion(u32 entryIndex, u32 offset, u32 bytes) const;
 
         /// @brief The shared view-constants buffer (binding ViewConstantsBinding).
         ///

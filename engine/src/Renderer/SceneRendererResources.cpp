@@ -530,13 +530,16 @@ namespace Veng::Renderer
         // a skinned draw's DrawData.PaletteBase indexes it directly. Vertex-stage only — the
         // skinned vertex shaders declare g_Palette in the vertex stage alone, so the reflected
         // set layout (set 4 for the surface pipeline, set 3 for the shadow pipeline) is Vertex.
+        // One region deeper than the frames in flight: a skinned draw also reads the previous
+        // Execute's region for its velocity, so a region is read by two consecutive frames.
         const u64 paletteRegion = static_cast<u64>(MaxSkinningMatricesPerFrame) * sizeof(mat4);
-        m_PaletteBuffer = Buffer::Create(m_Context, {
-                                                        .Name = "SceneRenderer Skinning Palette",
-                                                        .Size = paletteRegion * m_FramesInFlight,
-                                                        .Usage = BufferUsage::Storage,
-                                                        .HostMapped = true,
-                                                    });
+        m_PaletteBuffer =
+            Buffer::Create(m_Context, {
+                                          .Name = "SceneRenderer Skinning Palette",
+                                          .Size = paletteRegion * (m_FramesInFlight + 1),
+                                          .Usage = BufferUsage::Storage,
+                                          .HostMapped = true,
+                                      });
         m_PaletteSetLayout = DescriptorSetLayout::Create(
             m_Context, {
                            .Name = "SceneRenderer Palette Set Layout",

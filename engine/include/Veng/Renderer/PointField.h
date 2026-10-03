@@ -375,7 +375,9 @@ namespace Veng::Renderer
         ///
         /// A partial update path: the caller rewrites [firstPoint, firstPoint+points.size()) of
         /// the resident buffer without rebuilding the whole field. The cull grid is rebucketed to
-        /// reflect the new positions, so a moved point culls correctly.
+        /// reflect the new positions, so a moved point culls correctly. The points land in a new
+        /// resident buffer (GetPointBuffer() changes) and the old one retires with the frames still
+        /// reading it, so a Write is safe while earlier frames are in flight.
         /// @param firstPoint  Index of the first point to overwrite.
         /// @param points      The replacement points.
         /// @pre firstPoint + points.size() <= GetPointCount() (asserted).

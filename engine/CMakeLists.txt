@@ -330,6 +330,7 @@ add_library(veng SHARED
         src/Renderer/DepthInstancing.cpp
         src/Renderer/DrawGather.cpp
         src/Renderer/FrameTopology.cpp
+        src/Renderer/QueueSubmitMode.cpp
         src/Renderer/SceneRenderer.cpp
         src/Renderer/SceneRendererResources.cpp
         src/Renderer/ShadowCasters.cpp
