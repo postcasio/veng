@@ -182,7 +182,9 @@ namespace Veng::Cook
     /// every key alongside the cache-format version, so rebuilding vengc — or changing how a key is
     /// derived — invalidates the whole cache without a manual sweep.
     ///
-    /// The fingerprint is path + content hash. Hashing rather than stat'ing is what makes a rebuild
+    /// The image holding the cook library's own code is folded in beside the executable, since the
+    /// importers live there and a change confined to them can relink the executable to identical
+    /// bytes. The fingerprint is path + content hash. Hashing rather than stat'ing is what makes a rebuild
     /// that produced identical bytes a no-op; the hash is dropped for an image that cannot be read,
     /// leaving its path, and the format version is the one component always present.
     /// @param toolExe  The cook tool's own executable, or empty when it cannot be located.

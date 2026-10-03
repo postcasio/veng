@@ -392,8 +392,10 @@ tree** — `build-debug/` and `build/` never share one.
   stored form is chosen, so the compressed bytes agree whether freshly encoded or replayed.
 - **It is ccache-style: a direct key selects a per-entry manifest, which is then validated.** The
   key folds the **base tag** (the cache-format version plus a path + content-hash fingerprint of the
-  `vengc` executable, so rebuilding the cooker or changing the key derivation invalidates
-  everything), the manifest entry JSON, the pack directory, the
+  `vengc` executable and of the image holding the cook library's code — `libveng_cook`, where the
+  importers live, which a library-only change can leave the executable byte-identical over — so
+  rebuilding the cooker or changing the key derivation invalidates everything), the manifest entry
+  JSON, the pack directory, the
   active configuration's fingerprint, and the shader-include dir. A hit is trusted only after every
   recorded **source dependency** is confirmed unchanged **and** every recorded cross-asset
   **resolution** (`AssetId → source path`) still maps identically — the id→source-remap check a

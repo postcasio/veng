@@ -438,6 +438,10 @@ TEST_CASE("CookCache: a tag follows an image's contents, not only its path")
     }
     CHECK(baseBefore != ComputeCookBaseTag(exe));
     CHECK(ComputeCookBaseTag({}) != ComputeCookBaseTag(exe));
+
+    // The importers' own image keys it even with no executable named, so a change confined to the
+    // cook library is never served from entries an older library cooked.
+    CHECK(ComputeCookBaseTag({}).find(";lib_hash=") != string::npos);
 }
 
 TEST_CASE("CookCache: a rebuilt module leaves the entries that never read it alone")

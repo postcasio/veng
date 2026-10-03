@@ -13,6 +13,18 @@
 #include <Veng/Cook/JsonFile.h>
 #include <Veng/Project/CompressionRole.h>
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
+
 namespace Veng::Cook
 {
     namespace
@@ -75,6 +87,32 @@ namespace Veng::Cook
                 tag += fmt::format(";{}_hash={}", label, HexOf(*hash));
             }
         }
+
+        // The image holding this code — the cook library when it is a shared library, the tool
+        // itself when linked in statically — or empty when the platform cannot say.
+        path CookCodeImage()
+        {
+#if defined(_WIN32)
+            HMODULE module = nullptr;
+            if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                       GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                   reinterpret_cast<LPCWSTR>(&CookCodeImage), &module) == 0)
+            {
+                return {};
+            }
+            wchar_t buffer[MAX_PATH] = {};
+            const DWORD length = GetModuleFileNameW(module, buffer, MAX_PATH);
+            return length > 0 && length < MAX_PATH ? path(buffer) : path{};
+#else
+            Dl_info info{};
+            if (dladdr(reinterpret_cast<const void*>(&CookCodeImage), &info) == 0 ||
+                info.dli_fname == nullptr)
+            {
+                return {};
+            }
+            return path(info.dli_fname);
+#endif
+        }
     }
 
     optional<FileStat> StatFile(const path& file)
@@ -125,6 +163,9 @@ namespace Veng::Cook
     {
         string tag = fmt::format("cachefmt={}", CookCacheFormatVersion);
         AppendImage(tag, "exe", toolExe);
+        // The importers live in the cook library, so a change confined to it can relink the tool to
+        // identical bytes; its own image keys the cache too.
+        AppendImage(tag, "lib", CookCodeImage());
         return tag;
     }
 
