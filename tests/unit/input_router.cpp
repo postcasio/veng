@@ -1,7 +1,8 @@
 // InputRouter focus-stack and routing unit cases. The router's logic is device-free: it
 // folds events into the Input snapshot by focus and manages a focus stack with the Shift+Esc
 // release chord. A null window (no cursor capture) and a null ImGui layer (no UI sink) leave
-// exactly the snapshot-routing + focus behavior under test, with no GPU.
+// exactly the snapshot-routing + focus behavior under test, with no GPU. A cursor capture
+// withholds the mouse buttons held as it happens, so the capturing click never reaches the game.
 
 #include <doctest/doctest.h>
 
@@ -107,6 +108,54 @@ TEST_CASE("InputRouter: under gameplay focus the game still receives input throu
 
     // The gameplay snapshot is the one a SceneSystem reads via SystemContext.Input.
     CHECK(input.IsKeyDown(Key::Space));
+}
+
+TEST_CASE("InputRouter: the click that captures the cursor never reaches the game")
+{
+    Input input(nullptr);
+    const Renderer::ViewportRegistry registry;
+    InputRouter router(nullptr, input, registry);
+
+    // Under UI focus a left press reaches the snapshot, and the click captures the cursor.
+    input.BeginFrame();
+    MouseButtonPressedEvent press(MouseButton::Left, 0);
+    router.Dispatch(press);
+    REQUIRE(input.IsMouseButtonDown(MouseButton::Left));
+    router.PushFocus(InputFocus::Gameplay);
+
+    // Held on into gameplay, it reads up, and its release is no edge either.
+    input.BeginFrame();
+    CHECK_FALSE(input.IsMouseButtonDown(MouseButton::Left));
+    CHECK_FALSE(input.WasMouseButtonPressed(MouseButton::Left));
+    MouseButtonReleasedEvent release(MouseButton::Left, 0);
+    router.Dispatch(release);
+    CHECK_FALSE(input.WasMouseButtonReleased(MouseButton::Left));
+
+    // The next press is the game's.
+    input.BeginFrame();
+    router.Dispatch(press);
+    CHECK(input.IsMouseButtonDown(MouseButton::Left));
+    CHECK(input.WasMouseButtonPressed(MouseButton::Left));
+
+    // A focus change that leaves the cursor captured withholds nothing.
+    router.PushFocus(InputFocus::Gameplay);
+    CHECK(input.IsMouseButtonDown(MouseButton::Left));
+}
+
+TEST_CASE("Input: a tap withheld before its deferred release never reads down")
+{
+    Input input(nullptr);
+    input.BeginFrame();
+    const MouseButtonPressedEvent press(MouseButton::Left, 0);
+    const MouseButtonReleasedEvent release(MouseButton::Left, 0);
+    input.ApplyEvent(press);
+    input.ApplyEvent(release);
+    input.WithholdHeldMouseButtons();
+    CHECK_FALSE(input.IsMouseButtonDown(MouseButton::Left));
+
+    input.BeginFrame();
+    CHECK_FALSE(input.IsMouseButtonDown(MouseButton::Left));
+    CHECK_FALSE(input.WasMouseButtonReleased(MouseButton::Left));
 }
 
 TEST_CASE("InputRouter: Shift+Esc releases gameplay focus and is not delivered to the game")

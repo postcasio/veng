@@ -383,7 +383,9 @@ namespace Veng
         ///
         /// Gameplay focus on the cursor seat captures the cursor and signals the consumers the
         /// cursor is captured (so a polling consumer can suspend its cursor poll); any other focus
-        /// releases the cursor and clears the signal.
+        /// releases the cursor and clears the signal. The capture withholds the mouse buttons held
+        /// as it happens (Input::WithholdHeldMouseButtons), so the click that captured the cursor
+        /// never reaches the game.
         void SyncCursorState();
 
         /// @brief The cursor seat's current focus owner (UI when its stack is empty).
@@ -470,6 +472,8 @@ namespace Veng
         SeatRef m_CursorSeat;
         /// @brief Whether a window-focus loss leaves a held gameplay focus in place.
         bool m_BackgroundInput = false;
+        /// @brief Whether the last SyncCursorState captured the cursor, so a capture is acted on once.
+        bool m_CursorCaptured = false;
         /// @brief Monotonic source of focus-token identities; never reuses a value, 0 stays invalid.
         u64 m_NextToken = 1;
 

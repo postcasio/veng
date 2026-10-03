@@ -274,6 +274,16 @@ namespace Veng
         /// @brief Returns true only on the frame the button transitioned from down to up.
         [[nodiscard]] bool WasMouseButtonReleased(MouseButton button) const;
 
+        /// @brief Withholds every mouse button held now until it is physically released.
+        ///
+        /// Each held button reads as up from here — IsMouseButtonDown and WasMouseButtonPressed
+        /// false — and its physical release reports no released edge, since the press it ends was
+        /// never reported either; the next press reads normally. A tap whose release is deferred to
+        /// the next roll is withheld the same way. The InputRouter calls it as the cursor is
+        /// captured, so the click that captured it is the capture's and never reaches a binding that
+        /// only resolves once the cursor is captured.
+        void WithholdHeldMouseButtons();
+
         /// @brief Returns the current mouse cursor position in window-space pixels.
         [[nodiscard]] vec2 GetMousePosition() const;
 

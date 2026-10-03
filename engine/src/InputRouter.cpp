@@ -173,6 +173,11 @@ namespace Veng
     void InputRouter::SyncCursorState()
     {
         const bool gameplay = CursorFocus() == InputFocus::Gameplay;
+        if (gameplay && !m_CursorCaptured)
+        {
+            m_Input.WithholdHeldMouseButtons();
+        }
+        m_CursorCaptured = gameplay;
 
         if (m_Window != nullptr)
         {

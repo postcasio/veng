@@ -407,6 +407,12 @@ which a game-specific control system reads to produce the abstract `Intent` game
   holds focus declares the gate rather than a system lifting and re-inserting it from a saved
   index. It composes orthogonally with the coarse `FocusRequest`/`SeatFocusScope` focus stack (a
   map screen's authored stack *swap* is deliberate state change; this gate is evaluation).
+  **The click that captures the cursor never reaches a gated context.** The capture lands while that
+  click is still held, so a gated binding on the button would read it held from the first tick the
+  context resolves — a click to take the cursor back would also fire. The router therefore withholds
+  every mouse button held as the cursor is captured (`Input::WithholdHeldMouseButtons`): it reads up,
+  its release is no edge, and the next press is the game's. Keys are not withheld, so a key held
+  through the click keeps driving.
 - **`SeatInput` scopes the raw read *per seat*.** A reflected **`SeatInput`** component
   (`Veng/Scene/Components.h`, `UsesKeyboardMouse` + a `Gamepad` id + `WantsGamepad`) on the
   `Viewer` seat names that seat's devices; `InputMappingSystem` builds each seat a filtered

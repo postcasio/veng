@@ -216,6 +216,16 @@ namespace Veng
         return index < MaxMouseButtons && !m_MouseButtons[index] && m_PreviousMouseButtons[index];
     }
 
+    void Input::WithholdHeldMouseButtons()
+    {
+        // Input is event-driven, so a button cleared here stays up until its next press: the release
+        // that arrives for it then finds it already up and changes nothing.
+        m_MouseButtons.fill(false);
+        m_PreviousMouseButtons.fill(false);
+        m_MousePressedSinceRoll.fill(false);
+        m_MouseReleaseDeferred.fill(false);
+    }
+
     vec2 Input::GetMousePosition() const
     {
         return m_MousePosition;
