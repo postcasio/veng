@@ -1453,3 +1453,99 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     std::filesystem::remove(outArchive);
 }
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui material: a fill carries its fill tint and its element's state age")
+{
+    // The material fixture's first background-material panel: its draw's vertex colour is the fill
+    // tint (its alpha times the opacity), and the lane GuiFillStateAge reads is how long ago the
+    // element's state changed — settled until a change, then counting up through the window.
+    const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
+    const path packJson = fixtureDir / "ui_material_pack.json";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_ui_material_state.vengpack";
+    const std::array<path, 1> references{path(VENG_CORE_PACK_JSON)};
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    const VoidResult cooked = cooker.CookPack(packJson, outArchive, references, nullptr, nullptr,
+                                              nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    REQUIRE_MESSAGE(cooked.has_value(), cooked.error());
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+    const AssetResult<AssetHandle<Gui::UIDocument>> recipe =
+        assets.LoadSync<Gui::UIDocument>(AssetId{0xED64D6867A7A6259ULL});
+    REQUIRE(recipe.has_value());
+    const Unique<Gui::Document> document = Gui::Document::Instantiate(*recipe->Get(), assets);
+    REQUIRE(document != nullptr);
+
+    // The first element filled by a material, depth first.
+    Gui::Element* filled = nullptr;
+    vector<Gui::Element*> stack{&document->Root()};
+    while (!stack.empty() && filled == nullptr)
+    {
+        Gui::Element* const element = stack.back();
+        stack.pop_back();
+        if (element->ComputedStyle.BackgroundMaterial.IsLoaded())
+        {
+            filled = element;
+        }
+        for (Gui::Element* const child : element->Children)
+        {
+            stack.push_back(child);
+        }
+    }
+    REQUIRE(filled != nullptr);
+
+    const vec2 canvas{static_cast<f32>(Extent.x), static_cast<f32>(Extent.y)};
+    // The material vertices of one build: the material runs' index ranges, read back to vertices.
+    const auto materialVertices = [&]
+    {
+        document->Solve(canvas);
+        Gui::DrawList list;
+        document->Build(list);
+        vector<Gui::GuiVertex> vertices;
+        for (const Gui::DrawRun& run : list.GetRuns())
+        {
+            if (run.Pipeline != Gui::GuiPipeline::Material)
+            {
+                continue;
+            }
+            for (u32 index = 0; index < run.IndexCount; ++index)
+            {
+                vertices.push_back(list.GetVertices()[list.GetIndices()[run.FirstIndex + index]]);
+            }
+        }
+        return vertices;
+    };
+    const auto anyVertex = [](const vector<Gui::GuiVertex>& vertices, const auto& test)
+    { return std::ranges::any_of(vertices, test); };
+
+    // Untouched, every fill reads settled, and an element drawing no material stays settled.
+    CHECK(filled->StateAge == Gui::MaterialStateWindow);
+    const vector<Gui::GuiVertex> settled = materialVertices();
+    REQUIRE(!settled.empty());
+    CHECK(std::ranges::all_of(settled, [](const Gui::GuiVertex& vertex)
+                              { return vertex.Params.z == Gui::MaterialStateWindow; }));
+    document->SetState(document->Root(), Gui::ElementState::Hovered);
+    CHECK(document->Root().StateAge == Gui::MaterialStateWindow);
+
+    // The fill tint is the vertex colour.
+    Gui::Style style = filled->BaseStyle;
+    style.FillTint = vec4{0.2f, 0.4f, 0.6f, 0.5f};
+    document->SetStyle(*filled, style);
+    document->Update(0.0f);
+    CHECK(anyVertex(materialVertices(), [](const Gui::GuiVertex& vertex)
+                    { return glm::all(glm::equal(vertex.Color, vec4{0.2f, 0.4f, 0.6f, 0.5f})); }));
+
+    // A state change restarts the age, and Update counts it up to the window and no further.
+    document->SetState(*filled, Gui::ElementState::Hovered);
+    CHECK(filled->StateAge == 0.0f);
+    document->Update(0.25f);
+    CHECK(filled->StateAge == doctest::Approx(0.25f));
+    CHECK(anyVertex(materialVertices(), [](const Gui::GuiVertex& vertex)
+                    { return std::abs(vertex.Params.z - 0.25f) < 1e-5f; }));
+    document->Update(5.0f);
+    CHECK(filled->StateAge == Gui::MaterialStateWindow);
+
+    std::filesystem::remove(outArchive);
+}

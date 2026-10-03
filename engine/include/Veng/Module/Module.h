@@ -247,10 +247,13 @@ extern "C"
 /// Version 57 has AudioEngine::PlayGenerator take a shared Ref<IAudioGenerator> and widens
 /// AudioEngine's voice and deferred-free records to hold it. A module reaches the engine through
 /// SystemContext::Audio and reads its inline accessors, so a stale module reads it at the old layout.
+/// Version 58 grows Gui::Style with FillTint and Gui::Element with StateAge. A module reads and
+/// writes an element and its style through Gui::Document, so a stale module lays both out short and
+/// reads every field after the additions at a shifted offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 57u
+#define VENG_MODULE_ABI_VERSION 58u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

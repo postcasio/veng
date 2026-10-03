@@ -75,6 +75,15 @@ float GuiFillRoundedBoxSdf(float2 p, float2 b, float r)
     return GuiRoundedBoxSdf(p, b, r);
 }
 
+// Seconds since the element's interaction state (hover, press, focus, selection, …) last changed,
+// up to the document's MaterialStateWindow, which it reads as "settled". A fill animates a reaction
+// to a state change off it — a glint as a button lights — and the document re-records the draw
+// every frame while it is inside the window.
+float GuiFillStateAge(GuiFillInputs input)
+{
+    return input.v_Params.z;
+}
+
 // Resolves an authored fill into the pass's premultiplied linear output: the fixed silhouette
 // coverage — the rounded rectangle, or the arc when the quad carries one — screen-derivative
 // anti-aliased, its width taken from the distance field's rate of change so the edge is

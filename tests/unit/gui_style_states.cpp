@@ -356,7 +356,8 @@ TEST_CASE("gui style: the arc and stroke numbers animate; the shape and cap snap
 {
     for (const StyleProperty property :
          {StyleProperty::ArcStart, StyleProperty::ArcSweep, StyleProperty::ArcThickness,
-          StyleProperty::Stroke, StyleProperty::StrokeWidth, StyleProperty::StrokeTrim})
+          StyleProperty::Stroke, StyleProperty::StrokeWidth, StyleProperty::StrokeTrim,
+          StyleProperty::FillTint})
     {
         CHECK(IsAnimatableProperty(property));
     }
@@ -367,7 +368,7 @@ TEST_CASE("gui style: the arc and stroke numbers animate; the shape and cap snap
     for (const StyleProperty property :
          {StyleProperty::Shape, StyleProperty::ArcStart, StyleProperty::ArcSweep,
           StyleProperty::ArcThickness, StyleProperty::ArcCap, StyleProperty::Stroke,
-          StyleProperty::StrokeWidth, StyleProperty::StrokeTrim})
+          StyleProperty::StrokeWidth, StyleProperty::StrokeTrim, StyleProperty::FillTint})
     {
         CHECK(ParseStyleProperty(ToString(property)) == property);
     }

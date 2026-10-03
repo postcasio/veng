@@ -215,14 +215,28 @@ namespace Veng::Gui
                    a.ArcStart == b.ArcStart && a.ArcSweep == b.ArcSweep &&
                    a.ArcThickness == b.ArcThickness && a.ArcCapStyle == b.ArcCapStyle &&
                    a.Stroke == b.Stroke && a.StrokeWidth == b.StrokeWidth &&
-                   a.StrokeTrim == b.StrokeTrim && a.Pointer == b.Pointer;
+                   a.FillTint == b.FillTint && a.StrokeTrim == b.StrokeTrim &&
+                   a.Pointer == b.Pointer;
         }
 
         // Whether an element has anything Update must advance: an in-flight tween, or an animation
         // that has not settled (a looping one never does; a play-once one settles at its last key).
+        // Whether the element draws a material fill, the one paint that reads its state age.
+        bool HasMaterialFill(const Element& element)
+        {
+            const Style& style = element.ComputedStyle;
+            return style.BackgroundMaterial.IsLoaded() ||
+                   (element.Kind == ElementKind::Image && style.ImageMaterial.IsLoaded());
+        }
+
         bool HasLiveMotion(const Element& element)
         {
             if (!element.Tweens.empty())
+            {
+                return true;
+            }
+            // A material fill reacting to a fresh state change is redrawn until the window passes.
+            if (element.StateAge < MaterialStateWindow && HasMaterialFill(element))
             {
                 return true;
             }
@@ -1990,6 +2004,8 @@ namespace Veng::Gui
                 return vec4(style.ArcThickness, 0.0f, 0.0f, 0.0f);
             case StyleProperty::Stroke:
                 return style.Stroke;
+            case StyleProperty::FillTint:
+                return style.FillTint;
             case StyleProperty::StrokeWidth:
                 return vec4(style.StrokeWidth, 0.0f, 0.0f, 0.0f);
             case StyleProperty::StrokeTrim:
@@ -2102,6 +2118,9 @@ namespace Veng::Gui
                 return;
             case StyleProperty::Stroke:
                 style.Stroke = value;
+                return;
+            case StyleProperty::FillTint:
+                style.FillTint = value;
                 return;
             case StyleProperty::StrokeWidth:
                 style.StrokeWidth = value.x;
@@ -2328,6 +2347,12 @@ namespace Veng::Gui
         const auto moved =
             static_cast<ElementState>(static_cast<u32>(element.State) ^ static_cast<u32>(state));
         element.State = state;
+        // Only a material fill reads the age, and only an element drawing one is advanced through
+        // the window, so every other element stays settled.
+        if (moved != ElementState::None && HasMaterialFill(element))
+        {
+            element.StateAge = 0.0f;
+        }
         UpdateElement(element, 0.0f);
         // The paint reads a state bit directly as well as through the variants (a focused field's
         // caret), so a moved bit re-emits the element even when no style moved with it.
@@ -2551,6 +2576,16 @@ namespace Veng::Gui
     void Document::UpdateElement(Element& element, f32 delta)
     {
         ++m_Stats.StyleResolves;
+        // A material fill reads how long ago the state changed, so while that is inside the window
+        // its draw is re-recorded each frame with the age advanced.
+        if (element.StateAge < MaterialStateWindow)
+        {
+            element.StateAge = std::min(element.StateAge + delta, MaterialStateWindow);
+            if (HasMaterialFill(element))
+            {
+                MarkPaintDirty(element);
+            }
+        }
         const Style target = ResolveTarget(element, m_Assets, m_VariableValues);
         Style live = target;
 
@@ -4404,9 +4439,12 @@ namespace Veng::Gui
             {
                 // A material emits the RGBA inside the shape; the engine's SDF coverage, the border
                 // ring, and the composited opacity multiply into it, so the material never widens or
-                // replaces the silhouette. The opacity rides the vertex color the fragment reads.
-                list.MaterialFill(rect, style.BackgroundMaterial.Get(), style.Radii, {},
-                                  vec4(1.0f, 1.0f, 1.0f, opacity));
+                // replaces the silhouette. The fill tint and the opacity ride the vertex color the
+                // fragment reads, and the state age the lane GuiFillStateAge reads.
+                vec4 tint = style.FillTint;
+                tint.a *= opacity;
+                list.MaterialFill(rect, style.BackgroundMaterial.Get(), style.Radii, {}, tint,
+                                  {.Min = {0.0f, 0.0f}, .Size = {1.0f, 1.0f}}, element.StateAge);
             }
             else if (style.BackgroundGradient.has_value() &&
                      style.BackgroundGradient->Ramp.IsLoaded())
@@ -4481,7 +4519,7 @@ namespace Veng::Gui
                 tint.a *= opacity;
                 const FillBox content = ToContentBox(rect, style);
                 list.MaterialFill(content.Box, style.ImageMaterial.Get(), content.Radii, {}, tint,
-                                  element.ImageUv);
+                                  element.ImageUv, element.StateAge);
             }
             else if (element.Kind == ElementKind::Image && element.ImageTexture.IsValid() &&
                      element.ImageSampler.IsValid())

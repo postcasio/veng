@@ -130,6 +130,8 @@ namespace Veng::Gui
             return "stroke-width";
         case StyleProperty::StrokeTrim:
             return "stroke-trim";
+        case StyleProperty::FillTint:
+            return "fill-tint";
         }
         return "unknown";
     }
@@ -384,6 +386,10 @@ namespace Veng::Gui
         {
             return StyleProperty::StrokeTrim;
         }
+        if (name == "fill-tint")
+        {
+            return StyleProperty::FillTint;
+        }
         return std::nullopt;
     }
 
@@ -422,6 +428,7 @@ namespace Veng::Gui
         case StyleProperty::Stroke:
         case StyleProperty::StrokeWidth:
         case StyleProperty::StrokeTrim:
+        case StyleProperty::FillTint:
             return true;
         case StyleProperty::FlexDirection:
         case StyleProperty::JustifyContent:
@@ -466,6 +473,6 @@ namespace Veng::Gui
     {
         return property == StyleProperty::Background || property == StyleProperty::BorderColor ||
                property == StyleProperty::TextColor || property == StyleProperty::BoxShadowColor ||
-               property == StyleProperty::Stroke;
+               property == StyleProperty::Stroke || property == StyleProperty::FillTint;
     }
 }

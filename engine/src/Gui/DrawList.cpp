@@ -509,7 +509,7 @@ namespace Veng::Gui
 
     void DrawList::MaterialFill(const Rect& rect, const MaterialInstance* material,
                                 const CornerRadii& radii, const Border& border, vec4 tint,
-                                const Rect& uv)
+                                const Rect& uv, const f32 stateAge)
     {
         if (rect.IsEmpty() || material == nullptr)
         {
@@ -531,9 +531,10 @@ namespace Veng::Gui
 
         const vec2 half = rect.Size * 0.5f;
         const f32 radius = std::min(radii.TopLeft, std::min(half.x, half.y));
-        // The generated fragment reads only the radius and border lanes (through GuiFillResolve);
-        // the texture/sampler lanes stay negative, since a material samples through its own params.
-        const vec4 params{radius, border.Width, UntexturedIndex, UntexturedIndex};
+        // The fragment reads the radius and border lanes (through GuiFillResolve) and the element's
+        // state age in the third (through GuiFillStateAge); the sampler lane stays negative, since
+        // a material samples through its own params.
+        const vec4 params{radius, border.Width, stateAge, UntexturedIndex};
 
         PushQuad(corners, uvs, tint, half, rect.Center(), params);
     }

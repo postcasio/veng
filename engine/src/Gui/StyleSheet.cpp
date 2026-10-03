@@ -235,6 +235,9 @@ namespace Veng::Gui
         case StyleProperty::Stroke:
             style.Stroke = declaration.Values;
             return;
+        case StyleProperty::FillTint:
+            style.FillTint = declaration.Values;
+            return;
         case StyleProperty::StrokeWidth:
             style.StrokeWidth = declaration.Values.x;
             return;

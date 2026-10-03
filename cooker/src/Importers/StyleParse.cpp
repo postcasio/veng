@@ -932,6 +932,7 @@ namespace Veng::Cook
         case StyleProperty::TextColor:
         case StyleProperty::BoxShadowColor:
         case StyleProperty::Stroke:
+        case StyleProperty::FillTint:
             return ColorProperty(property, v, located);
 
         case StyleProperty::BoxShadow:

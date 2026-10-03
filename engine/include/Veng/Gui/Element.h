@@ -472,6 +472,14 @@ namespace Veng::Gui
 
         /// @brief The interaction-state mask a styling/event layer sets and reads.
         ElementState State = ElementState::None;
+        /// @brief Seconds since `State` last changed, counted up to `MaterialStateWindow`.
+        ///
+        /// What a material fill reads to animate a reaction to a hover, a press or a selection —
+        /// a glint as a button lights — through `GuiFillStateAge`. It starts at the window (an
+        /// element that has not changed state since it was built reads as settled); on an element
+        /// drawing a material fill it is zeroed by `Document::SetState` on any change of the mask
+        /// and counts up in `Document::Update`. An element drawing none stays at the window.
+        f32 StateAge = MaterialStateWindow;
         /// @brief Whether the element (and its subtree) is laid out and drawn.
         bool Visible = true;
 

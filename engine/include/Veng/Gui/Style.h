@@ -380,6 +380,15 @@ namespace Veng::Gui
         /// silhouette — the engine's rounded-rect coverage, the border ring, the clip, and the
         /// rotation multiply into whatever RGBA it emits.
         AssetHandle<MaterialInstance> BackgroundMaterial;
+        /// @brief The colour a material background fill is tinted with, linear straight-alpha RGBA;
+        ///        opaque white (the default) leaves the material's own colours as they are.
+        ///
+        /// The fill's vertex colour, so a GuiFill material reads it as `v_Color` — times the
+        /// composited opacity, which rides its alpha. A colour property like the others, so a sheet
+        /// variable binds it, a state variant changes it and a transition eases it: a stylesheet can
+        /// colour and light a shader fill without the material knowing where the colour came from.
+        /// Inert where no `BackgroundMaterial` is set.
+        vec4 FillTint{1.0f};
         /// @brief A texture background fill; empty (the default) leaves the flat/gradient fill alone.
         ///
         /// The resident texture the fill samples, resolved at instantiate and held for the Style's

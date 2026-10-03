@@ -701,6 +701,18 @@ TEST_CASE("Cooker: the stroke family parses into its cooked slots")
     CHECK_FALSE(ParseStyleDeclaration(Gui::StyleProperty::StrokeTrim, "all", located).has_value());
 }
 
+TEST_CASE("Cooker: a fill tint parses as a color")
+{
+    const string located = "loc";
+    const Result<CookedStyleProperty> tint =
+        ParseStyleDeclaration(Gui::StyleProperty::FillTint, "rgba(0.2, 0.4, 0.6, 0.05)", located);
+    REQUIRE(tint.has_value());
+    CHECK(tint->Values[1] == doctest::Approx(0.4f));
+    CHECK(tint->Values[3] == doctest::Approx(0.05f));
+    CHECK(Gui::IsColorProperty(Gui::StyleProperty::FillTint));
+    CHECK_FALSE(ParseStyleDeclaration(Gui::StyleProperty::FillTint, "0.5", located).has_value());
+}
+
 TEST_CASE("Cooker: the box-shadow shorthand splits into a geometry and a color declaration")
 {
     const string located = "loc";

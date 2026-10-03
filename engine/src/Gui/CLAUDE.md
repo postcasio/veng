@@ -336,6 +336,20 @@ color. So a shader-driven fill composes with `corner-radius`, `border-width`, `o
 and `rotation` for free, and the material cannot widen, replace, or alpha-blur the silhouette. (A
 "full custom shader" domain flag that skips the coverage multiply is deliberately not built.)
 
+- **`fill-tint` colours a background material from the sheet.** The fill's vertex colour —
+  `v_Color` in the fragment — is `Style::FillTint` (default opaque white) with the composited
+  opacity multiplied into its alpha. It is an ordinary colour property, so a sheet variable binds
+  it, a state variant changes it, and a transition eases it: one material serves every element and
+  every state, coloured and lit by the cascade rather than by a parameter write per element. (An
+  `Image`'s `material` takes the element's `ImageTint` instead, which a driver writes.)
+- **A fill reads how long ago its element's state changed.** `GuiFillStateAge(input)` is the seconds
+  since the element's interaction mask (hover, press, focus, selection, checked, disabled) last
+  changed, up to `MaterialStateWindow`, which reads as settled — so a fill can draw a reaction to a
+  state change, a glint as a button lights, without a driver. It rides the third params lane, which
+  a material fill had no use for. A draw is re-recorded only when its element moves, so
+  `Document::Update` keeps an element drawing a material fill in its animating set, re-recording it
+  each frame, for the window after a change (`Element::StateAge`); an element drawing none never
+  leaves settled. A reaction longer than the window is cut short by it.
 - **`background-material` is the top of the exclusive fill-source order** — above
   `background-gradient`, `background-image`, and `background`. When set, the material *is* the fill;
   a rule authoring it beside another fill source is the same **cook error** the rest of the order
