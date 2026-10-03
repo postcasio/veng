@@ -70,8 +70,7 @@ namespace Veng
         Ref<Veng::EnvironmentMap> environment;
         if (parse.Async)
         {
-            Task<void> upload;
-            environment = Veng::EnvironmentMap::PrepareAsync(context, info, parse.Tasks, upload);
+            environment = Veng::EnvironmentMap::PrepareOnWorker(context, info);
         }
         else
         {

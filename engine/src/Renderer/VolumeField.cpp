@@ -56,23 +56,20 @@ namespace Veng::Renderer
                   data.Resolution.z, data.ExpectedByteSize());
 
         // The caller's Voxels span is non-owning; copy the bytes into the job so they outlive the
-        // caller's frame (the async Image::Upload makes its own copy, but data.Voxels must be valid
-        // when it is called on the worker).
+        // caller's frame.
         vector<u8> voxels(data.Voxels.begin(), data.Voxels.end());
 
         return tasks.Submit(
-            [&context, &tasks, data = std::move(data),
+            [&context, data = std::move(data),
              voxels = std::move(voxels)]() mutable -> Ref<VolumeField>
             {
                 data.Voxels = voxels;
 
                 const Ref<VolumeField> field = CreateResources(context, data);
 
-                // Block on the transfer-queue submit here on the worker; the staging buffer retires
-                // on the transfer timeline, so the frame that first samples this view folds in the
+                // Submitted from this worker; the frame that first samples this view folds in the
                 // timeline wait. There is no bindless registration to defer to the main thread.
-                Task<void> upload = field->m_Image->Upload(tasks, data.Voxels);
-                (void)upload.Get();
+                field->m_Image->UploadOnWorker(data.Voxels);
 
                 return field;
             });

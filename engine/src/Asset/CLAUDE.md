@@ -204,6 +204,14 @@ The same split runs underneath at the resource level: `Buffer/Image::Upload` (ta
 transfer queue, and never blocks — while `UploadSync` is the blocking path (host memcpy +
 `WaitIdle`) the sync loaders, tests, and smoke render use.
 
+**Code already on a worker uploads in place, with `Image::UploadOnWorker`** — records, submits and
+marks the image transfer-produced before returning, and `Upload` is a job around it. An async
+loader's `Parse` and an async `Build` run on a worker, so they call it (through
+`Texture`/`EnvironmentMap::PrepareOnWorker`) rather than submitting a nested `Upload`: a dropped
+nested task leaves `Finalize` free to queue the frame's acquire of an image whose copy is not yet
+recorded — a layout transition unordered against the copy, and a race on the image's tracked state
+— and a waited one parks a worker on another worker's job.
+
 ## Textures
 
 **Textures load multi-mip and block-compressed.** A cooked texture carries a full mip chain

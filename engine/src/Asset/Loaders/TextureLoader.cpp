@@ -291,12 +291,13 @@ namespace Veng
         };
 
         // On an asynchronous load this runs on a worker, where both the image creation and the
-        // upload's submit are legal; the bindless registration waits for Finalize.
+        // upload's submit are legal; the bindless registration waits for Finalize. The upload is
+        // submitted here, before the parse lands, or Finalize could queue the frame's acquire of an
+        // image whose copy has not been recorded.
         Ref<Veng::Texture> texture;
         if (parse.Async)
         {
-            Task<void> upload;
-            texture = Veng::Texture::PrepareAsync(context, info, parse.Tasks, upload);
+            texture = Veng::Texture::PrepareOnWorker(context, info);
         }
         else
         {

@@ -89,15 +89,17 @@ namespace Veng
         static Ref<EnvironmentMap> PrepareSync(Renderer::Context& context,
                                                const EnvironmentMapData& data);
 
-        /// @brief Prepares an EnvironmentMap with an async transfer-queue upload, leaving it unregistered.
-        /// @param context    Render context the panorama image and view are created on.
-        /// @param data       EnvironmentMap description (extent, format, pixels).
-        /// @param tasks      Task system the async upload is recorded through.
-        /// @param outUpload  Receives the upload task to wait on before Finalize().
+        /// @brief Prepares an EnvironmentMap with a transfer-queue upload from the calling worker,
+        ///        leaving it unregistered.
+        ///
+        /// The upload is submitted and the image marked transfer-produced before this returns
+        /// (Image::UploadOnWorker).
+        /// @param context Render context the panorama image and view are created on.
+        /// @param data    EnvironmentMap description (extent, format, pixels).
         /// @return The unregistered environment.
-        static Ref<EnvironmentMap> PrepareAsync(Renderer::Context& context,
-                                                const EnvironmentMapData& data, TaskSystem& tasks,
-                                                Task<void>& outUpload);
+        /// @pre Called on a TaskSystem worker thread.
+        static Ref<EnvironmentMap> PrepareOnWorker(Renderer::Context& context,
+                                                   const EnvironmentMapData& data);
 
         /// @brief Registers the panorama view and sampler into the bindless registry (set 0).
         ///

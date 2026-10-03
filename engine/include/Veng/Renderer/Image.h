@@ -124,10 +124,31 @@ namespace Veng::Renderer
         /// @pre The image was created with MipLevels == regions.size() and ImageUsage::TransferDst.
         void UploadSync(std::span<const u8> span, std::span<const BufferImageCopyRegion> regions);
 
+        /// @brief Copies data into the image on the transfer queue from the calling worker.
+        ///
+        /// Records the copy onto the calling worker's transfer command buffer, submits it under the
+        /// submission lock, and marks the image transfer-produced with the timeline value it
+        /// signalled — all before returning, so a caller that hands the image on afterwards (to be
+        /// registered and acquired by a frame) hands on an image whose copy is already submitted and
+        /// whose tracked state names it. Returns once the work is submitted, not once the GPU
+        /// finishes; the first graphics use folds the timeline wait into the frame submit.
+        /// @param data Source pixels, in the image's format and full extent.
+        /// @pre Called on a TaskSystem worker thread.
+        void UploadOnWorker(std::span<const u8> data);
+
+        /// @brief Uploads a precooked mip chain from the calling worker, one copy region per level.
+        ///
+        /// The per-region sibling of UploadOnWorker(data), with no GPU mip generation.
+        /// @param data    All mip levels' pixels, tightly packed largest-first.
+        /// @param regions One entry per mip level; BufferOffset indexes into `data`. Empty copies
+        ///                the base level's full extent.
+        /// @pre Called on a TaskSystem worker thread.
+        void UploadOnWorker(std::span<const u8> data,
+                            std::span<const BufferImageCopyRegion> regions);
+
         /// @brief Copies data into the image on a worker thread, returning immediately.
         ///
-        /// The copy is recorded onto the worker's transfer command buffer and submitted
-        /// on the transfer queue under the submission lock; the returned Task completes
+        /// Submits UploadOnWorker(data) as a job; the returned Task completes
         /// once the work is submitted (not once the GPU finishes — that is gated by the
         /// transfer timeline). On first graphics use the render graph acquires the image
         /// and folds a transfer-timeline wait into the frame submit. The image is kept

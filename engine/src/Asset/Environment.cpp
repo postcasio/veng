@@ -36,12 +36,11 @@ namespace Veng
         return environment;
     }
 
-    Ref<EnvironmentMap> EnvironmentMap::PrepareAsync(Context& context,
-                                                     const EnvironmentMapData& data,
-                                                     TaskSystem& tasks, Task<void>& outUpload)
+    Ref<EnvironmentMap> EnvironmentMap::PrepareOnWorker(Context& context,
+                                                        const EnvironmentMapData& data)
     {
         Ref<EnvironmentMap> environment(new EnvironmentMap(context, data));
-        outUpload = environment->m_Image->Upload(tasks, data.Pixels);
+        environment->m_Image->UploadOnWorker(data.Pixels);
         return environment;
     }
 

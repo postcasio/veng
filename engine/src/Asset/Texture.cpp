@@ -104,8 +104,7 @@ namespace Veng
         return texture;
     }
 
-    Ref<Texture> Texture::PrepareAsync(Context& context, const TextureData& data, TaskSystem& tasks,
-                                       Task<void>& outUpload)
+    Ref<Texture> Texture::PrepareOnWorker(Context& context, const TextureData& data)
     {
         Ref<Texture> texture(new Texture(context, data));
 
@@ -113,11 +112,11 @@ namespace Veng
         {
             const vector<BufferImageCopyRegion> regions =
                 BuildMipCopyRegions(data.Extent, data.MipLevels, data.Format);
-            outUpload = texture->m_Image->Upload(tasks, data.Pixels, regions);
+            texture->m_Image->UploadOnWorker(data.Pixels, regions);
         }
         else
         {
-            outUpload = texture->m_Image->Upload(tasks, data.Pixels);
+            texture->m_Image->UploadOnWorker(data.Pixels);
         }
 
         return texture;
@@ -131,23 +130,17 @@ namespace Veng
         vector<u8> pixels(data.Pixels.begin(), data.Pixels.end());
 
         return tasks.Submit(
-            [&context, &tasks, data = std::move(data), pixels = std::move(pixels)]() mutable
+            [&context, data = std::move(data), pixels = std::move(pixels)]() mutable
             {
                 data.Pixels = pixels;
 
-                Task<void> upload;
+                // The upload submits from this worker, so the frame that first samples the view
+                // folds in a timeline wait the image already carries. Finalize (bindless
+                // registration) is deferred to the main thread.
                 Ref<Texture> texture;
                 {
-                    VE_PROFILE_SCOPE("Asset/TextureDecode");
-                    texture = Texture::PrepareAsync(context, data, tasks, upload);
-                }
-
-                // Block on the transfer-queue submit here on the worker; the staging buffer retires
-                // on the transfer timeline, so the frame that first samples this view folds in the
-                // timeline wait. Finalize (bindless registration) is deferred to the main thread.
-                {
                     VE_PROFILE_SCOPE("Asset/TextureUpload");
-                    (void)upload.Get();
+                    texture = Texture::PrepareOnWorker(context, data);
                 }
 
                 return Detail::BuiltAsset<Texture>{

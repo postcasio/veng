@@ -15,6 +15,7 @@
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Renderer/BindlessRegistry.h>
+#include <Veng/Renderer/Backend/Natives.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/GraphicsPipeline.h>
 #include <Veng/Renderer/Image.h>
@@ -673,6 +674,47 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(handle.Get()->GetHandle().IsValid());
     CHECK(handle.Get()->GetSamplerHandle().IsValid());
 
+    std::filesystem::remove(outArchive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "texture loader: an async Load lands with its upload already submitted")
+{
+    const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
+    const path packJson = fixtureDir / "texture_pack.json";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_texture_landed.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+    Context.InitializeTransferPools(Tasks);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+    const AssetHandle<Texture> handle = assets.Load<Texture>(AssetId{0x7D1});
+
+    // Pumped without waiting on the task system, so the handle lands the moment the parse does:
+    // the first frame may acquire the image from here on, so its copy must already be submitted
+    // and every subresource must name the transfer it waits on, never the untouched initial state.
+    for (int i = 0; i < 100000 && !handle.IsLoaded(); ++i)
+    {
+        Tasks.PumpMainThread();
+        assets.PumpFinalizes();
+    }
+    REQUIRE(handle.IsLoaded());
+
+    auto& image = handle.Get()->GetImage()->GetNative();
+    u32 untouched = 0;
+    u32 unpending = 0;
+    for (const auto& state : image.States)
+    {
+        untouched += state.Layout == vk::ImageLayout::eUndefined ? 1U : 0U;
+        unpending += state.PendingTransferValue == 0 ? 1U : 0U;
+    }
+    CHECK(untouched == 0);
+    CHECK(unpending == 0);
+
+    Tasks.WaitForAll();
     std::filesystem::remove(outArchive);
 }
 

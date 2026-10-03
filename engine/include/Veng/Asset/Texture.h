@@ -114,18 +114,18 @@ namespace Veng
         /// @return The unregistered texture.
         static Ref<Texture> PrepareSync(Renderer::Context& context, const TextureData& data);
 
-        /// @brief Prepares a Texture with an async transfer-queue upload, leaving it unregistered.
+        /// @brief Prepares a Texture with a transfer-queue upload from the calling worker, leaving it
+        ///        unregistered.
         ///
-        /// Constructs the image and view and records the upload on the transfer queue,
-        /// returning the unregistered texture and a Task that completes once the upload is
-        /// submitted. The result must be Finalize()d on the render thread before sampling.
-        /// @param context    Render context the image and view are created on.
-        /// @param data       Texture description (extent, format, pixels, sampler settings).
-        /// @param tasks      Task system the async upload is recorded through.
-        /// @param outUpload  Receives the upload task to wait on before Finalize().
+        /// Constructs the image and view and submits the upload on the transfer queue from this
+        /// worker (Image::UploadOnWorker), so the copy is submitted and the image marked
+        /// transfer-produced before this returns. The result must be Finalize()d on the render
+        /// thread before sampling.
+        /// @param context Render context the image and view are created on.
+        /// @param data    Texture description (extent, format, pixels, sampler settings).
         /// @return The unregistered texture.
-        static Ref<Texture> PrepareAsync(Renderer::Context& context, const TextureData& data,
-                                         TaskSystem& tasks, Task<void>& outUpload);
+        /// @pre Called on a TaskSystem worker thread.
+        static Ref<Texture> PrepareOnWorker(Renderer::Context& context, const TextureData& data);
 
         /// @brief Registers the view and sampler into the bindless registry (set 0).
         ///
