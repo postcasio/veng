@@ -322,6 +322,30 @@ namespace Veng::Gui
         /// @param color    The text color, linear straight-alpha RGBA.
         void SetTextColor(Element& element, vec4 color);
 
+        /// @brief Sets a stylesheet color variable on this document, repainting every value bound
+        ///        to it.
+        ///
+        /// A sheet declaration whose whole value is `var(--name)` or `rgba(var(--name), <alpha>)` on
+        /// a color property stays bound to the variable, base rule and `:hover`-style variant alike,
+        /// so one call recolors every element the sheets drew in it — the `rgba` spelling keeping its
+        /// own alpha. A paint-only write: the bound elements re-resolve at the next Update, easing
+        /// through any transition on the property. An element cascaded later (a list clone, a widget
+        /// part) takes the value too. SetBackground, SetTextColor, or a SetStyle that changes a
+        /// bound property unbinds that property on that element, so a driver's own color wins.
+        /// @param name   The variable name without its leading `--`.
+        /// @param color  The color, linear straight-alpha RGBA.
+        void SetVariable(string_view name, vec4 color);
+
+        /// @brief Clears a variable set through SetVariable, returning every value bound to it to
+        ///        the color the sheet authored.
+        /// @param name  The variable name without its leading `--`.
+        void ClearVariable(string_view name);
+
+        /// @brief Returns the color a variable is set to on this document.
+        /// @param name  The variable name without its leading `--`.
+        /// @return The color SetVariable last set, or nullopt when it is unset.
+        [[nodiscard]] optional<vec4> GetVariable(string_view name) const;
+
         /// @brief Sets an Image element's sampled UV sub-rect — a paint-only write, no layout re-solve.
         ///
         /// Writes the element's UV rectangle directly, so re-pointing an Image at a different atlas
@@ -1021,6 +1045,15 @@ namespace Veng::Gui
         /// @brief Queues an element for a style re-resolve at the next Update.
         void QueueResolve(Element& element);
 
+        /// @brief Returns the 1-based slot of a variable in this document's table, adding it unset.
+        u32 VariableSlot(string_view name);
+
+        /// @brief Returns the document slot of a sheet's bound variable (1-based index), or 0.
+        u32 BindSheetVariable(const StyleSheet& sheet, u32 index);
+
+        /// @brief Rewrites every base value bound to a variable slot and re-resolves its elements.
+        void RepaintVariable(u32 slot);
+
         /// @brief Queues an element whose overflow may have moved for the next scrollbar reconcile.
         void QueueScrollCheck(Element& element);
 
@@ -1641,6 +1674,12 @@ namespace Veng::Gui
         /// instantiate — a scrollbar appearing when an axis is styled scrollable — resolves against
         /// the same sheets the authored tree did, without the recipe having to outlive the document.
         vector<AssetHandle<StyleSheet>> m_StyleSheets;
+
+        /// @brief The variable names bound declarations on this document reference, by slot - 1.
+        vector<string> m_VariableNames;
+
+        /// @brief Each variable slot's SetVariable color, or nullopt to draw the sheet's own.
+        vector<optional<vec4>> m_VariableValues;
 
         /// @brief Resolved gradient ramps, shared by every cascade this document runs.
         ///

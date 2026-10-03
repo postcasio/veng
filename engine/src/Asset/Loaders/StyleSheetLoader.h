@@ -44,6 +44,8 @@ namespace Veng
             vector<Gui::StyleVariable> Variables;
             /// @brief The flat transition table a `transition` declaration slices.
             vector<Gui::StyleTransition> Transitions;
+            /// @brief The variable names bound declarations reference, by Variable - 1.
+            vector<string> BoundVariables;
             /// @brief The deduplicated font AssetIds every declaration references (load-time dependencies).
             vector<AssetId> FontIds;
             /// @brief The deduplicated texture AssetIds every `background-image` names (load-time dependencies).

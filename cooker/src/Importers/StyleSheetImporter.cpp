@@ -763,16 +763,69 @@ namespace Veng::Cook
             return cp;
         }
 
+        // Where one `var(--name)` use landed in the substituted token stream: its expansion spans
+        // [Begin, End). A declaration whose value is exactly such a span stays bound to the variable.
+        struct VarSpan
+        {
+            usize Begin = 0;
+            usize End = 0;
+            string Name;
+        };
+
+        // A block declaration bound to a variable: its index in the block's properties, the variable
+        // name without its `--`, and whether the declaration keeps its own alpha.
+        struct BlockBinding
+        {
+            usize Property = 0;
+            string Name;
+            bool KeepsAlpha = false;
+        };
+
+        // The binding a color declaration's value tokens [begin, end) carry: the whole value is one
+        // var() expansion, or `rgba(<expansion>, <alpha>)`.
+        optional<std::pair<string, bool>> FindBinding(const std::vector<CssToken>& tokens,
+                                                      const usize begin, const usize end,
+                                                      const vector<VarSpan>& spans)
+        {
+            const auto spanAt = [&](usize at) -> const VarSpan*
+            {
+                const auto found = std::ranges::find_if(spans, [&](const VarSpan& span)
+                                                        { return span.Begin == at; });
+                return found == spans.end() ? nullptr : &*found;
+            };
+            if (const VarSpan* whole = spanAt(begin); whole != nullptr && whole->End == end)
+            {
+                return std::pair{whole->Name, false};
+            }
+            if (end - begin < 2 || tokens[begin].Kind != CssTokenKind::Ident ||
+                tokens[begin].Text != "rgba" || tokens[begin + 1].Kind != CssTokenKind::LParen)
+            {
+                return std::nullopt;
+            }
+            const VarSpan* inner = spanAt(begin + 2);
+            if (inner == nullptr || inner->End + 3 != end ||
+                tokens[inner->End].Kind != CssTokenKind::Comma ||
+                tokens[inner->End + 1].Kind != CssTokenKind::Value ||
+                tokens[inner->End + 2].Kind != CssTokenKind::RParen)
+            {
+                return std::nullopt;
+            }
+            return std::pair{inner->Name, true};
+        }
+
         // Parses a declaration block (the tokens between `{` and `}`) into cooked properties.
         // `animationNames` is the sheet's @keyframes table an `animation` declaration resolves
         // against; `gradients`/`rampBytes` are the sheet's gradient tables a `background-gradient`
         // appends to; `transitions` is the sheet's transition table a `transition` declaration
         // slices. All are nullptr where those references are not authorable (a keyframe block), so
         // they fall through to ParseStyleDeclaration's located error.
+        // `spans` and `bindings` are the sheet's var() expansions and the block's bound color
+        // declarations out; both nullptr where no binding is kept (a keyframe block).
         Result<vector<CookedStyleProperty>>
         ParseBlock(const std::vector<CssToken>& tokens, usize& i, const string& located,
                    const vector<string>* animationNames, vector<CookedStyleGradient>* gradients,
-                   vector<u8>* rampBytes, vector<CookedStyleTransition>* transitions)
+                   vector<u8>* rampBytes, vector<CookedStyleTransition>* transitions,
+                   const vector<VarSpan>* spans, vector<BlockBinding>* bindings)
         {
             vector<CookedStyleProperty> properties;
 
@@ -796,6 +849,7 @@ namespace Veng::Cook
 
                 // Collect value tokens up to the `;` or `}`, rejoined with single spaces (a color's
                 // `#` + hex recombines, a shorthand's parts stay space-separated).
+                const usize valueBegin = i;
                 string value;
                 while (i < tokens.size() && tokens[i].Kind != CssTokenKind::Semicolon &&
                        tokens[i].Kind != CssTokenKind::RBrace)
@@ -836,6 +890,7 @@ namespace Veng::Cook
                     ++i;
                 }
 
+                const usize valueEnd = i;
                 if (i < tokens.size() && tokens[i].Kind == CssTokenKind::Semicolon)
                 {
                     ++i;
@@ -910,6 +965,16 @@ namespace Veng::Cook
                 if (!cooked)
                 {
                     return std::unexpected(cooked.error());
+                }
+                if (spans != nullptr && bindings != nullptr && Gui::IsColorProperty(*property))
+                {
+                    if (const optional<std::pair<string, bool>> bound =
+                            FindBinding(tokens, valueBegin, valueEnd, *spans))
+                    {
+                        bindings->push_back(BlockBinding{.Property = properties.size(),
+                                                         .Name = bound->first,
+                                                         .KeepsAlpha = bound->second});
+                    }
                 }
                 properties.push_back(*cooked);
             }
@@ -1050,8 +1115,8 @@ namespace Veng::Cook
                 }
                 ++i;
 
-                const Result<vector<CookedStyleProperty>> block =
-                    ParseBlock(tokens, i, located, nullptr, nullptr, nullptr, nullptr);
+                const Result<vector<CookedStyleProperty>> block = ParseBlock(
+                    tokens, i, located, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
                 if (!block)
                 {
                     return std::unexpected(block.error());
@@ -1178,7 +1243,7 @@ namespace Veng::Cook
         VoidResult PreprocessSheet(const vector<CssToken>& tokens, const path& file,
                                    const CookContext& context, StyleVariableTable& table,
                                    vector<string>* ownNames, vector<CssToken>* substituted,
-                                   std::set<string>& visited);
+                                   vector<VarSpan>* spans, std::set<string>& visited);
 
         // Reads a `@use`d sheet and merges its top-level variables (recursively honoring its own
         // `@use`s) into `table`, last-wins in encounter order. Rules are ignored — `@use` shares
@@ -1209,7 +1274,8 @@ namespace Veng::Cook
             context.RecordDependency(usedPath);
 
             const vector<CssToken> used = TokenizeCss(source);
-            return PreprocessSheet(used, usedPath, context, table, nullptr, nullptr, visited);
+            return PreprocessSheet(used, usedPath, context, table, nullptr, nullptr, nullptr,
+                                   visited);
         }
 
         // Linear top-down pass over a sheet's tokens: it resolves `@use` imports, collects file-scope
@@ -1217,12 +1283,13 @@ namespace Veng::Cook
         // sheet being cooked (`substituted` non-null) — emits every rule/`@keyframes` token with its
         // `var(--name)` uses expanded against the table state at each use site. `ownNames` (non-null
         // only for the sheet being cooked) records this file's own variable names for the runtime
-        // table. A `@use` after a rule, a `--` inside a rule, an undefined variable, and a missing
-        // `@use` target are located cook errors.
+        // table, and `spans` (likewise) where each expansion landed in `substituted`. A `@use` after
+        // a rule, a `--` inside a rule, an undefined variable, and a missing `@use` target are
+        // located cook errors.
         VoidResult PreprocessSheet(const vector<CssToken>& tokens, const path& file,
                                    const CookContext& context, StyleVariableTable& table,
                                    vector<string>* ownNames, vector<CssToken>* substituted,
-                                   std::set<string>& visited)
+                                   vector<VarSpan>* spans, std::set<string>& visited)
         {
             const string located = fmt::format("stylesheet importer: '{}'", file.string());
 
@@ -1337,8 +1404,14 @@ namespace Veng::Cook
                         return std::unexpected(
                             fmt::format("{}: use of undefined variable '{}'", located, name));
                     }
+                    const usize begin = substituted->size();
                     substituted->insert(substituted->end(), found->second.begin(),
                                         found->second.end());
+                    if (spans != nullptr)
+                    {
+                        spans->push_back(VarSpan{
+                            .Begin = begin, .End = substituted->size(), .Name = name.substr(2)});
+                    }
                     i += 4;
                     continue;
                 }
@@ -1397,8 +1470,10 @@ namespace Veng::Cook
             const path canonical = std::filesystem::weakly_canonical(sourcePath, ec);
             visited.insert((ec ? sourcePath : canonical).string());
         }
-        const VoidResult preprocessed = PreprocessSheet(
-            rawTokens, sourcePath, context, variableTable, &ownVariableNames, &tokens, visited);
+        vector<VarSpan> spans;
+        const VoidResult preprocessed =
+            PreprocessSheet(rawTokens, sourcePath, context, variableTable, &ownVariableNames,
+                            &tokens, &spans, visited);
         if (!preprocessed)
         {
             return std::unexpected(preprocessed.error());
@@ -1410,6 +1485,7 @@ namespace Veng::Cook
         vector<CookedStyleKeyframe> keyframes;
         vector<CookedStyleGradient> gradients;
         vector<CookedStyleTransition> transitions;
+        vector<CookedStyleBinding> bindings;
         vector<u8> rampBytes;
         vector<string> animationNames;
 
@@ -1470,8 +1546,10 @@ namespace Veng::Cook
             }
             ++i; // consume '{'
 
-            const Result<vector<CookedStyleProperty>> block = ParseBlock(
-                tokens, i, located, &animationNames, &gradients, &rampBytes, &transitions);
+            vector<BlockBinding> blockBindings;
+            const Result<vector<CookedStyleProperty>> block =
+                ParseBlock(tokens, i, located, &animationNames, &gradients, &rampBytes,
+                           &transitions, &spans, &blockBindings);
             if (!block)
             {
                 return std::unexpected(block.error());
@@ -1489,6 +1567,14 @@ namespace Veng::Cook
                 rule.FirstProperty = static_cast<u32>(properties.size());
                 rule.PropertyCount = static_cast<u32>(block->size());
                 rules.push_back(rule);
+                for (const BlockBinding& bound : blockBindings)
+                {
+                    CookedStyleBinding binding{};
+                    binding.Property = rule.FirstProperty + static_cast<u32>(bound.Property);
+                    binding.KeepsAlpha = bound.KeepsAlpha ? 1U : 0U;
+                    CopyName(binding.Name, StyleSelectorNameCapacity, bound.Name);
+                    bindings.push_back(binding);
+                }
                 properties.insert(properties.end(), block->begin(), block->end());
             }
         }
@@ -1542,6 +1628,7 @@ namespace Veng::Cook
         header.GradientCount = static_cast<u32>(gradients.size());
         header.VariableCount = static_cast<u32>(variables.size());
         header.TransitionCount = static_cast<u32>(transitions.size());
+        header.BindingCount = static_cast<u32>(bindings.size());
         header.RampByteCount = static_cast<u32>(rampBytes.size());
 
         vector<u8> blob;
@@ -1551,7 +1638,8 @@ namespace Veng::Cook
                      keyframes.size() * sizeof(CookedStyleKeyframe) +
                      gradients.size() * sizeof(CookedStyleGradient) +
                      variables.size() * sizeof(CookedStyleVariable) +
-                     transitions.size() * sizeof(CookedStyleTransition) + rampBytes.size());
+                     transitions.size() * sizeof(CookedStyleTransition) +
+                     bindings.size() * sizeof(CookedStyleBinding) + rampBytes.size());
         Append(blob, header);
         for (const CookedStyleRule& rule : rules)
         {
@@ -1580,6 +1668,10 @@ namespace Veng::Cook
         for (const CookedStyleTransition& transition : transitions)
         {
             Append(blob, transition);
+        }
+        for (const CookedStyleBinding& binding : bindings)
+        {
+            Append(blob, binding);
         }
         blob.insert(blob.end(), rampBytes.begin(), rampBytes.end());
 

@@ -21,7 +21,8 @@ namespace Veng::Gui
     ///
     /// A color property's value is a linear-space vec4. It authors two ways: hex `#rrggbb`/`#rrggbbaa`
     /// is an sRGB hue decoded to a linear color clamped to [0, 1] (the familiar LDR path), while
-    /// `rgb(x, y, z)` / `rgba(x, y, z, a)` are unclamped linear floats taken directly (no sRGB decode),
+    /// `rgb(x, y, z)` / `rgba(x, y, z, a)` are unclamped linear floats taken directly (no sRGB decode)
+    /// — and `rgba(<color>, a)` is either form with its alpha replaced —
     /// so a component may exceed 1 to author an emissive color that glows on a world surface. So
     /// `rgb(0.5, 0.5, 0.5)` is a linear 0.5 grey, distinct from `#808080`, which decodes to ~0.216
     /// linear.
@@ -218,4 +219,12 @@ namespace Veng::Gui
     /// @param property  The style property.
     /// @return True when a transition or a keyframe clip can interpolate the property.
     [[nodiscard]] bool IsAnimatableProperty(StyleProperty property);
+
+    /// @brief Whether a property's value is a single linear-space color held in a vec4.
+    ///
+    /// The set a stylesheet declaration may bind to a runtime variable: background, border-color,
+    /// color, the box shadow's color, and stroke.
+    /// @param property  The style property.
+    /// @return True when the property's whole value is one color.
+    [[nodiscard]] bool IsColorProperty(StyleProperty property);
 }

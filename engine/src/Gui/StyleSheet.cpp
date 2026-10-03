@@ -302,21 +302,22 @@ namespace Veng::Gui
                                        vector<StyleAnimationClip> animations,
                                        vector<StyleGradient> gradients,
                                        vector<StyleVariable> variables,
-                                       vector<StyleTransition> transitions,
+                                       vector<StyleTransition> transitions, vector<string> bound,
                                        vector<Ref<Detail::AssetCacheEntry>> dependencies)
     {
-        return Ref<StyleSheet>(new StyleSheet(std::move(rules), std::move(animations),
-                                              std::move(gradients), std::move(variables),
-                                              std::move(transitions), std::move(dependencies)));
+        return Ref<StyleSheet>(new StyleSheet(
+            std::move(rules), std::move(animations), std::move(gradients), std::move(variables),
+            std::move(transitions), std::move(bound), std::move(dependencies)));
     }
 
     StyleSheet::StyleSheet(vector<StyleRule> rules, vector<StyleAnimationClip> animations,
                            vector<StyleGradient> gradients, vector<StyleVariable> variables,
-                           vector<StyleTransition> transitions,
+                           vector<StyleTransition> transitions, vector<string> bound,
                            vector<Ref<Detail::AssetCacheEntry>> dependencies)
         : m_Rules(std::move(rules)), m_Animations(std::move(animations)),
           m_Gradients(std::move(gradients)), m_Variables(std::move(variables)),
-          m_Transitions(std::move(transitions)), m_Dependencies(std::move(dependencies))
+          m_Transitions(std::move(transitions)), m_BoundVariables(std::move(bound)),
+          m_Dependencies(std::move(dependencies))
     {
     }
 

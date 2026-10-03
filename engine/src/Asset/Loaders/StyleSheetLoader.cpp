@@ -1,5 +1,6 @@
 #include "StyleSheetLoader.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include <fmt/format.h>
@@ -66,12 +67,14 @@ namespace Veng
                 static_cast<usize>(header.VariableCount) * sizeof(CookedStyleVariable);
             const usize transitionBytes =
                 static_cast<usize>(header.TransitionCount) * sizeof(CookedStyleTransition);
+            const usize bindingBytes =
+                static_cast<usize>(header.BindingCount) * sizeof(CookedStyleBinding);
             const auto rampBytes = static_cast<usize>(header.RampByteCount);
 
             usize cursor = sizeof(CookedStyleSheetHeader);
             if (cooked.size() < cursor + ruleBytes + propertyBytes + animationBytes +
                                     keyframeBytes + gradientBytes + variableBytes +
-                                    transitionBytes + rampBytes)
+                                    transitionBytes + bindingBytes + rampBytes)
             {
                 return std::unexpected(Corrupt(id, "stylesheet: cooked blob truncated"));
             }
@@ -125,10 +128,40 @@ namespace Veng
             }
             cursor += transitionBytes;
 
+            vector<CookedStyleBinding> cookedBindings(header.BindingCount);
+            if (bindingBytes > 0)
+            {
+                std::memcpy(cookedBindings.data(), cooked.data() + cursor, bindingBytes);
+            }
+            cursor += bindingBytes;
+
             const u8* const rampRegion = cooked.data() + cursor;
 
             DecodedStyleSheet decoded;
             decoded.Rules.reserve(header.RuleCount);
+
+            // Each bound declaration's variable, by property index: 0 unbound, else 1 + its index
+            // in the deduplicated name table.
+            vector<u32> boundVariable(header.PropertyCount, 0);
+            vector<bool> keepsAlpha(header.PropertyCount, false);
+            for (const CookedStyleBinding& binding : cookedBindings)
+            {
+                if (binding.Property >= header.PropertyCount)
+                {
+                    return std::unexpected(
+                        Corrupt(id, "stylesheet: binding property index out of bounds"));
+                }
+                const string name = ReadName(binding.Name, StyleSelectorNameCapacity);
+                auto found = std::ranges::find(decoded.BoundVariables, name);
+                if (found == decoded.BoundVariables.end())
+                {
+                    decoded.BoundVariables.push_back(name);
+                    found = decoded.BoundVariables.end() - 1;
+                }
+                boundVariable[binding.Property] =
+                    static_cast<u32>(found - decoded.BoundVariables.begin()) + 1;
+                keepsAlpha[binding.Property] = binding.KeepsAlpha != 0;
+            }
 
             // The shared property-slice decode both a rule and a keyframe read through.
             const auto readDeclarations =
@@ -147,6 +180,8 @@ namespace Veng
                     declaration.Unit = cp.Unit;
                     declaration.Values = {cp.Values[0], cp.Values[1], cp.Values[2], cp.Values[3]};
                     declaration.Handle = AssetId{cp.Handle};
+                    declaration.Variable = boundVariable[first + i];
+                    declaration.KeepsAlpha = keepsAlpha[first + i];
                     if (declaration.Property == Gui::StyleProperty::TextFont && cp.Handle != 0)
                     {
                         decoded.FontIds.push_back(AssetId{cp.Handle});
@@ -321,7 +356,8 @@ namespace Veng
             const Ref<Gui::StyleSheet> sheet = Gui::StyleSheet::Create(
                 std::move(sheetParts->Rules), std::move(sheetParts->Animations),
                 std::move(sheetParts->Gradients), std::move(sheetParts->Variables),
-                std::move(sheetParts->Transitions), dependencies);
+                std::move(sheetParts->Transitions), std::move(sheetParts->BoundVariables),
+                dependencies);
             return Detail::LoadJob{
                 .Resource = Detail::RefAny(sheet),
                 .Dependencies = std::move(dependencies),

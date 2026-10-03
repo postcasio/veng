@@ -96,6 +96,8 @@ namespace Veng::Cook
                         static_cast<f32>(channels[3]) / 255.0f);
         }
 
+        Result<vec4> ParseColorValue(std::string_view value, const string& located);
+
         // An rgb()/rgba() functional color → a linear straight-alpha vec4. Components are unclamped
         // linear floats where >= 0 (a value > 1 is an emissive/HDR color); no sRGB decode is applied,
         // so the parsed vec4 is the draw-list's linear color directly. rgb() takes three components
@@ -113,6 +115,46 @@ namespace Veng::Cook
                     fmt::format("{}: color '{}' must be '{}(...)'", located, value, name));
             }
             const std::string_view inner = rest.substr(1, rest.size() - 2);
+
+            // `rgba(<color>, <alpha>)`: another color with its alpha replaced, so a sheet can take a
+            // variable's color at a weight without restating its channels.
+            if (hasAlpha)
+            {
+                usize depth = 0;
+                usize comma = std::string_view::npos;
+                usize commas = 0;
+                for (usize i = 0; i < inner.size(); ++i)
+                {
+                    depth += inner[i] == '(' ? 1 : 0;
+                    depth -= inner[i] == ')' && depth > 0 ? 1 : 0;
+                    if (inner[i] == ',' && depth == 0)
+                    {
+                        comma = commas == 0 ? i : comma;
+                        ++commas;
+                    }
+                }
+                const std::string_view head = Trim(inner.substr(0, comma));
+                if (commas == 1 && (head.starts_with("rgb") || head.starts_with('#')))
+                {
+                    const Result<vec4> color = ParseColorValue(head, located);
+                    if (!color)
+                    {
+                        return std::unexpected(color.error());
+                    }
+                    const std::string_view tail = Trim(inner.substr(comma + 1));
+                    const Result<f32> alpha = ParseFloat(tail, located);
+                    if (!alpha)
+                    {
+                        return std::unexpected(alpha.error());
+                    }
+                    if (*alpha < 0.0f)
+                    {
+                        return std::unexpected(fmt::format("{}: color '{}' alpha '{}' must be >= 0",
+                                                           located, value, tail));
+                    }
+                    return vec4(vec3(*color), *alpha);
+                }
+            }
 
             f32 components[4] = {0.0f, 0.0f, 0.0f, 1.0f};
             usize count = 0;

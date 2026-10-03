@@ -5,7 +5,9 @@
 // own color/scalar variables (and nullopt for a multi-token or @use'd one), the @use target is
 // recorded as a build dependency, and each malformed sheet is a located cook error. It also covers
 // the `transition` declaration — the list it cooks, the entries the cook rejects, and that a later
-// rule replaces the whole list — and the nesting-aware value split a functional colour needs.
+// rule replaces the whole list — and the nesting-aware value split a functional colour needs. A
+// color declaration whose whole value is a var() cooks bound to it, and a document's SetVariable
+// repaints the base and variant values bound that way.
 
 #include <algorithm>
 #include <array>
@@ -18,6 +20,7 @@
 #include <glm/gtc/packing.hpp>
 
 #include <Veng/Asset/Archive.h>
+#include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/CookedBlobs.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
@@ -25,6 +28,10 @@
 #include <Veng/Gui/Element.h>
 #include <Veng/Gui/StyleProperty.h>
 #include <Veng/Gui/StyleSheet.h>
+#include <Veng/Gui/UIDocument.h>
+#include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Renderer/Context.h>
+#include <Veng/Task/TaskSystem.h>
 
 #include "Asset/Loaders/StyleSheetLoader.h"
 #include "Importers/StyleParse.h"
@@ -217,7 +224,8 @@ TEST_CASE("Cooker: stylesheet variables substitute, redefine last-wins, and fill
     // The runtime variable table carries the sheet's own color/scalar variables only.
     const Ref<Gui::StyleSheet> sheet = Gui::StyleSheet::Create(
         std::move(decoded->Rules), std::move(decoded->Animations), std::move(decoded->Gradients),
-        std::move(decoded->Variables), std::move(decoded->Transitions), {});
+        std::move(decoded->Variables), std::move(decoded->Transitions),
+        std::move(decoded->BoundVariables), {});
 
     // A color variable, and one that resolved through another variable (var(--accent)).
     const optional<vec4> accentStrong = sheet->FindVariableColor("accent-strong");
@@ -879,4 +887,135 @@ TEST_CASE("Cooker: a multi-value declaration splits outside parentheses, so a st
     REQUIRE(hex.has_value());
     REQUIRE(hex->Gradients.size() == 1);
     CHECK(hex->Gradients.front().Width >= 2);
+}
+
+TEST_CASE("Cooker: rgba() takes a color and an alpha, replacing the color's own")
+{
+    const string located = "loc";
+
+    const Result<vec4> hex = ParseStyleColor("rgba(#ffffff80, 0.25)", located);
+    REQUIRE(hex.has_value());
+    CHECK(hex->r == doctest::Approx(1.0f));
+    CHECK(hex->a == doctest::Approx(0.25f));
+
+    const Result<vec4> linear = ParseStyleColor("rgba(rgb(2, 0, 3), 0.5)", located);
+    REQUIRE(linear.has_value());
+    CHECK(linear->r == doctest::Approx(2.0f));
+    CHECK(linear->b == doctest::Approx(3.0f));
+    CHECK(linear->a == doctest::Approx(0.5f));
+
+    // The inner color is held to its own grammar, and the alpha to a non-negative number.
+    CHECK_FALSE(ParseStyleColor("rgba(rgb(1, 2), 0.5)", located).has_value());
+    CHECK_FALSE(ParseStyleColor("rgba(rgb(1, 2, 3), x)", located).has_value());
+    CHECK_FALSE(ParseStyleColor("rgba(rgb(1, 2, 3), -1)", located).has_value());
+}
+
+TEST_CASE("Cooker: a color declaration whose whole value is a var() stays bound to it")
+{
+    const AssetResult<Detail::DecodedStyleSheet> decoded =
+        CookAndDecodeSheet("--accent: rgb(1, 2, 3);\n"
+                           "--half: 0.5;\n"
+                           ".lit {\n"
+                           "  background: var(--accent);\n"
+                           "  color: rgba(var(--accent), 0.5);\n"
+                           "  border-color: rgb(1, 1, 1);\n"
+                           "  opacity: var(--half);\n"
+                           "  box-shadow: 0 0 4 var(--accent);\n"
+                           "}\n"
+                           ".lit:selected { color: var(--accent); }\n");
+    REQUIRE(decoded.has_value());
+    REQUIRE(decoded->BoundVariables == vector<string>{"accent"});
+
+    const Gui::StyleRule* const lit = FindRuleByClass(decoded->Rules, "lit");
+    REQUIRE(lit != nullptr);
+    const Gui::StyleDeclaration* const background = FindDecl(*lit, Gui::StyleProperty::Background);
+    REQUIRE(background != nullptr);
+    CHECK(background->Variable == 1);
+    CHECK_FALSE(background->KeepsAlpha);
+    CheckColorEqual(background->Values, vec4(1.0f, 2.0f, 3.0f, 1.0f));
+
+    const Gui::StyleDeclaration* const text = FindDecl(*lit, Gui::StyleProperty::TextColor);
+    REQUIRE(text != nullptr);
+    CHECK(text->Variable == 1);
+    CHECK(text->KeepsAlpha);
+    CheckColorEqual(text->Values, vec4(1.0f, 2.0f, 3.0f, 0.5f));
+
+    // A literal, a non-color property, and a var() inside a shorthand all cook unbound.
+    for (const Gui::StyleProperty property :
+         {Gui::StyleProperty::BorderColor, Gui::StyleProperty::Opacity,
+          Gui::StyleProperty::BoxShadowColor})
+    {
+        const Gui::StyleDeclaration* const declaration = FindDecl(*lit, property);
+        REQUIRE(declaration != nullptr);
+        CHECK(declaration->Variable == 0);
+    }
+
+    const Gui::StyleRule* const selected =
+        FindRuleByClass(decoded->Rules, "lit", Gui::ElementState::Selected);
+    REQUIRE(selected != nullptr);
+    const Gui::StyleDeclaration* const selectedText =
+        FindDecl(*selected, Gui::StyleProperty::TextColor);
+    REQUIRE(selectedText != nullptr);
+    CHECK(selectedText->Variable == 1);
+}
+
+TEST_CASE("Cooker: a document variable repaints the base and variant values bound to it")
+{
+    AssetResult<Detail::DecodedStyleSheet> decoded =
+        CookAndDecodeSheet("--accent: rgb(1, 2, 3);\n"
+                           ".lit { background: var(--accent); color: rgba(var(--accent), 0.5); }\n"
+                           ".lit:selected { color: var(--accent); }\n"
+                           ".plain { background: rgb(0.5, 0.5, 0.5); }\n");
+    REQUIRE(decoded.has_value());
+    const AssetHandle<Gui::StyleSheet> sheet = AssetManager::Adopt(Gui::StyleSheet::Create(
+        std::move(decoded->Rules), std::move(decoded->Animations), std::move(decoded->Gradients),
+        std::move(decoded->Variables), std::move(decoded->Transitions),
+        std::move(decoded->BoundVariables), {}));
+
+    Renderer::Context context;
+    TaskSystem tasks;
+    TypeRegistry types;
+    AssetManager assets(context, tasks, types);
+    const Ref<Gui::UIDocument> recipe = Gui::UIDocument::Create(
+        {Gui::UIElementRecipe{.Kind = Gui::ElementKind::Panel, .ChildCount = 3},
+         Gui::UIElementRecipe{.Kind = Gui::ElementKind::Panel, .Classes = {"lit"}},
+         Gui::UIElementRecipe{.Kind = Gui::ElementKind::Panel, .Classes = {"lit"}},
+         Gui::UIElementRecipe{.Kind = Gui::ElementKind::Panel, .Classes = {"plain"}}},
+        {sheet}, {});
+    const Veng::Unique<Gui::Document> doc = Gui::Document::Instantiate(*recipe, assets);
+    Gui::Element& lit = *doc->Root().Children.at(0);
+    Gui::Element& driven = *doc->Root().Children.at(1);
+    const Gui::Element& plain = *doc->Root().Children.at(2);
+
+    // Unset, a bound value draws what the sheet authored.
+    CheckColorEqual(lit.ComputedStyle.Background, vec4(1.0f, 2.0f, 3.0f, 1.0f));
+
+    const vec4 red{4.0f, 0.0f, 0.0f, 1.0f};
+    doc->SetVariable("accent", red);
+    doc->Update(0.0f);
+    CheckColorEqual(lit.ComputedStyle.Background, red);
+    CheckColorEqual(lit.ComputedStyle.TextColor, vec4(4.0f, 0.0f, 0.0f, 0.5f));
+    CheckColorEqual(plain.ComputedStyle.Background, vec4(0.5f, 0.5f, 0.5f, 1.0f));
+
+    // A variant's bound value folds in at the variable's color too.
+    doc->SetState(lit, Gui::ElementState::Selected);
+    doc->Update(0.0f);
+    CheckColorEqual(lit.ComputedStyle.TextColor, red);
+
+    // A driver's own color unbinds that property, and keeps it through a later set.
+    const vec4 green{0.0f, 1.0f, 0.0f, 1.0f};
+    doc->SetBackground(driven, green);
+    const vec4 blue{0.0f, 0.0f, 5.0f, 1.0f};
+    doc->SetVariable("accent", blue);
+    doc->Update(0.0f);
+    CheckColorEqual(driven.ComputedStyle.Background, green);
+    CheckColorEqual(driven.ComputedStyle.TextColor, vec4(0.0f, 0.0f, 5.0f, 0.5f));
+    CheckColorEqual(lit.ComputedStyle.TextColor, blue);
+
+    // Clearing returns every bound value to the sheet's.
+    doc->ClearVariable("accent");
+    doc->Update(0.0f);
+    CHECK_FALSE(doc->GetVariable("accent").has_value());
+    CheckColorEqual(lit.ComputedStyle.TextColor, vec4(1.0f, 2.0f, 3.0f, 1.0f));
+    CheckColorEqual(lit.ComputedStyle.Background, vec4(1.0f, 2.0f, 3.0f, 1.0f));
 }

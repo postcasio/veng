@@ -35,6 +35,17 @@ namespace Veng::Gui
         /// The transport `font` (a Font) and `background-image` (a Texture) both ride; which asset
         /// type it names is decided by Property.
         AssetId Handle;
+        /// @brief The variable a color value is bound to: 0 when unbound, else 1 + its index.
+        ///
+        /// A sheet-authored color declaration whose whole value is `var(--name)` or
+        /// `rgba(var(--name), <alpha>)` stays bound after the cook, and Values holds the color the
+        /// variable had then. In a StyleSheet the index is into StyleSheet::GetBoundVariables; once a
+        /// Document has cascaded the declaration onto an element it is into the document's own
+        /// variable table, so Document::SetVariable can repaint it.
+        u32 Variable = 0;
+        /// @brief Whether a bound value keeps its own alpha (Values.w) rather than the variable's —
+        ///        true for the `rgba(var(--name), <alpha>)` spelling.
+        bool KeepsAlpha = false;
     };
 
     /// @brief One cooked @keyframes clip: its keyframes, ascending by offset.
@@ -154,13 +165,15 @@ namespace Veng::Gui
         /// @param gradients     The cooked gradients, indexed by `background-gradient` declarations.
         /// @param variables     The sheet's own queryable variables (colors and scalars).
         /// @param transitions   The flat transition table `transition` declarations slice.
+        /// @param bound         The variable names bound declarations reference, by
+        ///                      StyleDeclaration::Variable - 1.
         /// @param dependencies  The resolved font dependency cache entries, kept resident.
         /// @return A shared StyleSheet.
         static Ref<StyleSheet> Create(vector<StyleRule> rules,
                                       vector<StyleAnimationClip> animations,
                                       vector<StyleGradient> gradients,
                                       vector<StyleVariable> variables,
-                                      vector<StyleTransition> transitions,
+                                      vector<StyleTransition> transitions, vector<string> bound,
                                       vector<Ref<Detail::AssetCacheEntry>> dependencies);
 
         /// @brief Returns the sheet's resolved rules, in source order.
@@ -177,6 +190,12 @@ namespace Veng::Gui
 
         /// @brief Returns the sheet's own queryable variables (colors and scalars).
         [[nodiscard]] const vector<StyleVariable>& GetVariables() const { return m_Variables; }
+
+        /// @brief Returns the names, without the leading `--`, that bound declarations reference.
+        ///
+        /// A declaration with a nonzero StyleDeclaration::Variable names entry Variable - 1. A name
+        /// may belong to an `@use`d sheet: a binding is by name, resolved document-wide.
+        [[nodiscard]] const vector<string>& GetBoundVariables() const { return m_BoundVariables; }
 
         /// @brief Returns the flat transition table a `transition` declaration slices.
         ///
@@ -209,7 +228,7 @@ namespace Veng::Gui
     private:
         StyleSheet(vector<StyleRule> rules, vector<StyleAnimationClip> animations,
                    vector<StyleGradient> gradients, vector<StyleVariable> variables,
-                   vector<StyleTransition> transitions,
+                   vector<StyleTransition> transitions, vector<string> bound,
                    vector<Ref<Detail::AssetCacheEntry>> dependencies);
 
         vector<StyleRule> m_Rules;
@@ -221,6 +240,8 @@ namespace Veng::Gui
         vector<StyleVariable> m_Variables;
         /// @brief The flat transition table, sliced by a `transition` declaration's Unit + Values.x.
         vector<StyleTransition> m_Transitions;
+        /// @brief The variable names bound declarations reference, by Variable - 1.
+        vector<string> m_BoundVariables;
         /// @brief Resolved font dependency entries, kept resident so a declaration's font stays loaded.
         vector<Ref<Detail::AssetCacheEntry>> m_Dependencies;
     };

@@ -49,8 +49,23 @@ flattens to a color or a single number — queried at runtime by `StyleSheet::Fi
 `FindVariableScalar` (names stored without the leading `--`), so imperative code reads the same
 palette the rules were flattened from rather than restating it. Token substitution itself
 (`var(--name)`, `@use "sheet.vuss"` variable import, last-wins redefinition, define-before-use) is
-a pure cook-time transform ahead of the flatten — the runtime sees no `var()`; see
-[cooker/CLAUDE.md](../../../cooker/CLAUDE.md).
+a cook-time transform ahead of the flatten; see [cooker/CLAUDE.md](../../../cooker/CLAUDE.md).
+
+**One `var()` shape survives the cook: a color declaration bound to its variable.** A declaration
+on a color property (`Gui::IsColorProperty` — background, border-color, color, the shadow's color,
+stroke) whose *whole* value is `var(--name)`, or `rgba(var(--name), <alpha>)`, cooks its color as
+usual and also records the variable's name in the sheet's binding table
+(`StyleSheet::GetBoundVariables`, indexed by `StyleDeclaration::Variable - 1`; `KeepsAlpha` marks
+the `rgba` spelling). A `var()` anywhere else — inside a shorthand, on a non-color property, in a
+keyframe — stays purely cook-time. The cascade re-keys a bound declaration to a slot in the
+**document's** variable table, keeping base bindings on `Element::BoundStyle` and variant ones in
+place, so `Document::SetVariable(name, color)` repaints every bound value — the `:selected` fill as
+much as the base — as a paint-only re-resolve that eases through any transition, and
+`ClearVariable` returns them to the authored color. The table is by name and document-wide, so a
+theme sheet's `@use`d variable binds too, and an element cascaded later (a list clone, a widget part)
+draws at the current value. **A driver's own color wins:** `SetBackground`, `SetTextColor`, and a
+`SetStyle` that changes a bound property unbind that property on that element. This is what lets
+one cooked sheet be re-themed at runtime without a per-element sweep or a sheet per palette.
 
 `AssetTypes::UIDocument` (`Veng/Gui/UIDocument.h`) is the cooked markup: a **pre-order recipe
 element tree** (each element carrying its kind, id, classes, text, inline style, unresolved

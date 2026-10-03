@@ -1056,7 +1056,7 @@ namespace Veng
     ///
     /// Bumped on any CookedStyleSheetHeader/CookedStyleRule/CookedStyleProperty/
     /// CookedStyleAnimation/CookedStyleKeyframe/CookedStyleGradient/CookedStyleVariable/
-    /// CookedStyleTransition layout change,
+    /// CookedStyleTransition/CookedStyleBinding layout change,
     /// and on any renumbering of the StyleProperty enumerators a CookedStyleProperty stores by ordinal;
     /// the loader rejects a blob whose Version != this. v2 added the @keyframes animation tables; v3
     /// added the gradient table and its baked ramp region; v4 widened a gradient's geometry to
@@ -1064,8 +1064,9 @@ namespace Veng
     /// table; v6 widened the gradient ramp from RGBA8 to RGBA16Sfloat half-float texels so a stop can
     /// hold an HDR (> 1) color; v7 renumbered the StyleProperty enumerators, replacing the single clip
     /// flag with the per-axis overflow properties and the scrollbar layout; v8 added the transition
-    /// table a `transition` declaration slices.
-    inline constexpr u32 CookedStyleSheetVersion = 8u;
+    /// table a `transition` declaration slices; v9 added the binding table that keeps a color
+    /// declaration bound to its variable.
+    inline constexpr u32 CookedStyleSheetVersion = 9u;
 
     /// @brief Maximum byte length (including nul terminator) for a selector's class/id/type name.
     ///
@@ -1091,6 +1092,7 @@ namespace Veng
     ///   CookedStyleGradient[GradientCount]     — one entry per `background-gradient`, in source order
     ///   CookedStyleVariable[VariableCount]     — the sheet's own queryable variables, in source order
     ///   CookedStyleTransition[TransitionCount] — every `transition` declaration's entries, contiguous per declaration
+    ///   CookedStyleBinding[BindingCount]       — the color declarations bound to a variable, by property index
     ///   u8[RampByteCount]                      — every gradient's baked N×1 RGBA16Sfloat ramp, contiguous
     ///
     /// A rule's declarations are the PropertyCount-slice [FirstProperty, FirstProperty + PropertyCount)
@@ -1104,7 +1106,8 @@ namespace Veng
     /// `transition` replaces an earlier one's outright, like any other property in the cascade.
     /// The variable table carries only the sheet's own top-level `--` variables whose value resolves
     /// to a color or a single number, for runtime query; multi-token variables are cook-time-only and
-    /// absent.
+    /// absent. The binding table names, per bound color declaration, the variable its value came
+    /// from, so a runtime document can repaint it when the variable is set.
     struct CookedStyleSheetHeader
     {
         /// @brief Must equal CookedStyleSheetVersion; the loader rejects mismatches.
@@ -1123,7 +1126,9 @@ namespace Veng
         u32 VariableCount = 0;
         /// @brief Total number of CookedStyleTransition entries following the variable table.
         u32 TransitionCount = 0;
-        /// @brief Total bytes in the ramp region following the transition table.
+        /// @brief Number of CookedStyleBinding entries following the transition table.
+        u32 BindingCount = 0;
+        /// @brief Total bytes in the ramp region following the binding table.
         u32 RampByteCount = 0;
     };
 
@@ -1233,6 +1238,23 @@ namespace Veng
         u32 Kind = 0;
         /// @brief Resolved value: a linear straight-alpha color (all four), or a scalar in [0].
         f32 Payload[4] = {};
+    };
+
+    /// @brief One color declaration bound to a variable: which declaration, and the variable's name.
+    ///
+    /// A rule declaration whose whole value was `var(--name)` or `rgba(var(--name), <alpha>)` on a
+    /// color property gets one entry. Property indexes the property table; the declaration's own
+    /// Values still hold the color the variable resolved to at its use site, so a reader that
+    /// ignores this table draws exactly what the sheet authored. KeepsAlpha is 1 for the `rgba`
+    /// spelling, whose alpha is the declaration's own rather than the variable's.
+    struct CookedStyleBinding
+    {
+        /// @brief Index of the bound declaration in the property table.
+        u32 Property = 0;
+        /// @brief 1 when the declaration keeps its own alpha over the variable's; 0 otherwise.
+        u32 KeepsAlpha = 0;
+        /// @brief Nul-terminated variable name without the leading `--`.
+        char Name[StyleSelectorNameCapacity] = {};
     };
 
     /// @brief One entry of a cooked `transition` list: which property eases, and over how long.

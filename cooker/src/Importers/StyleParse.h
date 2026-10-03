@@ -48,6 +48,7 @@ namespace Veng::Cook
     /// convert sRGB → linear (the draw-list contract) and its alpha stays a straight [0, 1] value.
     /// An `rgb(x, y, z)` / `rgba(x, y, z, a)` color is taken as unclamped linear floats (each >= 0,
     /// a value > 1 authoring an emissive/HDR color) with no sRGB decode; `rgb()` defaults alpha to 1.
+    /// `rgba(<color>, <alpha>)` takes another color in either form and replaces its alpha.
     /// @param value    The color text (hex with or without a leading `#`, or an rgb()/rgba() call).
     /// @param located  The located-error prefix (file + selector/element context).
     /// @return The linear straight-alpha color, or a located error.

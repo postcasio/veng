@@ -154,6 +154,10 @@ at cook time:
   baked to a shape + a ramp LUT, and each `transition` list resolved into the sheet's transition
   table — an entry naming an unknown property, or one whose value does not interpolate, is a
   **located cook error** rather than an ease that silently never runs.
+  `var(--name)` is substituted as tokens before the parse, but a color declaration whose whole
+  value is `var(--name)` or `rgba(var(--name), <alpha>)` also lands in the sheet's **binding
+  table** (`CookedStyleBinding`), so the runtime document can re-color it; `rgba(<color>, <alpha>)`
+  is the general spelling of a color at another alpha.
   Both importers share `Importers/StyleParse.{h,cpp}`, which owns the
   per-property value grammar and the **fill-source exclusivity diagnostic**
   (`CheckExclusiveFillSources`): `background-material`, `background-gradient`, `background-image`,

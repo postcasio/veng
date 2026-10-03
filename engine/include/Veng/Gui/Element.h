@@ -455,6 +455,12 @@ namespace Veng::Gui
         /// padding are already included here.
         Rect Layout;
 
+        /// @brief The base style's color declarations bound to a document variable, one per property.
+        ///
+        /// Each declaration's Variable is a slot in the owning Document's variable table, and its
+        /// Values the color the sheet authored; Document::SetVariable rewrites the BaseStyle field
+        /// from it.
+        vector<StyleDeclaration> BoundStyle;
         /// @brief The state-scoped style variants, in cascade source order.
         vector<StyleVariant> Variants;
         /// @brief The per-property transitions that ease a target change over time.

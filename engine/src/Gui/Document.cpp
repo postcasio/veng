@@ -27,6 +27,7 @@
 #include <cctype>
 #include <charconv>
 #include <cmath>
+#include <span>
 #include <unordered_map>
 
 namespace Veng::Gui
@@ -677,17 +678,57 @@ namespace Veng::Gui
         // declaration resolves the same way, copying its slice of the sheet's transition table onto
         // the element — the same list Document::SetTransitions writes, so both paths reach one
         // runtime mechanism.
+        // The color a bound declaration takes: its variable's document value, with the declaration's
+        // own alpha where it keeps one, or the authored color while the variable is unset.
+        vec4 BoundValue(const StyleDeclaration& declaration, std::span<const optional<vec4>> values)
+        {
+            if (declaration.Variable == 0 || declaration.Variable > values.size() ||
+                !values[declaration.Variable - 1].has_value())
+            {
+                return declaration.Values;
+            }
+            const vec4 value = *values[declaration.Variable - 1];
+            return declaration.KeepsAlpha ? vec4(vec3(value), declaration.Values.a) : value;
+        }
+
+        // Applies a declaration, substituting a bound one's document value.
+        void ApplyBound(Style& style, const StyleDeclaration& declaration,
+                        std::span<const optional<vec4>> values, AssetManager* assets)
+        {
+            if (declaration.Variable == 0)
+            {
+                ApplyDeclaration(style, declaration, assets);
+                return;
+            }
+            StyleDeclaration resolved = declaration;
+            resolved.Values = BoundValue(declaration, values);
+            ApplyDeclaration(style, resolved, assets);
+        }
+
+        // Drops an element's base binding of one property, so a later value on it is not overwritten.
+        void Unbind(Element& element, const StyleProperty property)
+        {
+            std::erase_if(element.BoundStyle, [property](const StyleDeclaration& declaration)
+                          { return declaration.Property == property; });
+        }
+
+        // Maps a sheet's bound-variable index (1-based) onto the document's variable slot (1-based).
+        using VariableBinder = function<u32(const StyleSheet&, u32)>;
+
         // Cascades the sheets onto an element, then its inline style over the top. `recipe` is
         // null for a widget-owned element, which has neither an authored identity nor inline style
-        // — only the sheet rules its kind and classes match.
+        // — only the sheet rules its kind and classes match. A bound color declaration is re-keyed to
+        // the document's variable slot through `bindVariable` and drawn at its current `values`.
         void ResolveElementStyle(
             Element& element, const UIElementRecipe* recipe,
             const vector<const StyleSheet*>& sheets, AssetManager* assets,
-            const function<optional<ResolvedGradient>(const StyleSheet&, u32)>& resolveGradient)
+            const function<optional<ResolvedGradient>(const StyleSheet&, u32)>& resolveGradient,
+            const VariableBinder& bindVariable, std::span<const optional<vec4>> values)
         {
             element.Variants.clear();
             element.Animations.clear();
             element.Transitions.clear();
+            element.BoundStyle.clear();
 
             for (const StyleSheet* sheet : sheets)
             {
@@ -739,13 +780,33 @@ namespace Veng::Gui
                                 }
                                 continue;
                             }
-                            ApplyDeclaration(element.BaseStyle, declaration, assets);
+                            Unbind(element, declaration.Property);
+                            if (declaration.Variable == 0)
+                            {
+                                ApplyDeclaration(element.BaseStyle, declaration, assets);
+                                continue;
+                            }
+                            StyleDeclaration bound = declaration;
+                            bound.Variable = bindVariable(*sheet, declaration.Variable);
+                            ApplyBound(element.BaseStyle, bound, values, assets);
+                            if (bound.Variable != 0)
+                            {
+                                element.BoundStyle.push_back(bound);
+                            }
                         }
                     }
                     else
                     {
-                        element.Variants.push_back(
-                            StyleVariant{.State = rule.State, .Declarations = rule.Declarations});
+                        StyleVariant variant{.State = rule.State,
+                                             .Declarations = rule.Declarations};
+                        for (StyleDeclaration& declaration : variant.Declarations)
+                        {
+                            if (declaration.Variable != 0)
+                            {
+                                declaration.Variable = bindVariable(*sheet, declaration.Variable);
+                            }
+                        }
+                        element.Variants.push_back(std::move(variant));
                     }
                 }
             }
@@ -754,6 +815,7 @@ namespace Veng::Gui
             {
                 for (const StyleDeclaration& declaration : recipe->InlineStyle)
                 {
+                    Unbind(element, declaration.Property);
                     ApplyDeclaration(element.BaseStyle, declaration, assets);
                 }
             }
@@ -1154,6 +1216,10 @@ namespace Veng::Gui
             return resolved;
         };
 
+        Document* const owner = document.get();
+        const VariableBinder bindVariable = [owner](const StyleSheet& sheet, const u32 index) -> u32
+        { return owner->BindSheetVariable(sheet, index); };
+
         // Element 0 is the authored root; it maps onto the document's pre-made root. The pre-order
         // recipe carries an explicit child count per element, so a recursive walk over a shared
         // cursor rebuilds the hierarchy in one linear pass. A recipe root of a non-Panel kind still
@@ -1164,7 +1230,8 @@ namespace Veng::Gui
             const UIElementRecipe& node = elements[cursor];
             ++cursor;
             PopulateElement(live, node);
-            ResolveElementStyle(live, &node, sheets, &assets, resolveGradient);
+            ResolveElementStyle(live, &node, sheets, &assets, resolveGradient, bindVariable,
+                                document->m_VariableValues);
             ResolveElementImage(live, node, assets);
             // A widget inside a repeater's authored item template is inert template data, not a live
             // control: its clones are the live widgets, each initialized by CloneTemplate. Initializing
@@ -1472,6 +1539,15 @@ namespace Veng::Gui
             return;
         }
 
+        // A bound property the new style still holds at its bound color stays bound.
+        std::erase_if(element.BoundStyle,
+                      [&](const StyleDeclaration& declaration)
+                      {
+                          Style probe = style;
+                          ApplyBound(probe, declaration, m_VariableValues, m_Assets);
+                          return !SameStyle(probe, style);
+                      });
+
         const bool layoutMoved = LayoutInputsDiffer(element.ComputedStyle, style);
         const bool fontMoved = element.ComputedStyle.TextFont.Get() != style.TextFont.Get();
         const bool measureMoved = MeasureInputsDiffer(element.ComputedStyle, style);
@@ -1562,6 +1638,7 @@ namespace Veng::Gui
 
     void Document::SetBackground(Element& element, const vec4 color)
     {
+        Unbind(element, StyleProperty::Background);
         if (element.BaseStyle.Background == color && element.ComputedStyle.Background == color)
         {
             return;
@@ -1589,6 +1666,7 @@ namespace Veng::Gui
 
     void Document::SetTextColor(Element& element, const vec4 color)
     {
+        Unbind(element, StyleProperty::TextColor);
         if (element.BaseStyle.TextColor == color && element.ComputedStyle.TextColor == color)
         {
             return;
@@ -2127,7 +2205,8 @@ namespace Veng::Gui
 
         // Folds the variants whose state bit is set in `state` over the base style, in stored source
         // order (later-listed states win — the USS order), producing the resolved target style.
-        Style ResolveTarget(const Element& element, AssetManager* assets)
+        Style ResolveTarget(const Element& element, AssetManager* assets,
+                            std::span<const optional<vec4>> values)
         {
             const ElementState state = EffectiveState(element);
             Style target = element.BaseStyle;
@@ -2139,7 +2218,7 @@ namespace Veng::Gui
                 }
                 for (const StyleDeclaration& declaration : variant.Declarations)
                 {
-                    ApplyDeclaration(target, declaration, assets);
+                    ApplyBound(target, declaration, values, assets);
                 }
             }
             return target;
@@ -2297,6 +2376,99 @@ namespace Veng::Gui
         }
     }
 
+    u32 Document::VariableSlot(const string_view name)
+    {
+        const auto found = std::ranges::find(m_VariableNames, name);
+        if (found != m_VariableNames.end())
+        {
+            return static_cast<u32>(found - m_VariableNames.begin()) + 1;
+        }
+        m_VariableNames.emplace_back(name);
+        m_VariableValues.emplace_back();
+        return static_cast<u32>(m_VariableNames.size());
+    }
+
+    u32 Document::BindSheetVariable(const StyleSheet& sheet, const u32 index)
+    {
+        const vector<string>& names = sheet.GetBoundVariables();
+        if (index == 0 || index > names.size())
+        {
+            return 0;
+        }
+        return VariableSlot(names[index - 1]);
+    }
+
+    void Document::SetVariable(const string_view name, const vec4 color)
+    {
+        const u32 slot = VariableSlot(name);
+        if (m_VariableValues[slot - 1] == color)
+        {
+            return;
+        }
+        m_VariableValues[slot - 1] = color;
+        RepaintVariable(slot);
+    }
+
+    void Document::ClearVariable(const string_view name)
+    {
+        const auto found = std::ranges::find(m_VariableNames, name);
+        if (found == m_VariableNames.end())
+        {
+            return;
+        }
+        const auto slot = static_cast<u32>(found - m_VariableNames.begin()) + 1;
+        if (!m_VariableValues[slot - 1].has_value())
+        {
+            return;
+        }
+        m_VariableValues[slot - 1].reset();
+        RepaintVariable(slot);
+    }
+
+    optional<vec4> Document::GetVariable(const string_view name) const
+    {
+        const auto found = std::ranges::find(m_VariableNames, name);
+        if (found == m_VariableNames.end())
+        {
+            return std::nullopt;
+        }
+        return m_VariableValues[static_cast<usize>(found - m_VariableNames.begin())];
+    }
+
+    void Document::RepaintVariable(const u32 slot)
+    {
+        const auto bindsSlot = [slot](const StyleDeclaration& declaration)
+        { return declaration.Variable == slot; };
+        const auto visit = [&](Element& element, auto&& self) -> void
+        {
+            bool touched = false;
+            for (const StyleDeclaration& declaration : element.BoundStyle)
+            {
+                if (declaration.Variable == slot)
+                {
+                    ApplyBound(element.BaseStyle, declaration, m_VariableValues, m_Assets);
+                    touched = true;
+                }
+            }
+            for (const StyleVariant& variant : element.Variants)
+            {
+                touched = touched || std::ranges::any_of(variant.Declarations, bindsSlot);
+            }
+            if (touched)
+            {
+                QueueResolve(element);
+            }
+            for (Element* const child : element.Children)
+            {
+                if (child != nullptr)
+                {
+                    self(*child, self);
+                }
+            }
+        };
+        visit(Root(), visit);
+    }
+
     void Document::QueueScrollCheck(Element& element)
     {
         if (!element.Retained.ScrollQueued)
@@ -2379,7 +2551,7 @@ namespace Veng::Gui
     void Document::UpdateElement(Element& element, f32 delta)
     {
         ++m_Stats.StyleResolves;
-        const Style target = ResolveTarget(element, m_Assets);
+        const Style target = ResolveTarget(element, m_Assets, m_VariableValues);
         Style live = target;
 
         // A property with a positive-duration transition eases; every other property snaps to the
@@ -2907,7 +3079,10 @@ namespace Veng::Gui
             return resolved;
         };
 
-        ResolveElementStyle(element, nullptr, sheets, m_Assets, resolveGradient);
+        const VariableBinder bindVariable = [this](const StyleSheet& sheet, const u32 index) -> u32
+        { return BindSheetVariable(sheet, index); };
+        ResolveElementStyle(element, nullptr, sheets, m_Assets, resolveGradient, bindVariable,
+                            m_VariableValues);
     }
 
     Element& Document::CreateWidgetPart(Element& host, const ElementKind kind,
@@ -5995,6 +6170,7 @@ namespace Veng::Gui
         node->Bindings = element.Bindings;
         node->BaseStyle = element.BaseStyle;
         node->ComputedStyle = element.ComputedStyle;
+        node->BoundStyle = element.BoundStyle;
         node->Variants = element.Variants;
         node->Transitions = element.Transitions;
         node->Focusable = element.Focusable;
@@ -6046,7 +6222,14 @@ namespace Veng::Gui
         live.Bindings = node.Bindings;
         live.BaseStyle = node.BaseStyle;
         live.ComputedStyle = node.ComputedStyle;
+        live.BoundStyle = node.BoundStyle;
         live.Variants = node.Variants;
+        // A variable set after the template was captured reaches the clone.
+        for (const StyleDeclaration& declaration : live.BoundStyle)
+        {
+            ApplyBound(live.BaseStyle, declaration, m_VariableValues, m_Assets);
+            ApplyBound(live.ComputedStyle, declaration, m_VariableValues, m_Assets);
+        }
         live.Transitions = node.Transitions;
         live.Focusable = node.Focusable;
         live.Visible = node.Visible;

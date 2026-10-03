@@ -461,4 +461,11 @@ namespace Veng::Gui
         }
         return false;
     }
+
+    bool IsColorProperty(StyleProperty property)
+    {
+        return property == StyleProperty::Background || property == StyleProperty::BorderColor ||
+               property == StyleProperty::TextColor || property == StyleProperty::BoxShadowColor ||
+               property == StyleProperty::Stroke;
+    }
 }
