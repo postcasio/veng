@@ -14,9 +14,10 @@ namespace Veng::Audio
 
     /// @brief One voice as the real-time mixer sees it: an immutable, POD description.
     ///
-    /// The source is one of three: a raw pointer into an AudioBuffer's PCM, a borrowed
-    /// IAudioGenerator, or a StreamVoice's decoded-PCM ring. The reclamation handshake guarantees
-    /// whichever it is outlives any published frame that can reference it (see the module CLAUDE.md).
+    /// The source is one of three: a raw pointer into an AudioBuffer's PCM, a raw pointer to an
+    /// IAudioGenerator the main-thread voice holds a reference to, or a StreamVoice's decoded-PCM
+    /// ring. The reclamation handshake guarantees whichever it is outlives any published frame that
+    /// can reference it (see the module CLAUDE.md).
     struct VoiceSnapshot
     {
         /// @brief Whether this slot holds a live voice.

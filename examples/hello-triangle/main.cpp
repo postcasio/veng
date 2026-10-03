@@ -1381,14 +1381,9 @@ protected:
 
     // Runs before ~Application, while every engine service is still alive. Drop the MCP server first:
     // its destructor stops the listener thread and closes the socket, so no in-flight tool handler can
-    // touch engine state while the rest of the app tears down. Then stop the generator voice while the
-    // audio engine is still alive, so the mixer no longer references the borrowed m_Tone before it is
-    // destroyed with the app. The remaining resources are members and retire in declaration order.
-    ~HelloTriangleApp() override
-    {
-        m_McpServer.reset();
-        GetAudioEngine().StopVoice(m_ToneVoice);
-    }
+    // touch engine state while the rest of the app tears down. The remaining resources are members and
+    // retire in declaration order.
+    ~HelloTriangleApp() override { m_McpServer.reset(); }
 
 private:
     // Constructs the MCP server when HT_MCP=<port> is set (HT_MCP=0 picks an ephemeral port), so the
@@ -1436,7 +1431,7 @@ private:
         m_McpServer = Mcp::McpServer::Create(info, *m_McpHost);
     }
 
-    // Sets up the runtime-generation demo, the exemplar of plan 04's two code paths:
+    // Sets up the runtime-generation demo, the exemplar of its two code paths:
     //  - PlayGenerator registers the ToneGenerator as a live voice the mixer pulls samples from
     //    each block; PollAudioDemo drives its frequency each frame through the param block.
     //  - CreateClip wraps a short code-built PCM buffer as a one-shot clip, fired on a key (Key::G).
@@ -1446,8 +1441,8 @@ private:
     void SetupAudioDemo()
     {
         m_ToneVoice = GetAudioEngine().PlayGenerator(
-            &m_Tone, Audio::GeneratorVoiceParams{
-                         .Bus = Audio::AudioBuses::SFX(), .Spatial = false, .Gain = 0.12f});
+            m_Tone, Audio::GeneratorVoiceParams{
+                        .Bus = Audio::AudioBuses::SFX(), .Spatial = false, .Gain = 0.12f});
 
         // A short descending two-partial chirp, built in code and adopted as a clip — a finite
         // one-shot with no source file, indistinguishable downstream from a cooked one.
@@ -1471,7 +1466,7 @@ private:
     {
         m_ToneClock += delta;
         const f32 frequency = 200.0f + 60.0f * std::sin(m_ToneClock * 0.8f);
-        m_Tone.SetParams(ToneParams{.Frequency = frequency, .Amplitude = 0.6f});
+        m_Tone->SetParams(ToneParams{.Frequency = frequency, .Amplitude = 0.6f});
 
         if (GetInput().WasKeyPressed(Key::G))
         {
@@ -1899,7 +1894,7 @@ private:
     // The runtime-generation demo: the app-owned sine generator (its Render runs on the mixing
     // thread while this voice is live, so it must outlive the voice — stopped in the destructor), the
     // handle to its live voice, the clock driving its frequency, and the code-built one-shot clip.
-    ToneGenerator m_Tone;
+    Ref<ToneGenerator> m_Tone = CreateRef<ToneGenerator>();
     Audio::VoiceHandle m_ToneVoice;
     f32 m_ToneClock = 0.0f;
     AssetHandle<Audio::AudioClip> m_GeneratedClip;

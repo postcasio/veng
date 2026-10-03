@@ -90,8 +90,8 @@ TEST_CASE("StopVoice returns on a driven hardware device")
     CHECK(voice.IsValid());
     device->Pump(1.0f / 60.0f);
 
-    // The property is that this call returns at all; it did not before the driven device took the
-    // inline-mix path. The pump after it reaps the voice.
+    // The property is that this call returns at all: a stop never waits on the callback thread a
+    // driven device has stopped. The pump after it reaps the voice.
     engine.StopVoice(voice);
     device->Pump(1.0f / 60.0f);
     CHECK(engine.GetActiveVoiceCount() == 0);

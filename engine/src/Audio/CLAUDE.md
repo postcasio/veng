@@ -53,7 +53,12 @@ it, and released only once `ConsumedSerial` has passed that serial. So a source 
 while the callback is mid-mix on it — the contract every voice-lifetime story rests on
 (`AssetManager` clip eviction, ship-despawn teardown). A **stream voice adds a second party** to the
 handshake — the decode thread also references it — so its free waits on both the mixer's consumed
-serial *and* the decode thread's release ack (see [Streaming voices](#streaming-voices)).
+serial *and* the decode thread's release ack (see [Streaming voices](#streaming-voices)); a
+**buffered generator** adds the fill thread the same way. **Stopping a voice never blocks the
+caller** — whatever the source, `StopVoice` only retires the slot and queues the source, and the
+release happens later inside `Pump` (`CollectDeferred`), on the main thread. That is why the engine
+owns a reference to every source a voice reads, a generator included: a source the caller could free
+on return would force the stop to wait for every audio thread first.
 
 The reverse channel is a lock-free SPSC ring (`SpscRing.h`): when a finite voice exhausts, the
 callback posts its `{slot, generation}` and the main thread drains it in `DrainRetired()` — the
@@ -64,9 +69,9 @@ into it.
 
 `~AudioDevice` **stops and joins both engine-external threads before any member destructs**: the
 **decode thread first** (set `DecodeStop`, notify its condition variable, join), then the **callback
-thread** (`ma_device_uninit`). Once both are quiesced the engine's deferred sources — buffers, and
-the stream voices carrying decoders and clip handles — release safely as members destruct. The
-member is declared on `Application` **after the asset manager and the world runner** so it destructs
+thread** (`ma_device_uninit`). Once both are quiesced the engine's deferred sources — buffers,
+generators, and the stream voices carrying decoders and clip handles — release safely as members
+destruct. The member is declared on `Application` **after the asset manager and the world runner** so it destructs
 before them: neither mixing nor decoding is running before any clip, generator, or decoder a voice
 references is freed. Device-loss uses the same stop-then-quiesce ordering; the null-device fallback
 handles device *loss* by degrading to the null backend (output stops, the game keeps running) and
@@ -151,12 +156,12 @@ which is what keeps the one thread rule intact — and each `Pump` then mixes ex
 mix short. Nothing is emitted for the span, and a `ma_device_start` that fails on release degrades to
 the null backend with a logged error, the same device-loss policy as everywhere else.
 
-**Every main-thread wait on the mixer treats a driven device as it treats the null one.** Both have
-no mixing thread to wait for, so a wait that spins until the callback thread consumes a generation
-waits for itself. `AudioEngine::StopVoice` is the one such wait: it mixes a scratch frame inline to
-advance the consumed serial when the device is null *or* driven (the scratch frame is not tapped, so
-a recording loses one sample per stopped voice). A new wait on the consumed serial follows the same
-rule, and the GPU tier pins it on real hardware.
+**No main-thread call waits on the mixer.** A null device has no mixing thread and a driven
+device's is stopped, so a wait that spins until the callback thread consumes a generation would wait
+for itself on either. Reclamation therefore polls rather than waits: `CollectDeferred` runs inside
+`Pump`, after that pump's own mix, and frees whatever the consumed serial has passed. A new wait on
+the consumed serial would have to drive the mixer itself on a null or driven device; the GPU tier
+pins that `StopVoice` returns on a driven hardware device.
 
 **The block tap is the seam a consumer takes the mix through.** `SetBlockTap` installs one sink that
 receives every mixed block on the main thread, in order: `Pump` hands it the block directly on a null
@@ -233,8 +238,9 @@ Two runtime paths put code-made sound into the mix; pick by whether the sound is
   except provenance: it plays through `PlayOneShot`/`PlayAt`, attaches to an `AudioSource`, or feeds
   the director, indistinguishable downstream from a cooked clip.
 - **`IAudioGenerator` + `AudioEngine::PlayGenerator(gen, GeneratorVoiceParams)`** — for an
-  **unbounded, continuously-varying voice** the mixer pulls from. The engine holds a *borrowed*
-  pointer (the caller owns the generator and guarantees it outlives the voice); `Render` fills the
+  **unbounded, continuously-varying voice** the mixer pulls from. `PlayGenerator` takes a
+  `Ref<IAudioGenerator>` and the voice shares ownership of it: the caller keeps its own reference
+  to drive the generator's params, or drops it whenever it likes; `Render` fills the
   samples on the mixing thread at the device rate. Pitch (Doppler) is applied by resampling that
   stream, so a generator voice shares the clip attenuation/pan/Doppler/occlusion path with **no
   generator-specific case** — a spatial generator is a `Spatial` `Managed` voice moved each frame
@@ -257,12 +263,17 @@ Two runtime paths put code-made sound into the mix; pick by whether the sound is
 > synthesis state reaches it *only* through a `GeneratorParams<T>` block (`Set` on the main/View
 > thread, `Get` inside `Render`), never a direct call into `Render` from another thread.**
 
-`GeneratorParams<T>` is the plan-00 triple buffer (`TripleBuffer.h`, now a public header) scoped to
+`GeneratorParams<T>` is the snapshot's triple buffer (`TripleBuffer.h`, a public header) scoped to
 one voice's POD parameters, so `Set` and `Get` at unrelated rates never tear and the RT reader never
-spins. **Reclaiming a generator is the reclamation handshake made synchronous:** `StopVoice` on a
-generator handle removes it from the live snapshot, publishes, and returns only once the callback's
-consumed serial has passed that frame — after which the caller may free the borrowed generator with
-no use-after-free (on the null device `StopVoice` drives the mixer itself, there being no RT thread).
+spins. **A generator is reclaimed like any other source:** `StopVoice` (or an eviction) retires the
+slot and moves the engine's reference into the deferred-free queue, released once the consumed
+serial passes the last frame that named it — and, for a buffered voice, once the fill thread has
+acknowledged the removal, the reference riding the `BufferedGenerator` wrapper it renders through.
+The release happens on the main thread, so a generator's destructor never runs on the real-time or
+fill thread, and whichever reference goes last destroys it: a caller still holding one keeps the
+generator alive past the voice. The flip side is that **a stopped generator may still be rendered
+until it is reclaimed**, so a caller holding a reference changes it only through its
+`GeneratorParams` block, even after the stop; to restart with different state, start a new generator.
 
 ## The Dsp primitive library
 

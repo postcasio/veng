@@ -532,7 +532,7 @@ namespace Veng::Audio
             }
         }
 
-        // Fills a buffered generator's ring by rendering the borrowed generator at the device rate,
+        // Fills a buffered generator's ring by rendering its generator at the device rate,
         // off the real-time thread. Renders only what the ring has room for (so nothing rendered is
         // dropped), interleaved by the voice's channel count. A generator is unbounded — there is no
         // end and no AtEnd — so this refills forever until the fill thread drops the voice on a
@@ -629,7 +629,7 @@ namespace Veng::Audio
         // through two ordered command channels (an Add enrolls a voice into the working set; a Remove
         // drops it and acknowledges through ReleasedByDecoder so the main thread may free it). It
         // sleeps on the condition variable when no ring needed filling. It touches no engine state and
-        // no scene API — only the voices' lock-free rings, their decoders, and the borrowed generators
+        // no scene API — only the voices' lock-free rings, their decoders, and the generators
         // it renders — so it is the second sanctioned engine-external thread beside the real-time
         // callback.
         void DecodeThreadMain(AudioDevice::Native* native)
@@ -1525,7 +1525,7 @@ namespace Veng::Audio
         return AssetManager::Adopt<AudioClip>(AudioClip::CreatePcm(std::move(buffer)));
     }
 
-    VoiceHandle AudioEngine::PlayGenerator(IAudioGenerator* generator,
+    VoiceHandle AudioEngine::PlayGenerator(Ref<IAudioGenerator> generator,
                                            const GeneratorVoiceParams& params)
     {
         VE_ASSERT(generator != nullptr, "PlayGenerator requires a non-null generator");
@@ -1585,10 +1585,10 @@ namespace Veng::Audio
 
         if (params.Buffered)
         {
-            // Wrap the borrowed generator in an engine-owned ring the fill thread fills off the
+            // Wrap the generator in an engine-owned ring the fill thread fills off the
             // real-time thread, and enroll it before the next mix so the ring has samples to drain.
             auto buffered = CreateUnique<BufferedGenerator>();
-            buffered->Generator = generator;
+            buffered->Generator = std::move(generator);
             buffered->Channels = voice.GeneratorChannels;
             buffered->SampleRate = m_Device.GetSampleRate();
             buffered->RenderScratch.assign(
@@ -1633,66 +1633,9 @@ namespace Veng::Audio
 
     void AudioEngine::StopVoice(VoiceHandle voice)
     {
-        if (!IsVoiceLive(voice))
+        if (IsVoiceLive(voice))
         {
-            return;
-        }
-        const bool isBuffered = m_Voices[voice.Slot].Buffered != nullptr;
-        const bool isGenerator = !isBuffered && m_Voices[voice.Slot].Generator != nullptr;
-        // The buffered wrapper carries the fill thread's release ack; grab it before RetireSlot moves
-        // the wrapper into the deferred queue (from which this main thread will not free it mid-wait).
-        BufferedGenerator* bufferedPtr = isBuffered ? m_Voices[voice.Slot].Buffered.get() : nullptr;
-        RetireSlot(voice.Slot);
-        if (!isGenerator && !isBuffered)
-        {
-            // A buffer or stream voice's source is reclaimed asynchronously through the deferred-free
-            // queue; nothing borrows it, so there is nothing to wait on here.
-            return;
-        }
-
-        // A generator (plain or buffered) is caller-owned and borrowed, so its reclamation is the
-        // reclamation handshake made synchronous: publish a frame that no longer names the generator,
-        // then wait until every thread that could reach it is provably past it. For a plain generator
-        // that is the mixer's consumed serial reaching the removal frame; a buffered generator adds
-        // the fill thread, which renders the borrowed generator, so the wait also covers its Remove
-        // ack (ReleasedByDecoder). Once both hold, the caller may free the generator the moment this
-        // returns.
-        Publish();
-        const u64 target = m_PublishedSerial;
-        const auto released = [bufferedPtr]
-        {
-            return bufferedPtr == nullptr ||
-                   bufferedPtr->ReleasedByDecoder.load(std::memory_order_acquire);
-        };
-        if (m_Device.IsNull() || m_Device.IsDriven())
-        {
-            // No real-time thread exists — none at all on the null device, and a driven device's is
-            // stopped, so its mixer runs only inside Pump on this very thread. Every main-thread wait
-            // on the mixer must therefore treat a driven device as the null one, or it waits for
-            // itself. Drive the mixer here to advance the consumed serial past the removal (mixing one
-            // frame latches the just-published generator-free snapshot), then yield until the fill
-            // thread — which runs regardless of backend — acknowledges. The scratch frame is not
-            // delivered to the block tap: a recording loses one sample per stopped voice.
-            std::array<f32, 8> scratch{};
-            const u32 channels = std::min<u32>(m_Device.GetChannels(), 8);
-            while (m_Device.GetConsumedSerial() < target || !released())
-            {
-                if (m_Device.GetConsumedSerial() < target)
-                {
-                    m_Device.RenderBlock(std::span<f32>(scratch.data(), channels), 1);
-                }
-                else
-                {
-                    std::this_thread::yield();
-                }
-            }
-        }
-        else
-        {
-            while (m_Device.GetConsumedSerial() < target || !released())
-            {
-                std::this_thread::yield();
-            }
+            RetireSlot(voice.Slot);
         }
     }
 
@@ -1775,11 +1718,19 @@ namespace Veng::Audio
             m_Deferred.push_back(
                 Deferred{.Stream = std::move(voice.Stream), .SafeAfterSerial = m_PublishedSerial});
         }
+        if (voice.Generator && !voice.Buffered)
+        {
+            // A plain generator is rendered by the mixer alone, so it rides the buffer source's
+            // single handshake: the engine's reference drops once the consumed serial passes.
+            m_Deferred.push_back(Deferred{.Generator = std::move(voice.Generator),
+                                          .SafeAfterSerial = m_PublishedSerial});
+        }
         if (voice.Buffered)
         {
             // Tell the fill thread to drop the buffered generator (it acks through ReleasedByDecoder),
             // and defer the wrapper's free until both the mixer's consumed serial passes this frame
             // and the fill thread has released it — the same dual handshake the stream voice rides.
+            // The wrapper holds its own reference to the generator, released with it.
             AudioDevice::Native& native = m_Device.GetNative();
             native.BufferedCommands.Push(BufferedGeneratorCommand{
                 .Op = BufferedGeneratorCommand::Kind::Remove, .Generator = voice.Buffered.get()});
@@ -1789,6 +1740,7 @@ namespace Veng::Audio
         }
         voice.Active = false;
         voice.Source = nullptr;
+        voice.Generator = nullptr;
         m_Managed[slot] = Managed{};
         if (m_ActiveCount > 0)
         {
@@ -1825,7 +1777,7 @@ namespace Veng::Audio
                 snapshot.Generation = voice.Generation;
                 // A buffered voice's generator ran ahead of time on the fill thread, so the callback
                 // must drain its ring, not call Render: publish the ring and null the generator.
-                snapshot.Generator = voice.Buffered ? nullptr : voice.Generator;
+                snapshot.Generator = voice.Buffered ? nullptr : voice.Generator.get();
                 snapshot.GeneratorChannels = voice.GeneratorChannels;
                 snapshot.Stream = voice.Stream.get();
                 snapshot.Buffered = voice.Buffered.get();

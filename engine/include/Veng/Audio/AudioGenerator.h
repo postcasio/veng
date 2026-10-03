@@ -11,8 +11,9 @@ namespace Veng::Audio
     /// @brief A real-time source the mixer pulls samples from on demand.
     ///
     /// Where an AudioClip hands the mixer a finished buffer, a generator is called each block to
-    /// synthesize the next samples. The caller implements Render and owns the object; the engine
-    /// holds a borrowed pointer while the voice is live (see AudioEngine::PlayGenerator).
+    /// synthesize the next samples. The caller implements Render and shares ownership with the voice:
+    /// the engine holds a reference until every audio thread is provably past the stopped voice, so
+    /// the generator is never destroyed while a thread can render it (see AudioEngine::PlayGenerator).
     ///
     /// @warning Render runs off the main thread — on the real-time mixing thread, or, for a buffered
     ///          voice, on the audio fill thread. It must be lock-free, allocation-free, and touch no

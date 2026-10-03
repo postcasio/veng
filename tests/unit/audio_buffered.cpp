@@ -2,10 +2,10 @@
 // a ring the real-time callback only drains, so heavy, latency-tolerant synthesis never runs on — and
 // so can never underrun — the real-time thread. Mirrors the streaming-voice tests: a buffered voice
 // eventually plays exactly what the generator produces (past the initial fill latency), a
-// Buffered && Spatial request is rejected, StopVoice blocks until neither the mixer nor the fill
-// thread can reach the borrowed generator (so it is free to destroy the moment StopVoice returns), and
-// an unfilled ring drains as silence rather than a hang or garbage. All pure CPU over the
-// null-but-computing device.
+// Buffered && Spatial request is rejected, StopVoice returns at once while the engine keeps the
+// generator alive until neither the mixer nor the fill thread can reach it (and then destroys it on
+// the main thread), and an unfilled ring drains as silence rather than a hang or garbage. All pure CPU
+// over the null-but-computing device.
 
 #include <doctest/doctest.h>
 
@@ -34,15 +34,12 @@ namespace
 
     // A stereo generator writing one monotonically increasing counter to both channels, starting at 1
     // so the first rendered sample is distinguishable from underrun silence. A gap or duplicate at a
-    // ring seam shows up as a break in the drained sequence. It counts its Render calls so a test can
-    // prove the fill thread stopped rendering it the instant StopVoice returned.
+    // ring seam shows up as a break in the drained sequence.
     struct StereoRampGenerator final : IAudioGenerator
     {
         f64 Next = 1.0;
-        std::atomic<u64> RenderCalls{0};
         void Render(f32* out, const u32 frames, const u32 channels, u32 /*sampleRate*/) override
         {
-            RenderCalls.fetch_add(1, std::memory_order_relaxed);
             for (u32 f = 0; f < frames; ++f)
             {
                 const f32 v = static_cast<f32>(Next);
@@ -68,6 +65,41 @@ namespace
         }
     };
 
+    // What a LifetimeProbeGenerator reports from outside itself, so the test can still read it once the
+    // generator is gone: how often it rendered, and when and on which thread it was destroyed.
+    struct LifetimeProbe
+    {
+        std::atomic<u64> Renders{0};
+        std::atomic<u64> RendersAtDestruction{0};
+        std::atomic<int> Destroyed{0};
+        std::thread::id DestroyedOn;
+    };
+
+    // A generator that reports its renders and its destruction to a probe the test owns.
+    struct LifetimeProbeGenerator final : IAudioGenerator
+    {
+        explicit LifetimeProbeGenerator(LifetimeProbe& probe) : Probe(probe) {}
+        ~LifetimeProbeGenerator() override
+        {
+            Probe.DestroyedOn = std::this_thread::get_id();
+            Probe.RendersAtDestruction.store(Probe.Renders.load(std::memory_order_relaxed),
+                                             std::memory_order_relaxed);
+            Probe.Destroyed.fetch_add(1, std::memory_order_relaxed);
+        }
+        LifetimeProbeGenerator(const LifetimeProbeGenerator&) = delete;
+        LifetimeProbeGenerator& operator=(const LifetimeProbeGenerator&) = delete;
+        LifetimeProbeGenerator(LifetimeProbeGenerator&&) = delete;
+        LifetimeProbeGenerator& operator=(LifetimeProbeGenerator&&) = delete;
+
+        void Render(f32* out, const u32 frames, const u32 channels, u32 /*sampleRate*/) override
+        {
+            Probe.Renders.fetch_add(1, std::memory_order_relaxed);
+            std::fill_n(out, static_cast<usize>(frames) * channels, 0.25f);
+        }
+
+        LifetimeProbe& Probe;
+    };
+
     // Pumps the null device until it has emitted at least wantSamples interleaved samples, giving the
     // fill thread a moment between pumps to top the ring. Returns the accumulated interleaved output.
     std::vector<f32> Capture(AudioDevice& device, const usize wantSamples)
@@ -88,12 +120,11 @@ TEST_CASE("a buffered generator eventually plays exactly what it produces, conti
 {
     const Unique<AudioDevice> device = MakeStereoNullDevice();
     AudioEngine& engine = device->GetEngine();
-    StereoRampGenerator generator;
+    const auto generator = CreateRef<StereoRampGenerator>();
 
     const VoiceHandle voice = engine.PlayGenerator(
-        &generator,
-        GeneratorVoiceParams{
-            .Bus = AudioBuses::Master(), .Channels = 2, .Buffered = true, .Gain = 1.0f});
+        generator, GeneratorVoiceParams{
+                       .Bus = AudioBuses::Master(), .Channels = 2, .Buffered = true, .Gain = 1.0f});
     REQUIRE(voice.IsValid());
 
     // Give the fill thread time to render the head of the ramp into the ring before draining begins.
@@ -136,17 +167,17 @@ TEST_CASE("a buffered spatial generator request is rejected; a non-spatial one i
 {
     const Unique<AudioDevice> device = MakeStereoNullDevice();
     AudioEngine& engine = device->GetEngine();
-    ConstantGenerator generator;
+    const auto generator = CreateRef<ConstantGenerator>();
 
     // Buffered carries no per-frame pan or Doppler, so a spatial buffered request is invalid, exactly
     // as a stereo spatial one is.
     const VoiceHandle spatial =
-        engine.PlayGenerator(&generator, GeneratorVoiceParams{.Spatial = true, .Buffered = true});
+        engine.PlayGenerator(generator, GeneratorVoiceParams{.Spatial = true, .Buffered = true});
     CHECK_FALSE(spatial.IsValid());
     CHECK(engine.GetActiveVoiceCount() == 0);
 
     const VoiceHandle ok = engine.PlayGenerator(
-        &generator,
+        generator,
         GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Buffered = true, .Gain = 1.0f});
     CHECK(ok.IsValid());
     CHECK(engine.GetActiveVoiceCount() == 1);
@@ -154,14 +185,16 @@ TEST_CASE("a buffered spatial generator request is rejected; a non-spatial one i
     CHECK(engine.GetActiveVoiceCount() == 0);
 }
 
-TEST_CASE("StopVoice on a buffered generator returns only once no thread can reach the generator")
+TEST_CASE("a stopped buffered generator lives until neither audio thread can reach it")
 {
+    // Declared before the device, so it outlives any generator the engine still holds at teardown.
+    LifetimeProbe probe;
     const Unique<AudioDevice> device = MakeStereoNullDevice();
     AudioEngine& engine = device->GetEngine();
-    StereoRampGenerator generator;
 
+    // The engine's reference is the only one: the generator's life is the voice's to decide.
     const VoiceHandle voice = engine.PlayGenerator(
-        &generator,
+        CreateRef<LifetimeProbeGenerator>(probe),
         GeneratorVoiceParams{
             .Bus = AudioBuses::Master(), .Channels = 2, .Buffered = true, .Gain = 1.0f});
     REQUIRE(voice.IsValid());
@@ -170,43 +203,46 @@ TEST_CASE("StopVoice on a buffered generator returns only once no thread can rea
     // referencing the voice when it is stopped.
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     device->Pump(0.02f);
-    CHECK(engine.GetPendingReclaimCount() == 0);
+    REQUIRE(probe.Renders.load(std::memory_order_relaxed) > 0);
 
+    // The stop returns without mixing: on the null device a wait would have to drive the mixer itself,
+    // so an unmoved consumed serial shows the stop waited for nothing.
+    const u64 consumedBeforeStop = device->GetConsumedSerial();
     engine.StopVoice(voice);
-    // The moment StopVoice returns the borrowed generator is free to destroy: the mixer has consumed a
-    // frame past the removal and the fill thread has acknowledged the Remove.
+    CHECK(device->GetConsumedSerial() == consumedBeforeStop);
     CHECK_FALSE(engine.IsVoiceLive(voice));
     CHECK(engine.GetActiveVoiceCount() == 0);
-    // The wrapper is queued for reclamation — both handshake parties are past it, but CollectDeferred
-    // (run inside Pump) has not fired since the stop.
     CHECK(engine.GetPendingReclaimCount() == 1);
+    CHECK(probe.Destroyed.load(std::memory_order_relaxed) == 0);
 
-    // Prove the fill thread renders the generator no more: its call count cannot rise across a long
-    // sleep, even while the device keeps pumping. A rise would be a use-after-free waiting to happen.
-    const u64 callsAtStop = generator.RenderCalls.load(std::memory_order_relaxed);
-    for (int i = 0; i < 20; ++i)
+    for (int i = 0; i < 400 && engine.GetPendingReclaimCount() > 0; ++i)
+    {
+        device->Pump(1.0f / 60.0f);
+        std::this_thread::yield();
+    }
+    REQUIRE(engine.GetPendingReclaimCount() == 0);
+    CHECK(probe.Destroyed.load(std::memory_order_relaxed) == 1);
+    CHECK(probe.DestroyedOn == std::this_thread::get_id());
+
+    // Nothing renders the generator after its destruction: the count it saw last cannot rise while the
+    // device keeps pumping and the fill thread keeps running.
+    for (int i = 0; i < 10; ++i)
     {
         device->Pump(0.02f);
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
-    CHECK(generator.RenderCalls.load(std::memory_order_relaxed) == callsAtStop);
-
-    // The wrapper frees cleanly through the deferred queue once the mixer pumps again.
-    for (int i = 0; i < 400 && engine.GetPendingReclaimCount() > 0; ++i)
-    {
-        device->Pump(1.0f / 60.0f);
-    }
-    CHECK(engine.GetPendingReclaimCount() == 0);
+    CHECK(probe.Renders.load(std::memory_order_relaxed) ==
+          probe.RendersAtDestruction.load(std::memory_order_relaxed));
 }
 
 TEST_CASE("a buffered generator underrun is silence, never a hang or garbage")
 {
     const Unique<AudioDevice> device = MakeStereoNullDevice();
     AudioEngine& engine = device->GetEngine();
-    ConstantGenerator generator;
+    const auto generator = CreateRef<ConstantGenerator>();
 
     const VoiceHandle voice = engine.PlayGenerator(
-        &generator,
+        generator,
         GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Buffered = true, .Gain = 1.0f});
     REQUIRE(voice.IsValid());
 

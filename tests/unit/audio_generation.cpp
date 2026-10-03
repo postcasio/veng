@@ -82,6 +82,36 @@ namespace
         }
     };
 
+    // Counts a LifetimeGenerator's destructions, and the thread the last one ran on.
+    struct LifetimeProbe
+    {
+        int Destroyed = 0;
+        std::thread::id DestroyedOn;
+    };
+
+    // A generator that reports its destruction to a probe the test owns, so the test can watch when
+    // (and where) the engine's reference is the last to go.
+    struct LifetimeGenerator final : IAudioGenerator
+    {
+        explicit LifetimeGenerator(LifetimeProbe& probe) : Probe(probe) {}
+        ~LifetimeGenerator() override
+        {
+            ++Probe.Destroyed;
+            Probe.DestroyedOn = std::this_thread::get_id();
+        }
+        LifetimeGenerator(const LifetimeGenerator&) = delete;
+        LifetimeGenerator& operator=(const LifetimeGenerator&) = delete;
+        LifetimeGenerator(LifetimeGenerator&&) = delete;
+        LifetimeGenerator& operator=(LifetimeGenerator&&) = delete;
+
+        void Render(f32* out, const u32 frames, const u32 channels, u32 /*sampleRate*/) override
+        {
+            std::fill_n(out, static_cast<usize>(frames) * channels, 0.25f);
+        }
+
+        LifetimeProbe& Probe;
+    };
+
     // A generator emitting a constant, so a mix is trivially non-silent while it is live.
     struct ConstantGenerator final : IAudioGenerator
     {
@@ -245,14 +275,14 @@ TEST_CASE("a spatial generator is placed and panned through the clip spatializat
 {
     const Unique<AudioDevice> device = MakeNullDevice();
     AudioEngine& engine = device->GetEngine();
-    ConstantGenerator generator;
+    const auto generator = CreateRef<ConstantGenerator>();
 
     // Hard-left of a listener at the origin (identity rotation, +X right): the voice pans left,
     // using the same StereoPan a PlayAt clip does — no generator-specific spatialization exists.
     const VoiceHandle voice =
-        engine.PlayGenerator(&generator, GeneratorVoiceParams{.Spatial = true,
-                                                              .Position = vec3(-10.0f, 0.0f, 0.0f),
-                                                              .MaxDistance = 100.0f});
+        engine.PlayGenerator(generator, GeneratorVoiceParams{.Spatial = true,
+                                                             .Position = vec3(-10.0f, 0.0f, 0.0f),
+                                                             .MaxDistance = 100.0f});
     REQUIRE(voice.IsValid());
     const optional<VoiceParams> params = engine.GetVoiceParams(voice);
     REQUIRE(params.has_value());
@@ -262,8 +292,6 @@ TEST_CASE("a spatial generator is placed and panned through the clip spatializat
     engine.SetVoicePose(voice, vec3(10.0f, 0.0f, 0.0f), vec3(0.0f));
     CHECK(engine.GetVoiceParams(voice)->Pan > 0.5f);
 
-    // StopVoice runs the reclamation handshake and returns; the borrowed generator is then free to
-    // destruct as this scope ends, with the voice gone.
     engine.StopVoice(voice);
     CHECK_FALSE(engine.IsVoiceLive(voice));
     CHECK(engine.GetActiveVoiceCount() == 0);
@@ -273,11 +301,11 @@ TEST_CASE("a generator voice mixes through the null device and StopVoice reclaim
 {
     const Unique<AudioDevice> device = MakeNullDevice();
     AudioEngine& engine = device->GetEngine();
-    ConstantGenerator generator;
-    generator.Value = 0.5f;
+    const auto generator = CreateRef<ConstantGenerator>();
+    generator->Value = 0.5f;
 
     const VoiceHandle voice = engine.PlayGenerator(
-        &generator,
+        generator,
         GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false, .Gain = 1.0f});
     REQUIRE(voice.IsValid());
     CHECK(engine.GetActiveVoiceCount() == 1);
@@ -294,4 +322,98 @@ TEST_CASE("a generator voice mixes through the null device and StopVoice reclaim
     engine.StopVoice(voice);
     CHECK_FALSE(engine.IsVoiceLive(voice));
     CHECK(engine.GetActiveVoiceCount() == 0);
+}
+
+TEST_CASE("stopping generator voices waits for no mixer frame and reclaims them on the next pump")
+{
+    // Declared before the device, so it outlives any generator the engine still holds at teardown.
+    LifetimeProbe probe;
+    const Unique<AudioDevice> device = MakeNullDevice();
+    AudioEngine& engine = device->GetEngine();
+
+    // The engine's references are the only ones: each generator lives exactly as long as its voice
+    // needs it.
+    constexpr int VoiceCount = 3;
+    std::vector<VoiceHandle> voices;
+    for (int i = 0; i < VoiceCount; ++i)
+    {
+        voices.push_back(engine.PlayGenerator(
+            CreateRef<LifetimeGenerator>(probe),
+            GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false, .Gain = 0.3f}));
+        REQUIRE(voices.back().IsValid());
+    }
+    device->Pump(1.0f / 60.0f);
+
+    // On the null device a stop that waited would have to mix inline to advance the consumed serial;
+    // an unmoved serial shows none of the stops waited. The generators outlive the stop, held by the
+    // engine for the snapshot the mixer may still be reading.
+    const u64 consumedBeforeStop = device->GetConsumedSerial();
+    for (const VoiceHandle voice : voices)
+    {
+        engine.StopVoice(voice);
+    }
+    CHECK(device->GetConsumedSerial() == consumedBeforeStop);
+    CHECK(engine.GetActiveVoiceCount() == 0);
+    CHECK(engine.GetPendingReclaimCount() == VoiceCount);
+    CHECK(probe.Destroyed == 0);
+
+    // One pump publishes a frame naming none of them and mixes it, which is the mixer provably past
+    // every one: all are destroyed in that pump, on this (the main) thread.
+    device->Pump(1.0f / 60.0f);
+    CHECK(engine.GetPendingReclaimCount() == 0);
+    CHECK(probe.Destroyed == VoiceCount);
+    CHECK(probe.DestroyedOn == std::this_thread::get_id());
+}
+
+TEST_CASE("a caller's own reference keeps a generator alive past the voice's reclamation")
+{
+    // Declared before the device, so it outlives any generator the engine still holds at teardown.
+    LifetimeProbe probe;
+    const Unique<AudioDevice> device = MakeNullDevice();
+    AudioEngine& engine = device->GetEngine();
+    auto generator = CreateRef<LifetimeGenerator>(probe);
+
+    const VoiceHandle voice = engine.PlayGenerator(
+        generator, GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false});
+    REQUIRE(voice.IsValid());
+    device->Pump(1.0f / 60.0f);
+
+    engine.StopVoice(voice);
+    device->Pump(1.0f / 60.0f);
+    REQUIRE(engine.GetPendingReclaimCount() == 0);
+    CHECK(probe.Destroyed == 0);
+    CHECK(generator.use_count() == 1);
+
+    generator.reset();
+    CHECK(probe.Destroyed == 1);
+}
+
+TEST_CASE("stopping a dead or invalid handle is a no-op")
+{
+    // Declared before the device, so it outlives any generator the engine still holds at teardown.
+    LifetimeProbe probe;
+    const Unique<AudioDevice> device = MakeNullDevice();
+    AudioEngine& engine = device->GetEngine();
+
+    const VoiceHandle voice =
+        engine.PlayGenerator(CreateRef<LifetimeGenerator>(probe),
+                             GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false});
+    REQUIRE(voice.IsValid());
+    const VoiceHandle survivor =
+        engine.PlayGenerator(CreateRef<LifetimeGenerator>(probe),
+                             GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false});
+    REQUIRE(survivor.IsValid());
+
+    engine.StopVoice(voice);
+    REQUIRE(engine.GetPendingReclaimCount() == 1);
+
+    // Neither a stale handle nor a default one touches the live voice or queues a second reclaim.
+    engine.StopVoice(voice);
+    engine.StopVoice(VoiceHandle{});
+    CHECK(engine.GetPendingReclaimCount() == 1);
+    CHECK(engine.IsVoiceLive(survivor));
+    CHECK(engine.GetActiveVoiceCount() == 1);
+
+    device->Pump(1.0f / 60.0f);
+    CHECK(probe.Destroyed == 1);
 }

@@ -244,10 +244,13 @@ extern "C"
 /// Version 56 grows ApplicationInfo and ContextInfo with the queue-submit mode, and Context with
 /// the mode it resolved. A module builds the ApplicationInfo its Application is constructed from,
 /// so a stale module hands the host a short one.
+/// Version 57 has AudioEngine::PlayGenerator take a shared Ref<IAudioGenerator> and widens
+/// AudioEngine's voice and deferred-free records to hold it. A module reaches the engine through
+/// SystemContext::Audio and reads its inline accessors, so a stale module reads it at the old layout.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 56u
+#define VENG_MODULE_ABI_VERSION 57u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

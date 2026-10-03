@@ -67,15 +67,15 @@ namespace
     // reverb tail, so two returned buffers differ only by their send.
     std::vector<f32> RenderStereoWithReverb(f32 left, f32 right, f32 send, u32 frames)
     {
-        StereoConstantGenerator gen;
-        gen.Left = left;
-        gen.Right = right;
+        const auto gen = CreateRef<StereoConstantGenerator>();
+        gen->Left = left;
+        gen->Right = right;
         const Unique<AudioDevice> device = MakeNullDevice();
         AudioEngine& engine = device->GetEngine();
         engine.SetReverbParams(ReverbParams{.RoomSize = 0.8f, .Wet = 1.0f});
 
         const VoiceHandle voice = engine.PlayGenerator(
-            &gen,
+            gen,
             GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false, .Channels = 2});
         REQUIRE(voice.IsValid());
         engine.SetVoiceParams(
@@ -91,14 +91,14 @@ namespace
 
 TEST_CASE("a stereo generator keeps its channels independent through the mix")
 {
-    StereoConstantGenerator gen;
-    gen.Left = 0.5f;
-    gen.Right = -0.5f;
+    const auto gen = CreateRef<StereoConstantGenerator>();
+    gen->Left = 0.5f;
+    gen->Right = -0.5f;
     const Unique<AudioDevice> device = MakeNullDevice();
     AudioEngine& engine = device->GetEngine();
 
     const VoiceHandle voice = engine.PlayGenerator(
-        &gen, GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false, .Channels = 2});
+        gen, GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false, .Channels = 2});
     REQUIRE(voice.IsValid());
 
     engine.Publish();
@@ -118,14 +118,14 @@ TEST_CASE("a stereo generator keeps its channels independent through the mix")
 
 TEST_CASE("a stereo generator bypasses the pan stage")
 {
-    StereoConstantGenerator gen;
-    gen.Left = 0.5f;
-    gen.Right = 0.5f;
+    const auto gen = CreateRef<StereoConstantGenerator>();
+    gen->Left = 0.5f;
+    gen->Right = 0.5f;
     const Unique<AudioDevice> device = MakeNullDevice();
     AudioEngine& engine = device->GetEngine();
 
     const VoiceHandle voice = engine.PlayGenerator(
-        &gen, GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false, .Channels = 2});
+        gen, GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false, .Channels = 2});
     REQUIRE(voice.IsValid());
 
     // Hard-pan left on the snapshot: a mono voice would collapse entirely to the left channel. The
@@ -145,15 +145,15 @@ TEST_CASE("a stereo generator bypasses the pan stage")
 
 TEST_CASE("a mono generator still renders through the pan stage unchanged")
 {
-    MonoConstantGenerator gen;
-    gen.Value = 0.5f;
+    const auto gen = CreateRef<MonoConstantGenerator>();
+    gen->Value = 0.5f;
     const Unique<AudioDevice> device = MakeNullDevice();
     AudioEngine& engine = device->GetEngine();
 
     // Default width (mono). Hard-pan left: equal-power pan puts the whole signal in the left channel
     // and silence in the right — the mono-then-pan behaviour the additive stereo branch leaves be.
     const VoiceHandle voice = engine.PlayGenerator(
-        &gen, GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false});
+        gen, GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false});
     REQUIRE(voice.IsValid());
     engine.SetVoiceParams(voice,
                           VoiceParams{.Bus = AudioBuses::Master(), .Gain = 1.0f, .Pan = -1.0f});
@@ -170,12 +170,13 @@ TEST_CASE("a mono generator still renders through the pan stage unchanged")
 
 TEST_CASE("a spatial stereo generator request is rejected")
 {
-    StereoConstantGenerator gen; // never driven — the request is refused before it registers
+    const auto gen = CreateRef<
+        StereoConstantGenerator>(); // never driven — the request is refused before it registers
     const Unique<AudioDevice> device = MakeNullDevice();
     AudioEngine& engine = device->GetEngine();
 
     const VoiceHandle voice = engine.PlayGenerator(
-        &gen, GeneratorVoiceParams{.Spatial = true, .Channels = 2, .MaxDistance = 100.0f});
+        gen, GeneratorVoiceParams{.Spatial = true, .Channels = 2, .MaxDistance = 100.0f});
     CHECK_FALSE(voice.IsValid());
     CHECK(engine.GetActiveVoiceCount() == 0);
 }

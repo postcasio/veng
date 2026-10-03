@@ -349,10 +349,6 @@ public:
     {
     }
 
-    // Runs before ~Application, while the audio engine is still alive: stop the generator voice so the
-    // mixer no longer references the borrowed m_Synth before it is destroyed with the app.
-    ~TemplateApp() override { GetAudioEngine().StopVoice(m_SynthVoice); }
-
 private:
     // The world is loaded here; find the prefab-authored primary GuiOverlay and bind it the
     // view-model, and load the overlay level's handle so a later Open finds it. The bind is deferred
@@ -392,9 +388,9 @@ private:
     // the headless null device the smoke path uses), so the voice exists whenever the app does.
     void SetupSynth()
     {
-        m_Synth.Prepare(SynthSampleRate);
+        m_Synth->Prepare(SynthSampleRate);
         m_SynthVoice = GetAudioEngine().PlayGenerator(
-            &m_Synth,
+            m_Synth,
             Audio::GeneratorVoiceParams{
                 .Bus = Audio::AudioBuses::Music(), .Spatial = false, .Channels = 2, .Gain = 0.5f});
     }
@@ -439,7 +435,7 @@ private:
         // eased by the synth's own Smoother so it never zippers. This is the resonant filter sweep a
         // listen would judge.
         m_SynthClock += delta;
-        m_Synth.SetParams(DemoParams{.Cutoff = 800.0f + 500.0f * std::sin(m_SynthClock * 0.5f)});
+        m_Synth->SetParams(DemoParams{.Cutoff = 800.0f + 500.0f * std::sin(m_SynthClock * 0.5f)});
 
         m_Model.Caption =
             fmt::format("{} — {:.0f} fps", m_TuningLabel, delta > 0.0f ? 1.0f / delta : 0.0f);
@@ -550,7 +546,7 @@ private:
     // The demonstrator instrument, its live voice handle, and the clock driving its cutoff sweep. The
     // standard output rate the reverb and envelope timings are sized against (the mixer runs at it).
     static constexpr u32 SynthSampleRate = 48000;
-    DemoSynth m_Synth;
+    Ref<DemoSynth> m_Synth = CreateRef<DemoSynth>();
     Audio::VoiceHandle m_SynthVoice;
     f32 m_SynthClock = 0.0f;
 
