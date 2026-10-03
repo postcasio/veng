@@ -143,6 +143,14 @@ namespace Veng::Gui
                  ++viewportIt)
             {
                 Renderer::Viewport* const viewport = *viewportIt;
+                // An offscreen viewport renders into a texture something else displays, so it is
+                // never what a window pointer is over: its region is a render extent, not a place
+                // on screen, and a region left at the window origin would otherwise swallow every
+                // event over that corner.
+                if (viewport->GetRole() == Renderer::ViewportRole::Offscreen)
+                {
+                    continue;
+                }
                 const optional<vec2> normalized = viewport->WindowToViewport(pixels);
                 if (!normalized)
                 {

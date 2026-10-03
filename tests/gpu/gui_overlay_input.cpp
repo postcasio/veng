@@ -16,7 +16,9 @@
 //       event first and absorbs it, and passes it down when it hits nothing;
 //   (d) Interactive reaches a pre-bloom overlay's document, and flipping it off releases it;
 //   (e) the cursor rule's scope: a viewport reports a drawn cursor only while a routable document
-//       declares one, so a display-only or hidden overlay stops counting.
+//       declares one, so a display-only or hidden overlay stops counting;
+//   (f) an offscreen viewport never owns the window pointer, however late it registered and
+//       wherever its region lies: its region is a render extent, not a place on screen.
 
 #include <doctest/doctest.h>
 
@@ -316,4 +318,36 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     overlay.Visible = false;
     Context.ImmediateCommands([&](CommandBuffer& cmd) { route.View->Render(cmd); });
     CHECK_FALSE(route.View->IsDrawingCursor());
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui overlay input: an offscreen viewport never owns the window pointer")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+
+    PointerRoute route(Context, assets);
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    GuiOverlay& overlay = AddOverlay(*scene, entity, GuiOverlayPlacement::SceneHdrPreBloom, true);
+    route.View->SetViewState({.World = scene.get(), .Delta = 0.016f});
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { route.View->Render(cmd); });
+    ClickTarget target;
+    target.Install(overlay);
+    Context.ImmediateCommands([&](CommandBuffer& cmd) { route.View->Render(cmd); });
+
+    // A render-to-texture viewport registered after the presented one, so it is walked first, with
+    // its region at the window origin and wide enough to cover the target — a portrait's posture.
+    const Unique<Viewport> offscreen = Viewport::Create({
+        .Context = Context,
+        .Assets = assets,
+        .Region = {.Offset = {0, 0}, .Extent = RegionExtent * 2U},
+        .ColorFormat = Format::RGBA16Sfloat,
+        .Role = ViewportRole::Offscreen,
+    });
+    route.Viewports.push_back(offscreen.get());
+    REQUIRE(offscreen->WindowToViewport(OnTarget).has_value());
+
+    route.PressAt(OnTarget);
+    CHECK(target.Presses == 1);
 }

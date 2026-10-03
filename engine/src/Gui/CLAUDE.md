@@ -498,6 +498,12 @@ screen point carries no meaning on a projected plane, and a document on a world 
 `GuiSurface`'s job. `Viewport::IsPointerOverDocument` — how gameplay declines a pointer the UI is
 using — answers off the same list, so it cannot disagree with who gets the event.
 
+**Only an on-screen viewport owns the window pointer.** The consumer walks the drive list newest
+first and the first viewport whose region holds the pointer owns the event, consumed or not — but an
+`Offscreen` viewport is skipped: it renders into a texture something else displays, so its region is
+a render extent rather than a place in the window, and one left at the origin would swallow every
+event over that corner. (The editor's panels, which show offscreen viewports, are ImGui's to route.)
+
 **A focused text field claims the editing keys before focus navigation sees them.** Backspace,
 Delete, the arrows and Home/End produce no character, so they reach a field only as key presses:
 the consumer maps each to a `TextEditAction` and offers it to `Document::DispatchTextEdit` first.
