@@ -253,10 +253,13 @@ extern "C"
 /// Version 59 grows Gui::Style with FillAgeStates, so a stale module lays a style out short.
 /// Version 60 grows RibbonPath with its Placement. A module builds RibbonPath in code, so a stale
 /// module leaves the byte the renderer reads the placement from unwritten.
+/// Version 61 grows Renderer::CaptureSurface with Enabled ahead of its settings, MeshRenderer and
+/// VisibleMesh with SortPriority, and Ribbon, Trail and RibbonPath with Layer, so a stale module that
+/// builds any of them in code writes its fields short of where the engine reads them.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 60u
+#define VENG_MODULE_ABI_VERSION 61u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

@@ -450,6 +450,15 @@ namespace Veng
 
             for (auto [entity, surface] : scene.View<Renderer::CaptureSurface>())
             {
+                // A disabled surface holds nothing: releasing its runtime returns the capture to the
+                // pool and clears the slots it bound, as removing the component would.
+                if (!surface.Enabled)
+                {
+                    surface.Release();
+                    ++result.SurfacesDisabled;
+                    continue;
+                }
+
                 // A capture installed this pass — built or taken from the pool — is registered
                 // below; one the surface already held is on the drive-list.
                 const bool fresh = surface.GetCapture() == nullptr;

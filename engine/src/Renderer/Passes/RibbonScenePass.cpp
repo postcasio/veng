@@ -304,8 +304,14 @@ namespace Veng::Renderer
     }
 
     void GatherRibbons(const Scene& scene, const CameraView& camera, const f32 alpha,
-                       RibbonDrawPlan& scenePlan, RibbonDrawPlan& postResolvePlan)
+                       RibbonDrawPlan& scenePlan, RibbonDrawPlan& postResolvePlan,
+                       const u32 visibleLayers, const Entity exclude)
     {
+        // What a view leaves out of its mesh gather it leaves out here: a layer its mask omits, and
+        // the one entity a capture feeds.
+        const auto drawn = [&](const Entity entity, const RenderLayer layer)
+        { return entity != exclude && RenderLayerInMask(visibleLayers, layer); };
+
         for (RibbonDrawPlan* plan : {&scenePlan, &postResolvePlan})
         {
             plan->Alpha.clear();
@@ -323,6 +329,10 @@ namespace Veng::Renderer
 
         for (auto [entity, ribbon] : scene.View<Ribbon>())
         {
+            if (!drawn(entity, ribbon.Layer))
+            {
+                continue;
+            }
             const f32 fade = ribbon.Lifetime > 0.0f
                                  ? std::clamp(1.0f - ribbon.Age / ribbon.Lifetime, 0.0f, 1.0f)
                                  : 1.0f;
@@ -346,6 +356,10 @@ namespace Veng::Renderer
         vector<StripPoint> points;
         for (auto [entity, trail] : scene.View<Trail>())
         {
+            if (!drawn(entity, trail.Layer))
+            {
+                continue;
+            }
             optional<vec3> head;
             if (trail.Emitting && scene.Has<Transform>(entity))
             {
@@ -356,6 +370,10 @@ namespace Veng::Renderer
 
         for (auto [entity, path] : scene.View<RibbonPath>())
         {
+            if (!drawn(entity, path.Layer))
+            {
+                continue;
+            }
             if (!path.Strips.empty() && scene.Has<Transform>(entity))
             {
                 GatherPath(path, DrawnWorld(scene, entity, alpha), sink, points);

@@ -101,6 +101,41 @@ TEST_CASE("The capture drive skips a world no view presents, and reports what it
     CHECK(one.SurfacesDriven == 0);
 }
 
+TEST_CASE("The capture drive leaves a disabled surface empty in a presented world")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    // Device-free again: a presented world's enabled surface would need a device to materialize, so
+    // completing the pass proves the disabled one was passed over before anything was built for it.
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    const WorldInstanceId world = OpenCaptureWorld(runner, CaptureRefresh::EveryFrame);
+    Scene& scene = runner.ResolveWorld(world)->GetScene();
+    for (auto [entity, surface] : scene.View<CaptureSurface>())
+    {
+        surface.Enabled = false;
+        // A surface marked dirty before it is disabled holds a runtime; the drive releases it.
+        surface.MarkDirty();
+    }
+
+    const WorldCaptureDriveResult result = runner.DriveCaptureSurfaces({
+        .Register = [](SceneCapture&) { FAIL("a disabled surface registered a capture"); },
+        .IsPresented = [world](const WorldInstanceId presented) { return presented == world; },
+    });
+
+    CHECK(result.WorldsDriven == 1);
+    CHECK(result.SurfacesDisabled == 1);
+    CHECK(result.SurfacesDriven == 0);
+    CHECK(result.CapturesBuilt == 0);
+    for (auto [entity, surface] : scene.View<CaptureSurface>())
+    {
+        CHECK(surface.GetCapture() == nullptr);
+        CHECK(surface.Runtime == nullptr);
+        CHECK_FALSE(surface.IsRefreshing());
+    }
+}
+
 TEST_CASE("The capture rotation reserves the viewports' slots and starves no capture")
 {
     // One slot per registered viewport is held back: a capture that cannot claim holds its last map,

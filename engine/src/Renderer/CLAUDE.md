@@ -789,6 +789,13 @@ the full-res plan for that frame, the same fallback as the activation edge.
 
 ### Additive translucent materials
 
+**Translucent draws order by priority group, then back to front within a group.** A draw's priority
+is its material's `sortPriority` plus its entity's `MeshRenderer::SortPriority`: the material's is a
+statement about every surface drawn with it (an overlay over everything), the renderer's the same
+statement about one entity — glass a viewer always sits behind, which is nearer than everything
+translucent around it however its centre sorts — so one shared material need not be split into a
+second parent to order one use of it. Within a group the key is each submesh's own view-space centre.
+
 **A Translucent material chooses how its colour composites: `"blend": "alpha"` (the default) or
 `"additive"`** in its `.vmat.json` (Translucent-domain only, a cook error elsewhere), carried to
 `Material::GetTranslucentBlend()` as a `TranslucentBlend`. `TranslucentScenePass` builds an additive
@@ -1985,6 +1992,14 @@ number (`SceneCapturePool::DefaultCapacity`) and drops the longest-held past it.
 directly through `CaptureSurface::Drive`, outside the world drive, still builds its own on first use
 and frees it when it goes.
 
+**A surface can be switched off without losing its settings.** `CaptureSurface::Enabled` false makes
+the world drive release the surface's runtime — the capture to the pool, the material slots it bound
+cleared — and build nothing for it while it stays off (`WorldCaptureDriveResult::SurfacesDisabled`
+counts them); `IsRefreshing` reads false. Re-enabling it materializes a capture on a later pass, from
+the pool when one matches. It is the switch for a probe wanted only some of the time — one that
+matters only while a viewer is inside what it captures — so its owner flips one flag instead of
+storing the authored settings and recreating the component.
+
 **A renderer built mid-frame waits on nothing.** A face renderer's one-time setup — its shadow
 atlases' first clears, its LTC tables' upload, a baked sky cube's first clear — is handed to
 `Context::RecordSetupCommands` rather than an immediate submit, which would wait behind the frame in
@@ -2035,10 +2050,14 @@ renderer, so the field is read when the runtime materializes and is not live-tun
 the one nominated entity, a capture filters by `RenderLayer` (`Veng/Scene/RenderLayer.h`): every
 drawable sits on a layer (`MeshRenderer::Layer`), and `CaptureView::VisibleLayers` names the layers
 the faces draw. `CaptureSurface::VisibleLayers` defaults to `DefaultEnvironmentCaptureLayers` — every
-layer but `RenderLayer::ViewAnchored` — because a probe records the environment around its position
-and camera-anchored decoration (a near-field particle shell, a billboard slaved to the eye) is not
-part of it: drawn into the map, it would appear in every reflection or lens sampling the capture,
-floating at a distance it was never at. The filter is the same closed producer→consumer machinery the
+layer but `RenderLayer::ViewAnchored` and `RenderLayer::Display` — because a probe records the
+environment around its position, and neither camera-anchored decoration (a near-field particle
+shell, a billboard slaved to the eye) nor content presented to a viewer (a world-space readout, a
+holographic instrument) is part of it: drawn into the map, it would appear in every reflection or
+lens sampling the capture, floating at a distance it was never at or reflected as though it were
+scenery. **Ribbons, trails and ribbon paths honour the same filter and the same exclusion**: each
+carries a `Layer`, and `GatherRibbons` takes the view's mask and excluded entity and gathers neither
+an off-mask one nor the entity a capture feeds, exactly as `GatherMeshes` does. The filter is the same closed producer→consumer machinery the
 entity exclusion rides — `SceneView::VisibleLayers` carried into `SceneBroadphase::Sync`, applied by
 `GatherMeshes` beside the `Visible` test, a changed mask its own rebuild trigger — and the ordinary
 camera view keeps its default `AllRenderLayers`, so it draws every layer and is unaffected.

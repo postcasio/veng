@@ -236,6 +236,35 @@ TEST_CASE("MeshRenderer::Visible excludes a mesh from the gather and from the sc
     CHECK(scene->Get<MeshRenderer>(hidden).Mesh.IsLoaded());
 }
 
+TEST_CASE("GatherMeshes: a renderer's sort priority reaches the gather")
+{
+    Renderer::Context context;
+    TaskSystem tasks;
+    TypeRegistry types;
+    RegisterBuiltins(types);
+
+    const AssetManager manager(context, tasks, types);
+    Unique<Scene> scene = Scene::Create(types);
+    const AssetHandle<Mesh> mesh =
+        manager.Adopt<Mesh>(BoundsMesh(AABB{.Min = vec3(-0.5f), .Max = vec3(0.5f)}));
+
+    const Entity plain = scene->CreateEntity();
+    scene->Add<Transform>(plain);
+    scene->Add<MeshRenderer>(plain, MeshRenderer{.Mesh = mesh});
+    const Entity raised = scene->CreateEntity();
+    scene->Add<Transform>(raised);
+    scene->Add<MeshRenderer>(raised, MeshRenderer{.Mesh = mesh, .SortPriority = 2});
+
+    vector<VisibleMesh> out;
+    AABB outBounds = AABB::Empty();
+    GatherMeshes(*scene, out, outBounds);
+    REQUIRE(out.size() == 2);
+    for (const VisibleMesh& item : out)
+    {
+        CHECK(item.SortPriority == (item.Owner == raised ? 2 : 0));
+    }
+}
+
 TEST_CASE("GatherMeshes: a layer mask excludes off-mask renderers")
 {
     Renderer::Context context;

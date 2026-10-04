@@ -175,6 +175,8 @@ namespace Veng
         u32 CapturesReused = 0;
         /// @brief Surfaces left unmaterialized and undriven this pass because the build budget was spent.
         u32 SurfacesDeferred = 0;
+        /// @brief Disabled surfaces in the driven worlds, whose runtime is released and left empty.
+        u32 SurfacesDisabled = 0;
     };
 
     /// @brief An RAII refcounted pause on one world, released when the scope drops.

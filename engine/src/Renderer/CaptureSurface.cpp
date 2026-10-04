@@ -211,6 +211,11 @@ namespace Veng::Renderer
         }
     }
 
+    void CaptureSurface::Release() const
+    {
+        Runtime.reset();
+    }
+
     void CaptureSurface::MarkDirty() const
     {
         if (!Runtime)
@@ -232,6 +237,10 @@ namespace Veng::Renderer
 
     bool CaptureSurface::IsRefreshing() const
     {
+        if (!Enabled)
+        {
+            return false;
+        }
         if (Refresh == CaptureRefresh::EveryFrame)
         {
             return true;

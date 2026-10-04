@@ -129,6 +129,17 @@ namespace Veng::Renderer
         CaptureSurface(const CaptureSurface&) = delete;
         CaptureSurface& operator=(const CaptureSurface&) = delete;
 
+        /// @brief Whether the engine drives this capture at all.
+        ///
+        /// A disabled surface keeps its authored settings and holds nothing else: the world drive
+        /// releases its runtime — the capture back to the pool, and the material slots it filled
+        /// cleared, exactly as the component's removal would — and builds none while it stays off.
+        /// Re-enabling it materializes a capture again on a later drive. This is the switch for a
+        /// capture that is only wanted some of the time (a probe that matters only while a viewer is
+        /// near or inside what it captures), so its owner toggles one flag rather than storing the
+        /// settings and re-creating the component.
+        bool Enabled = true;
+
         /// @brief The surface's sampling model, read by the entity's material (see CaptureShape).
         CaptureShape Shape = CaptureShape::EnvironmentProbe;
 
@@ -283,6 +294,13 @@ namespace Veng::Renderer
         /// same reason Drive is const, so a read-only view of a scene can still re-arm a capture.
         void MarkDirty() const;
 
+        /// @brief Releases the surface's runtime, keeping its authored settings.
+        ///
+        /// The capture goes back to the pool it came from and the material slots the last drive bound
+        /// are cleared, exactly as the component's destruction does; the next drive of an enabled
+        /// surface materializes a fresh one. What the world drive does to a disabled surface.
+        void Release() const;
+
         /// @brief Returns the owned capture, or nullptr before the first Drive materializes it.
         [[nodiscard]] SceneCapture* GetCapture() const;
 
@@ -294,9 +312,10 @@ namespace Veng::Renderer
 
         /// @brief Whether the next Drive will still push a face into the capture (the refresh state).
         ///
-        /// True while a refresh is in progress: always for EveryFrame, and for OnDemand until its
-        /// FaceCount-frame refresh completes (re-armed by MarkDirty). False for a settled OnDemand
-        /// capture — the point at which it renders nothing until dirtied again.
+        /// True while a refresh is in progress: always for an enabled EveryFrame capture, and for
+        /// OnDemand until its FaceCount-frame refresh completes (re-armed by MarkDirty). False for a
+        /// settled OnDemand capture — the point at which it renders nothing until dirtied again — and
+        /// for a disabled one.
         [[nodiscard]] bool IsRefreshing() const;
 
         /// @brief Returns the configuration this surface's capture is built with.
@@ -415,6 +434,7 @@ VE_ENUMERATOR(Entity)
 VE_ENUM_END();
 
 VE_REFLECT(::Veng::Renderer::CaptureSurface, 0x59B48CAC6127A406ULL)
+VE_FIELD(Enabled, .DisplayName = "Enabled")
 VE_FIELD(Shape, .DisplayName = "Shape")
 VE_FIELD(Resolution, .DisplayName = "Resolution", .Display = {.Min = 1})
 VE_FIELD(Refresh, .DisplayName = "Refresh")

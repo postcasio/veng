@@ -248,6 +248,15 @@ namespace Veng
         /// frustum. Set it false for geometry that must not occlude — an emissive body co-located
         /// with its own light, a skybox proxy, a held first-person prop.
         bool CastsShadows = true;
+        /// @brief Added to each Translucent submesh's material sort priority when this entity draws.
+        ///
+        /// Translucent draws order by priority group, then back to front within one. A material's
+        /// own `sortPriority` is a statement about every surface drawn with it; this is the same
+        /// statement about one entity — glass a viewer always sits behind, a visor, anything known to
+        /// be nearer than everything translucent around it however its centre sorts — so a shared
+        /// material need not be split into a second parent to order one use of it. Ignored by every
+        /// other domain.
+        i32 SortPriority = 0;
         /// @brief Whether this mesh is drawn at all.
         ///
         /// True (the default) draws it normally. False excludes it from the render gather
@@ -1364,6 +1373,9 @@ namespace Veng
         f32 OpacityTo = 1.0f;
         /// @brief Adds light onto the scene (order-free) rather than compositing over it by coverage.
         bool Additive = true;
+        /// @brief The render layer it is drawn on; a view whose layer mask omits it does not draw it
+        ///        (an environment capture omits ViewAnchored and Display by default).
+        RenderLayer Layer = RenderLayer::Default;
         /// @brief When positive, seconds over which the ribbon fades linearly to nothing; 0 holds
         ///        it at full opacity.
         f32 Lifetime = 0.0f;
@@ -1412,6 +1424,9 @@ namespace Veng
         f32 MinSampleDistance = 0.0f;
         /// @brief Adds light onto the scene (order-free) rather than compositing over it by coverage.
         bool Additive = true;
+        /// @brief The render layer it is drawn on; a view whose layer mask omits it does not draw it
+        ///        (an environment capture omits ViewAnchored and Display by default).
+        RenderLayer Layer = RenderLayer::Default;
         /// @brief Whether the trail records new samples and joins them to the entity; clearing it
         ///        lets the recorded trail fade out where it lies.
         bool Emitting = true;
@@ -1483,6 +1498,9 @@ namespace Veng
         vector<RibbonStrip> Strips;
         /// @brief Adds light onto the scene (order-free) rather than compositing over it by coverage.
         bool Additive = true;
+        /// @brief The render layer it is drawn on; a view whose layer mask omits it does not draw it
+        ///        (an environment capture omits ViewAnchored and Display by default).
+        RenderLayer Layer = RenderLayer::Default;
         /// @brief Where in the frame the path draws; Scene unless the linework must stay crisp.
         RibbonPlacement Placement = RibbonPlacement::Scene;
     };
@@ -1738,6 +1756,7 @@ VE_REFLECT(::Veng::MeshRenderer, 0x3C5CB13E46E0450BULL)
 VE_FIELD(Mesh, .DisplayName = "Mesh")
 VE_FIELD(Source, .DisplayName = "Source")
 VE_FIELD(CastsShadows, .DisplayName = "Casts shadows")
+VE_FIELD(SortPriority, .DisplayName = "Sort priority")
 VE_FIELD(Visible, .DisplayName = "Visible")
 VE_FIELD(Layer, .DisplayName = "Render layer")
 VE_REFLECT_END();
@@ -2069,6 +2088,7 @@ VE_FIELD(ColorTo, .DisplayName = "Color To", .Tooltip = "Linear HDR colour at th
 VE_FIELD(OpacityFrom, .DisplayName = "Opacity From", .Display = {.Min = 0.0, .Max = 1.0})
 VE_FIELD(OpacityTo, .DisplayName = "Opacity To", .Display = {.Min = 0.0, .Max = 1.0})
 VE_FIELD(Additive, .DisplayName = "Additive")
+VE_FIELD(Layer, .DisplayName = "Render layer")
 VE_FIELD(Lifetime, .DisplayName = "Lifetime",
          .Tooltip = "When positive, seconds over which the ribbon fades out",
          .Display = {.Min = 0.0, .Step = 0.01})
@@ -2088,6 +2108,7 @@ VE_FIELD(MinSampleDistance, .DisplayName = "Min Sample Distance",
          .Tooltip = "World distance the head moves before another sample is recorded",
          .Display = {.Min = 0.0, .Step = 0.01})
 VE_FIELD(Additive, .DisplayName = "Additive")
+VE_FIELD(Layer, .DisplayName = "Render layer")
 VE_FIELD(Emitting, .DisplayName = "Emitting")
 VE_REFLECT_END();
 
@@ -2108,6 +2129,7 @@ VE_ENUM_END();
 VE_REFLECT(::Veng::RibbonPath, 0x9BCA6107D31AB0F6ULL)
 VE_ARRAY_FIELD(Strips, .DisplayName = "Strips")
 VE_FIELD(Additive, .DisplayName = "Additive")
+VE_FIELD(Layer, .DisplayName = "Render layer")
 VE_FIELD(Placement, .DisplayName = "Placement",
          .Tooltip = "Scene: resolved with the scene. PostResolve: drawn crisp at output resolution")
 VE_REFLECT_END();

@@ -2840,7 +2840,8 @@ namespace Veng::Renderer
         // The same for ribbons and trails, with their own hysteresis — one per placement, so each
         // pass is wired only while its own plan carries records.
         GatherRibbons(resolvedView.World, resolvedView.Camera, resolvedView.Alpha,
-                      m_Internal->RibbonPlan, m_Internal->RibbonPostResolvePlan);
+                      m_Internal->RibbonPlan, m_Internal->RibbonPostResolvePlan,
+                      resolvedView.VisibleLayers, resolvedView.Exclude);
         const u32 ribbonsDropped =
             m_Internal->RibbonPlan.Dropped + m_Internal->RibbonPostResolvePlan.Dropped;
         if (ribbonsDropped > 0 && !m_Internal->RibbonBudgetWarned)

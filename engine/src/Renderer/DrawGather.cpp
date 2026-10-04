@@ -385,13 +385,13 @@ namespace Veng::Renderer
                 .FirstIndex = subMesh.IndexOffset,
                 .CandidateId = slot,
                 .ViewDepth = viewDepth,
-                .SortPriority = parent->GetSortPriority(),
+                .SortPriority = parent->GetSortPriority() + item.SortPriority,
             });
         }
 
         // Ascending priority groups, back-to-front (most negative view-space z first) within
-        // each: a higher-priority material (an overlay) draws over every lower-priority draw
-        // regardless of depth. Each plan sorts on its own, since the layer composites as a
+        // each: a higher priority — the material's, plus its entity's MeshRenderer::SortPriority —
+        // draws over every lower-priority draw regardless of depth. Each plan sorts on its own, since the layer composites as a
         // whole under the full-resolution draws.
         const auto backToFront = [](const TranslucentDraw& a, const TranslucentDraw& b)
         {

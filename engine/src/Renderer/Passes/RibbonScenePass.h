@@ -102,8 +102,12 @@ namespace Veng::Renderer
     /// @param alpha            The render interpolation fraction, placing trail heads and paths.
     /// @param scenePlan        The RibbonPlacement::Scene plan to fill; cleared first.
     /// @param postResolvePlan  The RibbonPlacement::PostResolve plan to fill; cleared first.
+    /// @param visibleLayers    The view's render-layer mask: a ribbon, trail or path whose Layer it
+    ///                         omits is not gathered, as a mesh on that layer is not.
+    /// @param exclude          The view's excluded entity (a capture's own surface), not gathered.
     void GatherRibbons(const Scene& scene, const CameraView& camera, f32 alpha,
-                       RibbonDrawPlan& scenePlan, RibbonDrawPlan& postResolvePlan);
+                       RibbonDrawPlan& scenePlan, RibbonDrawPlan& postResolvePlan,
+                       u32 visibleLayers = AllRenderLayers, Entity exclude = Entity::Null);
 
     /// @brief How a RibbonScenePass is wired into the frame.
     struct RibbonScenePassInfo

@@ -534,6 +534,32 @@ TEST_CASE("A path's placement routes it to the scene or the post-resolve plan; o
     CHECK(postResolve.Dropped == 0);
 }
 
+TEST_CASE("A view gathers no ribbon on a layer its mask omits, nor its excluded entity")
+{
+    RibbonScene fixture;
+    Scene& world = *fixture.World;
+    const Entity shown = world.CreateEntity();
+    world.Add<Ribbon>(shown, Ribbon{.From = vec3(-1.0f), .To = vec3(1.0f)});
+    const Entity display = world.CreateEntity();
+    world.Add<Ribbon>(display,
+                      Ribbon{.From = vec3(-1.0f), .To = vec3(1.0f), .Layer = RenderLayer::Display});
+    const Entity excluded = world.CreateEntity();
+    world.Add<Ribbon>(excluded, Ribbon{.From = vec3(-1.0f), .To = vec3(1.0f)});
+
+    const auto gathered = [&](const u32 layers, const Entity exclude)
+    {
+        Renderer::RibbonDrawPlan plan;
+        Renderer::RibbonDrawPlan postResolve;
+        Renderer::GatherRibbons(world, fixture.Camera, 0.0f, plan, postResolve, layers, exclude);
+        return plan.GetSegmentCount();
+    };
+
+    // The ordinary camera view draws all three; an environment capture fed by the third leaves out
+    // the display and the surface it feeds, as its mesh gather would.
+    CHECK(gathered(AllRenderLayers, Entity::Null) == 3);
+    CHECK(gathered(DefaultEnvironmentCaptureLayers, excluded) == 1);
+}
+
 TEST_CASE("The per-frame record budget is shared across both placements")
 {
     const RibbonScene fixture;

@@ -70,6 +70,7 @@ namespace Veng
                 .Mesh = renderer->Mesh.Get(),
                 .Materials = materials,
                 .CastsShadows = renderer->CastsShadows,
+                .SortPriority = renderer->SortPriority,
             });
             outBounds.Expand(worldBounds);
         }

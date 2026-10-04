@@ -48,6 +48,9 @@ namespace Veng
         /// Mirrors MeshRenderer::CastsShadows. The camera view draws every candidate regardless;
         /// the shadow views skip a candidate whose flag is false, and the caster bound excludes it.
         bool CastsShadows;
+        /// @brief Mirrors MeshRenderer::SortPriority: added to a Translucent submesh's material
+        ///        priority when its draws are ordered.
+        i32 SortPriority = 0;
     };
 
     /// @brief One per-submesh draw candidate: a gather record and the submesh within it.

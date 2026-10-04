@@ -43,10 +43,18 @@ namespace Veng
         /// (see DefaultEnvironmentCaptureLayers), mirroring nearby geometry as well. The ordinary
         /// camera view draws it like Default.
         Environment = 2,
+        /// @brief Content presented to a viewer rather than part of the scene around them: a
+        ///        world-space readout, a holographic instrument, a gizmo.
+        ///
+        /// It stands in the world and the ordinary camera view draws it like Default, but it is
+        /// not scenery: a reflection probe that captured it would show a surface reflecting a
+        /// display that was drawn for whoever looks at it, often from the wrong side and always
+        /// doubled. Environment captures therefore drop it by default, as they drop ViewAnchored.
+        Display = 3,
     };
 
     /// @brief Number of members in the closed RenderLayer table.
-    inline constexpr u32 RenderLayerCount = 3;
+    inline constexpr u32 RenderLayerCount = 4;
 
     /// @brief The bit a layer occupies in a render-layer mask.
     /// @param layer  The layer whose bit to compute.
@@ -70,18 +78,21 @@ namespace Veng
 
     /// @brief The layers a reflection capture draws unless a consumer names another set.
     ///
-    /// Every layer but ViewAnchored: a probe captures the scene around a point, and camera-anchored
-    /// decoration is not part of that scene (see RenderLayer::ViewAnchored). This carries only the
-    /// *universal* exclusion — ViewAnchored is wrong in every capture. It keeps both Default (nearby
+    /// Every layer but ViewAnchored and Display: a probe captures the scene around a point, and
+    /// neither camera-anchored decoration nor content presented to a viewer is part of that scene
+    /// (see RenderLayer::ViewAnchored, RenderLayer::Display). This carries only the *universal*
+    /// exclusions — both are wrong in every capture. It keeps both Default (nearby
     /// scene geometry) and Environment (the distant backdrop), which is what a general specular
     /// reflection wants; a capture that wants only the distant surroundings — an IBL probe sitting
     /// within the local geometry — names RenderLayer::Environment alone instead.
     inline constexpr u32 DefaultEnvironmentCaptureLayers =
-        AllRenderLayers & ~RenderLayerBit(RenderLayer::ViewAnchored);
+        AllRenderLayers & ~RenderLayerBit(RenderLayer::ViewAnchored) &
+        ~RenderLayerBit(RenderLayer::Display);
 }
 
 VE_ENUM(::Veng::RenderLayer, 0x357D35AA53685C1AULL)
 VE_ENUMERATOR(Default)
 VE_ENUMERATOR(ViewAnchored)
 VE_ENUMERATOR(Environment)
+VE_ENUMERATOR(Display)
 VE_ENUM_END();
