@@ -1420,12 +1420,26 @@ namespace Veng
         vector<TrailSample> Samples;
     };
 
+    /// @brief Where in the frame a RibbonPath draws.
+    enum class RibbonPlacement : u8
+    {
+        /// @brief Into the lit scene colour at the render allocation, after the translucent pass:
+        ///        depth-tested, resolved by TAA with the scene, and resampled by the promotion.
+        Scene = 0,
+        /// @brief Into the finished scene colour at the post-resolve allocation, after the
+        ///        post-process effects and before the pre-bloom GUI overlay and bloom, through the
+        ///        unjittered projection: never temporally resolved or resampled.
+        PostResolve = 1,
+    };
+
     /// @brief One polyline of a RibbonPath, in its entity's local space.
     ///
-    /// Consecutive points closer than about a ten-thousandth of a world unit merge into one; a strip
-    /// left with fewer than two distinct points draws nothing. Each joint's tangent is taken across
-    /// its two neighbours (wrapping at the ends of a closed strip), so the segments meeting there
-    /// share their edge and a curve drawn as a fine polyline shows neither a gap nor a notch.
+    /// Consecutive points closer than about a ten-thousandth of a world unit merge into one. A strip
+    /// left with one distinct point draws a round, camera-facing dot of diameter Width centred on it
+    /// (the polyline analogue of a round cap on a zero-length subpath); one with none draws nothing.
+    /// Each joint's tangent is taken across its two neighbours (wrapping at the ends of a closed
+    /// strip), so the segments meeting there share their edge and a curve drawn as a fine polyline
+    /// shows neither a gap nor a notch.
     struct RibbonStrip
     {
         /// @brief The polyline's points, in the entity's local space.
@@ -1433,7 +1447,8 @@ namespace Veng
         /// @brief Joins the last point back to the first, with a shared joint there; a closed strip
         ///        of N distinct points draws N segments, an open one N − 1.
         bool Closed = false;
-        /// @brief The band's world width at unit scale; the entity's world scale multiplies it.
+        /// @brief The band's world width (a one-point strip's dot diameter) at unit scale; the
+        ///        entity's world scale multiplies it.
         f32 Width = 0.01f;
         /// @brief The linear HDR colour; above 1 drives bloom.
         vec3 Color{1.0f};
@@ -1455,12 +1470,21 @@ namespace Veng
     /// plain data a system may rewrite every frame — points, colours, the strip count — and the
     /// pass draws whatever they hold. Presentation only, never replicated, and nothing advances
     /// it; a floating origin's re-base reaches it through its entity's Transform.
+    ///
+    /// Placement chooses where in the frame the path draws. Scene (the default) draws with the rest
+    /// of the scene and is resolved and resampled with it. PostResolve draws the same bands at the
+    /// output resolution after the temporal resolve and the upscale, through the unjittered
+    /// projection, so crisp world-space linework — gizmos, projected orbits, wireframe holograms,
+    /// measurement guides — neither softens nor shimmers; it is occluded per fragment by the scene
+    /// depth rather than by a depth test, and still feeds bloom.
     struct RibbonPath
     {
         /// @brief The polylines drawn, each with its own width and colour.
         vector<RibbonStrip> Strips;
         /// @brief Adds light onto the scene (order-free) rather than compositing over it by coverage.
         bool Additive = true;
+        /// @brief Where in the frame the path draws; Scene unless the linework must stay crisp.
+        RibbonPlacement Placement = RibbonPlacement::Scene;
     };
 
     /// @brief A scene-authored fullscreen post-process effect the renderer runs over scene color.
@@ -2076,9 +2100,16 @@ VE_FIELD(Color, .DisplayName = "Color", .Tooltip = "Linear HDR colour")
 VE_FIELD(Opacity, .DisplayName = "Opacity", .Display = {.Min = 0.0, .Max = 1.0})
 VE_REFLECT_END();
 
+VE_ENUM(::Veng::RibbonPlacement, 0x7ADCEEC4BBBADE05ULL)
+VE_ENUMERATOR(Scene)
+VE_ENUMERATOR(PostResolve)
+VE_ENUM_END();
+
 VE_REFLECT(::Veng::RibbonPath, 0x9BCA6107D31AB0F6ULL)
 VE_ARRAY_FIELD(Strips, .DisplayName = "Strips")
 VE_FIELD(Additive, .DisplayName = "Additive")
+VE_FIELD(Placement, .DisplayName = "Placement",
+         .Tooltip = "Scene: resolved with the scene. PostResolve: drawn crisp at output resolution")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::PostProcessEffect, 0xE760A6F6C3F08F48ULL)

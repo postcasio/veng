@@ -142,9 +142,9 @@ separates *deciding* from *wiring*:
   with more than two meaningful states is a **named enum field**, not a boolean pair:
   `DofStages { None, CocOnly, Full }` makes "composited without the stages wired" unrepresentable
   rather than merely unreachable.
-- **The per-frame content-active flags are not topology.** The sprite and ribbon passes'
-  (`SpriteActive` and `RibbonActive`, each with its idle counter) live in `SceneRenderer::Internal`
-  beside the plans they gate.
+- **The per-frame content-active flags are not topology.** The sprite and both ribbon passes'
+  (`SpriteActive`, `RibbonActive` and `RibbonPostResolveActive`, each with its idle counter) live in
+  `SceneRenderer::Internal` beside the plans they gate.
 - **The three per-frame field-active flags are not topology and stay loose members.**
   `m_PointFieldActive`, `m_ScenePointFieldActive`, and `m_VolumeFieldActive` are resolved from
   *scene content* each frame (`ResolvePointFields` / `ResolveVolumeFields`), not from settings — so
@@ -348,7 +348,8 @@ one bilinear tap through the scene colour's own map, the same filter the termina
 when it carried this upscale, so the image is unchanged and the upscale is not performed twice. It
 is declared at the HDR tail anchor, **after** the depth-of-field composite and **before** the
 post-process effect chain, so every g-buffer-reading pass is upstream of it and the whole tail is
-downstream. It is wired only when the scene colour is not already the post-resolve allocation —
+downstream. Below it the tail composes in a fixed order: the post-process effects, the post-resolve
+ribbons (see "Ribbons and trails"), the pre-bloom GUI overlay, then bloom and the tonemap. It is wired only when the scene colour is not already the post-resolve allocation —
 a reduced render allocation, a dynamic-resolution sub-rect, or both. The wiring is scale-driven with
 the `HalfResTranslucency` shape: activated at the top of the `Execute` that first renders below the
 post-resolve allocation (before the post-resolve extent is derived, so that frame runs the promoted
@@ -360,12 +361,15 @@ viewport at render scale 1 carries neither target and neither pass**.
 `SceneRenderer::IsPostResolveUpscaleWired()` reports which case a frame was.
 
 **The bloom mask is the scene colour's companion channel and crosses the same boundary — as its own
-step.** It has a writer on each side: the translucent pass rasterizes it into the render allocation
-beside the lit colour, and a `SceneHdrPreBloom` overlay whose composite material declares
-`"bloomMask": true` adds an amplitude to it at the post-resolve allocation. So the mask is resampled
-from the rasterized sub-rect across a promoted, post-resolve-sized mask at the same boundary
-(`PromotionSource::BloomMask`, the same shader); the overlay composite then loads *that* and bloom
-reads it with an identity map, exactly like the scene colour beside it.
+step.** It has writers on each side: the translucent pass (and the scene-placed ribbon and sprite
+passes after it) rasterizes it into the render allocation beside the lit colour, and at the
+post-resolve allocation the post-resolve ribbons and a `SceneHdrPreBloom` overlay whose composite
+material declares `"bloomMask": true` add amplitudes to it. So the mask is resampled from the
+rasterized sub-rect across a promoted, post-resolve-sized mask at the same boundary
+(`PromotionSource::BloomMask`, the same shader); the post-resolve writers then load *that* and bloom
+reads it with an identity map, exactly like the scene colour beside it. The mask needs no content to
+exist: it is imported whenever the bloom sweep is wired and its latch is scale-driven, so a frame
+whose only mask writer is a post-resolve ribbon finds it already cleared (or promoted) underneath.
 
 **Its latch is separate from the colour's, and its pass follows from both.** The colour promotion
 asks whether the *finished scene colour* covers the post-resolve allocation; the mask asks whether
@@ -845,14 +849,46 @@ on — a flash at a muzzle, a burst at an impact, a puff at a trail's head — s
 composites over a ribbon rather than under it; additive content is order-free either way. Neither
 pass writes depth, so neither occludes the other.
 
+**A `RibbonPath` chooses its placement; ribbons and trails are always scene-placed.**
+`RibbonPlacement::Scene` (the default) is the pass above. `RibbonPlacement::PostResolve` draws the
+same bands through a second instance of the pass, **"Post-Resolve Ribbons"**, declared at the HDR
+tail anchor **after the post-process effects and immediately before the pre-bloom GUI overlay** (so
+a nearer overlay composites over it, and bloom reads both), into the effect chain's output at the
+**post-resolve allocation**, in the Final arm only (a debug arm has no pre-bloom scene-colour chain,
+as for the overlay). It exists for crisp world-space linework — gizmos, projected orbits, wireframe
+holograms, measurement guides — that the temporal resolve would soften and shimmer and the upscale
+would resample: it projects through the camera's **unjittered** projection (pushed, since the view
+constants carry the jittered one), floors its width in post-resolve pixels, and is never resolved or
+resampled. What differs from the scene placement:
+
+- **Occlusion is per fragment, by discard.** The post-resolve allocation has no depth buffer, so the
+  fragment samples the render-allocation g-buffer depth at its pixel through the sub-rect remap
+  (`ScaledSampleUV`, as the point-field and debug-draw fades do), turns it back into a view depth
+  through the projection's depth rows (which the TAA jitter leaves alone, so the unjittered matrix
+  serves), and **discards** a fragment farther than it by more than a 0.1 % relative tolerance. A
+  discard rather than a fade matches the scene placement's depth test, so moving a path between
+  placements changes its sharpness, not what hides it. The silhouette it is cut against is the
+  depth's, so at a reduced render scale an occluder's edge is as coarse as the render allocation.
+- **It writes the post-resolve bloom mask** (the promoted one when the mask crosses the boundary, the
+  render allocation's when that already is the post-resolve size), by the same luminance rule.
+
 - **Content-driven with deactivation hysteresis**, exactly the sprite pass's shape: `GatherRibbons`
-  runs every `Execute` into a `RibbonDrawPlan`, the pass is wired on the first non-empty gather and
-  unwired after `RibbonIdleFrameLimit` consecutive empty ones, and a scene that never carries one has
-  no pass (the smoke golden is unaffected).
-- **One record per segment, no vertex input.** A `Ribbon` is one segment; a `Trail` is a segment per
-  consecutive pair of its samples plus one to its entity's drawn position while `Emitting`, so a
-  trail contributes **at most `MaxSamples` segments**; a `RibbonPath` strip of N distinct points is
-  N − 1 segments open, N closed. Trails and strips run through one joiner (`JoinStrip`): coincident
+  runs every `Execute` into one `RibbonDrawPlan` per placement, each pass is wired on the first
+  non-empty gather of its own plan and unwired after `RibbonIdleFrameLimit` consecutive empty ones,
+  so a scene with no post-resolve path never wires the tail pass, one with only scene-placed content
+  is unchanged, and a scene that never carries any has no pass (the smoke golden is unaffected).
+- **One record per segment or dot, no vertex input.** A `Ribbon` is one segment; a `Trail` is a
+  segment per consecutive pair of its samples plus one to its entity's drawn position while
+  `Emitting`, so a trail contributes **at most `MaxSamples` segments**; a `RibbonPath` strip of N
+  distinct points is N − 1 segments open, N closed, and a strip of **one** distinct point (all its
+  points coincident counts) is one **dot record** — a disc of diameter `Width`, the polyline analogue
+  of a round cap on a zero-length subpath. A dot rides the segment record with both ends on its
+  centre and `StartTangent.w` set to 1; the vertex stage spans it with a square parallel to the image
+  plane (so the disc projects to a circle), floors it at the same pixel width with the same opacity
+  compensation, and the fragment's `(1 − r²)²` falloff over the disc coordinate is the band's
+  cross-section turned about its centre, so the dot is full at its centre and anti-aliased at its
+  rim. A trail of one point still draws nothing. Trails and strips run through one joiner
+  (`JoinStrip`): coincident
   consecutive points merge, and each point's tangent is taken across its neighbours — wrapping on a
   closed strip, falling back to the segment's own direction at a hairpin whose neighbours coincide
   — so the two segments meeting at a joint share its edge and a curve draws without gaps or notches,
@@ -881,13 +917,18 @@ pass writes depth, so neither occludes the other.
   weighted, destination alpha kept) — no blend of its own.
 - **The bloom mask is written by luminance** of the contributed light (`colour × coverage`) when the
   frame wires one, so an HDR beam glows whatever the threshold.
-- **Budget: `MaxRibbonSegmentsPerFrame` (8192).** Past it the rest are dropped for the frame and the
-  renderer warns once for its lifetime. Depth-tested against the opaque depth, never written.
+- **Budget: `MaxRibbonSegmentsPerFrame` (8192) records, shared by both placements** (a dot is one).
+  Past it the rest are dropped for the frame and the renderer warns once for its lifetime. The scene
+  placement is depth-tested against the opaque depth, never written.
 
 `tests/gpu/ribbon_pass.cpp` checks a ribbon's centre-line colour through each blend, a trail
-lighting its path, and the bloom-masked path; `tests/unit/ribbon.cpp` checks the trail ring's
-bounds, the stationary trail's empty gather, the packing bound, a pooled beam's fade and return, and
-a path's segment counts, shared joints, merging, and placement by its entity's (interpolated) pose.
+lighting its path, the bloom-masked path, a post-resolve path drawing through its own pass only and
+glowing through the post-resolve mask promoted or not, a dot's roundness in either placement, and
+(cooker-gated) a post-resolve path hidden behind a cube at full and reduced render scale;
+`tests/unit/ribbon.cpp` checks the trail ring's bounds, the stationary trail's empty gather, the
+packing bound, a pooled beam's fade and return, a path's segment counts, shared joints, merging,
+and placement by its entity's (interpolated) pose, the one-point dot, the routing by placement, and
+the shared budget.
 
 ### Forward lighting for translucent surfaces
 
@@ -1504,8 +1545,9 @@ plumbing.
 ### The pre-bloom GUI overlay
 
 `GuiHdrOverlayScenePass` composites each `SceneHdrPreBloom` overlay into the scene colour after the
-post-process effects and before bloom, at the post-resolve allocation. Each of its passes costs what
-the overlays cover rather than the frame:
+post-process effects and the post-resolve ribbons and before bloom, at the post-resolve allocation,
+so an overlay composites over world linework drawn there. Each of its passes costs what the overlays
+cover rather than the frame:
 
 - **The direct pass exists only while a direct overlay does.** Overlays naming no material merge into
   one draw list blended in place; `ResolveHdrOverlays` recompiles on whether any is conveyed, beside

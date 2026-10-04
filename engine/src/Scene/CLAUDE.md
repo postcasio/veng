@@ -252,10 +252,17 @@ carry HDR colour that feeds bloom, and choose `Additive` (order-free light) or a
   per-frame world-space bookkeeping, where a `Ribbon` per segment would need both. The entity's world
   scale multiplies `Width`; a path on an entity without a `Transform` draws nothing. A closed strip
   joins its last point to its first with a shared joint (a circle of N points is N segments with no
-  seam), coincident consecutive points merge, and a strip of fewer than two distinct points draws
-  nothing. The strips are fully reflected (`VE_ARRAY_FIELD`), so a prefab can author a static
-  shape, and are equally plain data a system rewrites every frame; nothing advances them, and a
-  floating origin's re-base reaches them through the entity's `Transform`.
+  seam), coincident consecutive points merge, a strip of one distinct point draws a round,
+  camera-facing dot of diameter `Width` (a marker, a vertex, a node, with no second point to invent),
+  and a strip of none draws nothing. **`Placement`** (`RibbonPlacement`) picks where in the frame
+  the path draws: `Scene` (the default) with the rest of the scene, resolved by TAA and resampled by
+  the upscale with it; `PostResolve` at the output resolution after both, through the unjittered
+  projection, so thin bright linework (a gizmo, a projected orbit, a wireframe hologram, a
+  measurement guide) stays crisp — occluded per fragment by the scene depth and still blooming
+  (renderer detail in [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Ribbons and trails"). The
+  strips and the placement are fully reflected (`VE_ARRAY_FIELD`, `VE_FIELD`), so a prefab can
+  author a static shape, and are equally plain data a system rewrites every frame; nothing advances
+  them, and a floating origin's re-base reaches them through the entity's `Transform`.
 - **`RibbonSystem`** (`Veng/Scene/RibbonSystem.h`) also advances every `Ribbon`'s `Age`, so a level
   lists it for its trails to record and its ribbons to fade.
 - **A floating origin re-bases them with `OffsetRibbons(scene, offset)`.** A scene drawn about a

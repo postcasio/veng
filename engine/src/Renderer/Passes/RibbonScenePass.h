@@ -4,6 +4,7 @@
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/ScenePass.h>
 #include <Veng/Renderer/Types.h>
+#include <Veng/Scene/Components.h>
 
 namespace Veng
 {
@@ -21,14 +22,19 @@ namespace Veng::Renderer
     class GraphicsPipeline;
     class PipelineLayout;
 
-    /// @brief One ribbon segment as the ribbon pass's vertex stage reads it (std430, 96 bytes).
+    /// @brief One ribbon record as the ribbon pass's vertex stage reads it (std430, 96 bytes): a
+    ///        segment, or a dot.
     ///
     /// Positions are relative to the camera's eye (the render origin), rebased on the CPU in double
     /// precision, so the vertex stage never pushes a large world coordinate through the view
-    /// matrix. Mirrors ribbon.vert.slang's GpuRibbonSegment byte for byte.
+    /// matrix. A dot record (StartTangent.w of 1) stands Start and End on the dot's centre with
+    /// their widths its diameter and zero tangents, and the vertex stage expands it into a disc
+    /// parallel to the image plane rather than a band. Mirrors ribbon.vert.slang's GpuRibbonSegment
+    /// byte for byte.
     struct GpuRibbonSegment
     {
-        /// @brief xyz: the segment's start, relative to the eye; w: the world width there.
+        /// @brief xyz: the segment's start, relative to the eye; w: the world width there (a dot's
+        ///        diameter).
         vec4 Start{0.0f};
         /// @brief xyz: the segment's end, relative to the eye; w: the world width there.
         vec4 End{0.0f};
@@ -36,7 +42,8 @@ namespace Veng::Renderer
         vec4 StartColor{1.0f};
         /// @brief rgb: the linear HDR colour at the end; a: the opacity there.
         vec4 EndColor{1.0f};
-        /// @brief xyz: the unit direction the ribbon runs at the start; w unused.
+        /// @brief xyz: the unit direction the ribbon runs at the start; w: 1 for a dot record, 0
+        ///        for a segment.
         vec4 StartTangent{0.0f};
         /// @brief xyz: the unit direction the ribbon runs at the end; w unused.
         vec4 EndTangent{0.0f};
@@ -45,75 +52,111 @@ namespace Veng::Renderer
     static_assert(sizeof(GpuRibbonSegment) == 96,
                   "GpuRibbonSegment must be 96 bytes (matches ribbon.vert.slang)");
 
-    /// @brief The most ribbon segments the pass draws in one frame; a frame gathering more drops the
-    ///        rest.
+    /// @brief Returns whether a record is a dot rather than a segment.
+    [[nodiscard]] inline bool IsDot(const GpuRibbonSegment& record)
+    {
+        return record.StartTangent.w > 0.5f;
+    }
+
+    /// @brief The most ribbon records the frame draws across both placements; a frame gathering
+    ///        more drops the rest. A dot is one record.
     inline constexpr u32 MaxRibbonSegmentsPerFrame = 8192;
 
-    /// @brief One frame's gathered ribbon segments, split by compositing.
+    /// @brief One placement's gathered ribbon records for a frame, split by compositing.
     struct RibbonDrawPlan
     {
-        /// @brief Alpha-composited segments, sorted back to front.
+        /// @brief Alpha-composited records, sorted back to front.
         vector<GpuRibbonSegment> Alpha;
-        /// @brief Additive segments, in gather order.
+        /// @brief Additive records, in gather order.
         vector<GpuRibbonSegment> Additive;
-        /// @brief Segments gathered past MaxRibbonSegmentsPerFrame and not drawn this frame.
+        /// @brief Records of this placement gathered past MaxRibbonSegmentsPerFrame and not drawn.
         u32 Dropped = 0;
 
         /// @brief Returns whether the plan draws anything.
         [[nodiscard]] bool IsEmpty() const { return Alpha.empty() && Additive.empty(); }
 
-        /// @brief Returns how many segments the plan draws.
+        /// @brief Returns how many records the plan draws.
         [[nodiscard]] usize GetSegmentCount() const { return Alpha.size() + Additive.size(); }
     };
 
-    /// @brief Gathers a scene's Ribbons, Trails and RibbonPaths into a frame's plan.
+    /// @brief Gathers a scene's Ribbons, Trails and RibbonPaths into a frame's two plans, one per
+    ///        RibbonPlacement.
     ///
     /// A Ribbon contributes one segment, From to To, with its Lifetime fade applied; one that is
     /// degenerate, fully faded, or transparent at both ends contributes none. A Trail contributes a
     /// segment between each consecutive pair of its samples, then from the newest to its entity's
     /// drawn position while it is Emitting, so a trail holding N samples contributes at most N
-    /// segments. A RibbonPath's strips are placed by its entity's drawn world transform and each
+    /// segments. Ribbons and trails always go to the scene plan. A RibbonPath goes to the plan its
+    /// Placement names; its strips are placed by its entity's drawn world transform and each
     /// contributes a segment per consecutive pair of its points, plus one from the last back to the
-    /// first when Closed. In trails and strips coincident consecutive points merge, and each point's
-    /// tangent is taken across its neighbours, so adjacent segments share their joint's edge and a
-    /// curve draws seamless. An entity's drawn pose is the one its meshes draw at: interpolated by
-    /// @p alpha while the scene carries motion history, the current one otherwise. Positions are
-    /// rebased to the camera's eye in double precision. The result is split into the alpha set
-    /// (sorted back to front on view depth) and the additive set; gathering stops at
-    /// MaxRibbonSegmentsPerFrame, counting the rest as dropped.
-    /// @param scene   The scene to gather from.
-    /// @param camera  The viewpoint: the render origin, and the back-to-front sort.
-    /// @param alpha   The render interpolation fraction, placing trail heads and paths.
-    /// @param plan    The plan to fill; cleared first.
+    /// first when Closed, or a single dot record when it holds one distinct point. In trails and
+    /// strips coincident consecutive points merge, and each point's tangent is taken across its
+    /// neighbours, so adjacent segments share their joint's edge and a curve draws seamless. An
+    /// entity's drawn pose is the one its meshes draw at: interpolated by @p alpha while the scene
+    /// carries motion history, the current one otherwise. Positions are rebased to the camera's eye
+    /// in double precision. Each plan is split into the alpha set (sorted back to front on view
+    /// depth) and the additive set; gathering stops at MaxRibbonSegmentsPerFrame records across both
+    /// plans, counting the rest as dropped in the plan each would have joined.
+    /// @param scene            The scene to gather from.
+    /// @param camera           The viewpoint: the render origin, and the back-to-front sort.
+    /// @param alpha            The render interpolation fraction, placing trail heads and paths.
+    /// @param scenePlan        The RibbonPlacement::Scene plan to fill; cleared first.
+    /// @param postResolvePlan  The RibbonPlacement::PostResolve plan to fill; cleared first.
     void GatherRibbons(const Scene& scene, const CameraView& camera, f32 alpha,
-                       RibbonDrawPlan& plan);
+                       RibbonDrawPlan& scenePlan, RibbonDrawPlan& postResolvePlan);
 
-    /// @brief Draws the frame's ribbons, trails and ribbon paths into the lit scene color.
+    /// @brief How a RibbonScenePass is wired into the frame.
+    struct RibbonScenePassInfo
+    {
+        /// @brief The borrowed per-frame plan the pass draws.
+        const RibbonDrawPlan* Plan = nullptr;
+        /// @brief Where in the frame the pass sits, and so what it draws into and how it occludes.
+        RibbonPlacement Placement = RibbonPlacement::Scene;
+        /// @brief The scene-color target the ribbons composite into: the lit target for Scene, the
+        ///        finished post-resolve scene colour for PostResolve.
+        ResourceId Target;
+        /// @brief The opaque depth: attached read-only for Scene's depth test, sampled for
+        ///        PostResolve's per-fragment occlusion.
+        ResourceId Depth;
+        /// @brief The depth's bindless slot, which PostResolve samples.
+        TextureHandle DepthHandle;
+        /// @brief The sampler PostResolve reads the depth through.
+        SamplerHandle Sampler;
+        /// @brief The bloom-mask target at the pass's allocation, or invalid when the frame wires
+        ///        none.
+        ResourceId Mask;
+        /// @brief Color format of the scene-color target.
+        Format TargetFormat = Format::Undefined;
+        /// @brief Color format of the bloom-mask target.
+        Format MaskFormat = Format::Undefined;
+        /// @brief Frames in flight, the depth of the record ring.
+        u32 FramesInFlight = 1;
+    };
+
+    /// @brief Draws one placement's ribbons, trails and ribbon paths into a scene colour.
     ///
-    /// Wired after the full-resolution translucent pass and immediately ahead of the sprite pass,
-    /// so ribbons composite over translucent surfaces, sprite effects standing on a beam or a trail
-    /// (a flash at a muzzle, a burst at an impact) composite over it, and everything resolves under
-    /// TAA and feeds bloom. Each segment is a quad expanded in the vertex stage from a per-frame
-    /// record buffer (no vertex input), turned about its axis to face the camera and floored at
-    /// about a pixel wide, depth-tested against the opaque depth with depth writes off. The alpha
-    /// set draws first, straight-alpha over; the additive set follows. Both write the bloom mask by
-    /// the contributed colour's luminance when the frame wires one.
+    /// The Scene placement is wired after the full-resolution translucent pass and immediately
+    /// ahead of the sprite pass, so ribbons composite over translucent surfaces, sprite effects
+    /// standing on a beam or a trail (a flash at a muzzle, a burst at an impact) composite over it,
+    /// and everything resolves under TAA and feeds bloom; it is depth-tested against the opaque
+    /// depth with depth writes off. The PostResolve placement is declared at the HDR tail anchor,
+    /// after the post-process effects and immediately before the pre-bloom GUI overlay composite,
+    /// into the finished scene colour at the post-resolve allocation through the unjittered
+    /// projection; with no depth attachment there, each fragment samples the render-allocation
+    /// depth through the sub-rect remap and is discarded when behind it. Each record is a quad
+    /// expanded in the vertex stage from a per-frame record buffer (no vertex input) — a segment
+    /// turned about its axis to face the camera, a dot a disc parallel to the image plane — and
+    /// floored at about a pixel wide in the target's pixels. The alpha set draws first,
+    /// straight-alpha over; the additive set follows. Both write the bloom mask by the contributed
+    /// colour's luminance when the frame wires one.
     class RibbonScenePass final : public ScenePass
     {
     public:
         /// @brief Constructs the pass and its pipelines.
-        /// @param context         Renderer context for pipeline and buffer creation.
-        /// @param assets          The asset manager the core ribbon shaders load through.
-        /// @param plan            Borrowed per-frame ribbon plan.
-        /// @param targetId        The lit scene-color target ribbons composite into.
-        /// @param depthId         The opaque depth target, bound read-only for depth-testing.
-        /// @param maskId          The bloom-mask target, or invalid when the frame wires none.
-        /// @param targetFormat    Color format of the scene-color target.
-        /// @param maskFormat      Color format of the bloom-mask target.
-        /// @param framesInFlight  Frames in flight, the depth of the record ring.
-        RibbonScenePass(Context& context, AssetManager& assets, const RibbonDrawPlan* plan,
-                        ResourceId targetId, ResourceId depthId, ResourceId maskId,
-                        Format targetFormat, Format maskFormat, u32 framesInFlight);
+        /// @param context  Renderer context for pipeline and buffer creation.
+        /// @param assets   The asset manager the core ribbon shaders load through.
+        /// @param info     The placement, the plan, and the targets the pass is wired to.
+        RibbonScenePass(Context& context, AssetManager& assets, const RibbonScenePassInfo& info);
 
         /// @brief Releases the pipelines and the record ring.
         ~RibbonScenePass() override;
@@ -132,10 +175,16 @@ namespace Veng::Renderer
         Context& m_Context;
         /// @brief Borrowed per-frame ribbon plan.
         const RibbonDrawPlan* m_Plan;
-        /// @brief The lit scene-color target.
+        /// @brief Where in the frame the pass sits.
+        RibbonPlacement m_Placement;
+        /// @brief The scene-color target.
         ResourceId m_TargetId;
         /// @brief The opaque depth target.
         ResourceId m_DepthId;
+        /// @brief The depth's bindless slot (sampled by the PostResolve placement).
+        TextureHandle m_DepthHandle;
+        /// @brief The sampler the PostResolve placement reads the depth through.
+        SamplerHandle m_SamplerHandle;
         /// @brief The bloom-mask target (invalid when the frame wires none).
         ResourceId m_MaskId;
         /// @brief Frames in flight, the depth of the record ring.

@@ -210,13 +210,23 @@ namespace Veng::Renderer
         u32 SpriteIdleFrames = 0;
         // Whether the over-budget warning has been logged; once per renderer.
         bool SpriteBudgetWarned = false;
-        // The frame's gathered ribbon and trail segments, which the ribbon pass uploads and draws.
+        // The frame's gathered scene-placed ribbon, trail and path records, which the ribbon pass
+        // uploads and draws.
         RibbonDrawPlan RibbonPlan;
         // Whether the pass set carries the ribbon pass, with the sprite pass's hysteresis
         // (RibbonIdleFrameLimit).
         bool RibbonActive = false;
         // Consecutive Executes the ribbon gather has come back empty while the pass is wired.
         u32 RibbonIdleFrames = 0;
+        // The frame's gathered post-resolve-placed path records, which the tail ribbon pass draws.
+        RibbonDrawPlan RibbonPostResolvePlan;
+        // Whether the tail carries the post-resolve ribbon pass, with the same hysteresis on its own
+        // plan, so a scene of only scene-placed paths never wires it.
+        bool RibbonPostResolveActive = false;
+        // Consecutive Executes the post-resolve plan has come back empty while its pass is wired.
+        u32 RibbonPostResolveIdleFrames = 0;
+        // The post-resolve ribbon pass, declared at the tail anchor rather than held in m_Passes.
+        Unique<RibbonScenePass> RibbonPostResolvePass;
         // Whether the ribbon over-budget warning has been logged; once per renderer.
         bool RibbonBudgetWarned = false;
     };
@@ -645,6 +655,7 @@ namespace Veng::Renderer
 
         m_Passes.clear();
         m_PointFieldPass.reset();
+        m_Internal->RibbonPostResolvePass.reset();
         m_DofCompositePass.reset();
         m_ScenePromotionPass.reset();
         m_BloomMaskPromotionPass.reset();
@@ -844,8 +855,16 @@ namespace Veng::Renderer
             if (m_Internal->RibbonActive)
             {
                 m_Passes.push_back(CreateUnique<RibbonScenePass>(
-                    m_Context, m_Assets, &m_Internal->RibbonPlan, lightingTargetId, depthId,
-                    m_BloomMaskId, HdrFormat, BloomMaskFormat, m_Context.GetMaxFramesInFlight()));
+                    m_Context, m_Assets,
+                    RibbonScenePassInfo{
+                        .Plan = &m_Internal->RibbonPlan,
+                        .Target = lightingTargetId,
+                        .Depth = depthId,
+                        .Mask = m_BloomMaskId,
+                        .TargetFormat = HdrFormat,
+                        .MaskFormat = BloomMaskFormat,
+                        .FramesInFlight = m_Context.GetMaxFramesInFlight(),
+                    }));
             }
             if (m_Internal->SpriteActive)
             {
@@ -969,6 +988,28 @@ namespace Veng::Renderer
                 m_GuiHdrOverlayPass->SetDocTarget(m_HdrOverlayDocHandle, m_HdrOverlayDocExtent);
                 m_GuiHdrOverlayPass->SetCompositeCount(m_HdrOverlayCompositeCount);
                 m_GuiHdrOverlayPass->SetHasDirect(m_HdrOverlayHasDirect);
+            }
+
+            // Post-resolve ribbon paths draw into the effect chain's output at the tail anchor,
+            // after the effects and immediately before the overlay composite, so a nearer overlay
+            // composites over them and bloom reads both. Final only, as the overlay is: a debug arm
+            // has no pre-bloom scene-color chain to draw into.
+            if (m_Internal->RibbonPostResolveActive)
+            {
+                m_Internal->RibbonPostResolvePass = CreateUnique<RibbonScenePass>(
+                    m_Context, m_Assets,
+                    RibbonScenePassInfo{
+                        .Plan = &m_Internal->RibbonPostResolvePlan,
+                        .Placement = RibbonPlacement::PostResolve,
+                        .Target = ppEffectFinalId,
+                        .Depth = depthId,
+                        .DepthHandle = m_DepthHandle,
+                        .Sampler = m_SamplerHandle,
+                        .Mask = PostMaskId(),
+                        .TargetFormat = HdrFormat,
+                        .MaskFormat = BloomMaskFormat,
+                        .FramesInFlight = m_Context.GetMaxFramesInFlight(),
+                    });
             }
 
             // The HDR tail declares just before the tonemap — never after it, even when a
@@ -1153,8 +1194,16 @@ namespace Veng::Renderer
             if (m_Internal->RibbonActive)
             {
                 m_Passes.push_back(CreateUnique<RibbonScenePass>(
-                    m_Context, m_Assets, &m_Internal->RibbonPlan, lightingTargetId, depthId,
-                    m_BloomMaskId, HdrFormat, BloomMaskFormat, m_Context.GetMaxFramesInFlight()));
+                    m_Context, m_Assets,
+                    RibbonScenePassInfo{
+                        .Plan = &m_Internal->RibbonPlan,
+                        .Target = lightingTargetId,
+                        .Depth = depthId,
+                        .Mask = m_BloomMaskId,
+                        .TargetFormat = HdrFormat,
+                        .MaskFormat = BloomMaskFormat,
+                        .FramesInFlight = m_Context.GetMaxFramesInFlight(),
+                    }));
             }
             if (m_Internal->SpriteActive)
             {
@@ -1353,6 +1402,10 @@ namespace Veng::Renderer
                         effectSourceHandle = evenIndex ? m_PpEffectHandleA : m_PpEffectHandleB;
                     }
                 }
+                if (m_Internal->RibbonPostResolvePass != nullptr)
+                {
+                    m_Internal->RibbonPostResolvePass->Declare(graph, io);
+                }
                 // The GUI-overlay slot: after the post-process effects, before bloom. It loads and
                 // stores the effect chain's output (ppEffectFinalId) in place, blending the overlays
                 // over it, so bloom and the bloom-off tonemap read the overlay's result.
@@ -1402,6 +1455,7 @@ namespace Veng::Renderer
         // observes a stale pass after the lean rebuild.
         m_Passes.clear();
         m_PointFieldPass.reset();
+        m_Internal->RibbonPostResolvePass.reset();
         m_DofCompositePass.reset();
         m_ScenePromotionPass.reset();
         m_BloomMaskPromotionPass.reset();
@@ -2783,32 +2837,45 @@ namespace Veng::Renderer
                 m_Internal->SpritePlan.Dropped, MaxSpritesPerFrame);
             m_Internal->SpriteBudgetWarned = true;
         }
-        // The same for ribbons and trails, with their own hysteresis.
+        // The same for ribbons and trails, with their own hysteresis — one per placement, so each
+        // pass is wired only while its own plan carries records.
         GatherRibbons(resolvedView.World, resolvedView.Camera, resolvedView.Alpha,
-                      m_Internal->RibbonPlan);
-        if (m_Internal->RibbonPlan.Dropped > 0 && !m_Internal->RibbonBudgetWarned)
+                      m_Internal->RibbonPlan, m_Internal->RibbonPostResolvePlan);
+        const u32 ribbonsDropped =
+            m_Internal->RibbonPlan.Dropped + m_Internal->RibbonPostResolvePlan.Dropped;
+        if (ribbonsDropped > 0 && !m_Internal->RibbonBudgetWarned)
         {
             Log::Warn(
                 "SceneRenderer: {} ribbon segments exceed the per-frame budget of {} and were "
                 "not drawn; later frames clamp without warning again.",
-                m_Internal->RibbonPlan.Dropped, MaxRibbonSegmentsPerFrame);
+                ribbonsDropped, MaxRibbonSegmentsPerFrame);
             m_Internal->RibbonBudgetWarned = true;
         }
-        const bool ribbonsPresent = !m_Internal->RibbonPlan.IsEmpty();
-        m_Internal->RibbonIdleFrames = ribbonsPresent ? 0 : m_Internal->RibbonIdleFrames + 1;
-        const bool ribbonsWanted =
-            ribbonsPresent ||
-            (m_Internal->RibbonActive && m_Internal->RibbonIdleFrames < RibbonIdleFrameLimit);
+        const auto ribbonsWantedFor =
+            [](const RibbonDrawPlan& plan, const bool active, u32& idleFrames)
+        {
+            const bool present = !plan.IsEmpty();
+            idleFrames = present ? 0 : idleFrames + 1;
+            return present || (active && idleFrames < RibbonIdleFrameLimit);
+        };
+        const bool ribbonsWanted = ribbonsWantedFor(
+            m_Internal->RibbonPlan, m_Internal->RibbonActive, m_Internal->RibbonIdleFrames);
+        const bool postResolveRibbonsWanted =
+            ribbonsWantedFor(m_Internal->RibbonPostResolvePlan, m_Internal->RibbonPostResolveActive,
+                             m_Internal->RibbonPostResolveIdleFrames);
 
         const bool spritesPresent = !m_Internal->SpritePlan.IsEmpty();
         m_Internal->SpriteIdleFrames = spritesPresent ? 0 : m_Internal->SpriteIdleFrames + 1;
         const bool spritesWanted =
             spritesPresent ||
             (m_Internal->SpriteActive && m_Internal->SpriteIdleFrames < SpriteIdleFrameLimit);
-        if (spritesWanted != m_Internal->SpriteActive || ribbonsWanted != m_Internal->RibbonActive)
+        if (spritesWanted != m_Internal->SpriteActive ||
+            ribbonsWanted != m_Internal->RibbonActive ||
+            postResolveRibbonsWanted != m_Internal->RibbonPostResolveActive)
         {
             m_Internal->SpriteActive = spritesWanted;
             m_Internal->RibbonActive = ribbonsWanted;
+            m_Internal->RibbonPostResolveActive = postResolveRibbonsWanted;
             Rebuild();
         }
 

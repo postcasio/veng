@@ -547,6 +547,21 @@
       "source": "shaders/ribbon_masked.frag.shader.json"
     },
     {
+      "id": "0x3E89E5673CF50020",
+      "type": "Shader",
+      "source": "shaders/ribbon_post_resolve.vert.shader.json"
+    },
+    {
+      "id": "0x4D7810339113239A",
+      "type": "Shader",
+      "source": "shaders/ribbon_post_resolve.frag.shader.json"
+    },
+    {
+      "id": "0xF6C14E1276C14FED",
+      "type": "Shader",
+      "source": "shaders/ribbon_post_resolve_masked.frag.shader.json"
+    },
+    {
       "id": "0x21CF1A41D3AA8650",
       "type": "Shader",
       "source": "shaders/pointfield/point_sprite.vert.shader.json"

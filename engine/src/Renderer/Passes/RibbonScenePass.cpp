@@ -29,26 +29,37 @@ namespace Veng::Renderer
     namespace
     {
         // The ribbon shaders in the engine core pack (auto-mounted by AssetManager). The masked
-        // fragment writes the bloom mask as a second output; the plain one writes colour alone.
+        // fragments write the bloom mask as a second output; the plain ones write colour alone. The
+        // post-resolve pair projects through the pushed unjittered projection and occludes by the
+        // sampled scene depth.
         constexpr AssetId RibbonVertId{0xF6BFB05FF0406BA1ULL};
         constexpr AssetId RibbonFragId{0x53221CEA8AE17B58ULL};
         constexpr AssetId RibbonMaskedFragId{0x27AC55CDC4A9B5EFULL};
+        constexpr AssetId RibbonPostResolveVertId{0x3E89E5673CF50020ULL};
+        constexpr AssetId RibbonPostResolveFragId{0x4D7810339113239AULL};
+        constexpr AssetId RibbonPostResolveMaskedFragId{0xF6C14E1276C14FEDULL};
 
-        // Six vertices (two triangles) per segment quad.
+        // Six vertices (two triangles) per record quad.
         constexpr u32 RibbonVertexCount = 6;
 
         // Two strip points closer than this, in world units, are one point: a zero-length segment
         // has no direction to face the camera about.
         constexpr f64 CoincidentDistance = 1e-4;
 
-        // Matches ribbon.vert.slang's push block.
+        // Matches ribbon_common.slang's push block.
         struct RibbonPushConstants
         {
-            u32 ViewConstantsIndex;
-            u32 Pad0;
-            u32 Pad1;
-            u32 Pad2;
+            mat4 Proj{1.0f};
+            u32 ViewConstantsIndex = 0;
+            u32 DepthTexture = 0;
+            u32 Sampler = 0;
+            u32 Pad0 = 0;
+            vec2 TargetExtent{0.0f};
+            vec2 Pad1{0.0f};
         };
+
+        static_assert(sizeof(RibbonPushConstants) == 96,
+                      "RibbonPushConstants must match ribbon_common.slang's push block");
 
         AssetHandle<Veng::Shader> LoadShader(AssetManager& assets, const AssetId id,
                                              const char* what)
@@ -67,44 +78,71 @@ namespace Veng::Renderer
             vec4 Color{0.0f};
         };
 
-        // Packs segments into the plan, rebased to the eye, against the per-frame budget.
-        struct SegmentSink
+        // One placement's plan, with its alpha records held for the back-to-front sort.
+        struct PlanSink
         {
             RibbonDrawPlan& Plan;
+            vector<std::pair<f32, GpuRibbonSegment>> Sorted;
+        };
+
+        // Packs records into the plans, rebased to the eye, against the per-frame budget the two
+        // placements share. Records go to the placement Target names.
+        struct SegmentSink
+        {
+            PlanSink Scene;
+            PlanSink PostResolve;
             dvec3 Eye{0.0};
             mat3 Rotation{1.0f};
-            vector<std::pair<f32, GpuRibbonSegment>> Sorted;
             u32 Gathered = 0;
+            RibbonPlacement Target = RibbonPlacement::Scene;
 
             void Add(const StripPoint& start, const StripPoint& end, const vec3& startTangent,
                      const vec3& endTangent, const bool additive)
             {
+                Push(
+                    GpuRibbonSegment{
+                        .Start = vec4(vec3(start.Position - Eye), start.Width),
+                        .End = vec4(vec3(end.Position - Eye), end.Width),
+                        .StartColor = start.Color,
+                        .EndColor = end.Color,
+                        .StartTangent = vec4(startTangent, 0.0f),
+                        .EndTangent = vec4(endTangent, 0.0f),
+                    },
+                    additive);
+            }
+
+            // A dot stands both ends on its centre; the marker in StartTangent.w selects the disc.
+            void AddDot(const StripPoint& center, const bool additive)
+            {
+                const vec4 position(vec3(center.Position - Eye), center.Width);
+                Push(
+                    GpuRibbonSegment{
+                        .Start = position,
+                        .End = position,
+                        .StartColor = center.Color,
+                        .EndColor = center.Color,
+                        .StartTangent = vec4(0.0f, 0.0f, 0.0f, 1.0f),
+                        .EndTangent = vec4(0.0f),
+                    },
+                    additive);
+            }
+
+            void Push(const GpuRibbonSegment& record, const bool additive)
+            {
+                PlanSink& sink = Target == RibbonPlacement::PostResolve ? PostResolve : Scene;
                 if (Gathered >= MaxRibbonSegmentsPerFrame)
                 {
-                    ++Plan.Dropped;
+                    ++sink.Plan.Dropped;
                     return;
                 }
                 ++Gathered;
-
-                const vec3 relativeStart(start.Position - Eye);
-                const vec3 relativeEnd(end.Position - Eye);
-                const GpuRibbonSegment segment{
-                    .Start = vec4(relativeStart, start.Width),
-                    .End = vec4(relativeEnd, end.Width),
-                    .StartColor = start.Color,
-                    .EndColor = end.Color,
-                    .StartTangent = vec4(startTangent, 0.0f),
-                    .EndTangent = vec4(endTangent, 0.0f),
-                };
                 if (additive)
                 {
-                    Plan.Additive.push_back(segment);
+                    sink.Plan.Additive.push_back(record);
+                    return;
                 }
-                else
-                {
-                    const f32 viewZ = (Rotation * ((relativeStart + relativeEnd) * 0.5f)).z;
-                    Sorted.emplace_back(viewZ, segment);
-                }
+                const f32 viewZ = (Rotation * ((vec3(record.Start) + vec3(record.End)) * 0.5f)).z;
+                sink.Sorted.emplace_back(viewZ, record);
             }
         };
 
@@ -202,9 +240,10 @@ namespace Veng::Renderer
         {
             const glm::dmat4 transform(world);
             const f64 scale = glm::length(dvec3(transform[0]));
+            sink.Target = path.Placement;
             for (const RibbonStrip& strip : path.Strips)
             {
-                if (strip.Opacity <= 0.0f || strip.Points.size() < 2)
+                if (strip.Opacity <= 0.0f || strip.Points.empty())
                 {
                     continue;
                 }
@@ -227,7 +266,25 @@ namespace Veng::Renderer
                 {
                     points.pop_back();
                 }
+                if (points.size() == 1)
+                {
+                    sink.AddDot(points.front(), path.Additive);
+                    continue;
+                }
                 JoinStrip(points, strip.Closed, path.Additive, sink);
+            }
+            sink.Target = RibbonPlacement::Scene;
+        }
+
+        // Moves a placement's sorted alpha records into its plan, farthest first.
+        void FinishPlan(PlanSink& sink)
+        {
+            // The camera looks down -Z, so the most negative view-space z is the farthest record.
+            std::ranges::stable_sort(sink.Sorted, {}, &std::pair<f32, GpuRibbonSegment>::first);
+            sink.Plan.Alpha.reserve(sink.Sorted.size());
+            for (const auto& [depth, record] : sink.Sorted)
+            {
+                sink.Plan.Alpha.push_back(record);
             }
         }
 
@@ -247,15 +304,19 @@ namespace Veng::Renderer
     }
 
     void GatherRibbons(const Scene& scene, const CameraView& camera, const f32 alpha,
-                       RibbonDrawPlan& plan)
+                       RibbonDrawPlan& scenePlan, RibbonDrawPlan& postResolvePlan)
     {
-        plan.Alpha.clear();
-        plan.Additive.clear();
-        plan.Dropped = 0;
+        for (RibbonDrawPlan* plan : {&scenePlan, &postResolvePlan})
+        {
+            plan->Alpha.clear();
+            plan->Additive.clear();
+            plan->Dropped = 0;
+        }
 
         const mat4 view = camera.View();
         SegmentSink sink{
-            .Plan = plan,
+            .Scene = {.Plan = scenePlan},
+            .PostResolve = {.Plan = postResolvePlan},
             .Eye = dvec3(glm::inverse(glm::dmat4(view))[3]),
             .Rotation = mat3(view),
         };
@@ -301,26 +362,24 @@ namespace Veng::Renderer
             }
         }
 
-        // The camera looks down -Z, so the most negative view-space z is the farthest segment.
-        std::ranges::stable_sort(sink.Sorted, {}, &std::pair<f32, GpuRibbonSegment>::first);
-        plan.Alpha.reserve(sink.Sorted.size());
-        for (const auto& [depth, segment] : sink.Sorted)
-        {
-            plan.Alpha.push_back(segment);
-        }
+        FinishPlan(sink.Scene);
+        FinishPlan(sink.PostResolve);
     }
 
     RibbonScenePass::RibbonScenePass(Context& context, AssetManager& assets,
-                                     const RibbonDrawPlan* plan, const ResourceId targetId,
-                                     const ResourceId depthId, const ResourceId maskId,
-                                     const Format targetFormat, const Format maskFormat,
-                                     const u32 framesInFlight)
-        : m_Context(context), m_Plan(plan), m_TargetId(targetId), m_DepthId(depthId),
-          m_MaskId(maskId), m_FramesInFlight(framesInFlight)
+                                     const RibbonScenePassInfo& info)
+        : m_Context(context), m_Plan(info.Plan), m_Placement(info.Placement),
+          m_TargetId(info.Target), m_DepthId(info.Depth), m_DepthHandle(info.DepthHandle),
+          m_SamplerHandle(info.Sampler), m_MaskId(info.Mask), m_FramesInFlight(info.FramesInFlight)
     {
-        const AssetHandle<Veng::Shader> vs = LoadShader(assets, RibbonVertId, "ribbon vertex");
-        const AssetHandle<Veng::Shader> fs = LoadShader(
-            assets, maskId.IsValid() ? RibbonMaskedFragId : RibbonFragId, "ribbon fragment");
+        const bool postResolve = m_Placement == RibbonPlacement::PostResolve;
+        const bool masked = m_MaskId.IsValid();
+        const AssetHandle<Veng::Shader> vs = LoadShader(
+            assets, postResolve ? RibbonPostResolveVertId : RibbonVertId, "ribbon vertex");
+        const AssetId fragmentId =
+            postResolve ? (masked ? RibbonPostResolveMaskedFragId : RibbonPostResolveFragId)
+                        : (masked ? RibbonMaskedFragId : RibbonFragId);
+        const AssetHandle<Veng::Shader> fs = LoadShader(assets, fragmentId, "ribbon fragment");
 
         // Set 3 carries the per-frame record SSBO, off bindless, as the sprite pass's does.
         m_SetLayout = DescriptorSetLayout::Create(
@@ -342,18 +401,20 @@ namespace Veng::Renderer
         const auto makePipeline = [&](const char* name, const BlendState& colorBlend)
         {
             vector<PipelineAttachmentInfo> attachments = {
-                {.Format = targetFormat, .Blend = colorBlend}};
-            if (m_MaskId.IsValid())
+                {.Format = info.TargetFormat, .Blend = colorBlend}};
+            if (masked)
             {
                 // The mask accumulates like the translucent pass's: two glows over one pixel sum.
-                attachments.push_back({.Format = maskFormat, .Blend = BlendState::Additive()});
+                attachments.push_back({.Format = info.MaskFormat, .Blend = BlendState::Additive()});
             }
             return GraphicsPipeline::Create(
                 m_Context,
                 {
                     .Name = name,
                     .ColorAttachments = std::move(attachments),
-                    .DepthAttachmentFormat = GBuffer::DepthFormat,
+                    // The post-resolve allocation has no depth buffer; that placement's fragment
+                    // occludes against the sampled scene depth instead.
+                    .DepthAttachmentFormat = postResolve ? Format::Undefined : GBuffer::DepthFormat,
                     .PipelineLayout = m_Layout,
                     .ShaderStages =
                         {
@@ -363,7 +424,7 @@ namespace Veng::Renderer
                     .Topology = PrimitiveTopology::TriangleList,
                     // The quad turns to face the camera, so it may present either winding.
                     .CullMode = CullMode::None,
-                    .DepthTestEnable = true,
+                    .DepthTestEnable = !postResolve,
                     .DepthWriteEnable = false,
                     // Reverse-Z: a nearer fragment has larger depth.
                     .DepthCompareOp = CompareOp::GreaterOrEqual,
@@ -396,7 +457,9 @@ namespace Veng::Renderer
 
     void RibbonScenePass::Declare(RenderGraph& graph, const PassIO& /*io*/)
     {
-        RenderGraph::PassBuilder builder = graph.AddPass("Scene Ribbons");
+        const bool postResolve = m_Placement == RibbonPlacement::PostResolve;
+        RenderGraph::PassBuilder builder =
+            graph.AddPass(postResolve ? "Post-Resolve Ribbons" : "Scene Ribbons");
         builder.Color({
             .Resource = m_TargetId,
             .Load = LoadOp::Load,
@@ -404,18 +467,26 @@ namespace Veng::Renderer
         });
         if (m_MaskId.IsValid())
         {
-            // The translucent pass ahead of this one cleared the mask; ribbons add to it.
+            // Every texel of the mask is already written — by the translucent pass's clear at the
+            // render allocation, by it or the promotion at the post-resolve one — and ribbons add.
             builder.Color({
                 .Resource = m_MaskId,
                 .Load = LoadOp::Load,
                 .Store = StoreOp::Store,
             });
         }
-        builder.Depth({
-            .Resource = m_DepthId,
-            .Load = LoadOp::Load,
-            .Store = StoreOp::Store,
-        });
+        if (postResolve)
+        {
+            builder.Sample(m_DepthId);
+        }
+        else
+        {
+            builder.Depth({
+                .Resource = m_DepthId,
+                .Load = LoadOp::Load,
+                .Store = StoreOp::Store,
+            });
+        }
         // An idle wired pass (deactivation hysteresis) skips its frame rather than loading and
         // storing its targets around no draws.
         builder.SkipWhen([this] { return m_Plan == nullptr || m_Plan->IsEmpty(); });
@@ -442,7 +513,9 @@ namespace Veng::Renderer
     void RibbonScenePass::Record(const ScenePassContext& ctx) const
     {
         CommandBuffer& cmd = ctx.Cmd();
-        const uvec2 extent = ctx.View().RenderExtent;
+        const SceneView& view = ctx.View();
+        const bool postResolve = m_Placement == RibbonPlacement::PostResolve;
+        const uvec2 extent = postResolve ? view.PostResolveExtent : view.RenderExtent;
         cmd.SetViewport({0, 0}, extent);
         cmd.SetScissor({0, 0}, extent);
 
@@ -456,8 +529,16 @@ namespace Veng::Renderer
         const u32 additiveCount = count - alphaCount;
 
         const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
-        const RibbonPushConstants push{.ViewConstantsIndex =
-                                           registry.GetCurrentViewConstantsIndex()};
+        RibbonPushConstants push{.ViewConstantsIndex = registry.GetCurrentViewConstantsIndex()};
+        if (postResolve)
+        {
+            // The view constants carry the jittered projection the scene rasterized through; the
+            // tail is past the temporal resolve, so it projects through the camera's own.
+            push.Proj = view.Camera.Projection();
+            push.DepthTexture = m_DepthHandle.Index;
+            push.Sampler = m_SamplerHandle.Index;
+            push.TargetExtent = vec2(extent);
+        }
         const u32 frame = m_Context.GetCurrentFrameInFlight();
 
         // The record index is the vertex index over six, so a set's first vertex selects its run.

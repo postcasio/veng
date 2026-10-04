@@ -1,8 +1,10 @@
 // Ribbons, trails and ribbon paths, device-free: a trail's sample ring stays within MaxSamples and
 // Lifetime and empties when its entity stops, a re-base of the origin carries every ribbon and
 // sample with it, the frame's packed segments stay bounded by the ribbons plus the trails' samples,
-// a pooled beam fades over its lifetime and returns to the pool, and a path's strips join into the
-// expected segments with shared joints, placed by their entity's drawn pose.
+// a pooled beam fades over its lifetime and returns to the pool, a path's strips join into the
+// expected segments with shared joints, placed by their entity's drawn pose, a one-point strip is a
+// dot of its width, and a path's placement routes it to the scene or the post-resolve plan under
+// one shared budget.
 
 #include <doctest/doctest.h>
 
@@ -40,28 +42,41 @@ namespace
             Camera.SetView(vec3(0.0f, 0.0f, 20.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
         }
 
-        [[nodiscard]] usize Segments() const
+        [[nodiscard]] usize Segments() const { return Gather().GetSegmentCount(); }
+
+        // Gathers the scene's records at @p alpha into the scene plan and @p postResolve.
+        [[nodiscard]] Renderer::RibbonDrawPlan Gather(const f32 alpha,
+                                                      Renderer::RibbonDrawPlan& postResolve) const
         {
             Renderer::RibbonDrawPlan plan;
-            Renderer::GatherRibbons(*World, Camera, 0.0f, plan);
-            return plan.GetSegmentCount();
+            Renderer::GatherRibbons(*World, Camera, alpha, plan, postResolve);
+            return plan;
         }
 
-        // Gathers the scene's segments at @p alpha.
+        // Gathers the scene's scene-placed records at @p alpha.
         [[nodiscard]] Renderer::RibbonDrawPlan Gather(const f32 alpha = 0.0f) const
         {
-            Renderer::RibbonDrawPlan plan;
-            Renderer::GatherRibbons(*World, Camera, alpha, plan);
-            return plan;
+            Renderer::RibbonDrawPlan postResolve;
+            return Gather(alpha, postResolve);
+        }
+
+        // Gathers the scene's post-resolve-placed records.
+        [[nodiscard]] Renderer::RibbonDrawPlan GatherPostResolve() const
+        {
+            Renderer::RibbonDrawPlan postResolve;
+            (void)Gather(0.0f, postResolve);
+            return postResolve;
         }
 
         // Stands a path of the given strips on a new entity at @p pose.
         Entity AddPath(const vector<RibbonStrip>& strips, const Transform& pose = {},
-                       const bool additive = true) const
+                       const bool additive = true,
+                       const RibbonPlacement placement = RibbonPlacement::Scene) const
         {
             const Entity entity = World->CreateEntity();
             World->Add<Transform>(entity, pose);
-            World->Add<RibbonPath>(entity, RibbonPath{.Strips = strips, .Additive = additive});
+            World->Add<RibbonPath>(
+                entity, RibbonPath{.Strips = strips, .Additive = additive, .Placement = placement});
             return entity;
         }
 
@@ -208,8 +223,7 @@ TEST_CASE("A frame's packed segments are bounded by its ribbons plus its trails'
     }
     scene.Get<Trail>(trails[0]).Emitting = false;
 
-    Renderer::RibbonDrawPlan plan;
-    Renderer::GatherRibbons(scene, fixture.Camera, 0.0f, plan);
+    const Renderer::RibbonDrawPlan plan = fixture.Gather();
     CHECK(plan.GetSegmentCount() >= ribbons);
     CHECK(plan.GetSegmentCount() <= ribbons + samples);
     CHECK(plan.Dropped == 0);
@@ -247,8 +261,7 @@ TEST_CASE("A transient beam fades over its lifetime, then returns to the pool")
 
     const auto opacity = [&]()
     {
-        Renderer::RibbonDrawPlan plan;
-        Renderer::GatherRibbons(scene, fixture.Camera, 0.0f, plan);
+        const Renderer::RibbonDrawPlan plan = fixture.Gather();
         return plan.Additive.empty() ? 0.0f : plan.Additive.front().StartColor.a;
     };
 
@@ -369,14 +382,13 @@ TEST_CASE("An open strip of N distinct points draws N - 1 segments, merging coin
     CHECK(shortest == doctest::Approx(1.0f));
 }
 
-TEST_CASE("A strip of fewer than two distinct points, or none visible, draws nothing")
+TEST_CASE("A strip of no points, or none visible, draws nothing")
 {
     RibbonScene fixture;
     fixture.AddPath({
         RibbonStrip{},
-        RibbonStrip{.Points = {vec3(1.0f)}},
-        RibbonStrip{.Points = {vec3(1.0f), vec3(1.0f), vec3(1.0f, 1.0f, 1.00001f)}, .Closed = true},
         RibbonStrip{.Points = {vec3(0.0f), vec3(1.0f)}, .Opacity = 0.0f},
+        RibbonStrip{.Points = {vec3(1.0f)}, .Opacity = 0.0f},
     });
     // A path off a Transform-less entity draws nothing either.
     const Entity loose = fixture.World->CreateEntity();
@@ -437,4 +449,108 @@ TEST_CASE("A path rides its entity's interpolated pose between two ticks")
     REQUIRE(plan.Additive.size() == 1);
     CHECK(glm::length(WorldPoint(fixture, plan.Additive.front().Start) - vec3(0.0f, 2.0f, 0.0f)) <
           1e-4f);
+}
+
+TEST_CASE("A one-point strip is one dot of its width at its transformed point, in either placement")
+{
+    const Transform pose{
+        .Position = vec3(-2.0f, 1.0f, 3.0f),
+        .Rotation = glm::angleAxis(1.1f, glm::normalize(vec3(0.3f, 1.0f, -0.2f))),
+        .Scale = vec3(1.5f),
+    };
+    const vec3 local(0.5f, -1.0f, 2.0f);
+    const vec3 expected = pose.Position + pose.Rotation * (pose.Scale * local);
+    const RibbonStrip strip{
+        .Points = {local}, .Width = 0.2f, .Color = vec3(3.0f, 2.0f, 1.0f), .Opacity = 0.5f};
+
+    for (const RibbonPlacement placement : {RibbonPlacement::Scene, RibbonPlacement::PostResolve})
+    {
+        const RibbonScene fixture;
+        fixture.AddPath({strip}, pose, /*additive=*/false, placement);
+        Renderer::RibbonDrawPlan postResolve;
+        const Renderer::RibbonDrawPlan scene = fixture.Gather(0.0f, postResolve);
+        const Renderer::RibbonDrawPlan& drawn =
+            placement == RibbonPlacement::Scene ? scene : postResolve;
+        const Renderer::RibbonDrawPlan& other =
+            placement == RibbonPlacement::Scene ? postResolve : scene;
+
+        REQUIRE(drawn.Alpha.size() == 1);
+        CHECK(drawn.Additive.empty());
+        CHECK(other.IsEmpty());
+        const Renderer::GpuRibbonSegment& dot = drawn.Alpha.front();
+        CHECK(Renderer::IsDot(dot));
+        CHECK(glm::length(WorldPoint(fixture, dot.Start) - expected) < 1e-4f);
+        CHECK(glm::length(WorldPoint(fixture, dot.End) - expected) < 1e-4f);
+        CHECK(dot.Start.w == doctest::Approx(0.2f * 1.5f));
+        CHECK(dot.StartColor == vec4(3.0f, 2.0f, 1.0f, 0.5f));
+    }
+}
+
+TEST_CASE("Coincident points collapse to one dot, open or closed, and a band is never a dot")
+{
+    const RibbonScene fixture;
+    const vec3 at(1.0f, 2.0f, -1.0f);
+    fixture.AddPath({
+        RibbonStrip{.Points = {at, at, at + vec3(0.0f, 0.0f, 1e-5f)}},
+        RibbonStrip{.Points = {at, at + vec3(1e-6f), at}, .Closed = true},
+        RibbonStrip{.Points = {vec3(0.0f), vec3(1.0f, 0.0f, 0.0f), vec3(1.0f)}},
+    });
+
+    const Renderer::RibbonDrawPlan plan = fixture.Gather();
+    REQUIRE(plan.Additive.size() == 4);
+    usize dots = 0;
+    for (const Renderer::GpuRibbonSegment& record : plan.Additive)
+    {
+        if (Renderer::IsDot(record))
+        {
+            ++dots;
+            CHECK(glm::length(WorldPoint(fixture, record.Start) - at) < 1e-4f);
+        }
+    }
+    CHECK(dots == 2);
+}
+
+TEST_CASE("A path's placement routes it to the scene or the post-resolve plan; others stay scene")
+{
+    RibbonScene fixture;
+    const vector<vec3> line{vec3(0.0f), vec3(1.0f, 0.0f, 0.0f), vec3(2.0f, 1.0f, 0.0f)};
+    fixture.AddPath({RibbonStrip{.Points = line}}, Transform{}, true, RibbonPlacement::Scene);
+    fixture.AddPath({RibbonStrip{.Points = line}, RibbonStrip{.Points = {vec3(4.0f)}}}, Transform{},
+                    false, RibbonPlacement::PostResolve);
+    fixture.AddPath({RibbonStrip{.Points = line}}, Transform{}, true, RibbonPlacement::PostResolve);
+    const Entity beam = fixture.World->CreateEntity();
+    fixture.World->Add<Ribbon>(beam, Ribbon{.From = vec3(-1.0f), .To = vec3(1.0f)});
+
+    Renderer::RibbonDrawPlan postResolve;
+    const Renderer::RibbonDrawPlan scene = fixture.Gather(0.0f, postResolve);
+    // The scene-placed path's two segments and the beam stay in the scene plan.
+    CHECK(scene.Additive.size() == 3);
+    CHECK(scene.Alpha.empty());
+    // The post-resolve paths keep their own compositing: two alpha segments and the dot, sorted,
+    // and two additive segments.
+    CHECK(postResolve.Alpha.size() == 3);
+    CHECK(postResolve.Additive.size() == 2);
+    CHECK(scene.Dropped == 0);
+    CHECK(postResolve.Dropped == 0);
+}
+
+TEST_CASE("The per-frame record budget is shared across both placements")
+{
+    const RibbonScene fixture;
+    vector<vec3> points;
+    for (u32 i = 0; i < Renderer::MaxRibbonSegmentsPerFrame; ++i)
+    {
+        points.emplace_back(0.01f * static_cast<f32>(i), 0.0f, 0.0f);
+    }
+    const auto segments = static_cast<u32>(points.size() - 1);
+    fixture.AddPath({RibbonStrip{.Points = points}}, Transform{}, true, RibbonPlacement::Scene);
+    fixture.AddPath({RibbonStrip{.Points = points}}, Transform{}, true,
+                    RibbonPlacement::PostResolve);
+
+    Renderer::RibbonDrawPlan postResolve;
+    const Renderer::RibbonDrawPlan scene = fixture.Gather(0.0f, postResolve);
+    CHECK(scene.GetSegmentCount() + postResolve.GetSegmentCount() ==
+          Renderer::MaxRibbonSegmentsPerFrame);
+    CHECK(scene.Dropped + postResolve.Dropped ==
+          2 * segments - Renderer::MaxRibbonSegmentsPerFrame);
 }

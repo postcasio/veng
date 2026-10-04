@@ -251,10 +251,12 @@ extern "C"
 /// writes an element and its style through Gui::Document, so a stale module lays both out short and
 /// reads every field after the additions at a shifted offset.
 /// Version 59 grows Gui::Style with FillAgeStates, so a stale module lays a style out short.
+/// Version 60 grows RibbonPath with its Placement. A module builds RibbonPath in code, so a stale
+/// module leaves the byte the renderer reads the placement from unwritten.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 59u
+#define VENG_MODULE_ABI_VERSION 60u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

@@ -3,8 +3,13 @@
 // additive ones sum, a trail drawn behind a moved entity lights the path it took, a ribbon-less
 // scene carries no pass and renders black, and a ribbon too dim for the bloom threshold still lights
 // the margin around it, which only its bloom-mask write can do — at a reduced render scale too, where
-// one pass carries the colour and the mask across to the post-resolve allocation.
+// one pass carries the colour and the mask across to the post-resolve allocation. A post-resolve
+// path draws through its own tail pass (and a scene of scene-placed paths never records it), glows
+// through the post-resolve bloom mask whether or not the mask was promoted, and is hidden behind
+// an opaque cube by its sampled-depth occlusion, at full and at reduced render scale. A one-point
+// strip draws a round dot in either placement.
 
+#include <filesystem>
 #include <vector>
 
 #include <glm/geometric.hpp>
@@ -13,6 +18,12 @@
 #include <doctest/doctest.h>
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/Material.h>
+#include <Veng/Asset/MaterialInstance.h>
+#include <Veng/Asset/Mesh.h>
+#include <Veng/Asset/Primitives.h>
+#include <Veng/Cook/BuiltinImporters.h>
+#include <Veng/Cook/Cooker.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
@@ -24,6 +35,7 @@
 #include <Veng/Scene/Scene.h>
 
 #include <gpu/fixture.h>
+#include "support/TempPath.h"
 
 using namespace Veng;
 using namespace Veng::Renderer;
@@ -92,6 +104,22 @@ namespace
                                          .ColorFrom = color,
                                          .ColorTo = color,
                                          .Additive = additive});
+        return entity;
+    }
+
+    // The same footprint as AddRibbon, drawn as a two-point RibbonPath in @p placement.
+    Entity AddPath(Scene& scene, const vec3 color, const bool additive,
+                   const RibbonPlacement placement, const f32 z = 0.0f)
+    {
+        const Entity entity = scene.CreateEntity();
+        scene.Add<Transform>(entity);
+        scene.Add<RibbonPath>(
+            entity,
+            RibbonPath{.Strips = {RibbonStrip{.Points = {vec3(-3.0f, 0.0f, z), vec3(3.0f, 0.0f, z)},
+                                              .Width = 2.0f,
+                                              .Color = color}},
+                       .Additive = additive,
+                       .Placement = placement});
         return entity;
     }
 }
@@ -199,3 +227,161 @@ TEST_CASE_FIXTURE(
     CHECK(dark < 1e-3f);
     CHECK(RgbAt(pixels, mid, 4).x > dark + 1e-3f);
 }
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "ribbon pass: a post-resolve path draws through its own tail pass only")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    RibbonRender render = MakeRenderer(Context, assets, /*bloom=*/false);
+    const Unique<Scene> scene = Scene::Create(Types);
+    const u32 mid = Extent.x / 2;
+    const vec3 color(0.5f, 0.25f, 0.125f);
+
+    const Entity scenePath = AddPath(*scene, color, /*additive=*/false, RibbonPlacement::Scene);
+    (void)render.Render(Context, *scene);
+    CHECK(render.Renderer->DidRecordPassLastFrame("Scene Ribbons"));
+    CHECK_FALSE(render.Renderer->DidRecordPassLastFrame("Post-Resolve Ribbons"));
+
+    scene->DestroyEntity(scenePath);
+    AddPath(*scene, color, /*additive=*/false, RibbonPlacement::PostResolve);
+    for (const f32 scale : {1.0f, 0.5f})
+    {
+        const vec3 center = RgbAt(render.Render(Context, *scene, 1.0f, scale), mid, mid);
+        CHECK(render.Renderer->DidRecordPassLastFrame("Post-Resolve Ribbons"));
+        CHECK_FALSE(render.Renderer->DidRecordPassLastFrame("Scene Ribbons"));
+        CHECK(center.x == doctest::Approx(color.x).epsilon(0.03));
+        CHECK(center.y == doctest::Approx(color.y).epsilon(0.03));
+        CHECK(center.z == doctest::Approx(color.z).epsilon(0.03));
+    }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "ribbon pass: a dim post-resolve path glows through the post-resolve bloom mask")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const u32 mid = Extent.x / 2;
+
+    // At scale 1 the path writes the render-allocation mask the translucent pass cleared; at half
+    // scale it writes the promoted one.
+    for (const f32 scale : {1.0f, 0.5f})
+    {
+        const Unique<Scene> scene = Scene::Create(Types);
+        RibbonRender render = MakeRenderer(Context, assets, /*bloom=*/true);
+        const f32 dark = RgbAt(render.Render(Context, *scene, 1.0f, scale), mid, 4).x;
+        // Luminance 0.5, below the threshold: the bright pass alone passes none of it.
+        AddPath(*scene, vec3(0.5f), /*additive=*/true, RibbonPlacement::PostResolve);
+        const f32 lit = RgbAt(render.Render(Context, *scene, 1.0f, scale), mid, 4).x;
+        CHECK(render.Renderer->DidRecordPassLastFrame("Post-Resolve Ribbons"));
+        CHECK(dark < 1e-3f);
+        CHECK(lit > dark + 1e-3f);
+    }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "ribbon pass: a one-point strip draws a round dot in either placement")
+{
+    RegisterBuiltinTypes(Types);
+    AssetManager assets(Context, Tasks, Types);
+    const u32 mid = Extent.x / 2;
+
+    for (const RibbonPlacement placement : {RibbonPlacement::Scene, RibbonPlacement::PostResolve})
+    {
+        RibbonRender render = MakeRenderer(Context, assets, /*bloom=*/false);
+        const Unique<Scene> scene = Scene::Create(Types);
+        // Two world units across at five from the eye: a disc about 27 pixels in diameter.
+        const Entity entity = scene->CreateEntity();
+        scene->Add<Transform>(entity);
+        scene->Add<RibbonPath>(
+            entity, RibbonPath{.Strips = {RibbonStrip{.Points = {vec3(0.0f)}, .Width = 2.0f}},
+                               .Additive = false,
+                               .Placement = placement});
+        const std::vector<u8> pixels = render.Render(Context, *scene);
+
+        // Full at its centre, and round: equal at equal radii on an axis and a diagonal, nothing
+        // in the corner of its quad.
+        CHECK(RgbAt(pixels, mid, mid).x == doctest::Approx(1.0f).epsilon(0.03));
+        const f32 axis = RgbAt(pixels, mid + 10, mid).x;
+        const f32 diagonal = RgbAt(pixels, mid + 7, mid + 7).x;
+        CHECK(axis > 0.05f);
+        CHECK(std::abs(axis - diagonal) < 0.05f);
+        CHECK(RgbAt(pixels, mid + 12, mid + 12).x < 0.02f);
+    }
+}
+
+#ifdef GPU_GBUFFER_FIXTURE_DIR
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "ribbon pass: a post-resolve path is hidden behind opaque depth at any scale")
+{
+    RegisterBuiltinTypes(Types);
+
+    // The cube must write depth for the occlusion to read, so it carries the cooked brick material.
+    const path fixtureDir = path(GPU_GBUFFER_FIXTURE_DIR);
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_ribbon_occlusion.vengpack";
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    const VoidResult cookResult =
+        cooker.CookPack(fixtureDir / "gbuffer_pack.json", outArchive, {}, nullptr, nullptr, nullptr,
+                        nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    REQUIRE(cookResult.has_value());
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(outArchive).has_value());
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443}); // the brick default instance
+    REQUIRE(material.has_value());
+
+    // A two-unit cube at the origin, its front face at z = +1, seen from z = +6.
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Ref<Mesh> cube = Mesh::BuildSync(Context, Primitives::Cube(2.0f, *material), "Cube");
+    const Entity cubeEntity = scene->CreateEntity();
+    scene->Add<Transform>(cubeEntity);
+    scene->Add<MeshRenderer>(cubeEntity).Mesh = assets.Adopt(cube);
+
+    RibbonRender render = MakeRenderer(Context, assets, /*bloom=*/false);
+    render.Camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    render.Camera.SetView(vec3(0.0f, 0.0f, 6.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    // The brightest the scene reads in the rows about the centre line, at a column.
+    const auto peak = [](const std::vector<u8>& pixels, const u32 column)
+    {
+        f32 brightest = 0.0f;
+        for (u32 row = Extent.y / 2 - 3; row <= Extent.y / 2 + 3; ++row)
+        {
+            brightest = std::max(brightest, RgbAt(pixels, column, row).x);
+        }
+        return brightest;
+    };
+    const u32 mid = Extent.x / 2;
+    const u32 margin = 4;
+
+    for (const f32 scale : {1.0f, 0.6f})
+    {
+        const std::vector<u8> bare = render.Render(Context, *scene, 1.0f, scale);
+
+        // A white line behind the cube shows beside it and adds nothing over it.
+        const Entity behind = scene->CreateEntity();
+        scene->Add<Transform>(behind);
+        scene->Add<RibbonPath>(
+            behind, RibbonPath{.Strips = {RibbonStrip{
+                                   .Points = {vec3(-6.0f, 0.0f, -1.0f), vec3(6.0f, 0.0f, -1.0f)},
+                                   .Width = 0.3f}},
+                               .Placement = RibbonPlacement::PostResolve});
+        const std::vector<u8> hidden = render.Render(Context, *scene, 1.0f, scale);
+        CHECK(peak(hidden, margin) > peak(bare, margin) + 0.5f);
+        CHECK(peak(hidden, mid) < peak(bare, mid) + 0.05f);
+
+        // The same line in front of the cube shows over it.
+        scene->Get<RibbonPath>(behind).Strips.front().Points = {vec3(-6.0f, 0.0f, 2.0f),
+                                                                vec3(6.0f, 0.0f, 2.0f)};
+        const std::vector<u8> shown = render.Render(Context, *scene, 1.0f, scale);
+        CHECK(peak(shown, mid) > peak(bare, mid) + 0.5f);
+        scene->DestroyEntity(behind);
+    }
+
+    std::filesystem::remove(outArchive);
+}
+
+#endif // GPU_GBUFFER_FIXTURE_DIR
