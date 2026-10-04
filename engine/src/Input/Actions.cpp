@@ -18,8 +18,8 @@ namespace Veng
         /// @brief The raw value a source contributes this tick.
         ///
         /// A digital source (keyboard key or button) contributes 1 while down; an analog axis
-        /// contributes its axis value. A gamepad source reads through the axis/button surface,
-        /// which the current adapter reports as neutral until the device layer lands.
+        /// contributes its axis value. A gamepad source reads through the same button/axis surface,
+        /// so the view decides which pad (if any) backs it.
         f32 ReadSource(const InputSource& source, const RawInputView& raw)
         {
             switch (source.Device)
