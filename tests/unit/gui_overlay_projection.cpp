@@ -8,6 +8,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <utility>
 
@@ -193,4 +194,49 @@ TEST_CASE(
     CHECK(GrowGuiOverlayDocumentAllocation(grown, Target, Target) == uvec2(1024, 704));
     CHECK(GrowGuiOverlayDocumentAllocation(uvec2(1024, 704), uvec2(10), uvec2(200, 100)) ==
           uvec2(256, 128));
+}
+
+TEST_CASE("gui overlay projection: the homography agrees with the per-point projection")
+{
+    // A plane tilted on two axes and off the view axis, so the map is genuinely projective: any point
+    // of the document, taken through the homography, lands where the vertex projection puts it.
+    const quat tilt = glm::angleAxis(glm::radians(25.0f), glm::normalize(vec3(1.0f, 0.6f, 0.0f)));
+    const mat4 model = ComputeGuiOverlayModel(vec3(0.4f, -0.2f, -2.5f), tilt);
+    const CameraView camera = ForwardCamera();
+    const mat3 homography =
+        ComputeGuiOverlayHomography(DocExtent, SurfaceSize, model, camera, Extent);
+
+    f32 worst = 0.0f;
+    for (const vec2 share :
+         {vec2(0.0f), vec2(1.0f, 0.0f), vec2(0.0f, 1.0f), vec2(1.0f), vec2(0.5f), vec2(0.2f, 0.7f)})
+    {
+        const vec2 point = share * DocExtent;
+        const optional<vec2> projected =
+            ProjectGuiOverlayPoint(point, DocExtent, SurfaceSize, model, camera, Extent);
+        REQUIRE(projected.has_value());
+        worst =
+            std::max(worst, glm::length(ApplyGuiOverlayHomography(homography, point) - *projected));
+    }
+    CHECK(worst < 1e-3f);
+}
+
+TEST_CASE("gui overlay projection: the inverse homography returns a pixel to its document point")
+{
+    const quat tilt = glm::angleAxis(glm::radians(-30.0f), vec3(0.0f, 1.0f, 0.0f));
+    const mat4 model = ComputeGuiOverlayModel(vec3(-0.3f, 0.1f, -2.0f), tilt);
+    const mat3 homography =
+        ComputeGuiOverlayHomography(DocExtent, SurfaceSize, model, ForwardCamera(), Extent);
+    const vec2 point(123.0f, 77.0f);
+    const vec2 back = ApplyGuiOverlayHomography(glm::inverse(homography),
+                                                ApplyGuiOverlayHomography(homography, point));
+    CHECK(back.x == doctest::Approx(point.x).epsilon(1e-4));
+    CHECK(back.y == doctest::Approx(point.y).epsilon(1e-4));
+}
+
+TEST_CASE("gui overlay projection: a screen-space homography is the stretch to the target")
+{
+    const mat3 homography = ComputeGuiOverlayScreenHomography(DocExtent, Extent);
+    const vec2 corner = ApplyGuiOverlayHomography(homography, DocExtent);
+    CHECK(corner.x == doctest::Approx(Extent.x));
+    CHECK(corner.y == doctest::Approx(Extent.y));
 }

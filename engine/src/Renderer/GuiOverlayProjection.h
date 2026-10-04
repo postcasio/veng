@@ -53,6 +53,65 @@ namespace Veng::Renderer
         return ProjectToScreen(camera, world, screenExtent);
     }
 
+    /// @brief The projective map from a world-anchored overlay's document points to screen pixels.
+    ///
+    /// The document lies on a flat plane and the camera is a pinhole, so the whole of
+    /// ProjectGuiOverlayPoint collapses to one 3x3 homography: a document point `(x, y)` maps to
+    /// `h = H * (x, y, 1)` and lands at pixel `h.xy / h.z`. Exact rather than fitted, so it agrees
+    /// with the per-vertex projection the draw list takes everywhere on the plane — which is what lets
+    /// a composite material invert it per fragment and work in the document's own frame.
+    /// @param docExtent    The document's logical extent.
+    /// @param surfaceSize  The plane's world-space width and height.
+    /// @param model        The plane's world-space model transform (see ComputeGuiOverlayModel).
+    /// @param camera       The live camera the plane projects through.
+    /// @param screenExtent The target pixel extent NDC maps onto.
+    /// @return The homography, document points to homogeneous screen pixels.
+    [[nodiscard]] inline mat3
+    ComputeGuiOverlayHomography(const vec2& docExtent, const vec2& surfaceSize, const mat4& model,
+                                const CameraView& camera, const vec2& screenExtent)
+    {
+        // The document point to plane-local affine map of ProjectGuiOverlayPoint, as the three columns
+        // a point's x, y and 1 scale; z is zero on the plane.
+        const vec2 perPoint = surfaceSize / glm::max(docExtent, vec2(1.0f));
+        const mat4 clipFromLocal = camera.ViewProjection() * model;
+        const vec4 columns[3] = {
+            clipFromLocal * vec4(perPoint.x, 0.0f, 0.0f, 0.0f),
+            clipFromLocal * vec4(0.0f, -perPoint.y, 0.0f, 0.0f),
+            clipFromLocal * vec4(-0.5f * surfaceSize.x, 0.5f * surfaceSize.y, 0.0f, 1.0f),
+        };
+        // pixel = (clip.xy / clip.w * 0.5 + 0.5) * extent = (extent / 2) * (clip.xy + clip.w) / clip.w.
+        const vec2 half = screenExtent * 0.5f;
+        mat3 homography;
+        for (i32 column = 0; column < 3; ++column)
+        {
+            const vec4& clip = columns[column];
+            homography[column] =
+                vec3(half.x * (clip.x + clip.w), half.y * (clip.y + clip.w), clip.w);
+        }
+        return homography;
+    }
+
+    /// @brief The map from a screen-space overlay's document points to screen pixels: a scale.
+    /// @param docExtent    The document's logical extent, stretched over the target.
+    /// @param screenExtent The target pixel extent.
+    /// @return The homography, document points to homogeneous screen pixels.
+    [[nodiscard]] inline mat3 ComputeGuiOverlayScreenHomography(const vec2& docExtent,
+                                                                const vec2& screenExtent)
+    {
+        const vec2 scale = screenExtent / glm::max(docExtent, vec2(1.0f));
+        return mat3(vec3(scale.x, 0.0f, 0.0f), vec3(0.0f, scale.y, 0.0f), vec3(0.0f, 0.0f, 1.0f));
+    }
+
+    /// @brief Applies a homography to a point and divides through.
+    /// @param homography The map (see ComputeGuiOverlayHomography or its inverse).
+    /// @param point      The point to map.
+    /// @return The mapped point.
+    [[nodiscard]] inline vec2 ApplyGuiOverlayHomography(const mat3& homography, const vec2& point)
+    {
+        const vec3 mapped = homography * vec3(point, 1.0f);
+        return vec2(mapped) / mapped.z;
+    }
+
     /// @brief The pixel granule a material overlay's document rect and its intermediate round to.
     ///
     /// Coarse enough that a document drifting by a few pixels a frame keeps the same rect, so the

@@ -1519,6 +1519,16 @@ per-view mirror, and reads the document through `LoadOverlayDocument` in the bin
 and returns transparent outside the rect. A material lacking `DocumentRect` is reported once, by
 name, and not composited — a read by scene pixel would land at the wrong texels.
 
+**A composite may also ask for the document's own frame.** Three optional fields are written when a
+material declares them: `DocumentExtent` (the document's logical extent), `SceneFromDocument` and
+its inverse `DocumentFromScene` (each a 3x3 as `float4[3]` rows). A world-anchored document lies on a
+flat plane seen through a pinhole, so the map is an exact homography
+(`ComputeGuiOverlayHomography`, unit-pinned against the per-vertex projection); a screen-space one's
+is a scale. An effect that must stand still on a projected sheet, or stop at an element's edge,
+works in document points through `OverlayMapPoint` / `LoadOverlayDocumentPoint` rather than in the
+rect's screen pixels — the rect is the granule-rounded screen bounds of the projection, not the
+document.
+
 ### Point fields
 
 **The point-field draw pipeline batches submission and runs per-point work once.** A `PointField`

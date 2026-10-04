@@ -132,6 +132,13 @@ namespace Veng::Renderer
     private:
         /// @brief Records the @p index-th material overlay's document into the intermediate target.
         void RecordDocument(const ScenePassContext& ctx, u32 index);
+        /// @brief Writes the document's frame into the material's optional fields that ask for it.
+        ///
+        /// `DocumentExtent` (the document's logical extent), `SceneFromDocument` (document points to
+        /// homogeneous scene pixels) and `DocumentFromScene` (its inverse), each a 3x3 as three
+        /// `float4` rows; a field the material does not declare is skipped.
+        static void WriteDocumentFrame(MaterialInstance& material, const GuiHdrOverlayView& overlay,
+                                       const SceneView& view);
         /// @brief Composites the @p index-th material overlay's document through its material.
         void RecordComposite(const ScenePassContext& ctx, u32 index);
         /// @brief Returns the @p index-th overlay naming a material this frame, or nullptr.

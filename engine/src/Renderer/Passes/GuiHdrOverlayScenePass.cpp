@@ -1,5 +1,6 @@
 #include "GuiHdrOverlayScenePass.h"
 
+#include <array>
 #include <limits>
 
 #include <fmt/format.h>
@@ -216,6 +217,48 @@ namespace Veng::Renderer
         m_Gui->RecordInto(ctx.Cmd(), rect.Size);
     }
 
+    void GuiHdrOverlayScenePass::WriteDocumentFrame(MaterialInstance& material,
+                                                    const GuiHdrOverlayView& overlay,
+                                                    const SceneView& view)
+    {
+        // Each is optional: a material that works only by scene pixel declares none and pays nothing.
+        const MaterialFieldHandle extentField = material.Field("DocumentExtent");
+        const MaterialFieldHandle toDocumentField = material.Field("DocumentFromScene");
+        const MaterialFieldHandle toSceneField = material.Field("SceneFromDocument");
+        if (extentField.IsValid())
+        {
+            material.SetParam(extentField, vec4(overlay.DocExtent, 0.0f, 0.0f));
+        }
+        if (!toDocumentField.IsValid() && !toSceneField.IsValid())
+        {
+            return;
+        }
+
+        const vec2 target = vec2(view.PostResolveExtent);
+        const mat3 sceneFromDocument =
+            overlay.WorldAnchored
+                ? ComputeGuiOverlayHomography(overlay.DocExtent, overlay.SurfaceSize, overlay.Model,
+                                              view.Camera, target)
+                : ComputeGuiOverlayScreenHomography(overlay.DocExtent, target);
+        // A shader reads a 3x3 as three float4 rows, w unused, so the layout carries no matrix
+        // packing rule of its own.
+        const auto writeRows = [&material](const MaterialFieldHandle field, const mat3& map)
+        {
+            const mat3 rows = glm::transpose(map);
+            const std::array<vec4, 3> packed = {vec4(rows[0], 0.0f), vec4(rows[1], 0.0f),
+                                                vec4(rows[2], 0.0f)};
+            material.SetParamArray(field, packed);
+        };
+        if (toSceneField.IsValid())
+        {
+            writeRows(toSceneField, sceneFromDocument);
+        }
+        if (toDocumentField.IsValid())
+        {
+            writeRows(toDocumentField, glm::inverse(sceneFromDocument));
+        }
+    }
+
     void GuiHdrOverlayScenePass::RecordComposite(const ScenePassContext& ctx, const u32 index)
     {
         const SceneView& view = ctx.View();
@@ -261,6 +304,7 @@ namespace Veng::Renderer
         // precede Material::Bind so the pushed selector reads a param block carrying both.
         material.SetTextureHandle("Document", m_DocTargetHandle);
         material.SetParam(rectField, vec4(vec2(rect.Origin), vec2(rect.Size)));
+        WriteDocumentFrame(material, *overlay, view);
 
         // The viewport stays the full target so sv_position is a scene pixel; the scissor keeps the
         // fragment to the pixels the document can cover.

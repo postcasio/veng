@@ -981,7 +981,8 @@ covers.** The renderer draws the document into an intermediate holding only the 
 rect, so the PostProcess-domain composite material declares `Document` (texture handle) and
 `DocumentRect` (`vec4`: origin, size, in scene pixels) and reads the document through
 `LoadOverlayDocument` (`Veng/overlay_composite.slang`) rather than by scene pixel; one without
-`DocumentRect` is reported by name and not drawn. The renderer side — the rect, the intermediate's
+`DocumentRect` is reported by name and not drawn. It may also declare `DocumentExtent`,
+`SceneFromDocument` and `DocumentFromScene` to work in the document's own points. The renderer side — the rect, the intermediate's
 growth, the scissored composite — is in [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "The pre-bloom
 GUI overlay".
 
