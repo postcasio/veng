@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include "support/TempPath.h"
+#include "support/TestCook.h"
 
 #include <doctest/doctest.h>
 
@@ -28,7 +29,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
 
-    const VoidResult cookResult = cooker.CookPack(packJson, outArchive);
+    const VoidResult cookResult = Veng::TestSupport::CookCached(cooker, packJson, outArchive);
     REQUIRE(cookResult.has_value());
 
     AssetManager assets(Context, Tasks, Types);

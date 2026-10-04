@@ -1202,6 +1202,7 @@ TEST_CASE_FIXTURE(
 
 #include <filesystem>
 #include "support/TempPath.h"
+#include "support/TestCook.h"
 
 #include <glm/gtc/packing.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -1262,9 +1263,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     Cook::RegisterBuiltinImporters(cooker);
     // The brick shaders `#include "Veng/surface.slang"`; the engine core shader dir is on
     // the cook's Slang search path so the cross-pack include resolves.
-    const VoidResult cookResult =
-        cooker.CookPack(fixtureDir / "gbuffer_pack.json", outArchive, {}, nullptr, nullptr, nullptr,
-                        nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    const VoidResult cookResult = Veng::TestSupport::CookCached(
+        cooker, fixtureDir / "gbuffer_pack.json", outArchive, {}, nullptr, nullptr, nullptr,
+        nullptr, {}, path(VENG_CORE_SHADER_DIR));
     REQUIRE(cookResult.has_value());
 
     AssetManager assets(Context, Tasks, Types);
@@ -1411,9 +1412,9 @@ namespace
         Cook::RegisterBuiltinImporters(cooker);
         // The brick shaders `#include "Veng/surface.slang"`; the engine core shader dir is
         // on the cook's Slang search path so the cross-pack include resolves.
-        const VoidResult cookResult =
-            cooker.CookPack(fixtureDir / "gbuffer_pack.json", outArchive, {}, nullptr, nullptr,
-                            nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
+        const VoidResult cookResult = Veng::TestSupport::CookCached(
+            cooker, fixtureDir / "gbuffer_pack.json", outArchive, {}, nullptr, nullptr, nullptr,
+            nullptr, {}, path(VENG_CORE_SHADER_DIR));
         REQUIRE(cookResult.has_value());
 
         const VoidResult mountResult = assets.Mount(outArchive);
@@ -1448,9 +1449,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_instance_override.vengpack";
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker
-                .CookPack(fixtureDir / "gbuffer_pack.json", outArchive, {}, nullptr, nullptr,
-                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+    REQUIRE(Veng::TestSupport::CookCached(cooker, fixtureDir / "gbuffer_pack.json", outArchive, {},
+                                          nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
                 .has_value());
 
     AssetManager assets(Context, Tasks, Types);
@@ -4263,7 +4264,8 @@ TEST_CASE_FIXTURE(
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(fixtureDir / "postprocess_pack.json", outArchive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, fixtureDir / "postprocess_pack.json", outArchive)
+                .has_value());
 
     AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(outArchive).has_value());
@@ -5393,9 +5395,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     Cook::RegisterBuiltinImporters(cooker);
     // The brick + translucent shaders `#include` the engine core contracts; the core shader dir is
     // on the cook's Slang search path so the cross-pack includes resolve.
-    const VoidResult cookResult =
-        cooker.CookPack(fixtureDir / "translucent_pack.json", outArchive, {}, nullptr, nullptr,
-                        nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    const VoidResult cookResult = Veng::TestSupport::CookCached(
+        cooker, fixtureDir / "translucent_pack.json", outArchive, {}, nullptr, nullptr, nullptr,
+        nullptr, {}, path(VENG_CORE_SHADER_DIR));
     REQUIRE(cookResult.has_value());
 
     AssetManager assets(Context, Tasks, Types);
@@ -5501,9 +5503,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    const VoidResult cookResult =
-        cooker.CookPack(fixtureDir / "translucent_pack.json", outArchive, {}, nullptr, nullptr,
-                        nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    const VoidResult cookResult = Veng::TestSupport::CookCached(
+        cooker, fixtureDir / "translucent_pack.json", outArchive, {}, nullptr, nullptr, nullptr,
+        nullptr, {}, path(VENG_CORE_SHADER_DIR));
     REQUIRE(cookResult.has_value());
 
     AssetManager assets(Context, Tasks, Types);
@@ -5606,9 +5608,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker
-                .CookPack(fixtureDir / "translucent_pack.json", outArchive, {}, nullptr, nullptr,
-                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+    REQUIRE(Veng::TestSupport::CookCached(cooker, fixtureDir / "translucent_pack.json", outArchive,
+                                          {}, nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
                 .has_value());
 
     AssetManager assets(Context, Tasks, Types);
@@ -5764,9 +5766,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker
-                .CookPack(fixtureDir / "translucent_pack.json", outArchive, {}, nullptr, nullptr,
-                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+    REQUIRE(Veng::TestSupport::CookCached(cooker, fixtureDir / "translucent_pack.json", outArchive,
+                                          {}, nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
                 .has_value());
 
     AssetManager assets(Context, Tasks, Types);
@@ -5852,9 +5854,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker
-                .CookPack(fixtureDir / "translucent_pack.json", outArchive, {}, nullptr, nullptr,
-                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+    REQUIRE(Veng::TestSupport::CookCached(cooker, fixtureDir / "translucent_pack.json", outArchive,
+                                          {}, nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
                 .has_value());
 
     AssetManager assets(Context, Tasks, Types);
@@ -6328,9 +6330,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    const VoidResult cookResult =
-        cooker.CookPack(fixtureDir / "skinned_pack.json", outArchive, {}, nullptr, nullptr, nullptr,
-                        nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    const VoidResult cookResult = Veng::TestSupport::CookCached(
+        cooker, fixtureDir / "skinned_pack.json", outArchive, {}, nullptr, nullptr, nullptr,
+        nullptr, {}, path(VENG_CORE_SHADER_DIR));
     REQUIRE(cookResult.has_value());
 
     AssetManager assets(Context, Tasks, Types);
@@ -6426,9 +6428,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_shading_override.vengpack";
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    const VoidResult cookResult =
-        cooker.CookPack(fixtureDir / "skinned_pack.json", outArchive, {}, nullptr, nullptr, nullptr,
-                        nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    const VoidResult cookResult = Veng::TestSupport::CookCached(
+        cooker, fixtureDir / "skinned_pack.json", outArchive, {}, nullptr, nullptr, nullptr,
+        nullptr, {}, path(VENG_CORE_SHADER_DIR));
     REQUIRE(cookResult.has_value());
 
     AssetManager assets(Context, Tasks, Types);

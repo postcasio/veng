@@ -32,6 +32,7 @@
 
 #include <filesystem>
 #include "support/TempPath.h"
+#include "support/TestCook.h"
 
 #include <glm/gtc/packing.hpp>
 
@@ -183,9 +184,9 @@ namespace
 
         Cook::Cooker cooker;
         Cook::RegisterBuiltinImporters(cooker);
-        const VoidResult cookResult =
-            cooker.CookPack(fixtureDir / "gbuffer_pack.json", outArchive, {}, nullptr, nullptr,
-                            nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
+        const VoidResult cookResult = Veng::TestSupport::CookCached(
+            cooker, fixtureDir / "gbuffer_pack.json", outArchive, {}, nullptr, nullptr, nullptr,
+            nullptr, {}, path(VENG_CORE_SHADER_DIR));
         REQUIRE(cookResult.has_value());
 
         REQUIRE(assets.Mount(outArchive).has_value());

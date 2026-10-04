@@ -63,6 +63,7 @@
 
 #include <gpu/fixture.h>
 #include "support/TempPath.h"
+#include "support/TestCook.h"
 
 // After the Veng headers, so Veng.h's GLM_FORCE_DEPTH_ZERO_TO_ONE is set before glm.
 #include <glm/gtc/packing.hpp>
@@ -293,9 +294,9 @@ namespace
 
         Cook::Cooker cooker;
         Cook::RegisterBuiltinImporters(cooker);
-        const VoidResult cooked =
-            cooker.CookPack(fixtureDir / "gui_surface_pack.json", outArchive, {}, nullptr, nullptr,
-                            nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
+        const VoidResult cooked = Veng::TestSupport::CookCached(
+            cooker, fixtureDir / "gui_surface_pack.json", outArchive, {}, nullptr, nullptr, nullptr,
+            nullptr, {}, path(VENG_CORE_SHADER_DIR));
         REQUIRE_MESSAGE(cooked.has_value(), cooked.error());
         return outArchive;
     }

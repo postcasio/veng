@@ -11,6 +11,7 @@
 #include <string>
 
 #include "support/TempPath.h"
+#include "support/TestCook.h"
 
 #include <doctest/doctest.h>
 
@@ -69,7 +70,7 @@ namespace
         const path out = dir / (std::string(name) + ".vengpack");
         Cook::Cooker cooker;
         Cook::RegisterBuiltinImporters(cooker);
-        REQUIRE(cooker.CookPack(dir / "pack.json", out).has_value());
+        REQUIRE(Veng::TestSupport::CookCached(cooker, dir / "pack.json", out).has_value());
         return out;
     }
 
@@ -95,7 +96,7 @@ namespace
         const path out = dir / (std::string(name) + ".vengpack");
         Cook::Cooker cooker;
         Cook::RegisterBuiltinImporters(cooker);
-        REQUIRE(cooker.CookPack(dir / "pack.json", out).has_value());
+        REQUIRE(Veng::TestSupport::CookCached(cooker, dir / "pack.json", out).has_value());
         return out;
     }
 }

@@ -11,6 +11,7 @@
 
 #include <filesystem>
 #include "support/TempPath.h"
+#include "support/TestCook.h"
 #include <fstream>
 
 #include <doctest/doctest.h>
@@ -117,9 +118,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     Cook::RegisterBuiltinImporters(cooker);
     // The brick shaders `#include "Veng/surface.slang"`; the engine core shader dir is on
     // the cook's Slang search path so the cross-pack include resolves.
-    REQUIRE(cooker
-                .CookPack(packJson, outArchive, {}, nullptr, nullptr, nullptr, nullptr, {},
-                          path(VENG_CORE_SHADER_DIR))
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive, {}, nullptr, nullptr,
+                                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
                 .has_value());
 
     AssetManager assets(Context, Tasks, Types);

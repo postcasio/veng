@@ -23,6 +23,7 @@
 #include <span>
 #include <string_view>
 #include "support/TempPath.h"
+#include "support/TestCook.h"
 
 #include <doctest/doctest.h>
 
@@ -86,9 +87,9 @@ TEST_CASE_FIXTURE(
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    const VoidResult cookResult =
-        cooker.CookPack(fixtureDir / "gbuffer_pack.json", outArchive, {}, nullptr, nullptr, nullptr,
-                        nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    const VoidResult cookResult = Veng::TestSupport::CookCached(
+        cooker, fixtureDir / "gbuffer_pack.json", outArchive, {}, nullptr, nullptr, nullptr,
+        nullptr, {}, path(VENG_CORE_SHADER_DIR));
     REQUIRE_MESSAGE(cookResult.has_value(), cookResult.error());
 
     AssetManager assets(Context, Tasks, Types);
@@ -154,9 +155,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker
-                .CookPack(fixtureDir / "gbuffer_pack.json", outArchive, {}, nullptr, nullptr,
-                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+    REQUIRE(Veng::TestSupport::CookCached(cooker, fixtureDir / "gbuffer_pack.json", outArchive, {},
+                                          nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
                 .has_value());
 
     // The parent material's texture uploads through the async transfer path.
@@ -199,9 +200,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker
-                .CookPack(fixtureDir / "gbuffer_pack.json", outArchive, {}, nullptr, nullptr,
-                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+    REQUIRE(Veng::TestSupport::CookCached(cooker, fixtureDir / "gbuffer_pack.json", outArchive, {},
+                                          nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
                 .has_value());
 
     AssetManager assets(Context, Tasks, Types);
@@ -232,9 +233,9 @@ TEST_CASE_FIXTURE(
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker
-                .CookPack(fixtureDir / "gbuffer_pack.json", outArchive, {}, nullptr, nullptr,
-                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+    REQUIRE(Veng::TestSupport::CookCached(cooker, fixtureDir / "gbuffer_pack.json", outArchive, {},
+                                          nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
                 .has_value());
 
     AssetManager assets(Context, Tasks, Types);
@@ -271,9 +272,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker
-                .CookPack(fixtureDir / "gbuffer_pack.json", outArchive, {}, nullptr, nullptr,
-                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+    REQUIRE(Veng::TestSupport::CookCached(cooker, fixtureDir / "gbuffer_pack.json", outArchive, {},
+                                          nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
                 .has_value());
 
     AssetManager assets(Context, Tasks, Types);
@@ -351,9 +352,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker
-                .CookPack(fixtureDir / "gbuffer_pack.json", outArchive, {}, nullptr, nullptr,
-                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+    REQUIRE(Veng::TestSupport::CookCached(cooker, fixtureDir / "gbuffer_pack.json", outArchive, {},
+                                          nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
                 .has_value());
 
     AssetManager assets(Context, Tasks, Types);

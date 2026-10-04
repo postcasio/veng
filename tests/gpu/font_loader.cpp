@@ -9,6 +9,7 @@
 #include <fstream>
 #include <string>
 #include "support/TempPath.h"
+#include "support/TestCook.h"
 
 #include <doctest/doctest.h>
 
@@ -55,7 +56,7 @@ namespace
         const path out = dir / "ext.vengpack";
         Cook::Cooker cooker;
         Cook::RegisterBuiltinImporters(cooker);
-        REQUIRE(cooker.CookPack(dir / "pack.json", out).has_value());
+        REQUIRE(Veng::TestSupport::CookCached(cooker, dir / "pack.json", out).has_value());
         return out;
     }
 }
@@ -69,7 +70,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive).has_value());
 
     Text::GlyphSource source;
     Text::GlyphAtlas atlas(Context, source);
@@ -123,7 +124,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "font loader: ShapeRun applies advance
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive).has_value());
 
     Text::GlyphSource source;
     Text::GlyphAtlas atlas(Context, source);

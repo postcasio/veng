@@ -49,6 +49,7 @@
 
 #include <gpu/fixture.h>
 #include "support/TempPath.h"
+#include "support/TestCook.h"
 
 using namespace Veng;
 using namespace Veng::Renderer;
@@ -108,9 +109,9 @@ namespace
 
         Cook::Cooker cooker;
         Cook::RegisterBuiltinImporters(cooker);
-        const VoidResult cookResult =
-            cooker.CookPack(fixtureDir / "gui_surface_pack.json", outArchive, {}, nullptr, nullptr,
-                            nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
+        const VoidResult cookResult = Veng::TestSupport::CookCached(
+            cooker, fixtureDir / "gui_surface_pack.json", outArchive, {}, nullptr, nullptr, nullptr,
+            nullptr, {}, path(VENG_CORE_SHADER_DIR));
         REQUIRE(cookResult.has_value());
         return outArchive;
     }

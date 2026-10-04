@@ -10,6 +10,7 @@
 #include <cstring>
 #include <filesystem>
 #include "support/TempPath.h"
+#include "support/TestCook.h"
 #include <fstream>
 
 #include <doctest/doctest.h>
@@ -203,8 +204,9 @@ SurfaceFragmentInput vsMain(VSInput input)
     const path outArchive = dir / "out.vengpack";
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    const VoidResult cooked = cooker.CookPack(dir / "pack.json", outArchive, {}, nullptr, nullptr,
-                                              nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    const VoidResult cooked =
+        Veng::TestSupport::CookCached(cooker, dir / "pack.json", outArchive, {}, nullptr, nullptr,
+                                      nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
     REQUIRE_MESSAGE(cooked.has_value(), cooked.error());
 
     AssetManager assets(Context, Tasks, Types);
@@ -366,8 +368,9 @@ SurfaceFragmentInput vsMain(VSInput input)
     const path outArchive = dir / "out.vengpack";
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    const VoidResult cooked = cooker.CookPack(dir / "pack.json", outArchive, {}, nullptr, nullptr,
-                                              nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    const VoidResult cooked =
+        Veng::TestSupport::CookCached(cooker, dir / "pack.json", outArchive, {}, nullptr, nullptr,
+                                      nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
     REQUIRE_MESSAGE(cooked.has_value(), cooked.error());
 
     AssetManager assets(Context, Tasks, Types);

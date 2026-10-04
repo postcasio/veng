@@ -45,6 +45,7 @@
 
 #include <gpu/fixture.h>
 #include "support/TempPath.h"
+#include "support/TestCook.h"
 
 #include "Renderer/EnvironmentIbl.h"
 
@@ -67,9 +68,9 @@ namespace
         const path outArchive = Veng::TestSupport::TempDir() / "veng_scene_capture_cube.vengpack";
         Cook::Cooker cooker;
         Cook::RegisterBuiltinImporters(cooker);
-        const VoidResult cooked =
-            cooker.CookPack(fixtureDir / "capture_surface_pack.json", outArchive, {}, nullptr,
-                            nullptr, nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
+        const VoidResult cooked = Veng::TestSupport::CookCached(
+            cooker, fixtureDir / "capture_surface_pack.json", outArchive, {}, nullptr, nullptr,
+            nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
         REQUIRE(cooked.has_value());
         return outArchive;
     }

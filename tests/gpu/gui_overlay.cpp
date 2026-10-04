@@ -33,6 +33,7 @@
 
 #include <gpu/fixture.h>
 #include "support/TempPath.h"
+#include "support/TestCook.h"
 
 using namespace Veng;
 using namespace Veng::Renderer;
@@ -60,7 +61,7 @@ namespace
         const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_gui_overlay.vengpack";
         Cook::Cooker cooker;
         Cook::RegisterBuiltinImporters(cooker);
-        REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+        REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive).has_value());
         return outArchive;
     }
 

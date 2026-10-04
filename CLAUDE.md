@@ -86,9 +86,9 @@ right tree name, deleting the tree, or using a non-canonical name. Any other bas
 the other; `build-debug-profiling` (debug code *and* profiler) is the standing
 profiling tree, and `VE_PROFILE` defaults plain OFF everywhere. **`VE_VALIDATION`** alone
 compiles in the Vulkan validation layers (`VE_ENABLE_VALIDATION_LAYERS`) and registers the
-`validation_gate` test; it defaults to `VE_DEBUG`, and the profiling tree pins it OFF because
-synchronization validation hooks every `vkCmd*`, so a profile of command recording would
-measure the layer as much as the engine. That tree keeps `VE_DEBUG`'s asserts and debug code.
+`validation_gate` test (run on demand, see below); it defaults to `VE_DEBUG`, and the profiling
+tree pins it OFF because synchronization validation hooks every `vkCmd*`, so a profile of command
+recording would measure the layer as much as the engine. That tree keeps `VE_DEBUG`'s asserts and debug code.
 
 For a non-canonical tree name, `VE_DEBUG` still selects the build-type default: with
 no explicit `CMAKE_BUILD_TYPE`, a `VE_DEBUG=ON` tree configures as **Debug** and a
@@ -123,9 +123,10 @@ so backtraces through these units resolve. It reaches two kinds of code:
 
 **Build and test the debug build only — do not build twice.** The `build-debug`
 tree above (`VE_DEBUG=ON`) is the one build an agent configures, builds, and tests
-by default. It is `-Werror` and runs the validation gate, so it catches strictly
-more than the validation-OFF build. The release build (`build/`, validation OFF —
-see [The release build](#the-release-build-validation-off)) is **optional**: reach
+by default. It is `-Werror` and carries the validation layers and the validation gate, so it
+catches strictly more than the validation-OFF build — the gate when it is run (see below). The
+release build (`build/`, validation OFF — see
+[The release build](#the-release-build-validation-off)) is **optional**: reach
 for it only when you specifically need to check release-only behavior, and never
 build both routinely.
 
@@ -680,9 +681,11 @@ the default and catches more. Do not build both routinely.
 - **Validation errors do NOT fail tests by themselves.** The debug-messenger
   callback (`engine/src/Renderer/Backend/Context.cpp`) only `Log::Error`s on
   validation errors — it never aborts. So a green `ctest` under `VE_VALIDATION` only means
-  something if the validation gate ran: `ctest --test-dir build-debug -j 4 -L
-  validation` (the `validation_gate` test) runs the `gpu`-labelled binaries and
-  fails on any unallowlisted `Vulkan validation` ERROR line
+  something if the validation gate ran, and **an ordinary `ctest` does not run it**: the gate
+  re-runs the whole gpu suite under the layers, doubling the band's GPU time, so it carries
+  `CONFIGURATIONS Validation` and is run on demand — before landing renderer or backend work —
+  with `ctest --test-dir build-debug -C Validation -j 4 -L validation`. It runs the
+  `gpu`-labelled binaries and fails on any unallowlisted `Vulkan validation` ERROR line
   (`cmake/ValidationGate.cmake`; allowlist currently empty). The benign MoltenVK
   "buffer robustness" warning is logged at `WARN`, not `ERROR`, and is ignored.
 - **Synchronization validation cannot see a shader access through the bindless sets.** The
@@ -715,6 +718,12 @@ landed. Four shapes are defects in a new test:
 
 The budget: a unit case runs in milliseconds, the heaviest earns a few seconds, nothing
 earns ten — the suite's cost is paid by every future change.
+
+**A test cooks a fixture pack through `Veng::TestSupport::CookCached`** (`tests/support/TestCook.h`),
+never a bare `Cooker::CookPack`. It is CookPack with the process's cook cache, so a pack cooked by
+case after case — every capture and GUI fixture is — pays its importers (a Slang compile of each
+shader) once per process rather than once per case, and reads back the byte-identical archive. The
+uncached form cost the gpu suite three quarters of its time: 222 s against 62 s.
 
 ## Core conventions
 

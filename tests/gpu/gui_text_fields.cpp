@@ -12,6 +12,7 @@
 #include <string>
 
 #include "support/TempPath.h"
+#include "support/TestCook.h"
 
 #include <doctest/doctest.h>
 
@@ -172,7 +173,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path archive = dir / "fields.vengpack";
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(dir / "pack.json", archive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, dir / "pack.json", archive).has_value());
 
     Text::GlyphSource source;
     Text::GlyphAtlas atlas(Context, source);
@@ -223,7 +224,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path archive = dir / "fields.vengpack";
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(dir / "pack.json", archive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, dir / "pack.json", archive).has_value());
 
     Text::GlyphSource source;
     Text::GlyphAtlas atlas(Context, source);
@@ -275,7 +276,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path archive = dir / "fields.vengpack";
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(dir / "pack.json", archive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, dir / "pack.json", archive).has_value());
 
     Text::GlyphSource source;
     Text::GlyphAtlas atlas(Context, source);
@@ -326,7 +327,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path archive = dir / "fields.vengpack";
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(dir / "pack.json", archive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, dir / "pack.json", archive).has_value());
 
     Text::GlyphSource source;
     Text::GlyphAtlas atlas(Context, source);

@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include "support/TempPath.h"
+#include "support/TestCook.h"
 
 #include <doctest/doctest.h>
 #include <fmt/format.h>
@@ -48,7 +49,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packPath, outArchive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packPath, outArchive).has_value());
 
     AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(outArchive).has_value());

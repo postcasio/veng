@@ -48,6 +48,7 @@
 
 #include <gpu/fixture.h>
 #include "support/TempPath.h"
+#include "support/TestCook.h"
 
 using namespace Veng;
 using namespace Veng::Renderer;
@@ -202,13 +203,13 @@ TEST_CASE_FIXTURE(
     const path postArchive = Veng::TestSupport::TempDir() / "veng_gui_hdr_overlay_post.vengpack";
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker
-                .CookPack(gbufferDir / "gbuffer_pack.json", gbufferArchive, {}, nullptr, nullptr,
-                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+    REQUIRE(Veng::TestSupport::CookCached(cooker, gbufferDir / "gbuffer_pack.json", gbufferArchive,
+                                          {}, nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
                 .has_value());
-    REQUIRE(cooker
-                .CookPack(postDir / "post_effect_pack.json", postArchive, {}, nullptr, nullptr,
-                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+    REQUIRE(Veng::TestSupport::CookCached(cooker, postDir / "post_effect_pack.json", postArchive,
+                                          {}, nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
                 .has_value());
 
     AssetManager assets(Context, Tasks, Types);
@@ -358,9 +359,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "gui hdr overlay: a composite material
     const path archive = Veng::TestSupport::TempDir() / "veng_gui_hdr_overlay_composite.vengpack";
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker
-                .CookPack(compositeDir / "overlay_composite_pack.json", archive, {}, nullptr,
-                          nullptr, nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+    REQUIRE(Veng::TestSupport::CookCached(cooker, compositeDir / "overlay_composite_pack.json",
+                                          archive, {}, nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
                 .has_value());
 
     AssetManager assets(Context, Tasks, Types);
@@ -456,9 +457,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path archive = Veng::TestSupport::TempDir() / "veng_gui_hdr_overlay_scaled.vengpack";
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker
-                .CookPack(compositeDir / "overlay_composite_pack.json", archive, {}, nullptr,
-                          nullptr, nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+    REQUIRE(Veng::TestSupport::CookCached(cooker, compositeDir / "overlay_composite_pack.json",
+                                          archive, {}, nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
                 .has_value());
 
     AssetManager assets(Context, Tasks, Types);
@@ -550,9 +551,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const path archive = Veng::TestSupport::TempDir() / "veng_gui_hdr_overlay_two.vengpack";
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker
-                .CookPack(compositeDir / "overlay_composite_pack.json", archive, {}, nullptr,
-                          nullptr, nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+    REQUIRE(Veng::TestSupport::CookCached(cooker, compositeDir / "overlay_composite_pack.json",
+                                          archive, {}, nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
                 .has_value());
 
     AssetManager assets(Context, Tasks, Types);
@@ -642,7 +643,7 @@ TEST_CASE_FIXTURE(
     const path archive = Veng::TestSupport::TempDir() / "veng_gui_hdr_overlay_hud.vengpack";
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, archive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, archive).has_value());
 
     AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(archive).has_value());
@@ -710,7 +711,7 @@ TEST_CASE_FIXTURE(
     const path archive = Veng::TestSupport::TempDir() / "veng_gui_hdr_overlay_hidden.vengpack";
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, archive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, archive).has_value());
 
     AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(archive).has_value());
@@ -783,10 +784,9 @@ namespace
     {
         Cook::Cooker cooker;
         Cook::RegisterBuiltinImporters(cooker);
-        REQUIRE(cooker
-                    .CookPack(path(GPU_POSTPROCESS_FIXTURE_DIR) / "overlay_composite_pack.json",
-                              archive, {}, nullptr, nullptr, nullptr, nullptr, {},
-                              path(VENG_CORE_SHADER_DIR))
+        REQUIRE(Veng::TestSupport::CookCached(
+                    cooker, path(GPU_POSTPROCESS_FIXTURE_DIR) / "overlay_composite_pack.json",
+                    archive, {}, nullptr, nullptr, nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
                     .has_value());
         REQUIRE(assets.Mount(archive).has_value());
     }

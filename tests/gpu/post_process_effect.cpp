@@ -43,6 +43,7 @@
 #include <gpu/fixture.h>
 
 #include "support/TempPath.h"
+#include "support/TestCook.h"
 
 #include <glm/gtc/packing.hpp>
 
@@ -82,13 +83,13 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker
-                .CookPack(gbufferDir / "gbuffer_pack.json", gbufferArchive, {}, nullptr, nullptr,
-                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+    REQUIRE(Veng::TestSupport::CookCached(cooker, gbufferDir / "gbuffer_pack.json", gbufferArchive,
+                                          {}, nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
                 .has_value());
-    REQUIRE(cooker
-                .CookPack(postDir / "post_effect_pack.json", postArchive, {}, nullptr, nullptr,
-                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+    REQUIRE(Veng::TestSupport::CookCached(cooker, postDir / "post_effect_pack.json", postArchive,
+                                          {}, nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
                 .has_value());
 
     AssetManager assets(Context, Tasks, Types);
@@ -200,13 +201,13 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker
-                .CookPack(gbufferDir / "gbuffer_pack.json", gbufferArchive, {}, nullptr, nullptr,
-                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+    REQUIRE(Veng::TestSupport::CookCached(cooker, gbufferDir / "gbuffer_pack.json", gbufferArchive,
+                                          {}, nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
                 .has_value());
-    REQUIRE(cooker
-                .CookPack(postDir / "post_effect_pack.json", postArchive, {}, nullptr, nullptr,
-                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+    REQUIRE(Veng::TestSupport::CookCached(cooker, postDir / "post_effect_pack.json", postArchive,
+                                          {}, nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
                 .has_value());
 
     AssetManager assets(Context, Tasks, Types);
@@ -312,9 +313,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker
-                .CookPack(postDir / "post_effect_pack.json", postArchive, {}, nullptr, nullptr,
-                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+    REQUIRE(Veng::TestSupport::CookCached(cooker, postDir / "post_effect_pack.json", postArchive,
+                                          {}, nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
                 .has_value());
 
     AssetManager assets(Context, Tasks, Types);
@@ -414,9 +415,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker
-                .CookPack(postDir / "post_effect_pack.json", postArchive, {}, nullptr, nullptr,
-                          nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR))
+    REQUIRE(Veng::TestSupport::CookCached(cooker, postDir / "post_effect_pack.json", postArchive,
+                                          {}, nullptr, nullptr, nullptr, nullptr, {},
+                                          path(VENG_CORE_SHADER_DIR))
                 .has_value());
 
     AssetManager assets(Context, Tasks, Types);

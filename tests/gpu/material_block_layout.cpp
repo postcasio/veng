@@ -45,6 +45,7 @@
 #include <Veng/Renderer/Types.h>
 
 #include "support/TempPath.h"
+#include "support/TestCook.h"
 
 #include <gpu/fixture.h>
 
@@ -121,9 +122,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    const VoidResult cooked =
-        cooker.CookPack(fixtureDir / "block_layout_pack.json", outArchive, {}, nullptr, nullptr,
-                        nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    const VoidResult cooked = Veng::TestSupport::CookCached(
+        cooker, fixtureDir / "block_layout_pack.json", outArchive, {}, nullptr, nullptr, nullptr,
+        nullptr, {}, path(VENG_CORE_SHADER_DIR));
     REQUIRE_MESSAGE(cooked.has_value(), cooked.error());
 
     AssetManager assets(Context, Tasks, Types);

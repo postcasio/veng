@@ -2437,7 +2437,10 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
     # gaps). Includes the launcher path so the real shipping shape runs under the
     # gate too. Registered after the examples subdirectory so the launcher target
     # exists. Registered only under VE_VALIDATION: a tree without the layers
-    # would run it and prove nothing.
+    # would run it and prove nothing. It carries CONFIGURATIONS Validation, so an
+    # ordinary ctest run skips it: it re-runs the whole gpu suite under the layers,
+    # which doubles the band's GPU time, so it is run on demand —
+    # `ctest --test-dir build-debug -C Validation -L validation`.
     if (VE_VALIDATION)
         # The MaterialPreview gate binary exists only when the editor is built; pass its
         # path through only when the target was built so the gate runs the two-renderer
@@ -2449,6 +2452,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle-launcher AND TARGET veng_test_gol
         endif ()
 
         add_test(NAME validation_gate
+            CONFIGURATIONS Validation
             COMMAND ${CMAKE_COMMAND}
                 -D VENG_GATE_BIN_HEADLESS_SMOKE=$<TARGET_FILE:veng_test_headless_smoke>
                 -D VENG_GATE_BIN_COMPUTE_DISPATCH=$<TARGET_FILE:veng_test_compute_dispatch>

@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include "support/TempPath.h"
+#include "support/TestCook.h"
 
 #include <doctest/doctest.h>
 #include <fmt/format.h>
@@ -83,7 +84,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
 
-    const VoidResult cookResult = cooker.CookPack(packJson, outArchive);
+    const VoidResult cookResult = Veng::TestSupport::CookCached(cooker, packJson, outArchive);
     REQUIRE(cookResult.has_value());
 
     AssetManager assets(Context, Tasks, Types);
@@ -177,7 +178,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive).has_value());
 
     AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(outArchive).has_value());
@@ -209,7 +210,7 @@ TEST_CASE_FIXTURE(
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive).has_value());
 
     constexpr AssetId TextureId{0x9C41A7E3D2F60B58ULL};
 
@@ -327,7 +328,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive).has_value());
 
     AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(outArchive).has_value());
@@ -440,7 +441,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, outArchive, {}, nullptr, nullptr, nullptr, &config, {})
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive, {}, nullptr, nullptr,
+                                          nullptr, &config, {})
                 .has_value());
 
     AssetManager assets(Context, Tasks, Types);
@@ -547,7 +549,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive).has_value());
 
     AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(outArchive).has_value());
@@ -647,7 +649,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive).has_value());
 
     // The async upload path records onto the per-worker transfer pools.
     Context.InitializeTransferPools(Tasks);
@@ -686,7 +688,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive).has_value());
     Context.InitializeTransferPools(Tasks);
 
     AssetManager assets(Context, Tasks, Types);
@@ -786,7 +788,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
         Cook::Cooker cooker;
         Cook::RegisterBuiltinImporters(cooker);
-        REQUIRE(cooker.CookPack(fixtureDir / half.Pack, outArchive).has_value());
+        REQUIRE(
+            Veng::TestSupport::CookCached(cooker, fixtureDir / half.Pack, outArchive).has_value());
 
         AssetManager assets(Context, Tasks, Types);
         REQUIRE(assets.Mount(outArchive).has_value());

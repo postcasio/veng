@@ -48,6 +48,7 @@
 #include <gpu/fixture.h>
 #include <gpu/golden_image.h>
 #include "support/TempPath.h"
+#include "support/TestCook.h"
 
 using namespace Veng;
 using namespace Veng::Renderer;
@@ -230,7 +231,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive).has_value());
 
     // Text needs the shared glyph systems wired: the face loads into the GlyphSource and
     // its glyphs rasterize on demand into the GlyphAtlas the pass records uploads from.
@@ -292,7 +293,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive).has_value());
 
     // Text needs the shared glyph systems wired: the face loads into the GlyphSource and
     // its glyphs rasterize on demand into the GlyphAtlas the pass records uploads from.
@@ -363,7 +364,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive).has_value());
 
     // Text needs the shared glyph systems wired: the face loads into the GlyphSource and
     // its glyphs rasterize on demand into the GlyphAtlas the pass records uploads from.
@@ -456,7 +457,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive).has_value());
 
     // Text needs the shared glyph systems wired: the face loads into the GlyphSource and
     // its glyphs rasterize on demand into the GlyphAtlas the pass records uploads from.
@@ -576,7 +577,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive).has_value());
 
     AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(outArchive).has_value());
@@ -642,7 +643,7 @@ TEST_CASE_FIXTURE(
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive).has_value());
 
     AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(outArchive).has_value());
@@ -708,7 +709,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive).has_value());
 
     AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(outArchive).has_value());
@@ -772,7 +773,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive).has_value());
 
     AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(outArchive).has_value());
@@ -839,8 +840,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    const VoidResult cooked = cooker.CookPack(packJson, outArchive, references, nullptr, nullptr,
-                                              nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    const VoidResult cooked =
+        Veng::TestSupport::CookCached(cooker, packJson, outArchive, references, nullptr, nullptr,
+                                      nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
     REQUIRE_MESSAGE(cooked.has_value(), cooked.error());
 
     AssetManager assets(Context, Tasks, Types);
@@ -917,8 +919,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    const VoidResult cooked = cooker.CookPack(packJson, outArchive, references, nullptr, nullptr,
-                                              nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    const VoidResult cooked =
+        Veng::TestSupport::CookCached(cooker, packJson, outArchive, references, nullptr, nullptr,
+                                      nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
     REQUIRE_MESSAGE(cooked.has_value(), cooked.error());
 
     AssetManager assets(Context, Tasks, Types);
@@ -1037,7 +1040,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive).has_value());
 
     AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(outArchive).has_value());
@@ -1121,7 +1124,8 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(fixtureDir / "font_pack.json", outArchive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, fixtureDir / "font_pack.json", outArchive)
+                .has_value());
 
     Text::GlyphSource glyphSource;
     Text::GlyphAtlas glyphAtlas(Context, glyphSource);
@@ -1292,8 +1296,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    const VoidResult cooked = cooker.CookPack(packJson, outArchive, references, nullptr, nullptr,
-                                              nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    const VoidResult cooked =
+        Veng::TestSupport::CookCached(cooker, packJson, outArchive, references, nullptr, nullptr,
+                                      nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
     REQUIRE_MESSAGE(cooked.has_value(), cooked.error());
 
     AssetManager assets(Context, Tasks, Types);
@@ -1399,7 +1404,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    REQUIRE(cooker.CookPack(packJson, outArchive).has_value());
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive).has_value());
 
     // Text needs the shared glyph systems wired: the face loads into the GlyphSource and
     // its glyphs rasterize on demand into the GlyphAtlas the pass records uploads from.
@@ -1467,8 +1472,9 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     Cook::Cooker cooker;
     Cook::RegisterBuiltinImporters(cooker);
-    const VoidResult cooked = cooker.CookPack(packJson, outArchive, references, nullptr, nullptr,
-                                              nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
+    const VoidResult cooked =
+        Veng::TestSupport::CookCached(cooker, packJson, outArchive, references, nullptr, nullptr,
+                                      nullptr, nullptr, {}, path(VENG_CORE_SHADER_DIR));
     REQUIRE_MESSAGE(cooked.has_value(), cooked.error());
     AssetManager assets(Context, Tasks, Types);
     REQUIRE(assets.Mount(outArchive).has_value());
