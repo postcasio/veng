@@ -1081,6 +1081,9 @@ namespace Veng
 
         // const Scene when any Ts is const (the read-only path); a mutable Scene otherwise.
         static constexpr bool AnyConst = (std::is_const_v<Ts> || ...);
+        static_assert(!AnyConst || (std::is_const_v<Ts> && ...),
+                      "A View is read-only when any component is const: name every component const "
+                      "to read, or none to write");
         using SceneRef = std::conditional_t<AnyConst, const Scene, Scene>;
         using Pool =
             std::conditional_t<AnyConst, const Detail::ComponentPool, Detail::ComponentPool>;
