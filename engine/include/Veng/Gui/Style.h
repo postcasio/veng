@@ -22,6 +22,8 @@ namespace Veng
 /// font, opacity) feed the draw list. All spatial values are in framebuffer pixels.
 namespace Veng::Gui
 {
+    enum class ElementState : u32;
+
     /// @brief Name of the TextureHandle field an Image's `material` receives its `src` texture in.
     ///
     /// The one convention binding the widget's authored art to its shading material. A material
@@ -389,6 +391,14 @@ namespace Veng::Gui
         /// colour and light a shader fill without the material knowing where the colour came from.
         /// Inert where no `BackgroundMaterial` is set.
         vec4 FillTint{1.0f};
+        /// @brief The interaction states whose gain restarts the element's state age
+        ///        (`Element::StateAge`); every bit set (the default) restarts it on any gained state.
+        ///
+        /// A fill reacting to "this control lit up" names the state that means lit — `selected`
+        /// for a tab, `hover` for a menu entry — so the press, release or focus that rides along
+        /// with it does not replay the reaction. A lost state never restarts the age, whatever
+        /// this holds. Inert where no material fill is drawn.
+        ElementState FillAgeStates = static_cast<ElementState>(~0u);
         /// @brief A texture background fill; empty (the default) leaves the flat/gradient fill alone.
         ///
         /// The resident texture the fill samples, resolved at instantiate and held for the Style's

@@ -819,6 +819,35 @@ namespace Veng::Cook
         return {};
     }
 
+    optional<Gui::ElementState> ParseStateName(std::string_view name)
+    {
+        if (name == "hover")
+        {
+            return Gui::ElementState::Hovered;
+        }
+        if (name == "active")
+        {
+            return Gui::ElementState::Active;
+        }
+        if (name == "focus")
+        {
+            return Gui::ElementState::Focused;
+        }
+        if (name == "disabled")
+        {
+            return Gui::ElementState::Disabled;
+        }
+        if (name == "checked")
+        {
+            return Gui::ElementState::Checked;
+        }
+        if (name == "selected")
+        {
+            return Gui::ElementState::Selected;
+        }
+        return std::nullopt;
+    }
+
     Result<CookedStyleProperty> ParseStyleDeclaration(StyleProperty property,
                                                       std::string_view value, const string& located)
     {
@@ -867,6 +896,31 @@ namespace Veng::Cook
             return EnumProperty(property, ParseElementShape(v), v, located);
         case StyleProperty::ArcCap:
             return EnumProperty(property, ParseArcCap(v), v, located);
+
+        case StyleProperty::FillAgeStates:
+        {
+            // A space-separated list of state names folded into one mask; `none` is the empty mask,
+            // a fill whose state age never restarts.
+            u32 mask = 0;
+            if (v != "none")
+            {
+                for (const std::string_view name : SplitWhitespace(v))
+                {
+                    const optional<Gui::ElementState> state = ParseStateName(name);
+                    if (!state)
+                    {
+                        return std::unexpected(
+                            fmt::format("{}: '{}' is not an interaction state for '{}'", located,
+                                        name, ToString(property)));
+                    }
+                    mask |= static_cast<u32>(*state);
+                }
+            }
+            CookedStyleProperty cp{};
+            cp.Property = static_cast<u32>(property);
+            cp.Unit = mask;
+            return cp;
+        }
 
         case StyleProperty::Overflow:
         {

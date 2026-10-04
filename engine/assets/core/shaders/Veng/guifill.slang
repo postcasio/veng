@@ -75,10 +75,11 @@ float GuiFillRoundedBoxSdf(float2 p, float2 b, float r)
     return GuiRoundedBoxSdf(p, b, r);
 }
 
-// Seconds since the element's interaction state (hover, press, focus, selection, …) last changed,
-// up to the document's MaterialStateWindow, which it reads as "settled". A fill animates a reaction
-// to a state change off it — a glint as a button lights — and the document re-records the draw
-// every frame while it is inside the window.
+// Seconds since the element last gained an interaction state (hover, press, focus, selection, …)
+// its style's fill-age-states names — any, by default — up to the document's MaterialStateWindow,
+// which it reads as "settled". A lost state never restarts it. A fill animates a reaction to a
+// control lighting up off it — a glint — and the document re-records the draw every frame while it
+// is inside the window.
 float GuiFillStateAge(GuiFillInputs input)
 {
     return input.v_Params.z;

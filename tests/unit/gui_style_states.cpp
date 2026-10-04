@@ -374,6 +374,47 @@ TEST_CASE("gui style: the arc and stroke numbers animate; the shape and cap snap
     }
 }
 
+TEST_CASE("gui style: only a gained state the fill names restarts its state age")
+{
+    constexpr auto Any = static_cast<ElementState>(~0u);
+    constexpr ElementState None = ElementState::None;
+    constexpr ElementState Hovered = ElementState::Hovered;
+    constexpr ElementState Active = ElementState::Active;
+    constexpr ElementState Selected = ElementState::Selected;
+
+    // A loss never restarts the age, whatever the fill names: leaving a tab, releasing a press.
+    CHECK_FALSE(RestartsStateAge(Selected | Hovered, None, Any));
+    CHECK_FALSE(RestartsStateAge(Selected | Active, Selected, Any));
+    CHECK_FALSE(RestartsStateAge(Selected | Active, Selected, Selected));
+    // Unset, any gained state restarts it.
+    CHECK(RestartsStateAge(None, Hovered, Any));
+    CHECK(RestartsStateAge(Selected, Selected | Active, Any));
+    // Named, only a gain of a listed state does — a press on a lit tab replays nothing.
+    CHECK(RestartsStateAge(Hovered, Hovered | Selected, Selected));
+    CHECK_FALSE(RestartsStateAge(Selected, Selected | Active, Selected));
+    CHECK_FALSE(RestartsStateAge(None, Hovered, Selected));
+    // A change that gains a listed state while losing another still restarts it.
+    CHECK(RestartsStateAge(Hovered, Selected, Selected));
+    CHECK_FALSE(RestartsStateAge(None, Hovered, None));
+
+    // The property is a name the cooker and runtime share, snaps rather than eases, and a variant
+    // declaring it reaches the computed style.
+    CHECK(ParseStyleProperty("fill-age-states") == StyleProperty::FillAgeStates);
+    CHECK(ToString(StyleProperty::FillAgeStates) == std::string_view{"fill-age-states"});
+    CHECK_FALSE(IsAnimatableProperty(StyleProperty::FillAgeStates));
+    CHECK(Style{}.FillAgeStates == Any);
+
+    Document doc;
+    Element& tab = doc.Add(doc.Root(), ElementKind::Panel);
+    StyleDeclaration decl;
+    decl.Property = StyleProperty::FillAgeStates;
+    decl.Unit = static_cast<u32>(Selected);
+    tab.Variants.push_back(StyleVariant{.State = Hovered, .Declarations = {decl}});
+    doc.SetStyle(tab, Style{});
+    doc.SetState(tab, Hovered);
+    CHECK(tab.ComputedStyle.FillAgeStates == Selected);
+}
+
 TEST_CASE("gui style: a transition on arc-sweep eases a gauge toward its target")
 {
     Document doc;

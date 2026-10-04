@@ -336,6 +336,20 @@ Animation comes from the pass clock (`g_PC.Time` in the fragment, seconds), not 
 parameter per frame — so a sweeping or pulsing fill needs no C++ at all, and a capture that never
 advances the clock renders reproducibly.
 
+Two properties let the cascade drive the shader with no parameter writes either:
+
+- **`fill-tint`** is the fill's vertex colour (`v_Color` in the fragment): an ordinary colour, so a
+  variable binds it, a `:hover` variant changes it and a `transition` eases it.
+- **`GuiFillStateAge(input)`** is the seconds since the element last *gained* an interaction state,
+  so a fill can play a reaction — a glint — as the control lights up. Losing a state never restarts
+  it. **`fill-age-states`** names which gained states count (`hover active focus disabled checked
+  selected`, space-separated, or `none`); unset, any does. Name the state that means "lit" for the
+  control, so the press and release that ride along with it replay nothing:
+
+```css
+.tab { background-material: 0x38FECEB6EB6644F5; fill-age-states: selected; }
+```
+
 ### Drop and inset shadows
 
 `box-shadow` lifts an element off what is behind it — or recesses it into it. The value is

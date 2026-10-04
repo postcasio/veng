@@ -250,10 +250,11 @@ extern "C"
 /// Version 58 grows Gui::Style with FillTint and Gui::Element with StateAge. A module reads and
 /// writes an element and its style through Gui::Document, so a stale module lays both out short and
 /// reads every field after the additions at a shifted offset.
+/// Version 59 grows Gui::Style with FillAgeStates, so a stale module lays a style out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 58u
+#define VENG_MODULE_ABI_VERSION 59u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

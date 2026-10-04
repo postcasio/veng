@@ -215,8 +215,8 @@ namespace Veng::Gui
                    a.ArcStart == b.ArcStart && a.ArcSweep == b.ArcSweep &&
                    a.ArcThickness == b.ArcThickness && a.ArcCapStyle == b.ArcCapStyle &&
                    a.Stroke == b.Stroke && a.StrokeWidth == b.StrokeWidth &&
-                   a.FillTint == b.FillTint && a.StrokeTrim == b.StrokeTrim &&
-                   a.Pointer == b.Pointer;
+                   a.FillTint == b.FillTint && a.FillAgeStates == b.FillAgeStates &&
+                   a.StrokeTrim == b.StrokeTrim && a.Pointer == b.Pointer;
         }
 
         // Whether an element has anything Update must advance: an in-flight tween, or an animation
@@ -2346,13 +2346,14 @@ namespace Veng::Gui
     {
         const auto moved =
             static_cast<ElementState>(static_cast<u32>(element.State) ^ static_cast<u32>(state));
-        element.State = state;
         // Only a material fill reads the age, and only an element drawing one is advanced through
         // the window, so every other element stays settled.
-        if (moved != ElementState::None && HasMaterialFill(element))
+        if (RestartsStateAge(element.State, state, element.ComputedStyle.FillAgeStates) &&
+            HasMaterialFill(element))
         {
             element.StateAge = 0.0f;
         }
+        element.State = state;
         UpdateElement(element, 0.0f);
         // The paint reads a state bit directly as well as through the variants (a focused field's
         // caret), so a moved bit re-emits the element even when no style moved with it.

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Gui/Element.h>
 #include <Veng/Gui/StyleProperty.h>
 #include <Veng/Result.h>
 #include <Veng/Veng.h>
@@ -26,6 +27,12 @@ namespace Veng::Cook
     [[nodiscard]] Result<CookedStyleProperty> ParseStyleDeclaration(Gui::StyleProperty property,
                                                                     std::string_view value,
                                                                     const string& located);
+
+    /// @brief Parses an interaction-state name — the spelling a `:hover`/`:selected` pseudo-class
+    ///        and a `fill-age-states` list share — into its ElementState bit.
+    /// @param name  The state name (`hover`, `active`, `focus`, `disabled`, `checked`, `selected`).
+    /// @return The state's single bit, or nullopt for an unknown name.
+    [[nodiscard]] optional<Gui::ElementState> ParseStateName(std::string_view name);
 
     /// @brief Parses a `box-shadow` shorthand into its geometry and color declarations.
     ///

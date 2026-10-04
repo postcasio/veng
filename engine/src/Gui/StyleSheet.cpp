@@ -238,6 +238,9 @@ namespace Veng::Gui
         case StyleProperty::FillTint:
             style.FillTint = declaration.Values;
             return;
+        case StyleProperty::FillAgeStates:
+            style.FillAgeStates = static_cast<ElementState>(declaration.Unit);
+            return;
         case StyleProperty::StrokeWidth:
             style.StrokeWidth = declaration.Values.x;
             return;

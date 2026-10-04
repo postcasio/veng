@@ -166,6 +166,20 @@ namespace Veng::Gui
         return static_cast<ElementState>(static_cast<u32>(a) & static_cast<u32>(b));
     }
 
+    /// @brief Whether an interaction-mask change restarts a material fill's state age.
+    ///
+    /// Only a **gained** state restarts it, and only one of `ageStates`: a fill's reaction plays
+    /// as a control lights up, never as it goes dark, so a lost bit never restarts the age.
+    /// @param before     The mask before the change.
+    /// @param after      The mask after the change.
+    /// @param ageStates  The states whose gain restarts the age (`Style::FillAgeStates`).
+    /// @return True when `after` holds a bit of `ageStates` that `before` did not.
+    constexpr bool RestartsStateAge(ElementState before, ElementState after, ElementState ageStates)
+    {
+        return (static_cast<u32>(after) & ~static_cast<u32>(before) &
+                static_cast<u32>(ageStates)) != 0u;
+    }
+
     /// @brief One state-scoped style variant: a pseudo-state and the declarations it applies.
     ///
     /// The resolved declarations a stylesheet cascade kept for a single interaction state
@@ -472,13 +486,14 @@ namespace Veng::Gui
 
         /// @brief The interaction-state mask a styling/event layer sets and reads.
         ElementState State = ElementState::None;
-        /// @brief Seconds since `State` last changed, counted up to `MaterialStateWindow`.
+        /// @brief Seconds since `State` last gained a state, counted up to `MaterialStateWindow`.
         ///
         /// What a material fill reads to animate a reaction to a hover, a press or a selection —
         /// a glint as a button lights — through `GuiFillStateAge`. It starts at the window (an
         /// element that has not changed state since it was built reads as settled); on an element
-        /// drawing a material fill it is zeroed by `Document::SetState` on any change of the mask
-        /// and counts up in `Document::Update`. An element drawing none stays at the window.
+        /// drawing a material fill it is zeroed by `Document::SetState` when the mask gains one of
+        /// the style's `FillAgeStates` (see `RestartsStateAge`) — never when it loses one — and
+        /// counts up in `Document::Update`. An element drawing none stays at the window.
         f32 StateAge = MaterialStateWindow;
         /// @brief Whether the element (and its subtree) is laid out and drawn.
         bool Visible = true;

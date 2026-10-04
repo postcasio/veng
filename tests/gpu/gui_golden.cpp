@@ -1547,5 +1547,17 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     document->Update(5.0f);
     CHECK(filled->StateAge == Gui::MaterialStateWindow);
 
+    // A lost state leaves it settled; with fill-age-states named, only a gain of that state
+    // restarts it.
+    document->SetState(*filled, Gui::ElementState::None);
+    CHECK(filled->StateAge == Gui::MaterialStateWindow);
+    style.FillAgeStates = Gui::ElementState::Selected;
+    document->SetStyle(*filled, style);
+    document->Update(0.0f);
+    document->SetState(*filled, Gui::ElementState::Hovered);
+    CHECK(filled->StateAge == Gui::MaterialStateWindow);
+    document->SetState(*filled, Gui::ElementState::Hovered | Gui::ElementState::Selected);
+    CHECK(filled->StateAge == 0.0f);
+
     std::filesystem::remove(outArchive);
 }

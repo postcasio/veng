@@ -713,6 +713,23 @@ TEST_CASE("Cooker: a fill tint parses as a color")
     CHECK_FALSE(ParseStyleDeclaration(Gui::StyleProperty::FillTint, "0.5", located).has_value());
 }
 
+TEST_CASE("Cooker: fill-age-states folds its state names into one mask")
+{
+    const string located = "loc";
+    const Result<CookedStyleProperty> listed =
+        ParseStyleDeclaration(Gui::StyleProperty::FillAgeStates, "selected  hover", located);
+    REQUIRE(listed.has_value());
+    CHECK(listed->Unit ==
+          static_cast<u32>(Gui::ElementState::Selected | Gui::ElementState::Hovered));
+    const Result<CookedStyleProperty> none =
+        ParseStyleDeclaration(Gui::StyleProperty::FillAgeStates, "none", located);
+    REQUIRE(none.has_value());
+    CHECK(none->Unit == 0u);
+    CHECK_FALSE(
+        ParseStyleDeclaration(Gui::StyleProperty::FillAgeStates, "selected glowing", located)
+            .has_value());
+}
+
 TEST_CASE("Cooker: the box-shadow shorthand splits into a geometry and a color declaration")
 {
     const string located = "loc";

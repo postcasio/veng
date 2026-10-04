@@ -177,6 +177,9 @@ namespace Veng::Gui
         StrokeTrim,
         /// @brief A material background fill's tint (Style::FillTint); value is a linear-space vec4.
         FillTint,
+        /// @brief Which gained interaction states restart a material fill's state age
+        /// (Style::FillAgeStates); Unit is an ElementState mask.
+        FillAgeStates,
     };
 
     /// @brief The kind of shadow a BoxShadow declaration's Unit selects.
@@ -193,7 +196,7 @@ namespace Veng::Gui
     /// @brief The number of StyleProperty enumerators — keep in step when appending one.
     ///
     /// The runtime's whole-style property sweeps iterate `[0, StylePropertyCount)`.
-    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::FillTint) + 1;
+    inline constexpr u32 StylePropertyCount = static_cast<u32>(StyleProperty::FillAgeStates) + 1;
 
     /// @brief Canonical USS declaration name of a style property ("flex-direction", "background", …).
     ///

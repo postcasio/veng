@@ -38,35 +38,6 @@ namespace Veng::Cook
             Gui::ElementState State = Gui::ElementState::None;
         };
 
-        optional<Gui::ElementState> ParsePseudoState(std::string_view name)
-        {
-            if (name == "hover")
-            {
-                return Gui::ElementState::Hovered;
-            }
-            if (name == "active")
-            {
-                return Gui::ElementState::Active;
-            }
-            if (name == "focus")
-            {
-                return Gui::ElementState::Focused;
-            }
-            if (name == "disabled")
-            {
-                return Gui::ElementState::Disabled;
-            }
-            if (name == "checked")
-            {
-                return Gui::ElementState::Checked;
-            }
-            if (name == "selected")
-            {
-                return Gui::ElementState::Selected;
-            }
-            return std::nullopt;
-        }
-
         // Copies a name into a fixed-capacity nul-terminated char array, truncating at capacity - 1.
         void CopyName(char* dst, usize capacity, const string& name)
         {
@@ -145,7 +116,7 @@ namespace Veng::Cook
                         return std::unexpected(fmt::format(
                             "{}: ':' must be followed by a pseudo-state name", located));
                     }
-                    const optional<Gui::ElementState> state = ParsePseudoState(tokens[i].Text);
+                    const optional<Gui::ElementState> state = ParseStateName(tokens[i].Text);
                     if (!state)
                     {
                         return std::unexpected(fmt::format(

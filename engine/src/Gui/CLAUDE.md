@@ -342,13 +342,17 @@ and `rotation` for free, and the material cannot widen, replace, or alpha-blur t
   it, a state variant changes it, and a transition eases it: one material serves every element and
   every state, coloured and lit by the cascade rather than by a parameter write per element. (An
   `Image`'s `material` takes the element's `ImageTint` instead, which a driver writes.)
-- **A fill reads how long ago its element's state changed.** `GuiFillStateAge(input)` is the seconds
-  since the element's interaction mask (hover, press, focus, selection, checked, disabled) last
-  changed, up to `MaterialStateWindow`, which reads as settled — so a fill can draw a reaction to a
-  state change, a glint as a button lights, without a driver. It rides the third params lane, which
-  a material fill had no use for. A draw is re-recorded only when its element moves, so
+- **A fill reads how long ago its element lit up.** `GuiFillStateAge(input)` is the seconds since
+  the element's interaction mask (hover, press, focus, selection, checked, disabled) last **gained**
+  a state, up to `MaterialStateWindow`, which reads as settled — so a fill can draw a reaction to a
+  control lighting up, a glint, without a driver. It rides the third params lane, which a material
+  fill had no use for. **A lost state never restarts the age**: a control going dark is not a
+  reaction to replay. And `fill-age-states` (`Style::FillAgeStates`, a space-separated list of
+  `hover active focus disabled checked selected`, or `none`) names which gained states restart it —
+  unset, any does. A tab lit by `:selected` names `selected`, so the press and release that ride
+  along with selecting it, and the hover over it, play nothing; the rule is `RestartsStateAge`. A draw is re-recorded only when its element moves, so
   `Document::Update` keeps an element drawing a material fill in its animating set, re-recording it
-  each frame, for the window after a change (`Element::StateAge`); an element drawing none never
+  each frame, for the window after a restart (`Element::StateAge`); an element drawing none never
   leaves settled. A reaction longer than the window is cut short by it.
 - **`background-material` is the top of the exclusive fill-source order** — above
   `background-gradient`, `background-image`, and `background`. When set, the material *is* the fill;

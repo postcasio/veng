@@ -132,6 +132,8 @@ namespace Veng::Gui
             return "stroke-trim";
         case StyleProperty::FillTint:
             return "fill-tint";
+        case StyleProperty::FillAgeStates:
+            return "fill-age-states";
         }
         return "unknown";
     }
@@ -390,6 +392,10 @@ namespace Veng::Gui
         {
             return StyleProperty::FillTint;
         }
+        if (name == "fill-age-states")
+        {
+            return StyleProperty::FillAgeStates;
+        }
         return std::nullopt;
     }
 
@@ -464,6 +470,7 @@ namespace Veng::Gui
         case StyleProperty::Transition:
         case StyleProperty::Shape:
         case StyleProperty::ArcCap:
+        case StyleProperty::FillAgeStates:
             return false;
         }
         return false;

@@ -264,11 +264,11 @@ namespace Veng::Gui
     };
     static_assert(sizeof(GpuGradient) == 48, "GpuGradient must match the shader's 48-byte record");
 
-    /// @brief How long after an element's state changes a material fill on it keeps being redrawn,
-    ///        in seconds.
+    /// @brief How long after an element's state age restarts a material fill on it keeps being
+    ///        redrawn, in seconds.
     ///
     /// A draw is re-recorded only when something about its element moves, so a fill animating off
-    /// `Element::StateAge` is re-recorded every frame for this long after a change and then left
+    /// `Element::StateAge` is re-recorded every frame for this long after a restart and then left
     /// alone; a reaction a fill draws to a state change has this long to run.
     inline constexpr f32 MaterialStateWindow = 1.0f;
 
@@ -521,7 +521,7 @@ namespace Veng::Gui
         /// @param border    Optional border; a positive width restricts the fill to the ring.
         /// @param tint      Forwarded to the fragment as the vertex color, linear straight-alpha RGBA.
         /// @param uv        UV rectangle the quad interpolates (defaults to the whole 0..1 box).
-        /// @param stateAge  Seconds since the element's state last changed, up to
+        /// @param stateAge  The element's state age (`Element::StateAge`), up to
         ///                  `MaterialStateWindow` (the default, "settled"); the fragment reads it
         ///                  through `GuiFillStateAge`.
         void MaterialFill(const Rect& rect, const MaterialInstance* material,
