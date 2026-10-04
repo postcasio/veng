@@ -256,10 +256,12 @@ extern "C"
 /// Version 61 grows Renderer::CaptureSurface with Enabled ahead of its settings, MeshRenderer and
 /// VisibleMesh with SortPriority, and Ribbon, Trail and RibbonPath with Layer, so a stale module that
 /// builds any of them in code writes its fields short of where the engine reads them.
+/// Version 62 grows Light with SpecularScale, so a stale module that builds a light in code lays it
+/// out short and the engine reads the polygon vertices at a shifted offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 61u
+#define VENG_MODULE_ABI_VERSION 62u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

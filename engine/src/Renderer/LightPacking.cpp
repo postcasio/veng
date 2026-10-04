@@ -713,6 +713,7 @@ namespace Veng::Renderer
                 .Cone = vec4(cosInner, cosOuter, shadowSlot, flags),
                 .Area = area,
                 .AreaNormal = vec4(areaNormal, shadowRadius),
+                .Response = vec4(light.SpecularScale, 0.0f, 0.0f, 0.0f),
             };
         }
 

@@ -367,7 +367,7 @@ void AccumulateLight(ViewConstants vc, LightingSurface s, GpuLight light,
             areaVisibility = AreaShadowVisibility(light, worldPos, N);
         }
         direct.Diffuse += area.Diffuse * rangeFactor * areaVisibility;
-        direct.Specular += area.Specular * rangeFactor * areaVisibility;
+        direct.Specular += area.Specular * rangeFactor * areaVisibility * light.Response.x;
         return;
     }
 
@@ -458,7 +458,7 @@ void AccumulateLight(ViewConstants vc, LightingSurface s, GpuLight light,
 
     LightingResult lit = EvaluateLight(s, L, radiance * attenuation);
     direct.Diffuse += lit.Diffuse * visibility;
-    direct.Specular += lit.Specular * visibility;
+    direct.Specular += lit.Specular * visibility * light.Response.x;
 }
 
 // The response of the surface to the lights of this view's light region that lightMask names (bit i

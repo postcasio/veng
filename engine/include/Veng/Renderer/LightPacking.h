@@ -77,10 +77,11 @@ namespace Veng::Renderer
 
     /// @brief One light packed for the ring-buffered light buffer (set-0 binding 6).
     ///
-    /// std430-compatible, matching the shader's GpuLight byte-for-byte: six vec4s. The
-    /// first four are the punctual-light fields; the last two carry the area-light
+    /// std430-compatible, matching the shader's GpuLight byte-for-byte: seven vec4s. The
+    /// first four are the punctual-light fields; the next two carry the area-light
     /// shape (emitter radius, polygon vertex range into the area-vertex buffer, the
-    /// area-shadow slot, the precomputed world-space area normal, and the shadow source radius).
+    /// area-shadow slot, the precomputed world-space area normal, and the shadow source radius);
+    /// the last carries how the light's response is weighted.
     struct PackedLight
     {
         /// @brief xyz world position, w range.
@@ -106,6 +107,8 @@ namespace Veng::Renderer
         /// with a bounded domain, so the lighting pass caps this lane's *angular* size per
         /// fragment. Keep the two lanes separate; the cap must never reach Area's x.
         vec4 AreaNormal;
+        /// @brief x the specular scale (Light::SpecularScale); y, z and w unused.
+        vec4 Response;
     };
 
     static_assert(sizeof(PackedLight) == BindlessRegistry::LightStride,

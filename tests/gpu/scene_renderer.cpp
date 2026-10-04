@@ -2164,6 +2164,108 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     std::filesystem::remove(outArchive);
 }
 
+// A light's specular scale removes its reflection and leaves its illumination. A face-on brick cube
+// is lit, in turn, by a point light and by a Rect panel between it and the camera, each rendered with
+// its specular at full scale and at zero. At zero the face is nowhere brighter than at full scale,
+// is darker somewhere by a visible part of what the light adds (its specular, gone), and is still
+// lit well above the ambient term (its diffuse, kept) — for a punctual light and an area light alike.
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "scene renderer: a zero specular scale removes a light's reflection and keeps its "
+    "diffuse")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path outArchive = CookAndMountBrick(assets, "veng_gpu_specular_scale.vengpack");
+
+    const AssetResult<AssetHandle<MaterialInstance>> material =
+        assets.LoadSync<MaterialInstance>(AssetId{0x895443});
+    REQUIRE(material.has_value());
+
+    const Ref<Mesh> cube =
+        Mesh::BuildSync(Context, Primitives::Cube(1.4f, *material), "Specular Scale Cube");
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const Entity entity = scene->CreateEntity();
+    scene->Add<Transform>(entity);
+    scene->Add<MeshRenderer>(entity).Mesh = assets.Adopt(cube);
+
+    constexpr uvec2 extent{128, 128};
+    CameraView camera;
+    camera.SetPerspective(glm::radians(45.0f), 1.0f, 0.1f, 100.0f);
+    camera.SetView(vec3(0.0f, 0.0f, 3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+
+    // Bloom and SSAO are off: neither is bit-stable across renders on MoltenVK, and the claim
+    // compares renders texel by texel.
+    const Unique<SceneRenderer> renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .AO = false},
+    });
+
+    const auto luma = [&](const vector<u8>& pixels)
+    {
+        vector<f32> out(static_cast<usize>(extent.x) * extent.y);
+        for (u32 y = 0; y < extent.y; ++y)
+        {
+            for (u32 x = 0; x < extent.x; ++x)
+            {
+                out[static_cast<usize>(y) * extent.x + x] =
+                    glm::dot(DecodeTexel(pixels, extent.x, x, y), vec3(0.2126f, 0.7152f, 0.0722f));
+            }
+        }
+        return out;
+    };
+    const vector<f32> ambient = luma(RenderOutput(Context, *renderer, *scene, camera));
+
+    // The panel faces the cube: a half turn about +Y turns its emitting +Z toward it.
+    const Entity point = scene->CreateEntity();
+    scene->Add<Transform>(point).Position = vec3(0.1f, 0.1f, 1.6f);
+    const Entity rect = scene->CreateEntity();
+    scene->Add<Transform>(rect) =
+        Transform{.Position = vec3(0.1f, 0.1f, 1.6f),
+                  .Rotation = glm::angleAxis(glm::pi<f32>(), vec3(0.0f, 1.0f, 0.0f))};
+    const std::array<std::pair<Entity, Light>, 2> lights{{
+        {point, Light{.Type = LightType::Point, .Intensity = PointLumens(2.0f), .Range = 5.0f}},
+        {rect, Light{.Type = LightType::Rect,
+                     .Intensity = AreaNits(4.0f),
+                     .Range = 5.0f,
+                     .Width = 0.4f,
+                     .Height = 0.4f}},
+    }};
+
+    for (const auto& [lit, authored] : lights)
+    {
+        CAPTURE(static_cast<u32>(authored.Type));
+        scene->Add<Light>(lit) = authored;
+        const vector<f32> full = luma(RenderOutput(Context, *renderer, *scene, camera));
+        scene->Get<Light>(lit).SpecularScale = 0.0f;
+        const vector<f32> diffuse = luma(RenderOutput(Context, *renderer, *scene, camera));
+        std::ignore = scene->Remove<Light>(lit);
+
+        f32 brightened = 0.0f;
+        f32 removed = 0.0f;
+        f32 added = 0.0f;
+        f32 kept = 0.0f;
+        for (usize i = 0; i < full.size(); ++i)
+        {
+            brightened = std::max(brightened, diffuse[i] - full[i]);
+            removed = std::max(removed, full[i] - diffuse[i]);
+            added = std::max(added, full[i] - ambient[i]);
+            kept = std::max(kept, diffuse[i] - ambient[i]);
+        }
+        MESSAGE("specular removed ", removed, " of ", added, " added; diffuse kept ", kept);
+        CHECK(brightened <= 1e-3f);
+        CHECK(removed > 0.01f * added);
+        CHECK(kept > 0.5f * added);
+    }
+
+    std::filesystem::remove(outArchive);
+}
+
 // The per-tile light masks are conservative and tight. A face-on brick cube is lit by a sun, a point
 // light reaching the left of its face, and a small Rect panel reaching its upper right corner, with
 // six point lights hovering between it and the camera, each inside the frustum (so packed) and each

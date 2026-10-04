@@ -527,6 +527,15 @@ namespace Veng
         /// texels nearest the light's own position, where a tile stretched across a large bound has
         /// the least to spend.
         bool CastsShadows{true};
+        /// @brief Scales this light's specular contribution; 0 leaves it diffuse-only.
+        ///
+        /// 1 by default, the physical response. The diffuse term is untouched at every value, so
+        /// this changes how the light reflects, never how much it illuminates. It exists for the
+        /// lights that stand in for something rather than being a source in their own right: a
+        /// fill or bounce light, or a light carrying the spill of a surface that is already drawn.
+        /// Such a light's specular is a reflected image of an emitter nobody sees — on a glossy
+        /// surface, a bright copy of its shape where the real surface is already in view.
+        f32 SpecularScale{1.0f};
         /// @brief Convex polygon vertices in entity-local space, wound CCW about local +Z (Polygon).
         vector<vec3> PolygonVertices;
     };
@@ -1815,6 +1824,8 @@ VE_FIELD(TwoSided, .DisplayName = "Two Sided",
 VE_ARRAY_FIELD(PolygonVertices, .DisplayName = "Polygon Vertices",
                .VisibleIf = VE_WHEN(self.Type == ::Veng::LightType::Polygon))
 VE_FIELD(CastsShadows, .DisplayName = "Casts Shadows")
+VE_FIELD(SpecularScale, .DisplayName = "Specular Scale",
+         .Display = {.Min = 0.0, .Max = 1.0, .Step = 0.05})
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::PlayerInput, 0x5401D36B1EF55045ULL)

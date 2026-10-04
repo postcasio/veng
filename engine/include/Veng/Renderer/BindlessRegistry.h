@@ -763,12 +763,13 @@ namespace Veng::Renderer
         /// @brief The fixed byte stride of one GpuLight entry in the LightBinding
         /// ByteAddressBuffer.
         ///
-        /// The GpuLight struct (six vec4) is 96 bytes; the pass reads the i-th light
+        /// The GpuLight struct (seven vec4) is 112 bytes; the pass reads the i-th light
         /// at (base + i) * LightStride. The first four vec4 are the punctual light
         /// fields (position/range, direction/type, color/intensity, cone/flags); the
-        /// last two carry the area-light shape (sphere radius, polygon vertex
-        /// range, area-shadow slot, and the area normal).
-        static constexpr u32 LightStride = 96;
+        /// next two carry the area-light shape (sphere radius, polygon vertex
+        /// range, area-shadow slot, and the area normal); the last the response weights
+        /// (the specular scale).
+        static constexpr u32 LightStride = 112;
 
         /// @brief The fixed cap on area-light polygon vertices packed per view.
         ///

@@ -299,6 +299,31 @@ TEST_CASE("PackSceneLights: a point/spot source radius packs into Area.x, transf
     CHECK(packed.Lights[1].Area.x == doctest::Approx(0.3f));
 }
 
+TEST_CASE("PackSceneLights: a light's specular scale packs into Response.x, 1 unless authored")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+    const Unique<Scene> scene = Scene::Create(types);
+
+    AddLight(*scene, Light{.Type = LightType::Point, .Range = 5.0f}, vec3(0.0f));
+    AddLight(*scene,
+             Light{.Type = LightType::Rect,
+                   .Range = 5.0f,
+                   .Width = 1.0f,
+                   .Height = 1.0f,
+                   .SpecularScale = 0.0f},
+             vec3(3.0f, 0.0f, 0.0f));
+
+    const PackedSceneLights packed = PackSceneLights(*scene, true, 1024);
+
+    REQUIRE(packed.LightCount == 2);
+    for (u32 i = 0; i < packed.LightCount; ++i)
+    {
+        const bool isRect = packed.Lights[i].DirectionType.w == static_cast<f32>(LightType::Rect);
+        CHECK(packed.Lights[i].Response.x == (isRect ? 0.0f : 1.0f));
+    }
+}
+
 TEST_CASE("PackSceneLights: a default point/spot source radius is zero, so the near field is inert")
 {
     TypeRegistry types;

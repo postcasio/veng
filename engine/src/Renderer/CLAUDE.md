@@ -619,6 +619,14 @@ with no occluder worth resolving — which wants its contribution and not its si
 light is also the worst case for the arm it would take: a perspective tile fit to the whole scene
 bound has least to spend exactly where a near light needs most.
 
+**A light's specular is scaled per light, through `Light::SpecularScale`.** It defaults to 1, the
+physical response; 0 leaves the light diffuse-only. The packed light carries it in its last vec4
+(`Response.x`), and `AccumulateLight` multiplies the light's specular by it — every light type, in
+the deferred pass and the forward light loop alike — while the diffuse term is never touched. A fill
+light wants it for the same reason it wants no shadow: its specular is a reflected image of an
+emitter nobody sees, and on glossy surfaces — glass above all — that reads as a bright copy of the
+light's shape beside the real, already-drawn surface it stands in for.
+
 ### The scene-gizmo layer
 
 **Most of what a scene holds draws nothing**, and `Veng/Renderer/SceneGizmos.h` is the one pass
