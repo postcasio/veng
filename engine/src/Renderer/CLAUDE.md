@@ -835,8 +835,9 @@ composited centre pixel against the tint, the additive sum, and the bloom-masked
 
 ### Ribbons and trails
 
-**`Ribbon` and `Trail` components draw as camera-facing HDR bands** (the components, `RibbonSystem`
-and `SpawnTransientBeam` are in [../Scene/CLAUDE.md](../Scene/CLAUDE.md), "Ribbons and trails").
+**`Ribbon`, `Trail` and `RibbonPath` components draw as camera-facing HDR bands** (the components,
+`RibbonSystem` and `SpawnTransientBeam` are in [../Scene/CLAUDE.md](../Scene/CLAUDE.md), "Ribbons and
+trails").
 `RibbonScenePass` (`Passes/RibbonScenePass.h`) is wired **after the full-resolution translucent pass
 and immediately ahead of the sprite pass**, in both compositing arms, into the same lit target and
 bloom mask. **Why ahead of sprites:** a beam or a trail is a long element that sprite effects stand
@@ -849,13 +850,22 @@ pass writes depth, so neither occludes the other.
   unwired after `RibbonIdleFrameLimit` consecutive empty ones, and a scene that never carries one has
   no pass (the smoke golden is unaffected).
 - **One record per segment, no vertex input.** A `Ribbon` is one segment; a `Trail` is a segment per
-  consecutive pair of its samples plus one to its entity's interpolated position while `Emitting`,
-  with coincident points merged — so a trail contributes **at most `MaxSamples` segments** and a
-  frame's buffer is bounded by ribbons plus trail samples. Each 96-byte `GpuRibbonSegment` carries
-  both ends' positions, widths, colours and opacities, and a tangent per end taken across that
-  point's neighbours, so the two segments meeting at a joint share its edge and a curved trail draws
-  without gaps. The records sit in a host-mapped ring, one region per frame in flight at set 3, as
-  the sprite pass's do.
+  consecutive pair of its samples plus one to its entity's drawn position while `Emitting`, so a
+  trail contributes **at most `MaxSamples` segments**; a `RibbonPath` strip of N distinct points is
+  N − 1 segments open, N closed. Trails and strips run through one joiner (`JoinStrip`): coincident
+  consecutive points merge, and each point's tangent is taken across its neighbours — wrapping on a
+  closed strip, falling back to the segment's own direction at a hairpin whose neighbours coincide
+  — so the two segments meeting at a joint share its edge and a curve draws without gaps or notches,
+  the closing joint included. Each 96-byte `GpuRibbonSegment` carries both ends' positions, widths,
+  colours and opacities and the per-end tangents. The records sit in a host-mapped ring sized at the
+  budget below, one region per frame in flight at set 3, as the sprite pass's do — so a frame's
+  ribbons, trail samples and path segments all draw from one fixed region and never grow it.
+- **A path stands where its entity's meshes draw.** A `RibbonPath`'s local points go through its
+  entity's *drawn* world transform — interpolated by the view's alpha while the scene carries motion
+  history, the current pose at alpha 0, with any `PredictionError` offset applied — the same pose
+  the mesh gather resolves, so a path parented under a moving body rides it without sliding. Its
+  strip widths scale by the length of the world X axis, as a sprite's size does. A trail's head is
+  placed by the same pose.
 - **Positions are rebased to the eye on the CPU, in double.** The gather subtracts the camera's
   position from every point before upload and the vertex stage rotates the eye-relative point by the
   View matrix's rotation alone, so no large world coordinate is pushed through the view translation
@@ -876,7 +886,8 @@ pass writes depth, so neither occludes the other.
 
 `tests/gpu/ribbon_pass.cpp` checks a ribbon's centre-line colour through each blend, a trail
 lighting its path, and the bloom-masked path; `tests/unit/ribbon.cpp` checks the trail ring's
-bounds, the stationary trail's empty gather, the packing bound, and a pooled beam's fade and return.
+bounds, the stationary trail's empty gather, the packing bound, a pooled beam's fade and return, and
+a path's segment counts, shared joints, merging, and placement by its entity's (interpolated) pose.
 
 ### Forward lighting for translucent surfaces
 

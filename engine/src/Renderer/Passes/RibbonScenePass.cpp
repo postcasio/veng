@@ -20,7 +20,9 @@
 #include <Veng/Renderer/PipelineLayout.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/RemoteInterpolationSystem.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/Transforms.h>
 
 namespace Veng::Renderer
 {
@@ -35,7 +37,7 @@ namespace Veng::Renderer
         // Six vertices (two triangles) per segment quad.
         constexpr u32 RibbonVertexCount = 6;
 
-        // Two trail points closer than this, in world units, are one point: a zero-length segment
+        // Two strip points closer than this, in world units, are one point: a zero-length segment
         // has no direction to face the camera about.
         constexpr f64 CoincidentDistance = 1e-4;
 
@@ -57,8 +59,8 @@ namespace Veng::Renderer
             return *shader;
         }
 
-        // One point along a trail, before it is joined to its neighbours.
-        struct TrailPoint
+        // One point along a strip or a trail, before it is joined to its neighbours.
+        struct StripPoint
         {
             dvec3 Position{0.0};
             f32 Width = 0.0f;
@@ -74,8 +76,7 @@ namespace Veng::Renderer
             vector<std::pair<f32, GpuRibbonSegment>> Sorted;
             u32 Gathered = 0;
 
-            void Add(const dvec3& start, const dvec3& end, const f32 startWidth, const f32 endWidth,
-                     const vec4& startColor, const vec4& endColor, const vec3& startTangent,
+            void Add(const StripPoint& start, const StripPoint& end, const vec3& startTangent,
                      const vec3& endTangent, const bool additive)
             {
                 if (Gathered >= MaxRibbonSegmentsPerFrame)
@@ -85,13 +86,13 @@ namespace Veng::Renderer
                 }
                 ++Gathered;
 
-                const vec3 relativeStart(start - Eye);
-                const vec3 relativeEnd(end - Eye);
+                const vec3 relativeStart(start.Position - Eye);
+                const vec3 relativeEnd(end.Position - Eye);
                 const GpuRibbonSegment segment{
-                    .Start = vec4(relativeStart, startWidth),
-                    .End = vec4(relativeEnd, endWidth),
-                    .StartColor = startColor,
-                    .EndColor = endColor,
+                    .Start = vec4(relativeStart, start.Width),
+                    .End = vec4(relativeEnd, end.Width),
+                    .StartColor = start.Color,
+                    .EndColor = end.Color,
                     .StartTangent = vec4(startTangent, 0.0f),
                     .EndTangent = vec4(endTangent, 0.0f),
                 };
@@ -114,8 +115,59 @@ namespace Veng::Renderer
             return length > 0.0 ? vec3(delta / length) : vec3(0.0f);
         }
 
+        // A point coincident with the last one replaces it: for a trail the newer is the brighter.
+        void AppendPoint(vector<StripPoint>& points, const StripPoint& point)
+        {
+            if (!points.empty() &&
+                glm::distance(points.back().Position, point.Position) < CoincidentDistance)
+            {
+                points.back() = point;
+                return;
+            }
+            points.push_back(point);
+        }
+
+        // Joins merged points into segments; a closed run of three or more also joins the last
+        // point back to the first. Each point's tangent spans its neighbours (wrapping when closed),
+        // so both segments meeting at a joint turn about the same edge there.
+        void JoinStrip(const vector<StripPoint>& points, const bool closed, const bool additive,
+                       SegmentSink& sink)
+        {
+            const usize count = points.size();
+            if (count < 2)
+            {
+                return;
+            }
+            const bool wraps = closed && count > 2;
+            const auto tangentAt = [&points, count, wraps](const usize i, const vec3& segment)
+            {
+                const usize previous = wraps ? (i + count - 1) % count : (i == 0 ? 0 : i - 1);
+                const usize next = wraps ? (i + 1) % count : std::min(i + 1, count - 1);
+                // A hairpin doubles straight back, leaving its neighbours no span to face about.
+                if (glm::distance(points[previous].Position, points[next].Position) <
+                    CoincidentDistance)
+                {
+                    return segment;
+                }
+                return Direction(points[previous].Position, points[next].Position);
+            };
+            const usize segments = wraps ? count : count - 1;
+            for (usize i = 0; i < segments; ++i)
+            {
+                const usize j = (i + 1) % count;
+                const StripPoint& a = points[i];
+                const StripPoint& b = points[j];
+                if (a.Color.a <= 0.0f && b.Color.a <= 0.0f)
+                {
+                    continue;
+                }
+                const vec3 segment = Direction(a.Position, b.Position);
+                sink.Add(a, b, tangentAt(i, segment), tangentAt(j, segment), additive);
+            }
+        }
+
         void GatherTrail(const Trail& trail, const optional<vec3> head, SegmentSink& sink,
-                         vector<TrailPoint>& points)
+                         vector<StripPoint>& points)
         {
             if (trail.Lifetime <= 0.0f)
             {
@@ -126,53 +178,71 @@ namespace Veng::Renderer
             const auto pointAt = [&trail](const vec3& position, const f32 age)
             {
                 const f32 t = std::clamp(age / trail.Lifetime, 0.0f, 1.0f);
-                return TrailPoint{
+                return StripPoint{
                     .Position = dvec3(position),
                     .Width = trail.Width * (1.0f + (trail.TailWidthScale - 1.0f) * t),
                     .Color = vec4(trail.Color, trail.Opacity * (1.0f - t)),
                 };
             };
-            // A point coincident with the last one replaces it: the newer is the brighter.
-            const auto append = [&points](const TrailPoint& point)
-            {
-                if (!points.empty() &&
-                    glm::distance(points.back().Position, point.Position) < CoincidentDistance)
-                {
-                    points.back() = point;
-                    return;
-                }
-                points.push_back(point);
-            };
 
             points.clear();
             for (const TrailSample& sample : trail.Samples)
             {
-                append(pointAt(sample.Position, sample.Age));
+                AppendPoint(points, pointAt(sample.Position, sample.Age));
             }
             if (head)
             {
-                append(pointAt(*head, 0.0f));
+                AppendPoint(points, pointAt(*head, 0.0f));
             }
+            JoinStrip(points, false, trail.Additive, sink);
+        }
 
-            // Each point's tangent spans its neighbours, so both segments meeting at a joint turn
-            // about the same edge there.
-            const usize count = points.size();
-            const auto tangentAt = [&points, count](const usize i)
+        void GatherPath(const RibbonPath& path, const mat4& world, SegmentSink& sink,
+                        vector<StripPoint>& points)
+        {
+            const glm::dmat4 transform(world);
+            const f64 scale = glm::length(dvec3(transform[0]));
+            for (const RibbonStrip& strip : path.Strips)
             {
-                return Direction(points[i == 0 ? 0 : i - 1].Position,
-                                 points[std::min(i + 1, count - 1)].Position);
-            };
-            for (usize i = 0; i + 1 < count; ++i)
-            {
-                const TrailPoint& a = points[i];
-                const TrailPoint& b = points[i + 1];
-                if (a.Color.a <= 0.0f && b.Color.a <= 0.0f)
+                if (strip.Opacity <= 0.0f || strip.Points.size() < 2)
                 {
                     continue;
                 }
-                sink.Add(a.Position, b.Position, a.Width, b.Width, a.Color, b.Color, tangentAt(i),
-                         tangentAt(i + 1), trail.Additive);
+                const auto width = static_cast<f32>(strip.Width * scale);
+                const vec4 color(strip.Color, strip.Opacity);
+                points.clear();
+                for (const vec3& local : strip.Points)
+                {
+                    AppendPoint(points,
+                                StripPoint{
+                                    .Position = dvec3(transform * glm::dvec4(dvec3(local), 1.0)),
+                                    .Width = width,
+                                    .Color = color,
+                                });
+                }
+                // A closed strip authored with its first point repeated at the end closes once.
+                if (strip.Closed && points.size() > 2 &&
+                    glm::distance(points.back().Position, points.front().Position) <
+                        CoincidentDistance)
+                {
+                    points.pop_back();
+                }
+                JoinStrip(points, strip.Closed, path.Additive, sink);
             }
+        }
+
+        // The pose an entity's meshes draw at: interpolated while the scene interpolates, the
+        // current one at alpha 0, and offset by any prediction smoothing still decaying.
+        mat4 DrawnWorld(const Scene& scene, const Entity entity, const f32 alpha)
+        {
+            mat4 world = alpha != 0.0f && scene.HasTransformInterpolation()
+                             ? scene.GetInterpolatedWorldTransform(entity, alpha)
+                             : WorldMatrix(scene, entity);
+            if (const auto* error = scene.TryGet<PredictionError>(entity))
+            {
+                world = ApplyPredictionError(world, *error);
+            }
+            return world;
         }
     }
 
@@ -203,21 +273,32 @@ namespace Veng::Renderer
                 continue;
             }
             const vec3 tangent = Direction(from, to);
-            sink.Add(from, to, ribbon.WidthFrom, ribbon.WidthTo,
-                     vec4(ribbon.ColorFrom, ribbon.OpacityFrom * fade),
-                     vec4(ribbon.ColorTo, ribbon.OpacityTo * fade), tangent, tangent,
-                     ribbon.Additive);
+            sink.Add({.Position = from,
+                      .Width = ribbon.WidthFrom,
+                      .Color = vec4(ribbon.ColorFrom, ribbon.OpacityFrom * fade)},
+                     {.Position = to,
+                      .Width = ribbon.WidthTo,
+                      .Color = vec4(ribbon.ColorTo, ribbon.OpacityTo * fade)},
+                     tangent, tangent, ribbon.Additive);
         }
 
-        vector<TrailPoint> points;
+        vector<StripPoint> points;
         for (auto [entity, trail] : scene.View<Trail>())
         {
             optional<vec3> head;
             if (trail.Emitting && scene.Has<Transform>(entity))
             {
-                head = vec3(scene.GetInterpolatedWorldTransform(entity, alpha)[3]);
+                head = vec3(DrawnWorld(scene, entity, alpha)[3]);
             }
             GatherTrail(trail, head, sink, points);
+        }
+
+        for (auto [entity, path] : scene.View<RibbonPath>())
+        {
+            if (!path.Strips.empty() && scene.Has<Transform>(entity))
+            {
+                GatherPath(path, DrawnWorld(scene, entity, alpha), sink, points);
+            }
         }
 
         // The camera looks down -Z, so the most negative view-space z is the farthest segment.

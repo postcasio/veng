@@ -221,12 +221,13 @@ interpolation), and `FlipbookSprite` (plays an `AssetHandle<Flipbook>` as a came
 `SpriteBlend` of `Asset`, `Alpha` or `Additive`; the View-phase `FlipbookSystem` advances its `Time`
 and sets its runtime-only `Finished` once a one-shot sequence has played, and a finished sprite
 draws nothing — see [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Flipbook sprites"), and
-`Ribbon` and `Trail` (see [Ribbons and trails](#ribbons-and-trails) below).
+`Ribbon`, `Trail` and `RibbonPath` (see [Ribbons and trails](#ribbons-and-trails) below).
 
 ## Ribbons and trails
 
 **A `Ribbon` is a straight camera-facing band between two world points; a `Trail` is a band through
-the recent positions of the entity it sits on.** Both are presentation (never replicated, drawn by
+the recent positions of the entity it sits on; a `RibbonPath` is an authored shape of polylines that
+rides its entity.** All three are presentation (never replicated, drawn by
 the renderer's ribbon pass — [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Ribbons and trails"),
 carry HDR colour that feeds bloom, and choose `Additive` (order-free light) or alpha-over.
 
@@ -244,6 +245,17 @@ carry HDR colour that feeds bloom, and choose `Additive` (order-free light) or a
   **`AttachTrail(scene, entity, trail)`** adds or replaces one with its samples cleared, so a reused
   or teleported entity starts fresh instead of streaking from where it stood. A prefab may carry a
   `Trail`; it stands on every peer that instantiates the prefab.
+- **`RibbonPath`** — `Strips`, each a `RibbonStrip` of `Points` in the entity's **local** space with
+  its own `Width`, `Color`, `Opacity` and `Closed`, all drawn `Additive` or alpha-over together. The
+  points follow the entity's drawn (interpolated) world transform, so a wireframe, a drawn orbit, a
+  range ring or an in-world reticle moves, turns and scales with what carries it — one entity and no
+  per-frame world-space bookkeeping, where a `Ribbon` per segment would need both. The entity's world
+  scale multiplies `Width`; a path on an entity without a `Transform` draws nothing. A closed strip
+  joins its last point to its first with a shared joint (a circle of N points is N segments with no
+  seam), coincident consecutive points merge, and a strip of fewer than two distinct points draws
+  nothing. The strips are fully reflected (`VE_ARRAY_FIELD`), so a prefab can author a static
+  shape, and are equally plain data a system rewrites every frame; nothing advances them, and a
+  floating origin's re-base reaches them through the entity's `Transform`.
 - **`RibbonSystem`** (`Veng/Scene/RibbonSystem.h`) also advances every `Ribbon`'s `Age`, so a level
   lists it for its trails to record and its ribbons to fade.
 - **A floating origin re-bases them with `OffsetRibbons(scene, offset)`.** A scene drawn about a

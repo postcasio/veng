@@ -1,11 +1,13 @@
-// Ribbons and trails, device-free: a trail's sample ring stays within MaxSamples and Lifetime and
-// empties when its entity stops, a re-base of the origin carries every ribbon and sample with it,
-// the frame's packed segments stay bounded by the ribbons plus the trails' samples, and a pooled
-// beam fades over its lifetime and returns to the pool.
+// Ribbons, trails and ribbon paths, device-free: a trail's sample ring stays within MaxSamples and
+// Lifetime and empties when its entity stops, a re-base of the origin carries every ribbon and
+// sample with it, the frame's packed segments stay bounded by the ribbons plus the trails' samples,
+// a pooled beam fades over its lifetime and returns to the pool, and a path's strips join into the
+// expected segments with shared joints, placed by their entity's drawn pose.
 
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <numbers>
 
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
@@ -43,6 +45,24 @@ namespace
             Renderer::RibbonDrawPlan plan;
             Renderer::GatherRibbons(*World, Camera, 0.0f, plan);
             return plan.GetSegmentCount();
+        }
+
+        // Gathers the scene's segments at @p alpha.
+        [[nodiscard]] Renderer::RibbonDrawPlan Gather(const f32 alpha = 0.0f) const
+        {
+            Renderer::RibbonDrawPlan plan;
+            Renderer::GatherRibbons(*World, Camera, alpha, plan);
+            return plan;
+        }
+
+        // Stands a path of the given strips on a new entity at @p pose.
+        Entity AddPath(const vector<RibbonStrip>& strips, const Transform& pose = {},
+                       const bool additive = true) const
+        {
+            const Entity entity = World->CreateEntity();
+            World->Add<Transform>(entity, pose);
+            World->Add<RibbonPath>(entity, RibbonPath{.Strips = strips, .Additive = additive});
+            return entity;
         }
 
         // Moves the entity to @p position and advances its trail by a frame.
@@ -256,4 +276,165 @@ TEST_CASE("A transient beam fades over its lifetime, then returns to the pool")
     CHECK_FALSE(scene.GetEffectPool()->IsLive(beam));
     CHECK_FALSE(scene.Has<Ribbon>(beam));
     CHECK(opacity() == 0.0f);
+}
+
+namespace
+{
+    // The world position a segment end stands at, undoing the gather's rebase to the eye.
+    vec3 WorldPoint(const RibbonScene& scene, const vec4& relative)
+    {
+        return vec3(relative) + scene.Camera.GetPosition();
+    }
+
+    // N points evenly round a circle of @p radius in the local XY plane.
+    vector<vec3> Circle(const u32 count, const f32 radius)
+    {
+        vector<vec3> points;
+        for (u32 i = 0; i < count; ++i)
+        {
+            const f32 angle =
+                2.0f * std::numbers::pi_v<f32> * static_cast<f32>(i) / static_cast<f32>(count);
+            points.emplace_back(radius * std::cos(angle), radius * std::sin(angle), 0.0f);
+        }
+        return points;
+    }
+}
+
+TEST_CASE("A closed strip of N points draws N segments, every joint shared, the seam included")
+{
+    const RibbonScene fixture;
+    constexpr u32 count = 24;
+    fixture.AddPath({RibbonStrip{.Points = Circle(count, 2.0f), .Closed = true}});
+
+    const Renderer::RibbonDrawPlan plan = fixture.Gather();
+    REQUIRE(plan.Additive.size() == count);
+    CHECK(plan.Alpha.empty());
+
+    // Each segment's end tangent is its successor's start tangent, wrapping from the last to the
+    // first; and on a regular polygon a joint's tangent is square to its radius.
+    f32 worstShared = 0.0f;
+    f32 worstSquare = 0.0f;
+    for (usize i = 0; i < count; ++i)
+    {
+        const Renderer::GpuRibbonSegment& segment = plan.Additive[i];
+        const Renderer::GpuRibbonSegment& next = plan.Additive[(i + 1) % count];
+        worstShared =
+            std::max(worstShared, glm::length(vec3(segment.EndTangent) - vec3(next.StartTangent)));
+        worstShared = std::max(worstShared, glm::length(WorldPoint(fixture, segment.End) -
+                                                        WorldPoint(fixture, next.Start)));
+        worstSquare = std::max(worstSquare, std::abs(glm::dot(vec3(segment.StartTangent),
+                                                              WorldPoint(fixture, segment.Start))));
+    }
+    CHECK(worstShared < 1e-4f);
+    CHECK(worstSquare < 1e-4f);
+
+    // The first point repeated at the end closes the strip once, not twice.
+    vector<vec3> repeated = Circle(count, 2.0f);
+    repeated.push_back(repeated.front());
+    const RibbonScene again;
+    again.AddPath({RibbonStrip{.Points = repeated, .Closed = true}});
+    CHECK(again.Gather().GetSegmentCount() == count);
+}
+
+TEST_CASE("An open strip of N distinct points draws N - 1 segments, merging coincident points")
+{
+    const RibbonScene fixture;
+    const vector<vec3> zigzag{vec3(0.0f), vec3(1.0f, 1.0f, 0.0f), vec3(2.0f, 0.0f, 0.0f),
+                              vec3(3.0f, 1.0f, 0.0f), vec3(4.0f, 0.0f, 0.0f)};
+    // The same five points, each doubled or nudged within the coincidence distance.
+    vector<vec3> stuttered;
+    for (const vec3& point : zigzag)
+    {
+        stuttered.push_back(point);
+        stuttered.push_back(point + vec3(0.0f, 0.0f, 1e-6f));
+    }
+    fixture.AddPath({RibbonStrip{.Points = zigzag}, RibbonStrip{.Points = stuttered}}, Transform{},
+                    false);
+
+    const Renderer::RibbonDrawPlan plan = fixture.Gather();
+    CHECK(plan.Additive.empty());
+    CHECK(plan.Alpha.size() == 2 * (zigzag.size() - 1));
+
+    // A hairpin's joint still faces somewhere: no tangent degenerates.
+    const RibbonScene hairpin;
+    hairpin.AddPath({RibbonStrip{.Points = {vec3(0.0f), vec3(1.0f, 0.0f, 0.0f), vec3(0.0f)}}});
+    const Renderer::RibbonDrawPlan back = hairpin.Gather();
+    REQUIRE(back.Additive.size() == 2);
+    f32 shortest = 1.0f;
+    for (const Renderer::GpuRibbonSegment& segment : back.Additive)
+    {
+        shortest = std::min({shortest, glm::length(vec3(segment.StartTangent)),
+                             glm::length(vec3(segment.EndTangent))});
+    }
+    CHECK(shortest == doctest::Approx(1.0f));
+}
+
+TEST_CASE("A strip of fewer than two distinct points, or none visible, draws nothing")
+{
+    RibbonScene fixture;
+    fixture.AddPath({
+        RibbonStrip{},
+        RibbonStrip{.Points = {vec3(1.0f)}},
+        RibbonStrip{.Points = {vec3(1.0f), vec3(1.0f), vec3(1.0f, 1.0f, 1.00001f)}, .Closed = true},
+        RibbonStrip{.Points = {vec3(0.0f), vec3(1.0f)}, .Opacity = 0.0f},
+    });
+    // A path off a Transform-less entity draws nothing either.
+    const Entity loose = fixture.World->CreateEntity();
+    fixture.World->Add<RibbonPath>(
+        loose, RibbonPath{.Strips = {RibbonStrip{.Points = {vec3(0.0f), vec3(1.0f)}}}});
+    CHECK(fixture.Gather().IsEmpty());
+
+    // Two distinct points closed draw their one segment, not a doubled-back pair.
+    fixture.AddPath({RibbonStrip{.Points = {vec3(0.0f), vec3(1.0f)}, .Closed = true}});
+    CHECK(fixture.Gather().GetSegmentCount() == 1);
+}
+
+TEST_CASE("A path's points and widths follow its entity's translation, rotation and scale")
+{
+    const RibbonScene fixture;
+    const Transform pose{
+        .Position = vec3(3.0f, -2.0f, 1.0f),
+        .Rotation = glm::angleAxis(0.7f, glm::normalize(vec3(1.0f, 2.0f, 0.5f))),
+        .Scale = vec3(2.5f),
+    };
+    const vector<vec3> local{vec3(1.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, -1.0f),
+                             vec3(-1.0f, 0.5f, 2.0f)};
+    fixture.AddPath({RibbonStrip{.Points = local, .Width = 0.04f}}, pose);
+
+    const Renderer::RibbonDrawPlan plan = fixture.Gather();
+    REQUIRE(plan.Additive.size() == 2);
+    const auto expected = [&pose](const vec3& point)
+    { return pose.Position + pose.Rotation * (pose.Scale * point); };
+    f32 worst = 0.0f;
+    f32 widest = 0.0f;
+    f32 narrowest = 1e9f;
+    for (usize i = 0; i < plan.Additive.size(); ++i)
+    {
+        const Renderer::GpuRibbonSegment& segment = plan.Additive[i];
+        worst =
+            std::max({worst, glm::length(WorldPoint(fixture, segment.Start) - expected(local[i])),
+                      glm::length(WorldPoint(fixture, segment.End) - expected(local[i + 1]))});
+        widest = std::max({widest, segment.Start.w, segment.End.w});
+        narrowest = std::min({narrowest, segment.Start.w, segment.End.w});
+    }
+    CHECK(worst < 1e-4f);
+    CHECK(narrowest == doctest::Approx(0.04f * 2.5f));
+    CHECK(widest == doctest::Approx(0.04f * 2.5f));
+}
+
+TEST_CASE("A path rides its entity's interpolated pose between two ticks")
+{
+    RibbonScene fixture;
+    const Entity entity =
+        fixture.AddPath({RibbonStrip{.Points = {vec3(0.0f), vec3(1.0f, 0.0f, 0.0f)}}});
+    fixture.World->SnapshotTransformHistory();
+    fixture.World->Get<Transform>(entity).Position = vec3(0.0f, 4.0f, 0.0f);
+    fixture.World->SnapshotTransformHistory();
+    REQUIRE(fixture.World->HasTransformInterpolation());
+
+    // Half a tick on, the path stands halfway between the two poses, as the entity's meshes do.
+    const Renderer::RibbonDrawPlan plan = fixture.Gather(0.5f);
+    REQUIRE(plan.Additive.size() == 1);
+    CHECK(glm::length(WorldPoint(fixture, plan.Additive.front().Start) - vec3(0.0f, 2.0f, 0.0f)) <
+          1e-4f);
 }

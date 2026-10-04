@@ -66,25 +66,29 @@ namespace Veng::Renderer
         [[nodiscard]] usize GetSegmentCount() const { return Alpha.size() + Additive.size(); }
     };
 
-    /// @brief Gathers a scene's Ribbons and Trails into a frame's plan.
+    /// @brief Gathers a scene's Ribbons, Trails and RibbonPaths into a frame's plan.
     ///
     /// A Ribbon contributes one segment, From to To, with its Lifetime fade applied; one that is
     /// degenerate, fully faded, or transparent at both ends contributes none. A Trail contributes a
     /// segment between each consecutive pair of its samples, then from the newest to its entity's
-    /// position at the render fraction while it is Emitting; coincident points are merged, so a
-    /// trail holding N samples contributes at most N segments. Each point's tangent is taken across
-    /// its neighbours, so adjacent segments share their joint's edge and a curved trail draws
-    /// seamless. Positions are rebased to the camera's eye in double precision. The result is split
-    /// into the alpha set (sorted back to front on view depth) and the additive set; gathering stops
-    /// at MaxRibbonSegmentsPerFrame, counting the rest as dropped.
+    /// drawn position while it is Emitting, so a trail holding N samples contributes at most N
+    /// segments. A RibbonPath's strips are placed by its entity's drawn world transform and each
+    /// contributes a segment per consecutive pair of its points, plus one from the last back to the
+    /// first when Closed. In trails and strips coincident consecutive points merge, and each point's
+    /// tangent is taken across its neighbours, so adjacent segments share their joint's edge and a
+    /// curve draws seamless. An entity's drawn pose is the one its meshes draw at: interpolated by
+    /// @p alpha while the scene carries motion history, the current one otherwise. Positions are
+    /// rebased to the camera's eye in double precision. The result is split into the alpha set
+    /// (sorted back to front on view depth) and the additive set; gathering stops at
+    /// MaxRibbonSegmentsPerFrame, counting the rest as dropped.
     /// @param scene   The scene to gather from.
     /// @param camera  The viewpoint: the render origin, and the back-to-front sort.
-    /// @param alpha   The render interpolation fraction, placing each trail's head.
+    /// @param alpha   The render interpolation fraction, placing trail heads and paths.
     /// @param plan    The plan to fill; cleared first.
     void GatherRibbons(const Scene& scene, const CameraView& camera, f32 alpha,
                        RibbonDrawPlan& plan);
 
-    /// @brief Draws the frame's ribbons and trails into the lit scene color.
+    /// @brief Draws the frame's ribbons, trails and ribbon paths into the lit scene color.
     ///
     /// Wired after the full-resolution translucent pass and immediately ahead of the sprite pass,
     /// so ribbons composite over translucent surfaces, sprite effects standing on a beam or a trail

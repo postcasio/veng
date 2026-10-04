@@ -1420,6 +1420,49 @@ namespace Veng
         vector<TrailSample> Samples;
     };
 
+    /// @brief One polyline of a RibbonPath, in its entity's local space.
+    ///
+    /// Consecutive points closer than about a ten-thousandth of a world unit merge into one; a strip
+    /// left with fewer than two distinct points draws nothing. Each joint's tangent is taken across
+    /// its two neighbours (wrapping at the ends of a closed strip), so the segments meeting there
+    /// share their edge and a curve drawn as a fine polyline shows neither a gap nor a notch.
+    struct RibbonStrip
+    {
+        /// @brief The polyline's points, in the entity's local space.
+        vector<vec3> Points;
+        /// @brief Joins the last point back to the first, with a shared joint there; a closed strip
+        ///        of N distinct points draws N segments, an open one N − 1.
+        bool Closed = false;
+        /// @brief The band's world width at unit scale; the entity's world scale multiplies it.
+        f32 Width = 0.01f;
+        /// @brief The linear HDR colour; above 1 drives bloom.
+        vec3 Color{1.0f};
+        /// @brief The opacity (for an additive path, its brightness scale); 0 hides the strip.
+        f32 Opacity = 1.0f;
+    };
+
+    /// @brief An authored shape of camera-facing ribbons that rides its entity: a wireframe, a
+    ///        drawn orbit, a range ring, a reticle standing in the world.
+    ///
+    /// Each strip is a polyline in the entity's local space, drawn by the renderer's ribbon pass
+    /// exactly as a Trail is — camera-facing about its own axis, floored at about a pixel wide with
+    /// its opacity scaled to match, depth-tested against the opaque scene without writing depth,
+    /// additive or sorted alpha-over, and glowing through the bloom mask by luminance. The points
+    /// are placed by the entity's interpolated world transform, the pose its meshes draw at, so a
+    /// path parented under a moving, turning entity rides it without judder, and the entity's world
+    /// scale (the length of its world X axis, as for FlipbookSprite::Size) multiplies every strip's
+    /// Width. A path on an entity without a Transform draws nothing, as a mesh's does. The strips are
+    /// plain data a system may rewrite every frame — points, colours, the strip count — and the
+    /// pass draws whatever they hold. Presentation only, never replicated, and nothing advances
+    /// it; a floating origin's re-base reaches it through its entity's Transform.
+    struct RibbonPath
+    {
+        /// @brief The polylines drawn, each with its own width and colour.
+        vector<RibbonStrip> Strips;
+        /// @brief Adds light onto the scene (order-free) rather than compositing over it by coverage.
+        bool Additive = true;
+    };
+
     /// @brief A scene-authored fullscreen post-process effect the renderer runs over scene color.
     ///
     /// Resolved by the renderer via View<PostProcessEffect> each Execute — the lights model: every
@@ -2022,6 +2065,20 @@ VE_FIELD(MinSampleDistance, .DisplayName = "Min Sample Distance",
          .Display = {.Min = 0.0, .Step = 0.01})
 VE_FIELD(Additive, .DisplayName = "Additive")
 VE_FIELD(Emitting, .DisplayName = "Emitting")
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::RibbonStrip, 0x42276DD8FF4B9918ULL)
+VE_ARRAY_FIELD(Points, .DisplayName = "Points", .Tooltip = "Polyline points in the entity's space")
+VE_FIELD(Closed, .DisplayName = "Closed", .Tooltip = "Joins the last point back to the first")
+VE_FIELD(Width, .DisplayName = "Width", .Tooltip = "World width at unit scale",
+         .Display = {.Min = 0.0, .Step = 0.001})
+VE_FIELD(Color, .DisplayName = "Color", .Tooltip = "Linear HDR colour")
+VE_FIELD(Opacity, .DisplayName = "Opacity", .Display = {.Min = 0.0, .Max = 1.0})
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::RibbonPath, 0x9BCA6107D31AB0F6ULL)
+VE_ARRAY_FIELD(Strips, .DisplayName = "Strips")
+VE_FIELD(Additive, .DisplayName = "Additive")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::PostProcessEffect, 0xE760A6F6C3F08F48ULL)
