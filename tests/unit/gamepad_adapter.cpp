@@ -59,8 +59,9 @@ TEST_CASE("A gamepad axis binding resolves against the designated pad's stick")
 
     GamepadState pad;
     pad.Connected = true;
-    pad.Axes[usize(GamepadAxis::LeftX)] = 0.5f;
-    pad.Axes[usize(GamepadAxis::LeftY)] = -1.0f; // stick up: −Y raw → +Y Move via the −1 scale
+    // A full deflection up and to the right, which the radial deadzone leaves full.
+    pad.Axes[usize(GamepadAxis::LeftX)] = 0.6f;
+    pad.Axes[usize(GamepadAxis::LeftY)] = -0.8f; // stick up: −Y raw → +Y Move via the −1 scale
     IngestOnePad(input, pad);
 
     const RawInput raw(input);
@@ -68,8 +69,8 @@ TEST_CASE("A gamepad axis binding resolves against the designated pad's stick")
     const std::array active{context};
 
     const ActionState state = ResolveActions(active, raw, {});
-    CHECK(state.GetValue(Move).x == doctest::Approx(0.5f));
-    CHECK(state.GetValue(Move).y == doctest::Approx(1.0f));
+    CHECK(state.GetValue(Move).x == doctest::Approx(0.6f));
+    CHECK(state.GetValue(Move).y == doctest::Approx(0.8f));
 }
 
 TEST_CASE("A gamepad button binding resolves against the designated pad")

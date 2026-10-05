@@ -35,6 +35,21 @@ namespace Veng
             }
             return 0.0f;
         }
+
+        /// @brief What one binding contributes to an action of the given kind; see Binding.
+        f32 ShapeContribution(const Binding& binding, const ActionKind kind, const f32 value)
+        {
+            const f32 scaled = binding.Scale * value;
+            if (kind == ActionKind::Button)
+            {
+                return scaled > 0.0f && scaled >= binding.Threshold ? 1.0f : 0.0f;
+            }
+            if (std::abs(scaled) < binding.Threshold)
+            {
+                return 0.0f;
+            }
+            return std::copysign(std::pow(std::abs(scaled), binding.Exponent), scaled);
+        }
     }
 
     vec2 ActionState::GetValue(ActionId id) const
@@ -85,8 +100,9 @@ namespace Veng
         ActionState result;
 
         // Build the deterministic action set: each context's actions in declaration order,
-        // an action declared in more than one context keeping its first position. An unbound
-        // declared action still gets a sample.
+        // an action declared in more than one context keeping its first position, and its kind
+        // from that first declaration. An unbound declared action still gets a sample.
+        vector<ActionKind> kinds;
         for (const ResolvedContext& context : active)
         {
             for (const InputAction& action : context.Actions)
@@ -97,6 +113,7 @@ namespace Veng
                 if (!present)
                 {
                     result.Actions.emplace_back(ActionSample{.Id = action.Id});
+                    kinds.push_back(action.Kind);
                 }
             }
         }
@@ -104,8 +121,9 @@ namespace Veng
         // Accumulate values. A higher-priority context (later in active) that binds an action
         // shadows every lower context's bindings of that same action, so find the highest
         // context binding each action and combine only its bindings.
-        for (ActionSample& sample : result.Actions)
+        for (usize index = 0; index < result.Actions.size(); ++index)
         {
+            ActionSample& sample = result.Actions[index];
             const vector<Binding>* winningBindings = nullptr;
             for (const ResolvedContext& context : active)
             {
@@ -130,8 +148,8 @@ namespace Veng
                     continue;
                 }
 
-                const f32 raw01 = ReadSource(binding.Source, raw);
-                const f32 contribution = binding.Scale * raw01;
+                const f32 contribution =
+                    ShapeContribution(binding, kinds[index], ReadSource(binding.Source, raw));
                 switch (binding.Axis)
                 {
                 case AxisComponent::Whole:

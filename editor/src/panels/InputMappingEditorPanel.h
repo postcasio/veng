@@ -5,6 +5,8 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Input/Actions.h>
+#include <Veng/Path.h>
+#include <Veng/Result.h>
 
 #include <VengEditor/AssetEditorPanel.h>
 #include <VengEditor/AssetSaveModel.h>
@@ -16,11 +18,35 @@ namespace Veng
     class AssetManager;
     class EditorRegistry;
     class Input;
+    class TypeRegistry;
 }
 
 namespace VengEditor
 {
     class AssetSourceIndex;
+
+    /// @brief Reads an .inputmap.json into its reflected document.
+    ///
+    /// Binds through the shared JSON walker, so every reflected action and binding field reads by
+    /// its field name. An absent field keeps its default and a key naming no field is ignored, the
+    /// editor's tolerant posture; the cook rejects such a key.
+    /// @param source  The .inputmap.json to read.
+    /// @param types   Registry carrying InputMapData and its element types.
+    /// @return The document, or an error naming the file and the malformed field.
+    [[nodiscard]] Veng::Result<Veng::InputMapData>
+    ReadInputMapDocument(const Veng::path& source, const Veng::TypeRegistry& types);
+
+    /// @brief Writes a reflected input-map document back to its .inputmap.json.
+    ///
+    /// Assigns every reflected field into the existing file, so a key the document does not own (a
+    /// hand-authored note) survives; the inverse of ReadInputMapDocument.
+    /// @param source  The .inputmap.json to write.
+    /// @param data    The document.
+    /// @param types   Registry carrying InputMapData and its element types.
+    /// @return Empty on success; an I/O error otherwise.
+    [[nodiscard]] Veng::VoidResult WriteInputMapDocument(const Veng::path& source,
+                                                         const Veng::InputMapData& data,
+                                                         const Veng::TypeRegistry& types);
 
     /// @brief Docked panel for viewing and editing a .inputmap.json binding table.
     ///
@@ -31,6 +57,9 @@ namespace VengEditor
     /// and picks its action by name rather than a raw numeric id. A read-only preview readout
     /// resolves the document against the editor's own input each frame, so a binding's effect is
     /// observable without launching the game.
+    ///
+    /// The document reads and writes through the same reflection walker, so every reflected field
+    /// of an action or binding round-trips with no panel code of its own.
     ///
     /// It writes nothing until an explicit save: an edit marks the document dirty, and Save
     /// performs the preserve-unknown-keys merge write, then the recook that hot-reloads behind the
@@ -69,10 +98,10 @@ namespace VengEditor
         void OnInspectableChanged(Veng::string_view name) override;
 
     private:
-        /// @brief Reads the on-disk .inputmap.json into m_Doc; absent fields keep defaults.
+        /// @brief Reads the on-disk .inputmap.json into m_Doc through ReadInputMapDocument.
         void LoadDocument();
 
-        /// @brief Writes the document back to the .inputmap.json, preserving unknown keys.
+        /// @brief Writes m_Doc back to the .inputmap.json through WriteInputMapDocument.
         /// @return Empty on success; an I/O error otherwise.
         [[nodiscard]] Veng::VoidResult WriteDocument();
 

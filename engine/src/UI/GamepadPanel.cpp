@@ -15,16 +15,17 @@ namespace Veng::UI
 {
     namespace
     {
-        /// @brief Draws one pad's controls as a control/value table.
+        /// @brief Draws one pad's controls as a table of the raw value beside the shaped one.
         void ControlTable(const Input& input, const GamepadId slot)
         {
-            const auto table = UI::Table("controls", 2);
+            const auto table = UI::Table("controls", 3);
             if (!table)
             {
                 return;
             }
             UI::TableSetupColumn("Control");
             UI::TableSetupColumn("Raw");
+            UI::TableSetupColumn("Shaped");
             UI::TableHeadersRow();
 
             for (const EnumEntry& button : VengReflect<GamepadButton>::Enumerators())
@@ -45,14 +46,28 @@ namespace Veng::UI
                 }
             }
 
-            for (const EnumEntry& axis : VengReflect<GamepadAxis>::Enumerators())
+            for (const EnumEntry& entry : VengReflect<GamepadAxis>::Enumerators())
             {
+                const auto axis = static_cast<GamepadAxis>(entry.Value);
                 UI::TableNextRow();
                 UI::TableNextColumn();
-                UI::Text(axis.Name);
+                UI::Text(entry.Name);
                 UI::TableNextColumn();
-                UI::Text(fmt::format(
-                    "{:+.3f}", input.GetGamepadAxis(slot, static_cast<GamepadAxis>(axis.Value))));
+                UI::Text(fmt::format("{:+.3f}", input.GetRawGamepadAxis(slot, axis)));
+                UI::TableNextColumn();
+                UI::Text(fmt::format("{:+.3f}", input.GetGamepadAxis(slot, axis)));
+            }
+        }
+
+        /// @brief Draws one pad's deadzone sliders, applying a changed zone to the pad at once.
+        void DeadzoneSliders(Input& input, const GamepadId slot)
+        {
+            GamepadDeadzones zones = input.GetGamepadDeadzones(slot);
+            bool changed = UI::Slider("Stick deadzone", zones.Stick, SliderOptions{});
+            changed |= UI::Slider("Trigger deadzone", zones.Trigger, SliderOptions{});
+            if (changed)
+            {
+                input.SetGamepadDeadzones(slot, zones.Stick, zones.Trigger);
             }
         }
 
@@ -92,7 +107,7 @@ namespace Veng::UI
             return;
         }
 
-        const Input& input = app.GetInput();
+        Input& input = app.GetInput();
         const std::span<const GamepadId> connected = input.ConnectedGamepads();
         if (connected.empty())
         {
@@ -129,6 +144,7 @@ namespace Veng::UI
             }
 
             MotorSliders(*backend, slot);
+            DeadzoneSliders(input, slot);
             ControlTable(input, slot);
         }
     }

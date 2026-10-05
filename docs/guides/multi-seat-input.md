@@ -111,9 +111,10 @@ events, not engine mechanism.
 The gamepad state it reconciles against is the device surface on **`Veng::Input`**
 (`Veng/Input.h`): pads are tracked by `GamepadId`, polled once per frame into the
 same event-fed snapshot as keyboard and mouse, and queried with
-`IsGamepadButtonDown` / `GetGamepadAxis` / `ConnectedGamepads`. The
-`GamepadButton` / `GamepadAxis` binding sources a `*.inputmap.json` can name — inert
-before the device layer existed — are now live.
+`IsGamepadButtonDown` / `GetGamepadAxis` / `ConnectedGamepads`, its sticks and triggers
+shaped through per-pad deadzones as they are taken in. The `GamepadButton` /
+`GamepadAxis` binding sources a `*.inputmap.json` names read it (see
+[Gamepad sources and shaping](authoring-input-actions.md#gamepad-sources-and-shaping)).
 
 ---
 

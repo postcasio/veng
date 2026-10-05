@@ -595,7 +595,7 @@ and the request-driven token never disturbs a token an overlay suspend or a
 `SeatFocusScope` pushed.
 
 **Focus-gated input contexts** are the authored, fine-grained complement to
-`FocusRequest`. An `InputMappingContext` can declare `requiresGameplayFocus` in its
+`FocusRequest`. An `InputMappingContext` can declare `RequiresGameplayFocus` in its
 `*.inputmap.json`; `InputMappingSystem` then **excludes** that context from a seat's
 effective bindings whenever the seat lacks gameplay focus (`SystemContext` carries a
 `GameplayFocused` flag for exactly this). It is pure evaluation — the authored

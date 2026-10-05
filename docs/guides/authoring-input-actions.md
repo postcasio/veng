@@ -80,46 +80,62 @@ at runtime by `AssetId`. hello-triangle's
 
 ```json
 {
-  "actions": [
-    { "id": "0x74080D78CF763EC4", "name": "Move", "kind": "Axis2D" },
-    { "id": "0x6DB6F4088653942D", "name": "Look", "kind": "Axis2D" },
-    { "id": "0xB64A2DFE34C4E523", "name": "Jump", "kind": "Button" }
+  "Actions": [
+    { "Id": "0x74080D78CF763EC4", "Name": "Move", "Kind": "Axis2D" },
+    { "Id": "0x6DB6F4088653942D", "Name": "Look", "Kind": "Axis2D" },
+    { "Id": "0xB64A2DFE34C4E523", "Name": "Jump", "Kind": "Button" }
   ],
-  "bindings": [
-    { "source": { "device": "Keyboard",  "control": 68 }, "action": "0x74080D78CF763EC4", "axis": "X", "scale":  1.0 },
-    { "source": { "device": "Keyboard",  "control": 65 }, "action": "0x74080D78CF763EC4", "axis": "X", "scale": -1.0 },
-    { "source": { "device": "Keyboard",  "control": 87 }, "action": "0x74080D78CF763EC4", "axis": "Y", "scale":  1.0 },
-    { "source": { "device": "Keyboard",  "control": 83 }, "action": "0x74080D78CF763EC4", "axis": "Y", "scale": -1.0 },
-    { "source": { "device": "MouseAxis", "control": 0  }, "action": "0x6DB6F4088653942D", "axis": "X", "scale":  1.0 },
-    { "source": { "device": "MouseAxis", "control": 1  }, "action": "0x6DB6F4088653942D", "axis": "Y", "scale":  1.0 },
-    { "source": { "device": "Keyboard",  "control": 32 }, "action": "0xB64A2DFE34C4E523", "axis": "Whole" }
+  "Bindings": [
+    { "Source": { "Device": "Keyboard",  "Control": 68 }, "Action": "0x74080D78CF763EC4", "Axis": "X", "Scale":  1.0 },
+    { "Source": { "Device": "Keyboard",  "Control": 65 }, "Action": "0x74080D78CF763EC4", "Axis": "X", "Scale": -1.0 },
+    { "Source": { "Device": "Keyboard",  "Control": 87 }, "Action": "0x74080D78CF763EC4", "Axis": "Y", "Scale":  1.0 },
+    { "Source": { "Device": "Keyboard",  "Control": 83 }, "Action": "0x74080D78CF763EC4", "Axis": "Y", "Scale": -1.0 },
+    { "Source": { "Device": "MouseAxis", "Control": 0  }, "Action": "0x6DB6F4088653942D", "Axis": "X", "Scale":  1.0 },
+    { "Source": { "Device": "MouseAxis", "Control": 1  }, "Action": "0x6DB6F4088653942D", "Axis": "Y", "Scale":  1.0 },
+    { "Source": { "Device": "Keyboard",  "Control": 32 }, "Action": "0xB64A2DFE34C4E523", "Axis": "Whole" }
   ]
 }
 ```
 
-- **`kind`** is the action's value shape: `Button` (value x ∈ {0,1}), `Axis1D`
+The document *is* the reflected `InputMapData` (`Veng/Asset/InputMappingContext.h`): every key is a
+field name of `InputMapData`, `InputAction`, `Binding` or `InputSource`, read through the shared
+JSON walker, so an absent field takes its default and a key naming no field is a cook error.
+
+- **`Kind`** is the action's value shape: `Button` (value x ∈ {0,1}), `Axis1D`
   (value x), or `Axis2D` (value xy).
-- **`device`** is `Keyboard` / `MouseButton` / `MouseAxis` (live now), or
-  `GamepadButton` / `GamepadAxis` (see [Gamepad](#gamepad-sources-are-inert-for-now)).
-  `control` is the code interpreted per device — a `Key` value for a keyboard
+- **`Device`** is `Keyboard` / `MouseButton` / `MouseAxis`, or
+  `GamepadButton` / `GamepadAxis` (see [Gamepad sources](#gamepad-sources-and-shaping)).
+  `Control` is the code interpreted per device — a `Key` value for a keyboard
   (`68` is `D`, `65` is `A`, `87` is `W`, `83` is `S`, `32` is `Space`), or a
   `MouseAxis` code: the pointer delta (`0` = horizontal, `1` = vertical), the
   viewport-local pointer position (`2` / `3`, seat-resolved only), or the
   scroll-wheel delta (`4` = horizontal, `5` = vertical). The named constants are
   `RawInput::MouseAxisX/Y`, `SeatInputView::MousePositionX/Y`, and
-  `RawInput::MouseScrollX/Y`.
-- **`axis`** picks which component of a vector action a scalar source drives:
+  `RawInput::MouseScrollX/Y`. A gamepad source's `Control` is a `GamepadButton` /
+  `GamepadAxis` index.
+- **`Axis`** picks which component of a vector action a scalar source drives:
   `X`, `Y`, or `Whole` (a native axis or a button drives the action directly).
   Four scalar keyboard bindings — two on `X`, two on `Y` — combine into the one 2D
   `Move` action.
-- **`scale`** is a signed multiplier applied before accumulation; a negative
-  `scale` inverts (so `A` on `X` with `-1.0` opposes `D` with `+1.0`). There is no
-  separate invert flag.
+- **`Scale`** is a signed multiplier applied first; a negative `Scale` inverts (so
+  `A` on `X` with `-1.0` opposes `D` with `+1.0`). There is no separate invert flag.
+- **`Threshold`** (default `0`) is the scaled value a source must reach. On a
+  `Button` action the source is a **half-axis**: it presses when the scaled value is
+  positive and at least `Threshold`, so a trigger becomes a button with a deliberate
+  pull point, and a stick axis bound with `Scale -1` to one button and `+1` to another
+  fires each only on its own half. A source at rest never presses, whatever the
+  threshold. On an axis action, a source whose scaled magnitude is under `Threshold`
+  contributes nothing, and above it the value passes through unrescaled.
+- **`Exponent`** (default `1`) is an axis action's response curve,
+  `sign(s)·|s|^Exponent` on the scaled value `s`, applied after the threshold: `2`
+  maps a half deflection to a quarter, for fine aiming near centre. A `Button` action
+  ignores it.
 
 The cook **validates every binding against the context's declared actions**: a
 binding naming an action the context does not declare is a located cook error (the
-typo-catch a global registry would otherwise miss), as is a duplicate action id or
-an unknown device/axis/kind name. Add the source to the asset pack manifest like
+typo-catch a global registry would otherwise miss), as is a duplicate or null action
+id, an unknown device/axis/kind name, a negative `Threshold`, or an `Exponent` that is
+not greater than 0. Add the source to the asset pack manifest like
 any other asset:
 
 ```json
@@ -284,15 +300,26 @@ none of this.
 
 ---
 
-## Gamepad sources are inert for now
+## Gamepad sources and shaping
 
-The binding vocabulary carries `GamepadButton` / `GamepadAxis` source arms so a
-`*.inputmap.json` can already name them, but **`Veng::Input` has no gamepad state
-yet**: the resolver reads a gamepad source as neutral (zero), so a gamepad binding
-is inert until the device layer lands. That layer — filling `Veng::Input` with pad
-state and fanning devices per seat — is a future direction, alongside multi-seat input
-routing. Author keyboard/mouse bindings today; gamepad bindings are forward-ready
-but do nothing yet.
+A `GamepadButton` / `GamepadAxis` source reads the seat's assigned pad (see
+[Multi-seat input](multi-seat-input.md)). A pad's sticks and triggers arrive already
+**shaped by the device layer**: `Veng::Input` passes each stick's two axes through one
+**radial deadzone** and each trigger through its own as it takes the pad in, rescaling
+what is left so the value is continuous at the zone's edge and full at full
+deflection. A resting stick therefore reads exactly zero — so a stick bound to a
+button never holds it from noise, and a stick bound to an axis action completes
+when released. The zone is radial because a per-axis zone would bend a diagonal onto
+whichever axis cleared first; only the device layer sees both axes of a stick together.
+
+The zones are engine defaults (`GamepadDeadzones::DefaultStick` 0.15 and
+`DefaultTrigger` 0.05, conventional starting points rather than measurements), set per
+pad with `Input::SetGamepadDeadzones(id, stick, trigger)` and reverting to the defaults
+when the pad disconnects. Virtual pads are shaped the same way. The unshaped values stay
+readable through `Input::GetRawGamepadAxis`, and the gamepad debug panel
+(`Veng::UI::GamepadPanel`) shows them beside the shaped ones with live zone sliders. A
+binding's own `Threshold` and `Exponent` then shape the zoned value per binding, so an
+input map authors the pull point and the response curve and never a deadzone.
 
 ---
 
@@ -300,7 +327,9 @@ but do nothing yet.
 
 The **`InputMappingEditorPanel`** (registered for `AssetTypes::InputMap`) opens a
 `*.inputmap.json` and draws its actions + bindings through the reflection inspector,
-so the binding table is add/remove/edit-able with no bespoke widget code. It shows
+so the binding table is add/remove/edit-able with no bespoke widget code. It reads and
+saves the file through the same reflection walker the cook binds it with, so every
+action and binding field round-trips. It shows
 each binding's action by name (an `ActionId` combo scoped to the document's declared
 actions), recooks live behind a stable handle, and resolves the document against the
 editor's own input each frame so a binding's effect is observable without launching

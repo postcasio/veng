@@ -170,14 +170,16 @@ at cook time:
   is the one *file* dependency these importers record, so editing a theme re-cooks every sheet that
   imports it. The runtime half is [engine/src/Gui/CLAUDE.md](../engine/src/Gui/CLAUDE.md).
 - **Input maps** (`*.inputmap.json`) cook an `InputMappingContext` (`AssetTypes::InputMap`)
-  through the **`InputMapImporter`**. The source declares its `"actions"` (each an unsigned
-  `id`, a `name`, and an enum `kind`) and its `"bindings"` (a raw `source` device/control, a
-  target `action` id, an `axis` component, and a `scale`); the importer decodes them into an
-  `InputMapData` and emits it through the shared `WriteFields` encoder — the reflected
-  actions + bindings, no bespoke binary format. Its core check is **binding → action
-  validation**: a binding must name an action the context's own `"actions"` declares (the
-  typo-catch a global registry would otherwise miss), and a duplicate action id, a null id,
-  or an unknown device/axis/kind name is a **located cook error** — the same discipline the
+  through the **`InputMapImporter`**. The source *is* the reflected `InputMapData` — its
+  `"Actions"` (each an `Id`, a `Name`, and an enum `Kind`), its `"Bindings"` (a raw `Source`
+  device/control, a target `Action` id, an `Axis` component, a `Scale`, a `Threshold` and an
+  `Exponent`) and `"RequiresGameplayFocus"` — bound strictly through the shared JSON walker
+  (`JsonReadFields`), so a new action or binding field authors with no importer change and a key
+  naming no field is an error; the importer emits it through the shared `WriteFields` encoder,
+  no bespoke binary format. Its core check is **binding → action validation**: a binding must
+  name an action the context's own `"Actions"` declares (the typo-catch a global registry would
+  otherwise miss), and a duplicate action id, a null id, an unknown device/axis/kind name, a
+  negative threshold or a non-positive exponent is a **located cook error** — the same discipline the
   `MaterialImporter` applies to `.vmat` fields and the `PrefabImporter` to components. It
   references only engine builtins (`InputAction`/`Binding` and their enums), so it needs no
   game module.

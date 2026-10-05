@@ -3,8 +3,53 @@
 #include <Veng/InputEvents.h>
 #include <Veng/Window.h>
 
+#include <algorithm>
+
 namespace Veng
 {
+    vec2 ShapeStick(const vec2 stick, const f32 zone)
+    {
+        const f32 length = glm::length(stick);
+        if (zone >= 1.0f || length <= zone)
+        {
+            return vec2{0.0f};
+        }
+        const f32 shaped = std::min((length - zone) / (1.0f - zone), 1.0f);
+        return stick * (shaped / length);
+    }
+
+    f32 ShapeTrigger(const f32 pull, const f32 zone)
+    {
+        if (zone >= 1.0f || pull <= zone)
+        {
+            return 0.0f;
+        }
+        return std::min((pull - zone) / (1.0f - zone), 1.0f);
+    }
+
+    namespace
+    {
+        /// @brief Shapes a pad's sticks and triggers in place through its deadzones.
+        void ShapeAxes(GamepadState& pad, const GamepadDeadzones& zones)
+        {
+            const auto shapeStick = [&pad, &zones](const GamepadAxis x, const GamepadAxis y)
+            {
+                auto& axes = pad.Axes;
+                const vec2 shaped = ShapeStick(
+                    {axes[static_cast<usize>(x)], axes[static_cast<usize>(y)]}, zones.Stick);
+                axes[static_cast<usize>(x)] = shaped.x;
+                axes[static_cast<usize>(y)] = shaped.y;
+            };
+            shapeStick(GamepadAxis::LeftX, GamepadAxis::LeftY);
+            shapeStick(GamepadAxis::RightX, GamepadAxis::RightY);
+            for (const GamepadAxis trigger : {GamepadAxis::LeftTrigger, GamepadAxis::RightTrigger})
+            {
+                f32& pull = pad.Axes[static_cast<usize>(trigger)];
+                pull = ShapeTrigger(pull, zones.Trigger);
+            }
+        }
+    }
+
     Input::Input(Window* window) : m_Window(window) {}
 
     void Input::BeginFrame(const bool rollEdges)
@@ -325,6 +370,12 @@ namespace Veng
             {
                 m_ConnectedGamepads.push_back(static_cast<GamepadId>(slot));
             }
+            else
+            {
+                m_GamepadDeadzones[slot] = GamepadDeadzones{};
+            }
+            m_RawGamepadAxes[slot] = pad.Axes;
+            ShapeAxes(pad, m_GamepadDeadzones[slot]);
 
             // Motion is only the travel of one finger held across two ingests: a landing, a lift or
             // a disconnect contributes none, so a finger set down elsewhere never reads as a jump.
@@ -334,10 +385,39 @@ namespace Veng
                 touching && m_TouchDown[slot] ? position - m_TouchPosition[slot] : vec2{0, 0};
             pad.Axes[DeltaX] = delta.x;
             pad.Axes[DeltaY] = delta.y;
+            m_RawGamepadAxes[slot][DeltaX] = delta.x;
+            m_RawGamepadAxes[slot][DeltaY] = delta.y;
             m_SimTouchAccumulator[slot] += delta;
             m_TouchDown[slot] = touching;
             m_TouchPosition[slot] = position;
         }
+    }
+
+    void Input::SetGamepadDeadzones(const GamepadId id, const f32 stick, const f32 trigger)
+    {
+        if (PadFor(id) == nullptr)
+        {
+            return;
+        }
+        m_GamepadDeadzones[static_cast<usize>(id)] = GamepadDeadzones{
+            .Stick = std::clamp(stick, 0.0f, 1.0f), .Trigger = std::clamp(trigger, 0.0f, 1.0f)};
+    }
+
+    GamepadDeadzones Input::GetGamepadDeadzones(const GamepadId id) const
+    {
+        return PadFor(id) != nullptr ? m_GamepadDeadzones[static_cast<usize>(id)]
+                                     : GamepadDeadzones{};
+    }
+
+    f32 Input::GetRawGamepadAxis(const GamepadId id, const GamepadAxis axis) const
+    {
+        if (PadFor(id) == nullptr)
+        {
+            return 0.0f;
+        }
+        const auto index = static_cast<usize>(axis);
+        return index < usize(GamepadAxis::Count) ? m_RawGamepadAxes[static_cast<usize>(id)][index]
+                                                 : 0.0f;
     }
 
     const GamepadState* Input::PadFor(const GamepadId id) const

@@ -2,7 +2,7 @@
 // CookedInputMapHeader plus that the { actions, bindings } record round-trips back through
 // ReadFields into the resolver-ready form InputMappingContext exposes. Also covers each
 // validation failure — an unknown-action binding, a Button/axis kind mismatch, a null id, a
-// duplicate id, an unknown enum name. An input map needs no --module (it references only engine
+// duplicate id, an unknown enum name, an unknown key, and out-of-range shaping. An input map needs no --module (it references only engine
 // builtins), so the cook runs with a builtin-only registry and no module load.
 
 #include <cstring>
@@ -97,23 +97,23 @@ namespace
         json map;
         const string moveId = FormatHexId(MoveId);
         const string jumpId = FormatHexId(JumpId);
-        map["actions"] = json::array({{{"id", moveId}, {"name", "Move"}, {"kind", "Axis2D"}},
-                                      {{"id", jumpId}, {"name", "Jump"}, {"kind", "Button"}}});
-        map["bindings"] = json::array({{{"source", {{"device", "Keyboard"}, {"control", 68}}},
-                                        {"action", moveId},
-                                        {"axis", "X"},
-                                        {"scale", 1.0}},
-                                       {{"source", {{"device", "Keyboard"}, {"control", 65}}},
-                                        {"action", moveId},
-                                        {"axis", "X"},
-                                        {"scale", -1.0}},
-                                       {{"source", {{"device", "Keyboard"}, {"control", 87}}},
-                                        {"action", moveId},
-                                        {"axis", "Y"},
-                                        {"scale", 1.0}},
-                                       {{"source", {{"device", "Keyboard"}, {"control", 32}}},
-                                        {"action", jumpId},
-                                        {"axis", "Whole"}}});
+        map["Actions"] = json::array({{{"Id", moveId}, {"Name", "Move"}, {"Kind", "Axis2D"}},
+                                      {{"Id", jumpId}, {"Name", "Jump"}, {"Kind", "Button"}}});
+        map["Bindings"] = json::array({{{"Source", {{"Device", "Keyboard"}, {"Control", 68}}},
+                                        {"Action", moveId},
+                                        {"Axis", "X"},
+                                        {"Scale", 1.0}},
+                                       {{"Source", {{"Device", "Keyboard"}, {"Control", 65}}},
+                                        {"Action", moveId},
+                                        {"Axis", "X"},
+                                        {"Scale", -1.0}},
+                                       {{"Source", {{"Device", "Keyboard"}, {"Control", 87}}},
+                                        {"Action", moveId},
+                                        {"Axis", "Y"},
+                                        {"Scale", 1.0}},
+                                       {{"Source", {{"Device", "Keyboard"}, {"Control", 32}}},
+                                        {"Action", jumpId},
+                                        {"Axis", "Whole"}}});
         return map;
     }
 }
@@ -169,7 +169,7 @@ TEST_CASE("input map cook: happy path — header + resolved context round-trip")
 TEST_CASE("input map cook: requiresGameplayFocus authors into the resolved context")
 {
     json map = SampleMap();
-    map["requiresGameplayFocus"] = true;
+    map["RequiresGameplayFocus"] = true;
     const path packJson = WriteInputMapPack("inputmap_focus", map);
 
     const Result<vector<u8>> blobResult = CookInputMap(packJson, AssetId{7777});
@@ -247,9 +247,9 @@ TEST_CASE("input map cook: a binding onto an undeclared action is a located erro
 {
     json map = SampleMap();
     // Bind a control to an action id this context never declares.
-    map["bindings"].push_back({{"source", {{"device", "Keyboard"}, {"control", 70}}},
-                               {"action", FormatHexId(0x1234567890ABCDEFULL)},
-                               {"axis", "Whole"}});
+    map["Bindings"].push_back({{"Source", {{"Device", "Keyboard"}, {"Control", 70}}},
+                               {"Action", FormatHexId(0x1234567890ABCDEFULL)},
+                               {"Axis", "Whole"}});
     const path packJson = WriteInputMapPack("inputmap_unknown_action", map);
 
     const Result<vector<u8>> blob = CookInputMap(packJson, AssetId{7777});
@@ -261,9 +261,9 @@ TEST_CASE("input map cook: an X/Y component on a Button action is a located erro
 {
     json map = SampleMap();
     // Jump is a Button; an X component onto it is a kind/axis mismatch.
-    map["bindings"].push_back({{"source", {{"device", "Keyboard"}, {"control", 71}}},
-                               {"action", FormatHexId(JumpId)},
-                               {"axis", "X"}});
+    map["Bindings"].push_back({{"Source", {{"Device", "Keyboard"}, {"Control", 71}}},
+                               {"Action", FormatHexId(JumpId)},
+                               {"Axis", "X"}});
     const path packJson = WriteInputMapPack("inputmap_axis_mismatch", map);
 
     const Result<vector<u8>> blob = CookInputMap(packJson, AssetId{7777});
@@ -274,7 +274,7 @@ TEST_CASE("input map cook: an X/Y component on a Button action is a located erro
 TEST_CASE("input map cook: a null action id is a located error")
 {
     json map = SampleMap();
-    map["actions"].push_back({{"id", FormatHexId(0)}, {"name", "Bad"}, {"kind", "Button"}});
+    map["Actions"].push_back({{"Id", FormatHexId(0)}, {"Name", "Bad"}, {"Kind", "Button"}});
     const path packJson = WriteInputMapPack("inputmap_null_id", map);
 
     const Result<vector<u8>> blob = CookInputMap(packJson, AssetId{7777});
@@ -285,8 +285,8 @@ TEST_CASE("input map cook: a null action id is a located error")
 TEST_CASE("input map cook: a duplicate action id is a located error")
 {
     json map = SampleMap();
-    map["actions"].push_back(
-        {{"id", FormatHexId(MoveId)}, {"name", "MoveAgain"}, {"kind", "Axis2D"}});
+    map["Actions"].push_back(
+        {{"Id", FormatHexId(MoveId)}, {"Name", "MoveAgain"}, {"Kind", "Axis2D"}});
     const path packJson = WriteInputMapPack("inputmap_dup_id", map);
 
     const Result<vector<u8>> blob = CookInputMap(packJson, AssetId{7777});
@@ -297,10 +297,65 @@ TEST_CASE("input map cook: a duplicate action id is a located error")
 TEST_CASE("input map cook: an unknown enum name is a located error")
 {
     json map = SampleMap();
-    map["actions"][0]["kind"] = "NotAKind";
+    map["Actions"][0]["Kind"] = "NotAKind";
     const path packJson = WriteInputMapPack("inputmap_bad_enum", map);
 
     const Result<vector<u8>> blob = CookInputMap(packJson, AssetId{7777});
     REQUIRE_FALSE(blob.has_value());
-    CHECK(blob.error().find("unknown value") != string::npos);
+    CHECK(blob.error().find("unknown enumerator") != string::npos);
+}
+
+TEST_CASE("input map cook: a binding's threshold and exponent author into the resolved context")
+{
+    json map = SampleMap();
+    map["Bindings"][0]["Threshold"] = 0.25;
+    map["Bindings"][0]["Exponent"] = 2.0;
+    const path packJson = WriteInputMapPack("inputmap_shaping", map);
+
+    const Result<vector<u8>> blobResult = CookInputMap(packJson, AssetId{7777});
+    REQUIRE_MESSAGE(blobResult.has_value(),
+                    "cook failed: ", blobResult ? string{} : blobResult.error());
+
+    TypeRegistry registry;
+    RegisterBuiltinTypes(registry);
+    CookedInputMapHeader header{};
+    std::memcpy(&header, blobResult->data(), sizeof(header));
+    const std::span<const u8> record(blobResult->data() + sizeof(CookedInputMapHeader),
+                                     header.RecordBytes);
+    InputMapData data;
+    REQUIRE(
+        ReadFields(record, &data, registry.Info(TypeIdOf<InputMapData>()), registry).has_value());
+    REQUIRE(data.Bindings.size() == 4);
+    CHECK(data.Bindings[0].Threshold == doctest::Approx(0.25f));
+    CHECK(data.Bindings[0].Exponent == doctest::Approx(2.0f));
+    // A binding authoring neither keeps the defaults that leave its value unchanged.
+    CHECK(data.Bindings[1].Threshold == 0.0f);
+    CHECK(data.Bindings[1].Exponent == 1.0f);
+}
+
+TEST_CASE("input map cook: a negative threshold or a non-positive exponent is a located error")
+{
+    json negative = SampleMap();
+    negative["Bindings"][0]["Threshold"] = -0.1;
+    const Result<vector<u8>> negativeBlob =
+        CookInputMap(WriteInputMapPack("inputmap_bad_threshold", negative), AssetId{7777});
+    REQUIRE_FALSE(negativeBlob.has_value());
+    CHECK(negativeBlob.error().find("Threshold") != string::npos);
+
+    json flat = SampleMap();
+    flat["Bindings"][0]["Exponent"] = 0.0;
+    const Result<vector<u8>> flatBlob =
+        CookInputMap(WriteInputMapPack("inputmap_bad_exponent", flat), AssetId{7777});
+    REQUIRE_FALSE(flatBlob.has_value());
+    CHECK(flatBlob.error().find("Exponent") != string::npos);
+}
+
+TEST_CASE("input map cook: a key naming no reflected field is a located error")
+{
+    json map = SampleMap();
+    map["Bindings"][0]["scale"] = 2.0;
+    const Result<vector<u8>> blob =
+        CookInputMap(WriteInputMapPack("inputmap_unknown_key", map), AssetId{7777});
+    REQUIRE_FALSE(blob.has_value());
+    CHECK(blob.error().find("unknown field") != string::npos);
 }

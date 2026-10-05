@@ -1071,6 +1071,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/action_resolve.cpp
             tests/unit/gamepad_adapter.cpp
             tests/unit/gamepad_slots.cpp
+            tests/unit/gamepad_deadzone.cpp
             tests/unit/seat_routing.cpp
             tests/unit/seat_routing_integration.cpp
             tests/unit/seat_focus.cpp
@@ -1685,6 +1686,7 @@ if (VENG_BUILD_TESTS)
             tests/editor/preview_capability.cpp
             tests/editor/status_tracker.cpp
             tests/editor/table_document.cpp
+            tests/editor/input_map_document.cpp
             tests/editor/asset_save_model.cpp
             tests/editor/ui_document_source.cpp
             tests/editor/editor_mcp.cpp

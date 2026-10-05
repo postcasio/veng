@@ -430,3 +430,90 @@ TEST_CASE("A neutral snapshot yields every action None with zero value")
         CHECK(sample.Phase == ActionPhase::None);
     }
 }
+
+namespace
+{
+    constexpr ActionId Left{0xD4};
+    constexpr ActionId Right{0xE5};
+
+    // One axis source (control 0) bound to an action of the given kind, with the given shaping.
+    ResolvedContext AxisBound(const ActionId id, const ActionKind kind, const f32 scale,
+                              const f32 threshold, const f32 exponent = 1.0f)
+    {
+        return ResolvedContext{
+            .Actions = {InputAction{.Id = id, .Name = "Shaped", .Kind = kind}},
+            .Bindings = {Binding{.Source = {.Device = InputDeviceType::GamepadAxis, .Control = 0},
+                                 .Action = id,
+                                 .Axis = AxisComponent::Whole,
+                                 .Scale = scale,
+                                 .Threshold = threshold,
+                                 .Exponent = exponent}}};
+    }
+
+    // Resolves one context against a single axis value on control 0.
+    ActionState ResolveAxis(const ResolvedContext& context, const f32 value)
+    {
+        FakeRawInput raw;
+        raw.Axes = {{0, value}};
+        const std::array active{context};
+        return ResolveActions(active, raw, {});
+    }
+}
+
+TEST_CASE("A trigger bound to a button presses at its threshold and not below it")
+{
+    const ResolvedContext context = AxisBound(Jump, ActionKind::Button, 1.0f, 0.5f);
+
+    const ActionState atThreshold = ResolveAxis(context, 0.5f);
+    CHECK(atThreshold.IsHeld(Jump));
+    CHECK(atThreshold.GetAxis(Jump) == 1.0f);
+    CHECK_FALSE(ResolveAxis(context, 0.49f).IsHeld(Jump));
+}
+
+TEST_CASE("A stick axis bound to two buttons by sign fires each only on its own half")
+{
+    const ResolvedContext context{
+        .Actions = {InputAction{.Id = Left, .Name = "Left", .Kind = ActionKind::Button},
+                    InputAction{.Id = Right, .Name = "Right", .Kind = ActionKind::Button}},
+        .Bindings = {Binding{.Source = {.Device = InputDeviceType::GamepadAxis, .Control = 0},
+                             .Action = Left,
+                             .Scale = -1.0f,
+                             .Threshold = 0.5f},
+                     Binding{.Source = {.Device = InputDeviceType::GamepadAxis, .Control = 0},
+                             .Action = Right,
+                             .Scale = 1.0f,
+                             .Threshold = 0.5f}}};
+
+    const ActionState pushedLeft = ResolveAxis(context, -0.8f);
+    CHECK(pushedLeft.IsHeld(Left));
+    CHECK_FALSE(pushedLeft.IsHeld(Right));
+
+    const ActionState pushedRight = ResolveAxis(context, 0.8f);
+    CHECK_FALSE(pushedRight.IsHeld(Left));
+    CHECK(pushedRight.IsHeld(Right));
+}
+
+TEST_CASE("A resting axis never presses a default-threshold button, whatever its scale")
+{
+    for (const f32 scale : {1.0f, -1.0f})
+    {
+        const ActionState state =
+            ResolveAxis(AxisBound(Jump, ActionKind::Button, scale, 0.0f), 0.0f);
+        CHECK(state.Actions.front().Phase == ActionPhase::None);
+    }
+}
+
+TEST_CASE("An axis action ignores a source under its threshold and passes it unrescaled above")
+{
+    const ResolvedContext context = AxisBound(Throttle, ActionKind::Axis1D, 1.0f, 0.2f);
+    CHECK(ResolveAxis(context, -0.19f).GetAxis(Throttle) == 0.0f);
+    CHECK(ResolveAxis(context, -0.3f).GetAxis(Throttle) == doctest::Approx(-0.3f));
+}
+
+TEST_CASE("A response exponent curves the magnitude and keeps the sign")
+{
+    const ResolvedContext squared = AxisBound(Throttle, ActionKind::Axis1D, 1.0f, 0.0f, 2.0f);
+    CHECK(ResolveAxis(squared, 0.5f).GetAxis(Throttle) == doctest::Approx(0.25f));
+    CHECK(ResolveAxis(squared, -0.5f).GetAxis(Throttle) == doctest::Approx(-0.25f));
+    CHECK(ResolveAxis(squared, 1.0f).GetAxis(Throttle) == doctest::Approx(1.0f));
+}

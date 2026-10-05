@@ -113,15 +113,19 @@ namespace Veng
     namespace
     {
         // An axis component in [-1, 1] to 8 bits and back — the packed-input value quantization.
+        // It uses 255 codes (0..254) rather than 256, so code 127 is zero exactly and a centred
+        // stick does not decode as a small push.
+        constexpr f32 AxisHalfSteps = 127.0f;
+
         u32 QuantizeAxis8(f32 value)
         {
-            const f32 normalized = std::clamp((value + 1.0f) * 0.5f, 0.0f, 1.0f);
-            return static_cast<u32>(std::lround(normalized * 255.0f));
+            const f32 clamped = std::clamp(value, -1.0f, 1.0f);
+            return static_cast<u32>(std::lround((clamped + 1.0f) * AxisHalfSteps));
         }
 
         f32 DequantizeAxis8(u32 code)
         {
-            return static_cast<f32>(code) / 255.0f * 2.0f - 1.0f;
+            return std::min(static_cast<f32>(code) / AxisHalfSteps - 1.0f, 1.0f);
         }
     }
 

@@ -255,6 +255,49 @@ namespace Veng
         string Name;
     };
 
+    /// @brief The radial deadzone a pad's sticks and triggers are shaped through on ingest.
+    ///
+    /// The defaults are the conventional starting points for a typical pad, values to tune rather
+    /// than measurements of any device.
+    struct GamepadDeadzones
+    {
+        /// @brief The default stick zone, as a fraction of full deflection.
+        static constexpr f32 DefaultStick = 0.15f;
+        /// @brief The default trigger zone, as a fraction of a full pull.
+        static constexpr f32 DefaultTrigger = 0.05f;
+
+        /// @brief The stick zone, 0..1: a deflection whose length is at or under it reads zero.
+        f32 Stick = DefaultStick;
+        /// @brief The trigger zone, 0..1: a pull at or under it reads zero.
+        f32 Trigger = DefaultTrigger;
+
+        /// @brief Compares both zones.
+        bool operator==(const GamepadDeadzones&) const = default;
+    };
+
+    /// @brief Shapes one stick's two axes through a radial deadzone.
+    ///
+    /// A deflection whose length is at or under @p zone reads exactly zero. Beyond it the length is
+    /// rescaled over [zone, 1] onto [0, 1] and the direction is kept, so the output is continuous at
+    /// the zone's edge, a full deflection stays full, and a diagonal leaves the zone on both axes at
+    /// once rather than on whichever axis clears a per-axis zone first. The output never leaves the
+    /// unit circle, so a square gate's corner reads full deflection rather than past it. A zero zone
+    /// passes any deflection within the unit circle unchanged; a zone of 1 or more reads zero always.
+    /// @param stick  The stick's raw (x, y), each −1..1.
+    /// @param zone   The deadzone radius, as a fraction of full deflection.
+    /// @return The shaped (x, y).
+    [[nodiscard]] vec2 ShapeStick(vec2 stick, f32 zone);
+
+    /// @brief Shapes a trigger's pull through a deadzone.
+    ///
+    /// A pull at or under @p zone reads exactly zero; beyond it the pull is rescaled over [zone, 1]
+    /// onto [0, 1], continuous at the zone's edge and full at a full pull. A zone of 1 or more reads
+    /// zero always.
+    /// @param pull  The trigger's raw pull, 0..1.
+    /// @param zone  The deadzone, as a fraction of a full pull.
+    /// @return The shaped pull, 0..1.
+    [[nodiscard]] f32 ShapeTrigger(f32 pull, f32 zone);
+
     class Window;
     class Event;
 
@@ -454,8 +497,27 @@ namespace Veng
         /// already captured. Each call also derives the touchpad-delta axes from the previous call's
         /// touchpad position and adds them to the per-pad Sim accumulation BeginGamepadSimTick
         /// latches. Headless never calls it, so the pad surface stays the neutral no-pads state.
+        ///
+        /// Each pad's sticks and triggers are shaped here through its GamepadDeadzones (ShapeStick
+        /// over each stick's two axes together, ShapeTrigger over each trigger), so every axis read
+        /// returns the shaped value and a resting stick reads exactly zero. A virtual pad is shaped
+        /// like a physical one. The unshaped values stay readable through GetRawGamepadAxis; the
+        /// touchpad axes are positions, not deflections, and pass through unshaped.
         /// @param states  One GamepadState per slot; slots past its end read as unconnected.
         void IngestGamepadStates(std::span<const GamepadState> states);
+
+        /// @brief Sets the deadzones the pad in a slot is shaped through from the next ingest.
+        ///
+        /// Each zone is clamped to 0..1. The zones belong to the pad now in the slot: they revert to
+        /// the GamepadDeadzones defaults when it disconnects, so the next pad to take the slot starts
+        /// from the defaults. A call naming an empty slot is ignored.
+        /// @param id       The pad's slot.
+        /// @param stick    The radial stick zone, applied to both sticks.
+        /// @param trigger  The trigger zone, applied to both triggers.
+        void SetGamepadDeadzones(GamepadId id, f32 stick, f32 trigger);
+
+        /// @brief Returns the deadzones the pad in a slot is shaped through; the defaults if absent.
+        [[nodiscard]] GamepadDeadzones GetGamepadDeadzones(GamepadId id) const;
 
         /// @brief Returns true if the given slot currently holds a connected pad.
         [[nodiscard]] bool IsGamepadConnected(GamepadId id) const;
@@ -480,6 +542,13 @@ namespace Veng
         /// The **per-tick** cadence: a touchpad-delta axis reads the motion BeginGamepadSimTick
         /// latched for this tick; every other axis is a level and reads as GetGamepadAxis does.
         [[nodiscard]] f32 GetSimGamepadAxis(GamepadId id, GamepadAxis axis) const;
+
+        /// @brief Returns the given pad's axis value as the backend reported it, before deadzone
+        ///        shaping; zero if absent.
+        ///
+        /// For a diagnostic display beside the shaped value. Nothing that drives behaviour reads it:
+        /// a raw stick at rest is never exactly zero.
+        [[nodiscard]] f32 GetRawGamepadAxis(GamepadId id, GamepadAxis axis) const;
 
         /// @brief Returns the family of the pad in the given slot, Unknown if absent.
         [[nodiscard]] GamepadType GetGamepadType(GamepadId id) const;
@@ -547,8 +616,12 @@ namespace Veng
         /// @brief The coordinate basis m_MousePosition was reported in (MouseMovedEvent::GetBasis).
         u32 m_MouseBasis = 0;
 
-        /// @brief Per-slot pad state this frame, filled by IngestGamepadStates.
+        /// @brief Per-slot pad state this frame, filled by IngestGamepadStates, axes shaped.
         std::array<GamepadState, MaxGamepads> m_Gamepads{};
+        /// @brief Per-slot axis values this frame as the backend reported them, before shaping.
+        std::array<std::array<f32, usize(GamepadAxis::Count)>, MaxGamepads> m_RawGamepadAxes{};
+        /// @brief Per-slot deadzones, reverted to the defaults when the slot's pad disconnects.
+        std::array<GamepadDeadzones, MaxGamepads> m_GamepadDeadzones{};
         /// @brief Per-slot button bits last frame, for the pad pressed-edge query.
         std::array<std::array<bool, usize(GamepadButton::Count)>, MaxGamepads>
             m_PreviousGamepadButtons{};

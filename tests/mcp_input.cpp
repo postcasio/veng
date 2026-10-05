@@ -447,7 +447,7 @@ int main()
                   {
                       const std::scoped_lock lock(inputMutex);
                       return input.IsGamepadButtonDown(slot2, GamepadButton::DpadUp) &&
-                             std::abs(input.GetGamepadAxis(slot2, GamepadAxis::LeftTrigger) -
+                             std::abs(input.GetRawGamepadAxis(slot2, GamepadAxis::LeftTrigger) -
                                       0.75f) < 1e-3f &&
                              input.IsGamepadButtonDown(slot2, GamepadButton::TouchpadTouch) &&
                              std::abs(input.GetGamepadAxis(slot2, GamepadAxis::TouchpadX) - 0.25f) <

@@ -14,10 +14,12 @@ namespace Veng
 namespace Veng::UI
 {
     /// @brief Draws every connected pad's slot, family, name, buttons, axes and touchpad, with
-    ///        sliders driving its motors.
+    ///        sliders driving its motors and its deadzones.
     ///
     /// Reads the pads through the application's Input, so what it shows is exactly what the action
-    /// layer reads — neutral while the window is unfocused, a virtual pad like any other. The motor
+    /// layer reads — neutral while the window is unfocused, a virtual pad like any other. Each axis
+    /// shows its raw value beside the deadzone-shaped one the action layer reads, and the deadzone
+    /// sliders set the pad's zones through Input::SetGamepadDeadzones, live. The motor
     /// sliders set the pad's levels directly and hold them until moved back to zero; they are a
     /// diagnostic override of the engine's haptics, and an application has no other way to write a
     /// motor. With no pad backend (a headless run) the panel says so.

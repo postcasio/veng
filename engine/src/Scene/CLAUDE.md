@@ -377,7 +377,7 @@ which a game-specific control system reads to produce the abstract `Intent` game
   like `AssetId`/`TypeId`); an action *exists* by being declared in a context, so there is no
   registry. An **`InputMappingContext`** (`AssetTypes::InputMap`) declares its actions
   (id + name + `ActionKind`) and a `vector<Binding>` (raw `InputSource` → action, with a signed
-  scale + axis-component modifier). **`ResolveActions(activeContexts, raw, previous) →
+  scale, an axis component, and a threshold and response exponent). **`ResolveActions(activeContexts, raw, previous) →
   ActionState`** (`Veng/Input/Actions.h`) is the pure, device-free core — bindings × the active
   context stack × the raw snapshot → each action's value + phase, phase derived by comparing
   against the previous `ActionState`. It is unit-tested with no window, mirroring the
@@ -419,7 +419,7 @@ which a game-specific control system reads to produce the abstract `Intent` game
   own seat exists, rather than presenting another peer's.
     **A context can be gated on gameplay focus as authored data.** An `InputMapData`
   (`Veng/Asset/InputMappingContext.h`) carries a reflected **`RequiresGameplayFocus`** flag
-  (authored `"requiresGameplayFocus"`, tolerant-read so existing cooked maps are unchanged); when
+  (authored `"RequiresGameplayFocus"`, tolerant-read so existing cooked maps are unchanged); when
   it is set, `InputMappingSystem` **excludes** that context from the seat's effective active list
   whenever the seat lacks gameplay focus (`SystemContext::GameplayFocused`, stamped from
   `InputRouter::IsGameplayFocused()` and `false` headless). This is **pure evaluation at list
@@ -485,7 +485,23 @@ pad) unless background input is retained, matching keyboard and mouse. **Virtual
 slots like physical ones and are driven through `VirtualGamepadEvent`, posted to
 `InputRouter::PostInjectedEvent` (MCP's `input.send` pad events use exactly this), so automation
 reaches every pad path without hardware. A `SeatInputView`'s gamepad arm reads the seat's assigned
-pad through it, at the per-tick cadence. A **`Possesses { Entity Pawn }`** link names the pawn a
+pad through it, at the per-tick cadence.
+
+**A source's value is shaped in two places, and nowhere else.** The device layer shapes a pad as
+`Input::IngestGamepadStates` takes it in: each stick's two axes go through one **radial** deadzone
+(`ShapeStick`), so a diagonal leaves the zone on both axes at once and keeps its direction, and each
+trigger through its own (`ShapeTrigger`); both rescale the remainder so the value is continuous at
+the zone's edge and full at full deflection, and a resting stick reads exactly zero. The zones are
+per pad (`SetGamepadDeadzones`, reverting to the `GamepadDeadzones` defaults when the pad leaves),
+virtual pads are shaped like physical ones, the touchpad's position axes are not deflections and
+pass through, and `GetRawGamepadAxis` keeps the unshaped value for a diagnostic display. A stick
+needs this at the device layer because only there are both of its axes seen together. Then each
+**`Binding`** shapes its scaled source for the action it drives: a `Threshold` (a Button action
+reads the source as a half-axis pressed at that pull point, positive side only; an axis action
+drops a source under it), and an `Exponent` response curve on axis actions. Both default to
+a pass-through, so a binding authoring neither resolves its source unchanged; `ResolveActions`'s fake
+`RawInputView` never passes through the device layer, which is why the zones are pure functions
+tested on their own. A **`Possesses { Entity Pawn }`** link names the pawn a
 seat controls; possession is independent of `Viewer.Camera` (a spectator views without possessing;
 a cutscene retargets the camera without un-possessing).
 

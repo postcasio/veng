@@ -265,10 +265,14 @@ extern "C"
 /// its queued edit, and Application with its pad backend and slot states. A module reads pads
 /// through an Input it is handed and subclasses Application, so a stale module reads every pad
 /// field after the arrays at a shifted offset and lays the application out short.
+/// Version 65 grows Binding with its Threshold and Exponent, and Input with each pad's raw axes and
+/// deadzones. A module builds bindings in code and reads pads through an Input it is handed, so a
+/// stale module lays a binding out short and reads Input's members after the pad table at a
+/// shifted offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 64u
+#define VENG_MODULE_ABI_VERSION 65u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

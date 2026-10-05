@@ -306,8 +306,10 @@ across the whole project's one AssetId namespace, not just its own pack.
   inspector (`DrawFields` over the same `FieldClass::Array` path the project-settings panel uses),
   so the binding table is add/remove/edit-able with **no** bespoke widget code. The one custom
   widget is an `ActionId` name combo scoped to the document's own declared actions (a `u64` leaf
-  has no default scalar widget), so a binding picks its action by name, not a raw id. Save
-  merge-writes the document, then recooks and hot-reloads behind the stable handle. It exposes a
+  has no default scalar widget), so a binding picks its action by name, not a raw id. The file is
+  read and written through the shared JSON walker too (`ReadInputMapDocument` /
+  `WriteInputMapDocument`), so every reflected action and binding field round-trips with no panel
+  code of its own. Save merge-writes the document, then recooks and hot-reloads behind the stable handle. It exposes a
   `GetInspectables()` override for the editor MCP — an external write through it marks the document
   dirty exactly as a UI edit does, and reaches disk only through `editor.save` — and draws a **read-only resolved-state preview** — the actions the current bindings
   resolve to over the editor's own input each frame — so a binding's effect is observable without

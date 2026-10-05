@@ -5,12 +5,11 @@
 #include "FieldWidget.h"
 #include "JsonUtil.h"
 
-#include <Veng/Asset/HexId.h>
 #include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Input.h>
 #include <Veng/Input/RawInput.h>
 #include <Veng/Log.h>
-#include <Veng/Reflection/EnumName.h>
+#include <Veng/Reflection/JsonSerialize.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/UI/UI.h>
@@ -18,9 +17,7 @@
 
 #include <array>
 #include <cstring>
-#include <fstream>
 #include <span>
-#include <sstream>
 
 #include <nlohmann/json.hpp>
 
@@ -71,162 +68,50 @@ namespace VengEditor
 
     InputMappingEditorPanel::~InputMappingEditorPanel() = default;
 
+    Result<InputMapData> ReadInputMapDocument(const path& source, const TypeRegistry& types)
+    {
+        const optional<nlohmann::json> doc = ReadJsonObject(source);
+        if (!doc)
+        {
+            return std::unexpected(fmt::format("failed to read {}", source.string()));
+        }
+        InputMapData data;
+        // Tolerant: a key naming no field (a hand-authored note) is skipped here and kept on save.
+        const VoidResult bound =
+            JsonReadFields(&data, types.Info(TypeIdOf<InputMapData>()), *doc, types, {}, true);
+        if (!bound)
+        {
+            return std::unexpected(fmt::format("'{}': {}", source.string(), bound.error()));
+        }
+        return data;
+    }
+
+    VoidResult WriteInputMapDocument(const path& source, const InputMapData& data,
+                                     const TypeRegistry& types)
+    {
+        return MergeWriteJsonObject(
+            source, 2, [&](nlohmann::json& doc)
+            { JsonWriteFields(doc, &data, types.Info(TypeIdOf<InputMapData>()), types); });
+    }
+
     void InputMappingEditorPanel::LoadDocument()
     {
-        m_Doc = InputMapData{};
         m_Dirty = false;
-
-        const optional<nlohmann::json> docResult = ReadJsonObject(m_SourcePath);
-        if (!docResult)
+        Result<InputMapData> loaded =
+            ReadInputMapDocument(m_SourcePath, m_Assets.GetTypeRegistry());
+        if (!loaded)
         {
-            Log::Error("Input map editor: failed to read {}", m_SourcePath.string());
+            m_Doc = InputMapData{};
+            Log::Error("Input map editor: {}", loaded.error());
             return;
         }
-        const nlohmann::json& doc = *docResult;
-
-        if (doc.contains("actions") && doc["actions"].is_array())
-        {
-            for (const nlohmann::json& actionJson : doc["actions"])
-            {
-                if (!actionJson.is_object())
-                {
-                    continue;
-                }
-                InputAction action;
-                if (actionJson.contains("id"))
-                {
-                    if (!actionJson["id"].is_string())
-                    {
-                        Log::Error("Input map editor: '{}': an action 'id' must be a hex id string",
-                                   m_SourcePath.string());
-                    }
-                    else if (const optional<u64> parsed =
-                                 ParseHexId(actionJson["id"].get<std::string>()))
-                    {
-                        action.Id = static_cast<ActionId>(*parsed);
-                    }
-                    else
-                    {
-                        Log::Error(
-                            "Input map editor: '{}': an action 'id' is a malformed hex id '{}'",
-                            m_SourcePath.string(), actionJson["id"].get<std::string>());
-                    }
-                }
-                if (actionJson.contains("name") && actionJson["name"].is_string())
-                {
-                    action.Name = actionJson["name"].get<std::string>();
-                }
-                if (actionJson.contains("kind") && actionJson["kind"].is_string())
-                {
-                    if (auto kind = ParseEnum<ActionKind>(actionJson["kind"].get<std::string>()))
-                    {
-                        action.Kind = *kind;
-                    }
-                }
-                m_Doc.Actions.push_back(std::move(action));
-            }
-        }
-
-        if (doc.contains("bindings") && doc["bindings"].is_array())
-        {
-            for (const nlohmann::json& bindingJson : doc["bindings"])
-            {
-                if (!bindingJson.is_object())
-                {
-                    continue;
-                }
-                Binding binding;
-                if (bindingJson.contains("source") && bindingJson["source"].is_object())
-                {
-                    const nlohmann::json& sourceJson = bindingJson["source"];
-                    if (sourceJson.contains("device") && sourceJson["device"].is_string())
-                    {
-                        if (auto device =
-                                ParseEnum<InputDeviceType>(sourceJson["device"].get<std::string>()))
-                        {
-                            binding.Source.Device = *device;
-                        }
-                    }
-                    if (sourceJson.contains("control") &&
-                        sourceJson["control"].is_number_unsigned())
-                    {
-                        binding.Source.Control = sourceJson["control"].get<u32>();
-                    }
-                }
-                if (bindingJson.contains("action"))
-                {
-                    if (!bindingJson["action"].is_string())
-                    {
-                        Log::Error(
-                            "Input map editor: '{}': a binding 'action' must be a hex id string",
-                            m_SourcePath.string());
-                    }
-                    else if (const optional<u64> parsed =
-                                 ParseHexId(bindingJson["action"].get<std::string>()))
-                    {
-                        binding.Action = static_cast<ActionId>(*parsed);
-                    }
-                    else
-                    {
-                        Log::Error(
-                            "Input map editor: '{}': a binding 'action' is a malformed hex id '{}'",
-                            m_SourcePath.string(), bindingJson["action"].get<std::string>());
-                    }
-                }
-                if (bindingJson.contains("axis") && bindingJson["axis"].is_string())
-                {
-                    if (auto axis =
-                            ParseEnum<AxisComponent>(bindingJson["axis"].get<std::string>()))
-                    {
-                        binding.Axis = *axis;
-                    }
-                }
-                if (bindingJson.contains("scale") && bindingJson["scale"].is_number())
-                {
-                    binding.Scale = bindingJson["scale"].get<f32>();
-                }
-                m_Doc.Bindings.push_back(binding);
-            }
-        }
+        m_Doc = std::move(*loaded);
     }
 
     VoidResult InputMappingEditorPanel::WriteDocument()
     {
-        // Round-trip the existing file so unknown keys (a hand-authored comment field, per-map
-        // settings no widget exposes) survive; only the actions/bindings arrays are rewritten.
         const VoidResult written =
-            MergeWriteJsonObject(m_SourcePath, 2,
-                                 [this](nlohmann::json& doc)
-                                 {
-                                     nlohmann::json actions = nlohmann::json::array();
-                                     for (const InputAction& action : m_Doc.Actions)
-                                     {
-                                         nlohmann::json entry = nlohmann::json::object();
-                                         entry["id"] = FormatHexId(static_cast<u64>(action.Id));
-                                         entry["name"] = action.Name;
-                                         entry["kind"] = EnumeratorName(action.Kind);
-                                         actions.push_back(std::move(entry));
-                                     }
-                                     doc["actions"] = std::move(actions);
-
-                                     nlohmann::json bindings = nlohmann::json::array();
-                                     for (const Binding& binding : m_Doc.Bindings)
-                                     {
-                                         nlohmann::json source = nlohmann::json::object();
-                                         source["device"] = EnumeratorName(binding.Source.Device);
-                                         source["control"] = binding.Source.Control;
-
-                                         nlohmann::json entry = nlohmann::json::object();
-                                         entry["source"] = std::move(source);
-                                         entry["action"] =
-                                             FormatHexId(static_cast<u64>(binding.Action));
-                                         entry["axis"] = EnumeratorName(binding.Axis);
-                                         entry["scale"] = binding.Scale;
-                                         bindings.push_back(std::move(entry));
-                                     }
-                                     doc["bindings"] = std::move(bindings);
-                                 });
-
+            WriteInputMapDocument(m_SourcePath, m_Doc, m_Assets.GetTypeRegistry());
         if (!written)
         {
             m_CookError = written.error();

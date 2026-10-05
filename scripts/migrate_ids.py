@@ -22,7 +22,7 @@ Reliability rules (do not relax):
 
 The **one hard rule**: these integers are *not* minted ids and stay numeric —
 material-field std140 ``value`` scalars, mesh material-slot map *keys* (decimal-string
-keys), inputmap ``control`` (a raw scancode), pack ``version``, texture/environment
+keys), inputmap ``Control`` (a raw scancode), pack ``version``, texture/environment
 ``max_size``, animation ``clip`` / ``trimStart`` / ``trimEnd``. The ``.prefab.json`` /
 ``.level.json`` files (game-defined ``AssetHandle`` field names) and ``.graph.json`` asset
 properties are *not* swept by this script — they are hand-migrated — so this script never
@@ -93,7 +93,7 @@ CONVERT_RULES = [
     # Mesh: the skeleton id and each material-slot *value* (the map keys stay numeric).
     ("*.mesh.json", [("skeleton",), ("materials", "*")]),
     # Input map: each action's id and each binding's action id.
-    ("*.inputmap.json", [("actions", "[]", "id"), ("bindings", "[]", "action")]),
+    ("*.inputmap.json", [("Actions", "[]", "Id"), ("Bindings", "[]", "Action")]),
 ]
 
 # Globs the script must never sweep — hand-migrated (game-defined key names defeat any

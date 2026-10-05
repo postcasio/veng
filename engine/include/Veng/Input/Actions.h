@@ -78,12 +78,24 @@ namespace Veng
         Y
     };
 
-    /// @brief One raw-source → action mapping with the minimal modifiers.
+    /// @brief One raw-source → action mapping with its shaping.
     ///
     /// A scalar source contributes to one action component with a signed scale (a negative
     /// Scale inverts, so there is no separate invert flag); a native axis (AxisComponent::Whole)
     /// drives its action directly. This covers WASD → a 2D Move action and a stick → the same
     /// action.
+    ///
+    /// The source's value v (a pad's already passed through the device deadzones, see
+    /// Input::IngestGamepadStates) is scaled first, s = Scale · v, and the binding then shapes s by
+    /// the kind of action it drives:
+    /// - **A Button action** reads the source as a half-axis: it contributes 1 when s > 0 and
+    ///   s ≥ Threshold, else 0. A resting source (s = 0) never presses, whatever the threshold, and
+    ///   a stick axis bound with Scale −1 to one button and +1 to another fires each only on its own
+    ///   half.
+    /// - **An axis action** takes nothing from a source with |s| < Threshold; above it the value
+    ///   passes through the response curve sign(s) · |s|^Exponent, with no rescale at the threshold.
+    ///
+    /// The defaults (Threshold 0, Exponent 1) leave an axis binding's value unchanged.
     struct Binding
     {
         /// @brief The raw control this binding reads.
@@ -97,6 +109,18 @@ namespace Veng
 
         /// @brief Signed scale applied to the source value before accumulation.
         f32 Scale = 1.0f;
+
+        /// @brief The scaled value a source must reach to count, 0 or more.
+        ///
+        /// For a Button action, the pull point that presses it; for an axis action, the magnitude
+        /// under which the source contributes nothing.
+        f32 Threshold = 0.0f;
+
+        /// @brief The response curve's exponent on an axis action, greater than 0.
+        ///
+        /// Above 1 it gives fine control near centre (2 maps a half deflection to a quarter);
+        /// 1 is linear. A Button action ignores it.
+        f32 Exponent = 1.0f;
     };
 
     /// @brief How an action's activation changed this tick.
@@ -274,10 +298,10 @@ namespace Veng
     /// context's actions in declaration order, an action declared in more than one context
     /// keeping its first position). A higher-priority context (later in active) that binds an
     /// action shadows a lower context's bindings of that same action entirely. Combines a 2D
-    /// action's component bindings, applies each binding's signed scale, and derives each
-    /// action's phase by comparing this tick's activation against previous — the seat's
-    /// ActionState from last tick — so phase needs no stateful adapter and works for axis
-    /// actions.
+    /// action's component bindings, shapes each binding's source by its scale, threshold and
+    /// curve (see Binding), and derives each action's phase by comparing this tick's activation
+    /// against previous — the seat's ActionState from last tick — so phase needs no stateful
+    /// adapter and works for axis actions.
     /// @param active    The active context stack, lowest priority first.
     /// @param raw       This tick's raw input read surface.
     /// @param previous  The seat's resolved ActionState from last tick, for phase derivation.
@@ -342,6 +366,14 @@ VE_FIELD(Axis, .DisplayName = "Axis",
 VE_FIELD(Scale, .DisplayName = "Scale",
          .Tooltip = "Signed scale applied to the source before accumulation (negative inverts).",
          .Category = "Mapping")
+VE_FIELD(Threshold, .DisplayName = "Threshold",
+         .Tooltip = "Scaled value the source must reach. A button action presses at it, on the "
+                    "positive half only; an axis action ignores a source below it.",
+         .Category = "Shaping")
+VE_FIELD(Exponent, .DisplayName = "Exponent",
+         .Tooltip = "Response curve sign(s)*|s|^Exponent on an axis action; above 1 gives fine "
+                    "control near centre. Ignored by a button action.",
+         .Category = "Shaping")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::ActionSample, 0xCCB2AAE2234FF034ULL)

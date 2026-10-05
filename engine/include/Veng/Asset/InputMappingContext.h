@@ -26,7 +26,7 @@ namespace Veng
 
         /// @brief Whether this context resolves only while its seat holds gameplay focus.
         ///
-        /// Authored `"requiresGameplayFocus"` in the *.inputmap.json source; carried into the
+        /// Authored `"RequiresGameplayFocus"` in the *.inputmap.json source; carried into the
         /// ResolvedContext the InputMappingSystem gates on. A tolerant field within the fixed
         /// CookedInputMapVersion — absent in a pre-change blob, so existing cooked maps load
         /// unchanged with the false default. False leaves the context always active.

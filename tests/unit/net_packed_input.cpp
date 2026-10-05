@@ -51,6 +51,20 @@ TEST_CASE("Packed action state round-trips each shape within the 8-bit axis quan
     CHECK(decoded.GetValue(Aim) == vec2(0.0f)); // absent → zero
 }
 
+TEST_CASE("A packed axis decodes zero and both full deflections exactly")
+{
+    ActionState state;
+    state.Actions = {
+        ActionSample{.Id = Move, .Value = vec2(0.0f, -1.0f), .Phase = ActionPhase::Ongoing},
+        ActionSample{.Id = Aim, .Value = vec2(1.0f, 0.0f), .Phase = ActionPhase::Ongoing},
+    };
+    const ActionState decoded =
+        DecodePackedActionState(EncodePackedActionState(state, Schema), Schema);
+
+    CHECK(decoded.GetValue(Move) == vec2(0.0f, -1.0f));
+    CHECK(decoded.GetValue(Aim) == vec2(1.0f, 0.0f));
+}
+
 TEST_CASE("A packed record is a handful of bytes for a three-action schema")
 {
     // The reflection form carries name-keyed self-describing records per sample; the packed form is
