@@ -69,14 +69,22 @@ namespace Veng::Renderer
         vector<GpuRibbonSegment> Alpha;
         /// @brief Additive records, in gather order.
         vector<GpuRibbonSegment> Additive;
+        /// @brief Alpha-composited records of unoccluded paths, sorted back to front.
+        vector<GpuRibbonSegment> UnoccludedAlpha;
+        /// @brief Additive records of unoccluded paths, in gather order.
+        vector<GpuRibbonSegment> UnoccludedAdditive;
         /// @brief Records of this placement gathered past MaxRibbonSegmentsPerFrame and not drawn.
         u32 Dropped = 0;
 
         /// @brief Returns whether the plan draws anything.
-        [[nodiscard]] bool IsEmpty() const { return Alpha.empty() && Additive.empty(); }
+        [[nodiscard]] bool IsEmpty() const { return GetSegmentCount() == 0; }
 
         /// @brief Returns how many records the plan draws.
-        [[nodiscard]] usize GetSegmentCount() const { return Alpha.size() + Additive.size(); }
+        [[nodiscard]] usize GetSegmentCount() const
+        {
+            return Alpha.size() + Additive.size() + UnoccludedAlpha.size() +
+                   UnoccludedAdditive.size();
+        }
     };
 
     /// @brief Gathers a scene's Ribbons, Trails and RibbonPaths into a frame's two plans, one per
@@ -95,7 +103,8 @@ namespace Veng::Renderer
     /// entity's drawn pose is the one its meshes draw at: interpolated by @p alpha while the scene
     /// carries motion history, the current one otherwise. Positions are rebased to the camera's eye
     /// in double precision. Each plan is split into the alpha set (sorted back to front on view
-    /// depth) and the additive set; gathering stops at MaxRibbonSegmentsPerFrame records across both
+    /// depth) and the additive set, each again by whether its path is Occluded — the unoccluded
+    /// sets draw after the occluded ones, through the depth; gathering stops at MaxRibbonSegmentsPerFrame records across both
     /// plans, counting the rest as dropped in the plan each would have joined.
     /// @param scene            The scene to gather from.
     /// @param camera           The viewpoint: the render origin, and the back-to-front sort.
@@ -202,6 +211,11 @@ namespace Veng::Renderer
         Ref<GraphicsPipeline> m_AlphaPipeline;
         /// @brief The coverage-weighted additive pipeline.
         Ref<GraphicsPipeline> m_AdditivePipeline;
+        /// @brief The straight-alpha pipeline for unoccluded paths: the scene placement's without
+        ///        its depth test (the post-resolve placement's occlusion is a push-constant switch).
+        Ref<GraphicsPipeline> m_UnoccludedAlphaPipeline;
+        /// @brief The additive pipeline for unoccluded paths.
+        Ref<GraphicsPipeline> m_UnoccludedAdditivePipeline;
         /// @brief Host-mapped record ring, one region per frame in flight.
         Ref<Buffer> m_Records;
         /// @brief Byte size of one ring region.

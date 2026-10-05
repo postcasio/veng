@@ -1501,6 +1501,9 @@ namespace Veng
     /// projection, so crisp world-space linework — gizmos, projected orbits, wireframe holograms,
     /// measurement guides — neither softens nor shimmers; it is occluded per fragment by the scene
     /// depth rather than by a depth test, and still feeds bloom.
+    ///
+    /// Occluded chooses whether nearer scene geometry hides the path. A path that is not drawn over
+    /// everything else of its placement, after the occluded paths, in either placement.
     struct RibbonPath
     {
         /// @brief The polylines drawn, each with its own width and colour.
@@ -1512,6 +1515,9 @@ namespace Veng
         RenderLayer Layer = RenderLayer::Default;
         /// @brief Where in the frame the path draws; Scene unless the linework must stay crisp.
         RibbonPlacement Placement = RibbonPlacement::Scene;
+        /// @brief Whether nearer scene geometry hides it; false draws it through everything, as a
+        ///        hologram or a gizmo that must stay readable inside the geometry it stands in.
+        bool Occluded = true;
     };
 
     /// @brief A scene-authored fullscreen post-process effect the renderer runs over scene color.
@@ -2143,6 +2149,8 @@ VE_FIELD(Additive, .DisplayName = "Additive")
 VE_FIELD(Layer, .DisplayName = "Render layer")
 VE_FIELD(Placement, .DisplayName = "Placement",
          .Tooltip = "Scene: resolved with the scene. PostResolve: drawn crisp at output resolution")
+VE_FIELD(Occluded, .DisplayName = "Occluded",
+         .Tooltip = "Whether nearer scene geometry hides it; off draws it through everything")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::PostProcessEffect, 0xE760A6F6C3F08F48ULL)

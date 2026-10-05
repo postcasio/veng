@@ -580,3 +580,38 @@ TEST_CASE("The per-frame record budget is shared across both placements")
     CHECK(scene.Dropped + postResolve.Dropped ==
           2 * segments - Renderer::MaxRibbonSegmentsPerFrame);
 }
+
+TEST_CASE("An unoccluded path's records go to its placement's unoccluded sets, alpha still sorted")
+{
+    const vector<vec3> line{vec3(0.0f, 0.0f, -2.0f), vec3(1.0f, 0.0f, -2.0f)};
+    for (const RibbonPlacement placement : {RibbonPlacement::Scene, RibbonPlacement::PostResolve})
+    {
+        const RibbonScene fixture;
+        fixture.AddPath({RibbonStrip{.Points = line}}, Transform{}, /*additive=*/true, placement);
+        fixture.AddPath({RibbonStrip{.Points = line}}, Transform{}, /*additive=*/false, placement);
+        const Entity far = fixture.AddPath({RibbonStrip{.Points = line}},
+                                           Transform{.Position = vec3(0.0f, 0.0f, -5.0f)},
+                                           /*additive=*/false, placement);
+        const Entity near = fixture.AddPath({RibbonStrip{.Points = line}}, Transform{},
+                                            /*additive=*/false, placement);
+        const Entity glow = fixture.AddPath({RibbonStrip{.Points = line}}, Transform{},
+                                            /*additive=*/true, placement);
+        for (const Entity unoccluded : {far, near, glow})
+        {
+            fixture.World->Get<RibbonPath>(unoccluded).Occluded = false;
+        }
+
+        Renderer::RibbonDrawPlan postResolve;
+        const Renderer::RibbonDrawPlan scene = fixture.Gather(0.0f, postResolve);
+        const Renderer::RibbonDrawPlan& drawn =
+            placement == RibbonPlacement::Scene ? scene : postResolve;
+        CAPTURE(static_cast<int>(placement));
+        CHECK(drawn.Additive.size() == 1);
+        CHECK(drawn.Alpha.size() == 1);
+        CHECK(drawn.UnoccludedAdditive.size() == 1);
+        REQUIRE(drawn.UnoccludedAlpha.size() == 2);
+        // Farthest first, as the occluded alpha set is.
+        CHECK(drawn.UnoccludedAlpha[0].Start.z < drawn.UnoccludedAlpha[1].Start.z);
+        CHECK(drawn.GetSegmentCount() == 5);
+    }
+}

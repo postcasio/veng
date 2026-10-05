@@ -7,7 +7,7 @@ struct PushConstants
     uint ViewConstantsIndex; // the current frame-in-flight's view-constants region
     uint DepthTexture;       // post-resolve: the render-allocation g-buffer depth's bindless index
     uint Sampler;            // post-resolve: the sampler the depth is read through
-    uint Pad0;
+    uint Occluded;           // post-resolve: 1 to discard fragments behind the scene depth, 0 not to
     float2 TargetExtent;     // post-resolve: the post-resolve allocation's extent, in pixels
     float2 Pad1;
 };

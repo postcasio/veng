@@ -48,6 +48,10 @@ float ViewDepthFromDevice(float4x4 proj, float device)
 
 void DiscardOccluded(VSOutput input)
 {
+    if (g_PC.Occluded == 0u)
+    {
+        return;
+    }
     ViewConstants view = LoadViewConstants(g_PC.ViewConstantsIndex);
     float2 logicalUV = input.sv_position.xy / g_PC.TargetExtent;
     float2 sampleUV = ScaledSampleUV(logicalUV, view.RenderScaleUV.xy, view.MaxValidUV.xy);

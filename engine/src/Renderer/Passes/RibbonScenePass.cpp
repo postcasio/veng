@@ -1,6 +1,7 @@
 #include "RibbonScenePass.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 
 #include <glm/geometric.hpp>
@@ -53,7 +54,7 @@ namespace Veng::Renderer
             u32 ViewConstantsIndex = 0;
             u32 DepthTexture = 0;
             u32 Sampler = 0;
-            u32 Pad0 = 0;
+            u32 Occluded = 1;
             vec2 TargetExtent{0.0f};
             vec2 Pad1{0.0f};
         };
@@ -83,6 +84,7 @@ namespace Veng::Renderer
         {
             RibbonDrawPlan& Plan;
             vector<std::pair<f32, GpuRibbonSegment>> Sorted;
+            vector<std::pair<f32, GpuRibbonSegment>> SortedUnoccluded;
         };
 
         // Packs records into the plans, rebased to the eye, against the per-frame budget the two
@@ -95,6 +97,7 @@ namespace Veng::Renderer
             mat3 Rotation{1.0f};
             u32 Gathered = 0;
             RibbonPlacement Target = RibbonPlacement::Scene;
+            bool Occluded = true;
 
             void Add(const StripPoint& start, const StripPoint& end, const vec3& startTangent,
                      const vec3& endTangent, const bool additive)
@@ -138,11 +141,12 @@ namespace Veng::Renderer
                 ++Gathered;
                 if (additive)
                 {
-                    sink.Plan.Additive.push_back(record);
+                    (Occluded ? sink.Plan.Additive : sink.Plan.UnoccludedAdditive)
+                        .push_back(record);
                     return;
                 }
                 const f32 viewZ = (Rotation * ((vec3(record.Start) + vec3(record.End)) * 0.5f)).z;
-                sink.Sorted.emplace_back(viewZ, record);
+                (Occluded ? sink.Sorted : sink.SortedUnoccluded).emplace_back(viewZ, record);
             }
         };
 
@@ -241,6 +245,7 @@ namespace Veng::Renderer
             const glm::dmat4 transform(world);
             const f64 scale = glm::length(dvec3(transform[0]));
             sink.Target = path.Placement;
+            sink.Occluded = path.Occluded;
             for (const RibbonStrip& strip : path.Strips)
             {
                 if (strip.Opacity <= 0.0f || strip.Points.empty())
@@ -274,17 +279,23 @@ namespace Veng::Renderer
                 JoinStrip(points, strip.Closed, path.Additive, sink);
             }
             sink.Target = RibbonPlacement::Scene;
+            sink.Occluded = true;
         }
 
         // Moves a placement's sorted alpha records into its plan, farthest first.
         void FinishPlan(PlanSink& sink)
         {
             // The camera looks down -Z, so the most negative view-space z is the farthest record.
-            std::ranges::stable_sort(sink.Sorted, {}, &std::pair<f32, GpuRibbonSegment>::first);
-            sink.Plan.Alpha.reserve(sink.Sorted.size());
-            for (const auto& [depth, record] : sink.Sorted)
+            for (auto [sorted, alpha] :
+                 {std::pair{&sink.Sorted, &sink.Plan.Alpha},
+                  std::pair{&sink.SortedUnoccluded, &sink.Plan.UnoccludedAlpha}})
             {
-                sink.Plan.Alpha.push_back(record);
+                std::ranges::stable_sort(*sorted, {}, &std::pair<f32, GpuRibbonSegment>::first);
+                alpha->reserve(sorted->size());
+                for (const auto& [depth, record] : *sorted)
+                {
+                    alpha->push_back(record);
+                }
             }
         }
 
@@ -316,6 +327,8 @@ namespace Veng::Renderer
         {
             plan->Alpha.clear();
             plan->Additive.clear();
+            plan->UnoccludedAlpha.clear();
+            plan->UnoccludedAdditive.clear();
             plan->Dropped = 0;
         }
 
@@ -416,7 +429,8 @@ namespace Veng::Renderer
                                ShaderStage::Vertex | ShaderStage::Fragment)},
                        });
 
-        const auto makePipeline = [&](const char* name, const BlendState& colorBlend)
+        const auto makePipeline =
+            [&](const char* name, const BlendState& colorBlend, const bool occluded)
         {
             vector<PipelineAttachmentInfo> attachments = {
                 {.Format = info.TargetFormat, .Blend = colorBlend}};
@@ -442,14 +456,19 @@ namespace Veng::Renderer
                     .Topology = PrimitiveTopology::TriangleList,
                     // The quad turns to face the camera, so it may present either winding.
                     .CullMode = CullMode::None,
-                    .DepthTestEnable = !postResolve,
+                    .DepthTestEnable = !postResolve && occluded,
                     .DepthWriteEnable = false,
                     // Reverse-Z: a nearer fragment has larger depth.
                     .DepthCompareOp = CompareOp::GreaterOrEqual,
                 });
         };
-        m_AlphaPipeline = makePipeline("Ribbon Alpha Pipeline", BlendState::AlphaBlend());
-        m_AdditivePipeline = makePipeline("Ribbon Additive Pipeline", BlendState::AlphaAdditive());
+        m_AlphaPipeline = makePipeline("Ribbon Alpha Pipeline", BlendState::AlphaBlend(), true);
+        m_AdditivePipeline =
+            makePipeline("Ribbon Additive Pipeline", BlendState::AlphaAdditive(), true);
+        m_UnoccludedAlphaPipeline =
+            makePipeline("Ribbon Unoccluded Alpha Pipeline", BlendState::AlphaBlend(), false);
+        m_UnoccludedAdditivePipeline =
+            makePipeline("Ribbon Unoccluded Additive Pipeline", BlendState::AlphaAdditive(), false);
 
         m_RegionStride = static_cast<u64>(MaxRibbonSegmentsPerFrame) * sizeof(GpuRibbonSegment);
         m_Records = Buffer::Create(m_Context, {
@@ -514,17 +533,22 @@ namespace Veng::Renderer
     u32 RibbonScenePass::Upload() const
     {
         const RibbonDrawPlan& plan = *m_Plan;
-        const auto count =
+        const auto budget =
             static_cast<u32>(std::min<usize>(plan.GetSegmentCount(), MaxRibbonSegmentsPerFrame));
         const u32 region = m_Context.GetCurrentFrameInFlight();
         auto* base = static_cast<u8*>(m_Records->GetMappedData()) +
                      static_cast<usize>(region) * m_RegionStride;
 
-        // Alpha first, then additive, so each set is one contiguous run of the region.
-        const usize alphaCount = std::min<usize>(plan.Alpha.size(), count);
-        std::memcpy(base, plan.Alpha.data(), alphaCount * sizeof(GpuRibbonSegment));
-        std::memcpy(base + alphaCount * sizeof(GpuRibbonSegment), plan.Additive.data(),
-                    (count - alphaCount) * sizeof(GpuRibbonSegment));
+        // The four sets in draw order, so each is one contiguous run of the region.
+        u32 count = 0;
+        for (const vector<GpuRibbonSegment>* set :
+             {&plan.Alpha, &plan.Additive, &plan.UnoccludedAlpha, &plan.UnoccludedAdditive})
+        {
+            const auto take = static_cast<u32>(std::min<usize>(set->size(), budget - count));
+            std::memcpy(base + static_cast<usize>(count) * sizeof(GpuRibbonSegment), set->data(),
+                        static_cast<usize>(take) * sizeof(GpuRibbonSegment));
+            count += take;
+        }
         return count;
     }
 
@@ -543,8 +567,6 @@ namespace Veng::Renderer
         }
 
         const u32 count = Upload();
-        const auto alphaCount = static_cast<u32>(std::min<usize>(m_Plan->Alpha.size(), count));
-        const u32 additiveCount = count - alphaCount;
 
         const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
         RibbonPushConstants push{.ViewConstantsIndex = registry.GetCurrentViewConstantsIndex()};
@@ -573,13 +595,24 @@ namespace Veng::Renderer
             cmd.PushConstants(push);
             cmd.Draw(segments * RibbonVertexCount, 1, first * RibbonVertexCount, 0);
         };
-        if (alphaCount > 0)
+        // Occluded alpha, occluded additive, then the unoccluded sets over them, matching Upload.
+        const std::array<std::pair<const vector<GpuRibbonSegment>*, const Ref<GraphicsPipeline>*>,
+                         4>
+            sets{{{&m_Plan->Alpha, &m_AlphaPipeline},
+                  {&m_Plan->Additive, &m_AdditivePipeline},
+                  {&m_Plan->UnoccludedAlpha, &m_UnoccludedAlphaPipeline},
+                  {&m_Plan->UnoccludedAdditive, &m_UnoccludedAdditivePipeline}}};
+        u32 first = 0;
+        for (usize i = 0; i < sets.size() && first < count; ++i)
         {
-            draw(m_AlphaPipeline, 0, alphaCount);
-        }
-        if (additiveCount > 0)
-        {
-            draw(m_AdditivePipeline, alphaCount, additiveCount);
+            const auto segments =
+                static_cast<u32>(std::min<usize>(sets[i].first->size(), count - first));
+            push.Occluded = i < 2 ? 1u : 0u;
+            if (segments > 0)
+            {
+                draw(*sets[i].second, first, segments);
+            }
+            first += segments;
         }
     }
 }

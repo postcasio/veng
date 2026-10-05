@@ -258,10 +258,12 @@ extern "C"
 /// builds any of them in code writes its fields short of where the engine reads them.
 /// Version 62 grows Light with SpecularScale, so a stale module that builds a light in code lays it
 /// out short and the engine reads the polygon vertices at a shifted offset.
+/// Version 63 grows RibbonPath with Occluded, so a stale module that builds a path in code leaves
+/// the byte the gather reads its occlusion from unwritten.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 62u
+#define VENG_MODULE_ABI_VERSION 63u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

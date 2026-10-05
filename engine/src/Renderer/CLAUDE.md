@@ -887,6 +887,12 @@ resampled. What differs from the scene placement:
 - **It writes the post-resolve bloom mask** (the promoted one when the mask crosses the boundary, the
   render allocation's when that already is the post-resolve size), by the same luminance rule.
 
+**A path may draw through the scene (`RibbonPath::Occluded` false)**, in either placement — a hologram
+or a gizmo that must stay readable inside the geometry it stands in. `GatherRibbons` splits each plan's
+alpha and additive sets again by it, and the pass draws the unoccluded sets after the occluded ones:
+the scene placement through pipelines without its depth test, the post-resolve placement with its
+fragment discard switched off by the push block's `Occluded` word.
+
 - **Content-driven with deactivation hysteresis**, exactly the sprite pass's shape: `GatherRibbons`
   runs every `Execute` into one `RibbonDrawPlan` per placement, each pass is wired on the first
   non-empty gather of its own plan and unwired after `RibbonIdleFrameLimit` consecutive empty ones,
