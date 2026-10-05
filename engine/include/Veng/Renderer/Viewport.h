@@ -493,8 +493,9 @@ namespace Veng::Renderer
         ///
         /// A document attached to this viewport inherits this seat; an input layer routes the
         /// document's input by that seat's devices. A null Viewer — the default — is the
-        /// single-player seat that reads every device. This records the identity only; the documents
-        /// drive no input until a later layer opens their interactivity.
+        /// single-player seat that reads every device. A bound viewport takes navigation roles from
+        /// that seat alone and routes the pointer only while that seat's focus is UI; an unbound one
+        /// takes roles from the implicit seat and always routes the pointer.
         /// @param seat  The seat, in the world this viewport presents, or a null-Viewer ref for the
         ///              all-devices default.
         void SetSeat(SeatRef seat) { m_Seat = seat; }
