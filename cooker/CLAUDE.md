@@ -183,6 +183,14 @@ at cook time:
   `MaterialImporter` applies to `.vmat` fields and the `PrefabImporter` to components. It
   references only engine builtins (`InputAction`/`Binding` and their enums), so it needs no
   game module.
+- **Rumble clips** (`*.rumble.json`) cook a `Haptics::RumbleClip` (`AssetTypes::RumbleClip`)
+  through the **`RumbleClipImporter`**. The source *is* the reflected `RumbleClipData` — `"Duration"`,
+  `"Loop"`, and the channels `"LowFrequency"`, `"HighFrequency"`, `"LeftTrigger"` and
+  `"RightTrigger"`, each `{ "Keys": [{ "Time", "Value", "Interp" }] }` — bound strictly through the
+  shared JSON walker and emitted through `WriteFields`. It is validated by
+  `Haptics::CheckRumbleClip`: a duration greater than zero, at least one keyed channel, and per
+  channel keys sorted by time, times within the duration and values within `[0, 1]`; a violation
+  fails the cook naming the asset id, the channel and the key index. It needs no game module.
 - **Tables** cook as a pair. A `*.tableschema.json` (`AssetTypes::TableSchema`) declares
   `"columns"` — each a `name` and a `"type"` naming a **registered reflected type by its
   fully-qualified name** (`"Veng::i64"`, `"Veng::vec4"`, `"Veng::AssetHandle<Texture>"`,

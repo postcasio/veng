@@ -126,6 +126,7 @@ add_library(veng SHARED
         src/Asset/Loaders/LocaleCatalogLoader.cpp
         src/Asset/Loaders/LocaleIndexLoader.cpp
         src/Asset/Loaders/InputMapLoader.cpp
+        src/Asset/Loaders/RumbleClipLoader.cpp
         src/Asset/Loaders/StyleSheetLoader.cpp
         src/Asset/Loaders/UIDocumentLoader.cpp
         src/Asset/Loaders/LevelLoader.cpp
@@ -160,6 +161,7 @@ add_library(veng SHARED
         src/Math/AABB.cpp
         src/Math/BVH.cpp
         src/Math/Colorimetry.cpp
+        src/Math/Curve.cpp
         src/Math/Frustum.cpp
         src/Math/Noise.cpp
         src/Module/ApplicationRegistry.cpp
@@ -285,6 +287,8 @@ add_library(veng SHARED
         src/Gui/StyleSheet.cpp
         src/Gui/UIDocument.cpp
         src/Gui/YogaTree.cpp
+        src/Haptics/Haptics.cpp
+        src/Haptics/RumbleClip.cpp
         src/Renderer/Passes/GuiScenePass.cpp
         src/Renderer/Passes/GuiHdrOverlayScenePass.cpp
         src/Renderer/Passes/GBufferScenePass.cpp

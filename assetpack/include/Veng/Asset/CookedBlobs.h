@@ -1003,6 +1003,29 @@ namespace Veng
         u32 RecordBytes = 0;
     };
 
+    /// @brief The current rumble-clip-format version.
+    ///
+    /// Bumped on any CookedRumbleClipHeader layout change; the loader rejects a blob whose
+    /// Version != this. The embedded reflection record evolves tolerantly within a fixed version.
+    inline constexpr u32 CookedRumbleClipVersion = 1u;
+
+    /// @brief Cooked header for a rumble-clip asset.
+    ///
+    /// A rumble clip is a duration, a loop flag and four motor curves. The whole clip rides the
+    /// reflection serializer's name-keyed WriteFields record, which assetpack treats as opaque bytes,
+    /// exactly as the input map does.
+    ///
+    /// The blob is, in order:
+    ///   CookedRumbleClipHeader
+    ///   clip record           — WriteFields record of Haptics::RumbleClipData
+    struct CookedRumbleClipHeader
+    {
+        /// @brief Must equal CookedRumbleClipVersion; the loader rejects mismatches.
+        u32 Version = 0;
+        /// @brief Byte size of the reflection record following this header.
+        u32 RecordBytes = 0;
+    };
+
     /// @brief The current font-format version.
     ///
     /// Bumped on any CookedFontHeader layout change; the loader rejects a blob whose Version != this.

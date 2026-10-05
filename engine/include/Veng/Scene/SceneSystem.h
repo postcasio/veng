@@ -21,6 +21,14 @@ namespace Veng::Audio
     class AudioEngine;
 }
 
+namespace Veng::Haptics
+{
+    class HapticsEngine;
+
+    /// @brief Returns the process's inert haptics engine, on which every play starts nothing.
+    [[nodiscard]] HapticsEngine& GetInertEngine();
+}
+
 namespace Veng::Localization
 {
     class Localization;
@@ -139,6 +147,14 @@ namespace Veng
         /// device when there is no hardware, so every call is a no-op that still tracks the request
         /// and no audio-triggering system needs a null-guard.
         Audio::AudioEngine& Audio;
+        /// @brief The haptics engine a system plays rumble clips on pads through.
+        ///
+        /// A scene-agnostic Application service, the one writer of every pad's motors. A Sim system
+        /// plays through it without gating on IsReplay: during a reconciliation replay the engine
+        /// itself starts nothing. Defaults to the inert engine (Haptics::GetInertEngine), so a context
+        /// a caller assembles without an application need not name one; every context the
+        /// Application builds binds its live engine.
+        Haptics::HapticsEngine& Haptics = ::Veng::Haptics::GetInertEngine();
         /// @brief The localization service a system resolves user-facing text through.
         ///
         /// A scene-agnostic Application service, always present: the engine binds it to the service

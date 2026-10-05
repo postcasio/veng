@@ -40,6 +40,11 @@ exemplar, built as part of the engine tree via `add_subdirectory`.
 - The `HT_SMOKE` capture and the `smoke_golden` / `hello_triangle_launcher_smoke` tests are the
   tree's verification floor — see below, and the validation gate in the
   [root CLAUDE.md](../CLAUDE.md), "Verification".
+- **It is the live consumer of the haptics engine.** The pad's A is bound to `Jump`, and the
+  `ControlSystem` plays `assets/haptics/jump.rumble.json` on the seat (owned by its world) each time
+  Jump triggers; the Gamepads debug window offers the same clip to play on any pad. The clip's shape
+  is a placeholder pulse touching every motor, not a tuned effect — see
+  [engine/src/Haptics/CLAUDE.md](../engine/src/Haptics/CLAUDE.md).
 - Its MCP wiring (`StartMcpServerIfRequested`, env-gated behind `HT_MCP`; the fixed-port
   `hello_triangle-run` / editor convenience targets) is the worked MCP reference — see
   [mcp/CLAUDE.md](../mcp/CLAUDE.md).

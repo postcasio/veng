@@ -442,6 +442,7 @@ add_library(libveng_cook SHARED
         src/Importers/PrefabImporter.cpp
         src/Importers/LevelImporter.cpp
         src/Importers/InputMapImporter.cpp
+        src/Importers/RumbleClipImporter.cpp
         src/Importers/SettingsSchemaImporter.cpp
         src/Importers/AudioBusGraphImporter.cpp
         # The UI-document + stylesheet importers reference libveng's Gui/ style vocabulary

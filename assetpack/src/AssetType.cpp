@@ -241,6 +241,11 @@ namespace Veng
                            .DisplayName = "Flipbook",
                            .Glyph = "FLP",
                            .HandleFieldType = AssetHandleFieldTypes::Flipbook});
+        registry.Register({.Id = AssetTypes::RumbleClip,
+                           .Name = "RumbleClip",
+                           .DisplayName = "RumbleClip",
+                           .Glyph = "RMB",
+                           .HandleFieldType = AssetHandleFieldTypes::RumbleClip});
         // No handle-field leaf: a settings schema is loaded by id by a settings store, never
         // referenced from a component — the same posture as Shader and VertexLayout. The wire name
         // stays "GraphicsSchema" so an existing graphics-schema pack entry resolves unchanged.

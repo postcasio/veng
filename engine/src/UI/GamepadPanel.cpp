@@ -1,6 +1,7 @@
 #include <Veng/UI/GamepadPanel.h>
 
 #include <Veng/Application.h>
+#include <Veng/Haptics/Haptics.h>
 #include <Veng/Input.h>
 #include <Veng/Reflection/EnumName.h>
 #include <Veng/UI/Layout.h>
@@ -8,8 +9,6 @@
 #include <Veng/UI/Widgets.h>
 
 #include <fmt/format.h>
-
-#include "../Platform/GamepadBackend.h"
 
 namespace Veng::UI
 {
@@ -71,41 +70,59 @@ namespace Veng::UI
             }
         }
 
-        /// @brief Draws one pad's motor sliders, writing a changed level straight to the backend.
-        void MotorSliders(GamepadBackend& backend, const GamepadId slot)
+        /// @brief Draws one pad's mixed rumble, its live instances and a play button per clip.
+        void RumbleRows(Haptics::HapticsEngine& haptics, const GamepadId slot,
+                        const std::span<const GamepadPanelClip> clips)
         {
-            GamepadMotors motors = backend.GetMotors(slot);
-            bool changed = false;
-            if (backend.HasRumble(slot))
+            const Haptics::RumbleChannels output = haptics.GetOutput(slot);
+            UI::ProgressBar(output.LowFrequency, {-1.0f, 0.0f},
+                            fmt::format("Low {:.2f}", output.LowFrequency));
+            UI::ProgressBar(output.HighFrequency, {-1.0f, 0.0f},
+                            fmt::format("High {:.2f}", output.HighFrequency));
+            UI::ProgressBar(output.LeftTrigger, {-1.0f, 0.0f},
+                            fmt::format("Left trigger {:.2f}", output.LeftTrigger));
+            UI::ProgressBar(output.RightTrigger, {-1.0f, 0.0f},
+                            fmt::format("Right trigger {:.2f}", output.RightTrigger));
+
+            bool any = false;
+            for (const Haptics::RumbleInstanceInfo& instance : haptics.GetAllInstances())
             {
-                changed |= UI::Slider("Low motor", motors.Low, SliderOptions{});
-                changed |= UI::Slider("High motor", motors.High, SliderOptions{});
+                if (instance.Gamepad != slot)
+                {
+                    continue;
+                }
+                any = true;
+                UI::Text(fmt::format(
+                    "0x{:016X}  {:.2f}/{:.2f}s  x{:.2f}{}{}{}", instance.Clip.Value, instance.Time,
+                    instance.Duration, instance.Intensity * instance.Fade,
+                    instance.Loop ? "  loop" : "", instance.Stopping ? "  stopping" : "",
+                    instance.Paused ? "  paused" : ""));
             }
-            if (backend.HasTriggerMotors(slot))
+            if (!any)
             {
-                changed |= UI::Slider("Left trigger motor", motors.LeftTrigger, SliderOptions{});
-                changed |= UI::Slider("Right trigger motor", motors.RightTrigger, SliderOptions{});
+                UI::TextDisabled("Nothing playing.");
             }
-            if (backend.GetMotors(slot) != GamepadMotors{} && UI::Button("Stop motors"))
+
+            for (const GamepadPanelClip& clip : clips)
             {
-                motors = {};
-                changed = true;
+                if (UI::Button(fmt::format("Play {}", clip.Name)))
+                {
+                    haptics.Play(Haptics::RumbleTarget::ForGamepad(slot), clip.Clip);
+                }
+                UI::SameLine();
             }
-            if (changed)
+            if (UI::Button("Stop"))
             {
-                backend.SetMotors(slot, motors);
+                haptics.StopAll(Haptics::RumbleTarget::ForGamepad(slot));
             }
         }
     }
 
-    void GamepadPanel(Application& app)
+    void GamepadPanel(Application& app, const std::span<const GamepadPanelClip> clips)
     {
-        GamepadBackend* backend = app.GetGamepadBackend();
-        if (backend == nullptr)
-        {
-            UI::TextDisabled("No gamepad backend (headless).");
-            return;
-        }
+        Haptics::HapticsEngine& haptics = app.GetHaptics();
+        UI::Text(fmt::format("Master intensity {:.2f}{}", haptics.GetMasterIntensity(),
+                             haptics.IsOutputSuspended() ? " (suspended: window unfocused)" : ""));
 
         Input& input = app.GetInput();
         const std::span<const GamepadId> connected = input.ConnectedGamepads();
@@ -143,7 +160,7 @@ namespace Veng::UI
                 UI::TextDisabled("Touchpad: no finger");
             }
 
-            MotorSliders(*backend, slot);
+            RumbleRows(haptics, slot, clips);
             DeadzoneSliders(input, slot);
             ControlTable(input, slot);
         }

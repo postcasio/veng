@@ -1,0 +1,22 @@
+{
+  "Duration": 0.25,
+  "Loop": false,
+  "LowFrequency": {
+    "Keys": [
+      { "Time": 0.0, "Value": 0.8, "Interp": "Smooth" },
+      { "Time": 0.25, "Value": 0.0 }
+    ]
+  },
+  "HighFrequency": {
+    "Keys": [
+      { "Time": 0.0, "Value": 1.0 },
+      { "Time": 0.1, "Value": 0.0 }
+    ]
+  },
+  "RightTrigger": {
+    "Keys": [
+      { "Time": 0.0, "Value": 0.5, "Interp": "Step" },
+      { "Time": 0.08, "Value": 0.0 }
+    ]
+  }
+}

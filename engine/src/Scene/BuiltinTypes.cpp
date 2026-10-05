@@ -7,6 +7,7 @@
 #include <Veng/Audio/AudioComponents.h>
 #include <Veng/Gui/Overlay.h>
 #include <Veng/Gui/Surface.h>
+#include <Veng/Haptics/RumbleClip.h>
 #include <Veng/Localization/LocKey.h>
 #include <Veng/Net/InputFeed.h>
 #include <Veng/Net/LagCompensation.h>
@@ -65,6 +66,8 @@ namespace Veng
         registry.Register<InputContextStack>();
         // The reflected on-disk payload of an input map, read by InputMapLoader.
         registry.Register<InputMapData>();
+        // A rumble clip's whole cooked record, read by the loader and bound by the importer.
+        registry.Register<Haptics::RumbleClipData>();
         // The reflected on-disk payload of a settings schema, read by SettingsSchemaLoader; its
         // nested category/setting/option/preset types auto-register through the describe walk.
         registry.Register<SettingsSchemaData>();
@@ -310,6 +313,7 @@ namespace Veng
         registry.Register<AssetHandle<InputMappingContext>>();
         registry.Register<AssetHandle<Audio::AudioClip>>();
         registry.Register<AssetHandle<Flipbook>>();
+        registry.Register<AssetHandle<Haptics::RumbleClip>>();
         registry.Register<AssetHandle<Font>>();
         registry.Register<AssetHandle<Gui::StyleSheet>>();
         registry.Register<AssetHandle<Gui::UIDocument>>();

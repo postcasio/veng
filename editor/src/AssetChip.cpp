@@ -50,6 +50,7 @@ namespace VengEditor
             {AssetTypes::DataTable, {0.35f, 0.75f, 0.65f, 1.0f}},
             {AssetTypes::CollisionShape, {0.85f, 0.35f, 0.30f, 1.0f}},
             {AssetTypes::Flipbook, {0.90f, 0.70f, 0.30f, 1.0f}},
+            {AssetTypes::RumbleClip, {0.80f, 0.50f, 0.70f, 1.0f}},
             {AssetTypes::Raw, {0.50f, 0.50f, 0.50f, 1.0f}},
         };
 

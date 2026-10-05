@@ -21,6 +21,7 @@
 #include "Loaders/FlipbookLoader.h"
 #include "Loaders/FontLoader.h"
 #include "Loaders/InputMapLoader.h"
+#include "Loaders/RumbleClipLoader.h"
 #include "Loaders/LevelLoader.h"
 #include "Loaders/LocaleCatalogLoader.h"
 #include "Loaders/LocaleIndexLoader.h"
@@ -82,6 +83,7 @@ namespace Veng
         RegisterLoader(CreateUnique<LocaleCatalogLoader>());
         RegisterLoader(CreateUnique<LocaleIndexLoader>());
         RegisterLoader(CreateUnique<InputMapLoader>());
+        RegisterLoader(CreateUnique<RumbleClipLoader>());
         RegisterLoader(CreateUnique<StyleSheetLoader>());
         RegisterLoader(CreateUnique<UIDocumentLoader>());
         RegisterLoader(CreateUnique<TableSchemaLoader>());

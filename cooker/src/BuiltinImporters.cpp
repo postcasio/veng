@@ -16,6 +16,7 @@ namespace Veng::Cook
         RegisterPrefabImporter(cooker);
         RegisterLevelImporter(cooker);
         RegisterInputMapImporter(cooker);
+        RegisterRumbleClipImporter(cooker);
         RegisterSettingsSchemaImporter(cooker);
         RegisterAudioBusGraphImporter(cooker);
         RegisterStyleSheetImporter(cooker);

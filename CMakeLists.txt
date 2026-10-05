@@ -1073,6 +1073,8 @@ if (VENG_BUILD_TESTS)
             tests/unit/gamepad_adapter.cpp
             tests/unit/gamepad_slots.cpp
             tests/unit/gamepad_deadzone.cpp
+            tests/unit/curve.cpp
+            tests/unit/haptics.cpp
             tests/unit/seat_routing.cpp
             tests/unit/seat_routing_integration.cpp
             tests/unit/seat_focus.cpp
@@ -1575,6 +1577,20 @@ if (VENG_BUILD_TESTS)
 
     add_test(NAME mcp_input COMMAND veng_test_mcp_input)
     set_tests_properties(mcp_input PROPERTIES LABELS mcp)
+
+    # The haptics read: stand a read-only McpServer up over a device-free HapticsEngine with one clip
+    # playing on a pad slot and one on a padless seat, and read haptics.state over loopback — the
+    # playing pad's mix and both instances are reported, idle slots are not, and a host with no
+    # Haptics reports the engine unavailable. Device-free, so it runs in the default band.
+    add_executable(veng_test_mcp_haptics tests/mcp_haptics.cpp)
+    target_link_libraries(veng_test_mcp_haptics PRIVATE veng::mcp veng::veng
+            nlohmann_json::nlohmann_json)
+    target_compile_definitions(veng_test_mcp_haptics PRIVATE JSON_NOEXCEPTION)
+    target_include_directories(veng_test_mcp_haptics SYSTEM PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/mcp/src/Vendor)
+
+    add_test(NAME mcp_haptics COMMAND veng_test_mcp_haptics)
+    set_tests_properties(mcp_haptics PROPERTIES LABELS mcp)
 
     # The capture-control proof: stand an McpServer up (AllowMutations, a Profiler seam over a live
     # Diagnostics::Profiler), pump it on a background thread that advances the frame and emits a scope
@@ -2314,6 +2330,7 @@ if (VENG_BUILD_TESTS AND TARGET hello_triangle)
             tests/cooker/prefab_save_roundtrip.cpp
             tests/cooker/level_cook.cpp
             tests/cooker/input_map_cook.cpp
+            tests/cooker/rumble_clip_cook.cpp
             tests/cooker/localization_cook.cpp
             tests/cooker/graphics_schema_cook.cpp
             tests/cooker/table_cook.cpp

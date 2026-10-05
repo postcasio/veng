@@ -1,5 +1,8 @@
 #pragma once
 #include <Veng/Veng.h>
+#include <Veng/Asset/AssetHandle.h>
+
+#include <span>
 
 /// @brief The gamepad debug panel, in the `Veng::UI` widget vocabulary.
 ///
@@ -11,18 +14,32 @@ namespace Veng
     class Application;
 }
 
+namespace Veng::Haptics
+{
+    class RumbleClip;
+}
+
 namespace Veng::UI
 {
-    /// @brief Draws every connected pad's slot, family, name, buttons, axes and touchpad, with
-    ///        sliders driving its motors and its deadzones.
+    /// @brief A rumble clip the gamepad panel offers to play, with the label its button shows.
+    struct GamepadPanelClip
+    {
+        /// @brief The button's label.
+        string_view Name;
+        /// @brief The clip; a clip still loading plays nothing.
+        AssetHandle<Haptics::RumbleClip> Clip;
+    };
+
+    /// @brief Draws every connected pad's slot, family, name, buttons, axes and touchpad, its
+    ///        mixed rumble and live instances, and sliders driving its deadzones.
     ///
     /// Reads the pads through the application's Input, so what it shows is exactly what the action
     /// layer reads — neutral while the window is unfocused, a virtual pad like any other. Each axis
     /// shows its raw value beside the deadzone-shaped one the action layer reads, and the deadzone
-    /// sliders set the pad's zones through Input::SetGamepadDeadzones, live. The motor
-    /// sliders set the pad's levels directly and hold them until moved back to zero; they are a
-    /// diagnostic override of the engine's haptics, and an application has no other way to write a
-    /// motor. With no pad backend (a headless run) the panel says so.
-    /// @param app  The application whose pads are shown.
-    void GamepadPanel(Application& app);
+    /// sliders set the pad's zones through Input::SetGamepadDeadzones, live. The rumble rows show the
+    /// haptics engine's mix for the pad and every instance playing on it; a button per offered clip
+    /// plays it on the pad through Haptics::HapticsEngine::Play, the motors' only writer.
+    /// @param app    The application whose pads are shown.
+    /// @param clips  The clips offered for playing on each pad; none draws no play buttons.
+    void GamepadPanel(Application& app, std::span<const GamepadPanelClip> clips = {});
 }

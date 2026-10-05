@@ -65,6 +65,8 @@
 
 #include <Veng/Event.h>
 #include <Veng/FrameClock.h>
+#include <Veng/Haptics/Haptics.h>
+#include <Veng/Haptics/RumbleClip.h>
 #include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
 #include <Veng/Input/RawInput.h>
@@ -89,6 +91,7 @@
 
 #include <Veng/Math/AABB.h>
 #include <Veng/Math/BVH.h>
+#include <Veng/Math/Curve.h>
 #include <Veng/Math/Ease.h>
 #include <Veng/Math/Frustum.h>
 #include <Veng/Math/Noise.h>

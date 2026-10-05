@@ -50,6 +50,15 @@ namespace Veng::Cook
     /// @param cooker  The cooker to register into.
     void RegisterInputMapImporter(Cooker& cooker);
 
+    /// @brief Registers the rumble-clip importer.
+    ///
+    /// Links libveng's reflection serializer (WriteFields) and is therefore absent from the
+    /// veng-free bootstrap cooker. Needs no game module — a clip references only engine builtins
+    /// (Haptics::RumbleClipData and its curves). Folded into RegisterBuiltinImporters; exposed
+    /// individually for a cooker that wants the core set plus only this importer.
+    /// @param cooker  The cooker to register into.
+    void RegisterRumbleClipImporter(Cooker& cooker);
+
     /// @brief Registers the settings-schema importer (graphics and audio schemas alike).
     ///
     /// Links libveng's reflection serializer (WriteFields) and is therefore absent from the

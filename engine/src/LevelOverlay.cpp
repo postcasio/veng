@@ -54,6 +54,7 @@ namespace Veng
                                  .Input = app.GetInput(),
                                  .Tasks = app.GetTaskSystem(),
                                  .Audio = app.GetAudioEngine(),
+                                 .Haptics = app.GetHaptics(),
                                  .Localization = app.GetLocalization()};
         }
     }

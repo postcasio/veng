@@ -74,6 +74,10 @@ namespace Veng
         class AudioDevice;
         class AudioEngine;
     }
+    namespace Haptics
+    {
+        class HapticsEngine;
+    }
     namespace Text
     {
         class GlyphSource;
@@ -736,12 +740,13 @@ namespace Veng
         /// to the UI. Always present; headless borrows no window and routes nothing.
         [[nodiscard]] InputRouter& GetInputRouter() const { return *m_InputRouter; }
 
-        /// @brief Returns the engine's gamepad device layer, or nullptr when it has none.
+        /// @brief Returns the haptics engine: the one writer of every pad's motors.
         ///
-        /// An opaque handle: the type is defined inside the engine, so an application can pass it
-        /// on but not call it. It exists for the engine's own pad tooling (UI::GamepadPanel); pad
-        /// state is read through GetInput. Null headless and on a dedicated host, which poll no pads.
-        [[nodiscard]] GamepadBackend* GetGamepadBackend() const { return m_Gamepads.get(); }
+        /// The engine every system reaches through SystemContext::Haptics to play rumble clips, and
+        /// what application code outside a world plays through. It runs headless and on a dedicated
+        /// host too, where there is simply no device to write; pad state is read through GetInput.
+        /// @pre Run() has initialized the engine — the haptics engine exists only inside Run().
+        [[nodiscard]] Haptics::HapticsEngine& GetHaptics() const;
 
         /// @brief Returns the render context.
         [[nodiscard]] Renderer::Context& GetRenderContext() { return m_RenderContext; }
@@ -2140,6 +2145,15 @@ namespace Veng
                                                        u64 tick, f32 alpha, bool firstStepThisFrame,
                                                        bool isReplay = false) const;
 
+        /// @brief Returns the pad a seat is assigned, for the haptics engine's seat targets.
+        ///
+        /// A world seat reads SeatInput::Gamepad off its Viewer, and is padless when the world, the
+        /// entity or the component is gone. The implicit seat reads every device, so it resolves to
+        /// the first connected pad, as its input does.
+        /// @param seat  The seat.
+        /// @return The pad slot, or GamepadId::None.
+        [[nodiscard]] GamepadId ResolveSeatGamepad(const SeatRef& seat) const;
+
         ApplicationInfo m_Info;
 
         /// @brief Command-line arguments parsed once in Run, before Initialize.
@@ -2336,6 +2350,12 @@ namespace Veng
         /// before any clip or generator a voice may reference is freed. Constructed in Initialize
         /// with a null backend when Headless, and pumped once per frame.
         Unique<Audio::AudioDevice> m_AudioDevice;
+
+        /// @brief The haptics engine, mixing every playing rumble clip into the pads' motors.
+        ///
+        /// Its instances hold clip handles, so it is declared after the asset manager and destructs
+        /// before it. Constructed in Initialize and updated once per frame after OnUpdate.
+        Unique<Haptics::HapticsEngine> m_Haptics;
 
         /// @brief The video recorder, recording the presented frame through the platform's encoder.
         ///

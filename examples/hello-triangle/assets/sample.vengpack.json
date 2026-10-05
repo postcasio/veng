@@ -190,6 +190,11 @@
       "id": "0xC8B2D38BFEF02557",
       "type": "AudioClip",
       "source": "audio/blip.audio.json"
+    },
+    {
+      "id": "0x64A87127B0361E70",
+      "type": "RumbleClip",
+      "source": "haptics/jump.rumble.json"
     }
   ]
 }

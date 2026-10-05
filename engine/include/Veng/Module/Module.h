@@ -280,10 +280,14 @@ extern "C"
 /// suspension, and moves the focus release off a fixed router key onto that role. A stale module
 /// declares no release action and relies on a key the router no longer reads, so nothing it binds
 /// frees a captured cursor.
+/// Version 69 grows SystemContext with its Haptics engine between Audio and Localization, and
+/// Application with its haptics engine. A module builds contexts, is handed them each tick and
+/// subclasses Application, so a stale module reads every context field after Audio at a shifted
+/// offset and lays the application out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 68u
+#define VENG_MODULE_ABI_VERSION 69u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

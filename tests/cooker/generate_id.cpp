@@ -84,6 +84,7 @@ TEST_CASE("Cooker: a .vmat's defaultInstance id emits a companion MaterialInstan
 TEST_CASE("Cooker: GenerateAssetTypeId mints an id that collides with no registered type")
 {
     AssetTypeRegistry types = BuiltinAssetTypes();
+    const usize builtins = types.All().size();
 
     // Mint repeatedly, registering each result, so every later mint must dodge a growing set.
     for (int i = 0; i < 32; ++i)
@@ -95,5 +96,5 @@ TEST_CASE("Cooker: GenerateAssetTypeId mints an id that collides with no registe
         CHECK(types.IsRegistered(minted));
     }
 
-    CHECK(types.All().size() == 25 + 32);
+    CHECK(types.All().size() == builtins + 32);
 }

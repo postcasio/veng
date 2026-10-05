@@ -30,6 +30,10 @@ namespace Veng
     {
         class AudioClip;
     }
+    namespace Haptics
+    {
+        class RumbleClip;
+    }
     namespace Gui
     {
         class UIDocument;
@@ -170,6 +174,8 @@ VE_LEAF(::Veng::AssetHandle<::Veng::CollisionShape>, 0x65CD07D328B875D1ULL,
 VE_LEAF(::Veng::AssetHandle<::Veng::Audio::AudioClip>, 0x8E4CE12FC2D9A1B1ULL,
         ::Veng::FieldClass::AssetHandle);
 VE_LEAF(::Veng::AssetHandle<::Veng::Flipbook>, 0x8F6C1BD21BCB5A56ULL,
+        ::Veng::FieldClass::AssetHandle);
+VE_LEAF(::Veng::AssetHandle<::Veng::Haptics::RumbleClip>, 0x14187B9B917282C1ULL,
         ::Veng::FieldClass::AssetHandle);
 
 // Entity is an intra-scene reference, not a value leaf — the prefab loader

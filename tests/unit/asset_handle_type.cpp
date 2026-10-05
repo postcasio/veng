@@ -81,7 +81,7 @@ TEST_CASE("AssetHandle leaves: a registered leaf id is unique across the builtin
             CHECK(types.FindByHandleField(info.HandleFieldType) == id);
         }
     }
-    CHECK(withLeaf == 19);
+    CHECK(withLeaf == 20);
 }
 
 TEST_CASE("AssetHandleFieldAccepts: a reference of the field's own type is accepted")

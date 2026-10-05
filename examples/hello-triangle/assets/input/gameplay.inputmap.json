@@ -129,6 +129,14 @@
     },
     {
       "Source": {
+        "Device": "GamepadButton",
+        "Control": 0
+      },
+      "Action": "0xB64A2DFE34C4E523",
+      "Axis": "Whole"
+    },
+    {
+      "Source": {
         "Device": "Keyboard",
         "Control": 69
       },

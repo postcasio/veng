@@ -112,6 +112,8 @@ namespace Veng
         inline constexpr AssetTypeId LocaleIndex{0x3563062346011D01ULL};
         /// @brief A grid-packed sprite-sheet atlas with its playback timing (see CookedFlipbookHeader).
         inline constexpr AssetTypeId Flipbook{0x8C7D7B602345DDC6ULL};
+        /// @brief A keyframed animation of a gamepad's motors (see CookedRumbleClipHeader).
+        inline constexpr AssetTypeId RumbleClip{0xA99D9C7B014EBD6BULL};
     }
 
     /// @brief The reflection TypeIds of the AssetHandle\<T\> leaves that reference a builtin type.
@@ -163,6 +165,8 @@ namespace Veng
         inline constexpr u64 AudioClip = 0x8E4CE12FC2D9A1B1ULL;
         /// @brief TypeId of AssetHandle\<Flipbook\>.
         inline constexpr u64 Flipbook = 0x8F6C1BD21BCB5A56ULL;
+        /// @brief TypeId of AssetHandle\<Haptics::RumbleClip\>.
+        inline constexpr u64 RumbleClip = 0x14187B9B917282C1ULL;
     }
 
     /// @brief What a registry records about one asset type.

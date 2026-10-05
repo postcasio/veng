@@ -31,6 +31,8 @@ namespace Veng
     static_assert(AssetHandleFieldTypes::CollisionShape == TypeIdOf<AssetHandle<CollisionShape>>());
     static_assert(AssetHandleFieldTypes::AudioClip == TypeIdOf<AssetHandle<Audio::AudioClip>>());
     static_assert(AssetHandleFieldTypes::Flipbook == TypeIdOf<AssetHandle<Flipbook>>());
+    static_assert(AssetHandleFieldTypes::RumbleClip ==
+                  TypeIdOf<AssetHandle<Haptics::RumbleClip>>());
 
     /// @brief Whether an asset of type @p actual may fill an AssetHandle field expecting @p expected.
     ///

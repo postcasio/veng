@@ -38,6 +38,7 @@
 #include <Veng/Audio/AudioClip.h>
 #include <Veng/Audio/AudioComponents.h>
 #include <Veng/Audio/AudioEngine.h>
+#include <Veng/Haptics/Haptics.h>
 #include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
 #include <Veng/Net/BlobCodec.h>
@@ -209,6 +210,11 @@ constexpr AssetId LocaleIndexId{0xC54C6BECF5E8ECF6ULL};
 // The cooked UI blip a code-triggered PlayOneShot fires through SystemContext::Audio (sample mode).
 constexpr AssetId UiBlipClipId{0xC8B2D38BFEF02557ULL};
 
+// The rumble clip Jump plays on the seat's pad through SystemContext::Haptics. Its shape is a
+// placeholder pulse (a short low-motor ease, a sharper high-motor spike and a right-trigger tick),
+// there to exercise every motor rather than to feel tuned.
+constexpr AssetId JumpRumbleClipId{0x64A87127B0361E70ULL};
+
 // The cooked slab model carrying the two authored attachment nodes the socket demo attaches to,
 // and the cube it parents to one of them.
 constexpr AssetId SocketSlabMeshId{0xECFBCDB0FED94D6CULL};
@@ -266,6 +272,7 @@ public:
     void OnStart(Scene&, const SystemContext& context) override
     {
         m_Blip = context.Assets.Load<Audio::AudioClip>(UiBlipClipId);
+        m_JumpRumble = context.Assets.Load<Haptics::RumbleClip>(JumpRumbleClipId);
     }
 
     void OnUpdate(Scene& scene, const f32, const SystemContext& context) override
@@ -283,6 +290,15 @@ public:
                     scene.IsAlive(viewer->Camera) && scene.Has<CameraLook>(viewer->Camera))
                 {
                     scene.Get<CameraLook>(viewer->Camera).Pitch += cameraPitchDelta;
+                }
+
+                // Jump rumbles the pad this seat reads, owned by this world so a pause holds it.
+                if (player.WasTriggered(Actions::Jump))
+                {
+                    context.Haptics.Play(Haptics::RumbleTarget::ForSeat(
+                                             SeatRef{.World = context.World, .Viewer = seat}),
+                                         m_JumpRumble,
+                                         Haptics::RumbleParams{.World = context.World});
                 }
 
                 // The seat may possess no pawn; skip rather than fault, so an unwired seat is inert.
@@ -358,6 +374,7 @@ private:
 
     // The UI blip the Interact one-shot plays, loaded once at OnStart.
     AssetHandle<Audio::AudioClip> m_Blip;
+    AssetHandle<Haptics::RumbleClip> m_JumpRumble;
 };
 
 VE_SYSTEM(ControlSystem, 0x1C2F5C03357C19B2ULL, "Control");
@@ -765,6 +782,9 @@ protected:
         StartMcpServerIfRequested();
         SetupAudioDemo();
 
+        // The panel's play control offers the same clip Jump plays.
+        m_JumpRumble = GetAssetManager().Load<Haptics::RumbleClip>(JumpRumbleClipId);
+
         if (GetImGuiLayer())
         {
             // Translucent debug windows so the lit scene shows through behind the
@@ -1008,6 +1028,7 @@ protected:
                                      .Input = GetInput(),
                                      .Tasks = GetTaskSystem(),
                                      .Audio = GetAudioEngine(),
+                                     .Haptics = GetHaptics(),
                                      .Localization = GetLocalization(),
                                      .Role = GetNetRole()};
             },
@@ -1421,6 +1442,7 @@ private:
             .Profiler = [this] { return &GetProfiler(); },
             .VideoRecorder = [this] { return &GetVideoRecorder(); },
             .Audio = [this] { return &GetAudioEngine(); },
+            .Haptics = [this] { return &GetHaptics(); },
         });
 
         m_McpServer = Mcp::McpServer::Create(info, *m_McpHost);
@@ -1655,7 +1677,8 @@ private:
         // Every connected pad's live controls, as the action layer reads them.
         if (auto padWindow = UI::Window("Gamepads"))
         {
-            UI::GamepadPanel(*this);
+            const UI::GamepadPanelClip clips[] = {{.Name = "jump", .Clip = m_JumpRumble}};
+            UI::GamepadPanel(*this, clips);
         }
 
         // The scene's composited output, drawn last so it fills its own window.
@@ -1715,6 +1738,7 @@ private:
                                      .Input = GetInput(),
                                      .Tasks = GetTaskSystem(),
                                      .Audio = GetAudioEngine(),
+                                     .Haptics = GetHaptics(),
                                      .Localization = GetLocalization(),
                                      .Role = NetRole::Server};
             },
@@ -1899,6 +1923,9 @@ private:
     Audio::VoiceHandle m_ToneVoice;
     f32 m_ToneClock = 0.0f;
     AssetHandle<Audio::AudioClip> m_GeneratedClip;
+
+    // The jump clip the gamepad panel offers to play on a pad.
+    AssetHandle<Haptics::RumbleClip> m_JumpRumble;
 
     // Pauses the managed world's simulation so the broadphase reads `static`; never set in smoke.
     bool m_PauseSpin = false;

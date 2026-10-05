@@ -41,6 +41,11 @@ engine *mounts* archives and resolves assets against them.
   `InputContextStack` references one or more by id, and `InputMappingSystem` resolves the active
   set against the raw snapshot — the gameplay control flow is
   [../Scene/CLAUDE.md](../Scene/CLAUDE.md).
+- **`AssetTypes::RumbleClip` — a `Haptics::RumbleClip`, CPU-only.** Its `*.rumble.json` source is
+  the reflected `RumbleClipData` (a `Duration`, a `Loop` flag and four `Curve1D` motor channels),
+  bound strictly and validated at cook. Loaded by `AssetId` through the ordinary path and hot-reloaded
+  through `MountMemory`; played through the haptics engine — see
+  [../Haptics/CLAUDE.md](../Haptics/CLAUDE.md).
 - **`AssetTypes::CollisionShape` — solver-neutral collision geometry, CPU-only** (no GPU
   resource). Its `*.collision.json` source names a model and a mode (`"convex"` / `"mesh"`); the
   loaded asset is a point list plus, for a triangle mesh, its indices. A `Collider` component

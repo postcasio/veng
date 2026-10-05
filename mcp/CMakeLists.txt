@@ -21,6 +21,7 @@ add_library(veng_mcp SHARED
         src/GuiTools.cpp
         src/RenderTools.cpp
         src/AudioTools.cpp
+        src/HapticsTools.cpp
         src/ViewportCapture.cpp
         src/MutationTools.cpp
         src/InputTools.cpp

@@ -50,6 +50,11 @@ Each major system's architecture lives in a `CLAUDE.md` inside its source direct
   handshake and lock-free retired-voice channel, the master reverb node, the single `MaxVoices`
   budget, and the null device (headless / device-loss). The callback thread is the one sanctioned
   exception to the single-thread rule, and touches no engine state.
+- **[src/Haptics/CLAUDE.md](src/Haptics/CLAUDE.md)** — `Veng/Haptics/`, gamepad rumble: the
+  general `Curve1D` keyframed scalar, the cooked CPU-only `RumbleClip` asset (four motor curves), and
+  the `HapticsEngine` reached as `SystemContext::Haptics` — seat or pad targets, intensity, loop and
+  fading stops, world-owned instances that pause and stop with their world, the replay gate, and the
+  per-pad maximum mix written once per frame as the motors' only writer.
 - **[src/Capture/CLAUDE.md](src/Capture/CLAUDE.md)** — `Veng/Capture/`, the video recorder:
   `VideoRecorder` as the compositor's `CaptureSink`, taking a fresh encoder-owned buffer per frame and
   appending it at the frame slot's retirement; the device-free `RecorderCore` (slot map, both
@@ -521,7 +526,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 68** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 69** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the

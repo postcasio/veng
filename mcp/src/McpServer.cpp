@@ -4,6 +4,7 @@
 #include <Veng/Log.h>
 
 #include "AudioTools.h"
+#include "HapticsTools.h"
 #include "GuiTools.h"
 #include "InputTools.h"
 #include "MutationTools.h"
@@ -466,6 +467,7 @@ namespace Veng::Mcp
         RegisterRenderTools(*server, mcpHost);
         RegisterProfileReadTools(*server, mcpHost);
         RegisterAudioTools(*server, mcpHost);
+        RegisterHapticsTools(*server, mcpHost);
 
         // Mutation, input-injection, capture-control and renderer-settings tools are opt-in: a
         // read-only server (the default) exposes none of them, so tools/list honestly reflects the

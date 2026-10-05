@@ -28,6 +28,11 @@ symbol: build the Doxygen reference with `cmake --build build --target docs`
   `InputContextStack` in the player prefab, and reading actions by name in a
   control system — plus why `InputMappingSystem` must run before the control
   system and how the context stack switches schemes and gates focus.
+- **[Authoring and playing rumble clips](guides/authoring-rumble-clips.md)** — gamepad
+  rumble as authored data: writing a `*.rumble.json` clip (its duration, loop flag and four
+  keyframed motor channels), adding it to a pack, playing it from a system on a seat through
+  `SystemContext::Haptics`, keeping a handle to scale and fade a continuous effect, how layered
+  clips mix by maximum, and checking it without a pad.
 - **[Multi-seat input and split-screen](guides/multi-seat-input.md)** — routing
   input per seat: the `SeatInput` component naming each seat's devices, the
   `DeviceAssignmentSystem` auto-assigning pads, the per-seat filtered view, how the

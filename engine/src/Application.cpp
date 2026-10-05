@@ -3,6 +3,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Asset/CookedProject.h>
 #include <Veng/Audio/AudioDevice.h>
+#include <Veng/Haptics/Haptics.h>
 #include <Veng/Audio/AudioEngine.h>
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Gui/GuiConsumer.h>
@@ -243,6 +244,33 @@ namespace Veng
         {
             m_Gamepads = CreateUnique<GamepadBackend>();
         }
+
+        // The motors' one writer. A seat resolves to its assigned pad, the implicit seat to the
+        // first connected pad as its input does; only a run with a pad backend has motors to write.
+        Haptics::HapticsEngineInfo haptics{
+            .ResolveSeat = [this](const SeatRef& seat) { return ResolveSeatGamepad(seat); },
+            .WorldState =
+                [this](const WorldInstanceId world)
+            {
+                if (!m_WorldRunner || m_WorldRunner->ResolveWorld(world) == nullptr)
+                {
+                    return Haptics::HapticsWorldState::Closed;
+                }
+                return m_WorldRunner->IsWorldPaused(world) ? Haptics::HapticsWorldState::Paused
+                                                           : Haptics::HapticsWorldState::Open;
+            },
+        };
+        if (m_Gamepads)
+        {
+            haptics.WriteMotors = [this](const GamepadId pad, const Haptics::RumbleChannels& levels)
+            {
+                m_Gamepads->SetMotors(pad, GamepadMotors{.Low = levels.LowFrequency,
+                                                         .High = levels.HighFrequency,
+                                                         .LeftTrigger = levels.LeftTrigger,
+                                                         .RightTrigger = levels.RightTrigger});
+            };
+        }
+        m_Haptics = CreateUnique<Haptics::HapticsEngine>(std::move(haptics));
 
         m_RenderContext.Initialize(
             {
@@ -773,6 +801,7 @@ namespace Veng
                                      .Input = *m_Input,
                                      .Tasks = *m_TaskSystem,
                                      .Audio = m_AudioDevice->GetEngine(),
+                                     .Haptics = *m_Haptics,
                                      .Localization = GetLocalization(),
                                      .Role = NetRole::Server};
             },
@@ -1353,6 +1382,7 @@ namespace Veng
                     });
                 const f32 simDelta =
                     1.0f / static_cast<f32>(m_Info.World ? m_Info.World->SimTickRate : 60u);
+                const Haptics::HapticsEngine::ReplayScope replay = m_Haptics->BeginReplay();
                 world.TickSimulationPhase(SceneSystem::Phase::Sim, simDelta,
                                           BuildSystemContext(world, m_ManagedWorld,
                                                              RoleForWorld(m_ManagedWorld),
@@ -2130,6 +2160,7 @@ namespace Veng
                              .Input = *m_Input,
                              .Tasks = *m_TaskSystem,
                              .Audio = m_AudioDevice->GetEngine(),
+                             .Haptics = *m_Haptics,
                              .Localization = GetLocalization(),
                              .Role = RoleForWorld(world)};
     }
@@ -2496,6 +2527,29 @@ namespace Veng
         return m_AudioDevice->GetEngine();
     }
 
+    Haptics::HapticsEngine& Application::GetHaptics() const
+    {
+        VE_ASSERT(m_Haptics, "GetHaptics before Run(): the haptics engine exists only once Run() "
+                             "has initialized the engine");
+        return *m_Haptics;
+    }
+
+    GamepadId Application::ResolveSeatGamepad(const SeatRef& seat) const
+    {
+        if (seat.IsImplicit())
+        {
+            const std::span<const GamepadId> connected = m_Input->ConnectedGamepads();
+            return connected.empty() ? GamepadId::None : connected.front();
+        }
+        World* const world = m_WorldRunner ? m_WorldRunner->ResolveWorld(seat.World) : nullptr;
+        if (world == nullptr || !world->GetScene().IsAlive(seat.Viewer))
+        {
+            return GamepadId::None;
+        }
+        const SeatInput* input = world->GetScene().TryGet<SeatInput>(seat.Viewer);
+        return input != nullptr ? input->Gamepad : GamepadId::None;
+    }
+
     Audio::AudioDevice& Application::GetAudioDevice()
     {
         VE_ASSERT(m_AudioDevice, "GetAudioDevice before Run(): the audio device exists only once "
@@ -2557,6 +2611,7 @@ namespace Veng
             .Input = *m_Input,
             .Tasks = *m_TaskSystem,
             .Audio = m_AudioDevice->GetEngine(),
+            .Haptics = *m_Haptics,
             .Localization = GetLocalization(),
             .Pointer = pointer,
             .Tick = tick,
@@ -3139,6 +3194,16 @@ namespace Veng
         {
             VE_PROFILE_SCOPE("Frame/Update");
             OnUpdate(delta);
+        }
+
+        // Every play this frame has landed, from the worlds' systems and from OnUpdate: advance and
+        // mix the rumble, silenced while the pads read neutral for want of window focus.
+        {
+            VE_PROFILE_SCOPE("Frame/Haptics");
+            const bool padsLive =
+                !m_Window || m_Window->IsFocused() || m_InputRouter->IsBackgroundInput();
+            m_Haptics->Update(
+                Haptics::HapticsFrameInfo{.Delta = delta, .OutputSuspended = !padsLive});
         }
 
         // Pull each managed viewport's camera from the world it names and push it: a viewport naming a
