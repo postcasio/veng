@@ -16,9 +16,8 @@ namespace Veng
                                  ? router.GetCursorSeat()
                                  : SeatRef{.World = world, .Viewer = request.Seat};
 
-        // Forget tokens the router popped out from under us — window-focus loss (alt-tab) releases
-        // the cursor seat's gameplay focus directly. Kept, a dead token would be popped by a later
-        // release: a fatal mispaired pop.
+        // Forget tokens the router popped out from under us — an anonymous PopFocus() on the cursor
+        // seat. Kept, a dead token would be popped by a later release: a fatal mispaired pop.
         std::erase_if(tokens, [&router](const FocusToken token)
                       { return !router.IsFocusTokenLive(token); });
         const auto held = std::ranges::find_if(tokens, [&router, seat](const FocusToken token)

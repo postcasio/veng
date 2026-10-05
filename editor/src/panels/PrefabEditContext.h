@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Veng/Veng.h>
+#include <Veng/InputRouter.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/Resolve.h>
@@ -85,6 +86,12 @@ namespace VengEditor
         /// read by the viewport push, so the editor's Play renders interpolated between the last two
         /// Sim ticks exactly as the launcher does. Zero while not playing.
         Veng::f32 PlayAlpha = 0.0f;
+
+        /// @brief The gameplay focus this document pushed to capture the cursor for Play.
+        ///
+        /// Invalid while not capturing. Held by token so a release pops exactly this document's
+        /// entry, including one a window-focus loss has suspended.
+        Veng::FocusToken PlayCapture;
 
         /// @brief Returns true while a play session is active (Playing or Paused).
         [[nodiscard]] bool IsPlaying() const { return Play != PlayState::Editing; }

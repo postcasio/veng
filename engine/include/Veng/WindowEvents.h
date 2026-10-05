@@ -41,7 +41,8 @@ namespace Veng
 
     /// @brief Fired when the window gains or loses OS input focus.
     ///
-    /// The router pops a held gameplay focus on focus loss so alt-tab frees a captured cursor.
+    /// The router suspends a held gameplay focus on focus loss, so alt-tab frees a captured cursor,
+    /// and resumes it on focus gain, so returning to the window recaptures it.
     class WindowFocusEvent final : public Event
     {
     public:

@@ -20,6 +20,12 @@
       "Id": "0xA491C2065BA0FC44",
       "Name": "Interact",
       "Kind": "Button"
+    },
+    {
+      "Id": "0xDF50BE28AA342E18",
+      "Name": "ReleaseCursor",
+      "Kind": "Button",
+      "Role": "ReleaseFocus"
     }
   ],
   "Bindings": [
@@ -127,6 +133,14 @@
         "Control": 69
       },
       "Action": "0xA491C2065BA0FC44",
+      "Axis": "Whole"
+    },
+    {
+      "Source": {
+        "Device": "Keyboard",
+        "Control": 256
+      },
+      "Action": "0xDF50BE28AA342E18",
       "Axis": "Whole"
     }
   ]

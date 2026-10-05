@@ -137,8 +137,13 @@ namespace Veng
     /// order until one accepts it.
     ///
     /// Gameplay focus pairs with the OS cursor capture: pushing it on the cursor seat hides+locks
-    /// the cursor, popping it (the release chord, or window-focus loss) restores it. The release
-    /// chord is Shift+Esc, checked here and not delivered to the game.
+    /// the cursor, popping it restores it. The router binds no key to the release: an application
+    /// binds an action with the ReleaseFocus role, which the engine's role resolution answers through
+    /// ReleaseGameplayFocus. Losing window focus **suspends** the cursor seat's gameplay entry rather
+    /// than popping it — the cursor is freed and the seat reads as UI-focused, its owner's token still
+    /// live — and regaining window focus resumes it and recaptures, whatever device the player uses.
+    /// So an application binding no release still cannot trap the cursor, and only what focus loss
+    /// took is restored: an entry released or popped while the window was away is not.
     ///
     /// A seat's focus stack decides where that seat's own devices route: split-screen seat A can
     /// hold UI focus (routing A's events to the consumers) while seat B stays in gameplay. A
@@ -194,11 +199,12 @@ namespace Veng
 
         /// @brief Sets whether a seat keeps its input focus when the window loses OS focus.
         ///
-        /// Losing window focus normally surrenders a held gameplay focus, so alt-tab frees the cursor.
-        /// Set for a run being driven rather than played — injected input carries no OS focus, so a
-        /// driven app would otherwise go inert whenever the operator works elsewhere. It grabs
-        /// nothing: OS focus still moves away, and only the engine's focus token is held.
-        /// @param retain  True to keep the focus token across a window-focus loss.
+        /// Losing window focus normally suspends a held gameplay focus until the window regains it,
+        /// so alt-tab frees the cursor. Set for a run being driven rather than played — injected
+        /// input carries no OS focus, so a driven app would otherwise go inert whenever the operator
+        /// works elsewhere. It grabs nothing: OS focus still moves away, and only the engine's focus
+        /// entry stays in force.
+        /// @param retain  True to keep gameplay focus in force across a window-focus loss.
         void SetBackgroundInput(bool retain) { m_BackgroundInput = retain; }
 
         /// @brief Whether a seat keeps its input focus across a window-focus loss.
@@ -242,13 +248,24 @@ namespace Veng
         /// @brief Returns whether a focus token still names a live entry in any seat's stack.
         ///
         /// A token goes stale when its entry is popped by a path other than its holder — most
-        /// notably the window-focus-loss release (alt-tab pops the cursor seat's gameplay entry
-        /// directly). A holder that caches tokens across frames (the FocusRequest seam) checks this
-        /// to detect such an external pop and drop the dead token rather than treat the seat as still
-        /// held.
+        /// notably ReleaseGameplayFocus, which a ReleaseFocus press drives. An entry suspended by a
+        /// window-focus loss stays live. A holder that caches tokens across frames (the FocusRequest
+        /// seam) checks this to detect such an external pop and drop the dead token rather than treat
+        /// the seat as still held.
         /// @param token  The token to test; a default (invalid) token is never live.
         /// @return True if the token names a live focus entry.
         [[nodiscard]] bool IsFocusTokenLive(FocusToken token) const;
+
+        /// @brief Releases a seat's gameplay focus by popping its top entry, when that entry holds it.
+        ///
+        /// The release a ReleaseFocus press drives: the seat's top entry is removed, exactly as
+        /// PopFocus(token) would remove it, and the cursor capture is recomputed when the seat is the
+        /// cursor seat. A seat not gameplay-focused — UI on top, an empty stack, or a suspended entry
+        /// — is left untouched.
+        /// @param seat  The seat to release.
+        /// @return The popped entry's token, so a holder caching it can forget it; an invalid token
+        ///         when nothing was released.
+        FocusToken ReleaseGameplayFocus(SeatRef seat);
 
         /// @brief Returns whether a focus token names a live entry in one seat's stack.
         ///
@@ -261,6 +278,8 @@ namespace Veng
         [[nodiscard]] bool IsFocusTokenOn(SeatRef seat, FocusToken token) const;
 
         /// @brief Returns the focus layer owning a seat's input (UI when its stack is empty).
+        ///
+        /// A gameplay entry a window-focus loss suspended reads as UI until the window regains focus.
         /// @param seat  The seat whose focus top to read.
         [[nodiscard]] InputFocus GetFocus(SeatRef seat) const;
 
@@ -504,7 +523,16 @@ namespace Veng
             FocusToken Token;
             /// @brief The focus layer this entry owns.
             InputFocus Focus = InputFocus::UI;
+            /// @brief Whether a window-focus loss suspended this gameplay entry, so it reads as UI
+            ///        until the window regains focus.
+            bool Suspended = false;
         };
+
+        /// @brief Suspends the cursor seat's top entry when it holds gameplay focus.
+        void SuspendCursorGameplay();
+
+        /// @brief Resumes every suspended entry and recomputes the cursor capture.
+        void ResumeSuspended();
 
         /// @brief Borrowed window; nullptr headless. Its cursor capture follows the cursor seat.
         Window* m_Window;
@@ -518,7 +546,7 @@ namespace Veng
         unordered_map<SeatRef, vector<FocusEntry>> m_Stacks;
         /// @brief The seat whose focus gates window events and drives the cursor capture.
         SeatRef m_CursorSeat;
-        /// @brief Whether a window-focus loss leaves a held gameplay focus in place.
+        /// @brief Whether a window-focus loss leaves a held gameplay focus in force, unsuspended.
         bool m_BackgroundInput = false;
         /// @brief Whether the last SyncCursorState captured the cursor, so a capture is acted on once.
         bool m_CursorCaptured = false;

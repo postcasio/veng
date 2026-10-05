@@ -2983,9 +2983,10 @@ namespace Veng
             }
         }
 
-        // The frame's input has landed: resolve every seat's role actions and drive navigation from
-        // their presses, once per frame and before any world ticks, so a paused world's seat still
-        // navigates and a press never depends on how many Sim steps this frame runs.
+        // The frame's input has landed: resolve every seat's role actions and act on their presses —
+        // navigation and focus release — once per frame and before any world ticks, so a paused
+        // world's seat still navigates and a press never depends on how many Sim steps this frame
+        // runs.
         {
             VE_PROFILE_SCOPE("Frame/Roles");
             const ScopedPointer pointer = ComputePointerRouting();
@@ -2997,6 +2998,7 @@ namespace Veng
                 .Pointer = pointer.Routing,
                 .PointerScene = pointer.Scene,
                 .Delta = delta,
+                .FocusTokens = &m_FocusRequestTokens,
             });
         }
 

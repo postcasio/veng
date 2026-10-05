@@ -163,11 +163,51 @@ namespace Veng
     InputFocus InputRouter::GetFocus(SeatRef seat) const
     {
         const auto stack = m_Stacks.find(StackKey(seat));
-        if (stack == m_Stacks.end() || stack->second.empty())
+        if (stack == m_Stacks.end() || stack->second.empty() || stack->second.back().Suspended)
         {
             return InputFocus::UI;
         }
         return stack->second.back().Focus;
+    }
+
+    FocusToken InputRouter::ReleaseGameplayFocus(SeatRef seat)
+    {
+        if (!IsGameplayFocused(seat))
+        {
+            return FocusToken{};
+        }
+        const FocusToken token = m_Stacks.at(StackKey(seat)).back().Token;
+        PopFocus(token);
+        return token;
+    }
+
+    void InputRouter::SuspendCursorGameplay()
+    {
+        if (!IsGameplayFocused())
+        {
+            return;
+        }
+        m_Stacks.at(m_CursorSeat).back().Suspended = true;
+        SyncCursorState();
+    }
+
+    void InputRouter::ResumeSuspended()
+    {
+        // Every seat, not only the cursor seat: a suspended entry rides MoveCursorSeat with the rest
+        // of its stack. An entry popped while suspended is simply gone, so nothing resumes it.
+        bool resumed = false;
+        for (auto& [seat, stack] : m_Stacks)
+        {
+            for (FocusEntry& entry : stack)
+            {
+                resumed |= entry.Suspended;
+                entry.Suspended = false;
+            }
+        }
+        if (resumed)
+        {
+            SyncCursorState();
+        }
     }
 
     void InputRouter::SyncCursorState()
@@ -235,15 +275,19 @@ namespace Veng
     {
         const EventType type = event.GetEventType();
 
-        // Window-focus loss frees a held gameplay capture on the cursor seat, so alt-tab releases
-        // the cursor — unless the seat holds input in the background, where the token is what keeps
-        // a driven app's focus-gated contexts resolving while the operator works in another window.
+        // Window-focus loss suspends a held gameplay capture on the cursor seat, so alt-tab frees the
+        // cursor and refocusing takes it back with no click — unless the seat holds input in the
+        // background, where the capture is what keeps a driven app's focus-gated contexts resolving
+        // while the operator works in another window.
         if (type == EventType::WindowFocus)
         {
-            if (!static_cast<WindowFocusEvent&>(event).IsFocused() && IsGameplayFocused() &&
-                !m_BackgroundInput)
+            if (static_cast<WindowFocusEvent&>(event).IsFocused())
             {
-                PopFocus();
+                ResumeSuspended();
+            }
+            else if (!m_BackgroundInput)
+            {
+                SuspendCursorGameplay();
             }
             OfferConsumers(event);
             return;
@@ -274,19 +318,6 @@ namespace Veng
 
         if (IsGameplayFocused())
         {
-            // Shift+Esc releases the cursor seat's gameplay focus and is consumed here, never
-            // delivered to the game.
-            if (type == EventType::KeyPressed)
-            {
-                const bool shift =
-                    m_Input.IsKeyDown(Key::LeftShift) || m_Input.IsKeyDown(Key::RightShift);
-                if (key == Key::Escape && shift)
-                {
-                    PopFocus();
-                    return;
-                }
-            }
-
             // Exclusive: only the gameplay snapshot sees the event; the consumers are starved.
             m_Input.ApplyEvent(event);
             return;

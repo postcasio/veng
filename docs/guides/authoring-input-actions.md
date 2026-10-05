@@ -178,25 +178,10 @@ entries to change the active scheme — enter a vehicle → push a `vehicle` con
 open a modal → push a UI context — and a higher-priority context that binds an
 action shadows a lower one's bindings of that same action entirely. Popping the
 gameplay context down to empty **neutralizes input**: with no active context the
-seat resolves to all-`None` actions. hello-triangle uses exactly that to release
-control when the window loses gameplay focus, suspending the seat's contexts and
-restoring them when focus returns:
-
-```cpp
-world->Each<Viewer, InputContextStack>(
-    [&](const Entity seat, Viewer&, InputContextStack& stack)
-    {
-        if (!focused && !stack.Active.empty())
-        {
-            m_SuspendedContexts[seat] = std::move(stack.Active);
-            stack.Active.clear();          // no active context → neutral input
-        }
-        else if (focused && stack.Active.empty())
-        {
-            // restore the suspended contexts on regaining focus
-        }
-    });
-```
+seat resolves to all-`None` actions. Going quiet while the seat lacks gameplay focus
+needs no stack surgery, though: a context authored `"RequiresGameplayFocus": true`
+drops out of resolution whenever the seat is not gameplay-focused, which is how
+hello-triangle's gameplay map stops reading the mouse while its debug UI has the cursor.
 
 `InputContextStack` is the fine-grained, per-seat sibling of the `InputRouter`'s
 coarse focus stack: the router decides *whether the game owns input at all*, the
@@ -410,6 +395,24 @@ the interactive Gui documents of the seat that pressed it, while that seat holds
   the editor reads the same key, so menus navigate the same under the editor's Play as in
   the shipped game. `Application::SetDefaultUiContext` overrides it at runtime. With none,
   documents navigate by pointer alone.
+
+**Releasing the cursor is a role too.** The engine releases no captured cursor on a key of
+its own. Tag a `Button` action **`ReleaseFocus`** and bind it in a map the seat resolves
+while it plays; its press hands the seat's gameplay focus back to the UI:
+
+```json
+{ "Id": "0x…", "Name": "ReleaseCursor", "Kind": "Button", "Role": "ReleaseFocus" }
+```
+
+```json
+{ "Source": { "Device": "Keyboard", "Control": 256 }, "Action": "<ReleaseCursor>" }
+```
+
+`ReleaseFocus` fires only under gameplay focus and the navigation roles only under UI
+focus, so the same key can carry this and a `Cancel`: the press that frees the cursor is
+still held when the menu appears, so it never also cancels there. Bind no release and the
+cursor still cannot be trapped — losing window focus suspends the capture, and returning to
+the window takes it back with no click.
 
 **How seats resolve roles.** The engine resolves every role action once a frame, before
 any world ticks — so a paused world's menu still navigates — for each local `SeatInput`

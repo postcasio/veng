@@ -402,6 +402,15 @@ which a game-specific control system reads to produce the abstract `Intent` game
   across frames otherwise could not — and the request-driven token composes with, and never pops,
   a token pushed by an overlay suspend or a `SeatFocusScope`. It is a local-only request like its
   siblings; see **The system catalog** and the request family in `Veng/Scene/Requests.h`.
+  **The engine binds no key to releasing it.** An application declares a Button action with the
+  **`ReleaseFocus`** role in a map its seat resolves under gameplay focus; the role resolver (below)
+  pops that seat's top gameplay entry on the press — through the `FocusRequest` drain's token when
+  that is the one holding it, so a later `FocusRequest{ Gameplay }` captures afresh. **Window-focus
+  loss suspends rather than pops**: the cursor seat's gameplay entry reads as UI while the window is
+  away, its token still live, and refocusing resumes it and recaptures with no click, whatever device
+  the player uses. Only what focus loss took is restored — a release made before it, or a token its
+  owner pops while the window is away, is not brought back — and `--background-input` suspends
+  nothing. An application that binds no release still cannot trap the cursor, since alt-tab frees it.
 - **`InputMappingSystem`** (`Veng/Scene/InputMappingSystem.h`) is the builtin Sim system that
   resolves each locally-owned seat's `InputContextStack` against the raw snapshot into that seat's
   `PlayerInput`. It is the **sole Sim-side reader of raw device state**, registered in
@@ -514,7 +523,8 @@ a cutscene retargets the camera without un-possessing).
 **An action can carry an engine meaning — a role — beside the value a control system reads.** An
 `InputAction` tagged with an **`ActionRole`** is one the engine itself acts on: the navigation roles
 (`NavigateUp`…`NavigatePrevious`, `Confirm`, `Cancel`) drive Gui focus (see
-[../Gui/CLAUDE.md](../Gui/CLAUDE.md), "Navigation is mapped actions, never keys"). Role actions are
+[../Gui/CLAUDE.md](../Gui/CLAUDE.md), "Navigation is mapped actions, never keys"), and
+`ReleaseFocus` releases the pressing seat's gameplay focus (above). Role actions are
 **not** read off `PlayerInput`. The engine's **role resolver** (`engine/src/Input/RoleResolver`)
 resolves them once per **frame**, after the input lands and before any world ticks, for the implicit
 seat and every locally-owned `SeatInput` seat in every world — paused ones included — against a
@@ -523,8 +533,10 @@ claimed reads up). A seat resolves its `InputContextStack` over the application'
 context** (`Application::SetDefaultUiContext`, from the project's `"defaultUiContext"`); a stack a
 `SeatFocusScope` swapped is marked **`Exclusive`** and the default beneath it fires nothing. It keeps
 its own previous `ActionState` and **repeat timers** per seat (`RepeatDelay`/`RepeatRate` on the
-action), and resolves whatever the seat's focus — only the dispatch is gated on focus — so a press
-held across a focus change is never `Started` twice. So `InputMappingSystem` is the sole reader of
+action), and resolves whatever the seat's focus — only the dispatch is gated on focus, navigation
+under UI and `ReleaseFocus` under Gameplay — so a press held across a focus change is never
+`Started` twice: one key may carry both `Cancel` and `ReleaseFocus`, and the press that releases
+focus never also cancels in the menu it uncovers. So `InputMappingSystem` is the sole reader of
 raw device state on the **Sim** side; the role resolver is its frame-rate counterpart, which
 reconciliation never replays.
 

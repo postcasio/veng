@@ -5,16 +5,18 @@
 #include <Veng/Input/InputConsumer.h>
 #include <Veng/Input/SeatRef.h>
 
+#include "../Scene/FocusRequestReconcile.h"
+
 #include <span>
 
 // Input/RoleResolver.h — the engine-internal per-frame resolution of role-tagged actions.
 //
 // A role action is an application-declared action the engine itself acts on (ActionRole): the
-// navigation roles drive Gui focus. The resolver resolves every seat's role actions once per frame,
-// whatever the seat's focus, so a press is a Started edge exactly once however long it is held and
-// whatever focus changes it is held across; only the dispatch is gated on focus. It reads no
-// Sim-resolved PlayerInput: a paused world does not step, a frame may run zero or several steps,
-// and a seatless viewport has no seat to resolve.
+// navigation roles drive Gui focus, and ReleaseFocus releases a seat's gameplay focus. The resolver
+// resolves every seat's role actions once per frame, whatever the seat's focus, so a press is a
+// Started edge exactly once however long it is held and whatever focus changes it is held across;
+// only the dispatch is gated on focus. It reads no Sim-resolved PlayerInput: a paused world does not
+// step, a frame may run zero or several steps, and a seatless viewport has no seat to resolve.
 
 namespace Veng
 {
@@ -52,6 +54,9 @@ namespace Veng
         const Scene* PointerScene = nullptr;
         /// @brief This frame's delta in seconds, which advances the repeat timers.
         f32 Delta = 0.0f;
+        /// @brief The FocusRequest drain's held tokens, from which a ReleaseFocus press forgets the
+        ///        token it released; null when no drain holds any.
+        FocusRequestTokens* FocusTokens = nullptr;
     };
 
     /// @brief Resolves every seat's role actions once per frame and dispatches their presses.
@@ -64,11 +69,16 @@ namespace Veng
     /// InputMappingSystem gates them) over the default UI context, which sits lowest so a seat
     /// context re-binding a role action's id shadows its controls. Beneath a stack a SeatFocusScope
     /// marked Exclusive the default fires nothing — it is resolved only so its presses keep their
-    /// phase across the takeover, and one held through it is not new when it ends. The implicit seat resolves the default UI context alone, against
-    /// every device, and drives only documents on viewports bound to no seat. Every navigation role
-    /// a seat fires is dispatched through the router only when that seat held UI focus as the frame's
-    /// dispatch began — the implicit seat taking the cursor seat's focus, as the window events it
-    /// reads do.
+    /// phase across the takeover, and one held through it is not new when it ends. The implicit seat
+    /// resolves the default UI context alone, against every device, and drives only documents on
+    /// viewports bound to no seat.
+    ///
+    /// Dispatch is gated on the focus each seat held as the frame's dispatch began — the implicit
+    /// seat taking the cursor seat's focus, as the window events it reads do. A navigation role is
+    /// dispatched through the router only under UI focus. A ReleaseFocus press releases the seat's
+    /// gameplay focus only under Gameplay focus (the implicit seat's releasing the cursor seat's), so
+    /// one control may carry both a Cancel and a ReleaseFocus action, and because the press stays
+    /// held across the release it never also cancels in the UI it uncovers.
     class RoleResolver
     {
     public:
@@ -131,6 +141,9 @@ namespace Veng
 
         /// @brief Reused per frame: the role presses awaiting dispatch.
         vector<RoleEvent> m_Pending;
+
+        /// @brief Reused per frame: the gameplay-focused seats a ReleaseFocus press releases.
+        vector<SeatRef> m_Releases;
     };
 
     /// @brief Reads the modifier keys a view reports held, either side counting.

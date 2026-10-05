@@ -681,13 +681,14 @@ namespace VengEditor
         const bool hovered = UI::ItemHovered();
         const bool focused = UI::WindowFocused();
 
-        // Play mouse capture is the router's gameplay focus (pushed by the document on Play,
-        // popped by Shift+Esc or window-focus loss). Clicking the viewport while playing
-        // re-grabs it after a release; recompute focus after so the push takes effect this frame.
-        if (m_Ctx.IsPlaying() && !m_Router.IsGameplayFocused() && hovered &&
+        // Play mouse capture is the router's gameplay focus, held by the document's token (pushed on
+        // Play, popped by the document's Shift+Esc, suspended across a window-focus loss). Clicking
+        // the viewport while playing re-grabs it after a release; recompute focus after so the push
+        // takes effect this frame.
+        if (m_Ctx.IsPlaying() && !m_Router.IsFocusTokenLive(m_Ctx.PlayCapture) && hovered &&
             m_Input.WasMouseButtonPressed(MouseButton::Left))
         {
-            m_Router.PushFocus(InputFocus::Gameplay);
+            m_Ctx.PlayCapture = m_Router.PushFocus(InputFocus::Gameplay);
         }
         const bool gameplayFocused = m_Router.IsGameplayFocused();
 

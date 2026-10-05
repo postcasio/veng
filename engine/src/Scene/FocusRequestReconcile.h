@@ -31,7 +31,8 @@ namespace Veng
     /// and keeps the token; a UI request with one held pops that exact token and forgets it;
     /// requesting the state already held is a no-op. The engine only ever pops a token it itself
     /// pushed, so an interleaved overlay / SeatFocusScope token is never disturbed. Tokens popped
-    /// by another path (window-focus loss) are forgotten on the next reconcile. Always succeeds —
+    /// by another path (InputRouter::PopFocus() on the cursor seat) are forgotten on the next
+    /// reconcile; a token whose entry a window-focus loss suspended is still held. Always succeeds —
     /// there is no failure path — so it returns RequestResult::Handled and never fills @p error.
     /// @param router   The router whose per-seat focus stack is reconciled.
     /// @param tokens   The engine-owned held tokens, updated in place.

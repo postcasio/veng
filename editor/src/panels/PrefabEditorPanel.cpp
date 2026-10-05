@@ -5,6 +5,7 @@
 #include <Veng/Application.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Prefab.h>
+#include <Veng/Input.h>
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
 #include <Veng/Scene/Components.h>
@@ -134,7 +135,9 @@ namespace VengEditor
     PrefabEditorPanel::~PrefabEditorPanel()
     {
         // Children (which hold m_Context and m_Scene by reference) are released by the
-        // base before the scenes, simulation, and prefab handle drop here.
+        // base before the scenes, simulation, and prefab handle drop here. A document closed while
+        // playing gives the cursor back rather than leaving its capture on the stack.
+        ReleaseFromPlay();
         m_Simulation.reset();
         m_PlayScene.reset();
         m_Scene.reset();
@@ -229,22 +232,33 @@ namespace VengEditor
 
     void PrefabEditorPanel::CaptureForPlay()
     {
-        if (!m_Router.IsGameplayFocused())
+        if (!m_Router.IsFocusTokenLive(m_Context.PlayCapture))
         {
-            m_Router.PushFocus(InputFocus::Gameplay);
+            m_Context.PlayCapture = m_Router.PushFocus(InputFocus::Gameplay);
         }
     }
 
     void PrefabEditorPanel::ReleaseFromPlay()
     {
-        if (m_Router.IsGameplayFocused())
+        if (m_Router.IsFocusTokenLive(m_Context.PlayCapture))
         {
-            m_Router.PopFocus();
+            m_Router.PopFocus(m_Context.PlayCapture);
         }
+        m_Context.PlayCapture = {};
     }
 
     void PrefabEditorPanel::TickPlaySimulation()
     {
+        // Shift+Esc is this tool's own Play release, since a project's maps may bind no release of
+        // their own. Read from the snapshot: a captured cursor starves the UI of key events.
+        const bool shift = m_Input.IsKeyDown(Key::LeftShift) || m_Input.IsKeyDown(Key::RightShift);
+        if (m_Context.IsPlaying() && m_Router.IsGameplayFocused() &&
+            m_Router.IsFocusTokenLive(m_Context.PlayCapture) && shift &&
+            m_Input.WasKeyPressed(Key::Escape))
+        {
+            ReleaseFromPlay();
+        }
+
         // Advance the play clone before the document body draws; the engine renders the viewport
         // at the next frame's start from the ViewState the viewport child pushes this frame, so
         // the tick and the camera carry the same one-frame latency. A subclass that overrides

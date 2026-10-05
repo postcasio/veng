@@ -365,12 +365,12 @@ VE_SYSTEM(ControlSystem, 0x1C2F5C03357C19B2ULL, "Control");
 // Drives the cursor seat's input focus from data: a View-phase system (once per frame) that reads
 // the seat's current focus and the frame's raw input, and stamps a builtin FocusRequest expressing
 // the focus the seat should hold — the engine owns the focus token behind it. It captures gameplay
-// focus at start and on a scene click (outside any ImGui window), and releases it on Escape, so the
-// mouse drives the game while captured and the debug UI while free — the focus policy every windowed
-// consumer needs, now authored as a level system rather than hand-rolled in the app's OnUpdate. A
-// gameplay system driving input focus is exactly what the FocusRequest seam exists for; the request
-// is drained at the engine's frame-safe point, and its per-seat token composes with any overlay
-// focus scope. Reuses one holder entity so a session of clicks does not accrete entities.
+// focus at start and on a scene click (outside any ImGui window), so the mouse drives the game while
+// captured and the debug UI while free. The release is no code at all: the gameplay map binds Escape
+// to a ReleaseFocus action, which the engine answers through this token, and refocusing the window
+// after alt-tab recaptures on its own. The request is drained at the engine's frame-safe point, and
+// its per-seat token composes with any overlay focus scope. Reuses one holder entity so a session of
+// clicks does not accrete entities.
 class GameplayFocusSystem final : public SceneSystem
 {
 public:
@@ -385,17 +385,10 @@ public:
 
     void OnUpdate(Scene& scene, const f32, const SystemContext& context) override
     {
-        if (context.GameplayFocused)
+        // A left click on the scene (not on an ImGui window) re-captures the cursor.
+        if (!context.GameplayFocused && context.Input.WasMouseButtonPressed(MouseButton::Left) &&
+            !UI::WantCaptureMouse())
         {
-            // Escape frees the cursor for the debug UI.
-            if (context.Input.WasKeyPressed(Key::Escape))
-            {
-                Stamp(scene, InputFocus::UI);
-            }
-        }
-        else if (context.Input.WasMouseButtonPressed(MouseButton::Left) && !UI::WantCaptureMouse())
-        {
-            // A left click on the scene (not on an ImGui window) re-captures the cursor.
             Stamp(scene, InputFocus::Gameplay);
         }
     }
@@ -1073,8 +1066,8 @@ protected:
         overlay.Document = *recipe;
         overlay.Driver = GuiDriverIdOf<HudDriver>();
         // The HUD takes input so its channel picker and the dropdown it opens are clickable; the
-        // seat only routes pointer into it while its focus top is UI, which here is after Escape
-        // frees the cursor from gameplay.
+        // seat only routes pointer into it while its focus top is UI, which here is after the
+        // ReleaseFocus action on Escape frees the cursor from gameplay.
         overlay.Interactive = true;
     }
 
@@ -1130,11 +1123,12 @@ protected:
             return;
         }
 
-        // Gameplay-focus capture/release is driven by the level's GameplayFocusSystem through the
-        // builtin FocusRequest seam (a click captures the cursor, Escape frees it for the debug UI),
-        // so the app touches no focus state here. The seat's gameplay context is authored
-        // `requiresGameplayFocus`, so the engine excludes it from resolution whenever ImGui owns the
-        // cursor — every gameplay action resolves to None with no stack surgery.
+        // Gameplay-focus capture is driven by the level's GameplayFocusSystem through the builtin
+        // FocusRequest seam (a click captures the cursor) and the release by the gameplay map's
+        // ReleaseFocus action on Escape, so the app touches no focus state here. The seat's gameplay
+        // context is authored `RequiresGameplayFocus`, so the engine excludes it from resolution
+        // whenever ImGui owns the cursor — every gameplay action resolves to None with no stack
+        // surgery.
 
         // Runtime net control through builtin request components: a system stamps a request onto the
         // world's scene and the engine drains it at its frame-safe point, so gameplay reaches the

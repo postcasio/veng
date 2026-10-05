@@ -1,7 +1,8 @@
 // Role-tagged actions and their per-frame resolution, headless. A role action is one the engine acts
 // on: its press is resolved once per frame for every seat — the implicit all-devices seat and each
 // locally-owned SeatInput seat in every world — and a navigation role is dispatched through the
-// router's consumers only while the pressing seat holds UI focus. The resolver is driven over a real
+// router's consumers only while the pressing seat holds UI focus, a ReleaseFocus press releasing the
+// seat's gameplay focus only while it holds that. The resolver is driven over a real
 // InputRouter, Input snapshot and WorldRunner; a recording consumer stands in for the Gui consumers,
 // which the gpu band covers against real documents.
 
@@ -19,6 +20,7 @@
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/Requests.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SystemRegistry.h>
 #include <Veng/World.h>
@@ -35,6 +37,8 @@ namespace
     constexpr ActionId UiUp{0xA1};
     constexpr ActionId UiDown{0xA2};
     constexpr ActionId UiConfirm{0xA3};
+    constexpr ActionId UiCancel{0xA4};
+    constexpr ActionId ReleaseCursor{0xA5};
 
     // The repeat the directions carry: binary-exact, so a run of 0.125 s frames lands on each
     // deadline exactly rather than a float's width either side of it.
@@ -58,21 +62,32 @@ namespace
                        .Action = action};
     }
 
-    // The default UI context: repeating Up/Down on the arrows, a non-repeating Confirm on Enter.
+    // The default UI context: repeating Up/Down on the arrows, a non-repeating Confirm on Enter, and
+    // Cancel on Escape.
     ResolvedContext UiContext()
     {
         return ResolvedContext{.Actions = {Role(UiUp, ActionRole::NavigateUp, true),
                                            Role(UiDown, ActionRole::NavigateDown, true),
-                                           Role(UiConfirm, ActionRole::Confirm, false)},
+                                           Role(UiConfirm, ActionRole::Confirm, false),
+                                           Role(UiCancel, ActionRole::Cancel, false)},
                                .Bindings = {BindKey(UiUp, Key::Up), BindKey(UiDown, Key::Down),
-                                            BindKey(UiConfirm, Key::Enter)}};
+                                            BindKey(UiConfirm, Key::Enter),
+                                            BindKey(UiCancel, Key::Escape)}};
+    }
+
+    // A gameplay context releasing the cursor on Escape, the key the UI context cancels on.
+    ResolvedContext ReleaseContext()
+    {
+        return ResolvedContext{.Actions = {Role(ReleaseCursor, ActionRole::ReleaseFocus, false)},
+                               .Bindings = {BindKey(ReleaseCursor, Key::Escape)},
+                               .RequiresGameplayFocus = true};
     }
 
     // A resident handle over a hand-built context, wired the way a prefab spawn rehydrates one.
     AssetHandle<InputMappingContext> MakeHandle(const u64 id, const ResolvedContext& context)
     {
-        const Ref<InputMappingContext> resource =
-            InputMappingContext::Create(context.Actions, context.Bindings);
+        const Ref<InputMappingContext> resource = InputMappingContext::Create(
+            context.Actions, context.Bindings, context.RequiresGameplayFocus);
         auto entry = CreateRef<Detail::AssetCacheEntry>(
             Detail::AssetCacheEntry{.Id = AssetId{.Value = id},
                                     .Type = AssetTypes::InputMap,
@@ -142,6 +157,7 @@ namespace
         RoleResolver Resolver;
         RoleRecorder Recorder;
         AssetHandle<InputMappingContext> DefaultUi = MakeHandle(0xD1, UiContext());
+        FocusRequestTokens Tokens;
         bool UseDefault = true;
 
         Rig()
@@ -170,7 +186,8 @@ namespace
                                           .Worlds = Runner,
                                           .DefaultUi = UseDefault ? DefaultUi.Get() : nullptr,
                                           .Pointer = pointer,
-                                          .Delta = delta});
+                                          .Delta = delta,
+                                          .FocusTokens = &Tokens});
             // The next frame begins: the snapshot rolls, applying any release this frame deferred.
             Snapshot.BeginFrame(true);
         }
@@ -191,6 +208,26 @@ namespace
         }
 
         Scene& SceneOf(const SeatRef seat) { return Runner.ResolveWorld(seat.World)->GetScene(); }
+
+        // Opens the keyboard seat holding the cursor, with the releasing gameplay context on its
+        // stack.
+        SeatRef OpenReleasingSeat()
+        {
+            const SeatRef seat = OpenSeat(true);
+            SceneOf(seat)
+                .Get<InputContextStack>(seat.Viewer)
+                .Active.push_back(MakeHandle(0xE2, ReleaseContext()));
+            Router.SetCursorSeat(seat);
+            return seat;
+        }
+
+        // Stamps a FocusRequest for the seat and reconciles it as the engine's drain does.
+        void RequestFocus(const SeatRef seat, const InputFocus focus)
+        {
+            string error;
+            ReconcileFocusRequest(Router, Tokens, seat.World,
+                                  FocusRequest{.Seat = seat.Viewer, .Focus = focus}, error);
+        }
     };
 }
 
@@ -445,4 +482,114 @@ TEST_CASE("action roles: a press reaches the first consumer that takes it and no
     rig.Press(Key::Enter);
     rig.Step();
     CHECK(second.Roles.size() == 1);
+}
+
+TEST_CASE("action roles: ReleaseFocus releases a gameplay-focused seat and nothing under UI focus")
+{
+    Rig rig;
+    const SeatRef seat = rig.OpenSeat(true);
+    ResolvedContext anyFocus = ReleaseContext();
+    anyFocus.RequiresGameplayFocus = false;
+    rig.SceneOf(seat)
+        .Get<InputContextStack>(seat.Viewer)
+        .Active.push_back(MakeHandle(0xE3, anyFocus));
+    rig.Router.SetCursorSeat(seat);
+
+    // Resolved under UI focus too, the press has no gameplay focus to release.
+    const FocusToken ui = rig.Router.PushFocus(seat, InputFocus::UI);
+    rig.Press(Key::Escape);
+    rig.Step();
+    CHECK(rig.Router.IsFocusTokenLive(ui));
+    rig.Release(Key::Escape);
+    rig.Step();
+    rig.Router.PopFocus(ui);
+
+    const FocusToken gameplay = rig.Router.PushFocus(seat, InputFocus::Gameplay);
+    rig.Press(Key::Escape);
+    rig.Step();
+    CHECK(rig.Router.GetFocus(seat) == InputFocus::UI);
+    CHECK_FALSE(rig.Router.IsFocusTokenLive(gameplay));
+}
+
+TEST_CASE("action roles: the press that releases focus never also cancels")
+{
+    Rig rig;
+    const SeatRef seat = rig.OpenReleasingSeat();
+    rig.Router.PushFocus(seat, InputFocus::Gameplay);
+
+    // Escape carries both roles. Its press releases, and the same press held on into the UI it
+    // uncovered is never a Cancel there — not on its own frame, nor on any later one.
+    rig.Press(Key::Escape);
+    rig.Step();
+    CHECK(rig.Router.GetFocus(seat) == InputFocus::UI);
+    for (int frame = 0; frame < 4; ++frame)
+    {
+        rig.Step();
+    }
+    CHECK(rig.Recorder.Roles.empty());
+
+    // A fresh press under UI focus is a Cancel.
+    rig.Release(Key::Escape);
+    rig.Step();
+    rig.Press(Key::Escape);
+    rig.Step();
+    REQUIRE(rig.Recorder.CountFor(seat) == 1);
+    CHECK(rig.Recorder.Roles[0].Role == ActionRole::Cancel);
+}
+
+TEST_CASE("action roles: a FocusRequest after a role release captures afresh")
+{
+    Rig rig;
+    const SeatRef seat = rig.OpenReleasingSeat();
+
+    rig.RequestFocus(seat, InputFocus::Gameplay);
+    REQUIRE(rig.Tokens.size() == 1);
+
+    // The release goes through the drain's token, which the drain then no longer holds.
+    rig.Press(Key::Escape);
+    rig.Step();
+    CHECK(rig.Router.GetFocus(seat) == InputFocus::UI);
+    CHECK(rig.Tokens.empty());
+    rig.Release(Key::Escape);
+    rig.Step();
+
+    rig.RequestFocus(seat, InputFocus::Gameplay);
+    CHECK(rig.Router.IsGameplayFocused(seat));
+    CHECK(rig.Tokens.size() == 1);
+    rig.RequestFocus(seat, InputFocus::UI);
+    CHECK(rig.Router.GetFocus(seat) == InputFocus::UI);
+}
+
+TEST_CASE("action roles: with no release bound, Escape leaves gameplay focus alone")
+{
+    Rig rig;
+    const SeatRef seat = rig.OpenSeat(true);
+    rig.Router.SetCursorSeat(seat);
+    rig.Router.PushFocus(seat, InputFocus::Gameplay);
+
+    rig.Press(Key::Escape);
+    rig.Step();
+    CHECK(rig.Router.IsGameplayFocused(seat));
+}
+
+TEST_CASE("action roles: one press releases one entry, however many seats raise it")
+{
+    Rig rig;
+    ResolvedContext ui = UiContext();
+    ui.Actions.push_back(Role(ReleaseCursor, ActionRole::ReleaseFocus, false));
+    ui.Bindings.push_back(BindKey(ReleaseCursor, Key::Escape));
+    rig.DefaultUi = MakeHandle(0xD2, ui);
+
+    // The seat and the implicit seat both resolve the default UI context's release against the
+    // keyboard, and both release the cursor seat.
+    const SeatRef seat = rig.OpenSeat();
+    rig.Router.SetCursorSeat(seat);
+    const FocusToken beneath = rig.Router.PushFocus(seat, InputFocus::Gameplay);
+    const FocusToken top = rig.Router.PushFocus(seat, InputFocus::Gameplay);
+
+    rig.Press(Key::Escape);
+    rig.Step();
+    CHECK_FALSE(rig.Router.IsFocusTokenLive(top));
+    CHECK(rig.Router.IsFocusTokenLive(beneath));
+    CHECK(rig.Router.IsGameplayFocused(seat));
 }

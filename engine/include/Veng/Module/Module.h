@@ -276,10 +276,14 @@ extern "C"
 /// Application with its default UI context and role resolver. A module builds actions and stacks in
 /// code, implements consumers and subclasses Application, so a stale module lays all of them out
 /// short and carries a consumer vtable short of the slot the role dispatch calls through.
+/// Version 68 grows ActionRole with ReleaseFocus and InputRouter's focus entries with their
+/// suspension, and moves the focus release off a fixed router key onto that role. A stale module
+/// declares no release action and relies on a key the router no longer reads, so nothing it binds
+/// frees a captured cursor.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 67u
+#define VENG_MODULE_ABI_VERSION 68u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

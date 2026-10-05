@@ -34,7 +34,9 @@ namespace Veng
     /// The engine binds no key: an application declares an action, tags it with a role, and binds
     /// it in its own input map, and the engine resolves every role-tagged action each frame and acts
     /// on its press. The navigation roles drive focus in the interactive Gui documents of the seat
-    /// that pressed them, while that seat holds UI focus.
+    /// that pressed them, while that seat holds UI focus; ReleaseFocus hands a seat holding gameplay
+    /// focus back to the UI. The two never fire under the same focus, so one control may carry both
+    /// a Cancel action and a ReleaseFocus action.
     enum class ActionRole : u32
     {
         /// @brief No engine meaning: the action is read only by the application's own code.
@@ -54,12 +56,17 @@ namespace Veng
         /// @brief Activates the focused Gui element.
         Confirm,
         /// @brief Raises a cancel the focused Gui element or an open popup consumes.
-        Cancel
+        Cancel,
+        /// @brief Releases the gameplay focus of the seat that pressed it, freeing the cursor.
+        ///
+        /// Fires only while that seat holds gameplay focus as the frame begins. The press stays
+        /// held across the release, so it never also cancels in the UI it uncovers.
+        ReleaseFocus
     };
 
     /// @brief Whether a role drives Gui focus navigation, so it fires only under UI focus.
     /// @param role  The role to test.
-    /// @return True for every role from NavigateUp through Cancel.
+    /// @return True for every role from NavigateUp through Cancel; false for None and ReleaseFocus.
     [[nodiscard]] constexpr bool IsNavigationRole(const ActionRole role)
     {
         return role >= ActionRole::NavigateUp && role <= ActionRole::Cancel;
@@ -431,6 +438,7 @@ VE_ENUMERATOR(NavigateNext)
 VE_ENUMERATOR(NavigatePrevious)
 VE_ENUMERATOR(Confirm)
 VE_ENUMERATOR(Cancel)
+VE_ENUMERATOR(ReleaseFocus)
 VE_ENUM_END();
 
 VE_REFLECT(::Veng::InputAction, 0xC81225F15105A79FULL)
@@ -442,7 +450,8 @@ VE_FIELD(Kind, .DisplayName = "Kind",
          .Tooltip = "Value shape the action resolves to (button, 1D axis, 2D axis).")
 VE_FIELD(Role, .DisplayName = "Role",
          .Tooltip = "What the engine does on a press: navigate, confirm or cancel in the seat's "
-                    "Gui documents. None for an action only the game reads.",
+                    "Gui documents, or release its gameplay focus. None for an action only the "
+                    "game reads.",
          .Category = "Role")
 VE_FIELD(RepeatDelay, .DisplayName = "Repeat Delay",
          .Tooltip = "Seconds held before a role action first repeats; read only with a Repeat "

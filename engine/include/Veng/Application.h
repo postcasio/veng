@@ -732,8 +732,8 @@ namespace Veng
         /// @brief Returns the input router that routes window events to ImGui and the Input snapshot.
         ///
         /// Push InputFocus::Gameplay to give the running game exclusive input (and capture the
-        /// cursor); pop it (or the Shift+Esc release chord) to return input to the UI. Always
-        /// present; headless borrows no window and routes nothing.
+        /// cursor); pop it, or press an action carrying ActionRole::ReleaseFocus, to return input
+        /// to the UI. Always present; headless borrows no window and routes nothing.
         [[nodiscard]] InputRouter& GetInputRouter() const { return *m_InputRouter; }
 
         /// @brief Returns the engine's gamepad device layer, or nullptr when it has none.
@@ -2404,8 +2404,9 @@ namespace Veng
         ///
         /// One token per seat a system has captured gameplay focus for through a FocusRequest; the
         /// engine holds it across frames on the stampers' behalf (they cannot) and pops it when a
-        /// UI FocusRequest releases the seat. A FocusToken is a plain id, so dropping the list is
-        /// inert; the router owns the actual focus stack, and says which seat each token is on.
+        /// UI FocusRequest or a ReleaseFocus press releases the seat. A FocusToken is a plain id, so
+        /// dropping the list is inert; the router owns the actual focus stack, and says which seat
+        /// each token is on.
         vector<FocusToken> m_FocusRequestTokens;
 
         /// @brief A presenting travel awaiting its rebind, so OnWorldArrival can fire when it lands.

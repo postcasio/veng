@@ -563,7 +563,9 @@ maps each role to its own `NavAction`, so the input layer never depends on Gui.
   the frame's dispatch begins (the implicit seat takes the cursor seat's focus, as the window events
   it reads do). Because resolution never stops, a press is `Started` once however long it is held and
   whatever focus or context change it is held across, so the press that closes one screen never also
-  acts on the screen it uncovers.
+  acts on the screen it uncovers. The one non-navigation role, `ReleaseFocus`, fires only under
+  gameplay focus, so one key may carry it and `Cancel` both: the press that frees the cursor never
+  also cancels in the document it exposes.
 - **Repeat is data.** A role action with a `RepeatRate` fires again once held its `RepeatDelay` and
   then at the rate, at most once per frame, from one timer per action per seat — a pad repeats as a
   key does, and the platform's key auto-repeat plays no part in navigation.

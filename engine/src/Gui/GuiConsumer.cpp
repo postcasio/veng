@@ -83,6 +83,7 @@ namespace Veng::Gui
             case ActionRole::Cancel:
                 return NavAction::Cancel;
             case ActionRole::None:
+            case ActionRole::ReleaseFocus:
                 return std::nullopt;
             }
             return std::nullopt;

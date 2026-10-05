@@ -1,8 +1,9 @@
 // InputRouter focus-stack and routing unit cases. The router's logic is device-free: it
-// folds events into the Input snapshot by focus and manages a focus stack with the Shift+Esc
-// release chord. A null window (no cursor capture) and a null ImGui layer (no UI sink) leave
-// exactly the snapshot-routing + focus behavior under test, with no GPU. A cursor capture
-// withholds the mouse buttons held as it happens, so the capturing click never reaches the game.
+// folds events into the Input snapshot by focus and manages per-seat focus stacks, binding no key
+// of its own, and suspends a gameplay capture across a window-focus loss. A null window (no cursor
+// capture) and a null ImGui layer (no UI sink) leave exactly the snapshot-routing + focus behavior
+// under test, with no GPU. A cursor capture withholds the mouse buttons held as it happens, so the
+// capturing click never reaches the game.
 
 #include <doctest/doctest.h>
 
@@ -40,6 +41,15 @@ namespace
 
     private:
         Gui::Document& m_Document;
+    };
+
+    // Records the cursor capture the router signals, standing in for the polling overlay.
+    struct CaptureRecorder final : InputConsumer
+    {
+        bool Captured = false;
+
+        bool ForwardEvent(const Event&) override { return false; }
+        void OnCursorCaptured(const bool captured) override { Captured = captured; }
     };
 
     // A document holding one focused, interactive text field — the text sink under test.
@@ -158,7 +168,7 @@ TEST_CASE("Input: a tap withheld before its deferred release never reads down")
     CHECK_FALSE(input.WasMouseButtonReleased(MouseButton::Left));
 }
 
-TEST_CASE("InputRouter: Shift+Esc releases gameplay focus and is not delivered to the game")
+TEST_CASE("InputRouter: the router binds no release key, so Shift+Esc reaches the game")
 {
     Input input(nullptr);
     const Renderer::ViewportRegistry registry;
@@ -167,53 +177,103 @@ TEST_CASE("InputRouter: Shift+Esc releases gameplay focus and is not delivered t
     router.PushFocus(InputFocus::Gameplay);
 
     input.BeginFrame();
-    // Shift is applied first (the game sees the modifier), then Escape triggers the chord.
     KeyPressedEvent shift(Key::LeftShift, 0, 0);
     router.Dispatch(shift);
-    CHECK(input.IsKeyDown(Key::LeftShift));
-
     KeyPressedEvent escape(Key::Escape, 0, 0);
     router.Dispatch(escape);
 
-    // The chord popped focus and swallowed the Escape, so the game never sees it.
-    CHECK(router.GetFocus() == InputFocus::UI);
-    CHECK_FALSE(input.IsKeyDown(Key::Escape));
-}
-
-TEST_CASE("InputRouter: a bare Escape without Shift is delivered, not a release")
-{
-    Input input(nullptr);
-    const Renderer::ViewportRegistry registry;
-    InputRouter router(nullptr, input, registry);
-
-    router.PushFocus(InputFocus::Gameplay);
-
-    input.BeginFrame();
-    KeyPressedEvent escape(Key::Escape, 0, 0);
-    router.Dispatch(escape);
-
-    // No Shift held, so Escape is ordinary gameplay input and focus is unchanged.
+    // Releasing focus is an application's mapped ReleaseFocus action, never a router key.
     CHECK(router.IsGameplayFocused());
     CHECK(input.IsKeyDown(Key::Escape));
 }
 
-TEST_CASE("InputRouter: window-focus loss pops a held gameplay focus")
+TEST_CASE("InputRouter: window-focus loss suspends a gameplay capture and refocus resumes it")
+{
+    Input input(nullptr);
+    const Renderer::ViewportRegistry registry;
+    InputRouter router(nullptr, input, registry);
+    CaptureRecorder capture;
+    router.RegisterConsumer(capture);
+
+    const FocusToken token = router.PushFocus(InputFocus::Gameplay);
+    CHECK(capture.Captured);
+
+    // Away from the window the cursor is free and the seat reads as UI, but its owner's token holds.
+    WindowFocusEvent lost(false);
+    router.Dispatch(lost);
+    CHECK(router.GetFocus() == InputFocus::UI);
+    CHECK_FALSE(capture.Captured);
+    CHECK(router.IsFocusTokenLive(token));
+
+    // Coming back recaptures with no click, whatever device the player is using.
+    WindowFocusEvent gained(true);
+    router.Dispatch(gained);
+    CHECK(router.IsGameplayFocused());
+    CHECK(capture.Captured);
+
+    // The owner still pops its own entry.
+    router.PopFocus(token);
+    CHECK(router.GetFocus() == InputFocus::UI);
+}
+
+TEST_CASE("InputRouter: a deliberate release is not restored by a refocus")
 {
     Input input(nullptr);
     const Renderer::ViewportRegistry registry;
     InputRouter router(nullptr, input, registry);
 
-    router.PushFocus(InputFocus::Gameplay);
+    const FocusToken token = router.PushFocus(InputFocus::Gameplay);
+    CHECK(router.ReleaseGameplayFocus(router.GetCursorSeat()) == token);
+    CHECK_FALSE(router.IsFocusTokenLive(token));
 
     WindowFocusEvent lost(false);
     router.Dispatch(lost);
-    CHECK(router.GetFocus() == InputFocus::UI);
-
-    // Regaining focus does not re-capture on its own.
-    router.PushFocus(InputFocus::Gameplay);
     WindowFocusEvent gained(true);
     router.Dispatch(gained);
-    CHECK(router.IsGameplayFocused());
+    CHECK(router.GetFocus() == InputFocus::UI);
+}
+
+TEST_CASE("InputRouter: an entry its owner pops while the window is away is not resumed")
+{
+    Input input(nullptr);
+    const Renderer::ViewportRegistry registry;
+    InputRouter router(nullptr, input, registry);
+
+    const FocusToken token = router.PushFocus(InputFocus::Gameplay);
+    WindowFocusEvent lost(false);
+    router.Dispatch(lost);
+    router.PopFocus(token);
+
+    WindowFocusEvent gained(true);
+    router.Dispatch(gained);
+    CHECK(router.GetFocus() == InputFocus::UI);
+}
+
+TEST_CASE("InputRouter: ReleaseGameplayFocus pops only a gameplay top")
+{
+    Input input(nullptr);
+    const Renderer::ViewportRegistry registry;
+    InputRouter router(nullptr, input, registry);
+    const SeatRef cursor = router.GetCursorSeat();
+
+    CHECK_FALSE(router.ReleaseGameplayFocus(cursor).IsValid());
+
+    // A UI layer above the capture owns the seat, so there is nothing to release.
+    const FocusToken gameplay = router.PushFocus(InputFocus::Gameplay);
+    const FocusToken ui = router.PushFocus(InputFocus::UI);
+    CHECK_FALSE(router.ReleaseGameplayFocus(cursor).IsValid());
+    router.PopFocus(ui);
+
+    // Nor while a window-focus loss holds the capture suspended.
+    WindowFocusEvent lost(false);
+    router.Dispatch(lost);
+    CHECK_FALSE(router.ReleaseGameplayFocus(cursor).IsValid());
+    CHECK(router.IsFocusTokenLive(gameplay));
+
+    WindowFocusEvent gained(true);
+    router.Dispatch(gained);
+    CHECK(router.ReleaseGameplayFocus(cursor) == gameplay);
+    CHECK(router.GetFocus() == InputFocus::UI);
 }
 
 TEST_CASE("InputRouter: background input holds a gameplay focus across a window-focus loss")
@@ -237,7 +297,7 @@ TEST_CASE("InputRouter: background input holds a gameplay focus across a window-
     router.Dispatch(gained);
     CHECK(router.IsGameplayFocused());
 
-    // Clearing it restores the release, so the setting is the whole of the behaviour.
+    // Clearing it restores the suspension, so the setting is the whole of the behaviour.
     router.SetBackgroundInput(false);
     WindowFocusEvent lostAgain(false);
     router.Dispatch(lostAgain);

@@ -168,13 +168,26 @@ namespace Veng
         m_Pending.clear();
         const std::span<const Key> claimed = frame.Router.GetClaimedKeys();
 
-        // Queues a seat's navigation presses when the seat holds UI focus; the focus is read before
-        // any press dispatches, so a press that changes focus cannot gate another this frame.
-        const auto queue =
-            [this](const SeatRef seat, const InputFocus focus, const RawInputView& raw)
+        // Queues a seat's presses under the focus it holds: navigation under UI, a release of
+        // `releases` under Gameplay. Every focus is read before any press acts, so a press that
+        // changes focus cannot gate another this frame.
+        m_Releases.clear();
+        const auto queue = [this](const SeatRef seat, const InputFocus focus,
+                                  const RawInputView& raw, const SeatRef releases)
         {
-            if (focus != InputFocus::UI || m_Fires.empty())
+            if (m_Fires.empty())
             {
+                return;
+            }
+            if (focus == InputFocus::Gameplay)
+            {
+                const bool release = std::ranges::any_of(
+                    m_Fires, [](const RoleFire& fired)
+                    { return fired.Role == ActionRole::ReleaseFocus && !fired.Repeat; });
+                if (release && std::ranges::find(m_Releases, releases) == m_Releases.end())
+                {
+                    m_Releases.push_back(releases);
+                }
                 return;
             }
             const ModifierKeys modifiers = ReadModifierKeys(raw);
@@ -231,7 +244,7 @@ namespace Veng
                     const FrameInputView raw(frame.Snapshot, devices, pointer, viewer, claimed);
                     m_Fires.clear();
                     ResolveSeat(seat, m_Contexts, trackedOnly, raw, frame.Delta, m_Fires);
-                    queue(seat, focus, raw);
+                    queue(seat, focus, raw, seat);
                 });
         }
 
@@ -244,10 +257,22 @@ namespace Veng
         }
         const FrameInputView raw(frame.Snapshot, claimed);
         m_Fires.clear();
+        const SeatRef cursor = frame.Router.GetCursorSeat();
         ResolveSeat(SeatRef{}, m_Contexts, 0, raw, frame.Delta, m_Fires);
-        queue(SeatRef{}, frame.Router.GetFocus(frame.Router.GetCursorSeat()), raw);
+        queue(SeatRef{}, frame.Router.GetFocus(cursor), raw, cursor);
 
         RetireUnseen();
+
+        // A release pops the seat's top gameplay entry, through the FocusRequest drain's token when
+        // that is the one holding it, so a later FocusRequest{Gameplay} captures afresh.
+        for (const SeatRef seat : m_Releases)
+        {
+            const FocusToken released = frame.Router.ReleaseGameplayFocus(seat);
+            if (released.IsValid() && frame.FocusTokens != nullptr)
+            {
+                std::erase(*frame.FocusTokens, released);
+            }
+        }
 
         for (const RoleEvent& event : m_Pending)
         {
