@@ -661,6 +661,7 @@ int main(int argc, char** argv)
         // (un-suffixed, the names the launcher mounts) and every source for one combined depfile.
         CookedProject cooked;
         cooked.StartupLevel = project->StartupLevel;
+        cooked.DefaultUiContext = project->DefaultUiContext;
 
         // The game's packs, then the editor-only ones: all cooked alike, but only the game's are
         // named in the cooked project the launcher mounts.

@@ -5,6 +5,7 @@
     "configs/windows.buildcfg",
     "configs/linux.buildcfg"
   ],
+  "defaultUiContext": "0x061A4D1C41C43924",
   "editorModule": "hello_triangle_editor",
   "module": "hello_triangle",
   "packs": [

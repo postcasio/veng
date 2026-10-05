@@ -11,20 +11,21 @@
 //     u32   version
 //     u32   packCount     // number of pack mount names
 //     u64   startupLevel  // AssetId of the level the engine bootstraps, 0 = none
+//     u64   defaultUiContext // AssetId of the input map Gui navigation resolves from, 0 = none
 //   PackNames[packCount]
 //     u32   length        // byte length of the UTF-8 mount name
 //     char  bytes[length] // the pack's file name, mounted from the executable directory
 //
 // The cook resolves project.veng (the JSON authoring file) into one .vengproj per build
-// configuration; the runtime reads it, mounts each named pack in order, and loads the
-// startup level. The format assumes the cook host and run host share endianness.
+// configuration; the runtime reads it, mounts each named pack in order, loads the startup level,
+// and takes the default UI context. The format assumes the cook host and run host share endianness.
 
 namespace Veng
 {
     /// @brief The cooked-project format version written and checked by the read/write helpers.
     ///
     /// A mismatch produces a clean error, not a crash. Bump on any layout change.
-    inline constexpr u32 CookedProjectFormatVersion = 1;
+    inline constexpr u32 CookedProjectFormatVersion = 2;
 
     /// @brief The runtime projection of a project for one build configuration.
     ///
@@ -35,6 +36,8 @@ namespace Veng
     {
         /// @brief The level the engine loads after mounting the packs; the invalid id (0) means none.
         AssetId StartupLevel;
+        /// @brief The input map the engine resolves Gui navigation from; the invalid id (0) means none.
+        AssetId DefaultUiContext;
         /// @brief The pack file names to mount, in mount order (e.g. "template.vengpack").
         vector<string> PackMountNames;
     };

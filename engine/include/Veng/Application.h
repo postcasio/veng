@@ -8,6 +8,7 @@
 #include <Veng/Input.h>
 #include <Veng/InputRouter.h>
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Asset/Level.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/SceneCapture.h>
@@ -58,6 +59,7 @@ namespace Veng
     class ClientHost;
     class GamepadBackend;
     class GuiDriverRegistry;
+    class RoleResolver;
     struct CookedProject;
     namespace Gui
     {
@@ -1032,6 +1034,23 @@ namespace Veng
         /// focused seat; a document is display-only until the game makes it interactive
         /// (Gui::Document::SetInteractive) while holding its seat.
         [[nodiscard]] Gui::GuiConsumer& GetGuiConsumer() const { return *m_GuiConsumer; }
+
+        /// @brief Sets the input context Gui navigation resolves from, beneath every seat's own.
+        ///
+        /// The engine binds no key to navigation: it resolves the role-tagged actions
+        /// (ActionRole) of this context every frame — beneath each seat's InputContextStack, and
+        /// alone for the implicit seat that drives viewports bound to no seat — and drives the
+        /// pressing seat's interactive documents. A managed game takes it from its cooked project's
+        /// default UI context before OnInitialize, so a call here overrides the project's choice; an
+        /// empty handle leaves documents navigable by pointer alone.
+        /// @param context  The UI context, or an empty handle for none.
+        void SetDefaultUiContext(AssetHandle<InputMappingContext> context);
+
+        /// @brief Returns the input context Gui navigation resolves from (empty when none is set).
+        [[nodiscard]] const AssetHandle<InputMappingContext>& GetDefaultUiContext() const
+        {
+            return m_DefaultUiContext;
+        }
 
         /// @brief Registers a viewport into the engine drive-list rendered each frame.
         ///
@@ -2261,6 +2280,14 @@ namespace Veng
         ///        receive UI-owned input. Borrows the router/input/window and the compositor's viewport
         ///        drive-list, so it is declared after them (destructs before them).
         Unique<Gui::GuiConsumer> m_GuiConsumer;
+
+        /// @brief The context the role resolution reads navigation from (SetDefaultUiContext); a
+        ///        handle into m_AssetManager, so declared after it.
+        AssetHandle<InputMappingContext> m_DefaultUiContext;
+
+        /// @brief Resolves every seat's role-tagged actions each frame and dispatches their presses
+        ///        through the router, after the frame's input lands and before any world ticks.
+        Unique<RoleResolver> m_RoleResolver;
 
         /// @brief The engine-owned managed-viewport policy; empty when no managed viewport is configured.
         ///

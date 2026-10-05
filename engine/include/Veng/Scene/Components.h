@@ -615,6 +615,14 @@ namespace Veng
     {
         /// @brief The active contexts, lowest priority first; resolved as a stack each tick.
         vector<AssetHandle<InputMappingContext>> Active;
+
+        /// @brief Whether Active is the seat's whole UI scheme, with no default UI context beneath it.
+        ///
+        /// The engine's per-frame role resolution otherwise appends the application's default UI
+        /// context below Active (Application::SetDefaultUiContext). A SeatFocusScope that swaps in a
+        /// context sets this for its lifetime, so a seat suspended under an empty context navigates
+        /// nothing. Runtime state, not reflected.
+        bool Exclusive = false;
     };
 
     /// @brief Abstract, source-agnostic command for what a pawn wants to do this tick.

@@ -507,17 +507,17 @@ with the element that raised it.
 Input is per-seat, and documents are display-only by default. `Veng::Gui` registers as a consumer
 in the input router's registry (`Veng/Gui/GuiConsumer.h`); it hit-tests the laid-out tree, routes
 pointer events with **capture → target → bubble** propagation (enter/leave/down/up/click, text
-input), and drives **keyboard and gamepad directional focus navigation** (plus confirm/cancel
-activation, a focus ring drawn as the `:focus` variant) — all scoped to the **seat** the document
-inherits from its host viewport (`Viewport::GetSeat`, the `Viewer`-entity seat identity — see
-[../Scene/CLAUDE.md](../Scene/CLAUDE.md)), so seat A's menu leaves seat B playing. A document is
-**display-only by default** (`IsInteractive() == false`): its bindings update and it draws, but it
-hit-tests and takes no focus until the game opens interactivity on it. A game makes a menu
-interactive by opening a **`SeatFocusScope`** (`Veng/Input/SeatFocusScope.h` — the RAII takeover: a
-token UI focus entry on the seat's stack + the seat's `InputContextStack` swap + the viewport↔seat
-association, restored in inverse order on destruction) and flipping `SetInteractive(true)`; the
-input consumer then routes that seat's devices into the document. The takeover every game screen
-otherwise hand-rolls is one engine seam.
+input), and drives **directional focus navigation from the application's mapped actions** (plus
+confirm/cancel activation, a focus ring drawn as the `:focus` variant) — all scoped to the **seat**
+the document inherits from its host viewport (`Viewport::GetSeat`, the `Viewer`-entity seat
+identity — see [../Scene/CLAUDE.md](../Scene/CLAUDE.md)), so seat A's menu leaves seat B playing. A
+document is **display-only by default** (`IsInteractive() == false`): its bindings update and it
+draws, but it hit-tests and takes no focus until the game opens interactivity on it. A game makes a
+menu interactive by opening a **`SeatFocusScope`** (`Veng/Input/SeatFocusScope.h` — the RAII
+takeover: a token UI focus entry on the seat's stack + the seat's `InputContextStack` swap + the
+viewport↔seat association, restored in inverse order on destruction) and flipping
+`SetInteractive(true)`; the input consumer then routes that seat's devices into the document. The
+takeover every game screen otherwise hand-rolls is one engine seam.
 
 **What input walks is not the layer stack.** A viewport keeps an **input attachment list**
 (`Viewport::GetInputDocuments`) — composite order, bottom → top: the screen-space pre-bloom overlay
@@ -537,16 +537,62 @@ first and the first viewport whose region holds the pointer owns the event, cons
 a render extent rather than a place in the window, and one left at the origin would swallow every
 event over that corner. (The editor's panels, which show offscreen viewports, are ImGui's to route.)
 
-**A focused text field claims the editing keys before focus navigation sees them.** Backspace,
-Delete, the arrows and Home/End produce no character, so they reach a field only as key presses:
-the consumer maps each to a `TextEditAction` and offers it to `Document::DispatchTextEdit` first.
-Only a focused `TextInput` consumes one, so Left/Right move its caret while it holds focus and fall
-through to directional focus navigation when any other element (or nothing) does — the precedence
-is decided by what holds focus, not by the key. A caret move that is already clamped at either end
-still consumes the key, so an arrow never leaks out of a field and moves focus instead. The caret
-indexes **codepoints**, so a move steps one whole glyph and a delete removes one whole glyph of the
-UTF-8 value. There is no selection anchor: every action addresses the caret or the codepoint
-adjacent to it.
+### Navigation is mapped actions, never keys
+
+**The engine binds no key to navigation.** Which control moves focus, confirms or cancels is the
+application's input map's decision: it declares Button actions tagged with an **`ActionRole`**
+(`NavigateUp`/`Down`/`Left`/`Right`, `NavigateNext`/`Previous`, `Confirm`, `Cancel` —
+`Veng/Input/Actions.h`) and binds them like any other action, so a key, a d-pad, a stick half-axis
+past a `Threshold`, or a chord (Shift+Tab is two chords, either Shift) all drive the same path. Gui
+maps each role to its own `NavAction`, so the input layer never depends on Gui.
+
+- **Where the map comes from.** `Application::SetDefaultUiContext` names the context; a managed game
+  takes it from its cooked project, which the cook fills from `project.veng`'s `"defaultUiContext"`,
+  and the editor host reads the same key, so documents navigate under the editor's Play exactly as
+  in the shipped game. With none set, documents navigate by pointer alone.
+- **Resolved per frame, for every seat, whatever its focus.** The engine's role resolver
+  (`engine/src/Input/RoleResolver`) runs once a frame, after the input lands and before any world
+  ticks, through the unchanged `ResolveActions` against a frame-rate seat view (`FrameInputView`). A
+  seat resolves its own `InputContextStack` over the default context, which sits lowest so a seat
+  context re-binding a role action's id shadows its controls; beneath a stack a `SeatFocusScope`
+  marked `Exclusive` the default fires nothing (a seat suspended under an overlay navigates
+  nothing). The **implicit seat** resolves the default alone against every device and drives only
+  viewports bound to no seat. It reads no Sim-resolved `PlayerInput`, so a paused world's seat
+  still navigates.
+- **Only dispatch is gated on focus.** A navigation role fires only for a seat holding UI focus as
+  the frame's dispatch begins (the implicit seat takes the cursor seat's focus, as the window events
+  it reads do). Because resolution never stops, a press is `Started` once however long it is held and
+  whatever focus or context change it is held across, so the press that closes one screen never also
+  acts on the screen it uncovers.
+- **Repeat is data.** A role action with a `RepeatRate` fires again once held its `RepeatDelay` and
+  then at the rate, at most once per frame, from one timer per action per seat — a pad repeats as a
+  key does, and the platform's key auto-repeat plays no part in navigation.
+- **Delivery.** A press reaches the router's consumers in order (`InputConsumer::ForwardRole`):
+  `GuiConsumer` offers it to the pressing seat's viewports topmost first and their interactive
+  documents topmost first, then `SurfaceInputConsumer` to that seat's participating world panels in
+  registration order — stopping at the first that takes it, so one press moves one document. It
+  carries the modifiers held on the seat's keyboard, which an `Extended` list reads (Shift extends,
+  Control or Meta moves focus alone).
+
+**A key a consumer takes is claimed, and a claimed key reads as up to the role resolver until it is
+released.** That is how the two key consumers ahead of navigation keep their keys:
+
+- **The immediate-mode layer** accepts key presses, repeats and typed characters while ImGui wants
+  the keyboard, so typing into an ImGui box never navigates or edits a Gui field.
+- **A focused text field claims its editing keys.** Backspace, Delete, the arrows and Home/End
+  produce no character, so they reach a field only as key presses: the consumer maps each to a
+  `TextEditAction` (the OS text-input contract, which stays at key level beside typed codepoints) and
+  offers it to `Document::DispatchTextEdit`. Only a focused `TextInput` consumes one, so Left/Right
+  move its caret while it holds focus and navigate when any other element (or nothing) does — the
+  precedence is decided by what holds focus, not by the key. A caret move already clamped at either
+  end still consumes the key, so a held arrow walks the caret, runs into the end, and never leaks out
+  into focus navigation however long the role's repeat timer would run. The platform's auto-repeat
+  takes the same editing route, so a held key erases or walks the way any text field does.
+
+A pad is never claimed, so a pad still navigates out of a focused field. The caret indexes
+**codepoints**, so a move steps one whole glyph and a delete removes one whole glyph of the UTF-8
+value. There is no selection anchor: every action addresses the caret or the codepoint adjacent to
+it.
 
 ## Popups — the within-document layer that escapes every clip
 
@@ -578,10 +624,10 @@ transform stacks reset**, and **hit-tests ahead of it**, top-down.
 - **Dismissal is LIFO and three-signalled.** Closing an entry closes everything above it (a menu
   takes its submenus), and focus returns to the element that held it before the chain opened. A
   **pointer press outside the top popup** light-dismisses it and is **consumed**, so a click-away
-  never doubles as a click-through (`PopupOptions::LightDismiss` opts out). **`Cancel`** (Esc /
-  gamepad B) closes the top popup before it reaches the focused element's `onCancel`. And focus
+  never doubles as a click-through (`PopupOptions::LightDismiss` opts out). **`Cancel`** (the role a
+  typical map binds to Esc and a pad's B) closes the top popup before it reaches the focused element's `onCancel`. And focus
   navigation is **scoped to the top popup** while one is open, so the stops behind a menu are no
-  more reachable by keyboard than they are by pointer.
+  more reachable by navigation than they are by pointer.
 - **Popups belong to interactive documents.** `SetInteractive(false)` closes them, so a
   display-only HUD holds none. Because the layer sits inside `Document::HitTest`,
   `Viewport::IsPointerOverDocument` counts an open menu covering the content beneath it with no

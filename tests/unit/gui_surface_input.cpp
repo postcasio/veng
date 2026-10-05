@@ -12,6 +12,8 @@
 #include <Veng/Gui/Surface.h>
 #include <Veng/Gui/SurfaceInput.h>
 #include <Veng/Input.h>
+#include <Veng/Input/Actions.h>
+#include <Veng/Input/InputConsumer.h>
 #include <Veng/Input/SeatFocusScope.h>
 #include <Veng/InputEvents.h>
 #include <Veng/InputRouter.h>
@@ -275,4 +277,59 @@ TEST_CASE("gui surface focus nav: gamepad directional navigation needs the seat,
     CHECK(doc.GetFocused() == &bottom);
     doc.Navigate(NavAction::MoveUp);
     CHECK(doc.GetFocused() == &middle);
+}
+
+TEST_CASE("gui surface focus nav: a role press navigates the pressing seat's registered panel")
+{
+    // Navigation reaches a world panel as a role press through the router, never as a key: the
+    // panel's registration takes the presses of its own seat while that seat's focus is UI.
+    Unique<Document> owner = CreateUnique<Document>();
+    Document* const doc = owner.get();
+    doc->SetInteractive(true);
+    PlaceAt(doc->Root(), {0, 0}, {300, 300});
+    Element& top = doc->Add(doc->Root(), ElementKind::Button);
+    top.Focusable = true;
+    PlaceAt(top, {100, 0}, {100, 40});
+    Element& bottom = doc->Add(doc->Root(), ElementKind::Button);
+    bottom.Focusable = true;
+    PlaceAt(bottom, {100, 100}, {100, 40});
+    doc->SetFocus(&top);
+
+    constexpr WorldInstanceId world{.Value = 1};
+    const Entity seat{.Index = 5, .Generation = 1};
+    const Entity other{.Index = 6, .Generation = 1};
+    GuiSurface surface;
+    surface.Resolution = {300, 300};
+    surface.Seat = seat;
+    surface.SetDocument(std::move(owner));
+
+    Input input(nullptr);
+    const Renderer::ViewportRegistry registry;
+    InputRouter router(nullptr, input, registry);
+    SurfaceInputConsumer consumer(router);
+    router.RegisterConsumer(consumer);
+    const SurfacePlacement placement = UnitPanel();
+    auto reg = consumer.Register(
+        surface, world, [&] { return placement; }, []() -> optional<Ray> { return std::nullopt; });
+
+    const SeatRef own{.World = world, .Viewer = seat};
+
+    // Another seat's press is not this panel's.
+    CHECK_FALSE(router.DispatchRole(RoleEvent{.Seat = SeatRef{.World = world, .Viewer = other},
+                                              .Role = ActionRole::NavigateDown}));
+    CHECK(doc->GetFocused() == &top);
+
+    // Its own seat's press moves focus, needing no ray at all.
+    CHECK(router.DispatchRole(RoleEvent{.Seat = own, .Role = ActionRole::NavigateDown}));
+    CHECK(doc->GetFocused() == &bottom);
+
+    // A seat in gameplay does not drive its panel.
+    const FocusToken gameplay = router.PushFocus(own, InputFocus::Gameplay);
+    CHECK_FALSE(router.DispatchRole(RoleEvent{.Seat = own, .Role = ActionRole::NavigateUp}));
+    CHECK(doc->GetFocused() == &bottom);
+    router.PopFocus(gameplay);
+
+    // Dropping the registration takes the panel out of the dispatch.
+    reg = {};
+    CHECK_FALSE(router.DispatchRole(RoleEvent{.Seat = own, .Role = ActionRole::NavigateUp}));
 }

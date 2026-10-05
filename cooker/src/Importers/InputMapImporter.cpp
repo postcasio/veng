@@ -3,6 +3,7 @@
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -117,6 +118,41 @@ namespace Veng::Cook
             {
                 return std::unexpected(Located(
                     file, fmt::format("action id {} is declared more than once", FormatHexId(id))));
+            }
+
+            // A role fires on a press, so its action is a Button; a stick drives one through a
+            // binding's Threshold. Repeat is the engine's timing of a held role, so it means nothing
+            // on an action the engine never acts on, and a delay with no rate never repeats.
+            if (action.Role != ActionRole::None && action.Kind != ActionKind::Button)
+            {
+                return std::unexpected(Located(
+                    file, fmt::format("action {} has Role '{}' but Kind '{}'; a role action is a "
+                                      "Button",
+                                      FormatHexId(id), EnumeratorName(action.Role),
+                                      EnumeratorName(action.Kind))));
+            }
+            if (!(action.RepeatDelay >= 0.0f) || !(action.RepeatRate >= 0.0f) ||
+                !std::isfinite(action.RepeatDelay) || !std::isfinite(action.RepeatRate))
+            {
+                return std::unexpected(Located(
+                    file, fmt::format("action {} has 'RepeatDelay' {} and 'RepeatRate' {}; both "
+                                      "are seconds, 0 or more",
+                                      FormatHexId(id), action.RepeatDelay, action.RepeatRate)));
+            }
+            const bool repeats = action.RepeatDelay > 0.0f || action.RepeatRate > 0.0f;
+            if (repeats && action.Role == ActionRole::None)
+            {
+                return std::unexpected(Located(
+                    file, fmt::format("action {} sets a repeat but has no Role; only a role action "
+                                      "repeats",
+                                      FormatHexId(id))));
+            }
+            if (action.RepeatDelay > 0.0f && action.RepeatRate == 0.0f)
+            {
+                return std::unexpected(Located(
+                    file, fmt::format("action {} sets 'RepeatDelay' {} with no 'RepeatRate', so it "
+                                      "never repeats",
+                                      FormatHexId(id), action.RepeatDelay)));
             }
         }
 

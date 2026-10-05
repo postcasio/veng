@@ -53,6 +53,7 @@
 #include "Platform/GamepadBackend.h"
 #include "Render/DisplayResolve.h"
 #include "Scene/FocusRequestReconcile.h"
+#include "Input/RoleResolver.h"
 #include "Scene/RequestDrain.h"
 
 #include <fmt/format.h>
@@ -385,6 +386,7 @@ namespace Veng
         m_GuiConsumer = CreateUnique<Gui::GuiConsumer>(*m_InputRouter, *m_Input, m_Window.get(),
                                                        m_Compositor.GetViewports());
         m_InputRouter->RegisterConsumer(*m_GuiConsumer);
+        m_RoleResolver = CreateUnique<RoleResolver>();
 
         // The translator engine-managed overlay documents localize their loc-keys through. It reads
         // the localization service live, so it is constructed now (the service itself is built later,
@@ -460,6 +462,24 @@ namespace Veng
         if (bootstrapWorld)
         {
             project = MountProjectPacks();
+
+            // The project's default UI context is what its documents navigate from, here as under the
+            // editor's Play; set before OnInitialize so a subclass may still override it.
+            if (project->DefaultUiContext.IsValid())
+            {
+                const AssetResult<AssetHandle<InputMappingContext>> context =
+                    m_AssetManager->LoadSync<InputMappingContext>(project->DefaultUiContext);
+                if (context)
+                {
+                    SetDefaultUiContext(*context);
+                }
+                else
+                {
+                    Log::Warn("project default UI context {:#018x} did not load ({}); documents "
+                              "navigate by pointer only",
+                              project->DefaultUiContext.Value, context.error().Detail);
+                }
+            }
         }
 
         // Application always owns a localization service: construct the inert null-object now so
@@ -647,6 +667,11 @@ namespace Veng
         {
             BootstrapWorld(*project);
         }
+    }
+
+    void Application::SetDefaultUiContext(AssetHandle<InputMappingContext> context)
+    {
+        m_DefaultUiContext = std::move(context);
     }
 
     CookedProject Application::MountProjectPacks()
@@ -2956,6 +2981,23 @@ namespace Veng
                 }
                 m_Input->IngestGamepadStates(m_GamepadStates);
             }
+        }
+
+        // The frame's input has landed: resolve every seat's role actions and drive navigation from
+        // their presses, once per frame and before any world ticks, so a paused world's seat still
+        // navigates and a press never depends on how many Sim steps this frame runs.
+        {
+            VE_PROFILE_SCOPE("Frame/Roles");
+            const ScopedPointer pointer = ComputePointerRouting();
+            m_RoleResolver->Update(RoleFrameInfo{
+                .Snapshot = *m_Input,
+                .Router = *m_InputRouter,
+                .Worlds = *m_WorldRunner,
+                .DefaultUi = m_DefaultUiContext.IsLoaded() ? m_DefaultUiContext.Get() : nullptr,
+                .Pointer = pointer.Routing,
+                .PointerScene = pointer.Scene,
+                .Delta = delta,
+            });
         }
 
         // After the events are forwarded: ImGui's NewFrame consumes them this frame. A frame the

@@ -9,5 +9,6 @@
     "configs/linux.buildcfg"
   ],
   "activeConfiguration": "macos",
+  "defaultUiContext": "0xAC5E99B8D8B0A809",
   "startupLevel": "0x899BF5DA01D2DBF3"
 }

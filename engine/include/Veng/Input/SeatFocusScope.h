@@ -67,7 +67,8 @@ namespace Veng
     /// The engine-owned form of "a UI surface holds this seat's focus". Constructed over a seat, it
     /// (a) pushes a token UI entry on that seat's router focus stack, (b) swaps the seat's
     /// InputContextStack to the given UI context (suspending the gameplay contexts) when a context is
-    /// supplied, and (c) associates the given viewport with the seat for pointer routing when a
+    /// supplied — marking the stack Exclusive, so that context is the seat's whole UI scheme and the
+    /// application's default UI context is not appended beneath it — and (c) associates the given viewport with the seat for pointer routing when a
     /// viewport is supplied; destruction restores all three in inverse order. Because the pop is by
     /// token, an interleaved second scope over the same seat pops its own entry safely even when it
     /// is not on top.
@@ -113,5 +114,7 @@ namespace Veng
         vector<AssetHandle<InputMappingContext>> m_SavedContexts;
         /// @brief Whether the constructor swapped the context (so the destructor restores it).
         bool m_SwappedContext = false;
+        /// @brief The stack's Exclusive mark before the swap, restored with its contexts.
+        bool m_SavedExclusive = false;
     };
 }

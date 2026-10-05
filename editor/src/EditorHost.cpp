@@ -176,24 +176,31 @@ namespace VengEditor
                 settings.ActiveConfiguration = (*project)["activeConfiguration"].get<string>();
             }
 
-            if (project->contains("startupLevel"))
+            // The level the editor opens with, and the input map documents navigate from under Play.
+            // A malformed id is reported and left unset.
+            const auto readProjectId = [&](const char* key, AssetId& out)
             {
-                if (!(*project)["startupLevel"].is_string())
+                if (!project->contains(key))
                 {
-                    Log::Error("Project '{}': 'startupLevel' must be a hex id string",
-                               projectFile.string());
+                    return;
                 }
-                else if (const optional<AssetId> startup =
-                             ParseAssetId((*project)["startupLevel"].get<string>()))
+                if (!(*project)[key].is_string())
                 {
-                    settings.StartupLevel = *startup;
+                    Log::Error("Project '{}': '{}' must be a hex id string", projectFile.string(),
+                               key);
+                }
+                else if (const optional<AssetId> id = ParseAssetId((*project)[key].get<string>()))
+                {
+                    out = *id;
                 }
                 else
                 {
-                    Log::Error("Project '{}': 'startupLevel' is a malformed hex id '{}'",
-                               projectFile.string(), (*project)["startupLevel"].get<string>());
+                    Log::Error("Project '{}': '{}' is a malformed hex id '{}'",
+                               projectFile.string(), key, (*project)[key].get<string>());
                 }
-            }
+            };
+            readProjectId("startupLevel", settings.StartupLevel);
+            readProjectId("defaultUiContext", settings.DefaultUiContext);
 
             // The module(s) the editor dlopens, named logically (the build writes lib<name>.<ext>
             // beside the build output, where the editor resolves them).
@@ -861,6 +868,23 @@ namespace VengEditor
             if (!mount)
             {
                 Log::Warn("editor: editor pack not mounted: {}", mount.error());
+            }
+        }
+
+        // The project's documents navigate under Play from the same default UI context a shipped
+        // build takes from its cooked project. A context that does not load leaves them pointer-only.
+        if (m_ProjectSettings.DefaultUiContext.IsValid())
+        {
+            const AssetResult<AssetHandle<InputMappingContext>> context =
+                GetAssetManager().LoadSync<InputMappingContext>(m_ProjectSettings.DefaultUiContext);
+            if (context)
+            {
+                SetDefaultUiContext(*context);
+            }
+            else
+            {
+                Log::Warn("editor: default UI context {:#018x} did not load ({})",
+                          m_ProjectSettings.DefaultUiContext.Value, context.error().Detail);
             }
         }
 

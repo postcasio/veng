@@ -66,7 +66,11 @@ authored as a **`GuiOverlay`** component (`Veng/Gui/Overlay.h`) on an entity:
   lower (HUD under menu under notifications).
 - `Interactive` gates input: `false` (the default) is display-only (it data-binds and draws
   but hit-tests nothing and takes no focus); `true` routes the claiming viewport's seat input
-  into the document. A system may flip it at runtime.
+  into the document. A system may flip it at runtime. Focus navigation reaches an interactive
+  overlay from the project's default UI context — the role-tagged actions your input map binds
+  to keys and pad controls (see
+  [Authoring input actions](authoring-input-actions.md#roles-actions-the-engine-acts-on)); the
+  engine binds no navigation key of its own.
 - `TargetSeat` (an entity reference, omitted above) resolves *which* viewport claims the
   overlay under multi-viewport presentation (below).
 

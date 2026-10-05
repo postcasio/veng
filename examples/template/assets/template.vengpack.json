@@ -82,6 +82,11 @@
       "source": "input/overlay.inputmap.json"
     },
     {
+      "id": "0xAC5E99B8D8B0A809",
+      "type": "InputMap",
+      "source": "input/ui.inputmap.json"
+    },
+    {
       "id": "0x8185F88D4C64E1E7",
       "type": "StyleSheet",
       "source": "ui/overlay.vuss"

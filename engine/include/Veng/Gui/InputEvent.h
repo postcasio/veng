@@ -111,12 +111,11 @@ namespace Veng::Gui
         bool Handled = false;
     };
 
-    /// @brief A logical navigation action a key or gamepad control raises against a document.
+    /// @brief A logical navigation action raised against a document.
     ///
-    /// The focus model is expressed in these abstract actions so keyboard and gamepad drive one
-    /// path: an arrow key or a d-pad direction both raise a Move*; Enter or the gamepad confirm
-    /// button both raise Confirm; Escape or the cancel button both raise Cancel. Tab/Shift-Tab map
-    /// to Next/Previous.
+    /// The focus model is expressed in these abstract actions so every device drives one path. The
+    /// engine raises them from the application's role-tagged input actions (ActionRole), whatever
+    /// control the input map binds: each navigation role names one of these.
     enum class NavAction : u8
     {
         /// @brief Move focus to the nearest focusable above the current one.
@@ -127,9 +126,9 @@ namespace Veng::Gui
         MoveLeft,
         /// @brief Move focus to the nearest focusable right of the current one.
         MoveRight,
-        /// @brief Move focus to the next focusable in tree order (Tab).
+        /// @brief Move focus to the next focusable in tree order.
         Next,
-        /// @brief Move focus to the previous focusable in tree order (Shift-Tab).
+        /// @brief Move focus to the previous focusable in tree order.
         Previous,
         /// @brief Activate the focused element (synthesizes a primary click).
         Confirm,

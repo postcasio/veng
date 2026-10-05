@@ -110,8 +110,10 @@ namespace Veng::Gui
     /// (the SeatFocusScope's takeover), so in split-screen a seat's in-world menu owns only that seat's
     /// devices. A pointer or wheel event names a world point, so when several participating panels lie
     /// under one ray the nearest hit wins (the only world-space arbitration; a richer policy is not
-    /// modeled); a keyboard or text event carries no point, so it routes to the participating panels in
-    /// registration order and stops at the first that consumes. The router must outlive the consumer.
+    /// modeled); a text-editing key or typed text carries no point, so it routes to the participating
+    /// panels in registration order and stops at the first that consumes. Focus navigation arrives as
+    /// a role press (ForwardRole) and reaches the participating panels of the pressing seat, in
+    /// registration order, likewise stopping at the first. The router must outlive the consumer.
     class SurfaceInputConsumer final : public InputConsumer
     {
     public:
@@ -172,12 +174,21 @@ namespace Veng::Gui
 
         /// @brief Offers one UI-owned event to the participating world panels.
         ///
-        /// Pointer and wheel events route by the nearest ray hit; keyboard, text-edit and typed-text
-        /// events route to the participating panels in registration order, stopping at the first that
+        /// Pointer and wheel events route by the nearest ray hit; text-editing keys and typed text
+        /// route to the participating panels in registration order, stopping at the first that
         /// consumes — the world-space mirror of the screen-space GuiConsumer's routing.
         /// @param event  The event to route.
         /// @return True when a panel consumed the event, stopping the fall-through.
         bool ForwardEvent(const Event& event) override;
+
+        /// @brief Drives focus navigation in the pressing seat's participating panels.
+        ///
+        /// Offered after the screen-space documents, through the router's consumer order; reaches the
+        /// participating panels whose Seat is the pressing seat, in registration order, stopping at
+        /// the first whose document takes the navigation.
+        /// @param event  The role press.
+        /// @return True when a panel took the navigation, stopping the fall-through.
+        bool ForwardRole(const RoleEvent& event) override;
 
     private:
         void Unregister(RegistrationId id);

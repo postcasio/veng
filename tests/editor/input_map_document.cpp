@@ -21,14 +21,16 @@ using namespace VengEditor;
 
 namespace
 {
-    // Every top-level and binding field authored away from its default, plus a key the document
-    // does not own, which a save must keep.
+    // Every top-level, action and binding field authored away from its default, plus a key the
+    // document does not own, which a save must keep.
     const char* const MapJson = R"({
       "Note": "hand-authored, must survive a save",
       "RequiresGameplayFocus": true,
       "Actions": [
-        { "Id": "0x00000000000000A1", "Name": "Throttle", "Kind": "Axis1D" },
-        { "Id": "0x00000000000000B2", "Name": "Fire", "Kind": "Button" }
+        { "Id": "0x00000000000000A1", "Name": "Throttle", "Kind": "Axis1D", "Role": "None",
+          "RepeatDelay": 0.0, "RepeatRate": 0.0 },
+        { "Id": "0x00000000000000B2", "Name": "Fire", "Kind": "Button", "Role": "NavigateDown",
+          "RepeatDelay": 0.25, "RepeatRate": 0.125 }
       ],
       "Bindings": [
         {
@@ -79,12 +81,16 @@ TEST_CASE("input map document: a load and save leaves every authored field uncha
     CHECK(loaded->Bindings[0].Modifier.Device == InputDeviceType::GamepadAxis);
     CHECK(loaded->Bindings[0].Modifier.Control == 4u);
     CHECK(loaded->Bindings[0].ModifierThreshold == doctest::Approx(0.75f));
+    REQUIRE(loaded->Actions.size() == 2);
+    CHECK(loaded->Actions[1].Role == ActionRole::NavigateDown);
+    CHECK(loaded->Actions[1].RepeatDelay == doctest::Approx(0.25f));
+    CHECK(loaded->Actions[1].RepeatRate == doctest::Approx(0.125f));
 
     REQUIRE(WriteInputMapDocument(file, *loaded, types).has_value());
     CHECK(ReadJson(file) == nlohmann::json::parse(MapJson));
 }
 
-TEST_CASE("input map document: a binding authoring no shaping or modifier reads the defaults")
+TEST_CASE("input map document: an action and binding authoring no optional field read the defaults")
 {
     TypeRegistry types;
     RegisterBuiltinTypes(types);
@@ -98,6 +104,10 @@ TEST_CASE("input map document: a binding authoring no shaping or modifier reads 
     const Result<InputMapData> loaded = ReadInputMapDocument(file, types);
     REQUIRE_MESSAGE(loaded.has_value(), loaded.error());
     REQUIRE(loaded->Bindings.size() == 1);
+    REQUIRE(loaded->Actions.size() == 1);
+    CHECK(loaded->Actions[0].Role == ActionRole::None);
+    CHECK(loaded->Actions[0].RepeatDelay == 0.0f);
+    CHECK(loaded->Actions[0].RepeatRate == 0.0f);
     const Binding& binding = loaded->Bindings[0];
     CHECK(binding.Source.Device == InputDeviceType::Keyboard);
     CHECK(binding.Scale == 1.0f);

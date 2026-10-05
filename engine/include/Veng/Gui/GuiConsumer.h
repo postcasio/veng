@@ -39,12 +39,16 @@ namespace Veng::Gui
     /// split-screen a seat's menu owns only that seat's devices — the consumer routes a pointer to a
     /// viewport only when the viewport's inherited seat is the one the pointer belongs to this frame.
     ///
-    /// A key press routes to the focused text field's editing actions first and to focus navigation
-    /// second. A **key repeat** — the platform's auto-repeat of a key still held — takes the editing
-    /// route and only the editing route: a caret step or a codepoint deletion has a per-press
-    /// increment worth accumulating, so a held key walks or erases the way any text field does,
-    /// while focus navigation is a discrete choice of element and never repeats. A repeat no field
-    /// claims falls through unconsumed.
+    /// A key press or its platform **repeat** reaches the documents only as text editing: the
+    /// focused text field takes its editing keys (accepting one claims the key against role
+    /// navigation until release), so a held key walks the caret or erases the way any text field
+    /// does. A key no field takes falls through unconsumed.
+    ///
+    /// **Focus navigation arrives as roles, never as keys** (ForwardRole): the application's input
+    /// map binds the navigation roles, the engine resolves them per seat each frame, and this
+    /// consumer drives Document::Navigate in the pressing seat's viewports — topmost first, stopping
+    /// at the first document that takes it. The implicit seat reaches only viewports bound to no
+    /// seat.
     ///
     /// The consumer borrows the router, the input snapshot, the window, and the viewport drive-list
     /// it walks (the Application-owned, registration-ordered list that self-cleans on a viewport's
@@ -70,6 +74,11 @@ namespace Veng::Gui
         /// @param event  The event to route.
         /// @return True when a document consumed the event, stopping the fall-through.
         bool ForwardEvent(const Event& event) override;
+
+        /// @brief Drives focus navigation in the pressing seat's documents; see the class brief.
+        /// @param event  The role press.
+        /// @return True when a document took the navigation, stopping the fall-through.
+        bool ForwardRole(const RoleEvent& event) override;
 
     private:
         /// @brief The pointer position in window framebuffer pixels, from the snapshot × content scale.

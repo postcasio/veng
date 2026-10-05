@@ -463,21 +463,34 @@ namespace Veng::Cook
             parsed.ActiveConfiguration = project["activeConfiguration"].get<string>();
         }
 
-        if (project.contains("startupLevel"))
+        const auto readId = [&](const char* key, AssetId& out) -> VoidResult
         {
-            if (!project["startupLevel"].is_string())
+            if (!project.contains(key))
             {
-                return std::unexpected(fmt::format(
-                    "project '{}': startupLevel is not a hex id string", projectFile.string()));
+                return {};
             }
-            const optional<AssetId> startup = ParseAssetId(project["startupLevel"].get<string>());
-            if (!startup)
+            if (!project[key].is_string())
             {
-                return std::unexpected(
-                    fmt::format("project '{}': startupLevel is a malformed hex id '{}'",
-                                projectFile.string(), project["startupLevel"].get<string>()));
+                return std::unexpected(fmt::format("project '{}': {} is not a hex id string",
+                                                   projectFile.string(), key));
             }
-            parsed.StartupLevel = *startup;
+            const optional<AssetId> id = ParseAssetId(project[key].get<string>());
+            if (!id)
+            {
+                return std::unexpected(fmt::format("project '{}': {} is a malformed hex id '{}'",
+                                                   projectFile.string(), key,
+                                                   project[key].get<string>()));
+            }
+            out = *id;
+            return {};
+        };
+        if (const VoidResult startup = readId("startupLevel", parsed.StartupLevel); !startup)
+        {
+            return std::unexpected(startup.error());
+        }
+        if (const VoidResult ui = readId("defaultUiContext", parsed.DefaultUiContext); !ui)
+        {
+            return std::unexpected(ui.error());
         }
 
         return parsed;

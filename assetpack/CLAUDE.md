@@ -46,12 +46,13 @@ the format and its serialization — neither importer nor loader.
   loader **never verifies**; hashing is a tooling concern, checkable with `vengc
   verify`.
 - **`CookedProject` (`.vengproj`) is the runtime entrypoint of a managed game.** A small
-  hand-rolled binary file (`Veng/Asset/CookedProject.h`, format v1: magic `VENGPROJ`,
-  version, pack count, startup-level `AssetId`, then length-prefixed pack mount names) the
-  cook writes per build configuration. `ReadCookedProject`/`WriteCookedProject` are plain
-  byte IO — no JSON in the runtime. The engine reads it to mount the named packs and load
-  the startup level; the pack archive header itself carries **no** startup level (it is a
-  project fact, not a pack fact).
+  hand-rolled binary file (`Veng/Asset/CookedProject.h`, format v2: magic `VENGPROJ`,
+  version, pack count, startup-level `AssetId`, default-UI-context `AssetId`, then
+  length-prefixed pack mount names) the cook writes per build configuration.
+  `ReadCookedProject`/`WriteCookedProject` are plain byte IO — no JSON in the runtime. The
+  engine reads it to mount the named packs, load the startup level, and take the input map its
+  Gui documents navigate from; the pack archive header itself carries **no** startup level (it
+  is a project fact, not a pack fact).
 - **Blobs are stored zstd-compressed or raw, per blob.** Each TOC entry carries an
   `ArchiveCodec` (`Stored`/`Zstd`) and an `UncompressedSize`. The **cooker** compresses
   each blob and stores whichever of the raw or compressed bytes is smaller; `assetpack`

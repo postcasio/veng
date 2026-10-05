@@ -67,7 +67,9 @@ namespace Veng
             if (InputContextStack* contexts = m_Seat.ResolveContexts())
             {
                 m_SavedContexts = std::move(contexts->Active);
+                m_SavedExclusive = contexts->Exclusive;
                 contexts->Active = {std::move(context)};
+                contexts->Exclusive = true;
                 m_SwappedContext = true;
             }
         }
@@ -101,6 +103,7 @@ namespace Veng
             if (InputContextStack* contexts = m_Seat.ResolveContexts())
             {
                 contexts->Active = std::move(m_SavedContexts);
+                contexts->Exclusive = m_SavedExclusive;
             }
         }
 

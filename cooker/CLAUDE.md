@@ -698,10 +698,11 @@ so the cooker and the runtime loader share one encoder.
   <project.veng> --config <name> --out-dir <dir> [--module <lib>] [--cook-module <lib>]
   [--reference <pack>]... [--shader-include <dir>] [--cache-dir <dir>] [--jobs <n>]
   [--timing[=<out.csv>]]`.
-  `ParseProject` hand-parses the project's `packs`, `editorPacks`, `configurations`, and
-  `startupLevel`; the named configuration is matched by `BuildConfiguration.Name`; each pack
-  cooks into `<stem><suffix>.vengpack` and a `<projstem><suffix>.vengproj` (`WriteCookedProject`)
-  names the packs' un-suffixed mount names + the startup level — the runtime entrypoint. The
+  `ParseProject` hand-parses the project's `packs`, `editorPacks`, `configurations`,
+  `startupLevel` and `defaultUiContext`; the named configuration is matched by
+  `BuildConfiguration.Name`; each pack cooks into `<stem><suffix>.vengpack` and a
+  `<projstem><suffix>.vengproj` (`WriteCookedProject`) names the packs' un-suffixed mount names,
+  the startup level and the default UI context — the runtime entrypoint. The
   `editorPacks` cook alike (and resolve ids with the rest) but are **not** named in the
   `.vengproj`, so the runtime never mounts them; `veng_add_game` copies them into `editor/` beside
   the launcher, where the editor mounts them and a bundle collecting the top-level packs never

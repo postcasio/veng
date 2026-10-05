@@ -97,10 +97,13 @@ namespace Veng
         /// so the InputRouter calls this to hand ImGui the events routed to the UI layer — and
         /// withholds the ones gameplay focus swallows. Translates the engine event to the
         /// backend's chain-callback so keymap/mods/char handling stay the backend's job. The
-        /// overlay is cooperative: it always returns false so a later consumer still sees the
-        /// event and the router's snapshot fold is unaffected.
+        /// overlay is cooperative except over the keyboard it holds: while ImGui wants the keyboard
+        /// (a text box or other widget is active), it accepts key presses, repeats and typed
+        /// characters, so no Gui field edits with them and the router claims the key against role
+        /// navigation. Every other event passes on. The router's snapshot fold is unaffected either
+        /// way.
         /// @param event  The event to forward; non-input events relevant to ImGui (focus) included.
-        /// @return False always: the overlay does not stop the event's fall-through.
+        /// @return True for a key event while ImGui wants the keyboard, false otherwise.
         bool ForwardEvent(const Event& event) override;
 
         /// @brief Suspends or resumes ImGui's mouse handling from the router's capture signal.

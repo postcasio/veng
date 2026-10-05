@@ -200,7 +200,7 @@ namespace Veng
         }
     }
 
-    void InputRouter::OfferConsumers(const Event& event)
+    bool InputRouter::OfferConsumers(const Event& event)
     {
         // Offer the event to the consumers in priority order; the first to accept it stops the
         // fall-through so a later consumer never sees an already-handled event.
@@ -208,9 +208,27 @@ namespace Veng
         {
             if (consumer->ForwardEvent(event))
             {
-                return;
+                return true;
             }
         }
+        return false;
+    }
+
+    bool InputRouter::DispatchRole(const RoleEvent& event)
+    {
+        for (InputConsumer* consumer : m_Consumers)
+        {
+            if (consumer->ForwardRole(event))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool InputRouter::IsKeyClaimed(const Key key) const
+    {
+        return std::ranges::find(m_ClaimedKeys, key) != m_ClaimedKeys.end();
     }
 
     void InputRouter::Dispatch(Event& event)
@@ -238,13 +256,28 @@ namespace Veng
             return;
         }
 
+        // A key's claim lasts one press: a new press or the release drops it, whatever the focus, so
+        // a claim earned under UI focus never outlives the press across a focus change.
+        Key key = Key::Space;
+        const bool keyEvent = type == EventType::KeyPressed || type == EventType::KeyReleased ||
+                              type == EventType::KeyRepeat;
+        if (keyEvent)
+        {
+            key = type == EventType::KeyPressed    ? static_cast<KeyPressedEvent&>(event).GetKey()
+                  : type == EventType::KeyReleased ? static_cast<KeyReleasedEvent&>(event).GetKey()
+                                                   : static_cast<KeyRepeatEvent&>(event).GetKey();
+            if (type != EventType::KeyRepeat)
+            {
+                std::erase(m_ClaimedKeys, key);
+            }
+        }
+
         if (IsGameplayFocused())
         {
             // Shift+Esc releases the cursor seat's gameplay focus and is consumed here, never
             // delivered to the game.
             if (type == EventType::KeyPressed)
             {
-                const Key key = static_cast<KeyPressedEvent&>(event).GetKey();
                 const bool shift =
                     m_Input.IsKeyDown(Key::LeftShift) || m_Input.IsKeyDown(Key::RightShift);
                 if (key == Key::Escape && shift)
@@ -261,7 +294,12 @@ namespace Veng
 
         // UI focus: the consumers see the input and the snapshot mirrors it for the editor camera.
         m_Input.ApplyEvent(event);
-        OfferConsumers(event);
+        const bool accepted = OfferConsumers(event);
+        if (accepted && (type == EventType::KeyPressed || type == EventType::KeyRepeat) &&
+            !IsKeyClaimed(key))
+        {
+            m_ClaimedKeys.push_back(key);
+        }
     }
 
     void InputRouter::PostInjectedEvent(const Event& event)

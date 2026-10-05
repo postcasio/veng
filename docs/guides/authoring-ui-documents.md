@@ -1032,10 +1032,20 @@ m_Menu->SetInteractive(true);
 The `SeatFocusScope` is the whole transition: it pushes a UI focus entry on that seat's
 stack, swaps the seat's input context, and associates the viewport for pointer routing —
 all restored in inverse order when it destructs. The input consumer then routes that
-seat's pointer, keyboard, and gamepad into the document: pointer events propagate
-capture → target → bubble, directional focus navigation moves a focus ring, and a
-`Button`'s `onClick="Name"` fires the handler registered on the binding context under
-`"Name"`. Because focus is **per-seat**, seat A opening a menu leaves seat B playing —
+seat's pointer and text into the document — pointer events propagate capture → target →
+bubble, and a `Button`'s `onClick="Name"` fires the handler registered on the binding
+context under `"Name"` — and **directional focus navigation** moves a focus ring.
+
+**Navigation comes from your input map, not from fixed keys.** The engine binds nothing:
+your project names a **default UI context** (`"defaultUiContext"` in `project.veng`, or
+`Application::SetDefaultUiContext`) whose actions carry navigation **roles** —
+`NavigateUp`/`Down`/`Left`/`Right`, `NavigateNext`/`Previous`, `Confirm`, `Cancel` — bound to
+whatever keys, pad buttons and stick directions you choose, with an optional hold-to-repeat.
+With no default UI context, documents navigate by pointer alone. A context you swap in through
+the `SeatFocusScope` replaces the default for that seat while the scope is open. Authoring the
+map is in [Authoring input actions](authoring-input-actions.md#roles-actions-the-engine-acts-on).
+
+Because focus is **per-seat**, seat A opening a menu leaves seat B playing —
 split-screen-correct by construction.
 
 ## 6. Open a menu that escapes its container
@@ -1070,8 +1080,8 @@ bound it — `max-height` plus `overflow-y: scroll` caps a long menu), is placed
 whole main tree with no inherited scissor and hit-tests ahead of it, so it covers what it overlaps
 and claims the pointer there.
 
-Dismissal is handled for you: a press outside the popup closes it and is consumed, Esc (or gamepad
-B) closes the top one, and closing a popup closes any opened over it, restoring the focus that was
+Dismissal is handled for you: a press outside the popup closes it and is consumed, the `Cancel`
+role (Esc or a pad's B, as a typical UI map binds it) closes the top one, and closing a popup closes any opened over it, restoring the focus that was
 live before. **Never store the anchor as an `Element*`** — a repeater destroys whole rows when its
 bound array shrinks. Take a handle instead, and the popup closes with its anchor for free:
 

@@ -4,6 +4,7 @@
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/Surface.h>
 #include <Veng/Input.h>
+#include <Veng/Input/Actions.h>
 #include <Veng/InputEvents.h>
 #include <Veng/InputRouter.h>
 
@@ -31,24 +32,23 @@ namespace Veng::Gui
             return PointerButton::Primary;
         }
 
-        // Maps a GLFW modifier bitfield to the Gui modifier vocabulary. The bits are GLFW's own
-        // (SHIFT/CONTROL/ALT/SUPER), the same field the pointer and ImGui sinks read.
-        InputModifiers ToInputModifiers(i32 mods)
+        // Maps a seat's held modifier keys to the Gui modifier vocabulary.
+        InputModifiers ToInputModifiers(const ModifierKeys& keys)
         {
             InputModifiers result = InputModifiers::None;
-            if ((mods & 0x0001) != 0)
+            if (keys.Shift)
             {
                 result = result | InputModifiers::Shift;
             }
-            if ((mods & 0x0002) != 0)
+            if (keys.Control)
             {
                 result = result | InputModifiers::Control;
             }
-            if ((mods & 0x0004) != 0)
+            if (keys.Alt)
             {
                 result = result | InputModifiers::Alt;
             }
-            if ((mods & 0x0008) != 0)
+            if (keys.Super)
             {
                 result = result | InputModifiers::Meta;
             }
@@ -59,29 +59,31 @@ namespace Veng::Gui
         // answers a flick the same whether it is composited as an overlay or mapped onto a mesh.
         constexpr f32 WheelNotchPoints = 56.0f;
 
-        // Maps a navigation key to its NavAction, or nullopt when the key is not a navigation key.
-        optional<NavAction> ToNavAction(Key key, bool shift)
+        // Maps a navigation role to its NavAction, or nullopt for a role that navigates nothing.
+        optional<NavAction> ToNavAction(const ActionRole role)
         {
-            switch (key)
+            switch (role)
             {
-            case Key::Up:
+            case ActionRole::NavigateUp:
                 return NavAction::MoveUp;
-            case Key::Down:
+            case ActionRole::NavigateDown:
                 return NavAction::MoveDown;
-            case Key::Left:
+            case ActionRole::NavigateLeft:
                 return NavAction::MoveLeft;
-            case Key::Right:
+            case ActionRole::NavigateRight:
                 return NavAction::MoveRight;
-            case Key::Tab:
-                return shift ? NavAction::Previous : NavAction::Next;
-            case Key::Enter:
-            case Key::Space:
+            case ActionRole::NavigateNext:
+                return NavAction::Next;
+            case ActionRole::NavigatePrevious:
+                return NavAction::Previous;
+            case ActionRole::Confirm:
                 return NavAction::Confirm;
-            case Key::Escape:
+            case ActionRole::Cancel:
                 return NavAction::Cancel;
-            default:
+            case ActionRole::None:
                 return std::nullopt;
             }
+            return std::nullopt;
         }
 
         // Maps an editing key to its TextEditAction, or nullopt when the key edits no text. These
@@ -363,42 +365,21 @@ namespace Veng::Gui
         }
 
         // A key carries no world point, so it routes to the participating panels in registration
-        // order, stopping at the first that consumes — the focused text field or focus navigation.
-        // An editing key is offered to the field first (a caret step or a codepoint deletion); a
-        // navigation key then drives focus. A platform auto-repeat takes the editing route and only
-        // it — focus is a discrete choice of element and must not skate through the focus order.
+        // order, stopping at the first that consumes — the focused text field's editing keys only,
+        // a platform repeat included. Navigation arrives as roles (ForwardRole).
         if (type == EventType::KeyPressed || type == EventType::KeyRepeat)
         {
-            const bool repeat = type == EventType::KeyRepeat;
-            const Key code = repeat ? static_cast<const KeyRepeatEvent&>(event).GetKey()
-                                    : static_cast<const KeyPressedEvent&>(event).GetKey();
-            if (const optional<TextEditAction> edit = ToTextEditAction(code))
-            {
-                for (const Entry& entry : m_Entries)
-                {
-                    if (IsParticipating(entry) &&
-                        entry.Surface->GetDocument()->DispatchTextEdit(*edit))
-                    {
-                        return true;
-                    }
-                }
-            }
-            if (repeat)
-            {
-                return false;
-            }
-            const InputModifiers modifiers =
-                ToInputModifiers(static_cast<const KeyPressedEvent&>(event).GetMods());
-            const optional<NavAction> action =
-                ToNavAction(code, HasModifier(modifiers, InputModifiers::Shift));
-            if (!action)
+            const Key code = type == EventType::KeyRepeat
+                                 ? static_cast<const KeyRepeatEvent&>(event).GetKey()
+                                 : static_cast<const KeyPressedEvent&>(event).GetKey();
+            const optional<TextEditAction> edit = ToTextEditAction(code);
+            if (!edit)
             {
                 return false;
             }
             for (const Entry& entry : m_Entries)
             {
-                if (IsParticipating(entry) &&
-                    entry.Surface->GetDocument()->Navigate(*action, modifiers))
+                if (IsParticipating(entry) && entry.Surface->GetDocument()->DispatchTextEdit(*edit))
                 {
                     return true;
                 }
@@ -420,6 +401,26 @@ namespace Veng::Gui
             return false;
         }
 
+        return false;
+    }
+
+    bool SurfaceInputConsumer::ForwardRole(const RoleEvent& event)
+    {
+        const optional<NavAction> action = ToNavAction(event.Role);
+        if (!action)
+        {
+            return false;
+        }
+        const InputModifiers modifiers = ToInputModifiers(event.Modifiers);
+        for (const Entry& entry : m_Entries)
+        {
+            const SeatRef seat{.World = entry.World, .Viewer = entry.Surface->Seat};
+            if (seat == event.Seat && IsParticipating(entry) &&
+                entry.Surface->GetDocument()->Navigate(*action, modifiers))
+            {
+                return true;
+            }
+        }
         return false;
     }
 }

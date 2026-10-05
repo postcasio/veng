@@ -4,6 +4,8 @@
 #include <Veng/InputRouter.h>
 #include <Veng/Scene/Components.h>
 
+#include <algorithm>
+
 namespace Veng
 {
     RawInput::RawInput(const Input& input) : m_Input(input) {}
@@ -139,6 +141,84 @@ namespace Veng
         {
             // The per-tick cadence, for the touchpad's motion axes as for the mouse's.
             return m_Input.GetSimGamepadAxis(m_Gamepad, static_cast<GamepadAxis>(code));
+        }
+
+        return 0.0f;
+    }
+
+    FrameInputView::FrameInputView(const Input& input, const std::span<const Key> claimed)
+        : m_Input(input), m_Claimed(claimed)
+    {
+        const std::span<const GamepadId> connected = input.ConnectedGamepads();
+        m_Gamepad = connected.empty() ? GamepadId::None : connected.front();
+    }
+
+    FrameInputView::FrameInputView(const Input& input, const SeatInput& seat,
+                                   const PointerRouting& pointer, const Entity viewer,
+                                   const std::span<const Key> claimed)
+        : m_Input(input), m_Pointer(&pointer), m_Viewer(viewer),
+          m_UsesKeyboardMouse(seat.UsesKeyboardMouse), m_Gamepad(seat.Gamepad), m_Claimed(claimed)
+    {
+    }
+
+    bool FrameInputView::OwnsPointer() const
+    {
+        return m_Pointer == nullptr ||
+               (m_UsesKeyboardMouse && m_Pointer->OwnerThisFrame() == m_Viewer);
+    }
+
+    bool FrameInputView::IsKeyDown(u32 code) const
+    {
+        const auto key = static_cast<Key>(code);
+        return m_UsesKeyboardMouse && m_Input.IsKeyDown(key) &&
+               std::ranges::find(m_Claimed, key) == m_Claimed.end();
+    }
+
+    bool FrameInputView::IsButtonDown(InputDeviceType device, u32 code) const
+    {
+        if (device == InputDeviceType::MouseButton)
+        {
+            return OwnsPointer() && m_Input.IsMouseButtonDown(static_cast<MouseButton>(code));
+        }
+
+        if (device == InputDeviceType::GamepadButton)
+        {
+            return m_Input.IsGamepadButtonDown(m_Gamepad, static_cast<GamepadButton>(code));
+        }
+
+        return false;
+    }
+
+    f32 FrameInputView::GetAxis(InputDeviceType device, u32 code) const
+    {
+        if (device == InputDeviceType::MouseAxis)
+        {
+            if (!OwnsPointer())
+            {
+                return 0.0f;
+            }
+            switch (code)
+            {
+            case RawInput::MouseAxisX:
+                return m_Input.GetMouseDelta().x;
+            case RawInput::MouseAxisY:
+                return m_Input.GetMouseDelta().y;
+            case SeatInputView::MousePositionX:
+                return m_Pointer != nullptr ? m_Pointer->LocalPosition.x : 0.0f;
+            case SeatInputView::MousePositionY:
+                return m_Pointer != nullptr ? m_Pointer->LocalPosition.y : 0.0f;
+            case RawInput::MouseScrollX:
+                return m_Input.GetScrollDelta().x;
+            case RawInput::MouseScrollY:
+                return m_Input.GetScrollDelta().y;
+            default:
+                return 0.0f;
+            }
+        }
+
+        if (device == InputDeviceType::GamepadAxis)
+        {
+            return m_Input.GetGamepadAxis(m_Gamepad, static_cast<GamepadAxis>(code));
         }
 
         return 0.0f;

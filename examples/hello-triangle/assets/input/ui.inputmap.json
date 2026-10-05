@@ -1,0 +1,218 @@
+{
+  "Actions": [
+    {
+      "Id": "0x2FC27625A301DD33",
+      "Name": "UiUp",
+      "Kind": "Button",
+      "Role": "NavigateUp",
+      "RepeatDelay": 0.4,
+      "RepeatRate": 0.1
+    },
+    {
+      "Id": "0x036CB63711B3E658",
+      "Name": "UiDown",
+      "Kind": "Button",
+      "Role": "NavigateDown",
+      "RepeatDelay": 0.4,
+      "RepeatRate": 0.1
+    },
+    {
+      "Id": "0x781FE038A9B46721",
+      "Name": "UiLeft",
+      "Kind": "Button",
+      "Role": "NavigateLeft",
+      "RepeatDelay": 0.4,
+      "RepeatRate": 0.1
+    },
+    {
+      "Id": "0xCB2E8A3E5D9D9091",
+      "Name": "UiRight",
+      "Kind": "Button",
+      "Role": "NavigateRight",
+      "RepeatDelay": 0.4,
+      "RepeatRate": 0.1
+    },
+    {
+      "Id": "0x577ABACAF6FE8248",
+      "Name": "UiNext",
+      "Kind": "Button",
+      "Role": "NavigateNext"
+    },
+    {
+      "Id": "0x173910CDF5400950",
+      "Name": "UiPrevious",
+      "Kind": "Button",
+      "Role": "NavigatePrevious"
+    },
+    {
+      "Id": "0xED00C07FD0DD7EA0",
+      "Name": "UiConfirm",
+      "Kind": "Button",
+      "Role": "Confirm"
+    },
+    {
+      "Id": "0x8443A9E98FD1D6DE",
+      "Name": "UiCancel",
+      "Kind": "Button",
+      "Role": "Cancel"
+    }
+  ],
+  "Bindings": [
+    {
+      "Source": {
+        "Device": "Keyboard",
+        "Control": 265
+      },
+      "Action": "0x2FC27625A301DD33"
+    },
+    {
+      "Source": {
+        "Device": "Keyboard",
+        "Control": 264
+      },
+      "Action": "0x036CB63711B3E658"
+    },
+    {
+      "Source": {
+        "Device": "Keyboard",
+        "Control": 263
+      },
+      "Action": "0x781FE038A9B46721"
+    },
+    {
+      "Source": {
+        "Device": "Keyboard",
+        "Control": 262
+      },
+      "Action": "0xCB2E8A3E5D9D9091"
+    },
+    {
+      "Source": {
+        "Device": "Keyboard",
+        "Control": 258
+      },
+      "Action": "0x577ABACAF6FE8248"
+    },
+    {
+      "Source": {
+        "Device": "Keyboard",
+        "Control": 258
+      },
+      "Action": "0x173910CDF5400950",
+      "Modifier": {
+        "Device": "Keyboard",
+        "Control": 340
+      }
+    },
+    {
+      "Source": {
+        "Device": "Keyboard",
+        "Control": 258
+      },
+      "Action": "0x173910CDF5400950",
+      "Modifier": {
+        "Device": "Keyboard",
+        "Control": 344
+      }
+    },
+    {
+      "Source": {
+        "Device": "Keyboard",
+        "Control": 257
+      },
+      "Action": "0xED00C07FD0DD7EA0"
+    },
+    {
+      "Source": {
+        "Device": "Keyboard",
+        "Control": 32
+      },
+      "Action": "0xED00C07FD0DD7EA0"
+    },
+    {
+      "Source": {
+        "Device": "Keyboard",
+        "Control": 256
+      },
+      "Action": "0x8443A9E98FD1D6DE"
+    },
+    {
+      "Source": {
+        "Device": "GamepadButton",
+        "Control": 11
+      },
+      "Action": "0x2FC27625A301DD33"
+    },
+    {
+      "Source": {
+        "Device": "GamepadButton",
+        "Control": 12
+      },
+      "Action": "0xCB2E8A3E5D9D9091"
+    },
+    {
+      "Source": {
+        "Device": "GamepadButton",
+        "Control": 13
+      },
+      "Action": "0x036CB63711B3E658"
+    },
+    {
+      "Source": {
+        "Device": "GamepadButton",
+        "Control": 14
+      },
+      "Action": "0x781FE038A9B46721"
+    },
+    {
+      "Source": {
+        "Device": "GamepadAxis",
+        "Control": 1
+      },
+      "Action": "0x2FC27625A301DD33",
+      "Scale": -1.0,
+      "Threshold": 0.5
+    },
+    {
+      "Source": {
+        "Device": "GamepadAxis",
+        "Control": 1
+      },
+      "Action": "0x036CB63711B3E658",
+      "Scale": 1.0,
+      "Threshold": 0.5
+    },
+    {
+      "Source": {
+        "Device": "GamepadAxis",
+        "Control": 0
+      },
+      "Action": "0x781FE038A9B46721",
+      "Scale": -1.0,
+      "Threshold": 0.5
+    },
+    {
+      "Source": {
+        "Device": "GamepadAxis",
+        "Control": 0
+      },
+      "Action": "0xCB2E8A3E5D9D9091",
+      "Scale": 1.0,
+      "Threshold": 0.5
+    },
+    {
+      "Source": {
+        "Device": "GamepadButton",
+        "Control": 0
+      },
+      "Action": "0xED00C07FD0DD7EA0"
+    },
+    {
+      "Source": {
+        "Device": "GamepadButton",
+        "Control": 1
+      },
+      "Action": "0x8443A9E98FD1D6DE"
+    }
+  ]
+}

@@ -22,12 +22,13 @@ namespace
     }
 }
 
-TEST_CASE("CookedProject: round-trips the startup level and pack names")
+TEST_CASE("CookedProject: round-trips the startup level, default UI context and pack names")
 {
     const path file = TempProjectPath("roundtrip");
 
     CookedProject project;
     project.StartupLevel = AssetId{0xABCDEF0123456789ULL};
+    project.DefaultUiContext = AssetId{0x0123456789ABCDEFULL};
     project.PackMountNames = {"sample.vengpack", "dlc.vengpack"};
 
     REQUIRE(WriteCookedProject(file, project).has_value());
@@ -35,6 +36,7 @@ TEST_CASE("CookedProject: round-trips the startup level and pack names")
     const Result<CookedProject> read = ReadCookedProject(file);
     REQUIRE(read.has_value());
     CHECK(read->StartupLevel.Value == 0xABCDEF0123456789ULL);
+    CHECK(read->DefaultUiContext.Value == 0x0123456789ABCDEFULL);
     REQUIRE(read->PackMountNames.size() == 2);
     CHECK(read->PackMountNames[0] == "sample.vengpack");
     CHECK(read->PackMountNames[1] == "dlc.vengpack");
@@ -51,6 +53,7 @@ TEST_CASE("CookedProject: round-trips an empty pack list and no startup level")
     const Result<CookedProject> read = ReadCookedProject(file);
     REQUIRE(read.has_value());
     CHECK_FALSE(read->StartupLevel.IsValid());
+    CHECK_FALSE(read->DefaultUiContext.IsValid());
     CHECK(read->PackMountNames.empty());
 
     std::filesystem::remove(file);

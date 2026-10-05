@@ -376,8 +376,9 @@ which a game-specific control system reads to produce the abstract `Intent` game
 - **The action-mapping layer** (`Veng/Input/`). An **`ActionId`** is a minted `u64` leaf (authored
   like `AssetId`/`TypeId`); an action *exists* by being declared in a context, so there is no
   registry. An **`InputMappingContext`** (`AssetTypes::InputMap`) declares its actions
-  (id + name + `ActionKind`) and a `vector<Binding>` (raw `InputSource` → action, with a signed
-  scale, an axis component, and a threshold and response exponent). **`ResolveActions(activeContexts, raw, previous) →
+  (id + name + `ActionKind`, and optionally an engine `ActionRole` with its repeat) and a
+  `vector<Binding>` (raw `InputSource` → action, with a signed scale, an axis component, and a
+  threshold and response exponent). **`ResolveActions(activeContexts, raw, previous) →
   ActionState`** (`Veng/Input/Actions.h`) is the pure, device-free core — bindings × the active
   context stack × the raw snapshot → each action's value + phase, phase derived by comparing
   against the previous `ActionState`. It is unit-tested with no window, mirroring the
@@ -403,7 +404,7 @@ which a game-specific control system reads to produce the abstract `Intent` game
   siblings; see **The system catalog** and the request family in `Veng/Scene/Requests.h`.
 - **`InputMappingSystem`** (`Veng/Scene/InputMappingSystem.h`) is the builtin Sim system that
   resolves each locally-owned seat's `InputContextStack` against the raw snapshot into that seat's
-  `PlayerInput`. It is the **sole reader of raw device state**, registered in
+  `PlayerInput`. It is the **sole Sim-side reader of raw device state**, registered in
   `RegisterBuiltinSystems` ahead of any control system — a level's explicit `systems` order must
   place it before the control system that reads `PlayerInput` (registration order does not reorder
   the list). It iterates `(Viewer, InputContextStack, PlayerInput, SeatInput)` seats, so a world
@@ -509,6 +510,23 @@ plain binding on the same source, in any active context, is silent; `ResolveActi
 live chords' sources before accumulating anything, so suppression is order-independent. A **`Possesses { Entity Pawn }`** link names the pawn a
 seat controls; possession is independent of `Viewer.Camera` (a spectator views without possessing;
 a cutscene retargets the camera without un-possessing).
+
+**An action can carry an engine meaning — a role — beside the value a control system reads.** An
+`InputAction` tagged with an **`ActionRole`** is one the engine itself acts on: the navigation roles
+(`NavigateUp`…`NavigatePrevious`, `Confirm`, `Cancel`) drive Gui focus (see
+[../Gui/CLAUDE.md](../Gui/CLAUDE.md), "Navigation is mapped actions, never keys"). Role actions are
+**not** read off `PlayerInput`. The engine's **role resolver** (`engine/src/Input/RoleResolver`)
+resolves them once per **frame**, after the input lands and before any world ticks, for the implicit
+seat and every locally-owned `SeatInput` seat in every world — paused ones included — against a
+`FrameInputView` (`SeatInputView`'s device gating with the per-frame deltas; a key a router consumer
+claimed reads up). A seat resolves its `InputContextStack` over the application's **default UI
+context** (`Application::SetDefaultUiContext`, from the project's `"defaultUiContext"`); a stack a
+`SeatFocusScope` swapped is marked **`Exclusive`** and the default beneath it fires nothing. It keeps
+its own previous `ActionState` and **repeat timers** per seat (`RepeatDelay`/`RepeatRate` on the
+action), and resolves whatever the seat's focus — only the dispatch is gated on focus — so a press
+held across a focus change is never `Started` twice. So `InputMappingSystem` is the sole reader of
+raw device state on the **Sim** side; the role resolver is its frame-rate counterpart, which
+reconciliation never replays.
 
 ## LocalControl — which pawn is mine
 

@@ -517,9 +517,12 @@ namespace Veng
             break;
         }
 
-        // Cooperative: never stop the event's fall-through, so a later consumer still sees it and
-        // the router's snapshot fold is unaffected.
-        return false;
+        // Cooperative except over the keyboard ImGui holds: a key typed into one of its widgets is
+        // not also a Gui edit or a navigation press. Every other event falls through.
+        const EventType type = event.GetEventType();
+        const bool keyboard = type == EventType::KeyPressed || type == EventType::KeyRepeat ||
+                              type == EventType::KeyTyped;
+        return keyboard && ImGui::GetIO().WantCaptureKeyboard;
     }
 
     void ImGuiLayer::OnCursorCaptured(bool captured)

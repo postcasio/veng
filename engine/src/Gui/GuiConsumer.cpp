@@ -4,6 +4,7 @@
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/InputEvent.h>
 #include <Veng/Input.h>
+#include <Veng/Input/Actions.h>
 #include <Veng/InputEvents.h>
 #include <Veng/InputRouter.h>
 #include <Veng/Renderer/Viewport.h>
@@ -60,29 +61,54 @@ namespace Veng::Gui
         // precise gesture scales down through the same constant.
         constexpr f32 WheelNotchPoints = 56.0f;
 
-        // Maps a navigation key to its NavAction, or nullopt when the key is not a navigation key.
-        optional<NavAction> ToNavAction(Key key, bool shift)
+        // Maps a navigation role to its NavAction, or nullopt for a role that navigates nothing.
+        optional<NavAction> ToNavAction(const ActionRole role)
         {
-            switch (key)
+            switch (role)
             {
-            case Key::Up:
+            case ActionRole::NavigateUp:
                 return NavAction::MoveUp;
-            case Key::Down:
+            case ActionRole::NavigateDown:
                 return NavAction::MoveDown;
-            case Key::Left:
+            case ActionRole::NavigateLeft:
                 return NavAction::MoveLeft;
-            case Key::Right:
+            case ActionRole::NavigateRight:
                 return NavAction::MoveRight;
-            case Key::Tab:
-                return shift ? NavAction::Previous : NavAction::Next;
-            case Key::Enter:
-            case Key::Space:
+            case ActionRole::NavigateNext:
+                return NavAction::Next;
+            case ActionRole::NavigatePrevious:
+                return NavAction::Previous;
+            case ActionRole::Confirm:
                 return NavAction::Confirm;
-            case Key::Escape:
+            case ActionRole::Cancel:
                 return NavAction::Cancel;
-            default:
+            case ActionRole::None:
                 return std::nullopt;
             }
+            return std::nullopt;
+        }
+
+        // Maps a seat's held modifier keys to the Gui modifier vocabulary.
+        InputModifiers ToInputModifiers(const ModifierKeys& keys)
+        {
+            InputModifiers result = InputModifiers::None;
+            if (keys.Shift)
+            {
+                result = result | InputModifiers::Shift;
+            }
+            if (keys.Control)
+            {
+                result = result | InputModifiers::Control;
+            }
+            if (keys.Alt)
+            {
+                result = result | InputModifiers::Alt;
+            }
+            if (keys.Super)
+            {
+                result = result | InputModifiers::Meta;
+            }
+            return result;
         }
 
         // Maps an editing key to its TextEditAction, or nullopt when the key edits no text. These
@@ -231,54 +257,18 @@ namespace Veng::Gui
             return false;
         }
 
-        // An editing key is offered to the focused text field first, then a navigation key drives
-        // focus in the interactive documents of the cursor seat's viewports; text input reaches the
-        // focused element's onText handler.
-        //
-        // A platform auto-repeat takes the editing route and only the editing route. Repetition is
-        // meaningful where an action has a per-press increment to accumulate — a caret step, a
-        // codepoint deletion — so holding the key walks or erases the way every text field on the
-        // machine does. Focus navigation is a discrete choice of which element is focused, so a held
-        // key must not skate through the focus order; a repeat therefore stops here and never
-        // reaches the navigation route.
+        // A key reaches the documents only as text editing; navigation arrives as roles
+        // (ForwardRole). A focused text field owns the editing keys — Backspace and Delete edit
+        // around its caret, Left/Right/Home/End move it — and accepting one claims the key, so the
+        // role resolution reads it as up and the field keeps it until release. A platform auto-repeat
+        // takes the same route, so a held key walks the caret or erases the way any text field does.
         if (type == EventType::KeyPressed || type == EventType::KeyRepeat)
         {
-            const bool repeat = type == EventType::KeyRepeat;
-            const Key code = repeat ? static_cast<const KeyRepeatEvent&>(event).GetKey()
-                                    : static_cast<const KeyPressedEvent&>(event).GetKey();
-
-            // A focused text field owns the editing keys: Backspace and Delete edit around its
-            // caret, Left/Right/Home/End move it. Left and Right are also focus-navigation keys, so
-            // this offer comes first and the field claims them while it holds focus; only when no
-            // field is focused does the arrow fall through to the navigation route below.
-            if (const optional<TextEditAction> edit = ToTextEditAction(code))
-            {
-                for (Renderer::Viewport* viewport : m_Viewports)
-                {
-                    const std::span<Gui::Document* const> documents = viewport->GetInputDocuments();
-                    for (auto it = documents.rbegin(); it != documents.rend(); ++it)
-                    {
-                        Gui::Document* document = *it;
-                        if (document->IsInteractive() && document->DispatchTextEdit(*edit))
-                        {
-                            return true;
-                        }
-                    }
-                }
-            }
-
-            // Navigation is a discrete step, so a repeat that no field claimed ends here rather
-            // than walking focus for as long as the key is held.
-            if (repeat)
-            {
-                return false;
-            }
-
-            const i32 mods = static_cast<const KeyPressedEvent&>(event).GetMods();
-            const InputModifiers modifiers = ToInputModifiers(mods);
-            const bool shift = HasModifier(modifiers, InputModifiers::Shift);
-            const optional<NavAction> action = ToNavAction(code, shift);
-            if (!action)
+            const Key code = type == EventType::KeyRepeat
+                                 ? static_cast<const KeyRepeatEvent&>(event).GetKey()
+                                 : static_cast<const KeyPressedEvent&>(event).GetKey();
+            const optional<TextEditAction> edit = ToTextEditAction(code);
+            if (!edit)
             {
                 return false;
             }
@@ -288,7 +278,7 @@ namespace Veng::Gui
                 for (auto it = documents.rbegin(); it != documents.rend(); ++it)
                 {
                     Gui::Document* document = *it;
-                    if (document->IsInteractive() && document->Navigate(*action, modifiers))
+                    if (document->IsInteractive() && document->DispatchTextEdit(*edit))
                     {
                         return true;
                     }
@@ -315,6 +305,40 @@ namespace Veng::Gui
             return false;
         }
 
+        return false;
+    }
+
+    bool GuiConsumer::ForwardRole(const RoleEvent& event)
+    {
+        const optional<NavAction> action = ToNavAction(event.Role);
+        if (!action)
+        {
+            return false;
+        }
+        const InputModifiers modifiers = ToInputModifiers(event.Modifiers);
+
+        // The seat's own viewports, topmost first, and in each its routable documents topmost first:
+        // the press stops at the first document that takes it. The implicit seat reaches only the
+        // viewports bound to no seat, so a seated document is driven by its own seat alone.
+        for (auto viewportIt = m_Viewports.rbegin(); viewportIt != m_Viewports.rend(); ++viewportIt)
+        {
+            Renderer::Viewport* const viewport = *viewportIt;
+            const SeatRef seat = viewport->GetSeat();
+            const bool owns = event.Seat.IsImplicit() ? seat.IsImplicit() : seat == event.Seat;
+            if (!owns)
+            {
+                continue;
+            }
+            const std::span<Gui::Document* const> documents = viewport->GetInputDocuments();
+            for (auto it = documents.rbegin(); it != documents.rend(); ++it)
+            {
+                Gui::Document* document = *it;
+                if (document->IsInteractive() && document->Navigate(*action, modifiers))
+                {
+                    return true;
+                }
+            }
+        }
         return false;
     }
 }

@@ -16,6 +16,7 @@ namespace Veng
     class Input;
     class InputConsumer;
     class Event;
+    struct RoleEvent;
 }
 
 namespace Veng::Renderer
@@ -280,8 +281,35 @@ namespace Veng
         }
 
         /// @brief Routes one drained window event to the consumers and/or the Input snapshot by focus.
+        ///
+        /// A key press a consumer accepts is **claimed** until the key is released (IsKeyClaimed):
+        /// each press first drops any claim its key held, then claims it again only if a consumer
+        /// takes it, so a claim lasts exactly as long as the press that earned it.
         /// @param event  The event to route.
         void Dispatch(Event& event);
+
+        /// @brief Offers one role press to the consumers in priority order, stopping at the first
+        ///        that accepts it.
+        ///
+        /// The role counterpart of the event fall-through: the engine's per-frame role resolution
+        /// calls it for a seat whose focus admits the role, so a press reaches exactly one
+        /// consumer — and, inside the Gui consumers, exactly one document.
+        /// @param event  The role press and the seat it belongs to.
+        /// @return True when a consumer accepted the press.
+        bool DispatchRole(const RoleEvent& event);
+
+        /// @brief Whether a consumer accepted the current press of a key, until its release.
+        ///
+        /// Set when the immediate-mode overlay has the keyboard or a focused Gui text field takes an
+        /// editing key. The engine's role resolution reads a claimed key as up, so a key typed into a
+        /// box never also navigates, and a held caret key never walks focus out of its field.
+        /// @param key  The key to test.
+        /// @return True from the accepted press until the key's release.
+        [[nodiscard]] bool IsKeyClaimed(Key key) const;
+
+        /// @brief Returns every currently claimed key, in claim order.
+        /// @return The claimed keys; valid until the next Dispatch.
+        [[nodiscard]] std::span<const Key> GetClaimedKeys() const { return m_ClaimedKeys; }
 
         /// @brief Queues a synthetic (injected) input event for paced release at the pre-tick point.
         ///
@@ -415,7 +443,8 @@ namespace Veng
 
         /// @brief Offers one UI-owned event to the consumers, stopping at the first that accepts it.
         /// @param event  The event to offer.
-        void OfferConsumers(const Event& event);
+        /// @return True when a consumer accepted the event.
+        bool OfferConsumers(const Event& event);
 
         /// @brief Which foldable input kind a queued synthetic event carries.
         enum class InjectedKind : u8
@@ -509,6 +538,9 @@ namespace Veng
 
         /// @brief Synthetic events awaiting paced release, oldest first (see PostInjectedEvent).
         vector<InjectedEvent> m_InjectedQueue;
+
+        /// @brief Keys whose current press a consumer accepted, each held until its release.
+        vector<Key> m_ClaimedKeys;
 
         /// @brief Receives drained virtual-gamepad edits; empty drops them.
         function<void(const VirtualGamepadEvent&)> m_VirtualGamepadSink;

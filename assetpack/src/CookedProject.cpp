@@ -15,15 +15,16 @@ namespace Veng
         constexpr char CookedProjectMagic[8] = {'V', 'E', 'N', 'G', 'P', 'R', 'O', 'J'};
 
         // Fixed-size leading header; the variable-length pack names follow it. Field order keeps
-        // the u64 8-byte-aligned so the struct packs to 24 bytes with no padding.
+        // the u64s 8-byte-aligned so the struct packs to 32 bytes with no padding.
         struct OnDiskHeader
         {
             char Magic[8];
             u32 Version;
             u32 PackCount;
-            u64 StartupLevel; // AssetId, 0 = none
+            u64 StartupLevel;     // AssetId, 0 = none
+            u64 DefaultUiContext; // AssetId, 0 = none
         };
-        static_assert(sizeof(OnDiskHeader) == 24);
+        static_assert(sizeof(OnDiskHeader) == 32);
     }
 
     Result<CookedProject> ReadCookedProject(const path& filePath)
@@ -62,6 +63,7 @@ namespace Veng
 
         CookedProject project;
         project.StartupLevel = AssetId{.Value = header.StartupLevel};
+        project.DefaultUiContext = AssetId{.Value = header.DefaultUiContext};
         project.PackMountNames.reserve(header.PackCount);
 
         usize cursor = sizeof(OnDiskHeader);
@@ -98,6 +100,7 @@ namespace Veng
         std::memcpy(header.Magic, CookedProjectMagic, sizeof(CookedProjectMagic));
         header.Version = CookedProjectFormatVersion;
         header.StartupLevel = project.StartupLevel.Value;
+        header.DefaultUiContext = project.DefaultUiContext.Value;
         header.PackCount = static_cast<u32>(project.PackMountNames.size());
 
         vector<u8> out(sizeof(OnDiskHeader));

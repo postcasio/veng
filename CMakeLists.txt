@@ -1069,6 +1069,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/input_events.cpp
             tests/unit/input_router.cpp
             tests/unit/action_resolve.cpp
+            tests/unit/action_roles.cpp
             tests/unit/gamepad_adapter.cpp
             tests/unit/gamepad_slots.cpp
             tests/unit/gamepad_deadzone.cpp
@@ -1930,6 +1931,7 @@ if (VENG_BUILD_TESTS)
             # through InputRouter and the real GuiConsumer into a document attached to a live
             # viewport; it needs the GPU band only because Viewport::Create needs a Context.
             tests/gpu/gui_editing_keys.cpp
+            tests/gpu/gui_role_navigation.cpp
             # capture_surface.cpp cooks a capture fixture pack and drives the CaptureSurface
             # component end to end: the entity's material samples the scene captured from the
             # entity (a backdrop out of the camera's direct view), the refresh policy (on-demand

@@ -5,6 +5,8 @@
 #include <Veng/Input/Actions.h>
 #include <Veng/Scene/Entity.h>
 
+#include <span>
+
 namespace Veng
 {
     class Input;
@@ -154,5 +156,72 @@ namespace Veng
         bool m_UsesKeyboardMouse;
         /// @brief The pad slot this seat's gamepad arms read, or GamepadId::None.
         GamepadId m_Gamepad;
+    };
+
+    /// @brief A RawInputView over Veng::Input for a once-per-frame reader of one seat's actions.
+    ///
+    /// The frame-rate sibling of SeatInputView, which the engine's role resolution reads: it gates
+    /// the devices exactly as SeatInputView does, but its look-delta, wheel and touchpad-motion arms
+    /// read the per-**frame** deltas, as RawInput's do, since it resolves once per frame whatever the
+    /// tick count. Built for the implicit seat it reads every device — the keyboard, the mouse, and
+    /// the first connected pad — as RawInput does.
+    ///
+    /// Its keyboard arm reads a **claimed** key as up (InputRouter::IsKeyClaimed): a key the
+    /// immediate-mode overlay or a focused text field took is that consumer's until it is released,
+    /// so it never also presses an action here. Only keys are ever claimed; a pad never is.
+    ///
+    /// The Control codes are RawInput's and SeatInputView's.
+    class FrameInputView final : public RawInputView
+    {
+    public:
+        /// @brief Constructs the implicit seat's view: every device, the first connected pad.
+        /// @param input    The frame-coherent input service, borrowed for the resolve call.
+        /// @param claimed  The keys to read as up this frame; borrowed for the resolve call.
+        FrameInputView(const Input& input, std::span<const Key> claimed);
+
+        /// @brief Constructs a seat's view, scoped to its devices and pointer region.
+        /// @param input    The frame-coherent input service, borrowed for the resolve call.
+        /// @param seat     The seat's device assignment: gates keyboard/mouse and scopes the pad.
+        /// @param pointer  This frame's pointer owner and region-local position.
+        /// @param viewer   The seat this view is for, so it can ask whether it owns the pointer.
+        /// @param claimed  The keys to read as up this frame; borrowed for the resolve call.
+        FrameInputView(const Input& input, const SeatInput& seat, const PointerRouting& pointer,
+                       Entity viewer, std::span<const Key> claimed);
+
+        /// @brief Whether a keyboard key is down and unclaimed, on a seat holding the keyboard.
+        /// @param code  The Key code.
+        /// @return True while the key is held, unclaimed, and the seat reads the keyboard.
+        [[nodiscard]] bool IsKeyDown(u32 code) const override;
+
+        /// @brief Whether a device button is down this frame.
+        /// @param device  The device the button belongs to.
+        /// @param code    The button index (a GamepadButton for a gamepad source).
+        /// @return True while held; a seat's mouse button needs pointer ownership, its pad button
+        ///         its assigned pad.
+        [[nodiscard]] bool IsButtonDown(InputDeviceType device, u32 code) const override;
+
+        /// @brief The value of a device axis this frame.
+        /// @param device  The device the axis belongs to.
+        /// @param code    The axis index.
+        /// @return The axis value, its deltas per frame; a seat's mouse axis needs pointer
+        ///         ownership, its pad axis its assigned pad.
+        [[nodiscard]] f32 GetAxis(InputDeviceType device, u32 code) const override;
+
+    private:
+        /// @brief Whether the mouse arms are live: always for the implicit seat, else pointer ownership.
+        [[nodiscard]] bool OwnsPointer() const;
+
+        /// @brief The borrowed input snapshot read for this frame's raw state.
+        const Input& m_Input;
+        /// @brief This frame's pointer routing; null for the implicit seat, which owns the mouse.
+        const PointerRouting* m_Pointer = nullptr;
+        /// @brief The seat this view is for; Entity::Null for the implicit seat.
+        Entity m_Viewer = Entity::Null;
+        /// @brief Whether this seat holds the keyboard/mouse; gates those arms.
+        bool m_UsesKeyboardMouse = true;
+        /// @brief The pad slot the gamepad arms read, or GamepadId::None.
+        GamepadId m_Gamepad = GamepadId::None;
+        /// @brief The keys read as up this frame.
+        std::span<const Key> m_Claimed;
     };
 }

@@ -521,7 +521,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 66** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 67** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the
@@ -599,11 +599,15 @@ blobs stay binary (the runtime load path parses no JSON).
   `project.veng`): a reflected `vector<BuildConfiguration> Configurations` (a genuine
   `FieldClass::Array` field), the `ActiveConfiguration` name the editor previews through and the
   cook defaults to, a `vector<path> Packs` (the pack manifests the project owns), and a
-  `StartupLevel` `AssetId`, and a `vector<path> EditorPacks` — packs only the editor mounts
-  (authoring aids a shipped game has no use for). `Packs`, `EditorPacks` and `StartupLevel` are
-  persisted by hand through the `"packs"`/`"editorPacks"`/`"startupLevel"` keys, kept off the
-  reflected field list; the cook writes the startup level + the game packs' mount names into the
-  cooked project file (`.vengproj`), not the pack header, and leaves the editor packs out of it.
+  `StartupLevel` `AssetId`, a `DefaultUiContext` `AssetId` (the input map whose role actions
+  every Gui document navigates from — see [src/Gui/CLAUDE.md](src/Gui/CLAUDE.md)), and a
+  `vector<path> EditorPacks` — packs only the editor mounts (authoring aids a shipped game has no
+  use for). `Packs`, `EditorPacks`, `StartupLevel` and `DefaultUiContext` are persisted by hand
+  through the `"packs"`/`"editorPacks"`/`"startupLevel"`/`"defaultUiContext"` keys, kept off the
+  reflected field list; the cook writes the startup level, the default UI context and the game
+  packs' mount names into the cooked project file (`.vengproj`), not the pack header, and leaves
+  the editor packs out of it. A managed game sets the default UI context from it before
+  `OnInitialize`, and the editor host from `project.veng`, so Play navigates as the game does.
   A `ProjectPreviewSettings Preview` (the `"preview"` object: a `level` whose render block the
   editor's previews render under, a `fovY`, an opening `environment`) is editor-only too.
 - **`BuildConfiguration`** (`Veng/Project/BuildConfiguration.h`) — a named ship target: a

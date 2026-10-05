@@ -362,13 +362,77 @@ left stick click and the right stick's X axis rolls instead of yawing":
 
 ---
 
+## Roles: actions the engine acts on
+
+Most actions mean something only to your control system. A few mean something to the
+**engine**, and you say so by tagging the action with a **`Role`**. The engine binds no
+key itself: which control navigates a menu is your input map's decision, made in the
+same file and the same vocabulary as every other binding.
+
+The navigation roles are `NavigateUp`, `NavigateDown`, `NavigateLeft`, `NavigateRight`,
+`NavigateNext`, `NavigatePrevious`, `Confirm` and `Cancel`. A press of one drives focus in
+the interactive Gui documents of the seat that pressed it, while that seat holds UI focus:
+
+```json
+{ "Id": "0x…", "Name": "UiDown", "Kind": "Button", "Role": "NavigateDown",
+  "RepeatDelay": 0.4, "RepeatRate": 0.1 },
+{ "Id": "0x…", "Name": "UiConfirm", "Kind": "Button", "Role": "Confirm" }
+```
+
+```json
+{ "Source": { "Device": "Keyboard", "Control": 264 }, "Action": "<UiDown>" },
+{ "Source": { "Device": "GamepadButton", "Control": 13 }, "Action": "<UiDown>" },
+{ "Source": { "Device": "GamepadAxis", "Control": 1 }, "Action": "<UiDown>",
+  "Scale": 1.0, "Threshold": 0.5 },
+{ "Source": { "Device": "Keyboard", "Control": 257 }, "Action": "<UiConfirm>" },
+{ "Source": { "Device": "GamepadButton", "Control": 0 }, "Action": "<UiConfirm>" }
+```
+
+- **A role action is a `Button`.** A stick drives one through a binding's `Threshold` on
+  one half-axis, a direction per half. Shift+Tab for `NavigatePrevious` is a pair of
+  chords — `Tab` modified by `LeftShift` (`340`) and by `RightShift` (`344`) — beside a
+  plain `Tab` on `NavigateNext`, which the live chord silences.
+- **A role fires on its press.** Holding it fires nothing more unless it **repeats**:
+  with a `RepeatRate` (seconds between repeats) set, a held role fires again once held
+  its `RepeatDelay` (0 waits one `RepeatRate`), then at the rate — at most once a frame,
+  from a timer the engine keeps per action per seat, so a pad repeats exactly as a key
+  does. Both default to 0, no repeat. The cook rejects a negative value, a repeat on an
+  action with no role, a delay with no rate, and a role on a non-`Button` action.
+- **The modifiers held on the keyboard travel with the press**, so Shift with a direction
+  extends an `Extended` list's range and Control moves focus alone.
+- **Where the map lives.** Name it in `project.veng` as the project's default UI context:
+
+  ```json
+  "defaultUiContext": "0x…"
+  ```
+
+  The cook writes it into the cooked project, the game takes it from there at boot, and
+  the editor reads the same key, so menus navigate the same under the editor's Play as in
+  the shipped game. `Application::SetDefaultUiContext` overrides it at runtime. With none,
+  documents navigate by pointer alone.
+
+**How seats resolve roles.** The engine resolves every role action once a frame, before
+any world ticks — so a paused world's menu still navigates — for each local `SeatInput`
+seat and for the implicit all-devices seat that drives viewports bound to no seat. A seat
+resolves its own `InputContextStack` with the default UI context beneath it: re-declare
+and re-bind a role action's **id** in a seat context to shadow the default's controls for
+that seat. A `SeatFocusScope` that swaps in a context makes it the seat's whole scheme, so a
+seat suspended under an overlay navigates nothing. Resolution continues whatever the
+seat's focus and only the dispatch is gated, so the press that closes one screen is never
+also a fresh press in the screen it uncovers. A key a text field or the immediate-mode
+overlay has taken reads as released until you let it go, so typing never navigates; a pad
+is never claimed.
+
+---
+
 ## The editor
 
 The **`InputMappingEditorPanel`** (registered for `AssetTypes::InputMap`) opens a
 `*.inputmap.json` and draws its actions + bindings through the reflection inspector,
 so the binding table is add/remove/edit-able with no bespoke widget code. It reads and
 saves the file through the same reflection walker the cook binds it with, so every
-action and binding field round-trips. It shows
+action and binding field round-trips — an action's `Role`, `RepeatDelay` and
+`RepeatRate` included, in its Role category. It shows
 each binding's action by name (an `ActionId` combo scoped to the document's declared
 actions), recooks live behind a stable handle, and resolves the document against the
 editor's own input each frame so a binding's effect is observable without launching

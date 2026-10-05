@@ -76,15 +76,17 @@ namespace Veng::Cook
         string ActiveConfiguration;
         /// @brief The startup level written into the cooked project; the invalid id means none.
         AssetId StartupLevel;
+        /// @brief The default UI context written into the cooked project; the invalid id means none.
+        AssetId DefaultUiContext;
     };
 
     /// @brief Hand-parses a `project.veng` JSON authoring file into a CookProject.
     ///
-    /// Reads the `"packs"`, `"editorPacks"`, `"configurations"`, `"activeConfiguration"`, and
-    /// `"startupLevel"` keys; relative `packs`/`editorPacks`/`configurations` entries resolve against
-    /// the project file's directory. The
-    /// `"startupLevel"` is a hex-string AssetId; an absent or zero key yields the invalid id. Errors
-    /// are located: `"project '<path>': <reason>"`.
+    /// Reads the `"packs"`, `"editorPacks"`, `"configurations"`, `"activeConfiguration"`,
+    /// `"startupLevel"` and `"defaultUiContext"` keys; relative `packs`/`editorPacks`/`configurations`
+    /// entries resolve against the project file's directory. `"startupLevel"` and
+    /// `"defaultUiContext"` are hex-string AssetIds; an absent or zero key yields the invalid id.
+    /// Errors are located: `"project '<path>': <reason>"`.
     /// @param projectFile  Path to the `project.veng` JSON file.
     /// @return The parsed project on success, or a located error.
     [[nodiscard]] Result<CookProject> ParseProject(const path& projectFile);

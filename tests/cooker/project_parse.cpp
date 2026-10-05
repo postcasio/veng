@@ -51,3 +51,23 @@ TEST_CASE("Cooker: ParseProject refuses an editorPacks that is not a list of pat
 
     CHECK_FALSE(ParseProject(file).has_value());
 }
+
+TEST_CASE("Cooker: ParseProject reads the default UI context, and none when it is absent")
+{
+    const path dir = TestSupport::TempDir() / "project_parse_ui";
+    std::filesystem::create_directories(dir);
+    const path file = dir / "project.veng";
+
+    std::ofstream(file) << R"({"packs": [], "defaultUiContext": "0x00000000000000A1"})";
+    const Result<CookProject> named = ParseProject(file);
+    REQUIRE(named.has_value());
+    CHECK(named->DefaultUiContext.Value == 0xA1u);
+
+    std::ofstream(file) << R"({"packs": []})";
+    const Result<CookProject> absent = ParseProject(file);
+    REQUIRE(absent.has_value());
+    CHECK_FALSE(absent->DefaultUiContext.IsValid());
+
+    std::ofstream(file) << R"({"packs": [], "defaultUiContext": 161})";
+    CHECK_FALSE(ParseProject(file).has_value());
+}

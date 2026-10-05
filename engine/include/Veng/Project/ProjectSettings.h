@@ -8,13 +8,6 @@
 
 namespace Veng
 {
-    /// @brief The project-wide build settings: the set of build configurations and the active one.
-    ///
-    /// One per project, lived in the JSON authoring file `project.veng`. Holds
-    /// project-wide invariants only — no codec here; the codec lives on each
-    /// BuildConfiguration. Reflected so the editor lists/edits the configurations
-    /// through the property table; Configurations is a genuine reflected array, so
-    /// adding or removing a configuration is reflection, not a fixed-capacity hack.
     /// @brief How the editor previews an asset (a material on a shape, a prefab in its editor) by
     /// default, so a preview looks as the project's scenes do rather than as the renderer's
     /// defaults.
@@ -29,6 +22,13 @@ namespace Veng
         AssetId Environment;
     };
 
+    /// @brief The project-wide build settings: the set of build configurations and the active one.
+    ///
+    /// One per project, lived in the JSON authoring file `project.veng`. Holds
+    /// project-wide invariants only — no codec here; the codec lives on each
+    /// BuildConfiguration. Reflected so the editor lists/edits the configurations
+    /// through the property table; Configurations is a genuine reflected array, so
+    /// adding or removing a configuration is reflection, not a fixed-capacity hack.
     struct ProjectSettings
     {
         /// @brief The project's build configurations, one per ship target.
@@ -61,6 +61,17 @@ namespace Veng
         /// (a decimal AssetId), not reflection — kept off the reflected field list so the editor's
         /// build-policy property table stays focused on the configurations.
         AssetId StartupLevel;
+
+        /// @brief The InputMap the project's Gui documents navigate from.
+        ///
+        /// Its role-tagged actions (ActionRole) are the navigation every interactive document answers
+        /// to, beneath each seat's own contexts (Application::SetDefaultUiContext). The cook writes it
+        /// into the cooked project file and a game takes it from there; the editor host reads it from
+        /// here, so documents navigate the same under the editor's Play as in the shipped game. The
+        /// invalid id (the default) binds nothing: documents navigate by pointer alone. Persisted by
+        /// hand through project.veng's "defaultUiContext" key (a hex AssetId string), like
+        /// StartupLevel.
+        AssetId DefaultUiContext;
 
         /// @brief The logical name of the game module the editor loads (e.g. "template").
         ///

@@ -29,7 +29,43 @@ namespace Veng
         Axis2D
     };
 
-    /// @brief One action a context declares: its id, display name, and value shape.
+    /// @brief The engine meaning an action carries, beyond the value a control system reads.
+    ///
+    /// The engine binds no key: an application declares an action, tags it with a role, and binds
+    /// it in its own input map, and the engine resolves every role-tagged action each frame and acts
+    /// on its press. The navigation roles drive focus in the interactive Gui documents of the seat
+    /// that pressed them, while that seat holds UI focus.
+    enum class ActionRole : u32
+    {
+        /// @brief No engine meaning: the action is read only by the application's own code.
+        None,
+        /// @brief Moves Gui focus to the nearest focusable above the current one.
+        NavigateUp,
+        /// @brief Moves Gui focus to the nearest focusable below the current one.
+        NavigateDown,
+        /// @brief Moves Gui focus to the nearest focusable left of the current one.
+        NavigateLeft,
+        /// @brief Moves Gui focus to the nearest focusable right of the current one.
+        NavigateRight,
+        /// @brief Moves Gui focus to the next focusable in tree order.
+        NavigateNext,
+        /// @brief Moves Gui focus to the previous focusable in tree order.
+        NavigatePrevious,
+        /// @brief Activates the focused Gui element.
+        Confirm,
+        /// @brief Raises a cancel the focused Gui element or an open popup consumes.
+        Cancel
+    };
+
+    /// @brief Whether a role drives Gui focus navigation, so it fires only under UI focus.
+    /// @param role  The role to test.
+    /// @return True for every role from NavigateUp through Cancel.
+    [[nodiscard]] constexpr bool IsNavigationRole(const ActionRole role)
+    {
+        return role >= ActionRole::NavigateUp && role <= ActionRole::Cancel;
+    }
+
+    /// @brief One action a context declares: its id, display name, value shape, and engine role.
     struct InputAction
     {
         /// @brief The action's stable identity, referenced by bindings and control code.
@@ -40,6 +76,26 @@ namespace Veng
 
         /// @brief The value shape this action resolves to.
         ActionKind Kind = ActionKind::Button;
+
+        /// @brief The engine meaning of a press of this action; None for an application-only action.
+        ///
+        /// A role action fires once when it activates, and again on each repeat while held when
+        /// RepeatRate is set. A role action is a Button: a stick drives one through a binding's
+        /// Threshold on its half-axis.
+        ActionRole Role = ActionRole::None;
+
+        /// @brief Seconds a role action is held before its first repeat.
+        ///
+        /// Read only when RepeatRate is greater than 0; 0 places the first repeat one RepeatRate
+        /// after the press.
+        f32 RepeatDelay = 0.0f;
+
+        /// @brief Seconds between the repeats of a held role action; 0 (the default) never repeats.
+        ///
+        /// The engine times the repeat itself, once per action per seat, so a pad repeats exactly as
+        /// a key does and the platform's key auto-repeat plays no part. At most one repeat fires per
+        /// frame, so a long frame never bursts several.
+        f32 RepeatRate = 0.0f;
     };
 
     /// @brief Which raw device a binding reads.
@@ -365,6 +421,18 @@ VE_ENUMERATOR(Ongoing)
 VE_ENUMERATOR(Completed)
 VE_ENUM_END();
 
+VE_ENUM(::Veng::ActionRole, 0x7AED104C373382F9ULL)
+VE_ENUMERATOR(None)
+VE_ENUMERATOR(NavigateUp)
+VE_ENUMERATOR(NavigateDown)
+VE_ENUMERATOR(NavigateLeft)
+VE_ENUMERATOR(NavigateRight)
+VE_ENUMERATOR(NavigateNext)
+VE_ENUMERATOR(NavigatePrevious)
+VE_ENUMERATOR(Confirm)
+VE_ENUMERATOR(Cancel)
+VE_ENUM_END();
+
 VE_REFLECT(::Veng::InputAction, 0xC81225F15105A79FULL)
 VE_FIELD(Id, .DisplayName = "Id",
          .Tooltip = "Stable minted action identity bindings and control code reference.")
@@ -372,6 +440,17 @@ VE_FIELD(Name, .DisplayName = "Name",
          .Tooltip = "Display label; on-disk identity is Id, not this name.")
 VE_FIELD(Kind, .DisplayName = "Kind",
          .Tooltip = "Value shape the action resolves to (button, 1D axis, 2D axis).")
+VE_FIELD(Role, .DisplayName = "Role",
+         .Tooltip = "What the engine does on a press: navigate, confirm or cancel in the seat's "
+                    "Gui documents. None for an action only the game reads.",
+         .Category = "Role")
+VE_FIELD(RepeatDelay, .DisplayName = "Repeat Delay",
+         .Tooltip = "Seconds held before a role action first repeats; read only with a Repeat "
+                    "Rate. 0 waits one Repeat Rate.",
+         .Category = "Role")
+VE_FIELD(RepeatRate, .DisplayName = "Repeat Rate",
+         .Tooltip = "Seconds between repeats while a role action is held; 0 never repeats.",
+         .Category = "Role")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::InputSource, 0x715BCFCB9DC23625ULL)

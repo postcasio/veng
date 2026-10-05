@@ -260,6 +260,14 @@ namespace VengEditor
         {
             project.erase("startupLevel");
         }
+        if (m_Settings.DefaultUiContext.IsValid())
+        {
+            project["defaultUiContext"] = FormatAssetId(m_Settings.DefaultUiContext);
+        }
+        else
+        {
+            project.erase("defaultUiContext");
+        }
 
         nlohmann::json configurations = nlohmann::json::array();
         for (const BuildConfiguration& config : m_Settings.Configurations)

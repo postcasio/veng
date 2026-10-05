@@ -271,10 +271,15 @@ extern "C"
 /// shifted offset.
 /// Version 66 grows Binding with its Modifier and ModifierThreshold, so a stale module that builds a
 /// binding in code lays it out short and the resolver reads its modifier from past the end.
+/// Version 67 grows InputAction with its Role, RepeatDelay and RepeatRate, InputContextStack with
+/// Exclusive, InputRouter with its claimed keys, InputConsumer with the ForwardRole virtual, and
+/// Application with its default UI context and role resolver. A module builds actions and stacks in
+/// code, implements consumers and subclasses Application, so a stale module lays all of them out
+/// short and carries a consumer vtable short of the slot the role dispatch calls through.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 66u
+#define VENG_MODULE_ABI_VERSION 67u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

@@ -2,8 +2,8 @@
 // CookedInputMapHeader plus that the { actions, bindings } record round-trips back through
 // ReadFields into the resolver-ready form InputMappingContext exposes. Also covers each
 // validation failure — an unknown-action binding, a Button/axis kind mismatch, a null id, a
-// duplicate id, an unknown enum name, an unknown key, out-of-range shaping, and an unreadable
-// source or chord modifier. An input map needs no --module (it references only engine builtins), so
+// duplicate id, an unknown enum name, an unknown key, out-of-range shaping, an unreadable source or
+// chord modifier, and a role or repeat the engine could not act on. An input map needs no --module (it references only engine builtins), so
 // the cook runs with a builtin-only registry and no module load.
 
 #include <cstring>
@@ -429,4 +429,74 @@ TEST_CASE("input map cook: a key naming no reflected field is a located error")
         CookInputMap(WriteInputMapPack("inputmap_unknown_key", map), AssetId{7777});
     REQUIRE_FALSE(blob.has_value());
     CHECK(blob.error().find("unknown field") != string::npos);
+}
+
+TEST_CASE("input map cook: an action's role and repeat author into the resolved context")
+{
+    json map = SampleMap();
+    map["Actions"][1]["Role"] = "Confirm";
+    map["Actions"][1]["RepeatDelay"] = 0.4;
+    map["Actions"][1]["RepeatRate"] = 0.1;
+    const Result<vector<u8>> blobResult =
+        CookInputMap(WriteInputMapPack("inputmap_role", map), AssetId{7777});
+    REQUIRE_MESSAGE(blobResult.has_value(),
+                    "cook failed: ", blobResult ? string{} : blobResult.error());
+
+    TypeRegistry registry;
+    RegisterBuiltinTypes(registry);
+    CookedInputMapHeader header{};
+    std::memcpy(&header, blobResult->data(), sizeof(header));
+    const std::span<const u8> record(blobResult->data() + sizeof(CookedInputMapHeader),
+                                     header.RecordBytes);
+    InputMapData data;
+    REQUIRE(
+        ReadFields(record, &data, registry.Info(TypeIdOf<InputMapData>()), registry).has_value());
+    REQUIRE(data.Actions.size() == 2);
+    CHECK(data.Actions[1].Role == ActionRole::Confirm);
+    CHECK(data.Actions[1].RepeatDelay == doctest::Approx(0.4f));
+    CHECK(data.Actions[1].RepeatRate == doctest::Approx(0.1f));
+    // An action authoring none is the game's alone, and never repeats.
+    CHECK(data.Actions[0].Role == ActionRole::None);
+    CHECK(data.Actions[0].RepeatRate == 0.0f);
+}
+
+TEST_CASE("input map cook: a role or repeat the engine could not act on is a located error")
+{
+    const auto cookError = [](const string& name, const json& map)
+    {
+        const Result<vector<u8>> blob = CookInputMap(WriteInputMapPack(name, map), AssetId{7777});
+        REQUIRE_FALSE(blob.has_value());
+        return blob.error();
+    };
+
+    SUBCASE("a role on an axis action")
+    {
+        json map = SampleMap();
+        map["Actions"][0]["Role"] = "NavigateUp";
+        CHECK(cookError("inputmap_role_axis", map).find("a role action is a Button") !=
+              string::npos);
+    }
+
+    SUBCASE("a negative repeat")
+    {
+        json map = SampleMap();
+        map["Actions"][1]["Role"] = "Confirm";
+        map["Actions"][1]["RepeatRate"] = -0.1;
+        CHECK(cookError("inputmap_repeat_negative", map).find("0 or more") != string::npos);
+    }
+
+    SUBCASE("a repeat on an action with no role")
+    {
+        json map = SampleMap();
+        map["Actions"][1]["RepeatRate"] = 0.1;
+        CHECK(cookError("inputmap_repeat_roleless", map).find("no Role") != string::npos);
+    }
+
+    SUBCASE("a delay with no rate")
+    {
+        json map = SampleMap();
+        map["Actions"][1]["Role"] = "Confirm";
+        map["Actions"][1]["RepeatDelay"] = 0.4;
+        CHECK(cookError("inputmap_repeat_delay_only", map).find("never repeats") != string::npos);
+    }
 }
