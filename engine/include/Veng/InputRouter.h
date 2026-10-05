@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/Input.h>
+#include <Veng/InputEvents.h>
 #include <Veng/Input/SeatRef.h>
 #include <Veng/Renderer/ViewportId.h>
 #include <Veng/Renderer/ViewportRegion.h>
@@ -291,9 +292,21 @@ namespace Veng
         /// replay it at the same pre-tick point a window event lands, and **paces** the queue so a
         /// press and its release straddle a tick and repeated taps of one control do not collapse into
         /// a single held frame. Only the foldable input kinds (key/button down·up, key repeat, move,
-        /// scroll, text entry) are queued; any other event kind is ignored. Call on the render thread (the pump point).
+        /// scroll, text entry) and virtual-gamepad edits are queued; any other event kind is ignored.
+        /// Call on the render thread (the pump point).
         /// @param event  The synthetic event to queue; decoded to its kind + payload, not retained.
         void PostInjectedEvent(const Event& event);
+
+        /// @brief Sets where drained virtual-gamepad edits go: the pad backend that owns the slots.
+        ///
+        /// A pad is a polled device, not a routed event stream, so a drained VirtualGamepadEvent is
+        /// handed to this sink instead of Dispatch; the backend then reports the virtual pad's state
+        /// at its next poll. With no sink set the edits are dropped, as on a host with no pad backend.
+        /// @param sink  Receives each drained edit, in order; empty to clear.
+        void SetVirtualGamepadSink(function<void(const VirtualGamepadEvent&)> sink)
+        {
+            m_VirtualGamepadSink = std::move(sink);
+        }
 
         /// @brief Releases one paced segment of the injected-event queue through Dispatch.
         ///
@@ -303,8 +316,10 @@ namespace Veng
         /// released — so each level change straddles a frame and is observed for at least one tick
         /// (and two rapid taps of one control stay distinct). Distinct controls (a chord) apply
         /// together; a move, scroll, text, or key-repeat event never gates — a repeat re-asserts a
-        /// level rather than reversing one, so a run of them applies in a single drain. Each applied event routes through
-        /// Dispatch exactly as a real window event. Empty queue is a no-op.
+        /// level rather than reversing one, so a run of them applies in a single drain. Each applied
+        /// event routes through Dispatch exactly as a real window event. A virtual-gamepad edit gates
+        /// the same way per pad and control — a button, the touchpad finger, the connection — with an
+        /// axis edit never gating, and goes to the virtual-gamepad sink. Empty queue is a no-op.
         void DrainInjectedEvents();
 
         /// @brief Associates a Presented viewport's region with the seat it feeds pointer input to.
@@ -420,7 +435,9 @@ namespace Veng
             /// @brief A scroll event, carrying Vector as the offset.
             Scroll,
             /// @brief A text-entry event, carrying Codepoint.
-            Text
+            Text,
+            /// @brief A virtual-gamepad edit, carrying Gamepad.
+            Gamepad
         };
 
         /// @brief One queued synthetic event: its kind and the single payload that kind reads.
@@ -436,6 +453,8 @@ namespace Veng
             vec2 Vector = {};
             /// @brief The Unicode codepoint for Text.
             u32 Codepoint = 0;
+            /// @brief The edit for Gamepad.
+            optional<VirtualGamepadEvent> Gamepad;
         };
 
         /// @brief Rebuilds a queued event into its concrete Veng::Event and routes it through Dispatch.
@@ -490,6 +509,9 @@ namespace Veng
 
         /// @brief Synthetic events awaiting paced release, oldest first (see PostInjectedEvent).
         vector<InjectedEvent> m_InjectedQueue;
+
+        /// @brief Receives drained virtual-gamepad edits; empty drops them.
+        function<void(const VirtualGamepadEvent&)> m_VirtualGamepadSink;
     };
 }
 

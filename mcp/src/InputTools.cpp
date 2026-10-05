@@ -6,6 +6,7 @@
 
 #include <Veng/Input.h>
 #include <Veng/InputEvents.h>
+#include <Veng/Reflection/EnumName.h>
 
 #include <nlohmann/json.hpp>
 
@@ -42,88 +43,88 @@ namespace Veng::Mcp
         };
 
         /// @brief The named keys input.send accepts, matching the Key enumerators.
-        constexpr std::array KeyNames{KeyName{"Space", Key::Space},
-                                      KeyName{"Apostrophe", Key::Apostrophe},
-                                      KeyName{"Comma", Key::Comma},
-                                      KeyName{"Minus", Key::Minus},
-                                      KeyName{"Period", Key::Period},
-                                      KeyName{"Slash", Key::Slash},
-                                      KeyName{"Num0", Key::Num0},
-                                      KeyName{"Num1", Key::Num1},
-                                      KeyName{"Num2", Key::Num2},
-                                      KeyName{"Num3", Key::Num3},
-                                      KeyName{"Num4", Key::Num4},
-                                      KeyName{"Num5", Key::Num5},
-                                      KeyName{"Num6", Key::Num6},
-                                      KeyName{"Num7", Key::Num7},
-                                      KeyName{"Num8", Key::Num8},
-                                      KeyName{"Num9", Key::Num9},
-                                      KeyName{"Semicolon", Key::Semicolon},
-                                      KeyName{"Equal", Key::Equal},
-                                      KeyName{"A", Key::A},
-                                      KeyName{"B", Key::B},
-                                      KeyName{"C", Key::C},
-                                      KeyName{"D", Key::D},
-                                      KeyName{"E", Key::E},
-                                      KeyName{"F", Key::F},
-                                      KeyName{"G", Key::G},
-                                      KeyName{"H", Key::H},
-                                      KeyName{"I", Key::I},
-                                      KeyName{"J", Key::J},
-                                      KeyName{"K", Key::K},
-                                      KeyName{"L", Key::L},
-                                      KeyName{"M", Key::M},
-                                      KeyName{"N", Key::N},
-                                      KeyName{"O", Key::O},
-                                      KeyName{"P", Key::P},
-                                      KeyName{"Q", Key::Q},
-                                      KeyName{"R", Key::R},
-                                      KeyName{"S", Key::S},
-                                      KeyName{"T", Key::T},
-                                      KeyName{"U", Key::U},
-                                      KeyName{"V", Key::V},
-                                      KeyName{"W", Key::W},
-                                      KeyName{"X", Key::X},
-                                      KeyName{"Y", Key::Y},
-                                      KeyName{"Z", Key::Z},
-                                      KeyName{"LeftBracket", Key::LeftBracket},
-                                      KeyName{"Backslash", Key::Backslash},
-                                      KeyName{"RightBracket", Key::RightBracket},
-                                      KeyName{"GraveAccent", Key::GraveAccent},
-                                      KeyName{"Escape", Key::Escape},
-                                      KeyName{"Enter", Key::Enter},
-                                      KeyName{"Tab", Key::Tab},
-                                      KeyName{"Backspace", Key::Backspace},
-                                      KeyName{"Insert", Key::Insert},
-                                      KeyName{"Delete", Key::Delete},
-                                      KeyName{"Right", Key::Right},
-                                      KeyName{"Left", Key::Left},
-                                      KeyName{"Down", Key::Down},
-                                      KeyName{"Up", Key::Up},
-                                      KeyName{"PageUp", Key::PageUp},
-                                      KeyName{"PageDown", Key::PageDown},
-                                      KeyName{"Home", Key::Home},
-                                      KeyName{"End", Key::End},
-                                      KeyName{"F1", Key::F1},
-                                      KeyName{"F2", Key::F2},
-                                      KeyName{"F3", Key::F3},
-                                      KeyName{"F4", Key::F4},
-                                      KeyName{"F5", Key::F5},
-                                      KeyName{"F6", Key::F6},
-                                      KeyName{"F7", Key::F7},
-                                      KeyName{"F8", Key::F8},
-                                      KeyName{"F9", Key::F9},
-                                      KeyName{"F10", Key::F10},
-                                      KeyName{"F11", Key::F11},
-                                      KeyName{"F12", Key::F12},
-                                      KeyName{"LeftShift", Key::LeftShift},
-                                      KeyName{"LeftControl", Key::LeftControl},
-                                      KeyName{"LeftAlt", Key::LeftAlt},
-                                      KeyName{"LeftSuper", Key::LeftSuper},
-                                      KeyName{"RightShift", Key::RightShift},
-                                      KeyName{"RightControl", Key::RightControl},
-                                      KeyName{"RightAlt", Key::RightAlt},
-                                      KeyName{"RightSuper", Key::RightSuper}};
+        constexpr std::array KeyNames{KeyName{.Name = "Space", .Value = Key::Space},
+                                      KeyName{.Name = "Apostrophe", .Value = Key::Apostrophe},
+                                      KeyName{.Name = "Comma", .Value = Key::Comma},
+                                      KeyName{.Name = "Minus", .Value = Key::Minus},
+                                      KeyName{.Name = "Period", .Value = Key::Period},
+                                      KeyName{.Name = "Slash", .Value = Key::Slash},
+                                      KeyName{.Name = "Num0", .Value = Key::Num0},
+                                      KeyName{.Name = "Num1", .Value = Key::Num1},
+                                      KeyName{.Name = "Num2", .Value = Key::Num2},
+                                      KeyName{.Name = "Num3", .Value = Key::Num3},
+                                      KeyName{.Name = "Num4", .Value = Key::Num4},
+                                      KeyName{.Name = "Num5", .Value = Key::Num5},
+                                      KeyName{.Name = "Num6", .Value = Key::Num6},
+                                      KeyName{.Name = "Num7", .Value = Key::Num7},
+                                      KeyName{.Name = "Num8", .Value = Key::Num8},
+                                      KeyName{.Name = "Num9", .Value = Key::Num9},
+                                      KeyName{.Name = "Semicolon", .Value = Key::Semicolon},
+                                      KeyName{.Name = "Equal", .Value = Key::Equal},
+                                      KeyName{.Name = "A", .Value = Key::A},
+                                      KeyName{.Name = "B", .Value = Key::B},
+                                      KeyName{.Name = "C", .Value = Key::C},
+                                      KeyName{.Name = "D", .Value = Key::D},
+                                      KeyName{.Name = "E", .Value = Key::E},
+                                      KeyName{.Name = "F", .Value = Key::F},
+                                      KeyName{.Name = "G", .Value = Key::G},
+                                      KeyName{.Name = "H", .Value = Key::H},
+                                      KeyName{.Name = "I", .Value = Key::I},
+                                      KeyName{.Name = "J", .Value = Key::J},
+                                      KeyName{.Name = "K", .Value = Key::K},
+                                      KeyName{.Name = "L", .Value = Key::L},
+                                      KeyName{.Name = "M", .Value = Key::M},
+                                      KeyName{.Name = "N", .Value = Key::N},
+                                      KeyName{.Name = "O", .Value = Key::O},
+                                      KeyName{.Name = "P", .Value = Key::P},
+                                      KeyName{.Name = "Q", .Value = Key::Q},
+                                      KeyName{.Name = "R", .Value = Key::R},
+                                      KeyName{.Name = "S", .Value = Key::S},
+                                      KeyName{.Name = "T", .Value = Key::T},
+                                      KeyName{.Name = "U", .Value = Key::U},
+                                      KeyName{.Name = "V", .Value = Key::V},
+                                      KeyName{.Name = "W", .Value = Key::W},
+                                      KeyName{.Name = "X", .Value = Key::X},
+                                      KeyName{.Name = "Y", .Value = Key::Y},
+                                      KeyName{.Name = "Z", .Value = Key::Z},
+                                      KeyName{.Name = "LeftBracket", .Value = Key::LeftBracket},
+                                      KeyName{.Name = "Backslash", .Value = Key::Backslash},
+                                      KeyName{.Name = "RightBracket", .Value = Key::RightBracket},
+                                      KeyName{.Name = "GraveAccent", .Value = Key::GraveAccent},
+                                      KeyName{.Name = "Escape", .Value = Key::Escape},
+                                      KeyName{.Name = "Enter", .Value = Key::Enter},
+                                      KeyName{.Name = "Tab", .Value = Key::Tab},
+                                      KeyName{.Name = "Backspace", .Value = Key::Backspace},
+                                      KeyName{.Name = "Insert", .Value = Key::Insert},
+                                      KeyName{.Name = "Delete", .Value = Key::Delete},
+                                      KeyName{.Name = "Right", .Value = Key::Right},
+                                      KeyName{.Name = "Left", .Value = Key::Left},
+                                      KeyName{.Name = "Down", .Value = Key::Down},
+                                      KeyName{.Name = "Up", .Value = Key::Up},
+                                      KeyName{.Name = "PageUp", .Value = Key::PageUp},
+                                      KeyName{.Name = "PageDown", .Value = Key::PageDown},
+                                      KeyName{.Name = "Home", .Value = Key::Home},
+                                      KeyName{.Name = "End", .Value = Key::End},
+                                      KeyName{.Name = "F1", .Value = Key::F1},
+                                      KeyName{.Name = "F2", .Value = Key::F2},
+                                      KeyName{.Name = "F3", .Value = Key::F3},
+                                      KeyName{.Name = "F4", .Value = Key::F4},
+                                      KeyName{.Name = "F5", .Value = Key::F5},
+                                      KeyName{.Name = "F6", .Value = Key::F6},
+                                      KeyName{.Name = "F7", .Value = Key::F7},
+                                      KeyName{.Name = "F8", .Value = Key::F8},
+                                      KeyName{.Name = "F9", .Value = Key::F9},
+                                      KeyName{.Name = "F10", .Value = Key::F10},
+                                      KeyName{.Name = "F11", .Value = Key::F11},
+                                      KeyName{.Name = "F12", .Value = Key::F12},
+                                      KeyName{.Name = "LeftShift", .Value = Key::LeftShift},
+                                      KeyName{.Name = "LeftControl", .Value = Key::LeftControl},
+                                      KeyName{.Name = "LeftAlt", .Value = Key::LeftAlt},
+                                      KeyName{.Name = "LeftSuper", .Value = Key::LeftSuper},
+                                      KeyName{.Name = "RightShift", .Value = Key::RightShift},
+                                      KeyName{.Name = "RightControl", .Value = Key::RightControl},
+                                      KeyName{.Name = "RightAlt", .Value = Key::RightAlt},
+                                      KeyName{.Name = "RightSuper", .Value = Key::RightSuper}};
 
         /// @brief Resolves a key name to its Key, or nullopt when no enumerator matches.
         optional<Key> ResolveKey(string_view name)
@@ -213,6 +214,16 @@ namespace Veng::Mcp
             return codepoints;
         }
 
+        /// @brief Resolves an enumerator name of a reflected enum to its value, or nullopt.
+        /// @tparam T  The VE_ENUM-reflected enum.
+        template <typename T>
+        optional<T> ResolveEnumerator(string_view name)
+        {
+            const optional<i64> value =
+                ParseEnumValue(VengReflect<T>::Enumerators(), std::string_view(name));
+            return value ? optional<T>(static_cast<T>(*value)) : std::nullopt;
+        }
+
         /// @brief Reads a required numeric field as f32, or nullopt when absent/not a number.
         optional<f32> ReadNumber(const Json& event, const char* field)
         {
@@ -241,6 +252,7 @@ namespace Veng::Mcp
                 MouseMove,
                 Scroll,
                 Text,
+                Gamepad,
             } Which = Kind::KeyDown;
 
             /// @brief The key for KeyDown/KeyUp/KeyRepeat.
@@ -251,7 +263,93 @@ namespace Veng::Mcp
             vec2 Vector = {};
             /// @brief The decoded codepoints for Text, applied one KeyTypedEvent each in order.
             vector<u32> Codepoints;
+            /// @brief The virtual-pad edit for Gamepad.
+            optional<VirtualGamepadEvent> Pad;
         };
+
+        /// @brief Validates and resolves one pad_* event, or returns a located error naming its index.
+        Result<ResolvedEvent> ResolvePad(const Json& event, const string& type, usize index)
+        {
+            const auto fail = [&](const string& what) -> Result<ResolvedEvent>
+            { return std::unexpected(fmt::format("events[{}] '{}' {}", index, type, what)); };
+            const auto pad = [](VirtualGamepadEvent edit)
+            { return ResolvedEvent{.Which = ResolvedEvent::Kind::Gamepad, .Pad = edit}; };
+
+            if (!event.contains("slot") || !event["slot"].is_number_integer() ||
+                event["slot"].get<i64>() < 0 ||
+                event["slot"].get<i64>() >= static_cast<i64>(Input::MaxGamepads))
+            {
+                return fail(
+                    fmt::format("needs an integer 'slot' in 0..{}", Input::MaxGamepads - 1));
+            }
+            const auto slot = static_cast<GamepadId>(event["slot"].get<u32>());
+
+            if (type == "pad_connect")
+            {
+                GamepadType padType = GamepadType::Standard;
+                if (event.contains("pad_type"))
+                {
+                    const optional<GamepadType> named =
+                        event["pad_type"].is_string()
+                            ? ResolveEnumerator<GamepadType>(event["pad_type"].get<string>())
+                            : std::nullopt;
+                    if (!named)
+                    {
+                        return fail("has an unknown 'pad_type'");
+                    }
+                    padType = *named;
+                }
+                return pad(VirtualGamepadEvent::Connect(slot, padType));
+            }
+            if (type == "pad_disconnect")
+            {
+                return pad(VirtualGamepadEvent::Disconnect(slot));
+            }
+            if (type == "pad_button")
+            {
+                const optional<GamepadButton> button =
+                    event.contains("button") && event["button"].is_string()
+                        ? ResolveEnumerator<GamepadButton>(event["button"].get<string>())
+                        : std::nullopt;
+                if (!button || !event.contains("down") || !event["down"].is_boolean())
+                {
+                    return fail("needs a GamepadButton name 'button' and a boolean 'down'");
+                }
+                return pad(
+                    VirtualGamepadEvent::SetButton(slot, *button, event["down"].get<bool>()));
+            }
+            if (type == "pad_axis")
+            {
+                const optional<GamepadAxis> axis =
+                    event.contains("axis") && event["axis"].is_string()
+                        ? ResolveEnumerator<GamepadAxis>(event["axis"].get<string>())
+                        : std::nullopt;
+                const optional<f32> value = ReadNumber(event, "value");
+                if (!axis || !value)
+                {
+                    return fail("needs a GamepadAxis name 'axis' and a number 'value'");
+                }
+                if (*axis >= GamepadAxis::TouchpadX)
+                {
+                    return fail("cannot set a touchpad axis; use 'pad_touch'");
+                }
+                return pad(VirtualGamepadEvent::SetAxis(slot, *axis, *value));
+            }
+            // pad_touch
+            if (!event.contains("down") || !event["down"].is_boolean())
+            {
+                return fail("needs a boolean 'down'");
+            }
+            const bool down = event["down"].get<bool>();
+            const optional<f32> x = ReadNumber(event, "x");
+            const optional<f32> y = ReadNumber(event, "y");
+            if (down && (!x || !y))
+            {
+                return fail("with down true needs numbers 'x' and 'y' in 0..1");
+            }
+            return pad(VirtualGamepadEvent::SetTouch(slot, down,
+                                                     vec2{x.value_or(0.0f), y.value_or(0.0f)}));
+        }
 
         /// @brief Validates and resolves one event object, or returns a located error naming its index.
         Result<ResolvedEvent> ResolveOne(const Json& event, usize index)
@@ -365,6 +463,11 @@ namespace Veng::Mcp
                 return ResolvedEvent{.Which = ResolvedEvent::Kind::Text,
                                      .Codepoints = std::move(*codepoints)};
             }
+            if (type == "pad_connect" || type == "pad_disconnect" || type == "pad_button" ||
+                type == "pad_axis" || type == "pad_touch")
+            {
+                return ResolvePad(event, type, index);
+            }
             return std::unexpected(fmt::format("events[{}] unknown type '{}'", index, type));
         }
 
@@ -431,6 +534,12 @@ namespace Veng::Mcp
                 }
                 break;
             }
+            case ResolvedEvent::Kind::Gamepad:
+            {
+                VirtualGamepadEvent event = *resolved.Pad;
+                host.InjectInput(event);
+                break;
+            }
             }
         }
     }
@@ -443,7 +552,8 @@ namespace Veng::Mcp
             tool.Name = "input.send";
             tool.Description =
                 "Sends an ordered batch of synthetic input events to drive the running app, as "
-                "if produced by the keyboard/mouse. Argument: { events: [ ... ] }, each event one "
+                "if produced by the keyboard, mouse or a gamepad. Argument: { events: [ ... ] }, "
+                "each event one "
                 "of: { type: 'key_down'|'key_up'|'key_repeat', key: <name> }, { type: "
                 "'mouse_down'|'mouse_up', button: 'Left'|'Right'|'Middle' }, { type: "
                 "'mouse_move', x: <px>, y: <px> } (window-space position), { type: 'scroll', dx: "
@@ -455,18 +565,32 @@ namespace Veng::Mcp
                 "platform auto-repeat of a key already held: send one per repetition to drive a "
                 "repeating action such as caret movement or deletion in a focused text field. It "
                 "never re-arms a one-shot press query, so it cannot fire a discrete action twice. "
-                "Up to 256 characters per text event. Events apply in order at the frame's input "
-                "point, so the action layer "
+                "Up to 256 characters per text event. Gamepad events drive a virtual pad, which "
+                "the "
+                "app reads exactly as a physical one: { type: 'pad_connect', slot: <0..15>, "
+                "pad_type?: <GamepadType name, default 'Standard'> } plugs one into a free slot; { "
+                "type: 'pad_disconnect', slot } unplugs it; { type: 'pad_button', slot, button: "
+                "<GamepadButton name, e.g. 'A', 'DpadUp', 'LeftBumper'>, down: <bool> }; { type: "
+                "'pad_axis', slot, axis: <'LeftX'|'LeftY'|'RightX'|'RightY'|'LeftTrigger'|"
+                "'RightTrigger'>, value: <-1..1, triggers 0..1> } (stick Y is positive down); { "
+                "type: 'pad_touch', slot, down: <bool>, x: <0..1>, y: <0..1> } puts the first "
+                "touchpad finger down, moves it, or lifts it. A connect to a slot a pad already "
+                "holds "
+                "is refused and logged. Virtual pads need a windowed app (a headless one has no "
+                "pad "
+                "backend). Events apply in order at the frame's input point, so the action layer "
                 "resolves them as real input. Up to 64 events per call.";
             tool.InputSchemaJson =
                 R"({"type":"object","required":["events"],"properties":{"events":{"type":"array",)"
                 R"("items":{"type":"object","required":["type"],"properties":{)"
                 R"("type":{"type":"string","enum":["key_down","key_up","key_repeat",)"
-                R"("mouse_down","mouse_up","mouse_move","scroll","text"]},)"
+                R"("mouse_down","mouse_up","mouse_move","scroll","text","pad_connect",)"
+                R"("pad_disconnect","pad_button","pad_axis","pad_touch"]},)"
                 R"("key":{"type":"string"},)"
                 R"("button":{"type":"string"},"text":{"type":"string"},)"
                 R"("x":{"type":"number"},"y":{"type":"number"},"dx":{"type":"number"},)"
-                R"("dy":{"type":"number"}}}}}})";
+                R"("dy":{"type":"number"},"slot":{"type":"integer"},"pad_type":{"type":"string"},)"
+                R"("axis":{"type":"string"},"value":{"type":"number"},"down":{"type":"boolean"}}}}}})";
             tool.Handler = [&host](string_view argsJson) -> Result<string>
             {
                 const Json args = Json::parse(argsJson, nullptr, false);

@@ -260,10 +260,15 @@ extern "C"
 /// out short and the engine reads the polygon vertices at a shifted offset.
 /// Version 63 grows RibbonPath with Occluded, so a stale module that builds a path in code leaves
 /// the byte the gather reads its occlusion from unwritten.
+/// Version 64 grows GamepadState with the touchpad, Misc and paddle controls, the pad's type and
+/// name, Input with the per-pad touchpad Sim latch, InputRouter with the virtual-gamepad sink and
+/// its queued edit, and Application with its pad backend and slot states. A module reads pads
+/// through an Input it is handed and subclasses Application, so a stale module reads every pad
+/// field after the arrays at a shifted offset and lays the application out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 63u
+#define VENG_MODULE_ABI_VERSION 64u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

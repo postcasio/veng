@@ -50,6 +50,7 @@
 #include <Veng/Scene/SceneViewport.h>
 
 #include "Gui/GuiCounters.h"
+#include "Platform/GamepadBackend.h"
 #include "Render/DisplayResolve.h"
 #include "Scene/FocusRequestReconcile.h"
 #include "Scene/RequestDrain.h"
@@ -236,6 +237,12 @@ namespace Veng
         // all-zeros state, so GetInput() and SystemContext::Input are never null.
         m_Input = CreateUnique<Input>(m_Window.get());
 
+        // Pads are polled only with a window, so a headless run or dedicated host has no device layer.
+        if (m_Window)
+        {
+            m_Gamepads = CreateUnique<GamepadBackend>();
+        }
+
         m_RenderContext.Initialize(
             {
                 .ApplicationName = m_Info.Name,
@@ -362,6 +369,11 @@ namespace Veng
         m_InputRouter = CreateUnique<InputRouter>(m_Window.get(), *m_Input,
                                                   m_RenderContext.GetViewportRegistry());
         m_InputRouter->SetBackgroundInput(m_LaunchArgs.BackgroundInput);
+        if (m_Gamepads)
+        {
+            m_InputRouter->SetVirtualGamepadSink([this](const VirtualGamepadEvent& edit)
+                                                 { m_Gamepads->ApplyVirtual(edit); });
+        }
         if (m_ImGuiLayer)
         {
             m_InputRouter->RegisterConsumer(*m_ImGuiLayer);
@@ -2922,18 +2934,28 @@ namespace Veng
                     m_Window->Update();
                 }
                 m_Window->DrainEvents([this](Event& event) { m_InputRouter->Dispatch(event); });
-
-                // Poll the connected pads into the snapshot after BeginFrame's roll: gamepads are
-                // polled per frame, unlike the callback-driven keyboard/mouse folded via DrainEvents.
-                std::array<GamepadState, 16> pads{};
-                m_Window->PollGamepads(pads);
-                m_Input->IngestGamepadStates(pads);
             }
 
             // Release one paced segment of any queued synthetic input (MCP/script injection) at the
             // same pre-tick point real window events land, so an injected event folds into this
             // frame's snapshot for the tick loop rather than after it (DrainInjectedEvents).
             m_InputRouter->DrainInjectedEvents();
+
+            // Poll the pads into the snapshot after BeginFrame's roll, and after the injected drain so
+            // a virtual-pad edit released this frame is polled this frame. Physical pads read neutral
+            // while the window is unfocused, as keyboard and mouse do, unless input is retained in
+            // the background.
+            if (m_Gamepads)
+            {
+                VE_PROFILE_SCOPE("Input/PollGamepads");
+                const bool live = m_Window->IsFocused() || m_InputRouter->IsBackgroundInput();
+                m_Gamepads->Update(m_GamepadStates, live);
+                for (const Unique<Event>& event : m_Gamepads->TakeEvents())
+                {
+                    m_InputRouter->Dispatch(*event);
+                }
+                m_Input->IngestGamepadStates(m_GamepadStates);
+            }
         }
 
         // After the events are forwarded: ImGui's NewFrame consumes them this frame. A frame the
@@ -3013,6 +3035,10 @@ namespace Veng
                 {
                     m_Input->BeginSimTick();
                 }
+
+                // A touchpad is a seat's device, not the pointer, so its motion latches on every
+                // world's step rather than only the pointer-routed one's.
+                m_Input->BeginGamepadSimTick();
 
                 if (IsWorldNetActive(world) && RoleForWorld(world) == NetRole::Server)
                 {

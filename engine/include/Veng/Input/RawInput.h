@@ -25,8 +25,8 @@ namespace Veng
     /// the raw Key / MouseButton values a binding stores; gamepad Control codes are the
     /// GamepadButton / GamepadAxis indices.
     ///
-    /// Its mouse and wheel arms read the **per-frame** deltas (Input::GetMouseDelta /
-    /// GetScrollDelta), matching its once-per-frame callers. A **fixed-rate Sim** consumer must not
+    /// Its mouse, wheel and touchpad-motion arms read the **per-frame** deltas (Input::GetMouseDelta /
+    /// GetScrollDelta / GetGamepadAxis), matching its once-per-frame callers. A **fixed-rate Sim** consumer must not
     /// resolve through this adapter: at any frame rate other than the tick rate the per-frame delta
     /// is the wrong quantity for a tick (see Input::BeginSimTick). SeatInputView is the Sim-rate
     /// view, and InputMappingSystem — the engine's sole Sim-side reader of raw device state — uses
@@ -96,9 +96,10 @@ namespace Veng
     /// mapping; the pointer-position codes (MousePositionX / MousePositionY) are additional
     /// MouseAxis codes.
     ///
-    /// **This view resolves at the fixed simulation rate**, so unlike RawInput its look-delta and
-    /// wheel arms read Input's per-**tick** deltas (GetSimMouseDelta / GetSimScrollDelta), latched by
-    /// Input::BeginSimTick. That is what makes a seat's resolved input a well-defined per-tick
+    /// **This view resolves at the fixed simulation rate**, so unlike RawInput its look-delta, wheel
+    /// and touchpad-motion arms read Input's per-**tick** deltas (GetSimMouseDelta /
+    /// GetSimScrollDelta / GetSimGamepadAxis), latched by Input::BeginSimTick and
+    /// Input::BeginGamepadSimTick. That is what makes a seat's resolved input a well-defined per-tick
     /// quantity — the sum over ticks is the motion the device actually produced, independent of how
     /// many frames elapsed, and it is stable across every system reading it within one tick. It also
     /// matters beyond feel: the resolved PlayerInput is what a client replicates and what a

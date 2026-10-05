@@ -137,7 +137,8 @@ namespace Veng
 
         if (device == InputDeviceType::GamepadAxis)
         {
-            return m_Input.GetGamepadAxis(m_Gamepad, static_cast<GamepadAxis>(code));
+            // The per-tick cadence, for the touchpad's motion axes as for the mouse's.
+            return m_Input.GetSimGamepadAxis(m_Gamepad, static_cast<GamepadAxis>(code));
         }
 
         return 0.0f;

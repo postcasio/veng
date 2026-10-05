@@ -466,11 +466,26 @@ rolls back and the uniform interface AI and remote players write through — bot
 `Intent` producers that never touch an action or a context, no movement change. (The net layer
 replicates `PlayerInput` — the action snapshot — for a human seat and re-derives its `Intent`
 server-side; AI and server-authoritative producers write `Intent` directly.) `Veng::Input`
-(`Veng/Input.h`) carries a gamepad device surface backing the gamepad `InputSource` arms — pads
-tracked by `GamepadId` (a stable GLFW joystick slot 0..15), polled once per frame into the same
-event-fed snapshot as keyboard/mouse, queried through `IsGamepadButtonDown` / `GetGamepadAxis` /
-`ConnectedGamepads`, with connect/disconnect surfaced as events. A `SeatInputView`'s gamepad arm
-reads the seat's assigned pad through it. A **`Possesses { Entity Pawn }`** link names the pawn a
+(`Veng/Input.h`) carries a gamepad device surface backing the gamepad `InputSource` arms. Pads are
+read through **SDL3's gamepad subsystem** (`engine/src/Platform/GamepadBackend`; GLFW keeps the
+window, keyboard and mouse), only when the app has a window, and polled once per frame into the
+same snapshot as keyboard/mouse. A pad is tracked by `GamepadId`, a small **slot** (0..15) the
+backend's slot table assigns: SDL's own ids grow per connection, the slot does not, and a freed
+slot reads disconnected for a frame before another pad may take it, so `DeviceAssignmentSystem`
+always sees a seat's pad leave. The surface is queried through `IsGamepadButtonDown` /
+`GetGamepadAxis` / `GetGamepadType` / `GetGamepadName` / `ConnectedGamepads`, with
+connect/disconnect raised as events. The button and axis enums are positional and
+**append-only** (a cooked binding stores the index): the Xbox-layout set, then `Misc`, the
+touchpad's click and touch, and four back paddles; the axes add the first touchpad finger's
+position and motion. **Touchpad motion has two cadences, like the mouse**: per frame through
+`GetGamepadAxis`, per Sim tick through `GetSimGamepadAxis`, latched per pad on every world's step
+(`Input::BeginGamepadSimTick`, not tied to the pointer routing), zero on the tick a finger lands.
+**Physical pads read neutral while the window is unfocused** (still connected, so a seat keeps its
+pad) unless background input is retained, matching keyboard and mouse. **Virtual pads** occupy
+slots like physical ones and are driven through `VirtualGamepadEvent`, posted to
+`InputRouter::PostInjectedEvent` (MCP's `input.send` pad events use exactly this), so automation
+reaches every pad path without hardware. A `SeatInputView`'s gamepad arm reads the seat's assigned
+pad through it, at the per-tick cadence. A **`Possesses { Entity Pawn }`** link names the pawn a
 seat controls; possession is independent of `Viewer.Camera` (a spectator views without possessing;
 a cutscene retargets the camera without un-possessing).
 

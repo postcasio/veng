@@ -68,9 +68,10 @@ devices that feed that seat:
 - **`UsesKeyboardMouse`** — whether this seat reads the keyboard (and, region-gated,
   the pointer). There is one keyboard, held by whichever seat sets this.
 - **`Gamepad`** — the pad slot this seat's gamepad bindings read, or `"None"` for no
-  pad. A `GamepadId` is the **GLFW joystick slot** (0..15), stable while a pad stays
-  connected — so a persisted assignment never silently re-points at a different
-  physical pad. A level can author a fixed slot (`"Gamepad": 0`) to pin seat 1 to pad
+  pad. A `GamepadId` is the **slot the engine's pad backend assigns** (0..15), stable
+  while a pad stays connected, and a freed slot reads disconnected for at least a frame
+  before another pad can take it — so a persisted assignment never silently re-points
+  at a different physical pad. A level can author a fixed slot (`"Gamepad": 0`) to pin seat 1 to pad
   0.
 - **`WantsGamepad`** — whether the `DeviceAssignmentSystem` (below) auto-fills an
   empty `Gamepad` slot when a pad connects. Independent of `UsesKeyboardMouse`: the

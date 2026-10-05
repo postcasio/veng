@@ -201,6 +201,8 @@ add_library(veng SHARED
         src/Physics/Queries.cpp
         src/Physics/RemoteCharacterBodySystem.cpp
         src/Platform/CrashReport.cpp
+        src/Platform/GamepadBackend.cpp
+        src/Platform/GamepadSlots.cpp
         src/Platform/SystemStats.cpp
         src/Platform/UserPaths.cpp
         src/Task/ParallelFor.cpp
@@ -218,6 +220,7 @@ add_library(veng SHARED
         src/UI/Joined.cpp
         src/UI/Query.cpp
         src/UI/DebugPanels.cpp
+        src/UI/GamepadPanel.cpp
         src/UI/Inspector.cpp
         src/UI/RenderSettings.cpp
         src/UI/VideoCapture.cpp
@@ -508,7 +511,7 @@ set_source_files_properties(src/Diagnostics/Profiler.cpp PROPERTIES COMPILE_DEFI
 # AssetId and friends appear in the public AssetManager API. nlohmann/json is
 # PUBLIC too — the reflection JSON walker (Veng/Reflection/JsonSerialize.h) names
 # json types directly, so every consumer of that header needs the include resolved
-# through this link. Vulkan, GLFW, VMA and nfd are hidden behind the Native idiom
+# through this link. Vulkan, GLFW, SDL3, VMA and nfd are hidden behind the Native idiom
 # (see Veng/Renderer/Native.h) — no public header pulls them in, so they link
 # PRIVATE and stay out of the consumer include graph. Jolt joins them: the solver is
 # reached only through PhysicsWorld::Native, so no public header names a JPH type.
@@ -535,6 +538,9 @@ target_compile_definitions(veng PUBLIC JSON_NOEXCEPTION)
 target_link_libraries(veng PRIVATE
         Vulkan::Vulkan
         glfw
+        # SDL3 reads the gamepads (GLFW keeps the window, keyboard and mouse). Static and PRIVATE,
+        # reached only through engine/src/Platform/GamepadBackend.cpp.
+        SDL3::SDL3-static
         GPUOpen::VulkanMemoryAllocator
         nfd
         ZLIB::ZLIB

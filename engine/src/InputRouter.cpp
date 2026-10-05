@@ -308,6 +308,11 @@ namespace Veng
                 .Kind = InjectedKind::Text,
                 .Codepoint = static_cast<const KeyTypedEvent&>(event).GetCodepoint()});
             break;
+        case EventType::VirtualGamepad:
+            m_InjectedQueue.push_back(
+                InjectedEvent{.Kind = InjectedKind::Gamepad,
+                              .Gamepad = static_cast<const VirtualGamepadEvent&>(event)});
+            break;
         default:
             // Not one of the foldable input kinds an injected batch carries; ignore it rather than
             // route a non-input event through the synthetic path.
@@ -369,6 +374,12 @@ namespace Veng
             Dispatch(event);
             break;
         }
+        case InjectedKind::Gamepad:
+            if (m_VirtualGamepadSink && injected.Gamepad)
+            {
+                m_VirtualGamepadSink(*injected.Gamepad);
+            }
+            break;
         }
     }
 
@@ -384,13 +395,41 @@ namespace Veng
         const auto contains = [](const auto& values, const auto value)
         { return std::ranges::find(values, value) != values.end(); };
 
+        // A virtual-pad edit's level is keyed by its pad and control; the touchpad finger and the
+        // connection are controls of their own, numbered past the buttons.
+        const auto padControl =
+            [](const VirtualGamepadEvent& edit) -> optional<std::pair<u64, bool>>
+        {
+            const u64 slot = static_cast<u64>(edit.GetSlot()) << 32;
+            switch (edit.GetOp())
+            {
+            case VirtualGamepadOp::Button:
+                return std::pair{slot | static_cast<u64>(edit.GetButton()), edit.IsDown()};
+            case VirtualGamepadOp::Touch:
+                return std::pair{slot | 0x10000u, edit.IsDown()};
+            case VirtualGamepadOp::Connect:
+                return std::pair{slot | 0x20000u, true};
+            case VirtualGamepadOp::Disconnect:
+                return std::pair{slot | 0x20000u, false};
+            case VirtualGamepadOp::Axis:
+                return std::nullopt;
+            }
+            return std::nullopt;
+        };
+
         usize applied = 0;
         vector<Key> pressedKeys;
         vector<Key> releasedKeys;
         vector<MouseButton> pressedButtons;
         vector<MouseButton> releasedButtons;
+        vector<u64> raisedPadControls;
+        vector<u64> loweredPadControls;
         for (const InjectedEvent& injected : m_InjectedQueue)
         {
+            const optional<std::pair<u64, bool>> padLevel =
+                injected.Kind == InjectedKind::Gamepad && injected.Gamepad
+                    ? padControl(*injected.Gamepad)
+                    : std::nullopt;
             bool reverses = false;
             switch (injected.Kind)
             {
@@ -405,6 +444,11 @@ namespace Veng
                 break;
             case InjectedKind::MouseUp:
                 reverses = contains(pressedButtons, injected.Button);
+                break;
+            case InjectedKind::Gamepad:
+                reverses =
+                    padLevel && contains(padLevel->second ? loweredPadControls : raisedPadControls,
+                                         padLevel->first);
                 break;
             case InjectedKind::KeyRepeat:
             case InjectedKind::MouseMove:
@@ -433,6 +477,13 @@ namespace Veng
                 break;
             case InjectedKind::MouseUp:
                 releasedButtons.push_back(injected.Button);
+                break;
+            case InjectedKind::Gamepad:
+                if (padLevel)
+                {
+                    (padLevel->second ? raisedPadControls : loweredPadControls)
+                        .push_back(padLevel->first);
+                }
                 break;
             case InjectedKind::KeyRepeat:
             case InjectedKind::MouseMove:

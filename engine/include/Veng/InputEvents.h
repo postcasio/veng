@@ -299,4 +299,139 @@ namespace Veng
         /// @brief The slot the pad left.
         const GamepadId m_Id;
     };
+
+    /// @brief Which edit a VirtualGamepadEvent makes to its slot's virtual pad.
+    enum class VirtualGamepadOp : u8
+    {
+        /// @brief Connects a virtual pad in the slot, of the event's GamepadType.
+        Connect,
+        /// @brief Disconnects the slot's virtual pad.
+        Disconnect,
+        /// @brief Sets one button down or up.
+        Button,
+        /// @brief Sets one axis to a value.
+        Axis,
+        /// @brief Puts the first touchpad finger down at a position, moves it, or lifts it.
+        Touch,
+    };
+
+    /// @brief A synthetic edit to a virtual gamepad, the automation seam for pad input.
+    ///
+    /// A virtual pad occupies a slot exactly as a physical one does, and everything reading pads
+    /// sees an ordinary pad there. An injector (a test harness, an automation tool) posts these
+    /// through InputRouter::PostInjectedEvent; the router paces them like injected keys, so a press
+    /// and its release straddle a frame, and hands each to the pad backend rather than to the input
+    /// snapshot. Fields not read by the event's op are ignored.
+    class VirtualGamepadEvent final : public Event
+    {
+    public:
+        /// @brief Builds an event connecting a virtual pad in a slot.
+        /// @param slot  The slot to occupy; the connect is refused while it holds another pad.
+        /// @param type  The family the virtual pad reports.
+        /// @return The event.
+        [[nodiscard]] static VirtualGamepadEvent Connect(GamepadId slot, GamepadType type)
+        {
+            VirtualGamepadEvent event(VirtualGamepadOp::Connect, slot);
+            event.m_Type = type;
+            return event;
+        }
+
+        /// @brief Builds an event disconnecting the virtual pad in a slot.
+        /// @param slot  The slot to free; a slot holding a physical pad is left alone.
+        /// @return The event.
+        [[nodiscard]] static VirtualGamepadEvent Disconnect(GamepadId slot)
+        {
+            return VirtualGamepadEvent(VirtualGamepadOp::Disconnect, slot);
+        }
+
+        /// @brief Builds an event setting one button of a virtual pad.
+        /// @param slot    The virtual pad's slot.
+        /// @param button  The button to set.
+        /// @param down    True to hold it down, false to release it.
+        /// @return The event.
+        [[nodiscard]] static VirtualGamepadEvent SetButton(GamepadId slot, GamepadButton button,
+                                                           bool down)
+        {
+            VirtualGamepadEvent event(VirtualGamepadOp::Button, slot);
+            event.m_Button = button;
+            event.m_Down = down;
+            return event;
+        }
+
+        /// @brief Builds an event setting one axis of a virtual pad.
+        /// @param slot   The virtual pad's slot.
+        /// @param axis   The axis to set; a touchpad axis is set through Touch instead.
+        /// @param value  The value, clamped to the axis's range when applied.
+        /// @return The event.
+        [[nodiscard]] static VirtualGamepadEvent SetAxis(GamepadId slot, GamepadAxis axis,
+                                                         f32 value)
+        {
+            VirtualGamepadEvent event(VirtualGamepadOp::Axis, slot);
+            event.m_Axis = axis;
+            event.m_Value = value;
+            return event;
+        }
+
+        /// @brief Builds an event placing, moving or lifting a virtual pad's first touchpad finger.
+        /// @param slot      The virtual pad's slot.
+        /// @param down      True while the finger rests on the touchpad, false to lift it.
+        /// @param position  The finger's position, 0..1 on each axis; ignored when lifting.
+        /// @return The event.
+        [[nodiscard]] static VirtualGamepadEvent SetTouch(GamepadId slot, bool down, vec2 position)
+        {
+            VirtualGamepadEvent event(VirtualGamepadOp::Touch, slot);
+            event.m_Down = down;
+            event.m_Position = position;
+            return event;
+        }
+
+        /// @brief Injects this event's type-identity members (see the EVENT macro).
+        EVENT(VirtualGamepad);
+
+        /// @brief Returns the edit this event makes.
+        [[nodiscard]] VirtualGamepadOp GetOp() const { return m_Op; }
+
+        /// @brief Returns the slot the edit applies to.
+        [[nodiscard]] GamepadId GetSlot() const { return m_Slot; }
+
+        /// @brief Returns the family a Connect gives the pad.
+        [[nodiscard]] GamepadType GetType() const { return m_Type; }
+
+        /// @brief Returns the button a Button edit sets.
+        [[nodiscard]] GamepadButton GetButton() const { return m_Button; }
+
+        /// @brief Returns the axis an Axis edit sets.
+        [[nodiscard]] GamepadAxis GetAxis() const { return m_Axis; }
+
+        /// @brief Returns the value an Axis edit sets.
+        [[nodiscard]] f32 GetValue() const { return m_Value; }
+
+        /// @brief Returns whether a Button edit holds its button, or a Touch edit puts its finger
+        ///        down.
+        [[nodiscard]] bool IsDown() const { return m_Down; }
+
+        /// @brief Returns the finger position a Touch edit sets, 0..1 on each axis.
+        [[nodiscard]] vec2 GetPosition() const { return m_Position; }
+
+    private:
+        /// @brief Constructs an event of the given op for a slot; the factories fill the rest.
+        VirtualGamepadEvent(VirtualGamepadOp op, GamepadId slot) : m_Op(op), m_Slot(slot) {}
+
+        /// @brief The edit this event makes.
+        VirtualGamepadOp m_Op;
+        /// @brief The slot the edit applies to.
+        GamepadId m_Slot;
+        /// @brief The family a Connect gives the pad.
+        GamepadType m_Type = GamepadType::Standard;
+        /// @brief The button a Button edit sets.
+        GamepadButton m_Button = GamepadButton::A;
+        /// @brief The axis an Axis edit sets.
+        GamepadAxis m_Axis = GamepadAxis::LeftX;
+        /// @brief The value an Axis edit sets.
+        f32 m_Value = 0.0f;
+        /// @brief Whether a Button edit holds its button, or a Touch edit puts its finger down.
+        bool m_Down = false;
+        /// @brief The finger position a Touch edit sets.
+        vec2 m_Position = {0, 0};
+    };
 }

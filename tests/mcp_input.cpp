@@ -19,6 +19,9 @@
 //     its consumer registry, so the whole path from the tool to the field's edit is the engine's.
 //   - a key_repeat batch, asserting the platform auto-repeat of a held key reaches the consumer
 //     registry and drives one edit per repetition, while leaving the snapshot's edge state alone.
+//   - a pad_connect / pad_button / pad_axis / pad_touch batch, asserting a virtual pad reads through
+//     Input — the router hands each edit to a device-free slot table standing in for the pad
+//     backend, which the pump polls into Input as the run loop does — and a pad_disconnect.
 //   - the shape-validation errors (empty batch, over-limit, an unknown key, an unknown type, an
 //     empty / absent / over-limit text run, a malformed event) as whole-call isError results, and
 //     confirms no event applied on a rejected batch (the validate-then-apply discipline).
@@ -41,6 +44,8 @@
 #include <Veng/InputRouter.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/ViewportRegistry.h>
+
+#include "Platform/GamepadSlots.h"
 
 #include <nlohmann/json.hpp>
 
@@ -176,6 +181,12 @@ int main()
     const Renderer::ViewportRegistry viewports;
     InputRouter router(nullptr, input, viewports);
 
+    // The pad backend's device-free half, fed by the router's virtual-pad sink and polled into Input
+    // each pump frame, as Application wires it.
+    GamepadSlots pads;
+    std::array<GamepadState, GamepadSlots::SlotCount> padStates{};
+    router.SetVirtualGamepadSink([&](const VirtualGamepadEvent& edit) { pads.ApplyVirtual(edit); });
+
     // A live Gui::Document with one focused TextInput — the text-entry oracle. In an app the
     // GuiConsumer routes a KeyTyped through the seat's viewports into each attached document; a
     // headless proof has no viewport, so the consumer below stands in for it in the same registry.
@@ -244,6 +255,9 @@ int main()
                     const std::scoped_lock lock(inputMutex);
                     input.BeginFrame();
                     router.DrainInjectedEvents();
+                    pads.Commit();
+                    pads.Fill(padStates, true, [](u64, GamepadState&) {});
+                    input.IngestGamepadStates(padStates);
                     scrollY = scrollY + input.GetScrollDelta().y;
                 }
                 server->Pump();
@@ -407,6 +421,71 @@ int main()
                       return !input.IsKeyDown(Key::Backspace);
                   }),
               "releasing the held key cleared it");
+
+        // Pad events: a virtual pad plugs into slot 2 and reads through Input like any pad.
+        const Json padBatch = CallToolResult(
+            client, "input.send",
+            Json{{"events",
+                  Json::array({Json{{"type", "pad_connect"}, {"slot", 2}, {"pad_type", "PS5"}},
+                               Json{{"type", "pad_button"},
+                                    {"slot", 2},
+                                    {"button", "DpadUp"},
+                                    {"down", true}},
+                               Json{{"type", "pad_axis"},
+                                    {"slot", 2},
+                                    {"axis", "LeftTrigger"},
+                                    {"value", 0.75f}},
+                               Json{{"type", "pad_touch"},
+                                    {"slot", 2},
+                                    {"down", true},
+                                    {"x", 0.25f},
+                                    {"y", 0.5f}}})}});
+        Check(!IsError(padBatch), "pad batch succeeded");
+        const GamepadId slot2{2};
+        Check(WaitFor(
+                  [&]
+                  {
+                      const std::scoped_lock lock(inputMutex);
+                      return input.IsGamepadButtonDown(slot2, GamepadButton::DpadUp) &&
+                             std::abs(input.GetGamepadAxis(slot2, GamepadAxis::LeftTrigger) -
+                                      0.75f) < 1e-3f &&
+                             input.IsGamepadButtonDown(slot2, GamepadButton::TouchpadTouch) &&
+                             std::abs(input.GetGamepadAxis(slot2, GamepadAxis::TouchpadX) - 0.25f) <
+                                 1e-3f;
+                  }),
+              "injected pad events reached Input through the virtual pad");
+        {
+            const std::scoped_lock lock(inputMutex);
+            Check(input.GetGamepadType(slot2) == GamepadType::PS5, "the virtual pad has its type");
+        }
+
+        CallToolResult(
+            client, "input.send",
+            Json{{"events", Json::array({Json{{"type", "pad_disconnect"}, {"slot", 2}}})}});
+        Check(WaitFor(
+                  [&]
+                  {
+                      const std::scoped_lock lock(inputMutex);
+                      return !input.IsGamepadConnected(slot2);
+                  }),
+              "pad_disconnect unplugged the virtual pad");
+
+        Check(IsError(CallToolResult(client, "input.send",
+                                     Json{{"events", Json::array({Json{{"type", "pad_button"},
+                                                                       {"slot", 0},
+                                                                       {"button", "Z"},
+                                                                       {"down", true}}})}})),
+              "an unknown pad button is a whole-call error");
+        Check(IsError(CallToolResult(
+                  client, "input.send",
+                  Json{{"events", Json::array({Json{{"type", "pad_connect"}, {"slot", 16}}})}})),
+              "a pad slot out of range is a whole-call error");
+        Check(IsError(CallToolResult(client, "input.send",
+                                     Json{{"events", Json::array({Json{{"type", "pad_axis"},
+                                                                       {"slot", 0},
+                                                                       {"axis", "TouchpadX"},
+                                                                       {"value", 0.5f}}})}})),
+              "a touchpad axis set through pad_axis is a whole-call error");
 
         // Shape-validation errors, each a whole-call isError.
         Check(IsError(CallToolResult(

@@ -52,7 +52,9 @@ namespace Veng
         /// @brief A gamepad was disconnected from a slot.
         GamepadDisconnected,
         /// @brief A key already down was re-asserted by the platform's auto-repeat.
-        KeyRepeat
+        KeyRepeat,
+        /// @brief A synthetic edit to a virtual gamepad: connect, disconnect, or set one control.
+        VirtualGamepad
     };
 
     /// @brief Abstract base for all engine events.

@@ -56,6 +56,7 @@ namespace Veng
 {
     class ServerHost;
     class ClientHost;
+    class GamepadBackend;
     class GuiDriverRegistry;
     struct CookedProject;
     namespace Gui
@@ -732,6 +733,13 @@ namespace Veng
         /// cursor); pop it (or the Shift+Esc release chord) to return input to the UI. Always
         /// present; headless borrows no window and routes nothing.
         [[nodiscard]] InputRouter& GetInputRouter() const { return *m_InputRouter; }
+
+        /// @brief Returns the engine's gamepad device layer, or nullptr when it has none.
+        ///
+        /// An opaque handle: the type is defined inside the engine, so an application can pass it
+        /// on but not call it. It exists for the engine's own pad tooling (UI::GamepadPanel); pad
+        /// state is read through GetInput. Null headless and on a dedicated host, which poll no pads.
+        [[nodiscard]] GamepadBackend* GetGamepadBackend() const { return m_Gamepads.get(); }
 
         /// @brief Returns the render context.
         [[nodiscard]] Renderer::Context& GetRenderContext() { return m_RenderContext; }
@@ -2168,6 +2176,13 @@ namespace Veng
 
         /// @brief Frame-coherent input; borrows m_Window, so declared after it (destructs first).
         Unique<Input> m_Input;
+
+        /// @brief The gamepad device layer; null when Headless.
+        Unique<GamepadBackend> m_Gamepads;
+
+        /// @brief The slot-indexed pad state the backend writes each frame, kept so a pad's name
+        ///        reuses its storage rather than allocating per frame.
+        std::array<GamepadState, Input::MaxGamepads> m_GamepadStates;
 
         Renderer::Context m_RenderContext;
 

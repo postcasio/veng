@@ -616,6 +616,11 @@ imnodes, zstd) — no system install needed beyond Vulkan, GLFW, glm, and zlib
   obligation.
 - **Backend libs (Vulkan, GLFW, VMA, nfd) link PRIVATE** — guarded by the
   `include_hygiene` test (see the Native idiom below).
+- **SDL3 reads the gamepads, and nothing else.** GLFW keeps the window, keyboard and mouse; SDL3
+  (pinned release tag) is built static with every subsystem off but joystick/gamepad, events,
+  sensor and HIDAPI, linked PRIVATE behind `engine/src/Platform/GamepadBackend`, and its symbols are
+  hidden so `libveng` does not re-export the SDL API. SDL enables OBJC in its own directory, so the
+  root project enables it on Apple too, giving GLFW's Cocoa sources their compile rule.
 - **Cooker-only deps** (assimp, Slang, stb, the `bc7enc_rdo` / `astc-encoder` texture
   encoders) are linked into `vengc` alone, never into `libveng` or its consumers.
 - **`veng::mcp`** adds one pinned dep of its own — cpp-httplib, vendored, PRIVATE.

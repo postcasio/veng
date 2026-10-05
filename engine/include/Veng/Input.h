@@ -106,63 +106,153 @@ namespace Veng
         Middle = 2,
     };
 
-    /// @brief Identity of a connected gamepad: the GLFW joystick slot, stable while it stays connected.
+    /// @brief Identity of a connected gamepad: the slot the pad backend assigned it, stable while
+    ///        it stays connected.
     ///
-    /// The raw slot (0..15), not a dense index over the connected set: a slot is reused only after
-    /// its pad disconnects, so a persisted assignment never silently re-points at a different pad.
+    /// A small slot index (0..15), not the device's own connection id: a slot is reused only after
+    /// its pad disconnects and a frame has reported it gone, so a persisted assignment never
+    /// silently re-points at a different pad.
     enum class GamepadId : u32
     {
         /// @brief The empty id, distinct from every real slot.
         None = 0xFFFFFFFFu
     };
 
-    /// @brief Engine gamepad button vocabulary (mapped to GLFW_GAMEPAD_BUTTON_* at the poll boundary).
+    /// @brief Engine gamepad button vocabulary, positional rather than labelled.
+    ///
+    /// The face buttons are named by the Xbox layout's positions: A is the bottom face button
+    /// whatever the pad prints on it. Values are append-only — an authored binding stores the index,
+    /// so a new control is added before Count and never between existing ones.
     enum class GamepadButton : u32
     {
+        /// @brief The bottom face button (Xbox A, PlayStation Cross).
         A,
+        /// @brief The right face button (Xbox B, PlayStation Circle).
         B,
+        /// @brief The left face button (Xbox X, PlayStation Square).
         X,
+        /// @brief The top face button (Xbox Y, PlayStation Triangle).
         Y,
+        /// @brief The left shoulder button.
         LeftBumper,
+        /// @brief The right shoulder button.
         RightBumper,
+        /// @brief The left centre button (Back, View, Share on a DualShock 4, Create on a DualSense).
         Back,
+        /// @brief The right centre button (Start, Menu, Options).
         Start,
+        /// @brief The logo button (Xbox, PS, Home).
         Guide,
+        /// @brief The left stick pressed in.
         LeftThumb,
+        /// @brief The right stick pressed in.
         RightThumb,
+        /// @brief The d-pad's up direction.
         DpadUp,
+        /// @brief The d-pad's right direction.
         DpadRight,
+        /// @brief The d-pad's down direction.
         DpadDown,
+        /// @brief The d-pad's left direction.
         DpadLeft,
+        /// @brief The pad's extra centre button (Xbox Series Share, DualSense microphone, Switch
+        ///        Capture).
+        Misc,
+        /// @brief The touchpad pressed down as a button (DualShock 4, DualSense).
+        TouchpadClick,
+        /// @brief Held while a finger rests on the touchpad, whether or not it is clicked.
+        TouchpadTouch,
+        /// @brief The upper right back paddle (Xbox Elite P1).
+        Paddle1,
+        /// @brief The lower right back paddle (Xbox Elite P2).
+        Paddle2,
+        /// @brief The upper left back paddle (Xbox Elite P3).
+        Paddle3,
+        /// @brief The lower left back paddle (Xbox Elite P4).
+        Paddle4,
         /// @brief Count of buttons; sizes the per-pad button array, excluded from the authored set.
         Count
     };
 
-    /// @brief Engine gamepad axis vocabulary (mapped to GLFW_GAMEPAD_AXIS_* at the poll boundary).
+    /// @brief Engine gamepad axis vocabulary. Values are append-only, like GamepadButton's.
     enum class GamepadAxis : u32
     {
+        /// @brief The left stick's horizontal deflection, −1 (left) to 1 (right).
         LeftX,
+        /// @brief The left stick's vertical deflection, −1 (up) to 1 (down).
         LeftY,
+        /// @brief The right stick's horizontal deflection, −1 (left) to 1 (right).
         RightX,
+        /// @brief The right stick's vertical deflection, −1 (up) to 1 (down).
         RightY,
+        /// @brief The left trigger's pull, 0 (released) to 1 (fully pulled).
         LeftTrigger,
+        /// @brief The right trigger's pull, 0 (released) to 1 (fully pulled).
         RightTrigger,
+        /// @brief The first touchpad finger's horizontal position, 0 (left edge) to 1 (right edge);
+        ///        0 while no finger is down.
+        TouchpadX,
+        /// @brief The first touchpad finger's vertical position, 0 (top edge) to 1 (bottom edge);
+        ///        0 while no finger is down.
+        TouchpadY,
+        /// @brief The first touchpad finger's horizontal motion, in touchpad widths.
+        ///
+        /// A delta with two cadences, like the mouse: per frame through Input::GetGamepadAxis and
+        /// per Sim tick through Input::GetSimGamepadAxis (see Input::BeginGamepadSimTick). Zero while
+        /// no finger is down and on the frame or tick a finger lands.
+        TouchpadDeltaX,
+        /// @brief The first touchpad finger's vertical motion, in touchpad heights; the vertical
+        ///        twin of TouchpadDeltaX, with the same two cadences.
+        TouchpadDeltaY,
         /// @brief Count of axes; sizes the per-pad axis array, excluded from the authored set.
         Count
     };
 
-    /// @brief One pad's raw state for a frame: the poll target, a GLFW-free struct.
+    /// @brief The family a connected pad belongs to, for choosing button prompts and glyphs.
+    enum class GamepadType : u8
+    {
+        /// @brief The pad's family is not known.
+        Unknown,
+        /// @brief A pad with a standard layout and no family of its own (a generic or third-party pad).
+        Standard,
+        /// @brief An Xbox 360 pad.
+        Xbox360,
+        /// @brief An Xbox One or Xbox Series pad.
+        XboxOne,
+        /// @brief A PlayStation 3 pad.
+        PS3,
+        /// @brief A PlayStation 4 pad (DualShock 4).
+        PS4,
+        /// @brief A PlayStation 5 pad (DualSense).
+        PS5,
+        /// @brief A Nintendo Switch Pro Controller.
+        SwitchPro,
+        /// @brief A single left Joy-Con.
+        JoyConLeft,
+        /// @brief A single right Joy-Con.
+        JoyConRight,
+        /// @brief A pair of Joy-Cons acting as one pad.
+        JoyConPair,
+    };
+
+    /// @brief One pad's state for a frame: what the pad backend reports for a slot, backend-free.
     ///
     /// Sticks report −1..1 and triggers 0..1; Buttons/Axes index by GamepadButton / GamepadAxis so
-    /// the arrays size off the enum Count sentinel and cannot drift when a control is added.
+    /// the arrays size off the enum Count sentinel and cannot drift when a control is added. The
+    /// touchpad-delta axes are derived by Input from successive touchpad positions; a value the
+    /// backend writes there is overwritten on ingest.
     struct GamepadState
     {
-        /// @brief Whether this slot holds a connected, gamepad-mapped pad this frame.
+        /// @brief Whether this slot holds a connected pad this frame.
         bool Connected = false;
         /// @brief Per-button held state, indexed by GamepadButton.
         std::array<bool, usize(GamepadButton::Count)> Buttons{};
         /// @brief Per-axis value, indexed by GamepadAxis (sticks −1..1, triggers 0..1).
         std::array<f32, usize(GamepadAxis::Count)> Axes{};
+        /// @brief The pad's family.
+        GamepadType Type = GamepadType::Unknown;
+        /// @brief The pad's human-readable product name; empty when unknown.
+        string Name;
     };
 
     class Window;
@@ -234,13 +324,29 @@ namespace Veng
         ///      steps must not, or the routed world is left with nothing.
         void BeginSimTick();
 
+        /// @brief Latches each pad's touchpad motion accumulated since the previous Sim step as
+        ///        this step's delta.
+        ///
+        /// The touchpad counterpart of BeginSimTick, read through GetSimGamepadAxis's
+        /// TouchpadDeltaX / TouchpadDeltaY. It is kept per pad and is separate from the pointer's
+        /// latch because a pad is a seat's device, not the pointer: BeginSimTick runs only for the
+        /// world the pointer routes to, so a touchpad latched there would bank its motion while the
+        /// pointer routes elsewhere. The latched delta is zero on the first step that sees a finger
+        /// down, so a landing finger never reads as a jump from wherever the last one lifted.
+        ///
+        /// @pre Called once per Sim step of every world, before the step's systems run. Two worlds
+        ///      stepping in one frame share the accumulation, so the first step takes the frame's
+        ///      motion and the other reads zero.
+        void BeginGamepadSimTick();
+
         /// @brief Discards the accumulated and latched Sim deltas without a tick consuming them.
         ///
-        /// The counterpart of BeginSimTick for a frame no Sim step ran on because nothing was
-        /// simulating: motion made while the simulation is stopped or paused must not bank into the
-        /// delta the resuming tick reads, which would arrive as one jump of the whole stopped
-        /// stretch's travel. A frame that ran no step merely because the accumulator has not yet
-        /// filled a tick calls neither, holding the motion for the tick-running frame that follows.
+        /// The counterpart of BeginSimTick and BeginGamepadSimTick for a frame no Sim step ran on
+        /// because nothing was simulating: motion made while the simulation is stopped or paused must
+        /// not bank into the delta the resuming tick reads, which would arrive as one jump of the
+        /// whole stopped stretch's travel. A frame that ran no step merely because the accumulator has
+        /// not yet filled a tick calls neither, holding the motion for the tick-running frame that
+        /// follows. Covers the pointer, the wheel and every pad's touchpad.
         void DropSimDeltas();
 
         /// @brief Folds one input event into the current snapshot.
@@ -342,12 +448,13 @@ namespace Veng
 
         /// @brief Replaces this frame's polled gamepad state for every slot.
         ///
-        /// The window layer polls each present joystick once per frame and hands the full
-        /// slot-indexed set here; a slot with no connected pad carries a default (unconnected)
-        /// GamepadState. Called after BeginFrame's roll so the previous-frame button bits the
-        /// pressed-edge query reads are already captured. Headless never calls it, so the pad
-        /// surface stays the neutral no-pads state.
-        /// @param states  One GamepadState per slot; must span all slots the queries can name.
+        /// The pad backend polls every pad once per frame and hands the full slot-indexed set here;
+        /// a slot with no connected pad carries a default (unconnected) GamepadState. Called after
+        /// BeginFrame's roll so the previous-frame button bits the pressed-edge query reads are
+        /// already captured. Each call also derives the touchpad-delta axes from the previous call's
+        /// touchpad position and adds them to the per-pad Sim accumulation BeginGamepadSimTick
+        /// latches. Headless never calls it, so the pad surface stays the neutral no-pads state.
+        /// @param states  One GamepadState per slot; slots past its end read as unconnected.
         void IngestGamepadStates(std::span<const GamepadState> states);
 
         /// @brief Returns true if the given slot currently holds a connected pad.
@@ -363,18 +470,36 @@ namespace Veng
         [[nodiscard]] bool WasGamepadButtonPressed(GamepadId id, GamepadButton button) const;
 
         /// @brief Returns the given pad's axis value (sticks −1..1, triggers 0..1), zero if absent.
+        ///
+        /// The **per-frame** cadence: a touchpad-delta axis reads the motion since the previous
+        /// frame. A fixed-rate Sim consumer reads GetSimGamepadAxis instead.
         [[nodiscard]] f32 GetGamepadAxis(GamepadId id, GamepadAxis axis) const;
+
+        /// @brief Returns the given pad's axis value for the current Sim tick, zero if absent.
+        ///
+        /// The **per-tick** cadence: a touchpad-delta axis reads the motion BeginGamepadSimTick
+        /// latched for this tick; every other axis is a level and reads as GetGamepadAxis does.
+        [[nodiscard]] f32 GetSimGamepadAxis(GamepadId id, GamepadAxis axis) const;
+
+        /// @brief Returns the family of the pad in the given slot, Unknown if absent.
+        [[nodiscard]] GamepadType GetGamepadType(GamepadId id) const;
+
+        /// @brief Returns the product name of the pad in the given slot, empty if absent.
+        ///
+        /// The view is valid until the next IngestGamepadStates.
+        [[nodiscard]] string_view GetGamepadName(GamepadId id) const;
 
         /// @brief Returns the slots currently holding a connected pad, in ascending slot order.
         [[nodiscard]] std::span<const GamepadId> ConnectedGamepads() const;
+
+        /// @brief Number of gamepad slots, sizing the slot-indexed pad state.
+        static constexpr usize MaxGamepads = 16;
 
     private:
         /// @brief Highest GLFW key code, sizing the key state bitsets.
         static constexpr usize MaxKeys = 512;
         /// @brief Number of tracked mouse buttons.
         static constexpr usize MaxMouseButtons = 8;
-        /// @brief Number of GLFW joystick slots, sizing the slot-indexed pad state.
-        static constexpr usize MaxGamepads = 16;
 
         /// @brief Returns the per-slot state for a valid slot id, or nullptr for None/out-of-range.
         [[nodiscard]] const GamepadState* PadFor(GamepadId id) const;
@@ -429,6 +554,17 @@ namespace Veng
             m_PreviousGamepadButtons{};
         /// @brief Slots marked Connected this frame, rebuilt in IngestGamepadStates for ConnectedGamepads.
         vector<GamepadId> m_ConnectedGamepads;
+
+        /// @brief Per-slot: whether a touchpad finger was down at the previous ingest.
+        std::array<bool, MaxGamepads> m_TouchDown{};
+        /// @brief Per-slot touchpad position at the previous ingest, the base of the next delta.
+        std::array<vec2, MaxGamepads> m_TouchPosition{};
+        /// @brief Per-slot touchpad motion summed since the last BeginGamepadSimTick.
+        std::array<vec2, MaxGamepads> m_SimTouchAccumulator{};
+        /// @brief Per-slot touchpad motion BeginGamepadSimTick latched for the current Sim tick.
+        std::array<vec2, MaxGamepads> m_SimTouchDelta{};
+        /// @brief Per-slot: whether a finger was down at the last BeginGamepadSimTick.
+        std::array<bool, MaxGamepads> m_SimTouchDown{};
     };
 }
 
@@ -452,6 +588,13 @@ VE_ENUMERATOR(DpadUp)
 VE_ENUMERATOR(DpadRight)
 VE_ENUMERATOR(DpadDown)
 VE_ENUMERATOR(DpadLeft)
+VE_ENUMERATOR(Misc)
+VE_ENUMERATOR(TouchpadClick)
+VE_ENUMERATOR(TouchpadTouch)
+VE_ENUMERATOR(Paddle1)
+VE_ENUMERATOR(Paddle2)
+VE_ENUMERATOR(Paddle3)
+VE_ENUMERATOR(Paddle4)
 VE_ENUM_END();
 
 VE_ENUM(::Veng::GamepadAxis, 0x512AC8C48915CA9EULL)
@@ -461,4 +604,22 @@ VE_ENUMERATOR(RightX)
 VE_ENUMERATOR(RightY)
 VE_ENUMERATOR(LeftTrigger)
 VE_ENUMERATOR(RightTrigger)
+VE_ENUMERATOR(TouchpadX)
+VE_ENUMERATOR(TouchpadY)
+VE_ENUMERATOR(TouchpadDeltaX)
+VE_ENUMERATOR(TouchpadDeltaY)
+VE_ENUM_END();
+
+VE_ENUM(::Veng::GamepadType, 0xCC84FC1C3ED4D5DBULL)
+VE_ENUMERATOR(Unknown)
+VE_ENUMERATOR(Standard)
+VE_ENUMERATOR(Xbox360)
+VE_ENUMERATOR(XboxOne)
+VE_ENUMERATOR(PS3)
+VE_ENUMERATOR(PS4)
+VE_ENUMERATOR(PS5)
+VE_ENUMERATOR(SwitchPro)
+VE_ENUMERATOR(JoyConLeft)
+VE_ENUMERATOR(JoyConRight)
+VE_ENUMERATOR(JoyConPair)
 VE_ENUM_END();

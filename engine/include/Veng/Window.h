@@ -101,6 +101,9 @@ namespace Veng
         /// @brief Returns true if the window is currently minimized.
         [[nodiscard]] bool IsMinimized() const;
 
+        /// @brief Returns true while this window has the OS input focus.
+        [[nodiscard]] bool IsFocused() const;
+
         /// @brief Minimizes the window.
         ///
         /// The window system may apply it asynchronously; IsMinimized() reports it once applied.
@@ -156,16 +159,6 @@ namespace Veng
         /// event to ImGui and the Input snapshot by the active focus.
         /// @param handler  Invoked with each queued event in arrival order.
         void DrainEvents(const std::function<void(Event&)>& handler);
-
-        /// @brief Polls every connected joystick into a slot-indexed GamepadState set.
-        ///
-        /// Fills one GamepadState per slot the span covers, from GLFW's polled gamepad API; a slot
-        /// with no gamepad-mapped pad is left unconnected. Only the slots the connect/disconnect
-        /// events report connected are read, so a frame with no pads polls nothing. The one place
-        /// GLFW's gamepad state is read, so Veng::Input stays backend-free. Called once per frame
-        /// before the snapshot is finalized; the transitions also arrive as queued events.
-        /// @param states  Slot-indexed output, one entry per joystick slot to poll.
-        void PollGamepads(std::span<GamepadState> states) const;
 
         /// @brief Signals the run loop to exit; sets IsOpen() to false without destroying anything.
         void Close();
@@ -288,13 +281,6 @@ namespace Veng
 
         /// @brief This frame's queued events, filled by GLFW callbacks and drained by DrainEvents.
         vector<Unique<Event>> m_Events;
-
-        /// @brief One bit per joystick slot holding a connected device, kept by the connect events.
-        ///
-        /// Seeded from the slots already present at construction (a device connected before the
-        /// window existed raises no event) and updated by the joystick callback, so PollGamepads
-        /// reads only these slots rather than probing every one each frame.
-        u32 m_ConnectedJoysticks = 0;
 
         Unique<Native> m_Native;
     };

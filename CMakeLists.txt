@@ -27,6 +27,13 @@ endif ()
 
 project(veng VERSION 0.1.0 LANGUAGES CXX)
 
+# SDL3 enables OBJC inside its own directory. GLFW's Cocoa sources, configured in a sibling directory
+# that never enabled it, are then classified OBJC with no compile rule there, which the Makefiles
+# generator refuses to generate. Enabled here, every directory has the rule.
+if (APPLE)
+    enable_language(OBJC)
+endif ()
+
 # Note: not REQUIRED — AppleClang doesn't advertise the C++26 dialect flag,
 # so the standard decays to the newest the compiler supports.
 set(CMAKE_CXX_STANDARD 26)
@@ -341,6 +348,47 @@ FetchContent_Declare(
         GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(glfw)
+
+# SDL3, for gamepads only: GLFW keeps the window, keyboard and mouse. Built static and linked
+# PRIVATE behind the Native idiom. Every subsystem is off except joystick (with gamepad and events,
+# which SDL always builds), HIDAPI and sensor; gamepad rumble does not need the haptic subsystem.
+# libusb is off so HIDAPI talks to the OS HID stack only.
+set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+set(SDL_STATIC ON CACHE BOOL "" FORCE)
+set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+set(SDL_UNINSTALL OFF CACHE BOOL "" FORCE)
+set(SDL_AUDIO OFF CACHE BOOL "" FORCE)
+set(SDL_VIDEO OFF CACHE BOOL "" FORCE)
+set(SDL_GPU OFF CACHE BOOL "" FORCE)
+set(SDL_RENDER OFF CACHE BOOL "" FORCE)
+set(SDL_CAMERA OFF CACHE BOOL "" FORCE)
+set(SDL_HAPTIC OFF CACHE BOOL "" FORCE)
+set(SDL_POWER OFF CACHE BOOL "" FORCE)
+set(SDL_DIALOG OFF CACHE BOOL "" FORCE)
+set(SDL_TRAY OFF CACHE BOOL "" FORCE)
+set(SDL_JOYSTICK ON CACHE BOOL "" FORCE)
+set(SDL_HIDAPI ON CACHE BOOL "" FORCE)
+set(SDL_SENSOR ON CACHE BOOL "" FORCE)
+set(SDL_HIDAPI_LIBUSB OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+        SDL3
+        GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+        GIT_TAG release-3.4.18
+        GIT_SHALLOW TRUE
+        EXCLUDE_FROM_ALL
+)
+FetchContent_MakeAvailable(SDL3)
+# libveng is shared, so the static archive it absorbs must be position-independent. Its symbols are
+# hidden, so libveng does not re-export the SDL API to its consumers: an empty SDL_DECLSPEC (PUBLIC, so
+# the engine's own SDL includes agree) lets the hidden visibility preset reach SDL's public functions.
+set_target_properties(SDL3-static PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        C_VISIBILITY_PRESET hidden
+        OBJC_VISIBILITY_PRESET hidden)
+target_compile_definitions(SDL3-static PUBLIC "SDL_DECLSPEC=")
 
 # zlib (tinyexr's zip compression). Linked PRIVATE and never exported, so its
 # install is skipped; the static target carries the include dirs tinyexr needs.
@@ -1022,6 +1070,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/input_router.cpp
             tests/unit/action_resolve.cpp
             tests/unit/gamepad_adapter.cpp
+            tests/unit/gamepad_slots.cpp
             tests/unit/seat_routing.cpp
             tests/unit/seat_routing_integration.cpp
             tests/unit/seat_focus.cpp
@@ -1519,6 +1568,8 @@ if (VENG_BUILD_TESTS)
     target_compile_definitions(veng_test_mcp_input PRIVATE JSON_NOEXCEPTION)
     target_include_directories(veng_test_mcp_input SYSTEM PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/mcp/src/Vendor)
+    # The device-free pad slot table stands in for the pad backend.
+    target_include_directories(veng_test_mcp_input PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/engine/src)
 
     add_test(NAME mcp_input COMMAND veng_test_mcp_input)
     set_tests_properties(mcp_input PROPERTIES LABELS mcp)

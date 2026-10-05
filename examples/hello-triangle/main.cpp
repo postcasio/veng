@@ -20,6 +20,7 @@
 #include <Veng/Asset/Texture.h>
 #include <Veng/UI/UI.h>
 #include <Veng/UI/DebugPanels.h>
+#include <Veng/UI/GamepadPanel.h>
 
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/Driver.h>
@@ -1655,6 +1656,12 @@ private:
         if (auto graphWindow = UI::Window("Frame Time"))
         {
             m_Performance.Draw(viewport);
+        }
+
+        // Every connected pad's live controls, as the action layer reads them.
+        if (auto padWindow = UI::Window("Gamepads"))
+        {
+            UI::GamepadPanel(*this);
         }
 
         // The scene's composited output, drawn last so it fills its own window.

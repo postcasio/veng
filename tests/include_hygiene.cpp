@@ -104,6 +104,7 @@
 #include <Veng/UI/Scopes.h>
 #include <Veng/UI/Query.h>
 #include <Veng/UI/DebugPanels.h>
+#include <Veng/UI/GamepadPanel.h>
 #include <Veng/UI/VideoCapture.h>
 
 #include <Veng/Gui/DrawList.h>

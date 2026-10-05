@@ -8,7 +8,6 @@
 #include <nfd.h>
 
 #include <algorithm>
-#include <bit>
 
 #include "Render/DisplayResolve.h"
 #include "WindowCocoa.h"
@@ -21,31 +20,10 @@ namespace Veng
     {
         bool s_GlfwInitialized = false;
 
-        // The joystick callback is a GLFW global with no window argument, so the single-window
-        // engine routes connect/disconnect events through the live window here.
-        Window* s_JoystickEventWindow = nullptr;
-
         void GLFWErrorCallback(int err, const char* message)
         {
             VE_ASSERT(false, "GLFW error ({0}): {1}", err, message);
         }
-
-        // Engine GamepadButton index → GLFW_GAMEPAD_BUTTON_*, in GamepadButton declaration order.
-        constexpr std::array<int, usize(GamepadButton::Count)> GamepadButtonToGlfw{
-            GLFW_GAMEPAD_BUTTON_A,           GLFW_GAMEPAD_BUTTON_B,
-            GLFW_GAMEPAD_BUTTON_X,           GLFW_GAMEPAD_BUTTON_Y,
-            GLFW_GAMEPAD_BUTTON_LEFT_BUMPER, GLFW_GAMEPAD_BUTTON_RIGHT_BUMPER,
-            GLFW_GAMEPAD_BUTTON_BACK,        GLFW_GAMEPAD_BUTTON_START,
-            GLFW_GAMEPAD_BUTTON_GUIDE,       GLFW_GAMEPAD_BUTTON_LEFT_THUMB,
-            GLFW_GAMEPAD_BUTTON_RIGHT_THUMB, GLFW_GAMEPAD_BUTTON_DPAD_UP,
-            GLFW_GAMEPAD_BUTTON_DPAD_RIGHT,  GLFW_GAMEPAD_BUTTON_DPAD_DOWN,
-            GLFW_GAMEPAD_BUTTON_DPAD_LEFT};
-
-        // Engine GamepadAxis index → GLFW_GAMEPAD_AXIS_*, in GamepadAxis declaration order.
-        constexpr std::array<int, usize(GamepadAxis::Count)> GamepadAxisToGlfw{
-            GLFW_GAMEPAD_AXIS_LEFT_X,       GLFW_GAMEPAD_AXIS_LEFT_Y,
-            GLFW_GAMEPAD_AXIS_RIGHT_X,      GLFW_GAMEPAD_AXIS_RIGHT_Y,
-            GLFW_GAMEPAD_AXIS_LEFT_TRIGGER, GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER};
     }
 
     Window::Window(const WindowInfo& info)
@@ -203,40 +181,6 @@ namespace Veng
                 window->m_Events.push_back(CreateUnique<MouseScrolledEvent>(offset));
             });
 
-        // The joystick callback is a GLFW global; route its connect/disconnect through this window.
-        s_JoystickEventWindow = this;
-        glfwSetJoystickCallback(
-            [](int jid, int event)
-            {
-                if (s_JoystickEventWindow == nullptr)
-                {
-                    return;
-                }
-                const auto id = static_cast<GamepadId>(jid);
-                const u32 bit = 1U << static_cast<u32>(jid);
-                if (event == GLFW_CONNECTED)
-                {
-                    s_JoystickEventWindow->m_ConnectedJoysticks |= bit;
-                    s_JoystickEventWindow->m_Events.push_back(
-                        CreateUnique<GamepadConnectedEvent>(id));
-                }
-                else if (event == GLFW_DISCONNECTED)
-                {
-                    s_JoystickEventWindow->m_ConnectedJoysticks &= ~bit;
-                    s_JoystickEventWindow->m_Events.push_back(
-                        CreateUnique<GamepadDisconnectedEvent>(id));
-                }
-            });
-
-        // A device connected before the window existed raised no connect event.
-        for (int jid = GLFW_JOYSTICK_1; jid <= GLFW_JOYSTICK_LAST; ++jid)
-        {
-            if (glfwJoystickPresent(jid) == GLFW_TRUE)
-            {
-                m_ConnectedJoysticks |= 1U << static_cast<u32>(jid);
-            }
-        }
-
         {
             int width, height;
             glfwGetFramebufferSize(m_Handle, &width, &height);
@@ -375,12 +319,6 @@ namespace Veng
     // veng is single-window, so window destruction terminates GLFW.
     Window::~Window()
     {
-        if (s_JoystickEventWindow == this)
-        {
-            glfwSetJoystickCallback(nullptr);
-            s_JoystickEventWindow = nullptr;
-        }
-
         if (m_Handle)
         {
             glfwDestroyWindow(m_Handle);
@@ -389,36 +327,6 @@ namespace Veng
 
         glfwTerminate();
         s_GlfwInitialized = false;
-    }
-
-    void Window::PollGamepads(const std::span<GamepadState> states) const
-    {
-        std::ranges::fill(states, GamepadState{});
-        for (u32 connected = m_ConnectedJoysticks; connected != 0; connected &= connected - 1)
-        {
-            const auto slot = static_cast<usize>(std::countr_zero(connected));
-            if (slot >= states.size())
-            {
-                break;
-            }
-            GamepadState& state = states[slot];
-
-            GLFWgamepadstate raw;
-            if (glfwGetGamepadState(static_cast<int>(slot), &raw) != GLFW_TRUE)
-            {
-                continue;
-            }
-
-            state.Connected = true;
-            for (usize button = 0; button < state.Buttons.size(); ++button)
-            {
-                state.Buttons[button] = raw.buttons[GamepadButtonToGlfw[button]] == GLFW_PRESS;
-            }
-            for (usize axis = 0; axis < state.Axes.size(); ++axis)
-            {
-                state.Axes[axis] = raw.axes[GamepadAxisToGlfw[axis]];
-            }
-        }
     }
 
     void Window::WaitUntilPresentable()
@@ -438,6 +346,11 @@ namespace Veng
             }
             glfwWaitEventsTimeout(ParkPollSeconds);
         }
+    }
+
+    bool Window::IsFocused() const
+    {
+        return glfwGetWindowAttrib(m_Handle, GLFW_FOCUSED) == GLFW_TRUE;
     }
 
     bool Window::IsMinimized() const

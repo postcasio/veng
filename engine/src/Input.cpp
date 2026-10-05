@@ -67,12 +67,27 @@ namespace Veng
         m_SimScrollAccumulator = {0, 0};
     }
 
+    void Input::BeginGamepadSimTick()
+    {
+        for (usize slot = 0; slot < MaxGamepads; ++slot)
+        {
+            // A step that is the first to see the finger down reads no motion: whatever moved between
+            // the landing and this step is the finger settling, not a drag the step should apply.
+            m_SimTouchDelta[slot] = m_SimTouchDown[slot] ? m_SimTouchAccumulator[slot] : vec2{0, 0};
+            m_SimTouchAccumulator[slot] = {0, 0};
+            m_SimTouchDown[slot] = m_TouchDown[slot];
+        }
+    }
+
     void Input::DropSimDeltas()
     {
         m_SimMouseAccumulator = {0, 0};
         m_SimScrollAccumulator = {0, 0};
         m_SimMouseDelta = {0, 0};
         m_SimScrollDelta = {0, 0};
+        m_SimTouchAccumulator.fill({0, 0});
+        m_SimTouchDelta.fill({0, 0});
+        m_SimTouchDown.fill(false);
     }
 
     void Input::ApplyEvent(const Event& event)
@@ -288,14 +303,40 @@ namespace Veng
 
     void Input::IngestGamepadStates(const std::span<const GamepadState> states)
     {
+        constexpr auto TouchX = static_cast<usize>(GamepadAxis::TouchpadX);
+        constexpr auto TouchY = static_cast<usize>(GamepadAxis::TouchpadY);
+        constexpr auto DeltaX = static_cast<usize>(GamepadAxis::TouchpadDeltaX);
+        constexpr auto DeltaY = static_cast<usize>(GamepadAxis::TouchpadDeltaY);
+        constexpr auto Touch = static_cast<usize>(GamepadButton::TouchpadTouch);
+
         m_ConnectedGamepads.clear();
         for (usize slot = 0; slot < MaxGamepads; ++slot)
         {
-            m_Gamepads[slot] = slot < states.size() ? states[slot] : GamepadState{};
-            if (m_Gamepads[slot].Connected)
+            GamepadState& pad = m_Gamepads[slot];
+            if (slot < states.size())
+            {
+                pad = states[slot];
+            }
+            else
+            {
+                pad = GamepadState{};
+            }
+            if (pad.Connected)
             {
                 m_ConnectedGamepads.push_back(static_cast<GamepadId>(slot));
             }
+
+            // Motion is only the travel of one finger held across two ingests: a landing, a lift or
+            // a disconnect contributes none, so a finger set down elsewhere never reads as a jump.
+            const bool touching = pad.Connected && pad.Buttons[Touch];
+            const vec2 position{pad.Axes[TouchX], pad.Axes[TouchY]};
+            const vec2 delta =
+                touching && m_TouchDown[slot] ? position - m_TouchPosition[slot] : vec2{0, 0};
+            pad.Axes[DeltaX] = delta.x;
+            pad.Axes[DeltaY] = delta.y;
+            m_SimTouchAccumulator[slot] += delta;
+            m_TouchDown[slot] = touching;
+            m_TouchPosition[slot] = position;
         }
     }
 
@@ -317,7 +358,8 @@ namespace Veng
     bool Input::IsGamepadButtonDown(const GamepadId id, const GamepadButton button) const
     {
         const GamepadState* pad = PadFor(id);
-        return pad != nullptr && pad->Buttons[static_cast<usize>(button)];
+        const auto index = static_cast<usize>(button);
+        return pad != nullptr && index < pad->Buttons.size() && pad->Buttons[index];
     }
 
     bool Input::WasGamepadButtonPressed(const GamepadId id, const GamepadButton button) const
@@ -328,13 +370,46 @@ namespace Veng
             return false;
         }
         const auto index = static_cast<usize>(button);
-        return pad->Buttons[index] && !m_PreviousGamepadButtons[static_cast<usize>(id)][index];
+        return index < pad->Buttons.size() && pad->Buttons[index] &&
+               !m_PreviousGamepadButtons[static_cast<usize>(id)][index];
     }
 
     f32 Input::GetGamepadAxis(const GamepadId id, const GamepadAxis axis) const
     {
         const GamepadState* pad = PadFor(id);
-        return pad != nullptr ? pad->Axes[static_cast<usize>(axis)] : 0.0f;
+        const auto index = static_cast<usize>(axis);
+        return pad != nullptr && index < pad->Axes.size() ? pad->Axes[index] : 0.0f;
+    }
+
+    f32 Input::GetSimGamepadAxis(const GamepadId id, const GamepadAxis axis) const
+    {
+        const GamepadState* pad = PadFor(id);
+        if (pad == nullptr)
+        {
+            return 0.0f;
+        }
+        switch (axis)
+        {
+        case GamepadAxis::TouchpadDeltaX:
+            return m_SimTouchDelta[static_cast<usize>(id)].x;
+        case GamepadAxis::TouchpadDeltaY:
+            return m_SimTouchDelta[static_cast<usize>(id)].y;
+        default:
+            return static_cast<usize>(axis) < pad->Axes.size() ? pad->Axes[static_cast<usize>(axis)]
+                                                               : 0.0f;
+        }
+    }
+
+    GamepadType Input::GetGamepadType(const GamepadId id) const
+    {
+        const GamepadState* pad = PadFor(id);
+        return pad != nullptr ? pad->Type : GamepadType::Unknown;
+    }
+
+    string_view Input::GetGamepadName(const GamepadId id) const
+    {
+        const GamepadState* pad = PadFor(id);
+        return pad != nullptr ? string_view(pad->Name) : string_view();
     }
 
     std::span<const GamepadId> Input::ConnectedGamepads() const

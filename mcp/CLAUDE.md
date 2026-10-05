@@ -441,6 +441,16 @@ family registers from the editor side.
   `GetInputRouter()::PostInjectedEvent`, which queues every foldable kind (key/button down·up,
   move, scroll, text) for paced release at the frame's pre-tick input point, so an injected event
   is **indistinguishable from a real window event** and the action/mapping layer resolves it naturally on the next tick.
+  **Pad events drive a virtual pad**, so a driven session reaches every gamepad path without
+  hardware: `pad_connect` (`{ slot: 0..15, pad_type?: <GamepadType name> }`, refused and logged
+  when the slot holds a pad), `pad_disconnect` (`{ slot }`), `pad_button` (`{ slot, button:
+  <GamepadButton name>, down }`), `pad_axis` (`{ slot, axis: <stick or trigger GamepadAxis name>,
+  value }`, clamped to the axis's range; the touchpad axes are refused here) and `pad_touch`
+  (`{ slot, down, x, y }`, the first touchpad finger in 0..1). Each becomes a
+  `VirtualGamepadEvent`; the router paces it like a key — per pad and control, so a press and its
+  release straddle a frame — and hands it to the engine's pad backend, where the virtual pad sits
+  in the slot table beside physical ones and reads through `Veng::Input` exactly as they do. A
+  headless app has no pad backend, so the events are accepted and dropped there.
   **A driven run wants `--background-input`**: a window that loses OS focus normally surrenders any
   held gameplay focus, and every focus-gated context stops resolving with it — so an app being driven
   goes inert the moment the operator works in another window, while its always-on contexts keep
@@ -515,9 +525,10 @@ struct McpHost
   falls back to the raw path. The tools never branch on host kind — they consult the hook and
   fall back.
 - **`InjectInput`** is the optional synthetic-input sink the `input.*` tools feed. A game fills it
-  with `[this](Event& e){ GetInputRouter().Dispatch(e); }` so a fabricated event routes exactly as
-  a real window event (through the focus stack); an app that leaves it null makes `input.send`
-  report injection unavailable. It runs on the render thread at the pump point, so it may freely
+  with `[this](Event& e){ GetInputRouter().PostInjectedEvent(e); }` so a fabricated event is paced
+  and routes exactly as a real window event (through the focus stack), and a virtual-pad edit
+  reaches the pad backend; an app that leaves it null makes `input.send` report injection
+  unavailable. It runs on the render thread at the pump point, so it may freely
   touch the input service.
 
 An **`McpMutation`** is a resolved, validated description of one scene edit (its `Kind`,
@@ -615,8 +626,9 @@ httplib stays PRIVATE and `veng-config` already carries `find_dependency(nlohman
   `ApplyMutation` hook and the batch delete verbs' per-item / over-limit result model.
 - **`mcp_input`** — `input.send` behind `AllowMutations` over a headless `Input`: key/button/move/
   scroll events land in the snapshot through `InjectInput`, a `text` run reaches a live
-  `Gui::Document`'s focused `TextInput` and edits its value, the batch shape-validation errors are
-  whole-call, a rejected batch applies nothing, a read-only server omits the tool, and a null
+  `Gui::Document`'s focused `TextInput` and edits its value, a pad batch drives a virtual pad
+  through the router into a device-free slot table and reads back through `Input`, the batch
+  shape-validation errors (pad ones included) are whole-call, a rejected batch applies nothing, a read-only server omits the tool, and a null
   `InjectInput` host reports it unavailable.
 - **`mcp_capture`** — the `render.capture_*` tools over a headless host with no recorder (a run with
   no swap chain presents no frame to record, so that is the honest shape): the write gate both ways,
