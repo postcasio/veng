@@ -501,7 +501,12 @@ reads the source as a half-axis pressed at that pull point, positive side only; 
 drops a source under it), and an `Exponent` response curve on axis actions. Both default to
 a pass-through, so a binding authoring neither resolves its source unchanged; `ResolveActions`'s fake
 `RawInputView` never passes through the device layer, which is why the zones are pure functions
-tested on their own. A **`Possesses { Entity Pawn }`** link names the pawn a
+tested on their own. A binding naming a **`Modifier`** (an `InputSource`; `InputDeviceType::None`,
+the default, means none) is a **chord**: it contributes only while the modifier is down, read as a
+button on its positive half-axis at `ModifierThreshold`. While a chord is **live** (modifier down,
+and its action resolving from the chord's own context rather than shadowed by a higher one), every
+plain binding on the same source, in any active context, is silent; `ResolveActions` gathers the
+live chords' sources before accumulating anything, so suppression is order-independent. A **`Possesses { Entity Pawn }`** link names the pawn a
 seat controls; possession is independent of `Viewer.Camera` (a spectator views without possessing;
 a cutscene retargets the camera without un-possessing).
 

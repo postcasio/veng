@@ -269,10 +269,12 @@ extern "C"
 /// deadzones. A module builds bindings in code and reads pads through an Input it is handed, so a
 /// stale module lays a binding out short and reads Input's members after the pad table at a
 /// shifted offset.
+/// Version 66 grows Binding with its Modifier and ModifierThreshold, so a stale module that builds a
+/// binding in code lays it out short and the resolver reads its modifier from past the end.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 65u
+#define VENG_MODULE_ABI_VERSION 66u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

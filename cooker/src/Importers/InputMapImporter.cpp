@@ -13,6 +13,7 @@
 #include <Veng/Asset/HexId.h>
 #include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Cook/JsonFile.h>
+#include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
 #include <Veng/Reflection/EnumName.h>
 #include <Veng/Reflection/JsonSerialize.h>
@@ -29,6 +30,32 @@ namespace Veng::Cook
         string Located(const string& file, const string& reason)
         {
             return fmt::format("input map importer: '{}': {}", file, reason);
+        }
+
+        // Why a source names no readable control, or empty when it does. A gamepad control must index
+        // a real button or axis; every other device's code space is open-ended.
+        string CheckControl(const InputSource& source)
+        {
+            if (source.Device == InputDeviceType::GamepadButton &&
+                source.Control >= static_cast<u32>(GamepadButton::Count))
+            {
+                return fmt::format("gamepad button {} is out of range (there are {})",
+                                   source.Control, static_cast<u32>(GamepadButton::Count));
+            }
+            if (source.Device == InputDeviceType::GamepadAxis &&
+                source.Control >= static_cast<u32>(GamepadAxis::Count))
+            {
+                return fmt::format("gamepad axis {} is out of range (there are {})", source.Control,
+                                   static_cast<u32>(GamepadAxis::Count));
+            }
+            return {};
+        }
+
+        // Whether a device reads exactly 0 or 1, so a modifier on it is down at any threshold up to 1.
+        bool IsDigital(const InputDeviceType device)
+        {
+            return device == InputDeviceType::Keyboard || device == InputDeviceType::MouseButton ||
+                   device == InputDeviceType::GamepadButton;
         }
 
         template <class T>
@@ -137,6 +164,44 @@ namespace Veng::Cook
                     file, fmt::format("binding onto action {} has 'Exponent' {}; it must be "
                                       "greater than 0",
                                       FormatHexId(actionId), binding.Exponent)));
+            }
+
+            if (binding.Source.Device == InputDeviceType::None)
+            {
+                return std::unexpected(Located(
+                    file, fmt::format("binding onto action {} has a 'Source' with Device 'None'; "
+                                      "a binding must read a control",
+                                      FormatHexId(actionId))));
+            }
+            if (const string bad = CheckControl(binding.Source); !bad.empty())
+            {
+                return std::unexpected(
+                    Located(file, fmt::format("binding onto action {}: 'Source' {}",
+                                              FormatHexId(actionId), bad)));
+            }
+
+            // A chord's modifier is read as a button, so it must be a real control, and a
+            // digital one must be reachable at its threshold.
+            if (const string bad = CheckControl(binding.Modifier); !bad.empty())
+            {
+                return std::unexpected(
+                    Located(file, fmt::format("binding onto action {}: 'Modifier' {}",
+                                              FormatHexId(actionId), bad)));
+            }
+            if (!(binding.ModifierThreshold >= 0.0f))
+            {
+                return std::unexpected(Located(
+                    file,
+                    fmt::format("binding onto action {} has a negative 'ModifierThreshold' {}",
+                                FormatHexId(actionId), binding.ModifierThreshold)));
+            }
+            if (IsDigital(binding.Modifier.Device) && binding.ModifierThreshold > 1.0f)
+            {
+                return std::unexpected(Located(
+                    file, fmt::format("binding onto action {} has 'ModifierThreshold' {} on a "
+                                      "{} modifier, which reads at most 1 and so is never down",
+                                      FormatHexId(actionId), binding.ModifierThreshold,
+                                      EnumeratorName(binding.Modifier.Device))));
             }
         }
 

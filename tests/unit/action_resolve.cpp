@@ -27,11 +27,12 @@ namespace
     constexpr u32 KeyD = 4;
     constexpr u32 KeySpace = 5;
 
-    // A scripted raw input surface: keys down are a set, axes are a small map. Neutral by
-    // default (empty), modelling the headless snapshot.
+    // A scripted raw input surface: keys and pad buttons down are sets, axes are a small map.
+    // Neutral by default (empty), modelling the headless snapshot.
     struct FakeRawInput final : RawInputView
     {
         vector<u32> KeysDown;
+        vector<u32> PadButtonsDown;
         vector<std::pair<u32, f32>> Axes;
 
         [[nodiscard]] bool IsKeyDown(u32 code) const override
@@ -39,7 +40,11 @@ namespace
             return std::ranges::find(KeysDown, code) != KeysDown.end();
         }
 
-        [[nodiscard]] bool IsButtonDown(InputDeviceType, u32) const override { return false; }
+        [[nodiscard]] bool IsButtonDown(InputDeviceType device, u32 code) const override
+        {
+            return device == InputDeviceType::GamepadButton &&
+                   std::ranges::find(PadButtonsDown, code) != PadButtonsDown.end();
+        }
 
         [[nodiscard]] f32 GetAxis(InputDeviceType, u32 code) const override
         {
@@ -516,4 +521,195 @@ TEST_CASE("A response exponent curves the magnitude and keeps the sign")
     CHECK(ResolveAxis(squared, 0.5f).GetAxis(Throttle) == doctest::Approx(0.25f));
     CHECK(ResolveAxis(squared, -0.5f).GetAxis(Throttle) == doctest::Approx(-0.25f));
     CHECK(ResolveAxis(squared, 1.0f).GetAxis(Throttle) == doctest::Approx(1.0f));
+}
+
+namespace
+{
+    constexpr ActionId Yaw{0xF6};
+    constexpr ActionId Roll{0x107};
+    constexpr ActionId Boost{0x118};
+
+    // Pad control codes the fake and the bindings agree on.
+    constexpr u32 StickX = 2;
+    constexpr u32 StickY = 3;
+    constexpr u32 Trigger = 5;
+    constexpr u32 StickClick = 7;
+
+    constexpr InputSource StickXSource{.Device = InputDeviceType::GamepadAxis, .Control = StickX};
+    constexpr InputSource StickClickModifier{.Device = InputDeviceType::GamepadButton,
+                                             .Control = StickClick};
+
+    // Stick X drives Yaw plainly.
+    Binding PlainYaw()
+    {
+        return Binding{.Source = StickXSource, .Action = Yaw};
+    }
+
+    // Stick X drives Roll while the stick is clicked.
+    Binding ChordRoll()
+    {
+        return Binding{.Source = StickXSource, .Action = Roll, .Modifier = StickClickModifier};
+    }
+
+    InputAction AxisAction(const ActionId id)
+    {
+        return InputAction{.Id = id, .Name = "Axis", .Kind = ActionKind::Axis1D};
+    }
+
+    // Plain Yaw and chorded Roll on the same stick axis, in one context.
+    ResolvedContext StickContext()
+    {
+        return ResolvedContext{.Actions = {AxisAction(Yaw), AxisAction(Roll)},
+                               .Bindings = {PlainYaw(), ChordRoll()}};
+    }
+
+    // The stick pushed to 0.8 on X, with the stick click held or not.
+    FakeRawInput StickPushed(const bool clicked)
+    {
+        FakeRawInput raw;
+        raw.Axes = {{StickX, 0.8f}};
+        if (clicked)
+        {
+            raw.PadButtonsDown = {StickClick};
+        }
+        return raw;
+    }
+}
+
+TEST_CASE("A chord contributes only while its modifier is down")
+{
+    const std::array active{StickContext()};
+
+    CHECK(ResolveActions(active, StickPushed(false), {}).GetAxis(Roll) == 0.0f);
+    CHECK(ResolveActions(active, StickPushed(true), {}).GetAxis(Roll) == doctest::Approx(0.8f));
+}
+
+TEST_CASE("A chord silences the plain binding on its control, which is live again on release")
+{
+    const std::array active{StickContext()};
+
+    const ActionState held = ResolveActions(active, StickPushed(true), {});
+    CHECK(held.GetAxis(Yaw) == 0.0f);
+    CHECK(held.GetAxis(Roll) == doctest::Approx(0.8f));
+
+    const ActionState released = ResolveActions(active, StickPushed(false), held);
+    CHECK(released.GetAxis(Yaw) == doctest::Approx(0.8f));
+    CHECK(released.GetAxis(Roll) == 0.0f);
+    CHECK(released.WasReleased(Roll));
+}
+
+TEST_CASE("A chord leaves a plain binding on a different control alone")
+{
+    ResolvedContext context = StickContext();
+    context.Actions.push_back(AxisAction(Throttle));
+    context.Bindings.push_back(Binding{
+        .Source = {.Device = InputDeviceType::GamepadAxis, .Control = StickY}, .Action = Throttle});
+    const std::array active{context};
+
+    FakeRawInput raw = StickPushed(true);
+    raw.Axes.emplace_back(StickY, -0.4f);
+    const ActionState state = ResolveActions(active, raw, {});
+    CHECK(state.GetAxis(Roll) == doctest::Approx(0.8f));
+    CHECK(state.GetAxis(Throttle) == doctest::Approx(-0.4f));
+}
+
+TEST_CASE("A live chord suppresses across contexts; a shadowed chord suppresses nothing")
+{
+    const ResolvedContext plain{.Actions = {AxisAction(Yaw)}, .Bindings = {PlainYaw()}};
+    const ResolvedContext chord{.Actions = {AxisAction(Roll)}, .Bindings = {ChordRoll()}};
+
+    SUBCASE("a chord in a higher context silences a lower plain binding")
+    {
+        const std::array active{plain, chord};
+        const ActionState state = ResolveActions(active, StickPushed(true), {});
+        CHECK(state.GetAxis(Yaw) == 0.0f);
+        CHECK(state.GetAxis(Roll) == doctest::Approx(0.8f));
+    }
+
+    SUBCASE("a chord in a lower context silences a higher plain binding")
+    {
+        const std::array active{chord, plain};
+        const ActionState state = ResolveActions(active, StickPushed(true), {});
+        CHECK(state.GetAxis(Yaw) == 0.0f);
+        CHECK(state.GetAxis(Roll) == doctest::Approx(0.8f));
+    }
+
+    SUBCASE("a chord whose action a higher context rebinds is dead")
+    {
+        // The top context binds Roll to a key, shadowing the chord, so the stick keeps driving Yaw.
+        const ResolvedContext rebound{
+            .Actions = {AxisAction(Roll)},
+            .Bindings = {Binding{.Source = {.Device = InputDeviceType::Keyboard, .Control = KeyW},
+                                 .Action = Roll}}};
+        const std::array active{plain, chord, rebound};
+        const ActionState state = ResolveActions(active, StickPushed(true), {});
+        CHECK(state.GetAxis(Yaw) == doctest::Approx(0.8f));
+        CHECK(state.GetAxis(Roll) == 0.0f);
+    }
+}
+
+TEST_CASE("An axis modifier counts at its ModifierThreshold, not the binding's Threshold")
+{
+    // A trigger modifier at 0.6; the binding's own Threshold (0.1) shapes only the stick.
+    Binding chord = ChordRoll();
+    chord.Modifier = {.Device = InputDeviceType::GamepadAxis, .Control = Trigger};
+    chord.ModifierThreshold = 0.6f;
+    chord.Threshold = 0.1f;
+    const std::array active{ResolvedContext{.Actions = {AxisAction(Yaw), AxisAction(Roll)},
+                                            .Bindings = {PlainYaw(), chord}}};
+
+    const auto resolveAt = [&active](const f32 trigger)
+    {
+        FakeRawInput raw;
+        raw.Axes = {{StickX, 0.8f}, {Trigger, trigger}};
+        return ResolveActions(active, raw, {});
+    };
+
+    const ActionState light = resolveAt(0.3f);
+    CHECK(light.GetAxis(Roll) == 0.0f);
+    CHECK(light.GetAxis(Yaw) == doctest::Approx(0.8f));
+
+    const ActionState pulled = resolveAt(0.6f);
+    CHECK(pulled.GetAxis(Roll) == doctest::Approx(0.8f));
+    CHECK(pulled.GetAxis(Yaw) == 0.0f);
+}
+
+TEST_CASE("A keyboard chord on a button action replaces the key's plain meaning")
+{
+    constexpr u32 KeyShift = 6;
+    const std::array active{ResolvedContext{
+        .Actions = {InputAction{.Id = Jump, .Name = "Jump", .Kind = ActionKind::Button},
+                    InputAction{.Id = Boost, .Name = "Boost", .Kind = ActionKind::Button}},
+        .Bindings = {
+            Binding{.Source = {.Device = InputDeviceType::Keyboard, .Control = KeySpace},
+                    .Action = Jump},
+            Binding{.Source = {.Device = InputDeviceType::Keyboard, .Control = KeySpace},
+                    .Action = Boost,
+                    .Modifier = {.Device = InputDeviceType::Keyboard, .Control = KeyShift}}}}};
+
+    FakeRawInput raw;
+    raw.KeysDown = {KeySpace, KeyShift};
+    const ActionState state = ResolveActions(active, raw, {});
+    CHECK(state.IsHeld(Boost));
+    CHECK_FALSE(state.IsHeld(Jump));
+}
+
+TEST_CASE("Modifier then control and control then modifier resolve the same")
+{
+    const std::array active{StickContext()};
+
+    FakeRawInput modifierOnly;
+    modifierOnly.PadButtonsDown = {StickClick};
+    const ActionState modifierFirst =
+        ResolveActions(active, StickPushed(true), ResolveActions(active, modifierOnly, {}));
+
+    const ActionState controlFirst =
+        ResolveActions(active, StickPushed(true), ResolveActions(active, StickPushed(false), {}));
+
+    for (const ActionState* state : {&modifierFirst, &controlFirst})
+    {
+        CHECK(state->GetAxis(Roll) == doctest::Approx(0.8f));
+        CHECK(state->WasTriggered(Roll));
+        CHECK(state->GetAxis(Yaw) == 0.0f);
+    }
 }

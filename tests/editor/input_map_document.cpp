@@ -37,7 +37,9 @@ namespace
           "Axis": "X",
           "Scale": -0.5,
           "Threshold": 0.25,
-          "Exponent": 2.0
+          "Exponent": 2.0,
+          "Modifier": { "Device": "GamepadAxis", "Control": 4 },
+          "ModifierThreshold": 0.75
         },
         {
           "Source": { "Device": "GamepadAxis", "Control": 5 },
@@ -45,7 +47,9 @@ namespace
           "Axis": "Whole",
           "Scale": 1.0,
           "Threshold": 0.5,
-          "Exponent": 1.0
+          "Exponent": 1.0,
+          "Modifier": { "Device": "None", "Control": 0 },
+          "ModifierThreshold": 0.5
         }
       ]
     })";
@@ -72,12 +76,15 @@ TEST_CASE("input map document: a load and save leaves every authored field uncha
     REQUIRE(loaded->Bindings.size() == 2);
     CHECK(loaded->Bindings[0].Threshold == doctest::Approx(0.25f));
     CHECK(loaded->Bindings[0].Exponent == doctest::Approx(2.0f));
+    CHECK(loaded->Bindings[0].Modifier.Device == InputDeviceType::GamepadAxis);
+    CHECK(loaded->Bindings[0].Modifier.Control == 4u);
+    CHECK(loaded->Bindings[0].ModifierThreshold == doctest::Approx(0.75f));
 
     REQUIRE(WriteInputMapDocument(file, *loaded, types).has_value());
     CHECK(ReadJson(file) == nlohmann::json::parse(MapJson));
 }
 
-TEST_CASE("input map document: a binding authoring no shaping reads the defaults")
+TEST_CASE("input map document: a binding authoring no shaping or modifier reads the defaults")
 {
     TypeRegistry types;
     RegisterBuiltinTypes(types);
@@ -96,4 +103,6 @@ TEST_CASE("input map document: a binding authoring no shaping reads the defaults
     CHECK(binding.Scale == 1.0f);
     CHECK(binding.Threshold == 0.0f);
     CHECK(binding.Exponent == 1.0f);
+    CHECK(binding.Modifier.Device == InputDeviceType::None);
+    CHECK(binding.ModifierThreshold == 0.5f);
 }

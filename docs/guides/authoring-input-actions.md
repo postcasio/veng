@@ -130,12 +130,17 @@ JSON walker, so an absent field takes its default and a key naming no field is a
   `sign(s)·|s|^Exponent` on the scaled value `s`, applied after the threshold: `2`
   maps a half deflection to a quarter, for fine aiming near centre. A `Button` action
   ignores it.
+- **`Modifier`** (default `{ "Device": "None" }`, no modifier) makes the binding a
+  **chord**, and **`ModifierThreshold`** (default `0.5`) is the value the modifier must
+  reach; see [Chorded bindings](#chorded-bindings).
 
 The cook **validates every binding against the context's declared actions**: a
 binding naming an action the context does not declare is a located cook error (the
 typo-catch a global registry would otherwise miss), as is a duplicate or null action
-id, an unknown device/axis/kind name, a negative `Threshold`, or an `Exponent` that is
-not greater than 0. Add the source to the asset pack manifest like
+id, an unknown device/axis/kind name, a negative `Threshold`, an `Exponent` that is
+not greater than 0, a `Source` with device `None`, a gamepad `Source` or `Modifier`
+indexing past the last button or axis, a negative `ModifierThreshold`, or a key or
+button modifier whose `ModifierThreshold` is over 1 (it would never be down). Add the source to the asset pack manifest like
 any other asset:
 
 ```json
@@ -320,6 +325,40 @@ readable through `Input::GetRawGamepadAxis`, and the gamepad debug panel
 (`Veng::UI::GamepadPanel`) shows them beside the shaped ones with live zone sliders. A
 binding's own `Threshold` and `Exponent` then shape the zoned value per binding, so an
 input map authors the pull point and the response curve and never a deadzone.
+
+---
+
+## Chorded bindings
+
+A pad has too few buttons for a control scheme with many verbs, so a binding can name a
+**`Modifier`**: a control that must be held for the binding to contribute. A modifier
+held plus a control is a **chord**, and it works on axes as well as buttons — "hold the
+left stick click and the right stick's X axis rolls instead of yawing":
+
+```json
+{ "Source": { "Device": "GamepadAxis", "Control": 2 }, "Action": "<Yaw>" },
+{ "Source": { "Device": "GamepadAxis", "Control": 2 }, "Action": "<Roll>",
+  "Modifier": { "Device": "GamepadButton", "Control": 7 } }
+```
+
+- **The modifier reads as a button.** A key, mouse button or pad button is down while
+  held; an axis (a trigger, a stick half) is down when its value is positive and at
+  least `ModifierThreshold`. That is separate from the binding's own `Threshold`, which
+  shapes the controlled source. Only the positive half of an axis can be a modifier.
+- **A chord replaces the plain meaning of its control.** While a chord is **live**, every
+  plain binding on the **same `Source`** contributes nothing, in any active context —
+  so above, holding the stick click stops the stick driving Yaw. A chord is live while
+  its modifier is down **and** its action resolves from the chord's own context; a chord
+  whose action a higher context rebinds is dead and silences nothing. Suppression is
+  computed before any value accumulates, so it depends on neither binding nor context
+  order, and pressing the modifier before or after the control resolves the same. A chord
+  never silences another chord.
+- **A modifier need not be an action.** A control used only as a modifier carries no
+  binding of its own. If it does carry one, that binding fires as usual while it is held.
+- **Keyboard chords work the same** (Shift + key). A binding has one modifier, so "either
+  Shift" is two bindings, one on `LeftShift` (`340`) and one on `RightShift` (`344`).
+- **Phase stays with the action.** An action held through a plain binding and then
+  through a chord stays `Ongoing` as long as its value never reaches zero.
 
 ---
 

@@ -2,8 +2,9 @@
 // CookedInputMapHeader plus that the { actions, bindings } record round-trips back through
 // ReadFields into the resolver-ready form InputMappingContext exposes. Also covers each
 // validation failure — an unknown-action binding, a Button/axis kind mismatch, a null id, a
-// duplicate id, an unknown enum name, an unknown key, and out-of-range shaping. An input map needs no --module (it references only engine
-// builtins), so the cook runs with a builtin-only registry and no module load.
+// duplicate id, an unknown enum name, an unknown key, out-of-range shaping, and an unreadable
+// source or chord modifier. An input map needs no --module (it references only engine builtins), so
+// the cook runs with a builtin-only registry and no module load.
 
 #include <cstring>
 #include <filesystem>
@@ -348,6 +349,76 @@ TEST_CASE("input map cook: a negative threshold or a non-positive exponent is a 
         CookInputMap(WriteInputMapPack("inputmap_bad_exponent", flat), AssetId{7777});
     REQUIRE_FALSE(flatBlob.has_value());
     CHECK(flatBlob.error().find("Exponent") != string::npos);
+}
+
+TEST_CASE("input map cook: a chord's modifier and its threshold author into the resolved context")
+{
+    json map = SampleMap();
+    map["Bindings"][0]["Modifier"] = {{"Device", "GamepadAxis"}, {"Control", 4}};
+    map["Bindings"][0]["ModifierThreshold"] = 0.75;
+    const path packJson = WriteInputMapPack("inputmap_chord", map);
+
+    const Result<vector<u8>> blobResult = CookInputMap(packJson, AssetId{7777});
+    REQUIRE_MESSAGE(blobResult.has_value(),
+                    "cook failed: ", blobResult ? string{} : blobResult.error());
+
+    TypeRegistry registry;
+    RegisterBuiltinTypes(registry);
+    CookedInputMapHeader header{};
+    std::memcpy(&header, blobResult->data(), sizeof(header));
+    const std::span<const u8> record(blobResult->data() + sizeof(CookedInputMapHeader),
+                                     header.RecordBytes);
+    InputMapData data;
+    REQUIRE(
+        ReadFields(record, &data, registry.Info(TypeIdOf<InputMapData>()), registry).has_value());
+    REQUIRE(data.Bindings.size() == 4);
+    CHECK(data.Bindings[0].Modifier.Device == InputDeviceType::GamepadAxis);
+    CHECK(data.Bindings[0].Modifier.Control == 4u);
+    CHECK(data.Bindings[0].ModifierThreshold == doctest::Approx(0.75f));
+    // A binding authoring no modifier stays plain.
+    CHECK(data.Bindings[1].Modifier.Device == InputDeviceType::None);
+    CHECK(data.Bindings[1].ModifierThreshold == doctest::Approx(0.5f));
+}
+
+TEST_CASE("input map cook: an unreadable source or modifier is a located error")
+{
+    const auto cookError = [](const string& name, const json& map)
+    {
+        const Result<vector<u8>> blob = CookInputMap(WriteInputMapPack(name, map), AssetId{7777});
+        REQUIRE_FALSE(blob.has_value());
+        return blob.error();
+    };
+
+    SUBCASE("a source with no device")
+    {
+        json map = SampleMap();
+        map["Bindings"][0]["Source"]["Device"] = "None";
+        CHECK(cookError("inputmap_source_none", map).find("'None'") != string::npos);
+    }
+
+    SUBCASE("a modifier past the last pad button")
+    {
+        json map = SampleMap();
+        map["Bindings"][0]["Modifier"] = {{"Device", "GamepadButton"}, {"Control", 999}};
+        CHECK(cookError("inputmap_modifier_range", map).find("'Modifier'") != string::npos);
+    }
+
+    SUBCASE("a negative modifier threshold")
+    {
+        json map = SampleMap();
+        map["Bindings"][0]["Modifier"] = {{"Device", "GamepadAxis"}, {"Control", 4}};
+        map["Bindings"][0]["ModifierThreshold"] = -0.5;
+        CHECK(cookError("inputmap_modifier_negative", map).find("ModifierThreshold") !=
+              string::npos);
+    }
+
+    SUBCASE("a digital modifier that could never reach its threshold")
+    {
+        json map = SampleMap();
+        map["Bindings"][0]["Modifier"] = {{"Device", "Keyboard"}, {"Control", 340}};
+        map["Bindings"][0]["ModifierThreshold"] = 1.5;
+        CHECK(cookError("inputmap_modifier_unreachable", map).find("never down") != string::npos);
+    }
 }
 
 TEST_CASE("input map cook: a key naming no reflected field is a located error")

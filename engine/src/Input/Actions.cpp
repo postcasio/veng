@@ -32,8 +32,29 @@ namespace Veng
             case InputDeviceType::MouseAxis:
             case InputDeviceType::GamepadAxis:
                 return raw.GetAxis(source.Device, source.Control);
+            case InputDeviceType::None:
+                return 0.0f;
             }
             return 0.0f;
+        }
+
+        /// @brief Whether a binding is a chord: it names a modifier.
+        bool IsChord(const Binding& binding)
+        {
+            return binding.Modifier.Device != InputDeviceType::None;
+        }
+
+        /// @brief Whether a chord's modifier is down: read as a button, on its positive half-axis.
+        bool IsModifierDown(const Binding& binding, const RawInputView& raw)
+        {
+            const f32 value = ReadSource(binding.Modifier, raw);
+            return value > 0.0f && value >= binding.ModifierThreshold;
+        }
+
+        /// @brief Whether two sources name the same control on the same device.
+        bool SameControl(const InputSource& a, const InputSource& b)
+        {
+            return a.Device == b.Device && a.Control == b.Control;
         }
 
         /// @brief What one binding contributes to an action of the given kind; see Binding.
@@ -118,32 +139,72 @@ namespace Veng
             }
         }
 
-        // Accumulate values. A higher-priority context (later in active) that binds an action
-        // shadows every lower context's bindings of that same action, so find the highest
-        // context binding each action and combine only its bindings.
+        // Find each action's winning context: a higher-priority context (later in active) that
+        // binds an action shadows every lower context's bindings of that same action, so only the
+        // highest context binding it contributes.
+        constexpr usize NoContext = ~usize{0};
+        vector<usize> winners(result.Actions.size(), NoContext);
         for (usize index = 0; index < result.Actions.size(); ++index)
         {
-            ActionSample& sample = result.Actions[index];
-            const vector<Binding>* winningBindings = nullptr;
-            for (const ResolvedContext& context : active)
+            const ActionId id = result.Actions[index].Id;
+            for (usize contextIndex = 0; contextIndex < active.size(); ++contextIndex)
             {
                 const bool bindsAction =
-                    std::ranges::any_of(context.Bindings, [&sample](const Binding& binding)
-                                        { return binding.Action == sample.Id; });
+                    std::ranges::any_of(active[contextIndex].Bindings, [id](const Binding& binding)
+                                        { return binding.Action == id; });
                 if (bindsAction)
                 {
-                    winningBindings = &context.Bindings;
+                    winners[index] = contextIndex;
                 }
             }
+        }
 
-            if (winningBindings == nullptr)
+        // Collect the sources a live chord claims. A chord is live while its modifier is down and
+        // its action resolves from the chord's own context; a chord whose action a higher context
+        // shadows is dead and claims nothing. Gathered before any value accumulates, so
+        // suppression depends on neither binding nor context order.
+        vector<InputSource> claimed;
+        for (usize contextIndex = 0; contextIndex < active.size(); ++contextIndex)
+        {
+            for (const Binding& binding : active[contextIndex].Bindings)
+            {
+                if (!IsChord(binding) || !IsModifierDown(binding, raw))
+                {
+                    continue;
+                }
+                const auto sample =
+                    std::ranges::find_if(result.Actions, [&binding](const ActionSample& candidate)
+                                         { return candidate.Id == binding.Action; });
+                const auto index = static_cast<usize>(sample - result.Actions.begin());
+                if (sample != result.Actions.end() && winners[index] == contextIndex)
+                {
+                    claimed.push_back(binding.Source);
+                }
+            }
+        }
+
+        // Accumulate values from each action's winning bindings: a chord only while its modifier
+        // is down, a plain binding only while no live chord claims its source.
+        const auto contributes = [&raw, &claimed](const Binding& binding)
+        {
+            if (IsChord(binding))
+            {
+                return IsModifierDown(binding, raw);
+            }
+            return std::ranges::none_of(claimed, [&binding](const InputSource& source)
+                                        { return SameControl(source, binding.Source); });
+        };
+        for (usize index = 0; index < result.Actions.size(); ++index)
+        {
+            if (winners[index] == NoContext)
             {
                 continue;
             }
 
-            for (const Binding& binding : *winningBindings)
+            ActionSample& sample = result.Actions[index];
+            for (const Binding& binding : active[winners[index]].Bindings)
             {
-                if (binding.Action != sample.Id)
+                if (binding.Action != sample.Id || !contributes(binding))
                 {
                     continue;
                 }

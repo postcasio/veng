@@ -54,7 +54,12 @@ namespace Veng
         /// @brief A gamepad button (Control is a GamepadButton index).
         GamepadButton,
         /// @brief A gamepad analog axis (Control is a GamepadAxis index).
-        GamepadAxis
+        GamepadAxis,
+        /// @brief No device: the unset sentinel, which reads neutral.
+        ///
+        /// A binding's Modifier defaults to it, meaning "no modifier"; a binding's own Source never
+        /// names it.
+        None
     };
 
     /// @brief A raw control reference: a device kind plus a control code interpreted per device.
@@ -96,6 +101,13 @@ namespace Veng
     ///   passes through the response curve sign(s) · |s|^Exponent, with no rescale at the threshold.
     ///
     /// The defaults (Threshold 0, Exponent 1) leave an axis binding's value unchanged.
+    ///
+    /// A binding with a Modifier is a **chord**: it contributes only while its modifier is down,
+    /// the modifier read as a button on its positive half-axis at ModifierThreshold. While a chord
+    /// is **live** (its modifier is down and its action resolves from the chord's context, not
+    /// shadowed by a higher one), every plain binding on the same Source, in any active context,
+    /// contributes nothing, so the chord replaces the plain meaning of its control rather than
+    /// adding to it. A chord never suppresses another chord.
     struct Binding
     {
         /// @brief The raw control this binding reads.
@@ -121,6 +133,18 @@ namespace Veng
         /// Above 1 it gives fine control near centre (2 maps a half deflection to a quarter);
         /// 1 is linear. A Button action ignores it.
         f32 Exponent = 1.0f;
+
+        /// @brief The control that must be held for this binding to contribute.
+        ///
+        /// A Device of InputDeviceType::None (the default) means no modifier: a plain binding.
+        InputSource Modifier{.Device = InputDeviceType::None};
+
+        /// @brief The value the modifier must reach to count as down, 0 or more.
+        ///
+        /// The modifier reads as a button does: down when its value v > 0 and v ≥ this, so a key,
+        /// mouse or pad button (v = 1) is down whenever held, and a trigger or stick half-axis is
+        /// down past this pull. Separate from Threshold, which shapes the binding's own Source.
+        f32 ModifierThreshold = 0.5f;
     };
 
     /// @brief How an action's activation changed this tick.
@@ -299,9 +323,10 @@ namespace Veng
     /// keeping its first position). A higher-priority context (later in active) that binds an
     /// action shadows a lower context's bindings of that same action entirely. Combines a 2D
     /// action's component bindings, shapes each binding's source by its scale, threshold and
-    /// curve (see Binding), and derives each action's phase by comparing this tick's activation
-    /// against previous — the seat's ActionState from last tick — so phase needs no stateful
-    /// adapter and works for axis actions.
+    /// curve, gates a chord on its modifier and silences the plain bindings a live chord shares a
+    /// source with (see Binding), and derives each action's phase by comparing this tick's
+    /// activation against previous — the seat's ActionState from last tick — so phase needs no
+    /// stateful adapter and works for axis actions.
     /// @param active    The active context stack, lowest priority first.
     /// @param raw       This tick's raw input read surface.
     /// @param previous  The seat's resolved ActionState from last tick, for phase derivation.
@@ -324,6 +349,7 @@ VE_ENUMERATOR(MouseButton)
 VE_ENUMERATOR(MouseAxis)
 VE_ENUMERATOR(GamepadButton)
 VE_ENUMERATOR(GamepadAxis)
+VE_ENUMERATOR(None)
 VE_ENUM_END();
 
 VE_ENUM(::Veng::AxisComponent, 0xFA84EF435C864686ULL)
@@ -374,6 +400,15 @@ VE_FIELD(Exponent, .DisplayName = "Exponent",
          .Tooltip = "Response curve sign(s)*|s|^Exponent on an axis action; above 1 gives fine "
                     "control near centre. Ignored by a button action.",
          .Category = "Shaping")
+VE_FIELD(Modifier, .DisplayName = "Modifier",
+         .Tooltip = "A control that must be held for this binding to count (a chord); Device "
+                    "None means none. While it is held, plain bindings on the same source are "
+                    "silent.",
+         .Category = "Chord")
+VE_FIELD(ModifierThreshold, .DisplayName = "Modifier Threshold",
+         .Tooltip = "Value the modifier must reach to count as held, on its positive half; a "
+                    "key or button is held at any value up to 1.",
+         .Category = "Chord")
 VE_REFLECT_END();
 
 VE_REFLECT(::Veng::ActionSample, 0xCCB2AAE2234FF034ULL)
