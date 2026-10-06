@@ -35,8 +35,10 @@ namespace Veng::Net
     /// snapshot interval, which a client's remote interpolation adopts in place of its own setting.
     /// Version 8 added reliable-message fragmentation: a reliable message larger than one packet
     /// travels as ordered fragments flagged on the packet's channel byte, while an unfragmented
-    /// message keeps the framing every version shares.
-    inline constexpr u32 ProtocolVersion = 8;
+    /// message keeps the framing every version shares. Version 9 added the reliable
+    /// component-state message, for a component too large for one snapshot packet, and grew every
+    /// input packet with the acknowledgement of that stream.
+    inline constexpr u32 ProtocolVersion = 9;
 
     /// @brief Wire overhead of a connect request, in bytes, ahead of its account profile blob.
     ///

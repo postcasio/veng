@@ -218,13 +218,14 @@ namespace Veng
         return state;
     }
 
-    vector<u8> EncodePackedInputPacket(u64 ackedServerTick, u64 contextHash,
+    vector<u8> EncodePackedInputPacket(u64 ackedServerTick, u64 ackedStateSequence, u64 contextHash,
                                        std::span<const TickedInput> records,
                                        std::span<const PackedInputAction> schema)
     {
         AssertContiguous(records);
         vector<u8> out;
         AppendU64(out, ackedServerTick);
+        AppendU64(out, ackedStateSequence);
         AppendU64(out, contextHash);
         AppendU64(out, records.empty() ? 0 : records.front().ClientTick);
         AppendU32(out, static_cast<u32>(records.size()));
@@ -243,10 +244,11 @@ namespace Veng
     {
         usize cursor = 0;
         const Result<u64> ackedServerTick = ReadU64(packet, cursor);
+        const Result<u64> ackedStateSequence = ReadU64(packet, cursor);
         const Result<u64> contextHash = ReadU64(packet, cursor);
         const Result<u64> firstClientTick = ReadU64(packet, cursor);
         const Result<u32> count = ReadU32(packet, cursor);
-        if (!ackedServerTick || !contextHash || !firstClientTick || !count)
+        if (!ackedServerTick || !ackedStateSequence || !contextHash || !firstClientTick || !count)
         {
             return std::unexpected("packed input packet: truncated header");
         }
@@ -257,6 +259,7 @@ namespace Veng
 
         InputPacket result;
         result.AckedServerTick = *ackedServerTick;
+        result.AckedStateSequence = *ackedStateSequence;
         for (u32 i = 0; i < *count; ++i)
         {
             const Result<u16> viewDelay = ReadU16(packet, cursor);
@@ -292,14 +295,15 @@ namespace Veng
         return decayed;
     }
 
-    vector<u8> EncodeInputPacket(u64 ackedServerTick, std::span<const TickedInput> records,
-                                 const TypeRegistry& registry)
+    vector<u8> EncodeInputPacket(u64 ackedServerTick, u64 ackedStateSequence,
+                                 std::span<const TickedInput> records, const TypeRegistry& registry)
     {
         AssertContiguous(records);
         const TypeInfo& info = ActionStateInfo(registry);
 
         vector<u8> out;
         AppendU64(out, ackedServerTick);
+        AppendU64(out, ackedStateSequence);
         AppendU64(out, records.empty() ? 0 : records.front().ClientTick);
         AppendU32(out, static_cast<u32>(records.size()));
 
@@ -323,6 +327,11 @@ namespace Veng
         {
             return std::unexpected("input packet: truncated header");
         }
+        const Result<u64> ackedStateSequence = ReadU64(packet, cursor);
+        if (!ackedStateSequence)
+        {
+            return std::unexpected("input packet: truncated header");
+        }
         const Result<u64> firstClientTick = ReadU64(packet, cursor);
         if (!firstClientTick)
         {
@@ -336,6 +345,7 @@ namespace Veng
 
         InputPacket result;
         result.AckedServerTick = *ackedServerTick;
+        result.AckedStateSequence = *ackedStateSequence;
 
         const TypeInfo& info = ActionStateInfo(registry);
         for (u32 i = 0; i < *count; ++i)
@@ -389,9 +399,10 @@ namespace Veng
         }
     }
 
-    vector<u8> InputSendBuffer::Encode(u64 ackedServerTick, const TypeRegistry& registry) const
+    vector<u8> InputSendBuffer::Encode(u64 ackedServerTick, u64 ackedStateSequence,
+                                       const TypeRegistry& registry) const
     {
-        return EncodeInputPacket(ackedServerTick, m_Window, registry);
+        return EncodeInputPacket(ackedServerTick, ackedStateSequence, m_Window, registry);
     }
 
     void InputJitterBuffer::Ingest(const InputPacket& packet)
@@ -421,7 +432,7 @@ namespace Veng
         if (!m_Buffer.empty())
         {
             ++m_ConsumeCount;
-            auto oldest = m_Buffer.extract(m_Buffer.begin());
+            const auto oldest = m_Buffer.extract(m_Buffer.begin());
             m_LastConsumedTick = oldest.key();
             m_LastViewDelayTicks = oldest.mapped().ViewDelayTicks;
             m_Last = oldest.mapped().State;
@@ -455,7 +466,7 @@ namespace Veng
         if (const auto it = m_Buffer.find(tick); it != m_Buffer.end())
         {
             ++m_ConsumeCount;
-            auto node = m_Buffer.extract(it);
+            const auto node = m_Buffer.extract(it);
             m_LastConsumedTick = tick;
             m_LastViewDelayTicks = node.mapped().ViewDelayTicks;
             m_Last = node.mapped().State;

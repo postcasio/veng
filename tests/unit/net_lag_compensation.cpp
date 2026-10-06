@@ -139,7 +139,7 @@ TEST_CASE("A client's stamped view tick reaches the server's seat to within a wi
     send.Stamp(99, SomeInput(), 92.0);
     send.Stamp(100, SomeInput(), viewTick);
 
-    const Result<InputPacket> decoded = DecodeInputPacket(send.Encode(0, types), types);
+    const Result<InputPacket> decoded = DecodeInputPacket(send.Encode(0, 0, types), types);
     REQUIRE(decoded.has_value());
     InputJitterBuffer jitter;
     jitter.Ingest(*decoded);
@@ -169,7 +169,7 @@ TEST_CASE("A view delay is carried as non-negative and bounded by the wire")
     send.Stamp(11, SomeInput(), -10000.0); // a view older than the wire carries clamps
     send.Stamp(12, SomeInput());           // no view drawn in the past
 
-    const Result<InputPacket> decoded = DecodeInputPacket(send.Encode(0, types), types);
+    const Result<InputPacket> decoded = DecodeInputPacket(send.Encode(0, 0, types), types);
     REQUIRE(decoded.has_value());
     REQUIRE(decoded->Inputs.size() == 3);
     CHECK(decoded->Inputs[0].ViewDelayTicks == 0.0f);

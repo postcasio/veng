@@ -2401,12 +2401,13 @@ namespace Veng
 
         // Acknowledge the highest applied server tick for this world so the server advances this
         // connection's delta baselines (and gates its snapshots against them) rather than re-sending
-        // full state forever. Tag the input with the world's JoinId so the server demuxes it to the
-        // right instance.
+        // full state forever, and the newest component-state message so the server sends the next.
+        // Tag the input with the world's JoinId so the server demuxes it to the right instance.
         if (m_Net->Client->State() == Net::ClientState::Connected)
         {
             const vector<u8> packet =
-                state.Send.Encode(m_Net->ClientHost->LastServerTick(join), m_TypeRegistry);
+                state.Send.Encode(m_Net->ClientHost->LastServerTick(join),
+                                  m_Net->ClientHost->GetAppliedStateSequence(join), m_TypeRegistry);
             (void)m_Net->Client->Server().Send(Net::Channel::UnreliableSequenced,
                                                Net::EncodeWorldEnvelope(join, packet));
         }

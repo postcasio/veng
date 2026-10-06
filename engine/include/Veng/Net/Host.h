@@ -843,6 +843,13 @@ namespace Veng
         /// @param join  The JoinId to resolve.
         [[nodiscard]] u64 LastServerTick(Net::JoinId join) const;
 
+        /// @brief The newest reliable component-state sequence a join has received, or 0.
+        ///
+        /// The join's acknowledgement of its component-state stream, sent beside LastServerTick in
+        /// each input packet (see ReplicationClient::GetAppliedStateSequence).
+        /// @param join  The JoinId to resolve.
+        [[nodiscard]] u64 GetAppliedStateSequence(Net::JoinId join) const;
+
         /// @brief The snapshot interval a join's server reported in its join reply, in server ticks.
         ///
         /// The interval is the server's: on the reply the host also writes it (with the reply's

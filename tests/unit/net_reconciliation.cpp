@@ -721,7 +721,7 @@ namespace
             {
                 (void)Client->Server().Send(
                     Channel::UnreliableSequenced,
-                    EncodeWorldEnvelope(Host->CurrentJoinId(), Send.Encode(0, Types)));
+                    EncodeWorldEnvelope(Host->CurrentJoinId(), Send.Encode(0, 0, Types)));
             }
         }
     };

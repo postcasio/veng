@@ -130,7 +130,7 @@ TEST_CASE("The world-drive input feed carries a client's input into the server s
     constexpr f64 viewTick = 13.75;
     send.Stamp(inputTick, MoveState(move), viewTick);
     (void)client->Server().Send(Channel::UnreliableSequenced,
-                                EncodeWorldEnvelope(join, send.Encode(0, serverTypes)));
+                                EncodeWorldEnvelope(join, send.Encode(0, 0, serverTypes)));
 
     // The server receives, ingests into the (connection, join) jitter buffer, then feeds the seat.
     std::unordered_map<u64, InputJitterBuffer> jitter;

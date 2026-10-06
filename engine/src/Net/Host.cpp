@@ -510,7 +510,7 @@ namespace Veng
                 existing != conn.KeyToJoin.end())
             {
                 const JoinState& join = conn.Joins.at(existing->second);
-                HostedWorld& world = WorldOf(join.World);
+                const HostedWorld& world = WorldOf(join.World);
                 const NetId seatNet = world.World->Has<NetIdentity>(join.Seat)
                                           ? world.World->Get<NetIdentity>(join.Seat).Id
                                           : InvalidNetId;
@@ -1856,7 +1856,7 @@ namespace Veng
     void ClientHost::Travel(const Net::WorldKey& key, const Net::Blob& payload, const bool present,
                             const optional<bool> standing)
     {
-        State& s = *m_State;
+        const State& s = *m_State;
         const vector<u8> message = Net::EncodeTravelRequest(Net::TravelRequestMessage{
             .Key = key,
             .Payload = payload,
@@ -2264,6 +2264,12 @@ namespace Veng
     {
         const State::JoinClient* jc = m_State->JoinClientOf(join);
         return jc != nullptr ? jc->LastServerTick : 0;
+    }
+
+    u64 ClientHost::GetAppliedStateSequence(Net::JoinId join) const
+    {
+        const State::JoinClient* jc = m_State->JoinClientOf(join);
+        return jc != nullptr ? jc->Replication->GetAppliedStateSequence() : 0;
     }
 
     u64 ClientHost::GetSnapshotInterval(const Net::JoinId join) const

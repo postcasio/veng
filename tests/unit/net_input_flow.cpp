@@ -98,7 +98,7 @@ namespace
     }
 }
 
-TEST_CASE("EncodeInputPacket round-trips the ack and a contiguous tick run")
+TEST_CASE("EncodeInputPacket round-trips both acks and a contiguous tick run")
 {
     const TypeRegistry registry = MakeRegistry();
 
@@ -107,11 +107,12 @@ TEST_CASE("EncodeInputPacket round-trips the ack and a contiguous tick run")
         TickedInput{.ClientTick = 6, .State = MakeState(vec2(0.0f, 1.0f), ActionPhase::Started)},
         TickedInput{.ClientTick = 7, .State = MakeState(vec2(-1.0f, 0.0f))},
     };
-    const vector<u8> bytes = EncodeInputPacket(/*acked=*/7, records, registry);
+    const vector<u8> bytes = EncodeInputPacket(/*acked=*/7, /*ackedState=*/3, records, registry);
 
     const Result<InputPacket> decoded = DecodeInputPacket(bytes, registry);
     REQUIRE(decoded.has_value());
     CHECK(decoded->AckedServerTick == 7);
+    CHECK(decoded->AckedStateSequence == 3);
     REQUIRE(decoded->Inputs.size() == 3);
     CHECK(decoded->Inputs[0].ClientTick == 5);
     CHECK(decoded->Inputs[1].ClientTick == 6);
@@ -132,7 +133,7 @@ TEST_CASE("InputSendBuffer keeps the last N ticks and encodes them redundantly")
     }
     CHECK(send.Size() == 3);
 
-    const Result<InputPacket> decoded = DecodeInputPacket(send.Encode(0, registry), registry);
+    const Result<InputPacket> decoded = DecodeInputPacket(send.Encode(0, 0, registry), registry);
     REQUIRE(decoded.has_value());
     REQUIRE(decoded->Inputs.size() == 3);
     CHECK(decoded->Inputs[0].ClientTick == 2);
@@ -150,7 +151,7 @@ TEST_CASE("A send window restarts at a tick discontinuity rather than relabellin
     send.Stamp(31, MakeState(vec2(0.0f, 0.0f)));
     send.Stamp(71, MakeState(vec2(1.0f, 0.0f)));
 
-    const Result<InputPacket> decoded = DecodeInputPacket(send.Encode(0, registry), registry);
+    const Result<InputPacket> decoded = DecodeInputPacket(send.Encode(0, 0, registry), registry);
     REQUIRE(decoded.has_value());
     REQUIRE(decoded->Inputs.size() == 1);
     CHECK(decoded->Inputs[0].ClientTick == 71);
@@ -162,7 +163,7 @@ TEST_CASE("An input-idle send buffer still carries its ack")
     const TypeRegistry registry = MakeRegistry();
 
     const InputSendBuffer send;
-    const Result<InputPacket> decoded = DecodeInputPacket(send.Encode(42, registry), registry);
+    const Result<InputPacket> decoded = DecodeInputPacket(send.Encode(42, 0, registry), registry);
     REQUIRE(decoded.has_value());
     CHECK(decoded->AckedServerTick == 42);
     CHECK(decoded->Inputs.empty());
@@ -182,7 +183,7 @@ TEST_CASE("DecodeInputPacket rejects a truncated header but recovers a truncated
         TickedInput{.ClientTick = 11, .State = MakeState(vec2(0.0f, 1.0f))},
         TickedInput{.ClientTick = 12, .State = MakeState(vec2(-1.0f, 0.0f))},
     };
-    vector<u8> bytes = EncodeInputPacket(0, records, registry);
+    vector<u8> bytes = EncodeInputPacket(0, 0, records, registry);
     bytes.resize(bytes.size() - 4); // lop the tail off the last record
 
     const Result<InputPacket> decoded = DecodeInputPacket(bytes, registry);
@@ -224,7 +225,7 @@ TEST_CASE("The jitter buffer feeds inputs at their client tick despite loss and 
         const ActionState state = MakeState(vec2(static_cast<f32>(tick), -static_cast<f32>(tick)));
         produced.push_back(state);
         send.Stamp(tick, state);
-        packets.push_back(send.Encode(0, registry));
+        packets.push_back(send.Encode(0, 0, registry));
     }
 
     // A lossy, reordering channel: drop packets 2 and 5 entirely (their ticks ride the redundant
@@ -345,7 +346,7 @@ TEST_CASE("A scripted client input drives the server pawn through the unchanged 
         const ActionState state = MakeState(vec2(1.0f, 0.5f));
         produced.push_back(state);
         send.Stamp(tick, state);
-        packets.push_back(send.Encode(0, registry));
+        packets.push_back(send.Encode(0, 0, registry));
     }
 
     InputJitterBuffer jitter(InputJitterBuffer::Settings{.TargetDepth = 100});

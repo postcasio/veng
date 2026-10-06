@@ -1253,6 +1253,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/ui_modal.cpp
             tests/unit/net_directory_resolution.cpp
             tests/unit/net_local_spawn_replication.cpp
+            tests/unit/net_oversized_records.cpp
             tests/unit/net_admission_profile.cpp
             tests/unit/net_blob_codec.cpp
             tests/unit/net_social.cpp
@@ -1404,6 +1405,11 @@ if (VENG_BUILD_TESTS)
     add_test(NAME death.anchor_second_join_binds COMMAND veng_test_death anchor_second_join_binds)
     set_tests_properties(death.anchor_second_join_binds PROPERTIES LABELS "death;fast"
             PASS_REGULAR_EXPRESSION "already bound by join")
+
+    add_test(NAME death.component_state_past_reliable_bound
+            COMMAND veng_test_death component_state_past_reliable_bound)
+    set_tests_properties(death.component_state_past_reliable_bound PROPERTIES LABELS "death;fast"
+            PASS_REGULAR_EXPRESSION "must fit one reliable message")
 
     add_test(NAME death.system_id_collision COMMAND veng_test_death system_id_collision)
     set_tests_properties(death.system_id_collision PROPERTIES LABELS "death;fast"

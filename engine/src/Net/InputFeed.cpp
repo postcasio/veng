@@ -70,7 +70,9 @@ namespace Veng
                     buffers.try_emplace(InputBufferKey(id, env->Join), InputJitterBuffer(settings))
                         .first->second;
                 buffer.Ingest(*decoded);
-                host.ReplicationForJoin(id, env->Join).Acknowledge(id, decoded->AckedServerTick);
+                ReplicationServer& replication = host.ReplicationForJoin(id, env->Join);
+                replication.Acknowledge(id, decoded->AckedServerTick);
+                replication.AcknowledgeComponentState(id, decoded->AckedStateSequence);
             }
         }
 

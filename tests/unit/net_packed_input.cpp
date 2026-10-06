@@ -90,11 +90,12 @@ TEST_CASE("A packed input packet round-trips when the context hash matches")
 
     const TickedInput records[] = {TickedInput{.ClientTick = 100, .State = SampleState()},
                                    TickedInput{.ClientTick = 101, .State = SampleState()}};
-    const vector<u8> packet = EncodePackedInputPacket(7, hash, records, Schema);
+    const vector<u8> packet = EncodePackedInputPacket(7, 3, hash, records, Schema);
 
     const Result<InputPacket> decoded = DecodePackedInputPacket(packet, hash, Schema);
     REQUIRE(decoded.has_value());
     CHECK(decoded->AckedServerTick == 7);
+    CHECK(decoded->AckedStateSequence == 3);
     REQUIRE(decoded->Inputs.size() == 2);
     CHECK(decoded->Inputs[0].ClientTick == 100);
     CHECK(decoded->Inputs[1].ClientTick == 101);
@@ -107,7 +108,7 @@ TEST_CASE("A context-hash mismatch is a decode error — the reflection-form fal
     const u64 receiverHash = HashContextStack(std::array{AssetId{0x9}});
 
     const TickedInput records[] = {TickedInput{.ClientTick = 5, .State = SampleState()}};
-    const vector<u8> packet = EncodePackedInputPacket(1, senderHash, records, Schema);
+    const vector<u8> packet = EncodePackedInputPacket(1, 0, senderHash, records, Schema);
 
     const Result<InputPacket> decoded = DecodePackedInputPacket(packet, receiverHash, Schema);
     CHECK_FALSE(decoded.has_value());

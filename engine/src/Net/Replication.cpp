@@ -301,7 +301,8 @@ namespace Veng
                                    const Net::QuantizationSettings& quant, BaselineStore* baselines,
                                    bool& appliedOut, bool& truncatedOut,
                                    PredictedRecord* collect = nullptr,
-                                   vector<TypeId>* addedTypes = nullptr)
+                                   vector<TypeId>* addedTypes = nullptr,
+                                   const set<TypeId>* reliableTypes = nullptr)
         {
             const AssetHandleFixup keepAsset = [](void*) {};
             const TypeId transformId = TypeIdOf<Transform>();
@@ -329,6 +330,12 @@ namespace Veng
                 cursor += *byteLength;
 
                 if (!known)
+                {
+                    continue;
+                }
+                // The server sends this component only reliably now, so a snapshot carrying it
+                // predates the switch and is older than the reliable record already applied.
+                if (reliableTypes != nullptr && reliableTypes->contains(*typeId))
                 {
                     continue;
                 }
@@ -434,6 +441,7 @@ namespace Veng
         {
             Spawn = 16,
             Despawn = 17,
+            ComponentState = 18,
         };
     }
 
@@ -686,6 +694,15 @@ namespace Veng
         }
     }
 
+    void ReplicationServer::AcknowledgeComponentState(Net::ConnectionId id, u64 sequence)
+    {
+        const auto it = m_Connections.find(id);
+        if (it != m_Connections.end() && sequence > it->second.AckedStateSequence)
+        {
+            it->second.AckedStateSequence = sequence;
+        }
+    }
+
     void ReplicationServer::SetInputFeedback(Net::ConnectionId id, i32 feedback)
     {
         if (const auto it = m_Connections.find(id); it != m_Connections.end())
@@ -836,6 +853,7 @@ namespace Veng
             state.Spawned.erase(netId);
             // Drop the connection's delta baseline for the entity; a re-spawn re-bases from its spawn.
             state.Baseline.erase(netId);
+            state.ReliableComponents.erase(netId);
         }
 
         // Snapshot on the interval tick: pack each connection's dirty state as ack-keyed field deltas
@@ -893,6 +911,75 @@ namespace Veng
                 return packet;
             };
 
+            const auto findReliable = [](ConnectionState& connection, const NetId netId,
+                                         const TypeId typeId) -> ReliableComponent*
+            {
+                const auto entityIt = connection.ReliableComponents.find(netId);
+                if (entityIt == connection.ReliableComponents.end())
+                {
+                    return nullptr;
+                }
+                const auto it = entityIt->second.find(typeId);
+                return it != entityIt->second.end() ? &it->second : nullptr;
+            };
+
+            // A component whose record cannot fit one packet rides a reliable component-state
+            // message in full instead. The message is marked clean up to the change tick it read,
+            // since the reliable channel delivers it; the caller holds a second send back until the
+            // client acknowledges this one.
+            const auto sendComponentState = [&](const NetId netId, const Entity entity,
+                                                const TypeId typeId, ReliableComponent& reliable,
+                                                const std::span<const u8> wire)
+            {
+                const u64 changeTick = scene.GetComponentChangeTick(entity, typeId);
+                vector<u8> message;
+                AppendU8(message, static_cast<u8>(ReplicationMessageId::ComponentState));
+                AppendU32(message, netId);
+                AppendU64(message, state.StateSequence + 1);
+                AppendComponentRecord(message, typeId, wire, {}, /*forceFull=*/true, InvalidTypeId,
+                                      registry, Net::QuantizationSettings{});
+
+                const bool fits =
+                    message.size() + Net::WorldEnvelopeHeaderSize <= Net::MaxReliableMessageSize;
+#if defined(VE_DEBUG) && VE_DEBUG
+                VE_ASSERT(fits,
+                          "Replication: {} on NetId {} is {} bytes, past the {}-byte reliable "
+                          "message bound; a replicated component must fit one reliable message",
+                          registry.Info(typeId).Name, netId, wire.size(),
+                          Net::MaxReliableMessageSize);
+#endif
+                if (!fits)
+                {
+                    // Not retried: the value is taken as sent, and only a later change is tried.
+                    reliable.SentChangeTick = changeTick;
+                    if (!reliable.ReportedOversize)
+                    {
+                        reliable.ReportedOversize = true;
+                        Log::Error("Replication: {} on NetId {} is {} bytes, past the {}-byte "
+                                   "reliable message bound; a replicated component must fit one "
+                                   "reliable message, and this value is not sent",
+                                   registry.Info(typeId).Name, netId, wire.size(),
+                                   Net::MaxReliableMessageSize);
+                    }
+                    return;
+                }
+
+                const usize messageBytes = message.size();
+                const VoidResult sent = send(ReplicationMessage{
+                    .Channel = Net::Channel::ReliableOrdered, .Bytes = std::move(message)});
+                if (!sent.has_value())
+                {
+                    Log::Error("Replication: component state of {} on NetId {} ({} bytes) to "
+                               "connection {} was refused: {}",
+                               registry.Info(typeId).Name, netId, messageBytes, id, sent.error());
+                    return;
+                }
+                state.StateSequence += 1;
+                reliable.Sequence = state.StateSequence;
+                reliable.SentChangeTick = changeTick;
+            };
+
+            constexpr usize EntityRecordHeaderSize = sizeof(u32) + sizeof(u32);
             vector<u8> current = startPacket();
             bool currentHasRecords = false;
             // The component values the packet being built carries: they join the snapshot's sent
@@ -947,11 +1034,26 @@ namespace Veng
                     {
                         continue;
                     }
-                    if (scene.GetComponentChangeTick(entity, typeId) <= state.AckedTick)
+                    const u64 changeTick = scene.GetComponentChangeTick(entity, typeId);
+                    const TypeInfo& info = registry.Info(typeId);
+
+                    if (ReliableComponent* reliable = findReliable(state, identity.Id, typeId))
+                    {
+                        // Changes made while a message is outstanding coalesce into the next.
+                        if (changeTick > reliable->SentChangeTick &&
+                            reliable->Sequence <= state.AckedStateSequence)
+                        {
+                            const vector<u8> wire = EncodeComponentWireBytes(
+                                scene, entity, typeId, info, registry, encodeRef, &m_RefReporter);
+                            sendComponentState(identity.Id, entity, typeId, *reliable, wire);
+                        }
+                        continue;
+                    }
+
+                    if (changeTick <= state.AckedTick)
                     {
                         continue;
                     }
-                    const TypeInfo& info = registry.Info(typeId);
                     vector<u8> wire = EncodeComponentWireBytes(scene, entity, typeId, info,
                                                                registry, encodeRef, &m_RefReporter);
 
@@ -969,6 +1071,15 @@ namespace Veng
                     vector<u8> componentRecord;
                     AppendComponentRecord(componentRecord, typeId, wire, baseline, keyframe,
                                           transformType, registry, m_Settings.Quantization);
+                    if (SnapshotHeaderSize + EntityRecordHeaderSize + componentRecord.size() >
+                        Net::MaxEnvelopedUnreliablePayload)
+                    {
+                        // Alone in a packet it would still be refused, so it leaves the snapshot
+                        // path for the rest of the entity's life on this connection.
+                        ReliableComponent& reliable = state.ReliableComponents[identity.Id][typeId];
+                        sendComponentState(identity.Id, entity, typeId, reliable, wire);
+                        continue;
+                    }
                     dirty.push_back(DirtyComponent{.Type = typeId,
                                                    .Record = std::move(componentRecord),
                                                    .Wire = std::move(wire)});
@@ -977,7 +1088,6 @@ namespace Veng
                 // Pack the entity's records into as few entity records as fit: an entity whose dirty
                 // state outgrows one packet is split by component across consecutive packets, each
                 // part a self-contained record the client applies on its own.
-                constexpr usize EntityRecordHeaderSize = sizeof(u32) + sizeof(u32);
                 usize next = 0;
                 while (next < dirty.size())
                 {
@@ -1075,6 +1185,7 @@ namespace Veng
         m_Anchors->Release(adopted.AnchorLo, adopted.AnchorHi);
         m_Map.Unbind(id);
         m_Baseline.erase(id);
+        m_ReliableComponents.erase(id);
     }
 
     void ReplicationClient::Leave(Scene& scene)
@@ -1098,6 +1209,8 @@ namespace Veng
         }
         m_Map.Clear();
         m_Baseline.clear();
+        m_ReliableComponents.clear();
+        m_AppliedStateSequence = 0;
         m_Adopted.clear();
     }
 
@@ -1318,7 +1431,41 @@ namespace Veng
             // Drop the entity's delta baseline: a re-spawn of the same id re-bases from its spawn
             // record, so a stale baseline can never patch the wrong entity's state.
             m_Baseline.erase(*netId);
+            m_ReliableComponents.erase(*netId);
             result.Despawned = true;
+            return result;
+        }
+        case ReplicationMessageId::ComponentState:
+        {
+            const Result<u32> netId = ReadU32(message, cursor);
+            const Result<u64> sequence = ReadU64(message, cursor);
+            if (!netId || !sequence)
+            {
+                return result;
+            }
+            // Counted as received whatever becomes of the record, so one this client cannot apply
+            // never holds the component's later values back.
+            m_AppliedStateSequence = std::max(m_AppliedStateSequence, *sequence);
+            result.Id = *netId;
+
+            const Entity entity = m_Map.Lookup(*netId);
+            usize typeCursor = cursor;
+            const Result<u64> typeId = ReadU64(message, typeCursor);
+            if (entity.IsNull() || !scene.IsAlive(entity) || !typeId)
+            {
+                return result;
+            }
+            m_ReliableComponents[*netId].insert(*typeId);
+
+            const EntityRemap decodeRef = MakeDecodeRef(m_Map);
+            bool applied = false;
+            bool truncated = false;
+            ApplyComponentRecords(message, cursor, /*componentCount=*/1, scene, entity, *netId,
+                                  /*known=*/true, registry, decodeRef, /*bufferTransform=*/false,
+                                  /*serverTick=*/0, m_Quantization, &m_Baseline, applied,
+                                  truncated);
+            result.StateApplied = applied;
+            result.Entity = entity;
             return result;
         }
         }
@@ -1382,12 +1529,16 @@ namespace Veng
             PredictedRecord collected;
             collected.Entity = entity;
 
+            const auto reliableIt = m_ReliableComponents.find(*netId);
+            const set<TypeId>* reliableTypes =
+                reliableIt != m_ReliableComponents.end() ? &reliableIt->second : nullptr;
+
             bool applied = false;
             bool truncated = false;
-            ApplyComponentRecords(packet, cursor, *componentCount, scene, entity, *netId, known,
-                                  registry, decodeRef, /*bufferTransform=*/!predicted, *serverTick,
-                                  m_Quantization, &m_Baseline, applied, truncated,
-                                  predicted ? &collected : nullptr);
+            ApplyComponentRecords(
+                packet, cursor, *componentCount, scene, entity, *netId, known, registry, decodeRef,
+                /*bufferTransform=*/!predicted, *serverTick, m_Quantization, &m_Baseline, applied,
+                truncated, predicted ? &collected : nullptr, /*addedTypes=*/nullptr, reliableTypes);
 
             if (predicted && !collected.Components.empty())
             {

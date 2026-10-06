@@ -299,7 +299,9 @@ namespace Veng
     /// over two in-process scenes, exactly the two-world test fixture.
     struct ReplicationMessage
     {
-        /// @brief The delivery discipline this message rides: reliable for spawn/despawn, unreliable for snapshots.
+        /// @brief The delivery discipline this message rides.
+        ///
+        /// Reliable for spawn, despawn and component state; unreliable for snapshots.
         Net::Channel Channel = Net::Channel::UnreliableSequenced;
         /// @brief The encoded message bytes to Send on Channel.
         vector<u8> Bytes;
@@ -321,6 +323,13 @@ namespace Veng
     /// each entity that has gone, and — on a snapshot-interval tick — the dirty state as one or more
     /// MTU-sized unreliable snapshot packets. It owns no transport and no NetId allocation (the caller
     /// runs AssignServerNetIds); it is pure per-connection bookkeeping over the codec above.
+    ///
+    /// A component whose record cannot fit one snapshot packet leaves the snapshot path for that
+    /// connection, for the rest of the entity's life on it: each change rides a reliable
+    /// component-state message carrying the full record instead. At most one such message is in
+    /// flight per (connection, entity, component); changes made meanwhile coalesce, and the newest
+    /// value is sent once the outstanding message is acknowledged (AcknowledgeComponentState). A
+    /// record too large for the reliable channel as well is an authoring error.
     class VE_API ReplicationServer
     {
     public:
@@ -385,6 +394,17 @@ namespace Veng
         /// @param tick  The highest server tick it has applied.
         void Acknowledge(Net::ConnectionId id, u64 tick);
 
+        /// @brief Advances a connection's acknowledged reliable component-state sequence.
+        ///
+        /// Each reliable component-state message carries a per-connection sequence, and the client
+        /// reports the newest it has applied (InputPacket::AckedStateSequence). Messages arrive in
+        /// order, so every message at or below @p sequence has been applied, and a component whose
+        /// outstanding message it covers may send its next value. A no-op for an untracked
+        /// connection or a sequence at or below the one already acknowledged.
+        /// @param id        The connection acknowledging.
+        /// @param sequence  The newest component-state sequence it has applied.
+        void AcknowledgeComponentState(Net::ConnectionId id, u64 sequence);
+
         /// @brief Sets a connection's input-timing feedback, ridden in its next snapshot header.
         ///
         /// The signal the client's tick-offset controller reads to trim its lead: positive means the
@@ -409,7 +429,8 @@ namespace Veng
         ///
         /// Emits a reliable Spawn for each replicated entity new to the connection, a reliable Despawn
         /// for each it had that is now gone, and — when @p tick is a snapshot-interval tick — the dirty
-        /// state (since the connection's acked tick) as MTU-sized unreliable snapshot packets. Updates
+        /// state (since the connection's acked tick) as MTU-sized unreliable snapshot packets, with a
+        /// reliable component-state message for each changed component too large for one. Updates
         /// the connection's spawned set as though every message were accepted. A no-op returning
         /// empty for an untracked connection.
         /// @param id     The connection to generate for (must be AddConnection'd).
@@ -427,8 +448,9 @@ namespace Veng
         ///
         /// The same messages as the returning overload, in the same order, but the connection's
         /// state follows what the sink accepted: an entity joins the spawned set only when its Spawn
-        /// is accepted, leaves it only when its Despawn is, and a snapshot packet's values join the
-        /// sent state an ack adopts only when the packet is. A refused Spawn is therefore generated
+        /// is accepted, leaves it only when its Despawn is, a snapshot packet's values join the
+        /// sent state an ack adopts only when the packet is, and a component-state message counts
+        /// as sent only when it is. A refused Spawn is therefore generated
         /// again on the next call, and is logged once per entity until it is accepted. Snapshot
         /// records cover only entities already spawned to the connection.
         /// @param id        The connection to generate for (must be AddConnection'd).
@@ -453,6 +475,17 @@ namespace Veng
             unordered_map<NetId, unordered_map<TypeId, vector<u8>>> Components;
         };
 
+        /// @brief One component that rides reliable component-state messages on a connection.
+        struct ReliableComponent
+        {
+            /// @brief The sequence of the last message sent for it; zero before the first.
+            u64 Sequence = 0;
+            /// @brief The change tick the last message carried; the component is clean up to it.
+            u64 SentChangeTick = 0;
+            /// @brief Whether a record past the reliable bound has already been reported.
+            bool ReportedOversize = false;
+        };
+
         /// @brief Per-connection replication bookkeeping.
         struct ConnectionState
         {
@@ -474,6 +507,15 @@ namespace Veng
             vector<SentSnapshot> InFlight;
             /// @brief Snapshots generated for this connection, driving the keyframe cadence.
             u64 SnapshotCounter = 0;
+            /// @brief The components too large for a snapshot packet, keyed by NetId then TypeId.
+            ///
+            /// The snapshot packer never encodes these; they ride reliable component-state
+            /// messages until the entity despawns from this connection.
+            unordered_map<NetId, unordered_map<TypeId, ReliableComponent>> ReliableComponents;
+            /// @brief The last reliable component-state sequence issued to this connection.
+            u64 StateSequence = 0;
+            /// @brief The newest reliable component-state sequence this connection has acknowledged.
+            u64 AckedStateSequence = 0;
             /// @brief The world tick this connection's last snapshot was emitted on.
             ///
             /// The snapshot cadence gates on the world's own sim tick, but Generate runs once per
@@ -517,6 +559,8 @@ namespace Veng
             bool Adopted = false;
             /// @brief True when the message was a Despawn that destroyed or released an entity.
             bool Despawned = false;
+            /// @brief True when the message was a component-state record that applied to an entity.
+            bool StateApplied = false;
             /// @brief The despawn's reason (destruction vs a visibility exit); meaningful when Despawned.
             DespawnReason Reason = DespawnReason::Destroyed;
             /// @brief The NetId the message concerned (0 when the message was malformed).
@@ -551,7 +595,13 @@ namespace Veng
         /// @param quant  The quantization settings.
         void SetQuantization(const Net::QuantizationSettings& quant) { m_Quantization = quant; }
 
-        /// @brief Applies one reliable Spawn or Despawn message into @p scene.
+        /// @brief Applies one reliable Spawn, Despawn or component-state message into @p scene.
+        ///
+        /// A component-state message carries one component's full record. It writes straight onto
+        /// the entity, becomes that component's decode baseline, and from then on snapshot records
+        /// for the component are ignored: the server sends that component only this way, so a
+        /// snapshot carrying it predates the switch. The component's reliable state is dropped when
+        /// the entity despawns.
         /// @param message  The reliable message bytes (a leading type byte + payload).
         /// @param scene    The client scene to spawn into or despawn from.
         /// @param assets   The asset manager the prefab-arm spawn resolves through.
@@ -570,6 +620,13 @@ namespace Veng
         /// @param scene   The client scene to apply into.
         /// @return A summary of what applied (see SnapshotApplyResult).
         SnapshotApplyResult ApplySnapshot(std::span<const u8> packet, Scene& scene);
+
+        /// @brief The newest reliable component-state sequence this client has received.
+        ///
+        /// The client's acknowledgement of the reliable component-state stream, ridden in its input
+        /// packets (InputSendBuffer::Encode) for the server's AcknowledgeComponentState. Reliable
+        /// messages arrive in order, so every message up to it has been applied. Zero before any.
+        [[nodiscard]] u64 GetAppliedStateSequence() const { return m_AppliedStateSequence; }
 
         /// @brief The predicted entities' authoritative records decoded by the last ApplySnapshot.
         ///
@@ -622,6 +679,10 @@ namespace Veng
         vector<PredictedRecord> m_PredictedRecords;
         /// @brief The per-(NetId, TypeId) baseline the delta decoder patches against (wire bytes).
         unordered_map<NetId, unordered_map<TypeId, vector<u8>>> m_Baseline;
+        /// @brief The components each entity receives through component-state messages only.
+        unordered_map<NetId, set<TypeId>> m_ReliableComponents;
+        /// @brief The newest component-state sequence received (see GetAppliedStateSequence).
+        u64 m_AppliedStateSequence = 0;
         /// @brief The spatial quantization the decoder dequantizes with (see SetQuantization).
         Net::QuantizationSettings m_Quantization;
         /// @brief The JoinId this client's adoptions are attributed to in the shared registry.
@@ -674,11 +735,16 @@ namespace Veng
         f32 ViewDelayTicks = 0.0f;
     };
 
-    /// @brief A decoded input packet: the piggybacked snapshot ack plus the client-tick-keyed input run.
+    /// @brief A decoded input packet: the piggybacked snapshot acks plus the client-tick-keyed input run.
     struct InputPacket
     {
         /// @brief The highest server snapshot tick the sender has applied; feeds ReplicationServer::Acknowledge.
         u64 AckedServerTick = 0;
+        /// @brief The newest reliable component-state sequence the sender has applied.
+        ///
+        /// Feeds ReplicationServer::AcknowledgeComponentState (see
+        /// ReplicationClient::GetAppliedStateSequence); zero before any has arrived.
+        u64 AckedStateSequence = 0;
         /// @brief The decoded inputs in ascending client-tick order; a per-record decode failure drops that record.
         vector<TickedInput> Inputs;
     };
@@ -692,26 +758,28 @@ namespace Veng
     /// @return The state with its edge phases decayed.
     [[nodiscard]] VE_API ActionState DecayInputPhases(const ActionState& state);
 
-    /// @brief Encodes an input packet: the piggybacked ack + a redundant run of recent input ticks.
+    /// @brief Encodes an input packet: the piggybacked acks + a redundant run of recent input ticks.
     ///
     /// The records cover a contiguous run of client ticks starting at the first record's ClientTick,
     /// each its view delay followed by the reflection encoding (WriteFields) of that tick's
     /// ActionState. Sending the last N ticks every packet makes the stream loss-tolerant without
     /// retransmission: a lost packet's ticks ride the next packet's overlap. An empty run encodes a
-    /// header-only packet, so an input-idle client still carries its ack.
+    /// header-only packet, so an input-idle client still carries its acks.
     ///
     /// Packet layout (framing little-endian; each record payload is the WriteFields bytes):
     ///
-    ///     InputPacket := AckedServerTick:u64  FirstClientTick:u64  Count:u32  Record*
+    ///     InputPacket := AckedServerTick:u64  AckedStateSequence:u64  FirstClientTick:u64
+    ///                    Count:u32  Record*
     ///     Record      := ViewDelay:u16  ByteLength:u32  WriteFields(ActionState)
     ///
     /// ViewDelay is TickedInput::ViewDelayTicks in 1/InputViewDelayStepsPerTick steps.
-    /// @param ackedServerTick  The highest server snapshot tick to acknowledge.
-    /// @param records          The inputs for the tick run, oldest first.
-    /// @param registry         The type registry the ActionState encodes through.
+    /// @param ackedServerTick     The highest server snapshot tick to acknowledge.
+    /// @param ackedStateSequence  The newest reliable component-state sequence to acknowledge.
+    /// @param records             The inputs for the tick run, oldest first.
+    /// @param registry            The type registry the ActionState encodes through.
     /// @pre @p records' ClientTicks ascend by exactly one.
     /// @return The encoded packet bytes.
-    [[nodiscard]] VE_API vector<u8> EncodeInputPacket(u64 ackedServerTick,
+    [[nodiscard]] VE_API vector<u8> EncodeInputPacket(u64 ackedServerTick, u64 ackedStateSequence,
                                                       std::span<const TickedInput> records,
                                                       const TypeRegistry& registry);
 
@@ -763,23 +831,25 @@ namespace Veng
 
     /// @brief Encodes an input packet in the packed form, carrying the context-stack hash.
     ///
-    /// The packed sibling of EncodeInputPacket: the same ack + redundant tick run, each record its
+    /// The packed sibling of EncodeInputPacket: the same acks + redundant tick run, each record its
     /// view delay then the bit-packed form against @p schema, prefixed by @p contextHash so the
     /// receiver can verify its own resolved list matches before decoding.
     ///
     /// Packet layout (framing little-endian):
     ///
-    ///     PackedInputPacket := AckedServerTick:u64  ContextHash:u64  FirstClientTick:u64  Count:u32  Record*
+    ///     PackedInputPacket := AckedServerTick:u64  AckedStateSequence:u64  ContextHash:u64
+    ///                          FirstClientTick:u64  Count:u32  Record*
     ///     Record            := ViewDelay:u16  ByteLength:u32  EncodePackedActionState-bytes
     ///
-    /// @param ackedServerTick  The highest server snapshot tick to acknowledge.
-    /// @param contextHash      The sender's context-stack hash (see HashContextStack).
-    /// @param records          The inputs for the tick run, oldest first.
-    /// @param schema           The seat's ordered resolved action list.
+    /// @param ackedServerTick     The highest server snapshot tick to acknowledge.
+    /// @param ackedStateSequence  The newest reliable component-state sequence to acknowledge.
+    /// @param contextHash         The sender's context-stack hash (see HashContextStack).
+    /// @param records             The inputs for the tick run, oldest first.
+    /// @param schema              The seat's ordered resolved action list.
     /// @pre @p records' ClientTicks ascend by exactly one.
     /// @return The encoded packet bytes.
     [[nodiscard]] VE_API vector<u8>
-    EncodePackedInputPacket(u64 ackedServerTick, u64 contextHash,
+    EncodePackedInputPacket(u64 ackedServerTick, u64 ackedStateSequence, u64 contextHash,
                             std::span<const TickedInput> records,
                             std::span<const PackedInputAction> schema);
 
@@ -845,13 +915,17 @@ namespace Veng
         ///                    input was resolved; nullopt means the present (nothing drawn in the past).
         void Stamp(u64 clientTick, const ActionState& state, optional<f64> viewTick = std::nullopt);
 
-        /// @brief Encodes the retained window into a packet acknowledging @p ackedServerTick.
+        /// @brief Encodes the retained window into a packet carrying the sender's two acks.
         ///
-        /// Header-only (no records) before the first Stamp, so the ack still flows on an input-idle tick.
-        /// @param ackedServerTick  The highest server snapshot tick to acknowledge.
-        /// @param registry         The type registry the ActionState encodes through.
+        /// Header-only (no records) before the first Stamp, so the acks still flow on an input-idle
+        /// tick.
+        /// @param ackedServerTick     The highest server snapshot tick to acknowledge.
+        /// @param ackedStateSequence  The newest reliable component-state sequence to acknowledge
+        ///                            (ReplicationClient::GetAppliedStateSequence).
+        /// @param registry            The type registry the ActionState encodes through.
         /// @return The encoded packet bytes to send on the unreliable channel.
-        [[nodiscard]] vector<u8> Encode(u64 ackedServerTick, const TypeRegistry& registry) const;
+        [[nodiscard]] vector<u8> Encode(u64 ackedServerTick, u64 ackedStateSequence,
+                                        const TypeRegistry& registry) const;
 
         /// @brief The number of ticks currently retained (at most Redundancy).
         [[nodiscard]] usize Size() const { return m_Window.size(); }

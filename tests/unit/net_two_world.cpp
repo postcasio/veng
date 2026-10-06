@@ -318,7 +318,7 @@ namespace
             {
                 (void)Client->Server().Send(
                     Channel::UnreliableSequenced,
-                    EncodeWorldEnvelope(Host->CurrentJoinId(), Send.Encode(0, Types)));
+                    EncodeWorldEnvelope(Host->CurrentJoinId(), Send.Encode(0, 0, Types)));
             }
         }
     };
@@ -1174,7 +1174,8 @@ TEST_CASE("A client join loads into the WorldRunner's world #0, not a parallel s
         host->Pump(now);
         if (client->State() == ClientState::Connected)
         {
-            (void)client->Server().Send(Channel::UnreliableSequenced, send.Encode(0, clientTypes));
+            (void)client->Server().Send(Channel::UnreliableSequenced,
+                                        send.Encode(0, 0, clientTypes));
         }
     }
 
@@ -1337,7 +1338,7 @@ TEST_CASE("One ServerHost hosts two worlds with isolated replication over separa
 
     const auto hub = CreateRef<Hub>();
     const u32 serverEndpoint = hub->Register();
-    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    const auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
 
     // Both worlds are pre-registered under their keys: a client presenting keyA converges on world A,
     // keyB on world B — the get-or-create map keyed by the client-presented WorldKey.
@@ -1792,7 +1793,7 @@ TEST_CASE(
     });
 
     // Application::JoinWorld's shape: open a fresh runner world, queue it, request the join.
-    auto joinWorld = [&](const WorldKey& key) -> WorldInstanceId
+    const auto joinWorld = [&](const WorldKey& key) -> WorldInstanceId
     {
         const WorldInstanceId world =
             runner.OpenWorld(WorldOpenInfo{.SimTickRate = 60, .StartSimulation = false});
@@ -1828,7 +1829,8 @@ TEST_CASE(
                 gameB = joinWorld(keyB);
                 joined = true;
             }
-            (void)client->Server().Send(Channel::UnreliableSequenced, send.Encode(0, clientTypes));
+            (void)client->Server().Send(Channel::UnreliableSequenced,
+                                        send.Encode(0, 0, clientTypes));
         }
     }
 
@@ -2384,7 +2386,7 @@ TEST_CASE("Input tagged with an ungranted or garbage JoinId is dropped, not rout
         const auto ungranted = static_cast<JoinId>(granted + 7);
         (void)client.Client->Server().Send(
             Channel::UnreliableSequenced,
-            EncodeWorldEnvelope(ungranted, send.Encode(0, server.Types)));
+            EncodeWorldEnvelope(ungranted, send.Encode(0, 0, server.Types)));
         (void)client.Client->Server().Send(Channel::UnreliableSequenced, vector<u8>{0x00, 0x01});
         (void)client.Client->Server().Send(Channel::UnreliableSequenced,
                                            vector<u8>(24, static_cast<u8>(tick)));
@@ -2925,7 +2927,7 @@ TEST_CASE("A payload-bucketing placement policy converges near params and splits
     // bucket for a far one — matching quality expressed over data no WorldKey encodes.
     const auto hub = CreateRef<Hub>();
     const u32 serverEndpoint = hub->Register();
-    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    const auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
 
     TypeRegistry serverTypes;
     RegisterBuiltinTypes(serverTypes);
@@ -4273,7 +4275,7 @@ TEST_CASE("A duplicate live account is refused; the first connection is undistur
 {
     const auto hub = CreateRef<Hub>();
     const u32 serverEndpoint = hub->Register();
-    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    const auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
 
     TypeRegistry serverTypes;
     RegisterBuiltinTypes(serverTypes);
@@ -4355,7 +4357,7 @@ TEST_CASE("Reconnect after a disconnect re-admits the account onto a fresh conne
 {
     const auto hub = CreateRef<Hub>();
     const u32 serverEndpoint = hub->Register();
-    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    const auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
 
     TypeRegistry serverTypes;
     RegisterBuiltinTypes(serverTypes);
@@ -4436,7 +4438,7 @@ TEST_CASE("A reconnect inside the zombie window is refused, then admitted once t
 {
     const auto hub = CreateRef<Hub>();
     const u32 serverEndpoint = hub->Register();
-    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    const auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
 
     TypeRegistry serverTypes;
     RegisterBuiltinTypes(serverTypes);
@@ -4816,7 +4818,7 @@ TEST_CASE("An unconfigured client account mints a valid, process-unique id")
 {
     const auto hub = CreateRef<Hub>();
     const u32 serverEndpoint = hub->Register();
-    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    const auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
 
     TypeRegistry serverTypes;
     RegisterBuiltinTypes(serverTypes);
@@ -5271,7 +5273,7 @@ TEST_CASE("Reattach: a denied gameplay resolve clears the entry and degrades to 
 
     // The authorize hook admits the first sitting and denies the gameplay key afterwards (the
     // world went private, say) — the reattach resolve fails, never a crash.
-    auto deny = std::make_shared<bool>(false);
+    const auto deny = std::make_shared<bool>(false);
     SessionHooks hooks;
     hooks.Authorize = [deny](const JoinRequestInfo& request)
     { return !(*deny && request.Key == GameplayKey); };
@@ -5330,7 +5332,7 @@ TEST_CASE("Reattach: records round-trip the Load/Save hooks across a simulated h
     const Blob params{.Type = TypeIdOf<Transform>(), .Bytes = {5}};
 
     // The consumer store the hook pair reads and writes — surviving the host teardown below.
-    auto store = std::make_shared<std::unordered_map<AccountId, vector<std::byte>>>();
+    const auto store = std::make_shared<std::unordered_map<AccountId, vector<std::byte>>>();
     const auto makeHooks = [store]
     {
         SessionHooks hooks;
@@ -6594,7 +6596,7 @@ TEST_CASE("A level-less data world joins end to end: no LoadLevel, empty scene, 
     // level, no core-pack stub. The echoed digest is validated exactly as for a level world.
     const auto hub = CreateRef<Hub>();
     const u32 serverEndpoint = hub->Register();
-    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    const auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
 
     TypeRegistry serverTypes;
     RegisterBuiltinTypes(serverTypes);
@@ -6706,7 +6708,7 @@ TEST_CASE("The join reply carries each world's SimTickRate; each join's estimato
     // large lead in fast ticks and a whole-tick-scale lead in slow ticks — never one rate for both.
     const auto hub = CreateRef<Hub>();
     const u32 serverEndpoint = hub->Register();
-    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    const auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
 
     TypeRegistry serverTypes;
     RegisterBuiltinTypes(serverTypes);
@@ -6983,8 +6985,11 @@ TEST_CASE("A world below the host pump rate stamps cadence in its own tick space
         {
             (void)client.Client->Server().Send(
                 Channel::UnreliableSequenced,
-                EncodeWorldEnvelope(client.Host->CurrentJoinId(),
-                                    send.Encode(client.Host->LastServerTick(), serverTypes)));
+                EncodeWorldEnvelope(
+                    client.Host->CurrentJoinId(),
+                    send.Encode(client.Host->LastServerTick(),
+                                client.Host->GetAppliedStateSequence(client.Host->CurrentJoinId()),
+                                serverTypes)));
         }
     };
 
@@ -7114,8 +7119,11 @@ TEST_CASE("A seatless data world's pump grows no input state, and a sparse snaps
         {
             (void)client.Client->Server().Send(
                 Channel::UnreliableSequenced,
-                EncodeWorldEnvelope(client.Host->CurrentJoinId(),
-                                    send.Encode(client.Host->LastServerTick(), serverTypes)));
+                EncodeWorldEnvelope(
+                    client.Host->CurrentJoinId(),
+                    send.Encode(client.Host->LastServerTick(),
+                                client.Host->GetAppliedStateSequence(client.Host->CurrentJoinId()),
+                                serverTypes)));
         }
     }
 
@@ -7153,7 +7161,7 @@ TEST_CASE("A world resolved with its own IdleDwell outlives the directory defaul
     // override world survives the default window and reaps only past its own.
     const auto hub = CreateRef<Hub>();
     const u32 serverEndpoint = hub->Register();
-    auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
+    const auto serverT = CreateUnique<HubTransport>(hub, serverEndpoint, serverEndpoint);
 
     TypeRegistry types;
     RegisterBuiltinTypes(types);

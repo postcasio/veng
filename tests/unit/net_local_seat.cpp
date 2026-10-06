@@ -167,7 +167,7 @@ TEST_CASE("StampLocalSeatInput stamps the locally-owned seat, else the first")
     {
         InputSendBuffer send(InputSendBuffer::Settings{.Redundancy = 1});
         StampLocalSeatInput(send, *scene, 1);
-        const Result<InputPacket> packet = DecodeInputPacket(send.Encode(0, types), types);
+        const Result<InputPacket> packet = DecodeInputPacket(send.Encode(0, 0, types), types);
         REQUIRE(packet.has_value());
         REQUIRE(packet->Inputs.size() == 1);
         CHECK(packet->Inputs.front().State.GetValue(MoveAction).x == doctest::Approx(0.25f));
@@ -178,7 +178,7 @@ TEST_CASE("StampLocalSeatInput stamps the locally-owned seat, else the first")
         scene->Add<LocalSeat>(seatB);
         InputSendBuffer send(InputSendBuffer::Settings{.Redundancy = 1});
         StampLocalSeatInput(send, *scene, 1);
-        const Result<InputPacket> packet = DecodeInputPacket(send.Encode(0, types), types);
+        const Result<InputPacket> packet = DecodeInputPacket(send.Encode(0, 0, types), types);
         REQUIRE(packet.has_value());
         REQUIRE(packet->Inputs.size() == 1);
         CHECK(packet->Inputs.front().State.GetValue(MoveAction).x == doctest::Approx(0.75f));

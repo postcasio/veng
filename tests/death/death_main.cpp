@@ -70,6 +70,7 @@
 #include <Veng/Scene/Transforms.h>
 
 #include <support/GpuProbe.h>
+#include <support/TestComponents.h>
 
 #include <fmt/format.h>
 
@@ -167,7 +168,7 @@ namespace
     void RunToVkUnmapped()
     {
         // A Format value outside the mapped range hits ToVk's "unmapped" assert.
-        volatile auto bad = static_cast<Format>(200);
+        const volatile auto bad = static_cast<Format>(200);
         const vk::Format mapped = ToVk(static_cast<Format>(bad));
         (void)mapped;
     }
@@ -341,6 +342,28 @@ namespace
         const vector<u8> spawn = MakeAnchoredSpawn(1, 7, 0);
         (void)first.ApplyReliable(spawn, *scene, DeathFakeAssets());
         (void)second.ApplyReliable(spawn, *scene, DeathFakeAssets());
+    }
+
+    // A replicated component grown past what one reliable message carries, after its entity has
+    // spawned: it can ride neither channel, an authoring error.
+    void RunComponentStatePastReliableBound()
+    {
+        TypeRegistry registry;
+        RegisterBuiltinTypes(registry);
+        registry.Register<VengTest::TestText>();
+        const Unique<Scene> scene = Scene::Create(registry);
+        const Entity entity = scene->CreateEntity();
+        scene->Add<VengTest::TestText>(entity, VengTest::TestText{.Value = "short"});
+        NetIdAllocator allocator;
+        AssignServerNetIds(*scene, allocator);
+
+        ReplicationServer server(ReplicationServer::Settings{.SnapshotInterval = 1});
+        server.AddConnection(1);
+        (void)server.Generate(1, *scene, 1);
+
+        scene->SetChangeTick(2);
+        scene->Get<VengTest::TestText>(entity).Value = string(Net::MaxReliableMessageSize, 'x');
+        (void)server.Generate(1, *scene, 2);
     }
 
     void RunTypeIdCollision()
@@ -653,6 +676,10 @@ int main(int argc, char** argv)
     else if (name == "anchor_second_join_binds")
     {
         RunAnchorSecondJoinBinds();
+    }
+    else if (name == "component_state_past_reliable_bound")
+    {
+        RunComponentStatePastReliableBound();
     }
     else if (name == "system_id_collision")
     {

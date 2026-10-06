@@ -71,8 +71,8 @@ request carries the protocol version, so it must stay readable by a peer of any 
 
 `Server.h`/`Client.h` are the connection lifecycle. A `Net::Server` listens/accepts/denies; a
 `Net::Client` connects. The handshake is **two-tier** (`Handshake.h`): a **connection tier**
-establishes the process↔process link — the connect request carries `Net::ProtocolVersion` (**8**, the
-version that added reliable-message fragmentation) + the active pack's content digest,
+establishes the process↔process link — the connect request carries `Net::ProtocolVersion` (**9**, the
+version that added the reliable component-state message below) + the active pack's content digest,
 rejected loudly on a mismatch (the `VengModuleAbiVersion` discipline on the wire, so the wire
 carries only asset ids, never assets) — and a **per-world join tier** joins one world (below). The
 `ConnectAcceptMessage` carries **only the assigned connection id**: it no longer bakes in a single
@@ -207,13 +207,34 @@ its Despawn is, and a snapshot packet's values join the sent state an ack adopts
 is. A refused Spawn (one past the reliable bound) is therefore generated again next time and logged
 once per entity until accepted, never silently lost; snapshot records cover only entities already
 spawned. An entity whose dirty state outgrows one snapshot packet is **split by component** across
-consecutive packets, each part a self-contained record; only a single component record larger than
-a packet cannot ride a snapshot, and that refusal is logged. The returning
+consecutive packets, each part a self-contained record. The returning
 `Generate(id, scene, tick, interest)` overload records every message as accepted — the device-free
 test convenience. `ReplicationClient`
 applies latest-wins, marks replicated entities **`Tier::Remote`**, and buffers each Transform
 snapshot for the **View-phase `RemoteInterpolationSystem`**, which renders a remote ~2 snapshot
 intervals in the past.
+
+**A component past one packet leaves the snapshot path for the reliable channel.** The unreliable
+channel does not fragment, so a component whose record (with its snapshot and entity headers) cannot
+fit one packet would be refused at every interval and never arrive. The first time that happens on a
+connection, the (connection, entity, component) is marked **reliable** for the rest of the entity's
+life on that connection: the snapshot packer never encodes it again, delta or keyframe, and each
+change rides a **component-state message** on the reliable channel instead — the `NetId`, a
+per-connection sequence, and the component's **full** record, fragmented by the connection like any
+large reliable message. **One message is in flight per component, and the newest wins:** a send
+marks the component clean up to the change tick it read, changes made while it is outstanding
+coalesce, and the next send waits for the client's acknowledgement — the newest component-state
+sequence it has applied, which rides every input packet beside the snapshot ack
+(`InputPacket::AckedStateSequence` → `ReplicationServer::AcknowledgeComponentState`). Reliable
+messages arrive in order, so that one number covers every message before it, and an unchanged
+component is never re-sent. On the client the record writes straight onto the entity, a predicted
+one included, and becomes the component's baseline, and any
+snapshot record still carrying the component is ignored, since it predates the switch; the marking
+is dropped on both ends when the entity despawns, so a re-spawn starts over. **A component record
+must fit one reliable message** (`MaxReliableMessageSize` less the framing, just under 32 KiB) — a
+cap on a replicated component's size. Past it the record can ride neither channel: that is an
+authoring error, a `VE_ASSERT` in a debug build and in a release build one `Log::Error` per (entity,
+component), and the value is not retried.
 
 **The snapshot interval is the server's.** Each hosted world's `ReplicationServer::Settings::SnapshotInterval`
 rides its join reply (`JoinAcceptMessage::SnapshotInterval`, beside `SimTickRate`), and on that reply
