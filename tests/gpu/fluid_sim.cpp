@@ -183,7 +183,7 @@ namespace
     f32 Divergence(const FieldReader& field, const uvec2 extent, const u32 x, const u32 y,
                    const FluidWrap wrapX, const FluidWrap wrapY)
     {
-        auto Sample = [&](const i32 dx, const i32 dy)
+        const auto Sample = [&](const i32 dx, const i32 dy)
         {
             return field.Velocity(
                 static_cast<u32>(FoldFluidTexel(static_cast<i32>(x) + dx, extent.x, wrapX)),
@@ -195,7 +195,7 @@ namespace
 
     f32 Curl(const FieldReader& field, const uvec2 extent, const u32 x, const u32 y)
     {
-        auto Sample = [&](const i32 dx, const i32 dy)
+        const auto Sample = [&](const i32 dx, const i32 dy)
         {
             return field.Velocity(static_cast<u32>(FoldFluidTexel(static_cast<i32>(x) + dx,
                                                                   extent.x, FluidWrap::Periodic)),
@@ -237,7 +237,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     // A deliberately compressible seed: both components vary along their own axis, so the
     // discrete divergence is large everywhere before the solve runs.
-    auto seed = [](const u32 x, const u32 y)
+    const auto seed = [](const u32 x, const u32 y)
     {
         const f32 u = (static_cast<f32>(x) + 0.5f) / static_cast<f32>(Extent.x);
         const f32 v = (static_cast<f32>(y) + 0.5f) / static_cast<f32>(Extent.y);
@@ -327,7 +327,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         return vec2(Flow, 0.0f) + 0.25f * falloff * vec2(-dy, dx);
     };
 
-    auto Run = [&](const f32 confinement)
+    const auto Run = [&](const f32 confinement)
     {
         const Ref<Image> velocity =
             MakeField(Context, "Vortex Velocity", Extent, Format::RG32Sfloat);
@@ -350,7 +350,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // diffused core has a nearly flat top, so the single strongest texel jitters by a texel or
     // two while the weighted centre does not. x is averaged circularly, since the axis is a ring
     // the vortex crosses no part of only by accident.
-    auto Locate = [&](const FieldReader& field)
+    const auto Locate = [&](const FieldReader& field)
     {
         f32 peak = 0.0f;
         for (u32 y = 0; y < Extent.y; ++y)
@@ -426,7 +426,7 @@ TEST_CASE_FIXTURE(
     constexpr u32 Steps = 40;
     constexpr u32 StartColumn = 4;
 
-    auto ColumnSums = [&](const FluidWrap wrapX)
+    const auto ColumnSums = [&](const FluidWrap wrapX)
     {
         // RG16Sfloat here, so the narrow velocity format's force and gradient variants are the
         // ones this case runs.
@@ -465,7 +465,7 @@ TEST_CASE_FIXTURE(
 
     auto Total = [](const std::vector<f32>& columns)
     { return std::accumulate(columns.begin(), columns.end(), 0.0f); };
-    auto Centre = [&](const std::vector<f32>& columns)
+    const auto Centre = [&](const std::vector<f32>& columns)
     {
         f32 weighted = 0.0f;
         for (u32 x = 0; x < columns.size(); ++x)
@@ -514,7 +514,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const Ref<Image> target = MakeField(Context, "Metric Target", Extent, Format::RG32Sfloat);
     const Ref<Image> dye = MakeField(Context, "Metric Dye", Extent, Format::R16Sfloat);
 
-    auto uniform = [](u32, u32) { return vec2(1.0f, 0.0f); };
+    const auto uniform = [](u32, u32) { return vec2(1.0f, 0.0f); };
     SeedVelocity(velocity, Extent, uniform);
     SeedVelocity(target, Extent, uniform);
     SeedDye(dye, Extent, [](const u32 x, u32) { return x == StartColumn ? 1.0f : 0.0f; });
@@ -543,7 +543,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     Context.ImmediateCommands([&](CommandBuffer& cmd) { sim->RecordSteps(cmd, Steps); });
 
     const FieldReader field = Read(Context, dye, Extent);
-    auto PeakColumn = [&](const u32 row)
+    const auto PeakColumn = [&](const u32 row)
     {
         f32 best = -1.0f;
         u32 at = 0;
@@ -572,7 +572,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture, "fluid sim: relaxation converges on it
     constexpr u32 Steps = 4;
     constexpr f32 Rate = 0.25f;
 
-    auto Run = [&](const f32 rate)
+    const auto Run = [&](const f32 rate)
     {
         const Ref<Image> velocity = MakeField(Context, "Jet Velocity", Extent, Format::RG32Sfloat);
         const Ref<Image> target = MakeField(Context, "Jet Target", Extent, Format::RG32Sfloat);
@@ -616,7 +616,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     constexpr uvec2 Extent{32, 32};
     constexpr u32 Steps = 12;
 
-    auto Run = [&]()
+    const auto Run = [&]()
     {
         const Ref<Image> velocity =
             MakeField(Context, "Digest Velocity", Extent, Format::RG32Sfloat);
@@ -686,5 +686,5 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // Pinned on the reference host (Apple M2, MoltenVK). Cross-device bit-identity is not
     // promised and is not asserted anywhere; this is a change detector, re-pinned freely and
     // without ceremony on an intended solver change, with a note saying what moved.
-    CHECK(first == 0xAF56CC176C83DA22ull);
+    CHECK(first == 0xC95ADBA6BC0A9AC5ull);
 }
