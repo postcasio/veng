@@ -66,7 +66,7 @@ namespace Veng::Renderer
             .flags = static_cast<VkImageCreateFlags>(flags),
             .imageType = static_cast<VkImageType>(ToVk(m_Type)),
             .format = static_cast<VkFormat>(ToVk(m_Format)),
-            .extent = {m_Extent.x, m_Extent.y, m_Extent.z},
+            .extent = {.width = m_Extent.x, .height = m_Extent.y, .depth = m_Extent.z},
             .mipLevels = m_MipLevels,
             .arrayLayers = m_Layers,
             .samples = static_cast<VkSampleCountFlagBits>(vk::SampleCountFlagBits::e1),
@@ -223,11 +223,11 @@ namespace Veng::Renderer
         const u32 transferFamily = families.TransferFamily.value_or(VK_QUEUE_FAMILY_IGNORED);
         const u32 graphicsFamily = families.GraphicsFamily.value_or(VK_QUEUE_FAMILY_IGNORED);
 
-        auto staging = Buffer::Create(m_Context, {
-                                                     .Name = m_Name + " (Upload)",
-                                                     .Size = data.size(),
-                                                     .Usage = BufferUsage::TransferSrc,
-                                                 });
+        const auto staging = Buffer::Create(m_Context, {
+                                                           .Name = m_Name + " (Upload)",
+                                                           .Size = data.size(),
+                                                           .Usage = BufferUsage::TransferSrc,
+                                                       });
         staging->UploadSync(data);
 
         // Command-pool allocation is not thread-safe, so the copy records onto this worker's own

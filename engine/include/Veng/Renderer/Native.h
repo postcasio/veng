@@ -115,7 +115,7 @@ namespace Veng::Renderer
     /// the per-frame graphics fence.
     /// @param buffer The buffer whose handles to release.
     /// @return The released handles; the caller owns them.
-    [[nodiscard]] inline ReleasedBuffer ReleaseBuffer(Buffer& buffer)
+    [[nodiscard]] inline ReleasedBuffer ReleaseBuffer(const Buffer& buffer)
     {
         auto& native = buffer.GetNative();
         const ReleasedBuffer released{.Buffer = native.Buffer, .Allocation = native.Allocation};
