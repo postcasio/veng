@@ -288,6 +288,28 @@ guards each component it returns (see "Forward lighting for translucent surfaces
 strictly as roughness falls to the floor, and a floor-roughness mirror under a light a hundred times
 the sun's stays finite and within the bound.
 
+**Geometric specular anti-aliasing widens the lobe by how far the normal varies across a pixel.** A
+full-strength lobe on a glossy surface is narrower than the normal's change across one pixel on a
+normal-mapped panel or a small curved surface, so a highlight lands on a pixel one frame and misses
+it the next, and TAA is not always on to hide it. `MakeLightingSurface` therefore takes the shading
+normal's screen-space variance `|∂N/∂x|² + |∂N/∂y|²` (`NormalScreenVariance`, fine derivatives) and
+applies Kaplanyan and Tokuyoshi's widening as Filament's `normalFiltering` does, once per surface:
+`α² = saturate(α² + min(2·σ²·variance, κ))`, converted back to perceptual roughness. `σ²` is
+`SceneView::SpecularAntiAliasingVariance` (default 0.15) and `κ` `SpecularAntiAliasingThreshold`
+(default 0.2), Filament's defaults, carried in the view block's `AmbientParams.yz` (see "View
+constants"); a zero `σ²` adds exactly nothing, which is how the feature is off. Because it changes the
+surface's roughness it reaches every light's `D` and G, a sized light's widening (which composes in
+`α²`), the LTC lookups and the image-based reflection's mip and BRDF-LUT lookups: a reflection blurs
+where the normal varies. The deferred pass takes the derivatives in uniform control flow, ahead of its
+background return, and zeroes the variance for any pixel whose 2×2 quad holds a background pixel — a
+second fine derivative of the "has surface" edge reaches the quad's diagonal — since the cleared
+normal would read as a huge variance and roughen a silhouette against the sky. **The deferred form's
+known trade**: a quad straddling two different surfaces reads their normal difference as variance, so
+those edge pixels roughen, bounded by `κ`. Detail finer than about two pixels is beyond what the
+derivatives resolve and is a normal map's to pre-filter. `tests/gpu/specular_lobe.cpp` pins that a
+flat mirror renders identically with it on and off, that a rippled mirror's reflected energy holds
+under a half-pixel move, and that a sphere's silhouette texels shade as with it off.
+
 ### Anti-aliasing
 
 **`Settings.AntiAliasing` is one mutually-exclusive `AntiAliasingMode`** — `None` (default), `FXAA`,
@@ -1039,6 +1061,10 @@ specular term, or divides it out, rather than letting the blend dim both alike.
   roughness/metallic (8-bit) where the forward path shades exact floats, so the two agree to that
   quantisation rather than bit for bit; `tests/gpu/forward_lighting.cpp` renders an opaque cube and
   its full-coverage forward-lit twin under a directional and a point light and holds them within it.
+- **It must be called in uniform control flow.** `EvaluateForwardLighting` takes screen-space
+  derivatives of `ForwardSurface.Normal` for specular anti-aliasing, so a material calls it before
+  any `discard` or early return some fragments of a quad take, and outside any branch that varies
+  across the quad; derivatives in divergent flow are undefined.
 - **The output guard bounds what the loop returns, not what a material writes.**
   `EvaluateForwardLighting` passes `Diffuse` and `Specular` each through `GuardLightingOutput`. A
   material that scales either up — dividing the specular by its coverage, as the straight-alpha
@@ -1270,6 +1296,12 @@ deep and each `SceneRenderer::Execute` claims its own slot (`BindlessRegistry::T
 per frame): two viewports rendering in one frame write distinct regions rather than the second's
 camera clobbering the region the first's draws still read at submit. The shared per-frame light
 buffer rings the same way.
+
+**Per-frame shading values ride the block, not a recompile.** `AmbientParams.x` carries the SH
+skylight arm's intensity, and `.y` / `.z` the geometric specular anti-aliasing variance scale and
+threshold (`SceneView::SpecularAntiAliasingVariance` / `SpecularAntiAliasingThreshold`, clamped to
+non-negative), read by `MakeLightingSurface`; `.w` is unused. A view block a pass writes without them
+(zero) shades with the widening off.
 
 **The per-material parameter arena is not in this ring** — it rings by frame-in-flight alone, so a
 material's block sits at one offset whichever view is recording and a value written between two

@@ -57,14 +57,15 @@ float3 GuardLightingOutput(float3 radiance)
 }
 
 // The surface a lighting evaluation shades, in world space. Build it with MakeLightingSurface,
-// which applies the roughness floor and derives the metal-tinted base reflectance.
+// which applies the roughness floor and specular anti-aliasing and derives the metal-tinted base
+// reflectance.
 struct LightingSurface
 {
     float3 Position;         // world position
     float3 Normal;           // unit world-space shading normal
     float3 View;             // unit vector from the surface toward the camera
     float3 Albedo;           // linear base colour
-    float  Roughness;        // perceptual roughness, floored at 0.04
+    float  Roughness;        // perceptual roughness, floored at 0.04 and widened by specular AA
     float  Metallic;         // [0,1]
     float3 F0;               // base reflectance: a flat 0.04 for dielectrics, albedo-tinted for metals
     float  ViewDepth;        // positive view-space distance in front of the camera (cascade select)
@@ -78,16 +79,42 @@ struct LightingResult
     float3 Specular;
 };
 
+// How far a shading normal varies across this pixel, |dN/dx|² + |dN/dy|²: the variance geometric
+// specular anti-aliasing widens the lobe by (MakeLightingSurface). It takes screen-space
+// derivatives, so it is called from a fragment stage in uniform control flow. Fine derivatives, so
+// a pixel's variance comes from its own row and column neighbours.
+float NormalScreenVariance(float3 normal)
+{
+    float3 du = ddx_fine(normal);
+    float3 dv = ddy_fine(normal);
+    return dot(du, du) + dot(dv, dv);
+}
+
+// Builds the surface a lighting evaluation shades.
+//
+// normalVariance is the shading normal's screen-space variance (NormalScreenVariance). Geometric
+// specular anti-aliasing (Kaplanyan 2016; Tokuyoshi and Kaplanyan 2019, as Filament's
+// normalFiltering ships it) widens the GGX width by it once, here, so every light's D and G, a
+// sized light's widening and the image-based reflection's mip and BRDF lookups all see the widened
+// roughness:
+//     alpha² = saturate(alpha² + min(2 · σ² · normalVariance, κ))
+// with σ² and κ the view block's AmbientParams.y and .z. A highlight narrower than the normal's
+// variation across one pixel lands on it one frame and misses it the next; the widened one covers
+// the pixel. A zero σ² adds exactly nothing. The result is converted back to perceptual roughness,
+// which is what Roughness holds and every reader expects.
 LightingSurface MakeLightingSurface(ViewConstants vc, float3 position, float3 normal,
                                     float3 view, float3 albedo, float roughness, float metallic,
-                                    bool declinesShadowMaps)
+                                    bool declinesShadowMaps, float normalVariance)
 {
     LightingSurface s;
     s.Position = position;
     s.Normal = normal;
     s.View = view;
     s.Albedo = albedo;
-    s.Roughness = clamp(roughness, 0.04, 1.0);
+    float floored = clamp(roughness, 0.04, 1.0);
+    float alpha = floored * floored;
+    float kernel = min(2.0 * vc.AmbientParams.y * normalVariance, vc.AmbientParams.z);
+    s.Roughness = sqrt(sqrt(saturate(alpha * alpha + kernel)));
     s.Metallic = metallic;
     // Metallic workflow: dielectrics reflect a flat 0.04, metals tint specular by albedo; diffuse
     // vanishes for metals.

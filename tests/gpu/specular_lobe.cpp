@@ -1,13 +1,15 @@
-// The GGX lobe is evaluated in full, a light's size widens it, and the lighting output is guarded
-// against the half-float overflow a full-strength lobe can reach. A flat white metal plane is framed
-// on a light's mirror reflection — a plane rather than a sphere, so a texel's angle on screen is its
-// angle in reflection and the brightest texel sits on the peak. The lit HDR scene colour is read
-// before tonemap, since the tonemapped output clamps to [0, 1] and can show neither the peak nor an
+// The GGX lobe is evaluated in full, a light's size widens it, specular anti-aliasing widens it by
+// how far the normal varies across a pixel, and the lighting output is guarded against the
+// half-float overflow a full-strength lobe can reach. A flat white metal plane is framed on a light's
+// mirror reflection — a plane rather than a sphere, so a texel's angle on screen is its angle in
+// reflection and the brightest texel sits on the peak. The lit HDR scene colour is read before
+// tonemap, since the tonemapped output clamps to [0, 1] and can show neither the peak nor an
 // overflow.
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <optional>
 
 #include <doctest/doctest.h>
 
@@ -48,6 +50,9 @@ namespace
     // The white-plane fixture pack's material: the g-buffer brick material over a white texture,
     // writing RoughnessFactor and MetallicFactor straight into the g-buffer.
     constexpr AssetId WhitePlaneInstanceId{0x895443ULL};
+    // The same pack's rippled material: the white metal with its shading normal tilted by a
+    // sinusoid along both UV axes (rippled.frag), off until its RippleAmplitude is set.
+    constexpr AssetId RippledInstanceId{0x80DA3AB8EEC00A11ULL};
 
     // The largest finite channel value across the lit HDR target, and whether every texel is finite.
     struct HdrScan
@@ -99,6 +104,10 @@ namespace
         MirrorFraming Framing;
         vec3 ToLight{0.0f};
         Entity Sun;
+        // The view's specular anti-aliasing variance scale; unset renders at the view's default.
+        std::optional<f32> SpecularAaVariance;
+        // The flat ambient arm's floor; zero leaves a metal lit by its reflection of the light alone.
+        vec3 AmbientFloor{0.0f};
     };
 
     MirrorScene MakeMirrorScene(Context& context, AssetManager& assets, TypeRegistry& types,
@@ -143,14 +152,15 @@ namespace
     // Renders the mirror scene as it stands and downloads the lit HDR target.
     vector<u8> RenderHdr(const Context& context, MirrorScene& mirror)
     {
-        context.ImmediateCommands(
-            [&](CommandBuffer& cmd)
-            {
-                mirror.Renderer->Execute(cmd, Renderer::SceneView{.World = *mirror.World,
-                                                                  .Camera = mirror.Camera,
-                                                                  .Delta = 0.0f,
-                                                                  .AmbientFloor = vec3(0.0f)});
-            });
+        Renderer::SceneView view{.World = *mirror.World,
+                                 .Camera = mirror.Camera,
+                                 .Delta = 0.0f,
+                                 .AmbientFloor = mirror.AmbientFloor};
+        if (mirror.SpecularAaVariance.has_value())
+        {
+            view.SpecularAntiAliasingVariance = *mirror.SpecularAaVariance;
+        }
+        context.ImmediateCommands([&](CommandBuffer& cmd) { mirror.Renderer->Execute(cmd, view); });
         const Ref<ImageView> hdr = mirror.Renderer->GetHdrView();
         REQUIRE(hdr != nullptr);
         return hdr->GetImage()->Download();
@@ -278,7 +288,8 @@ namespace
         };
     }
 
-    AssetHandle<MaterialInstance> LoadWhiteMetal(AssetManager& assets, const path& archive)
+    AssetHandle<MaterialInstance> LoadWhiteMetal(AssetManager& assets, const path& archive,
+                                                 const AssetId instance = WhitePlaneInstanceId)
     {
         Cook::Cooker cooker;
         Cook::RegisterBuiltinImporters(cooker);
@@ -289,7 +300,7 @@ namespace
         REQUIRE(assets.Mount(archive).has_value());
 
         const AssetResult<AssetHandle<MaterialInstance>> material =
-            assets.LoadSync<MaterialInstance>(WhitePlaneInstanceId);
+            assets.LoadSync<MaterialInstance>(instance);
         REQUIRE(material.has_value());
         REQUIRE(material->IsLoaded());
         const_cast<MaterialInstance&>(*material->Get()).SetParam("MetallicFactor", 1.0f);
@@ -429,6 +440,151 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     CHECK(highlights[0].Radius > 0.0f);
     CHECK(highlights[1].Radius > 2.0f * highlights[0].Radius);
+
+    std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "specular anti-aliasing: a flat mirror renders identically with it on and off")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path archive = Veng::TestSupport::TempDir() / "veng_gpu_specular_aa_flat.vengpack";
+    const AssetHandle<MaterialInstance> material = LoadWhiteMetal(assets, archive);
+    MirrorScene mirror = MakeMirrorScene(Context, assets, Types, material);
+    auto& instance = const_cast<MaterialInstance&>(*material.Get());
+    instance.SetParam("RoughnessFactor", 0.04f);
+    mirror.World->Get<Light>(mirror.Sun).Intensity = 1.0f / LuminousAnchor;
+
+    // A flat plane's normal does not vary across a pixel, so the widening adds exactly nothing and
+    // the floor-roughness glint is untouched, however sharp.
+    const vector<u8> on = RenderHdr(Context, mirror);
+    mirror.SpecularAaVariance = 0.0f;
+    const vector<u8> off = RenderHdr(Context, mirror);
+    CHECK(ScanHdr(on).Max > 1.0f);
+    CHECK(on == off);
+
+    std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "specular anti-aliasing: a rippled mirror's highlight holds its energy under a "
+                  "half-pixel move")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path archive = Veng::TestSupport::TempDir() / "veng_gpu_specular_aa_ripple.vengpack";
+    const AssetHandle<MaterialInstance> material =
+        LoadWhiteMetal(assets, archive, RippledInstanceId);
+    MirrorScene mirror = MakeMirrorScene(Context, assets, Types, material, WideFraming);
+    auto& instance = const_cast<MaterialInstance&>(*material.Get());
+
+    // A floor-roughness metal whose normal tilts by up to about three degrees with a period of three
+    // to four texels, under a point-sized sun: the bare lobe is far narrower than the normal's
+    // variation across one texel, so which texels catch it depends on where the ripple falls on the
+    // grid. The period is kept above two texels, where the derivatives that measure the variation
+    // still resolve it; finer detail is a normal map's to pre-filter.
+    instance.SetParam("RoughnessFactor", 0.04f);
+    instance.SetParam("RippleFrequency", 400.0f);
+    instance.SetParam("RippleAmplitude", 0.05f);
+    mirror.World->Get<Light>(mirror.Sun).Intensity = 1.0f / LuminousAnchor;
+
+    const f64 before = MeasureHighlight(Context, mirror).Energy;
+
+    // Move the camera half a texel sideways (its right axis is world X), shifting the ripple half a
+    // texel across the grid while the reflection direction at every texel stays put.
+    const f32 texel = 2.0f * 4.0f * std::tan(0.5f * mirror.Framing.FovY) /
+                      static_cast<f32>(mirror.Framing.Extent.x);
+    const vec3 shift(0.5f * texel, 0.0f, 0.0f);
+    const vec3 eye = glm::normalize(vec3(0.0f, 1.0f, -1.0f)) * 4.0f;
+    mirror.Camera.SetView(eye + shift, shift, vec3(0.0f, 1.0f, 0.0f));
+    const f64 after = MeasureHighlight(Context, mirror).Energy;
+
+    // The widened lobe covers the normal's variation across a texel, so the reflected energy the
+    // frame catches is a property of the surface rather than of the sample grid. Measured within
+    // 0.6 % across eight quarter-texel steps at landing, where the bare lobe swung by nearly a factor
+    // of two; 2 % leaves headroom for driver rounding and still fails a lobe that aliases.
+    REQUIRE(before > 0.0);
+    CHECK(std::abs(after - before) <= 0.02 * before);
+
+    std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "specular anti-aliasing: a sphere's silhouette against the background is not "
+                  "roughened")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path archive = Veng::TestSupport::TempDir() / "veng_gpu_specular_aa_silhouette.vengpack";
+    const AssetHandle<MaterialInstance> material = LoadWhiteMetal(assets, archive);
+    auto& instance = const_cast<MaterialInstance&>(*material.Get());
+    instance.SetParam("RoughnessFactor", 0.3f);
+
+    // A glossy metal sphere lit from the side, so its limb carries roughness-sensitive specular,
+    // against an empty background. The flat ambient floor lifts every texel of the sphere above
+    // zero, so a texel the lighting pass left black is background.
+    constexpr uvec2 extent{128, 128};
+    MirrorScene sphere;
+    sphere.World = Scene::Create(Types);
+    sphere.Framing = MirrorFraming{.FovY = glm::radians(40.0f), .Extent = extent};
+    sphere.AmbientFloor = vec3(0.1f);
+    const Ref<Mesh> mesh =
+        Mesh::BuildSync(Context, Primitives::Sphere(1.0f, 48, 96, material), "Silhouette Sphere");
+    const Entity ball = sphere.World->CreateEntity();
+    sphere.World->Add<Transform>(ball);
+    sphere.World->Add<MeshRenderer>(ball).Mesh = assets.Adopt(mesh);
+    sphere.Sun = sphere.World->CreateEntity();
+    sphere.World->Add<Light>(sphere.Sun) = Light{
+        .Type = LightType::Directional,
+        .Direction = -glm::normalize(vec3(1.0f, 0.4f, 0.3f)),
+        .Color = vec3(1.0f),
+        .Intensity = 1.0f / LuminousAnchor,
+    };
+    sphere.Camera.SetPerspective(sphere.Framing.FovY, 1.0f, 0.1f, 100.0f);
+    sphere.Camera.SetView(vec3(0.0f, 0.0f, 4.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+    sphere.Renderer = SceneRenderer::Create({
+        .Context = Context,
+        .Assets = assets,
+        .OutputFormat = Context.GetOutputFormat(),
+        .Extent = extent,
+        .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
+    });
+
+    const HdrImage on = DecodeHdr(RenderHdr(Context, sphere), extent);
+    sphere.SpecularAaVariance = 0.0f;
+    const HdrImage off = DecodeHdr(RenderHdr(Context, sphere), extent);
+    const auto background = [&](u32 x, u32 y) { return on.At(x, y) <= 0.0f; };
+
+    // Every lit texel whose 2x2 derivative quad holds a background texel shades as with the widening
+    // off; the sphere's own curvature is real variance, so some interior texel differs.
+    u32 silhouette = 0;
+    u32 silhouetteChanged = 0;
+    u32 interiorChanged = 0;
+    for (u32 y = 0; y < extent.y; ++y)
+    {
+        for (u32 x = 0; x < extent.x; ++x)
+        {
+            if (background(x, y))
+            {
+                continue;
+            }
+            const u32 qx = x & ~1u;
+            const u32 qy = y & ~1u;
+            const bool edge = background(qx, qy) || background(qx + 1, qy) ||
+                              background(qx, qy + 1) || background(qx + 1, qy + 1);
+            const bool changed = on.At(x, y) != off.At(x, y);
+            silhouette += edge ? 1u : 0u;
+            silhouetteChanged += (edge && changed) ? 1u : 0u;
+            interiorChanged += (!edge && changed) ? 1u : 0u;
+        }
+    }
+    CHECK(silhouette > 20u);
+    CHECK(silhouetteChanged == 0u);
+    CHECK(interiorChanged > 0u);
 
     std::filesystem::remove(archive);
 }

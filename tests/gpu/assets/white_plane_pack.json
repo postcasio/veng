@@ -25,6 +25,16 @@
       "id": "0x000000000000232B",
       "type": "Material",
       "source": "materials/brick.vmat.json"
+    },
+    {
+      "id": "0xCB7E1AD9B30D3894",
+      "type": "Shader",
+      "source": "shaders/rippled.frag.shader.json"
+    },
+    {
+      "id": "0xDD22F87963F21E31",
+      "type": "Material",
+      "source": "materials/rippled.vmat.json"
     }
   ]
 }

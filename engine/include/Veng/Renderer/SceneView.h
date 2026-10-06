@@ -358,6 +358,23 @@ namespace Veng::Renderer
         /// @brief SSR roughness cutoff; surfaces rougher than this trace no reflection ray.
         f32 SsrMaxRoughness = 0.8f;
 
+        /// @brief Geometric specular anti-aliasing's screen-space variance scale (sigma squared).
+        ///
+        /// The lighting core widens each surface's GGX width by how far its shading normal varies
+        /// across the pixel, alpha² += min(2 · variance, SpecularAntiAliasingThreshold), where
+        /// variance is this scale times |dN/dx|² + |dN/dy|², so a highlight narrower than that
+        /// variation stops shimmering as the surface moves. The widened roughness reaches every
+        /// light and the image-based reflection. Zero turns the widening off through the same path:
+        /// it leaves every surface's roughness as authored. Written to the view block each Execute,
+        /// so it does not trigger a recompile. The default is Filament's.
+        f32 SpecularAntiAliasingVariance = 0.15f;
+        /// @brief Geometric specular anti-aliasing's ceiling on the alpha² it adds (kappa).
+        ///
+        /// Bounds how rough the widening can make a surface, including at a deferred quad that
+        /// straddles two different surfaces, whose normal difference reads as variance. Written to
+        /// the view block each Execute. The default is Filament's.
+        f32 SpecularAntiAliasingThreshold = 0.2f;
+
         /// @brief Depth-of-field focus plane distance in metres; pushed to the CoC prefilter.
         ///
         /// One of the three thin-lens constants the battery evaluates ComputeCircleOfConfusion

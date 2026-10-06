@@ -550,6 +550,8 @@ namespace Veng::Renderer
             .SsrMaxDistance = m_ViewState.SsrMaxDistance,
             .SsrThickness = m_ViewState.SsrThickness,
             .SsrMaxRoughness = m_ViewState.SsrMaxRoughness,
+            .SpecularAntiAliasingVariance = m_ViewState.SpecularAntiAliasingVariance,
+            .SpecularAntiAliasingThreshold = m_ViewState.SpecularAntiAliasingThreshold,
             .DofFocusDistance = m_ViewState.DofFocusDistance,
             .DofAperture = m_ViewState.DofAperture,
             .DofCocScale = m_ViewState.DofCocScale,

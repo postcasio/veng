@@ -51,7 +51,7 @@ struct ForwardSurface
     float3 Normal;     // world-space shading normal, unit
     float3 View;       // unit vector from the surface toward the camera
     float3 Albedo;     // linear base colour
-    float  Roughness;  // perceptual roughness [0,1] (floored at 0.04, as the deferred pass floors it)
+    float  Roughness;  // perceptual roughness [0,1] (floored and widened as the deferred pass does)
     float  Metallic;   // [0,1]
     float  Occlusion;  // ambient occlusion [0,1]
 };
@@ -68,12 +68,17 @@ struct ForwardLighting
 // plus the view's ambient arm scaled by s.Occlusion. Returns exposure-scaled linear HDR radiance,
 // each component guarded; a caller that amplifies or sums them re-applies GuardLightingOutput to
 // what it writes.
+//
+// It takes screen-space derivatives of s.Normal for specular anti-aliasing (MakeLightingSurface),
+// so it must be called in uniform control flow: not after a discard or an early return some
+// fragments of a quad take, and not inside a branch that varies across the quad.
 ForwardLighting EvaluateForwardLighting(ForwardSurface s)
 {
     ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
     LightingSurface surface = MakeLightingSurface(vc, s.Position, s.Normal, s.View, s.Albedo,
                                                   s.Roughness, s.Metallic,
-                                                  /*declinesShadowMaps=*/false);
+                                                  /*declinesShadowMaps=*/false,
+                                                  NormalScreenVariance(s.Normal));
 
     LightingResult direct = EvaluateDirectLighting(vc, surface);
     LightingResult ambient = EvaluateAmbientLighting(vc, surface, s.Occlusion);

@@ -69,6 +69,22 @@ uint TileLightMask(ViewConstants vc, float2 fragCoord)
     return g_Buffers[NonUniformResourceIndex(vc.LightTiles.x)].Load(LightTileWord(vc, tile) * 4u);
 }
 
+// The shading normal's screen-space variance for specular anti-aliasing (MakeLightingSurface), or
+// zero for a pixel whose 2×2 quad holds a background pixel. The cleared g-buffer's zero normal
+// would otherwise read as a huge variance and roughen a silhouette against the sky. A quad
+// straddling two different surfaces does read their normal difference as variance, so those edge
+// pixels roughen, bounded by the threshold. Takes derivatives, so it runs in uniform control flow.
+float GBufferNormalVariance(float3 normal, bool hasSurface)
+{
+    float surface = hasSurface ? 1.0 : 0.0;
+    // Fine derivatives pair a pixel with its row and column neighbours only; a second derivative of
+    // that edge reaches the diagonal one, so any background pixel in the quad is seen by all four.
+    float edge = abs(ddx_fine(surface)) + abs(ddy_fine(surface));
+    float quadEdge = edge + abs(ddx_fine(edge)) + abs(ddy_fine(edge));
+    float variance = NormalScreenVariance(normal);
+    return quadEdge > 0.0 ? 0.0 : variance;
+}
+
 struct VSOutput
 {
     float4 sv_position : SV_Position;
@@ -92,6 +108,11 @@ float4 fsMain(VSOutput input) : SV_Target
     float4 orm    = g_Textures[NonUniformResourceIndex(g_PC.OrmTexture)].Sample(samp, sampleUV);
     float depth   = g_Textures[NonUniformResourceIndex(g_PC.DepthTexture)].Sample(samp, sampleUV).r;
 
+    float normalLength = length(normal);
+    float3 N = normalLength > 1e-4 ? normal / normalLength : float3(0.0, 0.0, 0.0);
+    // Ahead of the background return below: derivatives after a divergent return are undefined.
+    float normalVariance = GBufferNormalVariance(N, depth > 0.0);
+
     // Background (reverse-Z cleared depth = 0.0): no geometry was drawn here, so these pixels
     // belong to the skybox pass. Leave them black. The cleared g-buffer (occlusion 1, normal 0)
     // otherwise drives the IBL specular term — reflect(-V, 0) = -V samples the prefiltered
@@ -111,9 +132,6 @@ float4 fsMain(VSOutput input) : SV_Target
     // that coordinate belongs to unrelated geometry.
     bool declinesShadowMaps = GBufferDeclinesShadowMaps(orm.a);
 
-    float normalLength = length(normal);
-    float3 N = normalLength > 1e-4 ? normal / normalLength : float3(0.0, 0.0, 0.0);
-
     // Reconstruct world position: form NDC from the screen UV + sampled depth,
     // transform by the inverse view-projection, and perspective-divide.
     float2 ndcXY = input.v_UV * 2.0 - 1.0;
@@ -122,8 +140,8 @@ float4 fsMain(VSOutput input) : SV_Target
     float3 worldPos = worldH.xyz / worldH.w;
 
     float3 V = normalize(vc.CameraPosition.xyz - worldPos);
-    LightingSurface surface =
-        MakeLightingSurface(vc, worldPos, N, V, albedo, roughness, metallic, declinesShadowMaps);
+    LightingSurface surface = MakeLightingSurface(vc, worldPos, N, V, albedo, roughness, metallic,
+                                                  declinesShadowMaps, normalVariance);
 
 #if VE_DEBUG_CASCADES
     // The cascade debug arm: tint by the selected cascade, unlit, so cascade

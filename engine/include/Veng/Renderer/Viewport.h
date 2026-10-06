@@ -118,6 +118,14 @@ namespace Veng::Renderer
         f32 SsrThickness = 0.5f;
         /// @brief SSR roughness cutoff; surfaces rougher than this trace no reflection ray.
         f32 SsrMaxRoughness = 0.8f;
+        /// @brief Geometric specular anti-aliasing's screen-space variance scale; zero turns it off.
+        ///
+        /// @see SceneView::SpecularAntiAliasingVariance
+        f32 SpecularAntiAliasingVariance = 0.15f;
+        /// @brief Geometric specular anti-aliasing's ceiling on the alpha² it adds.
+        ///
+        /// @see SceneView::SpecularAntiAliasingThreshold
+        f32 SpecularAntiAliasingThreshold = 0.2f;
         /// @brief Depth-of-field focus plane distance in metres.
         ///
         /// Overwritten from the resolved camera's lens when it is Physical, so the camera wins by

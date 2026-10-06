@@ -1,0 +1,79 @@
+{
+  "defaultInstance": "0x80DA3AB8EEC00A11",
+  "shaders": {
+    "vertex": "0x000000000000238D",
+    "fragment": "0xCB7E1AD9B30D3894"
+  },
+  "fields": [
+    {
+      "name": "BaseColor",
+      "type": "texture",
+      "id": "0x0000000000002329"
+    },
+    {
+      "name": "BaseColorSampler",
+      "type": "sampler",
+      "texture": "BaseColor"
+    },
+    {
+      "name": "ORM",
+      "type": "texture",
+      "id": "0x0000000000002329"
+    },
+    {
+      "name": "ORMSampler",
+      "type": "sampler",
+      "texture": "ORM"
+    },
+    {
+      "name": "BaseColorFactor",
+      "type": "vec4",
+      "value": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "name": "EmissiveFactor",
+      "type": "vec4",
+      "value": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "MetallicFactor",
+      "type": "float",
+      "value": 1.0
+    },
+    {
+      "name": "RoughnessFactor",
+      "type": "float",
+      "value": 1.0
+    },
+    {
+      "name": "OcclusionStrength",
+      "type": "float",
+      "value": 1.0
+    },
+    {
+      "name": "SurfaceFlags",
+      "type": "float",
+      "value": 0.0
+    },
+    {
+      "name": "RippleFrequency",
+      "type": "float",
+      "value": 0.0
+    },
+    {
+      "name": "RippleAmplitude",
+      "type": "float",
+      "value": 0.0
+    }
+  ]
+}

@@ -287,10 +287,13 @@ extern "C"
 /// Version 70 grows Light with AngularRadius between Radius and TwoSided, so a stale module that
 /// builds a light in code lays it out short and the engine reads every field after Radius at a
 /// shifted offset.
+/// Version 71 grows SceneView and Viewport::ViewState with the specular anti-aliasing variance and
+/// threshold after SsrMaxRoughness. A module builds views and view states in code, so a stale module
+/// lays both out short and the renderer reads every field after SsrMaxRoughness at a shifted offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 70u
+#define VENG_MODULE_ABI_VERSION 71u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

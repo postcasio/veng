@@ -1510,8 +1510,8 @@ namespace Veng::Renderer
         resolvedView.SkinnedPaletteBases = &m_PaletteBaseByEntity;
 
         const vector<RenderGraph::ImportBinding> bindings = {
-            {m_LeanNormalId, m_LeanNormalView},
-            {m_LeanDepthId, m_LeanDepthView},
+            {.Id = m_LeanNormalId, .View = m_LeanNormalView},
+            {.Id = m_LeanDepthId, .View = m_LeanDepthView},
         };
         m_Internal->Graph->Execute(cmd, bindings, &resolvedView);
 
@@ -2452,7 +2452,10 @@ namespace Veng::Renderer
                     uvec4(m_LtcMatHandle.Index, m_LtcMagHandle.Index, m_SamplerHandle.Index,
                           m_SkyResolver->GetIbl().GetPrefilterMipCount()),
                 .AmbientFloor = vec4(resolvedView.AmbientFloor, resolvedView.EnvironmentIntensity),
-                .AmbientParams = vec4(resolvedView.SkylightIntensity, 0.0f, 0.0f, 0.0f),
+                .AmbientParams =
+                    vec4(resolvedView.SkylightIntensity,
+                         std::max(resolvedView.SpecularAntiAliasingVariance, 0.0f),
+                         std::max(resolvedView.SpecularAntiAliasingThreshold, 0.0f), 0.0f),
                 // The renderer executes once per frame, so the frame-in-flight index selects a mask
                 // region no frame still on the GPU reads.
                 .LightTiles = m_LightTiles->ViewState(m_Topology->LightTileCullActive,
@@ -2924,47 +2927,48 @@ namespace Veng::Renderer
     {
         // Bloom and SSAO imports are appended only when active (they are only declared then).
         vector<RenderGraph::ImportBinding> bindings = {
-            {m_AlbedoId, m_AlbedoView}, {m_NormalId, m_NormalView}, {m_OrmId, m_OrmView},
-            {m_DepthId, m_DepthView},   {m_HdrId, m_HdrView},       {m_OutputId, m_OutputView},
+            {.Id = m_AlbedoId, .View = m_AlbedoView}, {.Id = m_NormalId, .View = m_NormalView},
+            {.Id = m_OrmId, .View = m_OrmView},       {.Id = m_DepthId, .View = m_DepthView},
+            {.Id = m_HdrId, .View = m_HdrView},       {.Id = m_OutputId, .View = m_OutputView},
         };
         if (m_Topology->TaaActive)
         {
-            bindings.push_back({m_LitId, m_Taa->GetLitView()});
-            bindings.push_back({m_TaaHistoryId, m_Taa->GetHistoryView()});
+            bindings.push_back({.Id = m_LitId, .View = m_Taa->GetLitView()});
+            bindings.push_back({.Id = m_TaaHistoryId, .View = m_Taa->GetHistoryView()});
         }
         // The promotion's sub-rect scene target: the scene chain writes it and the upscale reads it.
         if (m_UpscaleWired)
         {
-            bindings.push_back({m_UpscaleSceneId, m_Upscale->GetSceneView()});
+            bindings.push_back({.Id = m_UpscaleSceneId, .View = m_Upscale->GetSceneView()});
         }
         // The promoted mask: the mask promotion writes it, a pre-bloom overlay composite adds to it,
         // and the bright pass reads it.
         if (m_BloomMaskPromotionWired)
         {
-            bindings.push_back({m_BloomMaskPromotedId, m_Upscale->GetMaskView()});
+            bindings.push_back({.Id = m_BloomMaskPromotedId, .View = m_Upscale->GetMaskView()});
         }
         // The spatial AA intermediate: the tonemap writes it and the resolve reads it, so it is
         // bound whenever FXAA or CMAA2 declared it.
         if (m_Topology->PostTonemapAa())
         {
-            bindings.push_back({m_AaInputId, m_Aa->GetInputView()});
+            bindings.push_back({.Id = m_AaInputId, .View = m_Aa->GetInputView()});
         }
         if (m_Topology->Cmaa2Active)
         {
-            bindings.push_back({m_Cmaa2EdgeId, m_Aa->GetEdgeView()});
+            bindings.push_back({.Id = m_Cmaa2EdgeId, .View = m_Aa->GetEdgeView()});
         }
         // Velocity is a g-buffer channel the surface pass writes every frame, so it is always bound.
-        bindings.push_back({m_VelocityId, m_VelocityView});
+        bindings.push_back({.Id = m_VelocityId, .View = m_VelocityView});
         // Emissive (G4) is likewise a g-buffer channel written every frame, always bound.
-        bindings.push_back({m_EmissiveId, m_EmissiveView});
+        bindings.push_back({.Id = m_EmissiveId, .View = m_EmissiveView});
         m_Picking->AppendBindings(bindings);
         if (m_Topology->ShadowActive && m_ShadowPass)
         {
-            bindings.push_back({m_ShadowId, m_ShadowPass->GetShadowView()});
+            bindings.push_back({.Id = m_ShadowId, .View = m_ShadowPass->GetShadowView()});
         }
         if (m_Topology->PunctualShadowActive && m_PunctualShadowPass)
         {
-            bindings.push_back({m_PunctualShadowId, m_Shadows->GetPunctualView()});
+            bindings.push_back({.Id = m_PunctualShadowId, .View = m_Shadows->GetPunctualView()});
         }
         if (m_Topology->BloomActive)
         {
@@ -2973,9 +2977,9 @@ namespace Veng::Renderer
             const std::vector<Ref<ImageView>>& bloomMips = m_Bloom->GetMipViews();
             for (u32 level = 0; level < bloomMips.size(); level++)
             {
-                bindings.push_back({m_BloomChainId.Level(level), bloomMips[level]});
+                bindings.push_back({.Id = m_BloomChainId.Level(level), .View = bloomMips[level]});
             }
-            bindings.push_back({m_BloomMaskId, m_BloomMaskView});
+            bindings.push_back({.Id = m_BloomMaskId, .View = m_BloomMaskView});
         }
         if (m_Topology->AutoExposureActive)
         {
@@ -2989,7 +2993,7 @@ namespace Veng::Renderer
         }
         if (m_Topology->SsaoActive && m_SsaoPass != nullptr)
         {
-            bindings.push_back({m_SsaoId, m_SsaoPass->GetAoView()});
+            bindings.push_back({.Id = m_SsaoId, .View = m_SsaoPass->GetAoView()});
         }
         if (m_Topology->RefractionActive)
         {
@@ -3000,66 +3004,70 @@ namespace Veng::Renderer
             for (usize level = 0; level < m_RefractionMipIds.size() && level < mipViews.size();
                  level++)
             {
-                bindings.push_back({m_RefractionMipIds[level], mipViews[level]});
+                bindings.push_back({.Id = m_RefractionMipIds[level], .View = mipViews[level]});
             }
-            bindings.push_back({m_RefractionDepthId, m_Refraction->GetDepthView()});
+            bindings.push_back({.Id = m_RefractionDepthId, .View = m_Refraction->GetDepthView()});
         }
         if (m_HalfResTranslucentActive)
         {
-            bindings.push_back({m_HalfResLayerId, m_HalfResTranslucent->GetLayerView()});
-            bindings.push_back({m_HalfResDepthReducedId, m_HalfResTranslucent->GetDepthView()});
+            bindings.push_back(
+                {.Id = m_HalfResLayerId, .View = m_HalfResTranslucent->GetLayerView()});
+            bindings.push_back(
+                {.Id = m_HalfResDepthReducedId, .View = m_HalfResTranslucent->GetDepthView()});
         }
         if (m_Topology->SsrActive)
         {
-            bindings.push_back({m_SsrSceneId, m_Ssr->GetSceneView()});
+            bindings.push_back({.Id = m_SsrSceneId, .View = m_Ssr->GetSceneView()});
             // Each reflection mip binds its per-frame view to its per-mip import slot (the trace
             // writes mip 0, the blur the rest).
             const std::vector<Ref<ImageView>>& reflectionMips = m_Ssr->GetReflectionMipViews();
             for (u32 level = 0; level < reflectionMips.size(); level++)
             {
-                bindings.push_back({m_SsrReflectionChainId.Level(level), reflectionMips[level]});
+                bindings.push_back(
+                    {.Id = m_SsrReflectionChainId.Level(level), .View = reflectionMips[level]});
             }
             const std::vector<Ref<ImageView>>& hiZMips = m_Ssr->GetHiZMipViews();
             for (u32 level = 0; level < hiZMips.size(); level++)
             {
-                bindings.push_back({m_SsrHiZChainId.Level(level), hiZMips[level]});
+                bindings.push_back({.Id = m_SsrHiZChainId.Level(level), .View = hiZMips[level]});
             }
         }
         if (m_Topology->DofWired())
         {
-            bindings.push_back({m_DofNearId, m_Dof->GetNearView()});
-            bindings.push_back({m_DofFarId, m_Dof->GetFarView()});
-            bindings.push_back({m_DofCocId, m_Dof->GetCocView()});
-            bindings.push_back({m_DofTileId, m_Dof->GetTileView()});
+            bindings.push_back({.Id = m_DofNearId, .View = m_Dof->GetNearView()});
+            bindings.push_back({.Id = m_DofFarId, .View = m_Dof->GetFarView()});
+            bindings.push_back({.Id = m_DofCocId, .View = m_Dof->GetCocView()});
+            bindings.push_back({.Id = m_DofTileId, .View = m_Dof->GetTileView()});
         }
         if (m_PostProcessEffectsActive)
         {
-            bindings.push_back({m_PpEffectIdA, m_PpEffectViewA});
+            bindings.push_back({.Id = m_PpEffectIdA, .View = m_PpEffectViewA});
             // The second target is imported only when the chain ping-pongs (two or more effects).
             if (m_PpEffectIdB.IsValid())
             {
-                bindings.push_back({m_PpEffectIdB, m_PpEffectViewB});
+                bindings.push_back({.Id = m_PpEffectIdB, .View = m_PpEffectViewB});
             }
         }
         // The overlay-document intermediate is bound whenever a material overlay composites (the id is
         // imported then); a material renders its document into it and samples it back.
         if (m_HdrOverlayDocId.IsValid())
         {
-            bindings.push_back({m_HdrOverlayDocId, m_HdrOverlayDocView});
+            bindings.push_back({.Id = m_HdrOverlayDocId, .View = m_HdrOverlayDocView});
         }
         if (m_Topology->DofComposited())
         {
-            bindings.push_back({m_DofSceneId, m_Dof->GetSceneView()});
-            bindings.push_back({m_DofNearBlurId, m_Dof->GetNearBlurView()});
-            bindings.push_back({m_DofFarBlurId, m_Dof->GetFarBlurView()});
-            bindings.push_back({m_DofNearFillId, m_Dof->GetNearFillView()});
-            bindings.push_back({m_DofFarFillId, m_Dof->GetFarFillView()});
+            bindings.push_back({.Id = m_DofSceneId, .View = m_Dof->GetSceneView()});
+            bindings.push_back({.Id = m_DofNearBlurId, .View = m_Dof->GetNearBlurView()});
+            bindings.push_back({.Id = m_DofFarBlurId, .View = m_Dof->GetFarBlurView()});
+            bindings.push_back({.Id = m_DofNearFillId, .View = m_Dof->GetNearFillView()});
+            bindings.push_back({.Id = m_DofFarFillId, .View = m_Dof->GetFarFillView()});
         }
         // Bind each hi-Z mip's per-frame storage view to its per-mip import slot.
         const std::vector<Ref<ImageView>>& hiZMipViews = m_GpuCull->GetHiZMipViews();
         for (u32 level = 0; level < hiZMipViews.size(); level++)
         {
-            bindings.push_back({m_GpuCull->GetHiZChainId().Level(level), hiZMipViews[level]});
+            bindings.push_back(
+                {.Id = m_GpuCull->GetHiZChainId().Level(level), .View = hiZMipViews[level]});
         }
         // The GPU cull arm shares the indirect command buffer between the cull pass and the
         // geometry pass through this import (the same buffer the cull set binding 2 writes).
@@ -3165,7 +3173,7 @@ namespace Veng::Renderer
         // Sum the tail and scene-color passes into one funnel; no active pass (no live field this
         // frame) reads back as all-zero, matching the passes' own no-field-drawn frames.
         PointFieldStats stats{};
-        auto fold = [&stats](const PointFieldStats& s)
+        const auto fold = [&stats](const PointFieldStats& s)
         {
             stats.Fields += s.Fields;
             stats.CellsTotal += s.CellsTotal;

@@ -1939,8 +1939,9 @@ if (VENG_BUILD_TESTS)
             # the same lights and compares them texel for texel: the forward loop is the deferred one.
             tests/gpu/forward_lighting.cpp
             # specular_lobe.cpp frames a white metal plane on a directional light's mirror reflection
-            # and reads the lit HDR target: the GGX peak rises to the roughness floor, and a very
-            # bright light's peak stays finite and under the lighting output guard.
+            # and reads the lit HDR target: the GGX peak rises to the roughness floor, a very bright
+            # light's peak stays finite and under the lighting output guard, and specular
+            # anti-aliasing steadies a rippled surface while leaving flat ones and silhouettes alone.
             tests/gpu/specular_lobe.cpp
             tests/gpu/environment_ibl.cpp
             tests/gpu/generated_texture.cpp

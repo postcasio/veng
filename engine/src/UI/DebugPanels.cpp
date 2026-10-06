@@ -555,7 +555,7 @@ namespace Veng::UI
                 }
             };
 
-            if (auto table = UI::Table("ScopeTable", 5))
+            if (const auto table = UI::Table("ScopeTable", 5))
             {
                 header("Scope", ScopeSortColumn::Name);
                 header("Incl ms", ScopeSortColumn::Inclusive);
@@ -606,7 +606,7 @@ namespace Veng::UI
         {
             bool dynamic = viewport.IsDynamicResolutionEnabled();
             {
-                auto timingDisabled = UI::Disabled(!context.IsGpuTimingSupported());
+                const auto timingDisabled = UI::Disabled(!context.IsGpuTimingSupported());
                 if (UI::Checkbox("Dynamic resolution", dynamic))
                 {
                     if (dynamic)
@@ -623,7 +623,7 @@ namespace Veng::UI
             // The controller's tuning: an edit re-applies through SetDynamicResolution, live on the
             // next frame. Greyed out while dynamic resolution is off.
             {
-                auto dynamicOff = UI::Disabled(!viewport.IsDynamicResolutionEnabled());
+                const auto dynamicOff = UI::Disabled(!viewport.IsDynamicResolutionEnabled());
                 Renderer::DynamicResolutionSettings settings =
                     viewport.GetDynamicResolution().value_or(Renderer::DynamicResolutionSettings{});
                 bool edited = false;
@@ -694,7 +694,7 @@ namespace Veng::UI
         UI::Tooltip("Shades every opaque draw with a constant albedo and its vertex normal, so the "
                     "g-buffer pass's time without material shading can be compared");
 
-        if (auto section = UI::CollapsingHeader("Lighting & effects", TreeFlags::DefaultOpen))
+        if (const auto section = UI::CollapsingHeader("Lighting & effects", TreeFlags::DefaultOpen))
         {
             changed |= UI::Checkbox("SSAO", settings.AO);
 
@@ -706,14 +706,20 @@ namespace Veng::UI
                 settings.AntiAliasing = static_cast<Renderer::AntiAliasingMode>(aa);
                 changed = true;
             }
+
+            // Per-frame ViewState values: a zero variance turns specular anti-aliasing off.
+            (void)UI::Slider("Specular AA variance", view.SpecularAntiAliasingVariance,
+                             {.Min = 0.0f, .Max = 1.0f});
+            (void)UI::Slider("Specular AA threshold", view.SpecularAntiAliasingThreshold,
+                             {.Min = 0.0f, .Max = 1.0f});
         }
 
-        if (auto section = UI::CollapsingHeader("Bloom", TreeFlags::DefaultOpen))
+        if (const auto section = UI::CollapsingHeader("Bloom", TreeFlags::DefaultOpen))
         {
             // On/off and the kernel are topology; threshold/intensity/radius are per-frame
             // ViewState values. The per-bloom knobs grey out when bloom is off.
             changed |= UI::Checkbox("Enabled##bloom", settings.Bloom);
-            auto bloomDisabled = UI::Disabled(!settings.Bloom);
+            const auto bloomDisabled = UI::Disabled(!settings.Bloom);
 
             static constexpr std::array<string_view, 2> kernelNames{"COD (13-tap/tent)",
                                                                     "Dual Kawase"};
@@ -732,12 +738,12 @@ namespace Veng::UI
                            {.Speed = 0.01f, .Min = 0.0f, .Max = 4.0f});
         }
 
-        if (auto section = UI::CollapsingHeader("Screen-space reflections"))
+        if (const auto section = UI::CollapsingHeader("Screen-space reflections"))
         {
             // The toggle and the trace resolution are topology; the intensity/distance/thickness/
             // roughness knobs are per-frame ViewState values. Everything greys out when SSR is off.
             changed |= UI::Checkbox("Enabled##ssr", settings.SSR);
-            auto ssrDisabled = UI::Disabled(!settings.SSR);
+            const auto ssrDisabled = UI::Disabled(!settings.SSR);
 
             static constexpr std::array<string_view, 3> ssrResolutionNames{"Full", "Half",
                                                                            "Quarter"};
@@ -759,19 +765,19 @@ namespace Veng::UI
                              {.Min = 0.0f, .Max = 1.0f});
         }
 
-        if (auto section = UI::CollapsingHeader("Depth of field"))
+        if (const auto section = UI::CollapsingHeader("Depth of field"))
         {
             // The toggle is topology; focus/aperture and the two quality knobs are per-frame
             // ViewState values. CoC scale has no widget at all — the viewport glue always derives
             // it from the target's pixel height and the camera's sensor.
             changed |= UI::Checkbox("Enabled##dof", settings.DepthOfField);
-            auto dofDisabled = UI::Disabled(!settings.DepthOfField);
+            const auto dofDisabled = UI::Disabled(!settings.DepthOfField);
 
             // A Physical camera authors the lens fields on every push, so editing them here would
             // write values nothing consults; the quality knobs stay live in every camera mode.
             const bool lensFromCamera = view.DofFromPhysicalCamera;
             {
-                auto lensDisabled = UI::Disabled(lensFromCamera);
+                const auto lensDisabled = UI::Disabled(lensFromCamera);
                 (void)UI::Drag("Focus distance##dof", view.DofFocusDistance,
                                {.Speed = 0.05f, .Min = 0.01f, .Max = 1000.0f});
                 (void)UI::Drag("Aperture##dof", view.DofAperture,
@@ -791,11 +797,11 @@ namespace Veng::UI
             }
         }
 
-        if (auto section = UI::CollapsingHeader("Shadows", TreeFlags::DefaultOpen))
+        if (const auto section = UI::CollapsingHeader("Shadows", TreeFlags::DefaultOpen))
         {
             changed |= UI::Checkbox("Directional shadows", settings.Shadows);
             {
-                auto shadowsDisabled = UI::Disabled(!settings.Shadows);
+                const auto shadowsDisabled = UI::Disabled(!settings.Shadows);
 
                 i32 cascadeCount = static_cast<i32>(settings.CascadeCount);
                 if (UI::Slider("Cascades##count", cascadeCount, 1,
@@ -830,7 +836,7 @@ namespace Veng::UI
 
             changed |= UI::Checkbox("Punctual shadows", settings.PunctualShadows);
             {
-                auto punctualDisabled = UI::Disabled(!settings.PunctualShadows);
+                const auto punctualDisabled = UI::Disabled(!settings.PunctualShadows);
 
                 i32 punctualResolution = static_cast<i32>(settings.PunctualShadowResolution);
                 if (UI::Drag("Resolution##punctual", punctualResolution,
@@ -844,7 +850,7 @@ namespace Veng::UI
             }
         }
 
-        if (auto section = UI::CollapsingHeader("Exposure", TreeFlags::DefaultOpen))
+        if (const auto section = UI::CollapsingHeader("Exposure", TreeFlags::DefaultOpen))
         {
             // Exposure and the auto-exposure tuning are per-frame ViewState values; the metering
             // toggle is topology (it inserts the histogram compute pass). With metering on,
@@ -853,7 +859,7 @@ namespace Veng::UI
             (void)UI::Drag("Exposure##value", view.Exposure,
                            {.Speed = 0.01f, .Min = 0.0f, .Max = 16.0f});
             changed |= UI::Checkbox("Auto exposure", settings.AutoExposure);
-            auto meteringDisabled = UI::Disabled(!settings.AutoExposure);
+            const auto meteringDisabled = UI::Disabled(!settings.AutoExposure);
             (void)UI::Drag("Key", view.AutoExposureKey,
                            {.Speed = 0.005f, .Min = 0.01f, .Max = 1.0f});
             (void)UI::Drag("Min luminance", view.AutoExposureMinLuminance,
@@ -868,7 +874,7 @@ namespace Veng::UI
         // toggle or a per-frame ViewState value — so it is authored and edited in the inspector,
         // not here.
 
-        if (auto section = UI::CollapsingHeader("Culling"))
+        if (const auto section = UI::CollapsingHeader("Culling"))
         {
             changed |= UI::Checkbox("Frustum culling", settings.FrustumCull);
             changed |= UI::Checkbox("Light tile culling", settings.LightTileCulling);
@@ -877,7 +883,7 @@ namespace Veng::UI
             // both drive a recompile. The selector greys out where the device cannot honor GPU
             // (it would silently degrade to CPU); the stats panel shows the active path.
             {
-                auto gpuUnsupported = UI::Disabled(!context.IsGpuDrivenCullingSupported());
+                const auto gpuUnsupported = UI::Disabled(!context.IsGpuDrivenCullingSupported());
                 static constexpr std::array<string_view, 2> cullNames{"CPU", "GPU"};
                 i32 cull = static_cast<i32>(settings.Cull);
                 if (UI::Combo("Cull mode", cull, cullNames))
@@ -886,12 +892,13 @@ namespace Veng::UI
                     changed = true;
                 }
 
-                auto cpuPath = UI::Disabled(settings.Cull != SceneRendererSettings::CullMode::GPU);
+                const auto cpuPath =
+                    UI::Disabled(settings.Cull != SceneRendererSettings::CullMode::GPU);
                 changed |= UI::Checkbox("GPU occlusion", settings.Occlusion);
             }
         }
 
-        if (auto section = UI::CollapsingHeader("Resolution"))
+        if (const auto section = UI::CollapsingHeader("Resolution"))
         {
             // Adaptive resolution and the manual render-scale override drive the viewport
             // imperatively — they recreate or resize renderer resources directly, not through the
@@ -899,7 +906,7 @@ namespace Veng::UI
             DrawResolutionControls(viewport, context);
         }
 
-        if (auto section = UI::CollapsingHeader("Authoring"))
+        if (const auto section = UI::CollapsingHeader("Authoring"))
         {
             // The immediate-mode debug-draw flush pass and the entity-id picking pass, both off
             // by default — authoring aids a consumer enables for a viewport's lifetime.

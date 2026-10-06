@@ -47,8 +47,10 @@ namespace Veng::Renderer
         // x the LTC matrix LUT texture handle, y the LTC magnitude LUT handle, z the sampler handle
         // both are read through, w the prefiltered specular cube's mip count.
         uvec4 LightLuts;
-        vec4 AmbientFloor;  // rgb the flat-arm ambient floor, w the IBL arm's intensity
-        vec4 AmbientParams; // x the SH skylight arm's intensity; yzw unused
+        vec4 AmbientFloor; // rgb the flat-arm ambient floor, w the IBL arm's intensity
+        // x the SH skylight arm's intensity, y the specular anti-aliasing variance scale, z its
+        // threshold; w unused.
+        vec4 AmbientParams;
         // x the per-tile light-mask buffer's bindless storage-buffer slot, or LightTilesNone when
         // no tile cull ran for the view; y the tile grid's row stride in tiles; z this frame's
         // first mask word; w unused.
