@@ -10,6 +10,7 @@
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <array>
 #include <cmath>
 #include <limits>
 
@@ -109,6 +110,40 @@ TEST_CASE("PackSceneLights: a lone directional packs exactly as it did before ca
     CHECK(light.AreaNormal.w == doctest::Approx(0.0f));
     CHECK(packed.PunctualCount == 0);
     CHECK(packed.DeniedDirectionalCount == 0);
+}
+
+TEST_CASE("PackSceneLights: a directional's angular radius packs into Area.x as its sine")
+{
+    TypeRegistry types;
+    RegisterBuiltins(types);
+    const Unique<Scene> scene = Scene::Create(types);
+
+    // Told apart by intensity, since the packer is free to order lights as it likes. A default
+    // directional carries the Sun's size; zero stays a point, and a radius past a quarter turn
+    // saturates at a hemisphere rather than folding back.
+    AddLight(*scene, Light{.Type = LightType::Directional, .Intensity = 1.0f});
+    AddLight(*scene,
+             Light{.Type = LightType::Directional, .Intensity = 2.0f, .AngularRadius = 0.0f});
+    AddLight(*scene,
+             Light{.Type = LightType::Directional, .Intensity = 3.0f, .AngularRadius = 0.03f});
+    AddLight(*scene,
+             Light{.Type = LightType::Directional, .Intensity = 4.0f, .AngularRadius = 2.5f});
+
+    const PackedSceneLights packed = PackSceneLights(*scene, true, 1024);
+
+    REQUIRE(packed.LightCount == 4);
+    std::array<f32, 4> sines{-1.0f, -1.0f, -1.0f, -1.0f};
+    for (u32 i = 0; i < packed.LightCount; ++i)
+    {
+        const auto slot =
+            static_cast<usize>(std::lround(packed.Lights[i].ColorIntensity.a / LuminousAnchor) - 1);
+        REQUIRE(slot < sines.size());
+        sines[slot] = packed.Lights[i].Area.x;
+    }
+    CHECK(sines[0] == doctest::Approx(std::sin(0.004675f)));
+    CHECK(sines[1] == 0.0f);
+    CHECK(sines[2] == doctest::Approx(std::sin(0.03f)));
+    CHECK(sines[3] == doctest::Approx(1.0f));
 }
 
 TEST_CASE("PackSceneLights: a spot aims with its entity; a directional keeps its world direction")

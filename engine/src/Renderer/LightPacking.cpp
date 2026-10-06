@@ -619,9 +619,11 @@ namespace Veng::Renderer
             // Area-light shape, packed into the last two vec4. A Rect or Polygon emits its
             // world-space vertices into the shared area-vertex buffer (base/count in Area.yz); a
             // Sphere records its transform-scaled radius in Area.x, and a Point or Spot records
-            // its transform-scaled source radius in the same lane (the shading distance clamp).
-            // Area.yz and the area-shadow slot stay inert for a punctual light. The area-shadow
-            // slot stays -1 here; the shading path is independent of the shadow arm.
+            // its transform-scaled source radius in the same lane (the shading distance clamp and
+            // the lobe widening). A Directional records the sine of its angular radius there: a
+            // dimensionless size, not a world radius. Area.yz and the area-shadow slot stay inert
+            // for a punctual light. The area-shadow slot stays -1 here; the shading path is
+            // independent of the shadow arm.
             vec4 area{0.0f, 0.0f, 0.0f, -1.0f};
             vec3 areaNormal{0.0f};
             // The source radius the PCSS estimator sizes its penumbra from, packed separately from
@@ -634,7 +636,13 @@ namespace Veng::Renderer
             f32 shadowRadius = 0.0f;
             const f32 flags = static_cast<f32>(PackLightFlags(light, candidate));
 
-            if (light.Type == LightType::Sphere)
+            if (light.Type == LightType::Directional)
+            {
+                // Only the lobe widening reads it: the tile cull, the cascade shadow and the
+                // reach estimates never read a directional's Area lane.
+                area.x = std::sin(std::clamp(light.AngularRadius, 0.0f, glm::half_pi<f32>()));
+            }
+            else if (light.Type == LightType::Sphere)
             {
                 // Uniform-scale the authored radius by the transform's basis length. The same
                 // world size serves both lanes: uncapped for the LTC integral, capped by angular
@@ -647,8 +655,9 @@ namespace Veng::Renderer
             {
                 // The spherical source radius rides Area.x for the punctual arm too, scaled by the
                 // transform basis so a parented, scaled light keeps a consistent source size. The
-                // lighting pass clamps the shading distance to it before the inverse-square; it
-                // does not size a shadow penumbra, so shadowRadius is left at zero.
+                // lighting pass clamps the shading distance to it before the inverse-square and
+                // widens the lobe by the angle it subtends; it does not size a shadow penumbra, so
+                // shadowRadius is left at zero.
                 const f32 scale = glm::length(vec3(world4[0]));
                 area.x = light.Radius * scale;
             }

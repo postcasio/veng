@@ -97,9 +97,24 @@ LightingSurface MakeLightingSurface(ViewConstants vc, float3 position, float3 no
     return s;
 }
 
+// How far a light's size widens the GGX width, in alpha² per sin²(angular radius):
+// alpha'² = alpha² + SourceLobeWidening · sin²θs. GGX falls to half its peak where
+// tan θh = alpha·sqrt(√2 − 1), and on a mirror the reflected angle is twice the half-vector angle,
+// so a lobe whose half-maximum radius in reflection matches a disc of angular radius θs has
+// alpha = θs / (2·sqrt(√2 − 1)), i.e. alpha² = θs² / (4(√2 − 1)) ≈ 0.6036 θs².
+static const float SourceLobeWidening = 0.6036;
+
 // The Cook-Torrance response of one light arriving from direction L with the given (already
 // distance/cone-attenuated) radiance, scaled by N·L.
-LightingResult EvaluateLight(LightingSurface s, float3 L, float3 radiance)
+//
+// sinSource is the sine of the angular radius the light's source subtends from the surface; zero is
+// a point. It widens the distribution alone, alpha'² = alpha² + SourceLobeWidening · sinSource², so
+// a glossy surface reflects a disc of the source's size rather than a point. Widening a normalised
+// distribution keeps it normalised, so the lobe's energy is conserved with no correction factor, and
+// G and F keep the surface's own roughness. It is a small-source approximation that leaves L aimed
+// at the source's centre: accurate for a sun or a bulb, while a source spanning more than a few
+// degrees belongs to the exact LTC Sphere path.
+LightingResult EvaluateLight(LightingSurface s, float3 L, float3 radiance, float sinSource)
 {
     float3 N = s.Normal;
     float3 V = s.View;
@@ -111,7 +126,9 @@ LightingResult EvaluateLight(LightingSurface s, float3 L, float3 radiance)
     float vDotH = max(dot(V, H), 0.0);
 
     // AccumulateLight calls this only with N·L > 0, so H is never opposite N and D stays finite.
-    float ndf = BrdfDistributionGGX(N, H, nDotH, s.Roughness * s.Roughness);
+    float alpha = s.Roughness * s.Roughness;
+    float sizedAlpha = sqrt(alpha * alpha + SourceLobeWidening * sinSource * sinSource);
+    float ndf = BrdfDistributionGGX(N, H, nDotH, sizedAlpha);
     float g = BrdfGeometrySmith(nDotV, nDotL, s.Roughness);
     float3 fresnel = BrdfFresnelSchlick(vDotH, s.F0);
 
@@ -359,12 +376,15 @@ void AccumulateLight(ViewConstants vc, LightingSurface s, GpuLight light,
 
     float3 L;
     float attenuation = 1.0;
+    // The sine of the source's angular radius from this surface, which widens its lobe.
+    float sinSource = 0.0;
     bool isDirectional = type == LightTypeDirectional;
     if (isDirectional)
     {
         // The light direction is the direction the light travels; the surface
         // faces the light along -direction.
         L = normalize(-light.DirectionType.xyz);
+        sinSource = light.Area.x;
     }
     else
     {
@@ -393,6 +413,8 @@ void AccumulateLight(ViewConstants vc, LightingSurface s, GpuLight light,
         // true toLight — the clamp bounds the magnitude of the response, not its direction.
         float sourceRadius = light.Area.x;
         float distanceFactor = 1.0 / max(max(dist * dist, sourceRadius * sourceRadius), 1e-4);
+        // The same radius sizes the lobe by the angle it subtends here (a hemisphere inside it).
+        sinSource = min(sourceRadius / max(dist, 1e-4), 1.0);
         float rangeFactor = saturate(1.0 - pow(dist / range, 4.0));
         rangeFactor *= rangeFactor;
         attenuation = distanceFactor * rangeFactor;
@@ -442,7 +464,7 @@ void AccumulateLight(ViewConstants vc, LightingSurface s, GpuLight light,
         visibility = PunctualShadowVisibility(worldPos, N, L, slot);
     }
 
-    LightingResult lit = EvaluateLight(s, L, radiance * attenuation);
+    LightingResult lit = EvaluateLight(s, L, radiance * attenuation, sinSource);
     direct.Diffuse += lit.Diffuse * visibility;
     direct.Specular += lit.Specular * visibility * light.Response.x;
 }

@@ -493,11 +493,14 @@ namespace Veng
         /// Point or Spot light's emitter.
         ///
         /// For a Sphere it is the area emitter's radius. For a Point or Spot it is the spherical
-        /// source radius: the deferred lighting pass clamps the shading distance to be no less
-        /// than it before the inverse-square, so the near field is bounded by a real source size
-        /// rather than exploding as the distance goes to zero. It is scaled by the entity's world
-        /// transform, so a parented, scaled light keeps a consistent size. Zero — the default —
-        /// is an unsized emitter: a punctual Point/Spot reproducing the pure inverse-square, or a
+        /// source radius, with two jobs: the lighting pass clamps the shading distance to be no
+        /// less than it before the inverse-square, so the near field is bounded by a real source
+        /// size rather than exploding as the distance goes to zero; and it widens the light's
+        /// specular lobe by the angle it subtends from the shaded point, so a glossy surface
+        /// reflects a bulb rather than a point (see AngularRadius for the approximation and its
+        /// domain). It is scaled by the entity's world transform, so a parented, scaled light
+        /// keeps a consistent size. Zero — the default — is an unsized emitter: a punctual
+        /// Point/Spot reproducing the pure inverse-square and the surface's own lobe, or a
         /// degenerate Sphere.
         ///
         /// **A Sphere's radius drives two things, and only one of them is capped.** It sizes the
@@ -508,6 +511,16 @@ namespace Veng
         /// Sphere far larger than its distance to a receiver is lit correctly and casts a shadow
         /// softer than physics would give, rather than one the estimator cannot compute.
         f32 Radius{0.0f};
+        /// @brief A Directional light's angular radius, in radians: the half-angle its disc subtends.
+        ///
+        /// It widens the light's specular lobe, so a glossy surface reflects a disc of this size
+        /// rather than a point. The default is the Sun's as seen from Earth (0.004675 rad, 0.2679°),
+        /// since a directional light most often stands for a sun; zero is a punctual light, whose
+        /// highlight on a mirror-smooth surface is the surface's own lobe alone. The widening is a
+        /// small-source approximation, accurate for a sun: a source spanning more than a few
+        /// degrees should be a Sphere area light, which is exact at any size. It changes only the
+        /// highlight's shape — the light's brightness, shadow and reach are untouched.
+        f32 AngularRadius{0.004675f};
         /// @brief Whether a Rect or Polygon area light emits from both faces.
         bool TwoSided{false};
         /// @brief Whether this light is given a shadow map.
@@ -1831,7 +1844,13 @@ VE_FIELD(Width, .DisplayName = "Width", .Display = {.Min = 0.0, .Step = 0.05},
 VE_FIELD(Height, .DisplayName = "Height", .Display = {.Min = 0.0, .Step = 0.05},
          .VisibleIf = VE_WHEN(self.Type == ::Veng::LightType::Rect))
 VE_FIELD(Radius, .DisplayName = "Radius", .Display = {.Min = 0.0, .Step = 0.05},
-         .VisibleIf = VE_WHEN(self.Type == ::Veng::LightType::Sphere))
+         .VisibleIf = VE_WHEN(self.Type == ::Veng::LightType::Point ||
+                              self.Type == ::Veng::LightType::Spot ||
+                              self.Type == ::Veng::LightType::Sphere))
+VE_FIELD(AngularRadius, .DisplayName = "Angular Radius",
+         .Tooltip = "Half-angle the light's disc subtends, in radians (the Sun's is 0.004675)",
+         .Display = {.Min = 0.0, .Max = 1.57079633, .Step = 0.0005, .Precision = 5},
+         .VisibleIf = VE_WHEN(self.Type == ::Veng::LightType::Directional))
 VE_FIELD(TwoSided, .DisplayName = "Two Sided",
          .VisibleIf = VE_WHEN(self.Type == ::Veng::LightType::Rect ||
                               self.Type == ::Veng::LightType::Polygon))

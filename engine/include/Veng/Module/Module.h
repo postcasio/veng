@@ -284,10 +284,13 @@ extern "C"
 /// Application with its haptics engine. A module builds contexts, is handed them each tick and
 /// subclasses Application, so a stale module reads every context field after Audio at a shifted
 /// offset and lays the application out short.
+/// Version 70 grows Light with AngularRadius between Radius and TwoSided, so a stale module that
+/// builds a light in code lays it out short and the engine reads every field after Radius at a
+/// shifted offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 69u
+#define VENG_MODULE_ABI_VERSION 70u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

@@ -92,11 +92,13 @@ namespace Veng::Renderer
         vec4 ColorIntensity;
         /// @brief x cos(inner), y cos(outer), z punctual shadow slot (-1 unshadowed), w LightFlags.
         vec4 Cone;
-        /// @brief x emitter radius, y polygon vertex base, z polygon vertex count, w area-shadow slot (-1 none).
+        /// @brief x emitter radius (sine of angular radius for a Directional), y polygon vertex base, z polygon vertex count, w area-shadow slot (-1 none).
         ///
-        /// x is the lighting radius: a Sphere's emitter radius for the LTC integral, or a
-        /// Point/Spot's source radius clamping the shading distance. It is a physical size and is
-        /// never capped — see AreaNormal's w, which is the shadow-sizing lane.
+        /// x is the lighting size: a Sphere's emitter radius for the LTC integral, a Point/Spot's
+        /// source radius clamping the shading distance and widening the specular lobe, or, for a
+        /// Directional, the sine of its angular radius (a dimensionless size, not a world radius)
+        /// widening the lobe. It is a physical size and is never capped — see AreaNormal's w,
+        /// which is the shadow-sizing lane.
         vec4 Area;
         /// @brief xyz world-space area normal (Rect/Polygon local +Z), w shadow source radius.
         ///

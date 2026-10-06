@@ -650,6 +650,25 @@ light wants it for the same reason it wants no shadow: its specular is a reflect
 emitter nobody sees, and on glossy surfaces — glass above all — that reads as a bright copy of the
 light's shape beside the real, already-drawn surface it stands in for.
 
+**A punctual light's size widens its specular lobe.** A Directional carries `Light::AngularRadius`
+(radians, defaulting to the Sun's 0.004675 — a directional light most often stands for one), packed
+as its sine into `Area.x`; a Point or Spot reuses its source `Radius` (the same lane, already the
+near-field clamp), and `AccumulateLight` takes `sinθₛ = min(Radius / distance, 1)`. `EvaluateLight`
+widens the GGX width for that light's `D` alone, `α'² = α² + c·sin²θₛ` with `c = 1/(4(√2 − 1)) ≈
+0.6036` (`SourceLobeWidening`), which sets a mirror's highlight half-maximum radius in reflected angle
+to the source's angular radius (in the plane of incidence; across it, the half-vector lobe is
+foreshortened by the cosine of half the view-to-light angle, as any GGX highlight is); `G` and `F`
+keep the surface's `α`. Widening a normalised
+distribution keeps it normalised, so the reflected energy is unchanged and no correction factor is
+applied. Without it, a full-strength lobe at the roughness floor reflects a sun as a sub-pixel glint.
+It is a **small-source approximation** that leaves `L` aimed at the source's centre (no
+representative point): accurate for a sun or a bulb, while a source spanning more than a few degrees
+should be a Sphere area light, which LTC integrates exactly at any size. The area types never reach
+`EvaluateLight`, so their lobes are untouched, and nothing but the lobe reads a directional's `Area`
+lane — its reach, tile cull and cascade shadow are unchanged. `tests/gpu/specular_lobe.cpp` pins it on
+a mirror plane: a directional highlight's half-maximum radius tracks `AngularRadius` with its
+reflected energy conserved, and a point light's highlight grows with its `Radius`.
+
 ### The scene-gizmo layer
 
 **Most of what a scene holds draws nothing**, and `Veng/Renderer/SceneGizmos.h` is the one pass

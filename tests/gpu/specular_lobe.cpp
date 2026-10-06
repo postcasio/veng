@@ -1,10 +1,9 @@
-// The GGX lobe is evaluated in full, and the lighting output is guarded against the half-float
-// overflow a full-strength lobe can reach. A flat white metal plane under a directional light is
-// framed on the light's mirror reflection, through a narrow field of view whose texels are several
-// times finer than the narrowest lobe's half-maximum width — a plane rather than a sphere, so a
-// texel's angle on screen is its angle in reflection and the brightest texel sits on the peak. The
-// lit HDR scene colour is read before tonemap, since the tonemapped output clamps to [0, 1] and can
-// show neither the peak nor an overflow.
+// The GGX lobe is evaluated in full, a light's size widens it, and the lighting output is guarded
+// against the half-float overflow a full-strength lobe can reach. A flat white metal plane is framed
+// on a light's mirror reflection — a plane rather than a sphere, so a texel's angle on screen is its
+// angle in reflection and the brightest texel sits on the peak. The lit HDR scene colour is read
+// before tonemap, since the tonemapped output clamps to [0, 1] and can show neither the peak nor an
+// overflow.
 
 #include <algorithm>
 #include <array>
@@ -34,7 +33,8 @@
 #include "support/TempPath.h"
 #include "support/TestCook.h"
 
-// glm's packing header after Veng.h, which configures glm first.
+// glm's headers after Veng.h, which configures glm first.
+#include <glm/gtc/constants.hpp>
 #include <glm/gtc/packing.hpp>
 
 using namespace Veng;
@@ -48,8 +48,6 @@ namespace
     // The white-plane fixture pack's material: the g-buffer brick material over a white texture,
     // writing RoughnessFactor and MetallicFactor straight into the g-buffer.
     constexpr AssetId WhitePlaneInstanceId{0x895443ULL};
-
-    constexpr uvec2 Extent{128, 128};
 
     // The largest finite channel value across the lit HDR target, and whether every texel is finite.
     struct HdrScan
@@ -74,23 +72,42 @@ namespace
         return scan;
     }
 
-    // A metal plane at the origin, a directional light 45 degrees up behind it, and a camera on the
-    // light's mirror reflection looking at the plane's centre through a 4-degree field of view: a
-    // texel spans about 0.03 degrees in reflection, against a half-maximum lobe radius of about 0.12
-    // degrees at the roughness floor.
+    // How the camera frames the mirror: its vertical field of view and the target's extent.
+    struct MirrorFraming
+    {
+        f32 FovY = glm::radians(4.0f);
+        uvec2 Extent{128, 128};
+    };
+
+    // The distribution cases' framing: a texel spans about 0.03 degrees in reflection, against a
+    // half-maximum lobe radius of about 0.12 degrees at the roughness floor.
+    const MirrorFraming NarrowFraming{};
+
+    // The light-size cases' framing: a texel spans about 0.08 degrees, so the smaller source's
+    // half-maximum radius covers several texels, and the frame is wide enough that under 2 % of the
+    // larger source's lobe energy falls outside it.
+    const MirrorFraming WideFraming{.FovY = glm::radians(40.0f), .Extent = {512, 512}};
+
+    // A metal plane at the origin, a light 45 degrees up behind it, and a camera on the light's
+    // mirror reflection looking at the plane's centre. The ambient floor is zero, so a metal's lit
+    // value is the light's reflection alone.
     struct MirrorScene
     {
         Unique<Scene> World;
         Unique<SceneRenderer> Renderer;
         CameraView Camera;
+        MirrorFraming Framing;
+        vec3 ToLight{0.0f};
         Entity Sun;
     };
 
     MirrorScene MakeMirrorScene(Context& context, AssetManager& assets, TypeRegistry& types,
-                                const AssetHandle<MaterialInstance>& material)
+                                const AssetHandle<MaterialInstance>& material,
+                                const MirrorFraming& framing = NarrowFraming)
     {
         MirrorScene mirror;
         mirror.World = Scene::Create(types);
+        mirror.Framing = framing;
 
         const Ref<Mesh> plane = Mesh::BuildSync(
             context, Primitives::Plane(vec2(8.0f), uvec2(1), material), "Mirror Plane");
@@ -98,26 +115,45 @@ namespace
         mirror.World->Add<Transform>(ground);
         mirror.World->Add<MeshRenderer>(ground).Mesh = assets.Adopt(plane);
 
-        const vec3 toLight = glm::normalize(vec3(0.0f, 1.0f, 1.0f));
+        mirror.ToLight = glm::normalize(vec3(0.0f, 1.0f, 1.0f));
         const vec3 toCamera = glm::normalize(vec3(0.0f, 1.0f, -1.0f));
         mirror.Sun = mirror.World->CreateEntity();
+        // A point source, so the distribution cases see the surface's own lobe; the light-size
+        // cases size it themselves.
         mirror.World->Add<Light>(mirror.Sun) = Light{
             .Type = LightType::Directional,
-            .Direction = -toLight,
+            .Direction = -mirror.ToLight,
             .Color = vec3(1.0f),
+            .AngularRadius = 0.0f,
         };
 
-        mirror.Camera.SetPerspective(glm::radians(4.0f), 1.0f, 0.1f, 100.0f);
+        mirror.Camera.SetPerspective(framing.FovY, 1.0f, 0.1f, 100.0f);
         mirror.Camera.SetView(toCamera * 4.0f, vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
         mirror.Renderer = SceneRenderer::Create({
             .Context = context,
             .Assets = assets,
             .OutputFormat = context.GetOutputFormat(),
-            .Extent = Extent,
+            .Extent = framing.Extent,
             .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
         });
         return mirror;
+    }
+
+    // Renders the mirror scene as it stands and downloads the lit HDR target.
+    vector<u8> RenderHdr(const Context& context, MirrorScene& mirror)
+    {
+        context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                mirror.Renderer->Execute(cmd, Renderer::SceneView{.World = *mirror.World,
+                                                                  .Camera = mirror.Camera,
+                                                                  .Delta = 0.0f,
+                                                                  .AmbientFloor = vec3(0.0f)});
+            });
+        const Ref<ImageView> hdr = mirror.Renderer->GetHdrView();
+        REQUIRE(hdr != nullptr);
+        return hdr->GetImage()->Download();
     }
 
     // Sets the sun's radiance and the plane's roughness, renders, and scans the lit HDR target.
@@ -126,16 +162,120 @@ namespace
     {
         mirror.World->Get<Light>(mirror.Sun).Intensity = radiance / LuminousAnchor;
         material.SetParam("RoughnessFactor", roughness);
-        context.ImmediateCommands(
-            [&](CommandBuffer& cmd)
+        return ScanHdr(RenderHdr(context, mirror));
+    }
+
+    // The lit HDR target as one grey value per texel (the mean of its colour channels), row-major.
+    struct HdrImage
+    {
+        vector<f32> Values;
+        uvec2 Extent{0};
+
+        [[nodiscard]] f32 At(u32 x, u32 y) const { return Values[(y * Extent.x) + x]; }
+    };
+
+    HdrImage DecodeHdr(const vector<u8>& rgba16f, uvec2 extent)
+    {
+        HdrImage image{.Extent = extent};
+        image.Values.resize(static_cast<usize>(extent.x) * extent.y);
+        const auto* halves = reinterpret_cast<const u16*>(rgba16f.data());
+        for (usize i = 0; i < image.Values.size(); ++i)
+        {
+            image.Values[i] = (glm::unpackHalf1x16(halves[(i * 4) + 0]) +
+                               glm::unpackHalf1x16(halves[(i * 4) + 1]) +
+                               glm::unpackHalf1x16(halves[(i * 4) + 2])) /
+                              3.0f;
+        }
+        return image;
+    }
+
+    // The angle off the camera's axis, along one screen axis, of a (fractional) texel coordinate.
+    f32 TexelAngle(f32 coordinate, u32 extent, f32 fov)
+    {
+        const f32 ndc = (2.0f * (coordinate + 0.5f) / static_cast<f32>(extent)) - 1.0f;
+        return std::atan(ndc * std::tan(0.5f * fov));
+    }
+
+    // The highlight's half-maximum radius in reflected angle: along the screen column through the
+    // brightest texel, the half-maximum crossing on each side (interpolated between texels), and half
+    // the angle between them. The column lies in the plane of incidence, where a reflected angle
+    // maps one-to-one onto the half-vector's — across it the lobe is foreshortened by the cosine of
+    // half the angle between the view and the light. Averaging the two sides cancels the slope
+    // the view-dependent BRDF factors put across the lobe.
+    f32 HalfMaxRadius(const HdrImage& image, f32 fov)
+    {
+        u32 peakX = 0;
+        u32 peakY = 0;
+        for (u32 y = 0; y < image.Extent.y; ++y)
+        {
+            for (u32 x = 0; x < image.Extent.x; ++x)
             {
-                mirror.Renderer->Execute(cmd, Renderer::SceneView{.World = *mirror.World,
-                                                                  .Camera = mirror.Camera,
-                                                                  .Delta = 0.0f});
-            });
-        const Ref<ImageView> hdr = mirror.Renderer->GetHdrView();
-        REQUIRE(hdr != nullptr);
-        return ScanHdr(hdr->GetImage()->Download());
+                if (image.At(x, y) > image.At(peakX, peakY))
+                {
+                    peakX = x;
+                    peakY = y;
+                }
+            }
+        }
+        const f32 half = 0.5f * image.At(peakX, peakY);
+
+        const auto crossing = [&](i32 step) -> f32
+        {
+            i32 y = static_cast<i32>(peakY);
+            while (y + step >= 0 && y + step < static_cast<i32>(image.Extent.y) &&
+                   image.At(peakX, static_cast<u32>(y + step)) >= half)
+            {
+                y += step;
+            }
+            const i32 beyond = y + step;
+            REQUIRE(beyond >= 0);
+            REQUIRE(beyond < static_cast<i32>(image.Extent.y));
+            const f32 inside = image.At(peakX, static_cast<u32>(y));
+            const f32 outside = image.At(peakX, static_cast<u32>(beyond));
+            const f32 t = (inside - half) / (inside - outside);
+            return static_cast<f32>(y) + (t * static_cast<f32>(step));
+        };
+
+        const f32 low = TexelAngle(crossing(-1), image.Extent.y, fov);
+        const f32 high = TexelAngle(crossing(+1), image.Extent.y, fov);
+        return 0.5f * (high - low);
+    }
+
+    // The reflected energy reaching the frame: each texel's radiance weighted by the solid angle it
+    // subtends, which falls off as cos³ of its angle off the axis (up to a constant per framing).
+    f64 ReflectedEnergy(const HdrImage& image, f32 fov)
+    {
+        const f64 tanHalf = std::tan(0.5 * static_cast<f64>(fov));
+        f64 energy = 0.0;
+        for (u32 y = 0; y < image.Extent.y; ++y)
+        {
+            for (u32 x = 0; x < image.Extent.x; ++x)
+            {
+                const f64 tx = ((2.0 * (x + 0.5) / image.Extent.x) - 1.0) * tanHalf;
+                const f64 ty = ((2.0 * (y + 0.5) / image.Extent.y) - 1.0) * tanHalf;
+                const f64 solidAngle = 1.0 / std::pow(1.0 + (tx * tx) + (ty * ty), 1.5);
+                energy += static_cast<f64>(image.At(x, y)) * solidAngle;
+            }
+        }
+        return energy;
+    }
+
+    // Renders the mirror and measures its highlight: half-maximum radius and reflected energy.
+    struct Highlight
+    {
+        f32 Radius = 0.0f;
+        f64 Energy = 0.0;
+        f32 Peak = 0.0f;
+    };
+
+    Highlight MeasureHighlight(const Context& context, MirrorScene& mirror)
+    {
+        const HdrImage image = DecodeHdr(RenderHdr(context, mirror), mirror.Framing.Extent);
+        return Highlight{
+            .Radius = HalfMaxRadius(image, mirror.Framing.FovY),
+            .Energy = ReflectedEnergy(image, mirror.Framing.FovY),
+            .Peak = *std::ranges::max_element(image.Values),
+        };
     }
 
     AssetHandle<MaterialInstance> LoadWhiteMetal(AssetManager& assets, const path& archive)
@@ -211,6 +351,84 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(scan.Finite);
     CHECK(scan.Max <= LightingOutputMax);
     CHECK(scan.Max > 0.5f * LightingOutputMax);
+
+    std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "specular lobe: a directional light's highlight is its angular size, and widening "
+    "it conserves the reflected energy")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path archive = Veng::TestSupport::TempDir() / "veng_gpu_specular_sun_size.vengpack";
+    const AssetHandle<MaterialInstance> material = LoadWhiteMetal(assets, archive);
+    MirrorScene mirror = MakeMirrorScene(Context, assets, Types, material, WideFraming);
+    auto& instance = const_cast<MaterialInstance&>(*material.Get());
+
+    // At the roughness floor the surface's own lobe is far narrower than either source, so the
+    // highlight a mirror shows is the source's: its half-maximum radius in reflected angle is the
+    // source's angular radius. The light is at solar radiance, so neither peak meets the guard.
+    instance.SetParam("RoughnessFactor", 0.04f);
+    auto& sun = mirror.World->Get<Light>(mirror.Sun);
+    sun.Intensity = 1.0f / LuminousAnchor;
+
+    constexpr std::array<f32, 2> angularRadii{0.01f, 0.03f};
+    std::array<Highlight, angularRadii.size()> highlights{};
+    for (usize i = 0; i < angularRadii.size(); ++i)
+    {
+        sun.AngularRadius = angularRadii[i];
+        highlights[i] = MeasureHighlight(Context, mirror);
+    }
+
+    for (usize i = 0; i < angularRadii.size(); ++i)
+    {
+        CAPTURE(i);
+        CHECK(highlights[i].Peak < 0.5f * LightingOutputMax);
+        CHECK(highlights[i].Radius >= 0.75f * angularRadii[i]);
+        CHECK(highlights[i].Radius <= 1.25f * angularRadii[i]);
+    }
+    // A normalised distribution stays normalised as it widens: three times the size spreads the
+    // same reflected energy over nine times the area.
+    CHECK(highlights[1].Energy == doctest::Approx(highlights[0].Energy).epsilon(0.05));
+
+    std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "specular lobe: a point light's highlight widens with its source radius")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    const path archive = Veng::TestSupport::TempDir() / "veng_gpu_specular_bulb_size.vengpack";
+    const AssetHandle<MaterialInstance> material = LoadWhiteMetal(assets, archive);
+    MirrorScene mirror = MakeMirrorScene(Context, assets, Types, material, WideFraming);
+    auto& instance = const_cast<MaterialInstance&>(*material.Get());
+    instance.SetParam("RoughnessFactor", 0.04f);
+
+    // A bulb ten units out along the light's direction, its lumens set for about solar radiance at
+    // the plane's centre. Its radius subtends 0.01 and then 0.03 rad there, and the highlight's
+    // half-maximum — the surface's own lobe being far narrower than either — follows that size.
+    constexpr f32 distance = 10.0f;
+    mirror.World->Add<Transform>(mirror.Sun, Transform{.Position = mirror.ToLight * distance});
+    auto& bulb = mirror.World->Get<Light>(mirror.Sun);
+    bulb.Type = LightType::Point;
+    bulb.Range = 100.0f;
+    bulb.Intensity = 4.0f * glm::pi<f32>() * distance * distance / LuminousAnchor;
+
+    constexpr std::array<f32, 2> radii{0.1f, 0.3f};
+    std::array<Highlight, radii.size()> highlights{};
+    for (usize i = 0; i < radii.size(); ++i)
+    {
+        bulb.Radius = radii[i];
+        highlights[i] = MeasureHighlight(Context, mirror);
+    }
+
+    CHECK(highlights[0].Radius > 0.0f);
+    CHECK(highlights[1].Radius > 2.0f * highlights[0].Radius);
 
     std::filesystem::remove(archive);
 }

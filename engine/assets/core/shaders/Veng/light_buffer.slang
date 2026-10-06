@@ -25,16 +25,17 @@ static const float LightTypePolygon = 5.0;
 
 // One light, packed by the renderer into the ring-buffered light buffer. Position
 // is the entity's world transform; the type rides DirectionType.w. Area and AreaNormal
-// carry the source/shape size: a Sphere's or a Point/Spot's source radius, a
-// Rect/Polygon's vertex range into the area-vertex buffer, the area-shadow slot, and
-// the world area normal. Response weights the light's terms.
+// carry the source/shape size: a Sphere's or a Point/Spot's source radius, a Directional's
+// sine of angular radius (dimensionless, not a world radius), a Rect/Polygon's vertex range
+// into the area-vertex buffer, the area-shadow slot, and the world area normal. Response
+// weights the light's terms.
 struct GpuLight
 {
     float4 PositionRange;   // xyz world position, w range
     float4 DirectionType;   // xyz travel direction, w LightType
     float4 ColorIntensity;  // rgb linear color, a intensity
     float4 Cone;            // x cos(inner), y cos(outer), z punctual shadow slot, w LightFlag bits
-    float4 Area;            // x sphere/point/spot source radius, y poly vertex base, z poly vertex count, w area-shadow slot
+    float4 Area;            // x sphere/point/spot source radius or directional sin(angular radius), y poly vertex base, z poly vertex count, w area-shadow slot
     float4 AreaNormal;      // xyz world area normal (Rect/Polygon), w shadow source radius
     float4 Response;        // x specular scale, yzw unused
 };
