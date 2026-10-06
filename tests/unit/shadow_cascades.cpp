@@ -106,7 +106,7 @@ TEST_CASE("ComputeCascades: interior slice points project inside their cascade")
 
     const mat4 invViewProj = glm::inverse(camera.ViewProjection());
 
-    auto worldPointAtViewDepth = [&](f32 viewDepth)
+    const auto worldPointAtViewDepth = [&](f32 viewDepth)
     {
         // Interpolate a center-of-screen world point between the near and far
         // frustum centers by the view-depth fraction (linear in view depth).
@@ -119,7 +119,7 @@ TEST_CASE("ComputeCascades: interior slice points project inside their cascade")
         return nearPoint + (farPoint - nearPoint) * fraction;
     };
 
-    auto inClip = [](const vec4& clip)
+    const auto inClip = [](const vec4& clip)
     {
         const vec3 ndc = vec3(clip) / clip.w;
         const f32 eps = 1e-3f;
@@ -394,6 +394,49 @@ TEST_CASE("ComputeCascades: MinDistance floors the shadow near for a tiny-near c
     // the micron near, so the near cascades sit in a shell no receiver occupies.
     const CascadeData unfloored = ComputeCascades(camera, lightDir, cockpit, CascadeSettings{});
     CHECK(floored.SplitFar[0] > unfloored.SplitFar[0]);
+}
+
+TEST_CASE("ComputeCascades: below the MinDistance floor the fit ignores the render near")
+{
+    // Once MinDistance floors the shadow near, the render near only names the camera's depth
+    // precision, so any two nears under the floor must fit the same cascades. The eye sits off
+    // the origin on purpose: a micron near's corners lie closer to the eye than one float ulp at
+    // a cockpit's distance from the origin, so a fit that differences them against the eye
+    // reads rounding as the frustum's shape.
+    const vec3 eye(1.3f, 6.2f, -11.2f);
+    const auto makeCamera = [&eye](const f32 near)
+    {
+        CameraView camera;
+        camera.SetPerspective(glm::radians(60.0f), 16.0f / 9.0f, near, 20000.0f);
+        camera.SetView(eye, eye + vec3(0.3f, -0.1f, -1.0f), vec3(0.0f, 1.0f, 0.0f));
+        return camera;
+    };
+    const vec3 lightDir(0.96f, -0.16f, 0.24f);
+    const AABB hull{.Min = vec3(-12.0f, -2.0f, -20.0f), .Max = vec3(12.0f, 8.0f, 4.0f)};
+    const CascadeSettings settings{.MaxDistance = 3000.0f, .MinDistance = 0.1f};
+
+    const CascadeData micron = ComputeCascades(makeCamera(1e-6f), lightDir, hull, settings);
+    const CascadeData centimetre = ComputeCascades(makeCamera(1e-2f), lightDir, hull, settings);
+
+    REQUIRE(micron.Count == centimetre.Count);
+    f32 worstSplit = 0.0f;
+    f32 worstMatrix = 0.0f;
+    for (u32 k = 0; k < micron.Count; ++k)
+    {
+        worstSplit = std::max(worstSplit, std::abs(micron.SplitFar[k] - centimetre.SplitFar[k]) /
+                                              centimetre.SplitFar[k]);
+        for (int c = 0; c < 4; ++c)
+        {
+            for (int r = 0; r < 4; ++r)
+            {
+                const f32 a = micron.ViewProj[k][c][r];
+                const f32 b = centimetre.ViewProj[k][c][r];
+                worstMatrix = std::max(worstMatrix, std::abs(a - b) / std::max(1.0f, std::abs(b)));
+            }
+        }
+    }
+    CHECK(worstSplit < 1e-4f);
+    CHECK(worstMatrix < 1e-3f);
 }
 
 TEST_CASE("ComputeCascades: without PancakeNear the cull matrix equals the render matrix")

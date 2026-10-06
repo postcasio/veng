@@ -20,40 +20,36 @@ namespace Veng::Renderer
         // own near, so casters between the light and the slice still reach it.
         constexpr f32 EmptyBoundsPullback = 50.0f;
 
-        // The four near-plane corners of the camera frustum in world space (NDC z = 1 under
-        // reverse-Z), ordered around the ndcXY ring. Only the near plane is reconstructed
-        // through the inverse view-proj: under reverse-Z a small render near maps the far
-        // plane to w = 0 (a point at infinity, so its reconstruction is inf), while the near
-        // plane keeps a finite w and reconstructs cleanly at any near. Every corner below is
-        // rebuilt from the eye and these instead.
-        std::array<vec3, 4> NearPlaneCorners(const mat4& invViewProj)
+        // The view-space point at view depth `depth` (view looks down -Z) that projects to
+        // `ndc`, solved from the projection's own coefficients for the skew-free perspective
+        // and orthographic matrices a CameraView builds (clip w = P[3][3] − P[2][3]·depth).
+        // Nothing is inverted and nothing is reconstructed through NDC depth, so it is exact at
+        // any depth however small the render near — under reverse-Z a tiny near sends the far
+        // plane to w = 0, where a reconstruction through the inverse view-proj is inf.
+        vec3 ViewPointAtDepth(const mat4& proj, vec2 ndc, f32 depth)
+        {
+            const f32 w = proj[3][3] - proj[2][3] * depth;
+            return {(ndc.x * w + proj[2][0] * depth - proj[3][0]) / proj[0][0],
+                    (ndc.y * w + proj[2][1] * depth - proj[3][1]) / proj[1][1], -depth};
+        }
+
+        // The eight world-space corners of the frustum between two view-space depths:
+        // corners[0..3] the nearDepth plane, [4..7] the farDepth plane, each quad ordered around
+        // the ndcXY ring. Each corner is solved in view space and only then placed as
+        // eye + rotation·offset, so the offset keeps full precision. Differencing two
+        // world-space points instead — a near-plane corner against the eye — loses the whole
+        // offset to rounding once a micron near's corners sit within one float ulp of an eye
+        // away from the origin, turning the frustum's shape into noise.
+        std::array<vec3, 8> FrustumCornersAtDepths(const mat4& proj, const mat3& viewToWorld,
+                                                   vec3 eye, f32 nearDepth, f32 farDepth)
         {
             const std::array<vec2, 4> ndcXY = {vec2(-1.0f, -1.0f), vec2(1.0f, -1.0f),
                                                vec2(1.0f, 1.0f), vec2(-1.0f, 1.0f)};
-            std::array<vec3, 4> corners{};
-            for (usize i = 0; i < 4; ++i)
-            {
-                const vec4 h = invViewProj * vec4(ndcXY[i].x, ndcXY[i].y, 1.0f, 1.0f);
-                corners[i] = vec3(h) / h.w;
-            }
-            return corners;
-        }
-
-        // The eight world-space corners of the frustum between two view-space depths. A
-        // frustum edge is a straight ray from the eye through a near corner, so a corner at
-        // view-depth d is eye + (nearCorner − eye)·(d / cameraNear) — no far-plane
-        // reconstruction, so it stays exact however small the render near is (the near corner
-        // is finite where the far corner is at infinity). corners[0..3] are the nearDepth
-        // plane, [4..7] the farDepth plane, in the near corners' ring order.
-        std::array<vec3, 8> FrustumCornersAtDepths(vec3 eye, const std::array<vec3, 4>& nearCorners,
-                                                   f32 cameraNear, f32 nearDepth, f32 farDepth)
-        {
             std::array<vec3, 8> corners{};
             for (usize i = 0; i < 4; ++i)
             {
-                const vec3 ray = nearCorners[i] - eye;
-                corners[i] = eye + ray * (nearDepth / cameraNear);
-                corners[i + 4] = eye + ray * (farDepth / cameraNear);
+                corners[i] = eye + viewToWorld * ViewPointAtDepth(proj, ndcXY[i], nearDepth);
+                corners[i + 4] = eye + viewToWorld * ViewPointAtDepth(proj, ndcXY[i], farDepth);
             }
             return corners;
         }
@@ -118,7 +114,7 @@ namespace Veng::Renderer
                                                    const AABB& bounds)
         {
             // Frustum edges: the near quad (0-3), the far quad (4-7), and the four
-            // connectors. SliceCorners orders each quad around the ndcXY ring.
+            // connectors. FrustumCornersAtDepths orders each quad around the ndcXY ring.
             static constexpr std::array<std::pair<int, int>, 12> frustumEdges = {{{0, 1},
                                                                                   {1, 2},
                                                                                   {2, 3},
@@ -203,16 +199,17 @@ namespace Veng::Renderer
     {
         const mat4 view = camera.View();
         const mat4 viewProj = camera.ViewProjection();
-        const mat4 invViewProj = glm::inverse(viewProj);
+        const mat4 proj = camera.Projection();
 
         const f32 cameraNear = camera.GetNear();
         const f32 cameraFar = camera.GetFar();
 
-        // Every frustum corner below is rebuilt from the eye and the near-plane corners, so
-        // the far plane — which reverse-Z sends to infinity when the render near is tiny — is
-        // never reconstructed.
-        const vec3 eye = camera.GetPosition();
-        const std::array<vec3, 4> nearCorners = NearPlaneCorners(invViewProj);
+        // Every frustum corner below is solved in view space at its depth and carried to world
+        // by the inverse view, so neither the far plane — which reverse-Z sends to infinity when
+        // the render near is tiny — nor the micron near plane is ever reconstructed.
+        const mat4 invView = glm::inverse(view);
+        const mat3 viewToWorld(invView);
+        const vec3 eye(invView[3]);
 
         // Floor the shadow near independently of the render near (settings.MinDistance; 0
         // keeps the camera near). A tiny render near against a distant far degenerates both
@@ -234,7 +231,7 @@ namespace Veng::Renderer
         if (!sceneBounds.IsEmpty())
         {
             const std::array<vec3, 8> frustumCorners =
-                FrustumCornersAtDepths(eye, nearCorners, cameraNear, cameraNear, cameraFar);
+                FrustumCornersAtDepths(proj, viewToWorld, eye, cameraNear, cameraFar);
             const std::optional<vec2> visibleDepth =
                 FrustumSceneDepthRange(frustumCorners, viewProj, view, sceneBounds);
             if (visibleDepth.has_value())
@@ -282,13 +279,13 @@ namespace Veng::Renderer
         // Pin the final split to the far plane exactly (float pow drifts).
         splits[data.Count] = far;
 
-        // The shadow sub-frustum's own near/far plane corners, reconstructed once from the
-        // eye and far corners at the bounded [near, far] depths. Each cascade slice below
+        // The shadow sub-frustum's own near/far plane corners, solved once at the bounded
+        // [near, far] depths. Each cascade slice below
         // interpolates between these two planes by a fraction within the *shadow* range —
         // always in [0, 1], so well-conditioned — rather than against the camera's full
         // range, whose fractions underflow together when the render near is tiny.
         const std::array<vec3, 8> shadowCorners =
-            FrustumCornersAtDepths(eye, nearCorners, cameraNear, near, far);
+            FrustumCornersAtDepths(proj, viewToWorld, eye, near, far);
 
         for (u32 k = 0; k < data.Count; ++k)
         {
