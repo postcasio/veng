@@ -603,6 +603,13 @@ namespace Veng::Renderer
         /// GPU scopes the callback opens are timed against a query pool of the one-shot buffer's
         /// own and read back before this returns; see GetLastImmediateGpuPassTimings. Setup work
         /// RecordSetupCommands is holding records at the head of the buffer, ahead of the callback.
+        ///
+        /// A recording made outside any frame, and not nested in another, is a frame of its own for
+        /// the per-view regions: it first waits the current frame slot's fence, then starts a fresh
+        /// view budget and brings that slot's material parameters up to date (see
+        /// BindlessRegistry::OnImmediateRecordingBegun). So any number of such recordings each
+        /// render, and each sees every material write made before it. A recording inside a frame
+        /// shares the frame's budget.
         /// @param function  Records the work into the one-shot command buffer it is handed.
         void ImmediateCommands(const std::function<void(CommandBuffer&)>& function) const;
 

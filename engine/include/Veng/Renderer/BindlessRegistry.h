@@ -465,7 +465,8 @@ namespace Veng::Renderer
         /// Called once per Viewport::Render (per SceneRenderer::Execute), before its
         /// WriteViewConstants / WriteLights, so that two viewports rendering in one frame write
         /// distinct regions and each's draws read its own. OnFrameAcquired resets the slot to the
-        /// first each frame.
+        /// first each frame, and OnImmediateRecordingBegun before each ImmediateCommands recording
+        /// made outside a frame.
         ///
         /// A frame wanting more than MaxViewsPerFrame views is a resource limit ordinary content can
         /// reach, not a contract violation, so the claim fails rather than aborting: it returns false,
@@ -608,6 +609,18 @@ namespace Veng::Renderer
         /// frame-in-flight slot `frameInFlight` was last current.
         /// @param frameInFlight The frame-in-flight index now being made current.
         void OnFrameAcquired(u32 frameInFlight);
+
+        /// @brief Called by Context::ImmediateCommands() before a recording made outside any frame,
+        /// once the fence of frame-in-flight slot `frameInFlight` has been waited.
+        ///
+        /// Such a recording completes before ImmediateCommands returns, so it is a frame of its own
+        /// for the per-view regions: the view budget starts over, rather than accumulating across
+        /// recordings no frame acquire ever resets. Material bytes still owed to the slot's region
+        /// are written into it, since a write made while the slot's last frame was executing was
+        /// deferred to an acquire this recording precedes. The owed counts are left for the next
+        /// acquire, which writes the same bytes again.
+        /// @param frameInFlight The current frame-in-flight index, whose fence has signalled.
+        void OnImmediateRecordingBegun(u32 frameInFlight);
 
         /// @brief The number of typed bindless descriptor sets prepended to every pipeline layout.
         ///
@@ -1038,7 +1051,7 @@ namespace Veng::Renderer
 
         /// @brief Distinct viewport renders seen so far in the current frame-in-flight.
         ///
-        /// Reset to 0 by OnFrameAcquired; TryBeginView takes the current slot from it and increments.
+        /// Reset to 0 by OnFrameAcquired and OnImmediateRecordingBegun; TryBeginView takes the current slot from it and increments.
         u32 m_ViewsThisFrame = 0;
 
         /// @brief The view slot the current Execute writes and reads (set by TryBeginView).

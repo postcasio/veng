@@ -198,7 +198,8 @@ namespace
     // A scene: a bright green backdrop cube well below the origin (out of the camera's frame, but in
     // the probe's -Y view), and a surface cube at the origin carrying the given capture material and a
     // CaptureSurface of the given refresh policy. Keeps the built meshes alive in `meshes`.
-    Unique<Scene> BuildCaptureScene(Context& context, AssetManager& assets, TypeRegistry& types,
+    Unique<Scene> BuildCaptureScene(Context& context, const AssetManager& assets,
+                                    TypeRegistry& types,
                                     const AssetHandle<MaterialInstance>& surfaceMaterial,
                                     const AssetHandle<MaterialInstance>& backdropMaterial,
                                     CaptureRefresh refresh, vector<Ref<Mesh>>& meshes,
@@ -277,7 +278,7 @@ namespace
     }
 
     // Adds one opaque, depth-writing wall cube of the given edge, centred at `center`.
-    void AddWall(Scene& scene, AssetManager& assets, vector<Ref<Mesh>>& meshes,
+    void AddWall(Scene& scene, const AssetManager& assets, vector<Ref<Mesh>>& meshes,
                  const AssetHandle<MaterialInstance>& material, const char* name,
                  const vec3& center, f32 edge, Context& context)
     {
@@ -309,7 +310,7 @@ namespace
     // proxy can hold — and, at the origin, a surface cube carrying the parallax fixture material and a
     // distance-publishing CaptureSurface. The surface fills the frame centre, so a rendered frame
     // reads back whatever the fixture produced there.
-    Unique<Scene> BuildMarchScene(Context& context, AssetManager& assets, TypeRegistry& types,
+    Unique<Scene> BuildMarchScene(Context& context, const AssetManager& assets, TypeRegistry& types,
                                   const AssetHandle<MaterialInstance>& parallaxMaterial,
                                   const AssetHandle<MaterialInstance>& wallMaterial,
                                   vector<Ref<Mesh>>& meshes, Entity& surfaceEntity)
@@ -539,7 +540,7 @@ TEST_CASE_FIXTURE(
         const Unique<Scene> scene =
             BuildCaptureScene(Context, assets, Types, *probe, *backdrop, CaptureRefresh::OnDemand,
                               meshes, surfaceEntity);
-        auto& capture = scene->Get<CaptureSurface>(surfaceEntity);
+        const auto& capture = scene->Get<CaptureSurface>(surfaceEntity);
         const AssetHandle<MaterialInstance> material = SurfaceMaterial(*scene, surfaceEntity);
 
         // While faces are still owed, the capture reports refreshing; each drive pushes one.
@@ -1523,19 +1524,22 @@ TEST_CASE_FIXTURE(
     }
 
     BindlessRegistry& registry = Context.GetBindlessRegistry();
-    registry.OnFrameAcquired(0);
-    while (registry.GetRemainingViews() > SlotsLeftForFrame)
-    {
-        CHECK(registry.TryBeginView());
-    }
     for (const Unique<SceneCapture>& capture : captures)
     {
         capture->SetView({.World = scene.get()});
     }
 
     // The frame records without aborting: three captures fit beside the viewport's reserved slot, the
-    // rest hold their last map.
-    Context.ImmediateCommands([&](CommandBuffer& cmd) { compositor.RenderRegistered(cmd); });
+    // rest hold their last map. The budget is narrowed inside the recording, which starts a fresh one.
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            while (registry.GetRemainingViews() > SlotsLeftForFrame)
+            {
+                CHECK(registry.TryBeginView());
+            }
+            compositor.RenderRegistered(cmd);
+        });
 
     // Every slot is spent and none was overdrawn — the whole budget was claimed, one of it the
     // viewport's, and the claim past the end is refused rather than fatal.

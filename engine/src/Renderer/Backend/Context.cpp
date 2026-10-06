@@ -70,9 +70,9 @@ namespace Veng::Renderer
 
     vk::PhysicalDevice Context::Native::GetPhysicalDevice()
     {
-        auto physicalDevices = Instance.enumeratePhysicalDevices().value;
+        const auto physicalDevices = Instance.enumeratePhysicalDevices().value;
 
-        for (auto& device : physicalDevices)
+        for (const auto& device : physicalDevices)
         {
             if (IsDeviceSuitable(device))
             {
@@ -87,7 +87,7 @@ namespace Veng::Renderer
     {
         const QueueFamilyIndices indices = FindQueueFamilies(device);
 
-        auto supportedFeatures = device.getFeatures();
+        const auto supportedFeatures = device.getFeatures();
 
         const bool extensionsSupported = CheckDeviceExtensionSupport(device);
 
@@ -665,7 +665,7 @@ namespace Veng::Renderer
                   "BeginTransferRecording: worker index {} out of range ({} transfer pools)",
                   workerIndex, m_Native->TransferPools.size());
 
-        auto& pool = m_Native->TransferPools[workerIndex];
+        const auto& pool = m_Native->TransferPools[workerIndex];
 
         // Reuse is timeline-gated: wait the worker's last upload to finish before
         // resetting its (single, reused) command buffer.
@@ -813,7 +813,7 @@ namespace Veng::Renderer
             vector<u32>& OpenStack;
         };
 
-        void OpenScope(CommandBuffer& cmd, const ScopeRun& run, const string_view name)
+        void OpenScope(const CommandBuffer& cmd, const ScopeRun& run, const string_view name)
         {
             // Past the budget: still push a sentinel so the matching close balances the stack.
             if (run.Names.size() >= Context::Native::MaxGpuScopes)
@@ -843,7 +843,7 @@ namespace Veng::Renderer
 #endif
         }
 
-        void CloseScope(CommandBuffer& cmd, const ScopeRun& run)
+        void CloseScope(const CommandBuffer& cmd, const ScopeRun& run)
         {
             VE_ASSERT(!run.OpenStack.empty(),
                       "Context::EndGpuScope called without a matching BeginGpuScope");
@@ -978,7 +978,7 @@ namespace Veng::Renderer
             m_Window->WaitUntilPresentable();
         }
 
-        auto& frame = AcquireNextFrame();
+        const auto& frame = AcquireNextFrame();
         ++m_FrameSerial;
 
         // AcquireNextFrame drained this slot's bin; fold in any handles retired since the last
@@ -1027,7 +1027,7 @@ namespace Veng::Renderer
 
         frame.GetInFlightFence().Reset();
 
-        auto commandBuffer = frame.GetCommandBuffer();
+        const auto commandBuffer = frame.GetCommandBuffer();
 
         commandBuffer->Reset();
 
@@ -1149,9 +1149,9 @@ namespace Veng::Renderer
 
     void Context::EndFrame()
     {
-        auto& frame = GetCurrentFrame();
+        const auto& frame = GetCurrentFrame();
 
-        auto commandBuffer = frame.GetCommandBuffer();
+        const auto commandBuffer = frame.GetCommandBuffer();
 
         // Headless has no swapchain image to transition for presentation.
         if (!IsHeadless())
@@ -1420,7 +1420,7 @@ namespace Veng::Renderer
     {
         auto& self = const_cast<Context&>(*this);
         Native& native = *m_Native;
-        auto commandBuffer = CommandBuffer::Create(self);
+        const auto commandBuffer = CommandBuffer::Create(self);
         commandBuffer->Begin(CommandBufferUsage::OneTimeSubmit);
 
         // A one-shot command buffer is not the driven frame's and never receives the per-frame
@@ -1442,7 +1442,14 @@ namespace Veng::Renderer
                 .resetQueryPool(native.ImmediateTimestampPool, 0, 2 * Native::MaxGpuScopes);
         }
 
+        // Outside a frame the current slot's last frame may still read its per-view and material
+        // regions, so its fence is waited before the recording takes them over.
         CommandBuffer* const outerImmediate = native.ActiveImmediateCommands;
+        if (!native.FrameRecording && outerImmediate == nullptr && native.Bindless)
+        {
+            native.SynchronizationFrames[native.CurrentFrameInFlight].GetInFlightFence().Wait();
+            native.Bindless->OnImmediateRecordingBegun(native.CurrentFrameInFlight);
+        }
         native.ActiveImmediateCommands = commandBuffer.get();
         self.DrainSetupCommands(*commandBuffer);
         function(*commandBuffer);
@@ -1669,7 +1676,7 @@ namespace Veng::Renderer
 
     bool Context::Native::CheckDeviceExtensionSupport(vk::PhysicalDevice device) const
     {
-        auto availableExtensions = device.enumerateDeviceExtensionProperties(nullptr).value;
+        const auto availableExtensions = device.enumerateDeviceExtensionProperties(nullptr).value;
 
         set<string> requiredExtensions(DeviceExtensions.begin(), DeviceExtensions.end());
 
@@ -2033,13 +2040,13 @@ namespace Veng::Renderer
         // Destroy dependents before the objects they reference: descriptor sets
         // first, then views, then the images/buffers backing them. Everything in
         // the bin is already GPU-idle.
-        for (auto descriptorSet : bin.DescriptorSets)
+        for (const auto descriptorSet : bin.DescriptorSets)
         {
             VK_ASSERT(
                 Device.freeDescriptorSets(DescriptorPool->GetVkDescriptorPool(), descriptorSet),
                 "failed to free descriptor set!");
         }
-        for (auto imageView : bin.ImageViews)
+        for (const auto imageView : bin.ImageViews)
         {
             Device.destroyImageView(imageView);
         }
@@ -2051,23 +2058,23 @@ namespace Veng::Renderer
         {
             vmaDestroyBuffer(Allocator, buffer, allocation);
         }
-        for (auto pipeline : bin.Pipelines)
+        for (const auto pipeline : bin.Pipelines)
         {
             Device.destroyPipeline(pipeline);
         }
-        for (auto pipelineLayout : bin.PipelineLayouts)
+        for (const auto pipelineLayout : bin.PipelineLayouts)
         {
             Device.destroyPipelineLayout(pipelineLayout);
         }
-        for (auto descriptorSetLayout : bin.DescriptorSetLayouts)
+        for (const auto descriptorSetLayout : bin.DescriptorSetLayouts)
         {
             Device.destroyDescriptorSetLayout(descriptorSetLayout);
         }
-        for (auto sampler : bin.Samplers)
+        for (const auto sampler : bin.Samplers)
         {
             Device.destroySampler(sampler);
         }
-        for (auto shaderModule : bin.ShaderModules)
+        for (const auto shaderModule : bin.ShaderModules)
         {
             Device.destroyShaderModule(shaderModule);
         }
@@ -2231,10 +2238,10 @@ namespace Veng::Renderer
 
         // Wait on the same per-image semaphore the frame submit signalled (image index
         // unchanged since acquire), the one keyed to this image rather than the frame slot.
-        auto renderFinishedSemaphore =
+        const auto renderFinishedSemaphore =
             m_Native->SwapChain->GetCurrentRenderFinishedSemaphore().GetNative().Semaphore;
-        auto swapChain = m_Native->SwapChain->GetVkSwapChain();
-        auto imageIndex = m_Native->SwapChain->GetCurrentImageIndex();
+        const auto swapChain = m_Native->SwapChain->GetVkSwapChain();
+        const auto imageIndex = m_Native->SwapChain->GetCurrentImageIndex();
 
         const vk::PresentInfoKHR presentInfo{.waitSemaphoreCount = 1,
                                              .pWaitSemaphores = &renderFinishedSemaphore,

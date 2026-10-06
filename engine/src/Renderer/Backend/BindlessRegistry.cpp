@@ -645,7 +645,8 @@ namespace Veng::Renderer
     {
         // Written now so the recording frame's draws (or a one-shot recording's) see the update.
         // Outside a frame the current slot's last frame may still be executing and reading this
-        // region, so the write is left to the flush at that slot's next acquire, after its fence.
+        // region, so the write is left to the flush after its fence: at that slot's next acquire, or
+        // at an out-of-frame immediate recording.
         // Neither consumes a dirty count.
         const u32 slot = m_Context.GetCurrentFrameInFlight();
         if (m_Context.GetNative().IsSlotWritable(slot))
@@ -1077,5 +1078,18 @@ namespace Veng::Renderer
             m_DirtyMaterials[kept++] = entryIndex;
         }
         m_DirtyMaterials.resize(kept);
+    }
+
+    void BindlessRegistry::OnImmediateRecordingBegun(const u32 frameInFlight)
+    {
+        m_ViewsThisFrame = 0;
+        m_ViewSlot = 0;
+
+        for (const u32 entryIndex : m_DirtyMaterials)
+        {
+            const MaterialEntry& entry = m_MaterialEntries[entryIndex];
+            WriteMaterialRegion(entryIndex, frameInFlight, entry.DirtyLow,
+                                entry.DirtyHigh - entry.DirtyLow);
+        }
     }
 }

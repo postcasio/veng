@@ -1293,7 +1293,8 @@ SSAO view/projection live in a set-0 buffer selected by an index fold (a dynamic
 mistranslates in set 0 on MoltenVK). This buffer is **shared across every `Viewport`** (it lives
 in the `Context`-owned `BindlessRegistry`), so it is ringed `framesInFlight * MaxViewsPerFrame`
 deep and each `SceneRenderer::Execute` claims its own slot (`BindlessRegistry::TryBeginView`, reset
-per frame): two viewports rendering in one frame write distinct regions rather than the second's
+per frame, and before each `ImmediateCommands` recording made outside a frame, so a host rendering only
+through those is not capped at `MaxViewsPerFrame` renders in all): two viewports rendering in one frame write distinct regions rather than the second's
 camera clobbering the region the first's draws still read at submit. The shared per-frame light
 buffer rings the same way.
 
@@ -1526,7 +1527,8 @@ that frame's fence has been waited.** How each kind of state keeps it:
   the *older* one; filing a release there reclaimed the slot while the newest frame could still read it.
 - **Host-written per-frame rings** write only the recording slot's slice, from inside the frame. A
   material update outside a frame skips the direct write while the current slot's frame may still run
-  (`IsSlotWritable`) and lands at that slot's acquire instead. A `SceneRenderer` executes at most once
+  (`IsSlotWritable`) and lands at that slot's acquire instead, or at an `ImmediateCommands` recording
+  made outside a frame, which waits the slot's fence first. A `SceneRenderer` executes at most once
   per frame (asserted against `Context::GetFrameSerial()`), because its rings hold one slice per frame
   in flight. The skinning palette is one region deeper, ringed per Execute, since a draw also reads the
   previous Execute's region for velocity. A single-copy buffer a frame reads is replaced, not

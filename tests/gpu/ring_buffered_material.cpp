@@ -17,6 +17,9 @@
 //      advance both reach every region.
 //   6. Packed neighbours: interleaved ranged writes to two materials whose blocks are
 //      adjacent in the arena leave each other's bytes untouched.
+//   7. Immediate recordings: recordings made outside any frame each claim a view slot,
+//      however many there are, and each reads the write made before it — including a
+//      write made while the current slot's last frame may still be executing.
 //
 // Each frame draws a fullscreen triangle whose fragment shader loads the
 // material block at the selector it is pushed and outputs the param as color;
@@ -159,6 +162,64 @@ namespace
         return {pixels[0], pixels[1], pixels[2], pixels[3]};
     }
 
+    // What one immediate render drew and whether it got a view slot.
+    struct ImmediatePixel
+    {
+        std::array<u8, 4> Pixel{};
+        bool Claimed = false;
+    };
+
+    // Renders through ImmediateCommands outside any frame, claiming a view slot first as a
+    // SceneRenderer::Execute does, and returns the center pixel. A refused claim draws nothing.
+    ImmediatePixel RenderImmediate(Context& context, BindlessRegistry& bindless,
+                                   const Ref<GraphicsPipeline>& pipeline,
+                                   const Ref<Image>& outputImage, const Ref<ImageView>& outputView,
+                                   MaterialHandle material)
+    {
+        ImmediatePixel result;
+        context.ImmediateCommands(
+            [&](CommandBuffer& cmd)
+            {
+                result.Claimed = bindless.TryBeginView();
+                if (!result.Claimed)
+                {
+                    return;
+                }
+
+                RenderGraph graph(context);
+                const ResourceId outputId = graph.Import("Output");
+                graph.AddPass("Draw Material Param")
+                    .Color({
+                        .Resource = outputId,
+                        .Load = LoadOp::Clear,
+                        .Store = StoreOp::Store,
+                        .Clear = ClearColor{.R = 0.0f, .G = 0.0f, .B = 0.0f, .A = 1.0f},
+                    })
+                    .Execute(
+                        [&](PassContext& ctx)
+                        {
+                            CommandBuffer& passCmd = ctx.Cmd();
+                            passCmd.BindPipeline(pipeline);
+                            passCmd.SetViewport({0, 0}, {Size, Size});
+                            passCmd.SetScissor({0, 0}, {Size, Size});
+                            bindless.Bind(passCmd);
+                            passCmd.PushConstants(
+                                MaterialPush{.MaterialOffset =
+                                                 bindless.GetCurrentFrameBase() + material.Offset});
+                            passCmd.DrawFullscreenTriangle();
+                        });
+
+                const RenderGraph::ImportBinding bindings[] = {
+                    {.Id = outputId, .View = outputView}};
+                graph.Compile()->Execute(cmd, bindings);
+            });
+
+        const vector<u8> pixels = outputImage->Download();
+        REQUIRE(pixels.size() == static_cast<size_t>(Size) * Size * 4);
+        result.Pixel = {pixels[0], pixels[1], pixels[2], pixels[3]};
+        return result;
+    }
+
     // One frame, two passes of different extents — the shape two Viewport::Renders take — with a
     // parameter write between them. Returns each pass's center pixel.
     struct TwoViewPixels
@@ -252,17 +313,17 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(fragmentAsset.has_value());
 
     Ref<PipelineLayout> layout;
-    auto pipeline = CreateMaterialPipeline(Context, layout, vertexAsset->Get()->Module,
-                                           fragmentAsset->Get()->Module);
+    const auto pipeline = CreateMaterialPipeline(Context, layout, vertexAsset->Get()->Module,
+                                                 fragmentAsset->Get()->Module);
 
-    auto outputImage =
+    const auto outputImage =
         Image::Create(Context, {
                                    .Name = "Ring Output",
                                    .Extent = {Size, Size, 1},
                                    .Format = Format::RGBA8Unorm,
                                    .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
                                });
-    auto outputView =
+    const auto outputView =
         ImageView::Create(Context, {.Name = "Ring Output View", .Image = outputImage});
 
     auto& bindless = Context.GetBindlessRegistry();
@@ -307,17 +368,17 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(fragmentAsset.has_value());
 
     Ref<PipelineLayout> layout;
-    auto pipeline = CreateMaterialPipeline(Context, layout, vertexAsset->Get()->Module,
-                                           fragmentAsset->Get()->Module);
+    const auto pipeline = CreateMaterialPipeline(Context, layout, vertexAsset->Get()->Module,
+                                                 fragmentAsset->Get()->Module);
 
-    auto outputImage =
+    const auto outputImage =
         Image::Create(Context, {
                                    .Name = "Ring Output Reuse",
                                    .Extent = {Size, Size, 1},
                                    .Format = Format::RGBA8Unorm,
                                    .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
                                });
-    auto outputView =
+    const auto outputView =
         ImageView::Create(Context, {.Name = "Ring Output Reuse View", .Image = outputImage});
 
     auto& bindless = Context.GetBindlessRegistry();
@@ -388,17 +449,17 @@ TEST_CASE_FIXTURE(
     REQUIRE(fragmentAsset.has_value());
 
     Ref<PipelineLayout> layout;
-    auto pipeline = CreateMaterialPipeline(Context, layout, vertexAsset->Get()->Module,
-                                           fragmentAsset->Get()->Module);
+    const auto pipeline = CreateMaterialPipeline(Context, layout, vertexAsset->Get()->Module,
+                                                 fragmentAsset->Get()->Module);
 
-    auto outputImage =
+    const auto outputImage =
         Image::Create(Context, {
                                    .Name = "Ring Output Stable",
                                    .Extent = {Size, Size, 1},
                                    .Format = Format::RGBA8Unorm,
                                    .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
                                });
-    auto outputView =
+    const auto outputView =
         ImageView::Create(Context, {.Name = "Ring Output Stable View", .Image = outputImage});
 
     auto& bindless = Context.GetBindlessRegistry();
@@ -440,28 +501,28 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(fragmentAsset.has_value());
 
     Ref<PipelineLayout> layout;
-    auto pipeline = CreateMaterialPipeline(Context, layout, vertexAsset->Get()->Module,
-                                           fragmentAsset->Get()->Module);
+    const auto pipeline = CreateMaterialPipeline(Context, layout, vertexAsset->Get()->Module,
+                                                 fragmentAsset->Get()->Module);
 
     // Two targets of different extents, the case MaxViewsPerFrame's own doc names: an editor
     // renders one viewport per visible panel and they are not the same size.
-    auto firstImage =
+    const auto firstImage =
         Image::Create(Context, {
                                    .Name = "Two View First",
                                    .Extent = {Size, Size, 1},
                                    .Format = Format::RGBA8Unorm,
                                    .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
                                });
-    auto firstView =
+    const auto firstView =
         ImageView::Create(Context, {.Name = "Two View First View", .Image = firstImage});
-    auto secondImage =
+    const auto secondImage =
         Image::Create(Context, {
                                    .Name = "Two View Second",
                                    .Extent = {Size * 2, Size * 2, 1},
                                    .Format = Format::RGBA8Unorm,
                                    .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
                                });
-    auto secondView =
+    const auto secondView =
         ImageView::Create(Context, {.Name = "Two View Second View", .Image = secondImage});
 
     auto& bindless = Context.GetBindlessRegistry();
@@ -496,17 +557,17 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(fragmentAsset.has_value());
 
     Ref<PipelineLayout> layout;
-    auto pipeline = CreateMaterialPipeline(Context, layout, vertexAsset->Get()->Module,
-                                           fragmentAsset->Get()->Module);
+    const auto pipeline = CreateMaterialPipeline(Context, layout, vertexAsset->Get()->Module,
+                                                 fragmentAsset->Get()->Module);
 
-    auto outputImage =
+    const auto outputImage =
         Image::Create(Context, {
                                    .Name = "Ranged Output",
                                    .Extent = {Size, Size, 1},
                                    .Format = Format::RGBA8Unorm,
                                    .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
                                });
-    auto outputView =
+    const auto outputView =
         ImageView::Create(Context, {.Name = "Ranged Output View", .Image = outputImage});
 
     auto& bindless = Context.GetBindlessRegistry();
@@ -571,17 +632,17 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(fragmentAsset.has_value());
 
     Ref<PipelineLayout> layout;
-    auto pipeline = CreateMaterialPipeline(Context, layout, vertexAsset->Get()->Module,
-                                           fragmentAsset->Get()->Module);
+    const auto pipeline = CreateMaterialPipeline(Context, layout, vertexAsset->Get()->Module,
+                                                 fragmentAsset->Get()->Module);
 
-    auto outputImage =
+    const auto outputImage =
         Image::Create(Context, {
                                    .Name = "Adjacent Output",
                                    .Extent = {Size, Size, 1},
                                    .Format = Format::RGBA8Unorm,
                                    .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
                                });
-    auto outputView =
+    const auto outputView =
         ImageView::Create(Context, {.Name = "Adjacent Output View", .Image = outputImage});
 
     auto& bindless = Context.GetBindlessRegistry();
@@ -661,4 +722,106 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     bindless.Release(lower);
     bindless.Release(upper);
+}
+
+namespace
+{
+    // The pipeline, target and material the immediate-recording cases draw with.
+    struct ImmediateRig
+    {
+        AssetManager Assets;
+        Ref<PipelineLayout> Layout;
+        Ref<GraphicsPipeline> Pipeline;
+        Ref<Image> OutputImage;
+        Ref<ImageView> OutputView;
+        MaterialHandle Material;
+
+        explicit ImmediateRig(Veng::Test::GpuFixture& fixture)
+            : Assets(fixture.Context, fixture.Tasks, fixture.Types)
+        {
+            REQUIRE(Assets.Mount(path(TEST_SHADER_PACK)).has_value());
+            const AssetResult<AssetHandle<Shader>> vertex =
+                Assets.LoadSync<Shader>(AssetId{0x1F42});
+            const AssetResult<AssetHandle<Shader>> fragment =
+                Assets.LoadSync<Shader>(AssetId{0x1F45});
+            REQUIRE(vertex.has_value());
+            REQUIRE(fragment.has_value());
+            Pipeline = CreateMaterialPipeline(fixture.Context, Layout, vertex->Get()->Module,
+                                              fragment->Get()->Module);
+            OutputImage = Image::Create(
+                fixture.Context, {
+                                     .Name = "Immediate Output",
+                                     .Extent = {Size, Size, 1},
+                                     .Format = Format::RGBA8Unorm,
+                                     .Usage = ImageUsage::ColorAttachment | ImageUsage::TransferSrc,
+                                 });
+            OutputView = ImageView::Create(fixture.Context,
+                                           {.Name = "Immediate Output View", .Image = OutputImage});
+            const auto initial = MakeBlock(vec4{0.0f, 0.0f, 0.0f, 1.0f});
+            Material = fixture.Context.GetBindlessRegistry().RegisterMaterial(
+                std::span<const std::byte>(initial));
+            REQUIRE(Material.IsValid());
+        }
+    };
+
+    // A distinct red value per render, so a render that drew nothing or read a stale block shows.
+    vec4 ImmediateValue(u32 render)
+    {
+        return {static_cast<f32>((render % 9) + 1) / 10.0f, 0.0f, 0.0f, 1.0f};
+    }
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "ring-buffered material: immediate recordings outside a frame each claim a view "
+                  "and read the latest write, past one frame's view budget")
+{
+    // No frame is ever acquired here, which is how a tool or an offline bake renders. Each
+    // recording is a frame of its own for view slots, so the budget never runs out.
+    const ImmediateRig rig(*this);
+    BindlessRegistry& bindless = Context.GetBindlessRegistry();
+
+    constexpr u32 Renders = BindlessRegistry::MaxViewsPerFrame + 8;
+    u32 claimed = 0;
+    u32 correct = 0;
+    for (u32 i = 0; i < Renders; ++i)
+    {
+        const auto block = MakeBlock(ImmediateValue(i));
+        bindless.UpdateMaterial(rig.Material, std::span<const std::byte>(block));
+        const ImmediatePixel drawn = RenderImmediate(Context, bindless, rig.Pipeline,
+                                                     rig.OutputImage, rig.OutputView, rig.Material);
+        claimed += drawn.Claimed ? 1 : 0;
+        correct += ChannelNear(drawn.Pixel[0], ImmediateValue(i).x) ? 1 : 0;
+    }
+    CHECK(claimed == Renders);
+    CHECK(correct == Renders);
+
+    bindless.Release(rig.Material);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "ring-buffered material: a write made between frames is what the next immediate "
+                  "recording reads")
+{
+    // Each write lands right after a frame is submitted and not waited, while the current slot's
+    // last frame may still be executing, so it can be deferred past the direct write; the
+    // immediate recording must still read it.
+    const ImmediateRig rig(*this);
+    BindlessRegistry& bindless = Context.GetBindlessRegistry();
+
+    constexpr u32 Renders = 8;
+    u32 correct = 0;
+    for (u32 i = 0; i < Renders; ++i)
+    {
+        Context.BeginFrame();
+        Context.EndFrame();
+        const auto block = MakeBlock(ImmediateValue(i));
+        bindless.UpdateMaterial(rig.Material, std::span<const std::byte>(block));
+        const ImmediatePixel drawn = RenderImmediate(Context, bindless, rig.Pipeline,
+                                                     rig.OutputImage, rig.OutputView, rig.Material);
+        correct += drawn.Claimed && ChannelNear(drawn.Pixel[0], ImmediateValue(i).x) ? 1 : 0;
+    }
+    CHECK(correct == Renders);
+
+    Context.WaitIdle();
+    bindless.Release(rig.Material);
 }

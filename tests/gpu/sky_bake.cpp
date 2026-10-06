@@ -252,7 +252,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // reconstructed direction is closest — a seam shows up as a border mismatch. Because both
     // faces evaluate the same analytic function of direction, agreement proves the basis is
     // consistent across the edge.
-    auto BorderTexels = [&](u32 face) -> vector<std::pair<vec3, vec3>>
+    const auto BorderTexels = [&](u32 face) -> vector<std::pair<vec3, vec3>>
     {
         // Returns (direction, color) for every border texel of a face.
         vector<std::pair<vec3, vec3>> out;
@@ -695,7 +695,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         .Settings = {.Mode = DebugView::Final, .Bloom = false, .Shadows = false, .AO = false},
     });
 
-    auto RenderWithMode = [&](SkyMode mode) -> vector<u8>
+    const auto RenderWithMode = [&](SkyMode mode) -> vector<u8>
     {
         source->Mode = mode;
         return RenderSkyToCompletion(Context, *renderer, *scene, camera, extent);
@@ -735,8 +735,7 @@ namespace
 {
     // Builds a full-sky atmosphere scene (an AtmosphereSky plus a directional sun, whose inverse
     // travel direction is the toward-sun direction the sky and any lighting share) and a renderer.
-    // The caller drives Mode/tier through the returned Render lambda; each Execute claims bake +
-    // frame view slots, so a case keeps its Execute count within one frame's view budget (16).
+    // The caller drives Mode/tier through the returned Render lambda.
     struct AtmosphereSceneFixture
     {
         Unique<Scene> World;
@@ -895,7 +894,7 @@ namespace
     }
 
     // Downloads all six irradiance-cube layers into one tightly-packed RGBA16F buffer (layer-major).
-    vector<u8> DownloadIrradiance(Context& context, EnvironmentIbl& ibl)
+    vector<u8> DownloadIrradiance(Context& context, const EnvironmentIbl& ibl)
     {
         const u32 faceSize = EnvironmentIbl::GetIrradianceFaceSize();
         const usize faceBytes = static_cast<usize>(faceSize) * faceSize * 8;
