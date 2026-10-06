@@ -80,7 +80,7 @@ TEST_CASE("PackSceneLights: an empty scene packs nothing and reports no directio
     CHECK(packed.CascadeTravel[0] == vec3{0.0f, -1.0f, 0.0f});
 }
 
-TEST_CASE("PackSceneLights: a lone directional packs exactly as it did before cascade sets")
+TEST_CASE("PackSceneLights: a lone directional packs into cascade set 0 with no atlas slot")
 {
     TypeRegistry types;
     RegisterBuiltins(types);
@@ -97,10 +97,10 @@ TEST_CASE("PackSceneLights: a lone directional packs exactly as it did before ca
     CHECK(packed.CascadeSetCount == 1);
     CHECK(packed.CascadeTravel[0] == vec3{0.3f, -0.8f, 0.5f});
 
-    // The overwhelmingly common scene — one shadow-casting directional — packs the same GpuLight
-    // shape it always has: set 0 is the flags word's zero, and the punctual slot stays -1 because a
-    // directional never takes an atlas tile. Its packed radiance is the authored lux converted
-    // through the anchor — a directional carries `Intensity · S`.
+    // The overwhelmingly common scene — one shadow-casting directional: set 0 is the flags word's
+    // zero, and the punctual slot stays -1 because a directional never takes an atlas tile. Its
+    // packed radiance is the authored lux converted through the anchor — a directional carries
+    // `Intensity · S`.
     const PackedLight& light = packed.Lights[0];
     CHECK(light.DirectionType.w == doctest::Approx(0.0f)); // LightType::Directional
     CHECK(light.ColorIntensity.a == doctest::Approx(2.0f * LuminousAnchor));
@@ -366,8 +366,7 @@ TEST_CASE("PackSceneLights: a default point/spot source radius is zero, so the n
     const Unique<Scene> scene = Scene::Create(types);
 
     // With Radius at its default, the packed source radius is zero: the shader's distance clamp
-    // falls back to the epsilon floor, reproducing the pure inverse-square. A default light of any
-    // positioned type is unchanged from before the source radius existed.
+    // falls back to the epsilon floor, reproducing the pure inverse-square.
     AddLight(*scene, Light{.Type = LightType::Point, .Range = 5.0f});
     AddLight(*scene, Light{.Type = LightType::Spot, .Range = 5.0f, .OuterCone = 0.6f},
              vec3(10.0f, 0.0f, 0.0f));
