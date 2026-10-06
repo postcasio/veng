@@ -150,8 +150,6 @@ TEST_CASE("Schedule: compute storage-write to graphics indirect-read derives a b
     const auto schedule = DeriveRenderGraphSchedule(resources, passes);
 
     REQUIRE(schedule.size() == 2);
-    // The producing pass emits no barrier (no prior access).
-    CHECK(schedule[0].BufferBarriers.empty());
     CHECK(schedule[0].Transitions.empty()); // buffers never produce image transitions
 
     // The consuming pass emits the compute-write -> indirect-read barrier.
@@ -192,6 +190,32 @@ TEST_CASE("Schedule: compute storage-write to a fragment storage-buffer read wai
     // A later write waits on the fragment read rather than on a compute stage that read nothing.
     REQUIRE(schedule[2].BufferBarriers.size() == 1);
     CHECK(schedule[2].BufferBarriers[0].SrcStage == vk::PipelineStageFlagBits::eFragmentShader);
+}
+
+TEST_CASE("Schedule: a buffer's first access waits on its last, so a replay follows the one before")
+{
+    // One command buffer may replay a compiled graph twice (one renderer recording two views). The
+    // second replay's write must wait on the first replay's read, which is the graph's last access
+    // to the slot; within one replay the read still waits on the write.
+    const vector<ScheduleResource> resources{ImportBuffer("Masks")};
+
+    const vector<RenderGraph::Access> write{Access(0, AccessKind::StorageBufferWrite)};
+    const vector<RenderGraph::Access> read{Access(0, AccessKind::StorageBufferReadGraphics)};
+    const vector<SchedulePass> passes{
+        {.Name = "Cull", .Accesses = write},
+        {.Name = "Shade", .Accesses = read},
+    };
+
+    const auto schedule = DeriveRenderGraphSchedule(resources, passes);
+
+    REQUIRE(schedule.size() == 2);
+    REQUIRE(schedule[0].BufferBarriers.size() == 1);
+    const ScheduledBufferBarrier& wrap = schedule[0].BufferBarriers[0];
+    CHECK(wrap.SrcStage == vk::PipelineStageFlagBits::eFragmentShader);
+    CHECK(wrap.DstStage == vk::PipelineStageFlagBits::eComputeShader);
+    CHECK(wrap.DstAccess == vk::AccessFlagBits::eShaderWrite);
+    REQUIRE(schedule[1].BufferBarriers.size() == 1);
+    CHECK(schedule[1].BufferBarriers[0].SrcAccess == vk::AccessFlagBits::eShaderWrite);
 }
 
 TEST_CASE("Schedule: a same-stage read-after-read on a buffer emits no barrier")
@@ -268,7 +292,6 @@ TEST_CASE("Schedule: a write after two reads waits on both reads' stages")
     const auto schedule = DeriveRenderGraphSchedule(resources, passes);
 
     REQUIRE(schedule.size() == 3);
-    CHECK(schedule[0].BufferBarriers.empty());
     // The indirect read is in a new stage, so it chains after the storage read.
     CHECK(schedule[1].BufferBarriers.size() == 1);
     REQUIRE(schedule[2].BufferBarriers.size() == 1);

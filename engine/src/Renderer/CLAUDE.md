@@ -50,6 +50,13 @@ are already in the tracked read scope; otherwise they record a layout-preserving
 is the earlier readers' stages — chaining after the barrier that ordered them, which is also what
 orders the new read after that barrier's layout transition — and widen the scope to cover both.
 
+**A buffer's first access in a graph waits on its last.** A buffer carries no tracked state, so its
+barriers are baked at `Compile`, and each slot's tracking starts from the scope the graph ends on. A
+compiled graph replays every frame and may replay more than once into one command buffer (one
+renderer recording two views), so without that the second replay's first write would race the
+first replay's; an image gets the same ordering from its live tracked state. It costs one baked
+barrier per written buffer per replay.
+
 **A pass with nothing to record some frames says so instead of rendering empty** —
 `PassBuilder::SkipWhen(predicate)`, evaluated each `Execute`. A skipped frame records no render
 pass, callback or GPU scope; its image transitions fall to the next pass using each resource

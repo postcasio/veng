@@ -6,6 +6,22 @@
 
 namespace Veng::Renderer::Backend
 {
+    namespace
+    {
+        // A buffer slot's tracked scope after one more access: a hazard (the prior access wrote,
+        // or this one writes) resets it to the access's own scope, since the barrier it takes
+        // chains every earlier access behind it; a read widens it.
+        [[nodiscard]] SubresourceState AdvanceBufferScope(const SubresourceState& prior,
+                                                          const SubresourceState& scope)
+        {
+            if (prior.Stage && (IsWriteAccess(prior.Access) || IsWriteAccess(scope.Access)))
+            {
+                return {.Stage = scope.Stage, .Access = scope.Access};
+            }
+            return {.Stage = prior.Stage | scope.Stage, .Access = prior.Access | scope.Access};
+        }
+    }
+
     vector<ScheduledPass>
     DeriveRenderGraphSchedule(const std::span<const ScheduleResource> resources,
                               const std::span<const SchedulePass> passes)
@@ -19,7 +35,23 @@ namespace Veng::Renderer::Backend
         // A buffer carries no runtime tracked state, so the graph tracks each buffer
         // slot's last declared scope and bakes both halves of a buffer barrier.
         // Default-constructed entries (no stage/access) mean no prior access.
+        //
+        // Each slot starts at the scope the graph leaves it in. A compiled graph replays every
+        // frame, and may replay more than once into one command buffer (one renderer recording two
+        // views), so a buffer's first access in a replay follows its last access in the replay
+        // before; an image gets the same ordering from its live tracked state.
         vector<SubresourceState> bufferScope(resources.size());
+        for (const SchedulePass& pass : passes)
+        {
+            for (const RenderGraph::Access& access : pass.Accesses)
+            {
+                if (IsBufferAccess(access.Kind))
+                {
+                    SubresourceState& tracked = bufferScope[access.Resource.Index];
+                    tracked = AdvanceBufferScope(tracked, ScopeFor(access.Kind));
+                }
+            }
+        }
 
         for (const SchedulePass& pass : passes)
         {
@@ -94,23 +126,18 @@ namespace Veng::Renderer::Backend
                             .DstStage = scope.Stage,
                             .DstAccess = scope.Access,
                         });
-                        bufferScope[slot] = {.Stage = scope.Stage, .Access = scope.Access};
                     }
-                    else
+                    else if (hadPriorAccess && newReadScope)
                     {
-                        if (hadPriorAccess && newReadScope)
-                        {
-                            baked.BufferBarriers.push_back({
-                                .Slot = slot,
-                                .SrcStage = prior.Stage,
-                                .SrcAccess = {},
-                                .DstStage = scope.Stage,
-                                .DstAccess = scope.Access,
-                            });
-                        }
-                        bufferScope[slot] = {.Stage = prior.Stage | scope.Stage,
-                                             .Access = prior.Access | scope.Access};
+                        baked.BufferBarriers.push_back({
+                            .Slot = slot,
+                            .SrcStage = prior.Stage,
+                            .SrcAccess = {},
+                            .DstStage = scope.Stage,
+                            .DstAccess = scope.Access,
+                        });
                     }
+                    bufferScope[slot] = AdvanceBufferScope(prior, scope);
 
                     if (IsWriteAccess(scope.Access))
                     {
