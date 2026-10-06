@@ -94,7 +94,7 @@ if command -v clang-tidy >/dev/null 2>&1 && [ -n "$staged_tus" ]; then
     fi
 
     tidy_out=$(printf '%s' "$tidy_tus" | tr '\n' '\0' \
-        | xargs -0 clang-tidy -p "$TIDY_FILTERED_DB" --quiet 2>&1 || true)
+        | xargs -0 clang-tidy -p "$TIDY_FILTERED_DB" --quiet "${TIDY_EXTRA_ARGS[@]}" 2>&1 || true)
 
     if tidy_run_failed "$tidy_out"; then
         echo "pre-commit: clang-tidy could not run, so nothing was checked." >&2

@@ -111,7 +111,7 @@ fi
 tidy_export_toolchain_env "$TIDY_DB"
 tidy_make_filtered_db "$TIDY_DB"
 
-out=$(clang-tidy -p "$TIDY_FILTERED_DB" --quiet "$@" 2>&1 || true)
+out=$(clang-tidy -p "$TIDY_FILTERED_DB" --quiet "${TIDY_EXTRA_ARGS[@]}" "$@" 2>&1 || true)
 
 if tidy_run_failed "$out"; then
     tidy_say "clang-tidy could not run, so nothing was checked."

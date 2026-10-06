@@ -91,6 +91,12 @@ tidy_export_toolchain_env() {
     return 0
 }
 
+# Arguments every clang-tidy run takes. Homebrew's clang deprecates the SDK libc++'s
+# char_traits<unsigned char> where the building compiler does not, and the build's -Werror turns
+# that into an error that aborts the TU before a check runs. Deprecations are not among the
+# allowlisted checks, and the build itself still reports them, so the lint run leaves them to it.
+TIDY_EXTRA_ARGS=(--extra-arg=-Wno-deprecated-declarations)
+
 # True when the build tree records -isysroot. Without it every TU dies on 'cstdint' file not
 # found, since the compiler resolves the SDK implicitly as a driver where libTooling does not.
 tidy_db_has_sysroot() {
