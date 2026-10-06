@@ -667,7 +667,7 @@ namespace Veng
             dependencies.push_back(std::move(entry));
         }
 
-        VE_ASSERT(parsed.Complete != nullptr, "AssetManager: asset {}'s parse set no Complete",
+        VE_ASSERT(parsed.Complete, "AssetManager: asset {}'s parse set no Complete",
                   parse.Id.Value);
         AssetResult<Detail::LoadJob> job = parsed.Complete(*this, dependencies);
         if (!job)
@@ -710,8 +710,7 @@ namespace Veng
             dependencies.push_back(std::move(*entry));
         }
 
-        VE_ASSERT(parsed->Complete != nullptr, "AssetManager: asset {}'s parse set no Complete",
-                  id.Value);
+        VE_ASSERT(parsed->Complete, "AssetManager: asset {}'s parse set no Complete", id.Value);
         return parsed->Complete(*this, dependencies);
     }
 

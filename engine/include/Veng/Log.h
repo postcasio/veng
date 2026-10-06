@@ -40,7 +40,7 @@ namespace Veng::Log
         requires(sizeof...(Args) > 0)
     inline void Info(fmt::format_string<Args...> fmtStr, Args&&... args)
     {
-        auto msg = fmt::format(fmtStr, std::forward<Args>(args)...);
+        const auto msg = fmt::format(fmtStr, std::forward<Args>(args)...);
         LogMessage(Level::Info, msg);
     }
 
@@ -49,7 +49,7 @@ namespace Veng::Log
         requires(sizeof...(Args) > 0)
     inline void Warn(fmt::format_string<Args...> fmtStr, Args&&... args)
     {
-        auto msg = fmt::format(fmtStr, std::forward<Args>(args)...);
+        const auto msg = fmt::format(fmtStr, std::forward<Args>(args)...);
         LogMessage(Level::Warn, msg);
     }
 
@@ -58,7 +58,7 @@ namespace Veng::Log
         requires(sizeof...(Args) > 0)
     inline void Error(fmt::format_string<Args...> fmtStr, Args&&... args)
     {
-        auto msg = fmt::format(fmtStr, std::forward<Args>(args)...);
+        const auto msg = fmt::format(fmtStr, std::forward<Args>(args)...);
         LogMessage(Level::Error, msg);
     }
 
