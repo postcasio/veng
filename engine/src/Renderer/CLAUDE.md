@@ -258,6 +258,29 @@ lights, **SSAO** folded into the ambient/occlusion term, a **compute mip-pyramid
 tonemap, and an optional **TAA** resolve (off by default) between lighting and tonemap. Each
 battery is a `SceneRendererSettings` toggle driving the `Configure` recompile.
 
+**The BRDF has one definition, and its distribution is evaluated in full.** The GGX distribution and
+importance sampler, the Hammersley set, both Smith-Schlick geometry terms (the direct-lighting
+`k = (r+1)²/8` and the image-based `k = r²/2`, which are different fits, not copies) and Schlick
+Fresnel live in the binding-free `Veng/brdf.slang`, which the lighting core and both split-sum bakes
+(`ibl_prefilter.comp`, `ibl_brdf_lut.comp`) include. `D` takes the GGX width `α` (perceptual
+roughness squared), so a caller widening the lobe works in `α`, and it is Filament's stable form:
+`1 − (n·h)²` is taken as `|n × h|²`, which keeps its precision toward the peak where the textbook
+`(n·h)²(α² − 1) + 1` cancels. It carries **no clamp**, so a glossy highlight peaks at the full
+`1/(πα²)` — about 124 000 at the lighting core's 0.04 roughness floor — and has the shape the
+distribution gives it.
+
+**The guard sits on the output, where the overflow is.** `GuardLightingOutput` (`Veng/lighting.slang`)
+clamps a lighting entry point's radiance per channel to `LightingOutputMax` (6·10⁴), below the RGBA16F
+scene colour's 65504. A full-strength lobe on a mirror metal reaches about 3·10⁴ times the light's
+radiance at the floor, so a light brighter than the reference sun could write `inf`, which bloom's
+Karis weight then turns into a `NaN` that spreads. A clamp on `D` would reshape the lobe and still not
+stop the output overflowing; a clamp on the output leaves every representable value exact. The
+deferred pass guards its final colour (direct, ambient and emissive together); the forward loop
+guards each component it returns (see "Forward lighting for translucent surfaces").
+`tests/gpu/specular_lobe.cpp` pins both properties on a mirror plane: the highlight's peak rises
+strictly as roughness falls to the floor, and a floor-roughness mirror under a light a hundred times
+the sun's stays finite and within the bound.
+
 ### Anti-aliasing
 
 **`Settings.AntiAliasing` is one mutually-exclusive `AntiAliasingMode`** — `None` (default), `FXAA`,
@@ -990,6 +1013,13 @@ specular term, or divides it out, rather than letting the blend dim both alike.
   roughness/metallic (8-bit) where the forward path shades exact floats, so the two agree to that
   quantisation rather than bit for bit; `tests/gpu/forward_lighting.cpp` renders an opaque cube and
   its full-coverage forward-lit twin under a directional and a point light and holds them within it.
+- **The output guard bounds what the loop returns, not what a material writes.**
+  `EvaluateForwardLighting` passes `Diffuse` and `Specular` each through `GuardLightingOutput`. A
+  material that scales either up — dividing the specular by its coverage, as the straight-alpha
+  advice above suggests, multiplies it by the coverage's reciprocal — or sums them with other
+  radiance can pass the bound again, so it passes its final colour through `GuardLightingOutput`
+  before returning it. The gpu fixture `forward_lit.frag` does, since even its unscaled
+  `Diffuse + Specular` can sum past the bound.
 
 ### Bloom
 

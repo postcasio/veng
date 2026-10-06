@@ -10,9 +10,14 @@
 //   3. Regression guard: GenerateFromCube over one cube produces a bit-identical irradiance map on
 //      a repeat run (the convolution is deterministic), and Generate's convolution arm is that
 //      same GenerateFromCube — so re-expressing Generate over it cannot move the maps.
+//   4. The specular half keeps its two properties: a constant radiance cube prefilters to that
+//      constant at every roughness mip (the GGX-weighted average of a constant is the constant),
+//      and every BRDF integration LUT texel is a non-negative split-sum pair whose sum — the
+//      directional albedo under a white Fresnel — is at most one.
 //
 // Skips cleanly (exit 77) on a machine with no Vulkan ICD, like the rest of the gpu band.
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <vector>
@@ -124,33 +129,28 @@ namespace
                                           });
     }
 
-    // Downloads all six irradiance-cube layers into one tightly-packed RGBA16F buffer (layer-major).
-    std::vector<u8> DownloadIrradiance(Context& context, EnvironmentIbl& ibl)
+    // Downloads all six layers of one mip of an RGBA16F cube into one tightly-packed buffer
+    // (layer-major). `cubeView` spans every mip and layer, so its transitions cover the copy.
+    std::vector<u8> DownloadCubeMip(Context& context, const Ref<ImageView>& cubeView, u32 mip)
     {
-        const u32 faceSize = EnvironmentIbl::GetIrradianceFaceSize();
+        const Ref<Image> image = cubeView->GetImage();
+        const u32 faceSize = std::max(1u, image->GetWidth() >> mip);
         const usize faceBytes = static_cast<usize>(faceSize) * faceSize * 8;
-        const Ref<Image>& image = ibl.GetIrradianceImage();
-        const Ref<ImageView> view = ImageView::Create(context, {
-                                                                   .Name = "Test Irradiance View",
-                                                                   .Image = image,
-                                                                   .ViewType = ImageViewType::Cube,
-                                                                   .ArrayLayers = CubeFaces,
-                                                               });
         const Ref<Buffer> staging = Buffer::Create(context, {
-                                                                .Name = "Test Irradiance Readback",
+                                                                .Name = "Test Cube Mip Readback",
                                                                 .Size = faceBytes * CubeFaces,
                                                                 .Usage = BufferUsage::TransferDst,
                                                             });
         context.ImmediateCommands(
             [&](CommandBuffer& cmd)
             {
-                cmd.PrepareForAccess(view, AccessKind::TransferSrc);
+                cmd.PrepareForAccess(cubeView, AccessKind::TransferSrc);
                 const vk::BufferImageCopy region{
                     .bufferOffset = 0,
                     .bufferRowLength = 0,
                     .bufferImageHeight = 0,
                     .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                         .mipLevel = 0,
+                                         .mipLevel = mip,
                                          .baseArrayLayer = 0,
                                          .layerCount = CubeFaces},
                     .imageOffset = {.x = 0, .y = 0, .z = 0},
@@ -159,9 +159,22 @@ namespace
                 GetVkCommandBuffer(cmd).copyImageToBuffer(GetVkImage(*image),
                                                           vk::ImageLayout::eTransferSrcOptimal,
                                                           GetVkBuffer(*staging), 1, &region);
-                cmd.PrepareForAccess(view, AccessKind::SampleGraphics);
+                cmd.PrepareForAccess(cubeView, AccessKind::SampleGraphics);
             });
         return staging->Download();
+    }
+
+    // Downloads all six irradiance-cube layers into one tightly-packed RGBA16F buffer (layer-major).
+    std::vector<u8> DownloadIrradiance(Context& context, const EnvironmentIbl& ibl)
+    {
+        const Ref<ImageView> view =
+            ImageView::Create(context, {
+                                           .Name = "Test Irradiance View",
+                                           .Image = ibl.GetIrradianceImage(),
+                                           .ViewType = ImageViewType::Cube,
+                                           .ArrayLayers = CubeFaces,
+                                       });
+        return DownloadCubeMip(context, view, 0);
     }
 
     vec3 IrradianceTexel(const std::vector<u8>& bytes, u32 faceSize, u32 face, u32 x, u32 y)
@@ -259,7 +272,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
         { return vec3(0.5f + 0.5f * dir.x, 0.4f + 0.4f * dir.y, 0.3f + 0.3f * dir.z); });
     const Ref<ImageView> view = CubeView(Context, cube);
 
-    auto Convolve = [&]() -> std::vector<u8>
+    const auto Convolve = [&]() -> std::vector<u8>
     {
         Context.ImmediateCommands(
             [&](CommandBuffer& cmd)
@@ -279,4 +292,70 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     const std::vector<u8> second = Convolve();
     REQUIRE(first.size() == second.size());
     CHECK(first == second);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "EnvironmentIbl::GenerateFromCube: a constant cube prefilters to itself at every "
+                  "roughness, and the BRDF LUT is a bounded albedo")
+{
+    AssetManager assets(Context, Tasks, Types);
+    const Unique<EnvironmentIbl> ibl = EnvironmentIbl::Create(Context, assets);
+
+    constexpr vec3 L(0.3f, 0.6f, 0.9f);
+    const Ref<Image> cube = MakeCubeImage(Context, [&](vec3) { return L; });
+    const Ref<ImageView> view = CubeView(Context, cube);
+
+    Context.ImmediateCommands(
+        [&](CommandBuffer& cmd)
+        {
+            ibl->EnsureInitialized(cmd);
+            cmd.PrepareForAccess(view, AccessKind::SampleGraphics);
+            ibl->GenerateFromCube(cmd, view, SourceFaceSize);
+        });
+
+    // Every prefilter texel at every mip is the constant, to the RGBA16F round trip. The roughness-0
+    // mip's sample-density term is undefined (a 0/0 the shader discards), so a NaN reaching its
+    // texels would show here as a non-finite value.
+    const u32 mipCount = ibl->GetPrefilterMipCount();
+    REQUIRE(mipCount >= 2);
+    f32 maxPrefilterError = 0.0f;
+    bool prefilterFinite = true;
+    for (u32 mip = 0; mip < mipCount; ++mip)
+    {
+        const std::vector<u8> texels = DownloadCubeMip(Context, ibl->GetPrefilterCubeView(), mip);
+        const auto* halves = reinterpret_cast<const u16*>(texels.data());
+        for (usize i = 0; i < texels.size() / sizeof(u16); i += 4)
+        {
+            for (u32 channel = 0; channel < 3; ++channel)
+            {
+                const f32 value = glm::unpackHalf1x16(halves[i + channel]);
+                prefilterFinite = prefilterFinite && std::isfinite(value);
+                maxPrefilterError =
+                    std::max(maxPrefilterError, std::abs(value - L[channel]) / L[channel]);
+            }
+        }
+    }
+    CHECK(prefilterFinite);
+    CHECK(maxPrefilterError < 0.01f);
+
+    // Each LUT texel (A, B) splits the directional albedo across F0's scale and bias. Neither half
+    // can be negative, and with F0 = 1 the surface reflects A + B of the light, which energy
+    // conservation bounds by one; the tolerance is the RG16F rounding of each half.
+    const std::vector<u8> lut = ibl->GetBrdfLutImage()->Download();
+    const auto* halves = reinterpret_cast<const u16*>(lut.data());
+    f32 minHalf = 1e9f;
+    f32 maxSum = 0.0f;
+    bool lutFinite = true;
+    for (usize i = 0; i < lut.size() / sizeof(u16); i += 2)
+    {
+        const f32 a = glm::unpackHalf1x16(halves[i + 0]);
+        const f32 b = glm::unpackHalf1x16(halves[i + 1]);
+        lutFinite = lutFinite && std::isfinite(a) && std::isfinite(b);
+        minHalf = std::min(minHalf, std::min(a, b));
+        maxSum = std::max(maxSum, a + b);
+    }
+    CHECK(lutFinite);
+    CHECK(minHalf >= 0.0f);
+    CHECK(maxSum <= 1.0f + 2e-3f);
+    CHECK(maxSum > 0.5f);
 }

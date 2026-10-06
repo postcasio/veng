@@ -30,6 +30,12 @@
 // by coverage: a material that wants its reflections to survive at low opacity (clear glass is
 // nearly all reflection) raises its coverage by the specular luminance, or divides the specular
 // term by its coverage, rather than letting the blend dim both alike.
+//
+// Each component comes back through the lighting core's output guard (GuardLightingOutput), which
+// keeps it inside the scene colour's half-float range. The guard bounds what the loop returns, not
+// what a material writes: a material that scales either component up (dividing specular by its
+// coverage multiplies it by the coverage's reciprocal) or sums them with other radiance passes its
+// final colour through GuardLightingOutput before returning it.
 
 #include "Veng/translucent.slang"
 
@@ -59,7 +65,9 @@ struct ForwardLighting
 
 // Evaluates the scene's lights and ambient for a translucent fragment exactly as the deferred pass
 // would for an opaque surface with the same parameters: every live light in this view (shadowed),
-// plus the view's ambient arm scaled by s.Occlusion. Returns exposure-scaled linear HDR radiance.
+// plus the view's ambient arm scaled by s.Occlusion. Returns exposure-scaled linear HDR radiance,
+// each component guarded; a caller that amplifies or sums them re-applies GuardLightingOutput to
+// what it writes.
 ForwardLighting EvaluateForwardLighting(ForwardSurface s)
 {
     ViewConstants vc = LoadViewConstants(g_PC.ViewConstantsIndex);
@@ -71,8 +79,8 @@ ForwardLighting EvaluateForwardLighting(ForwardSurface s)
     LightingResult ambient = EvaluateAmbientLighting(vc, surface, s.Occlusion);
 
     ForwardLighting lit;
-    lit.Diffuse = direct.Diffuse + ambient.Diffuse;
-    lit.Specular = direct.Specular + ambient.Specular;
+    lit.Diffuse = GuardLightingOutput(direct.Diffuse + ambient.Diffuse);
+    lit.Specular = GuardLightingOutput(direct.Specular + ambient.Specular);
     return lit;
 }
 

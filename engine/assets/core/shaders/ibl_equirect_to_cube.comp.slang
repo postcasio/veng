@@ -4,7 +4,7 @@
 // UV, and writes the sampled radiance into the cube layer.
 //
 // The panorama is sampled through the set-0 bindless array (it is a registered asset);
-// the destination is a single storage layer set bound on set 1.
+// the destination is a single storage layer set bound on set 3.
 [[vk::binding(0, 0)]] Texture2D g_Textures[];
 [[vk::binding(1, 0)]] SamplerState g_Samplers[];
 [[vk::binding(0, 3)]] [format("rgba16f")] RWTexture2DArray<float4> g_DestCube;

@@ -3,7 +3,7 @@
 // alpha, and the depth attachment) through the bindless set-0 array, reconstructs world position
 // from depth, and evaluates the shared lighting core (Veng/lighting.slang) — a Cook-Torrance BRDF
 // over the typed lights in the per-view light buffer, plus the ambient arm the view block names.
-// Writes linear HDR.
+// Writes linear HDR, through the lighting core's output guard (GuardLightingOutput).
 //
 // VE_USE_SSAO selects a compile-time variant: when defined (by the
 // deferred_lighting_ssao.frag wrapper), the screen-space AO target is sampled and
@@ -153,7 +153,7 @@ float4 fsMain(VSOutput input) : SV_Target
     // The IBL-contribution debug arm: the ambient term alone, unlit, so the environment
     // lighting each pixel receives (whichever ambient arm it took) is directly observable.
     // Background pixels already returned black above.
-    return float4(ambient.Diffuse + ambient.Specular, 1.0);
+    return float4(GuardLightingOutput(ambient.Diffuse + ambient.Specular), 1.0);
 #endif
 
     // G4 emissive: the linear HDR radiance the surface fragment authored, added into the
@@ -163,6 +163,7 @@ float4 fsMain(VSOutput input) : SV_Target
     // returned black above) carries none.
     float3 emissive = g_Textures[NonUniformResourceIndex(g_PC.EmissiveTexture)].Sample(samp, sampleUV).rgb;
 
-    return float4(direct.Diffuse + direct.Specular + ambient.Diffuse + ambient.Specular + emissive,
+    return float4(GuardLightingOutput(direct.Diffuse + direct.Specular + ambient.Diffuse +
+                                      ambient.Specular + emissive),
                   1.0);
 }

@@ -32,7 +32,7 @@ namespace Veng::Renderer
     /// and the environment-independent BRDF integration LUT — all through compute, off the
     /// bindless registry, mirroring the bloom/hi-Z compute-with-manual-barriers pattern. The
     /// four sampled maps + a linear sampler are exposed as one descriptor set the deferred
-    /// lighting pass binds (set 2). Generation is recorded once when the bound environment
+    /// lighting pass binds (set 4). Generation is recorded once when the bound environment
     /// changes (the caller gates the call); the BRDF LUT is generated once on first use.
     class EnvironmentIbl
     {
@@ -111,7 +111,7 @@ namespace Veng::Renderer
         /// @return The cosine-convolved irradiance SH set for the environment's sky.
         [[nodiscard]] Sh9 ProjectEnvironmentToIrradianceSh(const Veng::EnvironmentMap& environment);
 
-        /// @brief The consumer descriptor-set layout the lighting pipeline reserves (set 2).
+        /// @brief The consumer descriptor-set layout the lighting pipeline reserves (set 4).
         [[nodiscard]] const Ref<DescriptorSetLayout>& GetSetLayout() const
         {
             return m_ConsumerSetLayout;
@@ -151,6 +151,9 @@ namespace Veng::Renderer
         /// @brief The irradiance cube image, exposed for tests reading back the convolved diffuse map.
         [[nodiscard]] const Ref<Image>& GetIrradianceImage() const { return m_IrradianceImage; }
 
+        /// @brief The BRDF integration LUT image, exposed for tests reading back the split-sum pair.
+        [[nodiscard]] const Ref<Image>& GetBrdfLutImage() const { return m_BrdfImage; }
+
         /// @brief The irradiance cube's face edge length in texels, exposed for tests.
         [[nodiscard]] static u32 GetIrradianceFaceSize();
 
@@ -187,7 +190,7 @@ namespace Veng::Renderer
 
         Ref<Sampler> m_Sampler;
 
-        // Generation pipelines + their per-pass descriptor sets (off bindless, set 1).
+        // Generation pipelines + their per-pass descriptor sets (off bindless, set 3).
         Ref<DescriptorSetLayout> m_EquirectSetLayout;
         Ref<PipelineLayout> m_EquirectLayout;
         Ref<ComputePipeline> m_EquirectPipeline;

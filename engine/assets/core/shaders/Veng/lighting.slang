@@ -5,6 +5,11 @@
 // Veng/forward_lighting.slang per translucent fragment, so an opaque and a translucent surface with
 // the same parameters receive the same light.
 //
+// The BRDF terms themselves (the GGX distribution, Smith geometry, Schlick Fresnel) live in the
+// binding-free Veng/brdf.slang, shared with the split-sum bakes. The two entry points (the deferred
+// pass and EvaluateForwardLighting) pass what they return through GuardLightingOutput, which keeps
+// it inside the scene colour's half-float range.
+//
 // Everything a caller needs beyond the surface itself comes from the view block
 // (view_constants.slang): the light-buffer region and count, the area-vertex region, the ambient
 // arm and its parameters, and the LTC LUT handles. Results split diffuse from specular radiance —
@@ -15,6 +20,7 @@
 // VE_SHADOW_SET (see shadow.slang). This file declares the image-based-lighting maps at set 4, and
 // through Veng/light_buffer.slang the set-0 light and area-vertex buffers (bindings 6 and 7).
 #include "../shadow.slang"
+#include "Veng/brdf.slang"
 #include "Veng/light_buffer.slang"
 #include "Veng/sh.slang"
 #include "Veng/light_flags.slang"
@@ -34,7 +40,21 @@ static const uint AmbientArmFlat = 0;
 static const uint AmbientArmSkylight = 1;
 static const uint AmbientArmIbl = 2;
 
-static const float LightingPi = 3.14159265358979323846;
+// The largest radiance a lighting entry point returns, per channel. It sits below the RGBA16F scene
+// colour's maximum (65504), so a lit value is never written as inf.
+static const float LightingOutputMax = 6.0e4;
+
+// Clamps lit radiance per channel to LightingOutputMax. The bound exists for overflow, not for the
+// lobe: a full-strength GGX peak on a glossy metal under a bright light can exceed the half-float
+// range, and an inf in the scene colour becomes a NaN wherever a later pass weights it (bloom's
+// Karis average), which then spreads. Every value the target can represent passes unchanged.
+//
+// It bounds the radiance it is handed, not what a caller makes of it afterwards: a material that
+// scales lit radiance up, or sums it with other radiance, passes its final colour through it again.
+float3 GuardLightingOutput(float3 radiance)
+{
+    return min(radiance, float3(LightingOutputMax));
+}
 
 // The surface a lighting evaluation shades, in world space. Build it with MakeLightingSurface,
 // which applies the roughness floor and derives the metal-tinted base reflectance.
@@ -77,41 +97,6 @@ LightingSurface MakeLightingSurface(ViewConstants vc, float3 position, float3 no
     return s;
 }
 
-// GGX / Trowbridge-Reitz normal distribution.
-float BrdfDistributionGGX(float nDotH, float roughness)
-{
-    float a = roughness * roughness;
-    float a2 = a * a;
-    float d = nDotH * nDotH * (a2 - 1.0) + 1.0;
-    return a2 / max(LightingPi * d * d, 1e-7);
-}
-
-// Smith geometry with the Schlick-GGX approximation, direct-lighting k.
-float BrdfGeometrySchlickGGX(float nDotX, float roughness)
-{
-    float r = roughness + 1.0;
-    float k = (r * r) / 8.0;
-    return nDotX / (nDotX * (1.0 - k) + k);
-}
-
-float BrdfGeometrySmith(float nDotV, float nDotL, float roughness)
-{
-    return BrdfGeometrySchlickGGX(nDotV, roughness) * BrdfGeometrySchlickGGX(nDotL, roughness);
-}
-
-float3 BrdfFresnelSchlick(float cosTheta, float3 f0)
-{
-    return f0 + (1.0 - f0) * pow(saturate(1.0 - cosTheta), 5.0);
-}
-
-// Roughness-aware Fresnel for the IBL ambient term: a rough surface's grazing
-// reflectance is bounded by its f0 rather than rising to white.
-float3 BrdfFresnelSchlickRoughness(float cosTheta, float3 f0, float roughness)
-{
-    float3 fr = max(float3(1.0 - roughness), f0);
-    return f0 + (fr - f0) * pow(saturate(1.0 - cosTheta), 5.0);
-}
-
 // The Cook-Torrance response of one light arriving from direction L with the given (already
 // distance/cone-attenuated) radiance, scaled by N·L.
 LightingResult EvaluateLight(LightingSurface s, float3 L, float3 radiance)
@@ -125,14 +110,15 @@ LightingResult EvaluateLight(LightingSurface s, float3 L, float3 radiance)
     float nDotH = max(dot(N, H), 0.0);
     float vDotH = max(dot(V, H), 0.0);
 
-    float ndf = BrdfDistributionGGX(nDotH, s.Roughness);
+    // AccumulateLight calls this only with N·L > 0, so H is never opposite N and D stays finite.
+    float ndf = BrdfDistributionGGX(N, H, nDotH, s.Roughness * s.Roughness);
     float g = BrdfGeometrySmith(nDotV, nDotL, s.Roughness);
     float3 fresnel = BrdfFresnelSchlick(vDotH, s.F0);
 
     float3 specular = (ndf * g * fresnel) / max(4.0 * nDotV * nDotL, 1e-4);
 
     float3 kd = (1.0 - fresnel) * (1.0 - s.Metallic);
-    float3 diffuse = kd * s.Albedo / LightingPi;
+    float3 diffuse = kd * s.Albedo / BrdfPi;
 
     LightingResult r;
     r.Diffuse = diffuse * radiance * nDotL;
@@ -530,7 +516,7 @@ LightingResult EvaluateAmbientLighting(ViewConstants vc, LightingSurface s, floa
         // normalization (the IBL arm folds the same 1/pi into its irradiance convolution).
         float3 irradiance = max(ShEvalIrradiance(vc.SkyShCoeffs, N), float3(0.0));
         ambient.Diffuse =
-            irradiance * (s.Albedo / LightingPi) * vc.AmbientParams.x * ambientOcclusion;
+            irradiance * (s.Albedo / BrdfPi) * vc.AmbientParams.x * ambientOcclusion;
     }
     else
     {

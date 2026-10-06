@@ -90,7 +90,7 @@ namespace Veng::Renderer
 
     EnvironmentIbl::EnvironmentIbl(Context& context, AssetManager& assets) : m_Context(context)
     {
-        auto LoadShader = [&assets](const AssetId id, const char* what) -> Ref<ShaderModule>
+        const auto LoadShader = [&assets](const AssetId id, const char* what) -> Ref<ShaderModule>
         {
             const AssetResult<AssetHandle<Veng::Shader>> result = assets.LoadSync<Veng::Shader>(id);
             VE_ASSERT(result.has_value(), "EnvironmentIbl: {} shader load failed: {}", what,
@@ -147,7 +147,7 @@ namespace Veng::Renderer
                                              .ArrayLayers = CubeFaces,
                                          });
 
-        // Prefiltered specular cube (roughness mip chain).
+        // Prefiltered specular cube (roughness mip chain). TransferSrc so tests read its mips.
         m_PrefilterImage =
             Image::Create(m_Context, {
                                          .Name = "IBL Prefilter Cube",
@@ -155,7 +155,8 @@ namespace Veng::Renderer
                                          .MipLevels = PrefilterMips,
                                          .Layers = CubeFaces,
                                          .Format = Format::RGBA16Sfloat,
-                                         .Usage = ImageUsage::Sampled | ImageUsage::Storage,
+                                         .Usage = ImageUsage::Sampled | ImageUsage::Storage |
+                                                  ImageUsage::TransferSrc,
                                      });
         m_PrefilterCubeView = ImageView::Create(m_Context, {
                                                                .Name = "IBL Prefilter Cube View",
@@ -178,13 +179,14 @@ namespace Veng::Renderer
                            }));
         }
 
-        // BRDF integration LUT (environment-independent).
+        // BRDF integration LUT (environment-independent). TransferSrc so tests read it.
         m_BrdfImage =
             Image::Create(m_Context, {
                                          .Name = "IBL BRDF LUT",
                                          .Extent = {BrdfLutSize, BrdfLutSize, 1},
                                          .Format = Format::RG16Sfloat,
-                                         .Usage = ImageUsage::Sampled | ImageUsage::Storage,
+                                         .Usage = ImageUsage::Sampled | ImageUsage::Storage |
+                                                  ImageUsage::TransferSrc,
                                      });
         m_BrdfView = ImageView::Create(m_Context, {.Name = "IBL BRDF View", .Image = m_BrdfImage});
         m_BrdfStorageView =
@@ -204,8 +206,8 @@ namespace Veng::Renderer
                                                });
 
         // Generation pipelines. The equirect->cube pass samples the panorama through set-0
-        // bindless and writes its own storage destination on set 1; the convolution passes
-        // sample the radiance cube + a linear sampler and write storage, all on set 1.
+        // bindless and writes its own storage destination on set 3; the convolution passes
+        // sample the radiance cube + a linear sampler and write storage, all on set 3.
         m_EquirectSetLayout = DescriptorSetLayout::Create(
             m_Context, {
                            .Name = "IBL Equirect Set Layout",
@@ -311,7 +313,7 @@ namespace Veng::Renderer
             DescriptorSet::Create(m_Context, {.Name = "IBL BRDF Set", .Layout = m_BrdfSetLayout});
         m_BrdfSet->Write(0, m_BrdfStorageView);
 
-        // The consumer set the lighting pass binds (set 2): radiance/irradiance/prefilter cubes,
+        // The consumer set the lighting pass binds (set 4): radiance/irradiance/prefilter cubes,
         // the BRDF LUT, and the linear sampler. Its shape is shared with a baked sky cube's consumer
         // set (the skybox samples the baked radiance through the same layout), so it has one home.
         m_ConsumerSetLayout = BakedSkyCube::CreateConsumerSetLayout(m_Context);

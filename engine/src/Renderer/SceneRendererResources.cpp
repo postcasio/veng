@@ -136,7 +136,8 @@ namespace Veng::Renderer
 
     void SceneRenderer::CreatePipelines()
     {
-        auto LoadShader = [this](const AssetId id, const char* what) -> AssetHandle<Veng::Shader>
+        const auto LoadShader = [this](const AssetId id,
+                                       const char* what) -> AssetHandle<Veng::Shader>
         {
             const AssetResult<AssetHandle<Veng::Shader>> result =
                 m_Assets.LoadSync<Veng::Shader>(id);
@@ -158,9 +159,9 @@ namespace Veng::Renderer
 
         // Builds a fullscreen pipeline (shared vertex stage) over a layout, naming the
         // color-target format the pass writes.
-        auto MakePipeline = [&](const char* name, const Ref<PipelineLayout>& layout,
-                                const AssetHandle<Veng::Shader>& fs,
-                                const Format format) -> Ref<GraphicsPipeline>
+        const auto MakePipeline = [&](const char* name, const Ref<PipelineLayout>& layout,
+                                      const AssetHandle<Veng::Shader>& fs,
+                                      const Format format) -> Ref<GraphicsPipeline>
         {
             return GraphicsPipeline::Create(
                 m_Context, {
@@ -581,7 +582,8 @@ namespace Veng::Renderer
                            .Name = "SceneRenderer HDR",
                            .Extent = {m_SceneColorAllocExtent.x, m_SceneColorAllocExtent.y, 1},
                            .Format = HdrFormat,
-                           .Usage = HdrUsage,
+                           // Transfer source so GetHdrView's tests and tooling can read it back.
+                           .Usage = HdrUsage | ImageUsage::TransferSrc,
                        });
         m_HdrView =
             ImageView::Create(m_Context, {.Name = "SceneRenderer HDR View", .Image = m_HdrImage});

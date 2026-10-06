@@ -2,7 +2,7 @@
 // cosine-weighted hemisphere of incoming radiance from the source radiance cubemap. The
 // result is the diffuse IBL term the lighting pass multiplies by albedo.
 //
-// Source radiance cube and destination irradiance cube both bind on set 1 (a closed
+// Source radiance cube and destination irradiance cube both bind on set 3 (a closed
 // producer->consumer chain off the bindless registry).
 [[vk::binding(0, 3)]] TextureCube g_Env;
 [[vk::binding(1, 3)]] SamplerState g_Sampler;

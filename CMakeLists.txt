@@ -1938,6 +1938,10 @@ if (VENG_BUILD_TESTS)
             # forward_lighting.cpp renders an opaque cube and its forward-lit Translucent twin under
             # the same lights and compares them texel for texel: the forward loop is the deferred one.
             tests/gpu/forward_lighting.cpp
+            # specular_lobe.cpp frames a white metal plane on a directional light's mirror reflection
+            # and reads the lit HDR target: the GGX peak rises to the roughness floor, and a very
+            # bright light's peak stays finite and under the lighting output guard.
+            tests/gpu/specular_lobe.cpp
             tests/gpu/environment_ibl.cpp
             tests/gpu/generated_texture.cpp
             tests/gpu/fluid_sim.cpp

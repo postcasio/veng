@@ -26,6 +26,7 @@ float4 fsMain(SurfaceFragmentInput input) : SV_Target0
     surface.Metallic = p.Metallic;
     surface.Occlusion = p.Occlusion;
 
+    // Two guarded components can sum past the guard's bound, so the sum takes the guard again.
     ForwardLighting lit = EvaluateForwardLighting(surface);
-    return float4(lit.Diffuse + lit.Specular, p.Coverage);
+    return float4(GuardLightingOutput(lit.Diffuse + lit.Specular), p.Coverage);
 }
