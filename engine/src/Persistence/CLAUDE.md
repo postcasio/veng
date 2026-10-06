@@ -12,8 +12,9 @@ opened with `Store::Open(slotDirectory)`. Everything below is that one class.
 
 State is partitioned into **families** (`StoreFamily`), each a keyspace named by a minted
 **`StoreFamilyId`** (`vengc generate-family-id`) and persisted as its own file in the slot. A
-family registration carries its id, a **file stem**, a format **version**, and four optional hooks
-(`Capture`, `RehydrateKeys`, `Rehydrate`, `Migrate`). Ids come from a single flat space — the
+family registration carries its id, a **file stem**, a format **version**, four optional hooks
+(`Capture`, `RehydrateKeys`, `Rehydrate`, `Migrate`), and an optional **flush interval** (see
+[A family's flush interval](#a-familys-flush-interval)). Ids come from a single flat space — the
 engine's own families are minted from the same space consumers mint from, with no reserved numeric
 range — and a double registration is a fatal assert.
 
@@ -24,9 +25,9 @@ interprets the bits, so any 128-bit id space a consumer already owns keys record
 `InvalidTypeId`.
 
 Reads and writes (`Read`/`Write`/`Erase`/`EraseAll`/`ForEachRecord`) are memory-only against
-per-family tables loaded at open; `Flush` is the only file I/O. `Subscribe` is the pub seam an
-event-driven projection hangs off: it fires per effective mutation, after the table reflects the
-change, may re-enter, and is never removed.
+per-family tables loaded at open; the flush's write is the only file I/O after the open.
+`Subscribe` is the pub seam an event-driven projection hangs off: it fires per effective mutation,
+after the table reflects the change, may re-enter, and is never removed.
 
 **`CaptureScene(Scene&)`** runs every capture-registered family over a scene, stamping each record
 with the current wall clock; **`RehydrateScene(Scene&)`** applies stored records over a freshly
@@ -37,16 +38,27 @@ verbatim and ignores it, and nothing in the engine derives anything from it.
 
 ### The flush protocol
 
-`Flush` persists the dirty families atomically for the whole slot:
+A flush persists the dirty families atomically for the whole slot, in two halves.
 
-1. Each dirty family writes `<stem>.<nextGeneration>.vst`, fsynced. The committed record still
-   names only the prior generation, so a crash here leaves the prior generation whole.
-2. The **commit record** — every family's committed file, dirty ones at the new generation and
-   clean ones keeping their old file — is written to `slot.commit.<nextGeneration>.tmp`, fsynced,
-   and **renamed** onto `slot.commit`. That rename is the whole slot's commit point.
+**The snapshot runs on the calling thread.** It takes each due dirty family's records as they stand
+and clears its dirty mark. A record is immutable once stored — a write replaces it rather than
+mutating it — so the snapshot shares the records it takes and copies none of their bytes; its cost
+is one pointer per record. Measured on the debug build, 50 000 records cost ~1.9 ms to snapshot
+against ~29 ms to deep-copy and ~67 ms to write, so the copy was rejected.
+
+**The write runs as a background job,** in this order:
+
+1. Each family in the snapshot writes `<stem>.<nextGeneration>.vst`, fsynced. The committed record
+   still names only the prior generation, so a crash here leaves the prior generation whole.
+2. The **commit record** — every family's committed file, the snapshot's at the new generation and
+   the rest keeping their old file — is written to `slot.commit.<nextGeneration>.tmp`, fsynced, and
+   **renamed** onto `slot.commit`. That rename is the whole slot's commit point.
 3. The directory is synced (POSIX). Windows has no directory-handle fsync, so the rename's
    durability rides the synced write; that asymmetry is real and is not compensated for.
 4. Superseded family files are deleted best-effort; `Open`'s sweep collects any straggler.
+
+The generation is assigned when the write runs, not when the snapshot is taken, and `GetGeneration`
+advances when the commit lands.
 
 The rename goes through `std::filesystem::rename`, not `::rename`: the narrow path conversion a C
 rename needs is lossy on Windows, which would fail every flush for a slot under a non-ASCII user
@@ -57,13 +69,51 @@ On-disk vocabulary: family files carry the magic `VNG.VST1`, the commit record `
 open loudly with the reason; the OS releases the lock on any process exit, so a crash leaves no
 stale lock.
 
+**While a write is in flight** the store stays readable and writable, and a write to a family after
+its snapshot marks it dirty for the next flush — the in-flight write keeps the records it took.
+**At most one write is in flight**: a flush started meanwhile queues one write behind it, and every
+further flush coalesces into that queued write (a family both carry takes the newer table). A
+**failed write** is logged by the store and its families retry: in the queued write when there is
+one, otherwise they are marked dirty again and due at the next flush whatever their interval.
+`IsDirty` reports a write in flight or queued as well as dirty families.
+
+**Where the job runs** is `StoreInfo::RunWrite`, passed at `Open`: unset, it is the `TaskSystem`
+pool ambient on the flushing thread (an `Application`'s main thread) and a thread of the store's own
+off one (a unit test, a tool). A consumer may route the job to its own I/O queue, or run it inline
+to make every flush synchronous. The job and the store co-own the writer's state, and whichever
+thread claims the drain first does the writing — so a job the executor never ran, or has not started
+yet, is run by the next thread that waits instead, and the job finds nothing when it does run. A
+wait therefore never queues behind a busy pool. The store itself remains single-threaded: only the
+write's job runs elsewhere, and it touches nothing but the snapshot and the slot directory.
+
+**Waiting.** `FlushAndWait` is the full, blocking flush — it waits for any in-flight write, then
+writes every dirty family whatever its interval and returns that write's result — for the exit
+path, a slot close, and anything that must observe a failure. `WaitForWrites` blocks until no
+write is in flight or queued. **Closing a store waits** for an in-flight write and the one queued
+behind it; writes no flush has taken are lost.
+
+### A family's flush interval
+
+`StoreFamily::FlushIntervalSeconds` (0, the default, writes the family every flush) holds a family
+out of `Flush` until that long has passed since a flush last took it, or since the store opened.
+Meanwhile it stays dirty and the commit record keeps its previous file. A full flush
+(`FlushAndWait`) includes it whatever its interval, and a family whose write failed is due at once.
+The interval is measured on `StoreInfo::Clock`, the steady clock unless one is supplied. It exists
+for a large family that changes constantly: written every flush, it would be rewritten whole each
+time a small family is saved.
+
+**What it trades:** after a crash, a family with an interval can be older than the rest of the slot
+by up to its interval. Each family is still whole and readable, but the slot is no longer one
+instant across families. A consumer whose families must stay consistent with each other leaves the
+interval at 0 on all of them.
+
 ### Versions and migration
 
 A family's **version lives in the file header only**, never per record. Schema drift *within* a
 version is absorbed by the reflection walker's tolerant read (an unknown field skipped, a missing
 field defaulted). A version *bump* is the explicit `Migrate` hook, run lazily at `Read` and swept
-over the remainder at `Flush`/`ForEachRecord` so a written file carries one version throughout. An
-older file with no `Migrate` hook reads as no records, logged once.
+over the remainder at a flush's snapshot and at `ForEachRecord`, so a written file carries one
+version throughout. An older file with no `Migrate` hook reads as no records, logged once.
 
 Records of families **never registered in this process are preserved verbatim** across a flush, so
 a tool or a partially-configured process cannot silently drop a slot's other families.
@@ -229,16 +279,26 @@ created when absent and restamped on every write.
 ## The store checkpoint
 
 `Veng/Persistence/StoreCheckpoint.h` is the consumer-side cadence every store-backed application
-otherwise re-implements: on the interval (`Update(delta)`) and on demand (`CheckpointNow` — a save
-action, the exit path), capture every live world of a `WorldRunner` into the store, then flush the
-slot atomically. The store resolves per checkpoint through a source — the same source shape the
-session binding takes, and for the same reason — so a null-resolving source is the no-op posture
-and a save-slot switch needs no rebinding. The two halves carry the `Checkpoint/Capture` and
-`Checkpoint/Flush` profiler scopes, and `LastCostMs` keeps their wall-clock costs as plain state,
+otherwise re-implements: capture every live world of a `WorldRunner` into the store, then flush the
+slot atomically. It has two forms:
+
+- **`CheckpointNow`** — the timed checkpoint (`Update(delta)` on the interval) and the on-demand one —
+  captures, then starts a background flush that honours family intervals. It does not wait for the
+  write, so a frame pays the capture and the snapshot, never the file I/O.
+- **`CheckpointAndWait`** captures, then flushes fully and waits: every family is written whatever
+  its interval and has committed on return. It is for the exit path, a slot close, and an explicit
+  save, and returns (and logs) a failed write.
+
+The store resolves per checkpoint through a source — the same source shape the session binding
+takes, and for the same reason — so a null-resolving source is the no-op posture and a save-slot
+switch needs no rebinding. The two halves carry the `Checkpoint/Capture` and `Checkpoint/Flush`
+profiler scopes, and `LastCostMs` keeps their wall-clock costs as plain state (`CheckpointCost`:
+the capture, the flush call on the calling thread, and the store's last write measured on its job),
 because a panel's cost readout must hold a value in every build configuration and the profiler's
 per-frame aggregates cannot carry that (they zero for a frame the scope did not run in, and do not
 exist under `VE_PROFILE=OFF`). `tests/unit/store_checkpoint.cpp` pins the whole-runner capture, the
-durable flush, and the cadence.
+durable flush, the waited checkpoint's full commit, and the cadence;
+`tests/unit/persistence_store_flush.cpp` pins the background flush itself.
 
 ## The session-store binding
 
@@ -276,10 +336,11 @@ encoding is already the tolerant reflection walker), but the tag is the only thi
 bytes to a debug dump, a save inspector, or a later migration.
 
 **`SessionStoreInfo::FlushOnSave`** defaults true, because a session save is a genuine durability
-point — a disconnect may precede process death. The cost is that `Store::Flush` is whole-slot: every
-dirty family is rewritten and synced, so on a large slot an unrelated family pays for someone's
-disconnect. A consumer checkpointing on its own cadence sets it false. `SaveSession` returns `void`,
-so a failed flush can only be logged; a consumer that must observe write failures flushes itself.
+point — a disconnect may precede process death. The save starts a background `Store::Flush`, so the
+saving thread pays only the snapshot, and families with a flush interval are held to it. It is still
+whole-slot — every other due dirty family is written with the session — so a consumer checkpointing
+on its own cadence sets it false. A failed write is logged by the store; a consumer that must
+observe write failures sets it false and calls `FlushAndWait` itself.
 
 The raw hook pair remains the extension seam — a consumer with bespoke storage skips this header
 entirely.

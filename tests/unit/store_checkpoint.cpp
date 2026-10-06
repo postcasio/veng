@@ -1,6 +1,7 @@
 // StoreCheckpoint: the timed and on-demand whole-store checkpoint over a runner's live worlds. The
 // properties pinned: an on-demand checkpoint captures every live world (not just one) and its flush
-// is durable across a cold reopen; the timed cadence fires only once the interval accrues; and a
+// is durable across a cold reopen; the waited checkpoint has committed every family, an interval
+// family included, when it returns; the timed cadence fires only once the interval accrues; and a
 // null-resolving store source is the no-op posture rather than an error.
 
 #include <doctest/doctest.h>
@@ -115,9 +116,9 @@ TEST_CASE("StoreCheckpoint captures every live world and the flush survives a co
         // presented world — and the measured costs hold values in every build configuration.
         CHECK((*store)->Read(CheckpointFamily, StoreKey{.Lo = 1, .Hi = 0}).has_value());
         CHECK((*store)->Read(CheckpointFamily, StoreKey{.Lo = 2, .Hi = 0}).has_value());
-        const auto [captureMs, flushMs] = checkpoint.LastCostMs();
-        CHECK(captureMs >= 0.0);
-        CHECK(flushMs >= 0.0);
+        const CheckpointCost cost = checkpoint.LastCostMs();
+        CHECK(cost.CaptureMs >= 0.0);
+        CHECK(cost.FlushMs >= 0.0);
     }
 
     // The flush was durable: a cold reopen reads both records off disk.
@@ -159,5 +160,39 @@ TEST_CASE("StoreCheckpoint's cadence fires only once the interval accrues, and n
         .Runner = &runner, .StoreSource = [] { return nullptr; }, .IntervalSeconds = 0.5});
     storeless.Update(1.0f);
     storeless.CheckpointNow();
-    CHECK(storeless.LastCostMs() == std::pair{0.0, 0.0});
+    CHECK(storeless.CheckpointAndWait());
+    const CheckpointCost cost = storeless.LastCostMs();
+    CHECK(cost.CaptureMs == 0.0);
+    CHECK(cost.FlushMs == 0.0);
+    CHECK(cost.WriteMs == 0.0);
+}
+
+TEST_CASE("StoreCheckpoint's waited checkpoint commits every family, whatever its interval")
+{
+    const TempSlot slot;
+    TypeRegistry types = MakeRegistry();
+    SystemRegistry systems;
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    OpenMarkedWorld(runner, 3, 33);
+
+    // Every write runs inline, so the background checkpoint's outcome is visible on return.
+    Result<Unique<Store>> store =
+        Store::Open(slot.Dir, StoreInfo{.RunWrite = [](const function<void()>& job) { job(); }});
+    REQUIRE(store.has_value());
+    StoreFamily family = ComponentSetFamily<CheckpointTag, CheckpointPayload>(
+        CheckpointFamily, "checkpoints", KeyOfTag, types);
+    family.FlushIntervalSeconds = 3600.0;
+    (*store)->RegisterFamily(std::move(family));
+    StoreCheckpoint checkpoint(
+        StoreCheckpoint::Info{.Runner = &runner, .StoreSource = [&store] { return store->get(); }});
+
+    // The background checkpoint honours the interval and leaves the family dirty.
+    checkpoint.CheckpointNow();
+    CHECK((*store)->GetGeneration() == 0);
+    CHECK((*store)->IsDirty());
+
+    REQUIRE(checkpoint.CheckpointAndWait());
+    CHECK((*store)->GetGeneration() == 1);
+    CHECK(!(*store)->IsDirty());
+    CHECK(checkpoint.LastCostMs().WriteMs > 0.0);
 }

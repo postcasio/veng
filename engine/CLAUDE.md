@@ -40,7 +40,8 @@ Each major system's architecture lives in a `CLAUDE.md` inside its source direct
   Sim phase, the `PhysicsPose`/`SyncTransform` seam and the two-writer hazard, the closed collision
   layer table, the replay gate, and the Native containment of the vendored solver.
 - **[src/Persistence/CLAUDE.md](src/Persistence/CLAUDE.md)** — `Veng/Persistence/`, the
-  durable-state subsystem: the `Store`'s families, opaque record keys, atomic whole-slot flush,
+  durable-state subsystem: the `Store`'s families, opaque record keys, atomic whole-slot flush
+  (a snapshot on the calling thread, the write in the background, per-family flush intervals),
   versioning and migration, and the capture/rehydrate scene hooks — plus its opposite number, the
   `DerivedDataCache`, where expendable derived blobs live under a generation that wipes them.
 - **[src/Audio/CLAUDE.md](src/Audio/CLAUDE.md)** — `Veng/Audio/`, the audio subsystem: miniaudio
@@ -526,7 +527,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 71** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 72** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the

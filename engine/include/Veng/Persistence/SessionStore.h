@@ -36,13 +36,14 @@ namespace Veng
     /// @brief How the binding treats a session save.
     struct SessionStoreInfo
     {
-        /// @brief Whether a session save flushes the store to disk before returning.
+        /// @brief Whether a session save starts a background flush of the store.
         ///
         /// A session save is a genuine durability point — a disconnect may precede process death —
-        /// so flushing is the default. The cost is that Store::Flush is whole-slot rather than
-        /// per-family: on a slot carrying large unrelated families, every one of them that is dirty
-        /// is rewritten and synced on someone's disconnect. A consumer that checkpoints the slot on
-        /// its own cadence sets this false and keeps the session writes in memory until it does.
+        /// so flushing is the default. The flush is Store::Flush: the saving thread pays only its
+        /// snapshot, the write runs in the background, and families with a flush interval are held
+        /// to it. It is still whole-slot, so every other due dirty family is written with the
+        /// session. A consumer that checkpoints the slot on its own cadence sets this false and
+        /// keeps the session writes in memory until it does.
         bool FlushOnSave = true;
     };
 
@@ -83,8 +84,9 @@ namespace Veng
     /// @param storeSource  Resolves the store to persist into, or nullptr for memory-only.
     /// @param info         Save behavior; the default flushes on every save.
     /// @return The hook pair.
-    /// @note SaveSession returns void, so a failed flush can only be logged — a consumer needing to
-    ///       observe write failures flushes the store itself with FlushOnSave false.
+    /// @note SaveSession returns void and its flush runs in the background, so a failed write is
+    ///       logged by the store — a consumer needing to observe write failures sets FlushOnSave
+    ///       false and calls Store::FlushAndWait itself.
     [[nodiscard]] VE_API SessionHooks MakeSessionHooks(function<Store*()> storeSource,
                                                        const SessionStoreInfo& info = {});
 }

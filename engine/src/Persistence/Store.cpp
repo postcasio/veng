@@ -1,8 +1,10 @@
 #include <Veng/Persistence/Store.h>
 
 #include <Veng/Assert.h>
+#include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Log.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Task/TaskSystem.h>
 
 #include <fmt/format.h>
 
@@ -18,9 +20,13 @@
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
+#include <mutex>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -237,6 +243,9 @@ namespace Veng
             }
         };
 
+        /// @brief A stored record, immutable once stored and shared with any flush that took it.
+        using RecordRef = Ref<const StoreRecord>;
+
         /// @brief One family's live state: its records, file identity, versions, and hooks.
         struct FamilyState
         {
@@ -246,19 +255,88 @@ namespace Veng
             string FileStem;
             /// @brief The version the not-yet-migrated in-memory records were stored under.
             u32 StoredVersion = 1;
-            /// @brief The generation suffix of the family's committed on-disk file; 0 for none.
-            u64 FileGeneration = 0;
-            /// @brief Whether the family has unflushed writes.
+            /// @brief Whether the family has writes no flush has taken.
             bool Dirty = false;
             /// @brief Whether a family was registered this process (hooks and Version are live).
             bool Registered = false;
             /// @brief Whether the missing-migration condition was already logged (log once).
             bool MigrationGapLogged = false;
-            /// @brief The record table.
-            std::unordered_map<StoreKey, StoreRecord, StoreKeyHash> Records;
+            /// @brief When a flush last took the family (the store's clock); its interval's anchor.
+            f64 TakenAt = 0.0;
+            /// @brief The record table. A write replaces a record rather than mutating it, so a
+            ///        flush's snapshot shares the records it took with no copy of their bytes.
+            std::unordered_map<StoreKey, RecordRef, StoreKeyHash> Records;
             /// @brief Keys already migrated (or written fresh) at the registered version, while
             ///        StoredVersion still lags it.
             std::unordered_set<StoreKey, StoreKeyHash> Migrated;
+        };
+
+        /// @brief One family's table as a flush took it.
+        struct FamilySnapshot
+        {
+            /// @brief The family's id.
+            StoreFamilyId Id;
+            /// @brief The family file's name stem.
+            string FileStem;
+            /// @brief The version the file header carries.
+            u32 Version = 1;
+            /// @brief The records, shared with the live table.
+            vector<std::pair<StoreKey, RecordRef>> Records;
+        };
+
+        /// @brief The families one write persists.
+        struct FlushSnapshot
+        {
+            /// @brief The families to write, each at most once.
+            vector<FamilySnapshot> Families;
+            /// @brief Whether a caller blocks on this write and takes its result (no log needed).
+            bool Awaited = false;
+        };
+
+        /// @brief A family's committed file: the stem and the generation suffix it was written at.
+        struct CommittedFile
+        {
+            /// @brief The family file's name stem.
+            string FileStem;
+            /// @brief The generation suffix of the committed file.
+            u64 Generation = 0;
+        };
+
+        /// @brief Every family's committed file, as the commit record names them.
+        using CommittedFiles = std::unordered_map<StoreFamilyId, CommittedFile, StoreFamilyIdHash>;
+
+        /// @brief The background write's state, shared between the store and every write job.
+        ///
+        /// Heap-owned and co-owned by each job submitted, so a job first run after the write it was
+        /// submitted for has already been drained elsewhere (or after the store closed) touches
+        /// only live state, finds nothing to do, and returns.
+        struct Writer
+        {
+            /// @brief The slot directory every file lives in.
+            path SlotDir;
+            /// @brief Guards every field below.
+            std::mutex Mutex;
+            /// @brief Signalled when the writer goes idle.
+            std::condition_variable Settled;
+            /// @brief The committed generation (the commit record's); 0 for a fresh slot.
+            u64 Generation = 0;
+            /// @brief Every family's committed file; written only by the draining thread.
+            CommittedFiles Committed;
+            /// @brief The write handed off and not yet started.
+            optional<FlushSnapshot> Current;
+            /// @brief The write queued behind the one in flight, which later flushes coalesce into.
+            optional<FlushSnapshot> Next;
+            /// @brief Whether a write is in flight or queued.
+            bool Busy = false;
+            /// @brief Whether a thread is draining the writes.
+            bool Draining = false;
+            /// @brief Families of failed writes with nothing queued to carry them; re-dirtied by
+            ///        the store.
+            vector<StoreFamilyId> Failed;
+            /// @brief The result of the most recent write.
+            VoidResult LastResult;
+            /// @brief The most recent write's wall-clock time in milliseconds.
+            f64 LastWriteMs = 0.0;
         };
     }
 
@@ -273,12 +351,31 @@ namespace Veng
         /// @brief The held exclusive slot lock's file descriptor.
         int LockFd = -1;
 #endif
-        /// @brief The committed generation (the commit record's); 0 for a fresh slot.
-        u64 Generation = 0;
         /// @brief Every family with records or a registration, keyed by id.
         std::unordered_map<StoreFamilyId, FamilyState, StoreFamilyIdHash> Families;
         /// @brief The record-change observers, each fired per changed key (Write/Erase/EraseAll).
         vector<function<void(StoreFamilyId, StoreKey)>> Observers;
+        /// @brief The background write's shared state.
+        Ref<Writer> Writes = CreateRef<Writer>();
+        /// @brief The interval clock (StoreInfo::Clock, or the steady clock).
+        function<f64()> Clock;
+        /// @brief The consumer's write executor; unset uses the ambient pool or WriterThread.
+        function<void(function<void()>)> RunWrite;
+        /// @brief The store's own write thread, when no pool or executor runs the job.
+        std::thread WriterThread;
+        /// @brief The clock reading at open: every family's first interval anchor.
+        f64 OpenedAt = 0.0;
+
+        /// @brief Returns a family's state, creating it anchored at the open when absent.
+        FamilyState& FamilyFor(const StoreFamilyId id)
+        {
+            const auto [it, inserted] = Families.try_emplace(id);
+            if (inserted)
+            {
+                it->second.TakenAt = OpenedAt;
+            }
+            return it->second;
+        }
 
         /// @brief Notifies every observer of one changed record.
         void NotifyChanged(const StoreFamilyId family, const StoreKey key)
@@ -288,27 +385,41 @@ namespace Veng
                 observer(family, key);
             }
         }
+
+        /// @brief Marks the families of failed writes dirty again, due at the next flush whatever
+        ///        their interval, so the next flush retries them.
+        void RedirtyFailed();
+
+        /// @brief Takes the due dirty families into a snapshot and clears their dirty marks.
+        /// @param full      Whether every dirty family is due, whatever its interval.
+        /// @param snapshot  Receives the taken families.
+        void TakeSnapshot(bool full, FlushSnapshot& snapshot);
+
+        /// @brief Hands a snapshot to the writer: in flight when idle, else coalesced behind.
+        void Submit(FlushSnapshot snapshot);
+
+        /// @brief Blocks until no write is in flight or queued, then re-dirties failed families.
+        void WaitForWrites();
     };
 
     namespace
     {
-        // Serializes one family's table into its file image (header + records).
-        [[nodiscard]] vector<u8> EncodeFamilyFile(const StoreFamilyId id, const FamilyState& family,
-                                                  const u32 version)
+        // Serializes one family's snapshot into its file image (header + records).
+        [[nodiscard]] vector<u8> EncodeFamilyFile(const FamilySnapshot& family)
         {
             vector<u8> out;
             Put(out, FamilyFileMagic);
-            Put(out, id.Value);
-            Put(out, version);
+            Put(out, family.Id.Value);
+            Put(out, family.Version);
             Put(out, static_cast<u32>(0));
             Put(out, static_cast<u64>(family.Records.size()));
             for (const auto& [key, record] : family.Records)
             {
                 Put(out, key.Lo);
                 Put(out, key.Hi);
-                Put(out, record.CapturedAtWall);
-                Put(out, static_cast<u32>(record.Components.size()));
-                for (const ComponentBlob& component : record.Components)
+                Put(out, record->CapturedAtWall);
+                Put(out, static_cast<u32>(record->Components.size()));
+                for (const ComponentBlob& component : record->Components)
                 {
                     Put(out, component.Type);
                     Put(out, static_cast<u32>(component.Bytes.size()));
@@ -380,7 +491,7 @@ namespace Veng
                                            in.begin() + static_cast<isize>(cursor + byteCount));
                     cursor += byteCount;
                 }
-                family.Records.emplace(key, std::move(record));
+                family.Records.emplace(key, CreateRef<const StoreRecord>(std::move(record)));
             }
             return {};
         }
@@ -409,7 +520,7 @@ namespace Veng
                           family.FileStem, family.StoredVersion, migrated.error());
                 return std::nullopt;
             }
-            family.Records[key] = *migrated;
+            family.Records[key] = CreateRef<const StoreRecord>(*migrated);
             family.Migrated.insert(key);
             family.Dirty = true;
             return std::move(*migrated);
@@ -429,7 +540,9 @@ namespace Veng
             }
             for (const StoreKey key : pending)
             {
-                if (!MigrateRecord(family, key, family.Records.at(key)).has_value())
+                // Held by value: a successful migration replaces the record the table pointed at.
+                const RecordRef stored = family.Records.at(key);
+                if (!MigrateRecord(family, key, *stored).has_value())
                 {
                     family.Records.erase(key);
                     family.Dirty = true;
@@ -438,12 +551,324 @@ namespace Veng
             family.StoredVersion = family.Info.Version;
             family.Migrated.clear();
         }
+
+        // Folds a newer snapshot into a queued one: a family both carry takes the newer table.
+        void MergeNewer(FlushSnapshot& queued, FlushSnapshot&& newer)
+        {
+            for (FamilySnapshot& family : newer.Families)
+            {
+                const auto it = std::ranges::find(queued.Families, family.Id, &FamilySnapshot::Id);
+                if (it != queued.Families.end())
+                {
+                    *it = std::move(family);
+                }
+                else
+                {
+                    queued.Families.push_back(std::move(family));
+                }
+            }
+        }
+
+        // Folds an older snapshot under a queued one: only families the queued one lacks are added.
+        void MergeOlder(FlushSnapshot& queued, FlushSnapshot&& older)
+        {
+            for (FamilySnapshot& family : older.Families)
+            {
+                if (std::ranges::find(queued.Families, family.Id, &FamilySnapshot::Id) ==
+                    queued.Families.end())
+                {
+                    queued.Families.push_back(std::move(family));
+                }
+            }
+        }
+
+        // Writes a snapshot as the next generation: its family files, then the commit record
+        // renamed into place. On success `committed` names the slot's new committed files and
+        // `superseded` the family files the commit replaced.
+        [[nodiscard]] VoidResult WriteGeneration(const path& slotDir, const u64 nextGeneration,
+                                                 const FlushSnapshot& snapshot,
+                                                 CommittedFiles& committed,
+                                                 vector<path>& superseded)
+        {
+            // The families write under the next generation's suffixed names first; the committed
+            // record still references only the prior generation's files, so a crash below leaves
+            // the prior generation fully readable — never a mixed-generation slot.
+            for (const FamilySnapshot& family : snapshot.Families)
+            {
+                const path file =
+                    slotDir / fmt::format("{}.{}.vst", family.FileStem, nextGeneration);
+                if (const VoidResult written = WriteFileSynced(file, EncodeFamilyFile(family));
+                    !written)
+                {
+                    return written;
+                }
+            }
+
+            // The commit record: every family's committed file (the snapshot's at the new
+            // generation, the rest keeping their old file), written to a temp and renamed into
+            // place — the rename is the whole slot's commit point.
+            CommittedFiles next = committed;
+            for (const FamilySnapshot& family : snapshot.Families)
+            {
+                CommittedFile& entry = next[family.Id];
+                if (entry.Generation != 0)
+                {
+                    superseded.push_back(
+                        slotDir / fmt::format("{}.{}.vst", entry.FileStem, entry.Generation));
+                }
+                entry = CommittedFile{.FileStem = family.FileStem, .Generation = nextGeneration};
+            }
+            vector<u8> commit;
+            Put(commit, CommitFileMagic);
+            Put(commit, nextGeneration);
+            Put(commit, static_cast<u32>(next.size()));
+            for (const auto& [id, entry] : next)
+            {
+                Put(commit, id.Value);
+                Put(commit, static_cast<u32>(entry.FileStem.size()));
+                commit.insert(commit.end(), entry.FileStem.begin(), entry.FileStem.end());
+                Put(commit, entry.Generation);
+            }
+            const path commitTemp =
+                slotDir / fmt::format("{}.{}.tmp", CommitFileName, nextGeneration);
+            const path commitFile = slotDir / CommitFileName;
+            if (const VoidResult written = WriteFileSynced(commitTemp, commit); !written)
+            {
+                superseded.clear();
+                return written;
+            }
+            // std::filesystem::rename, not ::rename: the narrow conversion a C rename needs is
+            // lossy for a slot directory under a non-ASCII path on Windows, which would fail every
+            // flush while the rest of the write path worked.
+            std::error_code ec;
+            std::filesystem::rename(commitTemp, commitFile, ec);
+            if (ec)
+            {
+                superseded.clear();
+                return std::unexpected(
+                    fmt::format("cannot commit slot record '{}'", commitFile.string()));
+            }
+            SyncDirectory(slotDir);
+            committed = std::move(next);
+            return {};
+        }
+
+        // Writes every handed-off snapshot in turn, on whichever thread claims the drain first —
+        // a write job, or a thread waiting on the writer. Returns at once when another thread is
+        // already draining or nothing is in flight.
+        void Drain(Writer& writer)
+        {
+            std::unique_lock lock(writer.Mutex);
+            if (!writer.Busy || writer.Draining)
+            {
+                return;
+            }
+            writer.Draining = true;
+            while (writer.Current.has_value())
+            {
+                FlushSnapshot snapshot = std::move(*writer.Current);
+                writer.Current.reset();
+                const u64 nextGeneration = writer.Generation + 1;
+                CommittedFiles committed = writer.Committed;
+                lock.unlock();
+
+                VE_PROFILE_SCOPE("Store/Write");
+                const std::chrono::steady_clock::time_point start =
+                    std::chrono::steady_clock::now();
+                vector<path> superseded;
+                VoidResult result = WriteGeneration(writer.SlotDir, nextGeneration, snapshot,
+                                                    committed, superseded);
+                // Best effort: the open-time sweep also collects any straggler.
+                std::error_code ec;
+                for (const path& file : superseded)
+                {
+                    std::filesystem::remove(file, ec);
+                }
+                const f64 elapsedMs =
+                    std::chrono::duration<f64, std::milli>(std::chrono::steady_clock::now() - start)
+                        .count();
+                if (!result && !snapshot.Awaited)
+                {
+                    Log::Error("store: writing slot '{}' failed: {}", writer.SlotDir.string(),
+                               result.error());
+                }
+
+                lock.lock();
+                writer.LastWriteMs = elapsedMs;
+                if (result)
+                {
+                    writer.Generation = nextGeneration;
+                    writer.Committed = std::move(committed);
+                }
+                else if (writer.Next.has_value())
+                {
+                    // The queued write retries the failed families, keeping its newer tables.
+                    MergeOlder(*writer.Next, std::move(snapshot));
+                }
+                else
+                {
+                    for (const FamilySnapshot& family : snapshot.Families)
+                    {
+                        writer.Failed.push_back(family.Id);
+                    }
+                }
+                writer.LastResult = std::move(result);
+                writer.Current = std::move(writer.Next);
+                writer.Next.reset();
+            }
+            writer.Busy = false;
+            writer.Draining = false;
+            writer.Settled.notify_all();
+        }
+
+        // The steady clock in seconds: the default interval clock.
+        [[nodiscard]] f64 SteadySeconds()
+        {
+            return std::chrono::duration<f64>(std::chrono::steady_clock::now().time_since_epoch())
+                .count();
+        }
+    }
+
+    void Store::State::RedirtyFailed()
+    {
+        vector<StoreFamilyId> failed;
+        {
+            const std::scoped_lock lock(Writes->Mutex);
+            failed.swap(Writes->Failed);
+        }
+        for (const StoreFamilyId id : failed)
+        {
+            FamilyState& family = FamilyFor(id);
+            family.Dirty = true;
+            family.TakenAt = -std::numeric_limits<f64>::infinity();
+        }
+    }
+
+    void Store::State::TakeSnapshot(const bool full, FlushSnapshot& snapshot)
+    {
+        const f64 now = Clock();
+        for (auto& [id, family] : Families)
+        {
+            if (!family.Dirty)
+            {
+                continue;
+            }
+            const f64 interval = family.Info.FlushIntervalSeconds;
+            if (!full && interval > 0.0 && now - family.TakenAt < interval)
+            {
+                continue;
+            }
+            // A version-lagged registered family lifts every remaining record before the write,
+            // so the file carries one version — its header's — for all records.
+            if (family.Registered && family.StoredVersion != family.Info.Version)
+            {
+                MigrateRemaining(family);
+            }
+            FamilySnapshot taken{
+                .Id = id,
+                .FileStem = family.FileStem,
+                .Version = family.Registered ? family.Info.Version : family.StoredVersion,
+            };
+            taken.Records.reserve(family.Records.size());
+            for (const auto& [key, record] : family.Records)
+            {
+                taken.Records.emplace_back(key, record);
+            }
+            snapshot.Families.push_back(std::move(taken));
+            family.Dirty = false;
+            family.TakenAt = now;
+        }
+    }
+
+    void Store::State::Submit(FlushSnapshot snapshot)
+    {
+        TaskSystem* const pool = RunWrite ? nullptr : TaskSystem::GetAmbientPool();
+        if (!RunWrite && pool == nullptr && WriterThread.joinable())
+        {
+            // Joined while the writer is idle, before this write is handed off: a previous thread
+            // that has not started yet then finds nothing to drain, rather than taking this write
+            // and holding the join for its whole length.
+            bool idle = false;
+            {
+                const std::scoped_lock lock(Writes->Mutex);
+                idle = !Writes->Busy;
+            }
+            if (idle)
+            {
+                WriterThread.join();
+            }
+        }
+        {
+            const std::scoped_lock lock(Writes->Mutex);
+            if (Writes->Busy)
+            {
+                if (Writes->Next.has_value())
+                {
+                    MergeNewer(*Writes->Next, std::move(snapshot));
+                }
+                else
+                {
+                    Writes->Next = std::move(snapshot);
+                }
+                return;
+            }
+            Writes->Current = std::move(snapshot);
+            Writes->Busy = true;
+        }
+        function<void()> job = [writer = Writes] { Drain(*writer); };
+        if (RunWrite)
+        {
+            RunWrite(std::move(job));
+        }
+        else if (pool != nullptr)
+        {
+            pool->Submit(std::move(job), "Store/Write");
+        }
+        else
+        {
+            // Still joinable only when the previous thread finished its drain after the idle
+            // check above, so it is already returning.
+            if (WriterThread.joinable())
+            {
+                WriterThread.join();
+            }
+            WriterThread = std::thread(std::move(job));
+        }
+    }
+
+    void Store::State::WaitForWrites()
+    {
+        {
+            std::unique_lock lock(Writes->Mutex);
+            while (Writes->Busy)
+            {
+                if (!Writes->Draining)
+                {
+                    // A job not yet started is drained here instead, so a wait never queues
+                    // behind a busy pool or an executor that has not run it.
+                    lock.unlock();
+                    Drain(*Writes);
+                    lock.lock();
+                    continue;
+                }
+                Writes->Settled.wait(lock);
+            }
+        }
+        RedirtyFailed();
     }
 
     Store::Store(Unique<State> state) : m_State(std::move(state)) {}
 
     Store::~Store()
     {
+        if (m_State)
+        {
+            m_State->WaitForWrites();
+            if (m_State->WriterThread.joinable())
+            {
+                m_State->WriterThread.join();
+            }
+        }
 #if defined(_WIN32)
         if (m_State && m_State->LockHandle != INVALID_HANDLE_VALUE)
         {
@@ -472,7 +897,7 @@ namespace Veng
                                    });
     }
 
-    Result<Unique<Store>> Store::Open(const path& slotDirectory)
+    Result<Unique<Store>> Store::Open(const path& slotDirectory, StoreInfo info)
     {
         std::error_code ec;
         std::filesystem::create_directories(slotDirectory, ec);
@@ -484,6 +909,10 @@ namespace Veng
 
         auto state = Unique<State>(new State{});
         state->SlotDir = slotDirectory;
+        state->Writes->SlotDir = slotDirectory;
+        state->Clock = info.Clock ? std::move(info.Clock) : function<f64()>(SteadySeconds);
+        state->RunWrite = std::move(info.RunWrite);
+        state->OpenedAt = state->Clock();
 
         // The exclusive slot lock: held for the store's lifetime and released by the OS on any
         // process exit, so a crash leaves no stale lock. Contention fails loudly here.
@@ -556,7 +985,8 @@ namespace Veng
             u64 magic = 0;
             u32 familyCount = 0;
             if (!Take(*bytes, cursor, magic) || magic != CommitFileMagic ||
-                !Take(*bytes, cursor, state->Generation) || !Take(*bytes, cursor, familyCount))
+                !Take(*bytes, cursor, state->Writes->Generation) ||
+                !Take(*bytes, cursor, familyCount))
             {
                 return std::unexpected(
                     fmt::format("unreadable commit record '{}'", commitFile.string()));
@@ -601,8 +1031,10 @@ namespace Veng
                 }
 
                 FamilyState family;
-                family.FileStem = std::move(stem);
-                family.FileGeneration = fileGeneration;
+                family.FileStem = stem;
+                family.TakenAt = state->OpenedAt;
+                state->Writes->Committed.emplace(
+                    id, CommittedFile{.FileStem = std::move(stem), .Generation = fileGeneration});
                 const path familyFile =
                     slotDirectory / fmt::format("{}.{}.vst", family.FileStem, fileGeneration);
                 Result<vector<u8>> fileBytes = ReadFileBytes(familyFile);
@@ -624,9 +1056,9 @@ namespace Veng
         // anything of ours beyond it is garbage; anything that is not ours is left alone, since
         // opening a slot must never mean emptying a directory.
         std::unordered_set<string> referenced{CommitFileName, LockFileName};
-        for (const auto& [id, family] : state->Families)
+        for (const auto& [id, file] : state->Writes->Committed)
         {
-            referenced.insert(fmt::format("{}.{}.vst", family.FileStem, family.FileGeneration));
+            referenced.insert(fmt::format("{}.{}.vst", file.FileStem, file.Generation));
         }
         for (const string& name : presentFiles)
         {
@@ -652,7 +1084,7 @@ namespace Veng
                       "store: file stem '{}' is claimed by two families", family.FileStem);
         }
 
-        FamilyState& state = m_State->Families[family.Id];
+        FamilyState& state = m_State->FamilyFor(family.Id);
         VE_ASSERT(!state.Registered, "store: family '{}' registered twice", family.FileStem);
         if (state.FileStem.empty())
         {
@@ -683,16 +1115,18 @@ namespace Veng
         if (state.Registered && state.StoredVersion != state.Info.Version &&
             !state.Migrated.contains(key))
         {
-            return MigrateRecord(state, key, recordIt->second);
+            // Held by value: a successful migration replaces the record the table pointed at.
+            const RecordRef stored = recordIt->second;
+            return MigrateRecord(state, key, *stored);
         }
-        return recordIt->second;
+        return *recordIt->second;
     }
 
     void Store::Write(const StoreFamilyId family, const StoreKey key, StoreRecord record)
     {
         VE_ASSERT(family.IsValid(), "store: Write needs a valid family id");
-        FamilyState& state = m_State->Families[family];
-        state.Records[key] = std::move(record);
+        FamilyState& state = m_State->FamilyFor(family);
+        state.Records[key] = CreateRef<const StoreRecord>(std::move(record));
         state.Dirty = true;
         if (state.Registered && state.StoredVersion != state.Info.Version)
         {
@@ -724,7 +1158,7 @@ namespace Veng
         }
         for (const auto& [key, record] : state.Records)
         {
-            visit(key, record);
+            visit(key, *record);
         }
     }
 
@@ -766,107 +1200,39 @@ namespace Veng
         }
     }
 
-    VoidResult Store::Flush()
+    void Store::Flush()
     {
         State& state = *m_State;
-        const bool anyDirty = std::ranges::any_of(state.Families, [](const auto& entry)
-                                                  { return entry.second.Dirty; });
-        if (!anyDirty)
+        state.RedirtyFailed();
+        FlushSnapshot snapshot;
+        state.TakeSnapshot(false, snapshot);
+        if (!snapshot.Families.empty())
+        {
+            state.Submit(std::move(snapshot));
+        }
+    }
+
+    VoidResult Store::FlushAndWait()
+    {
+        State& state = *m_State;
+        state.WaitForWrites();
+        FlushSnapshot snapshot{.Awaited = true};
+        state.TakeSnapshot(true, snapshot);
+        if (snapshot.Families.empty())
         {
             return {};
         }
+        // The writer is idle and only this thread hands it work, so this snapshot is the next
+        // and only write, and the last result once the wait returns is its own.
+        state.Submit(std::move(snapshot));
+        state.WaitForWrites();
+        const std::scoped_lock lock(state.Writes->Mutex);
+        return state.Writes->LastResult;
+    }
 
-        // Dirty families write under the next generation's suffixed names first; the committed
-        // record still references only the prior generation's files, so a crash below leaves the
-        // prior generation fully readable — never a mixed-generation slot.
-        const u64 nextGeneration = state.Generation + 1;
-        vector<path> superseded;
-        for (auto& [id, family] : state.Families)
-        {
-            if (!family.Dirty)
-            {
-                continue;
-            }
-            // A version-lagged registered family lifts every remaining record before the write,
-            // so the file carries one version — its header's — for all records.
-            if (family.Registered && family.StoredVersion != family.Info.Version)
-            {
-                MigrateRemaining(family);
-            }
-            const u32 version = family.Registered ? family.Info.Version : family.StoredVersion;
-            const path file =
-                state.SlotDir / fmt::format("{}.{}.vst", family.FileStem, nextGeneration);
-            if (const VoidResult written =
-                    WriteFileSynced(file, EncodeFamilyFile(id, family, version));
-                !written)
-            {
-                return written;
-            }
-        }
-
-        // The commit record: every family's committed file (dirty ones at the new generation, clean
-        // ones keeping their old file), written to a temp and renamed into place — the rename is
-        // the whole slot's commit point. A registered family that has never been written owns no
-        // file yet and stays out of the record.
-        vector<u8> commit;
-        Put(commit, CommitFileMagic);
-        Put(commit, nextGeneration);
-        const u32 fileCount = static_cast<u32>(std::ranges::count_if(
-            state.Families, [](const auto& entry)
-            { return entry.second.Dirty || entry.second.FileGeneration != 0; }));
-        Put(commit, fileCount);
-        for (const auto& [id, family] : state.Families)
-        {
-            if (!family.Dirty && family.FileGeneration == 0)
-            {
-                continue;
-            }
-            Put(commit, id.Value);
-            Put(commit, static_cast<u32>(family.FileStem.size()));
-            commit.insert(commit.end(), family.FileStem.begin(), family.FileStem.end());
-            Put(commit, family.Dirty ? nextGeneration : family.FileGeneration);
-        }
-        const path commitTemp =
-            state.SlotDir / fmt::format("{}.{}.tmp", CommitFileName, nextGeneration);
-        const path commitFile = state.SlotDir / CommitFileName;
-        if (const VoidResult written = WriteFileSynced(commitTemp, commit); !written)
-        {
-            return written;
-        }
-        // std::filesystem::rename, not ::rename: the narrow conversion a C rename needs is lossy
-        // for a slot directory under a non-ASCII path on Windows, which would fail every flush
-        // while the rest of the write path worked.
-        std::error_code ec;
-        std::filesystem::rename(commitTemp, commitFile, ec);
-        if (ec)
-        {
-            return std::unexpected(
-                fmt::format("cannot commit slot record '{}'", commitFile.string()));
-        }
-        SyncDirectory(state.SlotDir);
-
-        // Committed: advance the generations and drop each replaced family file (best effort —
-        // the open-time sweep also collects any straggler).
-        for (auto& [id, family] : state.Families)
-        {
-            if (!family.Dirty)
-            {
-                continue;
-            }
-            if (family.FileGeneration != 0)
-            {
-                superseded.push_back(state.SlotDir / fmt::format("{}.{}.vst", family.FileStem,
-                                                                 family.FileGeneration));
-            }
-            family.FileGeneration = nextGeneration;
-            family.Dirty = false;
-        }
-        state.Generation = nextGeneration;
-        for (const path& file : superseded)
-        {
-            std::filesystem::remove(file, ec);
-        }
-        return {};
+    void Store::WaitForWrites()
+    {
+        m_State->WaitForWrites();
     }
 
     void Store::CaptureScene(Scene& scene)
@@ -920,8 +1286,21 @@ namespace Veng
 
     bool Store::IsDirty() const
     {
+        {
+            const std::scoped_lock lock(m_State->Writes->Mutex);
+            if (m_State->Writes->Busy || !m_State->Writes->Failed.empty())
+            {
+                return true;
+            }
+        }
         return std::ranges::any_of(m_State->Families,
                                    [](const auto& entry) { return entry.second.Dirty; });
+    }
+
+    f64 Store::GetLastWriteMs() const
+    {
+        const std::scoped_lock lock(m_State->Writes->Mutex);
+        return m_State->Writes->LastWriteMs;
     }
 
     const path& Store::GetSlotDirectory() const
@@ -931,7 +1310,8 @@ namespace Veng
 
     u64 Store::GetGeneration() const
     {
-        return m_State->Generation;
+        const std::scoped_lock lock(m_State->Writes->Mutex);
+        return m_State->Writes->Generation;
     }
 
     usize Store::GetRecordCount() const

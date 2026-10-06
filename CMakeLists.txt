@@ -1243,6 +1243,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/net_connection.cpp
             tests/unit/net_lifecycle.cpp
             tests/unit/persistence_store.cpp
+            tests/unit/persistence_store_flush.cpp
             tests/unit/net_session_store.cpp
             tests/unit/persistence_account.cpp
             tests/unit/persistence_save_slots.cpp

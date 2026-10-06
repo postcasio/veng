@@ -147,6 +147,13 @@ TEST_CASE("enumeration lists slot directories, skips stray files, and orders new
 
     std::filesystem::create_directories(root.Dir / "alpha");
     std::filesystem::create_directories(root.Dir / "beta");
+    // One stamp for both, so the name breaks the tie even when the two creations straddle a second.
+    const auto now = std::filesystem::file_time_type::clock::now();
+    std::error_code ec;
+    std::filesystem::last_write_time(root.Dir / "alpha", now, ec);
+    REQUIRE_FALSE(ec);
+    std::filesystem::last_write_time(root.Dir / "beta", now, ec);
+    REQUIRE_FALSE(ec);
     // A consumer's own file beside the slots — an account record, say — is not a slot.
     TouchFile(root.Dir / "account");
 
@@ -158,8 +165,7 @@ TEST_CASE("enumeration lists slot directories, skips stray files, and orders new
     CHECK(slots[0].LastWriteWall > 0);
 
     // Newest first: touching beta's directory content moves it ahead of alpha.
-    const auto later = std::filesystem::file_time_type::clock::now() + std::chrono::hours(1);
-    std::error_code ec;
+    const auto later = now + std::chrono::hours(1);
     std::filesystem::last_write_time(root.Dir / "beta", later, ec);
     REQUIRE_FALSE(ec);
 

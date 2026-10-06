@@ -125,7 +125,7 @@ TEST_CASE("store round-trips records across close and reopen")
         (*store)->Write(TestFamily, StoreKey{.Lo = 1, .Hi = 2}, MakeRecord(1234, {9, 8, 7}));
         (*store)->Write(TestFamily, StoreKey{.Lo = 3, .Hi = 4}, MakeRecord(5678, {1}));
         CHECK((*store)->IsDirty());
-        REQUIRE((*store)->Flush());
+        REQUIRE((*store)->FlushAndWait());
         CHECK(!(*store)->IsDirty());
         CHECK((*store)->GetGeneration() == 1);
         CHECK((*store)->GetSlotDirectory() == slot.Dir);
@@ -154,16 +154,16 @@ TEST_CASE("store erase removes a record durably, and EraseAll empties the slot")
         (*store)->RegisterFamily(StoreFamily{.Id = TestFamily, .FileStem = "test", .Version = 1});
         (*store)->Write(TestFamily, StoreKey{.Lo = 1}, MakeRecord(1, {1}));
         (*store)->Write(TestFamily, StoreKey{.Lo = 2}, MakeRecord(2, {2}));
-        REQUIRE((*store)->Flush());
+        REQUIRE((*store)->FlushAndWait());
         (*store)->Erase(TestFamily, StoreKey{.Lo = 1});
-        REQUIRE((*store)->Flush());
+        REQUIRE((*store)->FlushAndWait());
     }
     {
         Result<Unique<Store>> store = Store::Open(slot.Dir);
         REQUIRE(store);
         CHECK((*store)->GetRecordCount() == 1);
         (*store)->EraseAll();
-        REQUIRE((*store)->Flush());
+        REQUIRE((*store)->FlushAndWait());
     }
     {
         Result<Unique<Store>> store = Store::Open(slot.Dir);
@@ -182,7 +182,7 @@ TEST_CASE("records of an unregistered family are preserved verbatim across a flu
         (*store)->RegisterFamily(StoreFamily{.Id = OtherFamily, .FileStem = "other", .Version = 1});
         (*store)->Write(TestFamily, StoreKey{.Lo = 1}, MakeRecord(1, {1}));
         (*store)->Write(OtherFamily, StoreKey{.Lo = 2}, MakeRecord(2, {2}));
-        REQUIRE((*store)->Flush());
+        REQUIRE((*store)->FlushAndWait());
     }
     {
         // Only one family is registered this time; the other's records must survive the flush.
@@ -190,7 +190,7 @@ TEST_CASE("records of an unregistered family are preserved verbatim across a flu
         REQUIRE(store);
         (*store)->RegisterFamily(StoreFamily{.Id = TestFamily, .FileStem = "test", .Version = 1});
         (*store)->Write(TestFamily, StoreKey{.Lo = 3}, MakeRecord(3, {3}));
-        REQUIRE((*store)->Flush());
+        REQUIRE((*store)->FlushAndWait());
     }
     {
         Result<Unique<Store>> store = Store::Open(slot.Dir);
@@ -211,7 +211,7 @@ TEST_CASE("a crash between family writes leaves the prior generation whole")
         (*store)->RegisterFamily(StoreFamily{.Id = OtherFamily, .FileStem = "other", .Version = 1});
         (*store)->Write(TestFamily, StoreKey{.Lo = 1}, MakeRecord(1, {1, 1}));
         (*store)->Write(OtherFamily, StoreKey{.Lo = 2}, MakeRecord(2, {2, 2}));
-        REQUIRE((*store)->Flush());
+        REQUIRE((*store)->FlushAndWait());
     }
 
     // Simulate a flush killed between its two family writes: one next-generation family file made
@@ -247,10 +247,10 @@ TEST_CASE("a superseded generation's files are replaced by the commit flip")
     REQUIRE(store);
     (*store)->RegisterFamily(StoreFamily{.Id = TestFamily, .FileStem = "test", .Version = 1});
     (*store)->Write(TestFamily, StoreKey{.Lo = 1}, MakeRecord(1, {1}));
-    REQUIRE((*store)->Flush());
+    REQUIRE((*store)->FlushAndWait());
     CHECK(std::filesystem::exists(slot.Dir / "test.1.vst"));
     (*store)->Write(TestFamily, StoreKey{.Lo = 1}, MakeRecord(2, {2}));
-    REQUIRE((*store)->Flush());
+    REQUIRE((*store)->FlushAndWait());
     CHECK((*store)->GetGeneration() == 2);
     CHECK(std::filesystem::exists(slot.Dir / "test.2.vst"));
     CHECK(!std::filesystem::exists(slot.Dir / "test.1.vst"));
@@ -280,7 +280,7 @@ TEST_CASE("a record written under one family version reads under the next throug
         (*store)->RegisterFamily(StoreFamily{.Id = TestFamily, .FileStem = "test", .Version = 1});
         (*store)->Write(TestFamily, StoreKey{.Lo = 5}, MakeRecord(50, {10, 20}));
         (*store)->Write(TestFamily, StoreKey{.Lo = 6}, MakeRecord(60, {30}));
-        REQUIRE((*store)->Flush());
+        REQUIRE((*store)->FlushAndWait());
     }
     {
         // Reopen at version 2: the explicit migration appends a marker byte to every blob.
@@ -304,7 +304,7 @@ TEST_CASE("a record written under one family version reads under the next throug
         REQUIRE(migrated.has_value());
         CHECK(migrated->Components.front().Bytes == vector<u8>{10, 20, 0xAB});
         // The migration dirties the family; the flush persists it under version 2.
-        REQUIRE((*store)->Flush());
+        REQUIRE((*store)->FlushAndWait());
     }
     {
         // A version-2 reopen with no migration reads the lifted records directly — the version
@@ -330,7 +330,7 @@ TEST_CASE("an older-version record with no migration reads as none")
         REQUIRE(store);
         (*store)->RegisterFamily(StoreFamily{.Id = TestFamily, .FileStem = "test", .Version = 1});
         (*store)->Write(TestFamily, StoreKey{.Lo = 5}, MakeRecord(50, {1}));
-        REQUIRE((*store)->Flush());
+        REQUIRE((*store)->FlushAndWait());
     }
     {
         Result<Unique<Store>> store = Store::Open(slot.Dir);
@@ -359,7 +359,7 @@ TEST_CASE("a component field added to the schema tolerant-reads an old record")
     StoreRecord record{.CapturedAtWall = 1};
     record.Components.push_back(blob);
     (*store)->Write(TestFamily, StoreKey{.Lo = 1}, record);
-    REQUIRE((*store)->Flush());
+    REQUIRE((*store)->FlushAndWait());
 
     const optional<StoreRecord> read = (*store)->Read(TestFamily, StoreKey{.Lo = 1});
     REQUIRE(read.has_value());
@@ -492,7 +492,7 @@ TEST_CASE("ForEachRecord visits a whole family, migrating as it goes")
         (*store)->RegisterFamily(StoreFamily{.Id = TestFamily, .FileStem = "test", .Version = 1});
         (*store)->Write(TestFamily, StoreKey{.Lo = 1}, MakeRecord(1, {1}));
         (*store)->Write(TestFamily, StoreKey{.Lo = 2}, MakeRecord(2, {2}));
-        REQUIRE((*store)->Flush());
+        REQUIRE((*store)->FlushAndWait());
     }
     {
         Result<Unique<Store>> store = Store::Open(slot.Dir);

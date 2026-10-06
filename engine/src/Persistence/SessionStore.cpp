@@ -1,6 +1,5 @@
 #include <Veng/Persistence/SessionStore.h>
 
-#include <Veng/Log.h>
 #include <Veng/Net/Session.h>
 #include <Veng/Reflection/TypeId.h>
 
@@ -66,14 +65,9 @@ namespace Veng
             StoreRecord record{.CapturedAtWall = Store::WallClockSeconds()};
             record.Components.push_back(std::move(component));
             store->Write(SessionsFamily, KeyOf(account), std::move(record));
-            if (!flushOnSave)
+            if (flushOnSave)
             {
-                return;
-            }
-            if (const VoidResult flushed = store->Flush(); !flushed)
-            {
-                Log::Error("session store: flushing a saved session record failed: {}",
-                           flushed.error());
+                store->Flush();
             }
         };
         return hooks;

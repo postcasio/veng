@@ -290,10 +290,13 @@ extern "C"
 /// Version 71 grows SceneView and Viewport::ViewState with the specular anti-aliasing variance and
 /// threshold after SsrMaxRoughness. A module builds views and view states in code, so a stale module
 /// lays both out short and the renderer reads every field after SsrMaxRoughness at a shifted offset.
+/// Version 72 grows StoreFamily with FlushIntervalSeconds and makes Store::Flush return nothing, its
+/// write moving to a background job. A module registers families in code and flushes its stores, so
+/// a stale module passes a family short and reads a result Flush no longer returns.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 71u
+#define VENG_MODULE_ABI_VERSION 72u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

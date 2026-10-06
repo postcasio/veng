@@ -157,7 +157,7 @@ TEST_CASE("component-set family round-trips captured components across flush and
         REQUIRE(store);
         (*store)->RegisterFamily(MakePatternFamily(types));
         (*store)->CaptureScene(*scene);
-        REQUIRE((*store)->Flush());
+        REQUIRE((*store)->FlushAndWait());
     }
 
     Result<Unique<Store>> reopened = Store::Open(slot.Dir);
@@ -507,7 +507,7 @@ TEST_CASE("the singleton's read-modify-write preserves a foreign blob")
             (*store)->Read(SingletonTestFamily, SingletonRecordKey);
         REQUIRE(record.has_value());
         CHECK(record->Components.size() == 2);
-        REQUIRE((*store)->Flush());
+        REQUIRE((*store)->FlushAndWait());
     }
 
     Result<Unique<Store>> reopened = Store::Open(slot.Dir);

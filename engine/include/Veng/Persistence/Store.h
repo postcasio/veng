@@ -112,6 +112,31 @@ namespace Veng
         /// returned record replaces the stored one (persisted at Version on the next flush). An
         /// error, or an older file with no Migrate hook, reads as no record (logged once).
         function<Result<StoreRecord>(u32 storedVersion, StoreRecord)> Migrate;
+        /// @brief The least time between this family's writes, in seconds; 0 writes it every flush.
+        ///
+        /// A family with an interval is held out of a Store::Flush until the interval has passed
+        /// since a flush last took it (or since the store opened), and the commit record keeps its
+        /// previous file meanwhile. Store::FlushAndWait is full and writes it whatever its interval.
+        /// The trade: after a crash, the family can be older than the rest of the slot by up to the
+        /// interval. Each family is still whole and readable, but the slot is no longer one instant
+        /// across families, so families that must stay consistent with each other keep this 0.
+        f64 FlushIntervalSeconds = 0.0;
+    };
+
+    /// @brief How a store measures time and where its background writes run.
+    struct StoreInfo
+    {
+        /// @brief Monotonic seconds family flush intervals are measured on; unset reads the
+        ///        steady clock.
+        function<f64()> Clock;
+        /// @brief Runs a background write's job off the flushing thread.
+        ///
+        /// Unset runs the job on the TaskSystem pool ambient on the flushing thread when there is
+        /// one, and on a thread of the store's own otherwise. A consumer with its own I/O queue
+        /// routes writes there; one that runs the job inline makes every flush synchronous. A job
+        /// never run is not lost: the next wait, FlushAndWait, or the store's close runs it on the
+        /// waiting thread, and a job run after that finds nothing to do.
+        function<void(function<void()> job)> RunWrite;
     };
 
     /// @brief The durable-state substrate: one instance per slot directory, per process.
@@ -123,6 +148,11 @@ namespace Veng
     /// small commit record renames into place last — that rename is the commit point, so a crash
     /// anywhere in the flush leaves the prior generation fully readable. Open takes an exclusive
     /// slot lock (an advisory lock file) and fails loudly on contention.
+    ///
+    /// A flush is split in two: a snapshot on the calling thread, which shares the dirty families'
+    /// records rather than copying their bytes, and the file write on a background job. The store
+    /// itself is single-threaded — every method is called from one thread — and stays readable and
+    /// writable while a write is in flight; only the write's job runs elsewhere.
     ///
     /// The store owns the `slot.` file-name prefix within a slot directory and its own
     /// `<stem>.<generation>.vst` family files; every other file in the directory is left alone.
@@ -141,11 +171,17 @@ namespace Veng
         /// commit record the store cannot read, fails the open rather than reading as fresh — an
         /// unreadable slot is reported, never silently replaced.
         /// @param slotDirectory  The slot directory; created when absent.
+        /// @param info           The clock and the background-write executor; defaults suit an
+        ///                       application.
         /// @return The opened store, or a recoverable error (lock contention, an unreadable or
         /// unrecognized slot, a rejected file stem, an implausible record count).
-        [[nodiscard]] static Result<Unique<Store>> Open(const path& slotDirectory);
+        [[nodiscard]] static Result<Unique<Store>> Open(const path& slotDirectory,
+                                                        StoreInfo info = {});
 
-        /// @brief Releases the slot lock and drops the in-memory tables; unflushed writes are lost.
+        /// @brief Waits for an in-flight write, and one queued behind it, then releases the slot
+        ///        lock.
+        ///
+        /// Writes no flush has taken are lost.
         ~Store();
 
         Store(const Store&) = delete;
@@ -204,14 +240,33 @@ namespace Veng
         void ForEachRecord(StoreFamilyId family,
                            const function<void(StoreKey, const StoreRecord&)>& visit);
 
-        /// @brief Persists the dirty families to disk, atomically for the whole slot.
+        /// @brief Starts persisting the dirty families, atomically for the whole slot, in the
+        ///        background.
         ///
-        /// Dirty families write under the next generation's file names, each synced; then the
-        /// commit record replaces the old one by rename — the commit point. Superseded
-        /// old-generation files are deleted after the commit (best effort). A no-op when nothing is
-        /// dirty.
-        /// @return Empty on success; a recoverable error describing the failed write.
-        VoidResult Flush();
+        /// On the calling thread it takes a snapshot: each dirty family's records as they stand,
+        /// shared rather than copied, and its dirty mark cleared. A family whose flush interval has
+        /// not passed stays dirty and out of the snapshot. The write then runs as a background job:
+        /// the families write under the next generation's file names, each synced; then the commit
+        /// record replaces the old one by rename — the commit point. Superseded files are deleted
+        /// after the commit (best effort).
+        ///
+        /// At most one write is in flight. A flush started meanwhile queues one write behind it,
+        /// and further flushes coalesce into that queued write. A write made after a family's
+        /// snapshot marks it dirty for the next flush. A failed write is logged and its families
+        /// retry in the next write. A no-op when no family is due.
+        void Flush();
+
+        /// @brief Persists every dirty family and blocks until the write commits.
+        ///
+        /// A full flush: every dirty family is written whatever its interval. It first waits for an
+        /// in-flight write, so on return everything written before the call is committed. For the
+        /// exit path, a slot close, and anything that must observe the outcome.
+        /// @return Empty on success (or when nothing was dirty); the error of a failed write,
+        /// whose families stay dirty.
+        VoidResult FlushAndWait();
+
+        /// @brief Blocks until no background write is in flight or queued.
+        void WaitForWrites();
 
         /// @brief Runs every capture-registered family over a scene, writing its records.
         ///
@@ -235,14 +290,21 @@ namespace Veng
         /// @param family  The family to test.
         [[nodiscard]] bool IsFamilyRegistered(StoreFamilyId family) const;
 
-        /// @brief Returns whether any family holds unflushed writes.
+        /// @brief Returns whether any family holds writes not yet committed to disk.
+        ///
+        /// True for a dirty family (including one an interval holds back) and while a write is in
+        /// flight or queued.
         [[nodiscard]] bool IsDirty() const;
+
+        /// @brief Returns the wall-clock time the most recent write took on its job, in
+        ///        milliseconds; 0 before the first.
+        [[nodiscard]] f64 GetLastWriteMs() const;
 
         /// @brief Returns the slot directory this store is open on.
         [[nodiscard]] const path& GetSlotDirectory() const;
 
         /// @brief Returns the committed generation number (0 before the first flush of a fresh
-        ///        slot).
+        ///        slot); a background write's commit advances it when the write lands.
         [[nodiscard]] u64 GetGeneration() const;
 
         /// @brief Returns the total record count across every family (a debug-surface statistic).
