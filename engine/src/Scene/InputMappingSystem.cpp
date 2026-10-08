@@ -31,6 +31,18 @@ namespace Veng
         return true;
     }
 
+    void ResetFrameActionEdges(Scene& scene)
+    {
+        for (auto [entity, input] : scene.View<PlayerInput>())
+        {
+            for (ActionSample& sample : input.State.Actions)
+            {
+                sample.StartedThisFrame = false;
+                sample.ReleasedThisFrame = false;
+            }
+        }
+    }
+
     void InputMappingSystem::OnUpdate(Scene& scene, const f32, const SystemContext& context)
     {
         // A reconciliation replay feeds each tick its recorded PlayerInput directly, so re-resolving

@@ -240,8 +240,9 @@ namespace Veng
         /// The frame-accumulated companion to Phase == Started: InputMappingSystem ORs this across
         /// every Sim tick of a frame and resets it on the frame's first tick, so a once-per-frame
         /// reader (a View system) sees a Started edge that landed on a non-final tick of a multi-tick
-        /// frame — which the single-valued Phase would have overwritten. Not reflected: a transient,
-        /// locally-derived view of Phase, never cooked or replicated.
+        /// frame — which the single-valued Phase would have overwritten. A frame that runs no Sim tick
+        /// clears it (ResetFrameActionEdges), so it never carries an edge into the next frame. Not
+        /// reflected: a transient, locally-derived view of Phase, never cooked or replicated.
         bool StartedThisFrame = false;
 
         /// @brief Whether the action released (Completed) on any Sim tick since this frame began.
@@ -298,7 +299,9 @@ namespace Veng
         /// application code) samples: under the fixed timestep a frame runs 0..N Sim ticks and a
         /// Started pulse on a non-final tick is overwritten in Phase before the frame's single View
         /// pass reads it. This survives that, reading the ORed StartedThisFrame the InputMappingSystem
-        /// maintains. A per-tick Sim system uses WasTriggered.
+        /// maintains. A frame that runs no Sim tick reads false, so an edge is seen on exactly one
+        /// frame however the frame rate and the tick rate interleave. A per-tick Sim system uses
+        /// WasTriggered.
         /// @param id  The action to look up.
         /// @return True if the action activated on any tick this frame.
         [[nodiscard]] bool WasTriggeredThisFrame(ActionId id) const;
@@ -307,7 +310,7 @@ namespace Veng
         ///
         /// The frame-accumulated release edge; the companion to WasTriggeredThisFrame, and the query
         /// a once-per-frame click/release consumer must use so a Completed pulse on a non-final tick
-        /// of a multi-tick frame is not lost.
+        /// of a multi-tick frame is not lost. Like it, it reads false on a frame that runs no Sim tick.
         /// @param id  The action to look up.
         /// @return True if the action released on any tick this frame.
         [[nodiscard]] bool WasReleasedThisFrame(ActionId id) const;

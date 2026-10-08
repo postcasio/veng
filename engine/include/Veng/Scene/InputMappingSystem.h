@@ -26,6 +26,18 @@ namespace Veng
     /// @return True while the seat is owned by this peer.
     [[nodiscard]] VE_API bool IsLocallyOwned(const Scene& scene, Entity seat);
 
+    /// @brief Clears every PlayerInput's frame-accumulated action edges.
+    ///
+    /// Zeroes StartedThisFrame and ReleasedThisFrame on every sample of every PlayerInput in the
+    /// scene, leaving each sample's Phase and Value untouched. A frame that runs no Sim step never
+    /// reaches InputMappingSystem, whose first step is what otherwise starts a frame's accumulation
+    /// afresh; without this the edges a previous frame accumulated would read again in this frame's
+    /// View pass. Phase is left alone because the next Sim step derives its phase from it.
+    /// @param scene  The scene whose PlayerInputs are cleared.
+    /// @pre Called on a frame whose step plan ran zero Sim steps, before that frame's View pass.
+    /// @post Every WasTriggeredThisFrame / WasReleasedThisFrame query in @p scene reads false.
+    VE_API void ResetFrameActionEdges(Scene& scene);
+
     /// @brief Builtin Sim system that resolves each seat's active contexts into its PlayerInput.
     ///
     /// The single reader of raw device state: for each locally-owned seat it builds a SeatInputView
@@ -34,7 +46,8 @@ namespace Veng
     /// PlayerInput, threading the previous PlayerInput for phase derivation. It also folds each
     /// step's action edges into the sample's frame-accumulated StartedThisFrame/ReleasedThisFrame
     /// (reset on the frame's first step, per SystemContext::FirstStepThisFrame), so a once-per-frame
-    /// reader sees an edge that a later step of a multi-step frame would erase from Phase. Because
+    /// reader sees an edge that a later step of a multi-step frame would erase from Phase; a frame
+    /// that runs no step is cleared by its driver through ResetFrameActionEdges instead. Because
     /// the query includes SeatInput, a seat lacking it is skipped — its PlayerInput is synthesized or
     /// replicated (the AI/remote path). Registered first in RegisterBuiltinSystems so it runs ahead
     /// of any control system; in headless the neutral snapshot resolves to all-None with no guard.

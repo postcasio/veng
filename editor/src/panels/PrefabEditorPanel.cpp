@@ -9,6 +9,7 @@
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/InputMappingSystem.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/SceneSystem.h>
@@ -296,6 +297,10 @@ namespace VengEditor
                     return true;
                 },
                 [] { return 0.0; });
+            if (step.Steps == 0)
+            {
+                ResetFrameActionEdges(*m_PlayScene);
+            }
             m_Simulation->UpdatePhase(*m_PlayScene, SceneSystem::Phase::View, Time::GetDeltaTime(),
                                       context(m_PlaySimClock.GetTick(), step.Alpha));
             m_Context.PlayAlpha = step.Alpha;
@@ -393,7 +398,7 @@ namespace VengEditor
             return;
         }
 
-        if (auto bar = UI::Toolbar("##prefab-toolbar"))
+        if (const auto bar = UI::Toolbar("##prefab-toolbar"))
         {
             DrawDocumentToolbar();
             UI::SameLine();

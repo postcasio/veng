@@ -30,7 +30,11 @@
 #include <Veng/Scene/Movement.h>
 #include <Veng/Scene/Resolve.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/SceneSystem.h>
+#include <Veng/Scene/SystemRegistry.h>
+#include <Veng/World.h>
+#include <Veng/WorldRunner.h>
 
 using namespace Veng;
 
@@ -482,6 +486,180 @@ TEST_CASE("InputMappingSystem accumulates a release edge across a multi-step fra
     input.BeginFrame(true);
     tick(/*firstStep=*/true);
     CHECK_FALSE(resolved.WasReleasedThisFrame(Jump));
+}
+
+namespace
+{
+    // A View-phase reader of the frame edges, the once-per-frame consumer their contract is written
+    // for: it counts the View passes that read Jump as triggered this frame.
+    struct FrameEdgeProbe final : SceneSystem
+    {
+        static inline int Triggered = 0;
+        [[nodiscard]] Phase GetPhase() const override { return Phase::View; }
+        void OnUpdate(Scene& scene, f32, const SystemContext&) override
+        {
+            scene.Each<PlayerInput>(
+                [](const Entity, const PlayerInput& input)
+                {
+                    if (input.WasTriggeredThisFrame(Jump))
+                    {
+                        ++Triggered;
+                    }
+                });
+        }
+    };
+}
+
+namespace Veng
+{
+    template <>
+    struct VengSystem<FrameEdgeProbe>
+    {
+        static constexpr SystemId Id = 0x784CBCE052700F46ULL;
+        static string Name() { return "FrameEdgeProbe"; }
+    };
+}
+
+namespace
+{
+    // One world with a keyboard seat resolving Jump from Space through the real InputMappingSystem,
+    // and FrameEdgeProbe reading it, driven frame by frame the way the application drives it: the
+    // snapshot rolls (held after a frame that ran no step), the frame's input lands, the runner ticks.
+    struct FrameEdgeRig
+    {
+        TypeRegistry Types = MakeRegistry();
+        SystemRegistry Systems;
+        ContextStorage Storage;
+        WorldRunner Runner{WorldRunnerInfo{.Types = &Types, .Systems = &Systems}};
+        WorldInstanceId Id;
+        bool Latched = false;
+
+        FrameEdgeRig()
+        {
+            FrameEdgeProbe::Triggered = 0;
+            Systems.Register<InputMappingSystem>();
+            Systems.Register<FrameEdgeProbe>();
+            Id = Runner.OpenWorld(WorldOpenInfo{
+                .SimTickRate = 60,
+                .StartSimulation = true,
+                .Systems = vector<SystemId>{SystemIdOf<InputMappingSystem>(),
+                                            SystemIdOf<FrameEdgeProbe>()},
+                .MakeStartContext = [this] { return Storage.Make(); },
+            });
+
+            const ResolvedContext jumpContext{
+                .Actions = {InputAction{.Id = Jump, .Name = "Jump", .Kind = ActionKind::Button}},
+                .Bindings = {Binding{.Source = {.Device = InputDeviceType::Keyboard,
+                                                .Control = static_cast<u32>(Key::Space)},
+                                     .Action = Jump,
+                                     .Axis = AxisComponent::Whole,
+                                     .Scale = 1.0f}}};
+            Scene& scene = Runner.ResolveWorld(Id)->GetScene();
+            const Entity seat = scene.CreateEntity();
+            scene.Add<Viewer>(seat, Viewer{});
+            scene.Add<PlayerInput>(seat, PlayerInput{});
+            scene.Add<InputContextStack>(
+                seat, InputContextStack{.Active = {MakeResidentContext(jumpContext)}});
+            scene.Add<SeatInput>(seat, SeatInput{});
+        }
+
+        // Runs one frame of @p delta seconds, pressing Space first when asked; returns the steps run.
+        u64 Frame(const f32 delta, const bool press = false)
+        {
+            Storage.HeadlessInput.BeginFrame(!Latched);
+            if (press)
+            {
+                Storage.HeadlessInput.ApplyEvent(KeyPressedEvent(Key::Space, 0, 0));
+            }
+            const World& world = *Runner.ResolveWorld(Id);
+            const u64 before = world.Clock.GetTick();
+            const WorldTickResult result = Runner.Tick(WorldTickInfo{
+                .Delta = delta,
+                .BuildContext =
+                    [this](WorldInstanceId, const Scene&, const u64 tick, const f32 alpha,
+                           const bool firstStep)
+                {
+                    SystemContext context = Storage.Make();
+                    context.Tick = tick;
+                    context.Alpha = alpha;
+                    context.FirstStepThisFrame = firstStep;
+                    return context;
+                },
+            });
+            Latched = result.AnyActive && !result.AnyTicked;
+            return world.Clock.GetTick() - before;
+        }
+    };
+
+    // The 60 Hz tick, and half of it: a 120 Hz display's frame, which runs a step every other frame.
+    constexpr f32 Tick60 = 1.0f / 60.0f;
+    constexpr f32 Half60 = Tick60 * 0.5f;
+}
+
+TEST_CASE("A frame edge is read on one frame when every other frame runs no Sim step")
+{
+    FrameEdgeRig rig;
+
+    REQUIRE(rig.Frame(Tick60, /*press=*/true) == 1);
+    REQUIRE(rig.Frame(Half60) == 0);
+    REQUIRE(rig.Frame(Half60) == 1);
+    REQUIRE(rig.Frame(Half60) == 0);
+
+    CHECK(FrameEdgeProbe::Triggered == 1);
+}
+
+TEST_CASE("A frame edge on the first step of a multi-step frame is read once")
+{
+    FrameEdgeRig rig;
+
+    // A quarter tick is left over, so the half-tick frame after it runs no step and the next one does.
+    REQUIRE(rig.Frame(Tick60 * 3.25f, /*press=*/true) == 3);
+    REQUIRE(rig.Frame(Half60) == 0);
+    REQUIRE(rig.Frame(Half60) == 1);
+
+    CHECK(FrameEdgeProbe::Triggered == 1);
+}
+
+TEST_CASE("A press landing on a frame that runs no Sim step is read on the next frame that does")
+{
+    FrameEdgeRig rig;
+
+    REQUIRE(rig.Frame(Tick60) == 1);
+    REQUIRE(rig.Frame(Half60, /*press=*/true) == 0);
+    CHECK(FrameEdgeProbe::Triggered == 0);
+
+    REQUIRE(rig.Frame(Half60) == 1);
+    REQUIRE(rig.Frame(Half60) == 0);
+    CHECK(FrameEdgeProbe::Triggered == 1);
+}
+
+TEST_CASE("ResetFrameActionEdges clears the frame edges and keeps each sample's phase and value")
+{
+    TypeRegistry registry = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(registry);
+    const Entity seat = scene->CreateEntity();
+    PlayerInput input;
+    input.State.Actions = {ActionSample{.Id = Jump,
+                                        .Value = vec2(1.0f, 0.0f),
+                                        .Phase = ActionPhase::Started,
+                                        .StartedThisFrame = true,
+                                        .ReleasedThisFrame = true},
+                           ActionSample{.Id = Move,
+                                        .Value = vec2(0.5f, -0.25f),
+                                        .Phase = ActionPhase::Ongoing,
+                                        .StartedThisFrame = true}};
+    scene->Add<PlayerInput>(seat, input);
+
+    ResetFrameActionEdges(*scene);
+
+    const PlayerInput& reset = scene->Get<PlayerInput>(seat);
+    CHECK_FALSE(reset.WasTriggeredThisFrame(Jump));
+    CHECK_FALSE(reset.WasReleasedThisFrame(Jump));
+    CHECK_FALSE(reset.WasTriggeredThisFrame(Move));
+    CHECK(reset.WasTriggered(Jump));
+    CHECK(reset.GetValue(Jump).x == 1.0f);
+    CHECK(reset.State.Actions[1].Phase == ActionPhase::Ongoing);
+    CHECK(reset.GetValue(Move) == vec2(0.5f, -0.25f));
 }
 
 TEST_CASE(

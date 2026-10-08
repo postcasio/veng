@@ -427,6 +427,15 @@ which a game-specific control system reads to produce the abstract `Intent` game
   prefer the locally-owned seat through it. The last two fall back to the first seat; a presenting
   viewport does not, so a host scene seating only remote peers leaves the viewport unseated until its
   own seat exists, rather than presenting another peer's.
+    **An edge has two cadences, per tick and per frame.** `WasTriggered`/`WasReleased` read the
+  tick's `Phase`, for a Sim system that sees every tick. A View system or per-frame code reads
+  `WasTriggeredThisFrame`/`WasReleasedThisFrame`, which `InputMappingSystem` ORs across a frame's
+  steps and resets on its first, so an edge on a non-final step of a multi-step frame survives to the
+  View pass. A frame that runs **no** step — every other frame when the display outpaces the tick
+  rate — never reaches the system, so the world drive (`WorldRunner::Tick`, and the editor's Play
+  drive) clears the frame edges with `ResetFrameActionEdges` before that frame's View pass, leaving
+  `Phase` and `Value` for the next step to derive from. A frame edge is therefore read on exactly one
+  frame: the first that ticks after the input lands.
     **A context can be gated on gameplay focus as authored data.** An `InputMapData`
   (`Veng/Asset/InputMappingContext.h`) carries a reflected **`RequiresGameplayFocus`** flag
   (authored `"RequiresGameplayFocus"`, tolerant-read so existing cooked maps are unchanged); when

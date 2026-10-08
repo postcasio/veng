@@ -10,6 +10,7 @@
 #include <Veng/Renderer/SceneCapturePool.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/InputMappingSystem.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Time.h>
@@ -362,6 +363,11 @@ namespace Veng
             if (step.Steps > 0)
             {
                 result.AnyTicked = true;
+            }
+            else
+            {
+                // No step reset the frame edges, so View would read the last frame's.
+                ResetFrameActionEdges(scene);
             }
 
             if (info.RunViewPhase && !IsCloseQueued(world->Id))
