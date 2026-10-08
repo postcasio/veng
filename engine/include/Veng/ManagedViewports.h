@@ -354,7 +354,8 @@ namespace Veng
         /// the markers of a world that stopped being presented. Managed viewports come first, in index
         /// order, then bound ones in registration order. Clears @p seats first, so a caller reuses one
         /// buffer across worlds without a per-frame allocation. A viewport with no seat contributes
-        /// none.
+        /// none, and neither does a bound viewport its owner has stopped showing
+        /// (Renderer::Viewport::IsShown).
         /// @param world  The world whose presenting seats to collect.
         /// @param seats  The buffer filled with the presenting seats; cleared on entry.
         void CollectPresentingSeats(WorldInstanceId world, vector<Entity>& seats) const;
@@ -374,8 +375,9 @@ namespace Veng
         /// @brief Returns whether any viewport in this set presents a world, in-flight rebinds included.
         ///
         /// The presentation query the sim domain has no back-reference for: a world is presented when
-        /// some indexed managed viewport's applied binding names it, some bound (overlay) viewport
-        /// names it, or an in-flight rebind of either kind is destined for it. A **pending destination
+        /// some indexed managed viewport's applied binding names it, some bound (overlay) viewport its
+        /// owner is showing (Renderer::Viewport::IsShown) names it, or an in-flight rebind of either
+        /// kind is destined for it. A **pending destination
         /// counts**, which is what make-before-break needs — the destination of a
         /// RebindWorldWhenReady is presented for its whole wait, so the per-world work its
         /// presentation gates (its capture surfaces above all) is warm on the frame it becomes
@@ -491,9 +493,11 @@ namespace Veng
         /// the world's own interpolation fraction; otherwise the caller pushes its own ViewState.
         /// The viewport is handed the set's Gui driver catalog, translator and localization, so an
         /// engine-driven overlay presented through it drives as on a managed viewport (its sound and
-        /// rumble engines come from the compositor it is registered on). The set never owns the
-        /// viewport — the caller unregisters the binding (UnregisterBoundViewport) before dropping the
-        /// viewport. Bound viewports are not indexed and Get / Build / Reconfigure never touch them.
+        /// rumble engines come from the compositor it is registered on). An on-demand viewport whose
+        /// owner stops pushing views stops presenting the world until the next push
+        /// (Renderer::Viewport::IsShown). The set never owns the viewport — the caller unregisters the
+        /// binding (UnregisterBoundViewport) before dropping the viewport. Bound viewports are not
+        /// indexed and Get / Build / Reconfigure never touch them.
         /// @param viewport  The caller-owned viewport.
         /// @param info      The world, seat, knobs, look and camera-pull choice of the binding.
         void RegisterBoundViewport(Renderer::Viewport& viewport, const BoundViewportInfo& info);

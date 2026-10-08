@@ -244,7 +244,12 @@ viewport's `ViewState` to its owner — the editor's Offscreen document viewport
 through a camera it resolves itself. Registration hands the viewport the set's Gui driver catalog,
 translator and localization, and `UnregisterBoundViewport` clears them again, so a viewport kept
 past its binding drives no overlay; the sound and rumble engines its drivers play through come from
-the compositor it is registered on, bound or not. `ResolvePresentationSeat(scene, boundViewer)` (also
+the compositor it is registered on, bound or not. **A viewport its host stops drawing stops
+presenting.** An on-demand viewport (`RenderOnDemand`) whose owner lets a whole frame pass without
+pushing a view releases its scene at that render and reads `IsShown() == false`, so a bound one stops
+counting for `IsWorldPresented` and `CollectPresentingSeats` and gives its world no `View` — the
+world's sound and rumble mute, its captures stop, its seat's `LocalControl` lifts — until the next
+push. That is what makes a hidden editor Play tab unpresented, with no editor code. `ResolvePresentationSeat(scene, boundViewer)` (also
 in `Veng/ManagedViewports.h`) is the seat rule a rebind applies and a binder resolves its `Viewer`
 with.
 

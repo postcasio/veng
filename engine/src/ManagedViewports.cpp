@@ -511,9 +511,10 @@ namespace Veng
                 seats.push_back(managed.Info.Viewer);
             }
         }
+        // A bound viewport its owner stopped showing presents nothing, so its seat loses its marker.
         for (const BoundViewport& bound : m_Bound)
         {
-            if (bound.World == world && !bound.Viewer.IsNull())
+            if (bound.World == world && !bound.Viewer.IsNull() && bound.Viewport->IsShown())
             {
                 seats.push_back(bound.Viewer);
             }
@@ -560,7 +561,7 @@ namespace Veng
         }
         for (const BoundViewport& bound : m_Bound)
         {
-            if (bound.World == world)
+            if (bound.World == world && bound.Viewport->IsShown())
             {
                 return true;
             }

@@ -337,9 +337,12 @@ dedicated server runs no View phase, so every scope it holds is `Held`; a world 
 its scope closed by the deferred drain, before that frame's `Resolve`; and an open world **no viewport
 presents** has an empty `View` and is `Muted`. Presentation is exactly what the context factory resolves
 `View` from (`FindPresentingViewport`, then a self-driven `Presented` viewport), so a viewport that is
-registered and retains the world's scene counts as presenting it whether or not anything is on screen
-— an editor document's Play viewport in a hidden dock tab keeps its last pushed scene and its world
-stays `Live`. The registry's one **application scope** (`GetApplicationScope()`) is always `Live`; it
+registered and retains the world's scene counts as presenting it. A viewport retains its scene until
+its owner stops showing it: an **on-demand** viewport (`ViewportInfo::RenderOnDemand`) whose owner lets
+a whole frame pass without pushing a view — an editor document's Play viewport in a hidden dock tab —
+releases its scene at that render (`Viewport::IsShown` reads false), so its world reads `Muted` while
+its time advances, and a bound viewport so released stops counting for `IsWorldPresented` and
+`CollectPresentingSeats` too, until its owner pushes again. The registry's one **application scope** (`GetApplicationScope()`) is always `Live`; it
 owns what plays outside any scene, and nothing a scene's system starts belongs in it.
 
 Two device engines file under scopes: the **audio engine** — every voice, started through the

@@ -441,6 +441,7 @@ namespace Veng::Renderer
         m_ViewState = state;
         m_HasViewState = true;
         m_ViewStateFresh = true;
+        m_Shown = true;
     }
 
     void Viewport::ReleasePresentedScene(const Scene& scene)
@@ -500,6 +501,14 @@ namespace Veng::Renderer
         m_ViewStateFresh = false;
         if (m_RenderOnDemand && !wasFresh)
         {
+            // An owner that pushed nothing for a whole frame has stopped showing the viewport, so it
+            // stops presenting its scene too, rather than holding it presented from behind a hidden tab.
+            if (m_ViewState.World != nullptr)
+            {
+                OnPresentedSceneChanging();
+                m_ViewState.World = nullptr;
+            }
+            m_Shown = false;
             return;
         }
 

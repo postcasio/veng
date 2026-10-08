@@ -222,7 +222,8 @@ namespace Veng::Renderer
         /// editor panel that hides when its dock tab is inactive — Render is a no-op on any frame no
         /// SetViewState landed since the last, so a hidden panel (whose draw, and thus its
         /// per-frame SetViewState, did not run) stops driving the renderer rather than re-rendering
-        /// stale content into the shared bindless targets behind the visible panels.
+        /// stale content into the shared bindless targets behind the visible panels — and stops
+        /// presenting its scene, which it releases (see Viewport::IsShown).
         bool RenderOnDemand = false;
 
         /// @brief Scale attached Gui documents lay out and draw at (see Viewport::SetUiScale).
@@ -607,8 +608,20 @@ namespace Veng::Renderer
         ///
         /// The retained scene pointer, so the engine can match a viewport to the simulation whose
         /// scene it presents (the primary-presenter resolution behind SystemContext::View). Null
-        /// until the owner has pushed a ViewState, so a never-pushed viewport presents no scene.
+        /// until the owner has pushed a ViewState, so a never-pushed viewport presents no scene, and
+        /// null again once an on-demand viewport's owner stops showing it (IsShown).
         [[nodiscard]] const Scene* GetPresentedScene() const { return m_ViewState.World; }
+
+        /// @brief Returns whether the viewport's owner is showing it.
+        ///
+        /// Always true for a viewport that renders every frame. An on-demand viewport
+        /// (ViewportInfo::RenderOnDemand) whose owner lets a whole frame pass without pushing a
+        /// ViewState — a hidden editor tab, any panel its host stopped drawing — reads false from the
+        /// render that finds no push, and releases its retained scene there, so the scene reads
+        /// unpresented: its sound and rumble mute, and the world it is bound to (RegisterBoundViewport)
+        /// counts as presented by it no longer, for captures and the locally-controlled marker alike.
+        /// The owner's next push shows it again.
+        [[nodiscard]] bool IsShown() const { return m_Shown; }
 
         /// @brief Returns the camera the last-pushed ViewState renders through (the retained view).
         ///
@@ -880,6 +893,10 @@ namespace Veng::Renderer
         bool m_ViewStateFresh = false;
         /// @brief Whether Render renders at all (see SetEnabled); the output persists while off.
         bool m_Enabled = true;
+
+        /// @brief Whether the owner is showing the viewport (see IsShown); cleared by a Render that
+        ///        finds an on-demand viewport unpushed, set by SetViewState.
+        bool m_Shown = true;
 
         /// @brief The bound per-frame render source.
         ViewState m_ViewState;

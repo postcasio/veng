@@ -36,6 +36,8 @@
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
+#include <Veng/Scene/LocalControl.h>
+#include <Veng/Scene/PresentationScope.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SystemRegistry.h>
 
@@ -934,6 +936,95 @@ TEST_CASE(
     };
 
     app.Frames = 4;
+    app.Run({});
+}
+
+TEST_CASE("An on-demand bound viewport its owner stops showing presents nothing until shown again")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    MvApp app(HeadlessInfo({}), types, systems);
+
+    MvApp::WorldSeat a{};
+    Entity pawn = Entity::Null;
+    PresentationScopeId scope;
+    Unique<Renderer::Viewport> viewport;
+
+    app.InitFn = [&](MvApp& app)
+    {
+        // A running world, so its View phase renews its scope every frame; only its audibility moves.
+        a = app.OpenReadyCameraWorld(vec3(0.0f, 0.0f, 5.0f));
+        Scene& scene = app.GetWorldRunner().ResolveWorld(a.World)->GetScene();
+        pawn = scene.CreateEntity();
+        scene.Add<Possesses>(a.Seat).Pawn = pawn;
+        scope = scene.GetPresentationScope()->GetId();
+
+        // A tool's document viewport: rendered only on a frame its panel pushed a view.
+        viewport = Renderer::Viewport::Create({
+            .Context = app.GetRenderContext(),
+            .Assets = app.GetAssetManager(),
+            .Region = {.Offset = {0, 0}, .Extent = {32, 32}},
+            .Role = Renderer::ViewportRole::Offscreen,
+            .RenderOnDemand = true,
+        });
+        app.RegisterViewport(*viewport);
+        app.GetManagedViewports().RegisterBoundViewport(
+            *viewport, BoundViewportInfo{.World = a.World, .Viewer = a.Seat, .PullsCamera = false});
+    };
+
+    const auto show = [&] { viewport->SetViewState({.World = a.Scene, .Delta = 0.016f}); };
+    const auto presented = [&](MvApp& app)
+    {
+        return viewport->IsShown() && app.IsWorldPresented(a.World) &&
+               a.Scene->TryGet<LocalControl>(pawn) != nullptr;
+    };
+
+    app.StepFn = [&](MvApp& app, int frame)
+    {
+        const PresentationState state = app.GetPresentationScopes().GetState(scope);
+        switch (frame)
+        {
+        case 0:
+            show();
+            break;
+        case 1:
+            CHECK(presented(app));
+            show();
+            break;
+        case 2:
+            // Shown and presented: the world's sound is heard. The panel stops drawing from here.
+            CHECK(state == PresentationState::Live);
+            break;
+        case 3:
+            // A whole frame unpushed: the viewport released the scene, the world counts as presented
+            // by it no longer, and its seat's marker lifted.
+            CHECK_FALSE(viewport->IsShown());
+            CHECK(viewport->GetPresentedScene() == nullptr);
+            CHECK_FALSE(app.IsWorldPresented(a.World));
+            CHECK(a.Scene->TryGet<LocalControl>(pawn) == nullptr);
+            break;
+        case 4:
+            // The world still runs its View phase, so its scope is muted rather than held.
+            CHECK(state == PresentationState::Muted);
+            show();
+            break;
+        case 5:
+            CHECK(presented(app));
+            show();
+            break;
+        case 6:
+            CHECK(state == PresentationState::Live);
+            app.GetManagedViewports().UnregisterBoundViewport(*viewport);
+            viewport.reset();
+            break;
+        default:
+            break;
+        }
+    };
+
+    app.Frames = 7;
     app.Run({});
 }
 

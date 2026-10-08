@@ -222,7 +222,14 @@ across the whole project's one AssetId namespace, not just its own pack.
     clone's presentation seat (`ResolvePresentationSeat`) and `PullsCamera = false` — the panel keeps
     pushing its own `ViewState` through the scene's authored camera — so Play's systems get `View`
     and `Debug` from it, the seat's pawn is marked `LocalControl`, the world counts as presented, and
-    engine-driven Gui overlays drive through it. `Stop` unregisters it before closing the world.
+    engine-driven Gui overlays drive through it (with sound and rumble, from the compositor the panel
+    registered it on). `Stop` unregisters it before closing the world.
+  - **A Play document in a hidden dock tab is unpresented.** The panel's viewport is `RenderOnDemand`,
+    and a hidden tab's panel does not draw, so it pushes no `ViewState`; the viewport's next render
+    releases the retained scene (`Renderer::Viewport::IsShown` reads false), so the world's audio and
+    rumble mute while its time still advances, its captures stop driving, and the seat's
+    `LocalControl` lifts — and all of it returns on the frame the tab is shown again and pushes. No
+    editor code does this: it is the engine's rule for any on-demand viewport its host stops drawing.
   - **Each frame, `UpdatePlaySession` only follows the world** (the runner ticked it before the
     editor's UI ran, so Play keeps the one-frame tick-to-render latency): a world that no longer
     resolves — its sandboxed exit, a system closing it, shutdown — returns the document to editing;
