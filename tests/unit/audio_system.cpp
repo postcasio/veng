@@ -1,9 +1,9 @@
 // The View-phase AudioSystem over a Scene and a null device: it publishes a well-formed voice
-// snapshot (a PlayOnStart source sounds, a no-listener scene still plays non-spatial voices, the cap
-// keeps the loudest, a finished non-looping source is gone next tick), and it reads the interpolated
-// drawn pose rather than the raw Sim transform; a world's MusicState plays while it is presented and
-// stops with the world. Pure CPU — the null device runs the whole mix path
-// on the main thread, so no hardware is touched.
+// snapshot (a Playing source sounds, a no-listener scene still plays non-spatial voices, the cap
+// keeps the loudest), Playing is a live control a finished clip clears, a generator plays from a
+// source as one voice at its entity's drawn pose, and it reads the interpolated drawn pose rather than
+// the raw Sim transform; a world's MusicState plays while it is presented and stops with the world.
+// Pure CPU — the null device runs the whole mix path on the main thread, so no hardware is touched.
 
 #include <doctest/doctest.h>
 
@@ -17,6 +17,7 @@
 #include <Veng/Audio/AudioEngine.h>
 #include <Veng/Audio/AudioSystem.h>
 #include <Veng/Audio/ScopedAudio.h>
+#include <Veng/Log.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
@@ -28,9 +29,12 @@
 #include <Veng/WorldRunner.h>
 #include "support/TestServices.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <numbers>
+#include <thread>
 #include <vector>
 
 using namespace Veng;
@@ -63,7 +67,7 @@ namespace
     }
 }
 
-TEST_CASE("a PlayOnStart non-spatial source plays with no listener in the scene")
+TEST_CASE("a Playing non-spatial source plays with no listener in the scene")
 {
     TypeRegistry registry;
     RegisterBuiltinTypes(registry);
@@ -75,7 +79,7 @@ TEST_CASE("a PlayOnStart non-spatial source plays with no listener in the scene"
     scene->Add<Transform>(entity, Transform{});
     scene->Add<AudioSource>(entity, AudioSource{.Clip = MakePcmClip(0.5f, 4800),
                                                 .Bus = "Music",
-                                                .PlayOnStart = true,
+                                                .Playing = true,
                                                 .Spatial = false});
 
     AudioSystem system;
@@ -87,7 +91,7 @@ TEST_CASE("a PlayOnStart non-spatial source plays with no listener in the scene"
     CHECK(system.HasVoice(entity));
 }
 
-TEST_CASE("a finished non-looping source is gone the next tick")
+TEST_CASE("a finished non-looping clip reads Playing false, and setting Playing replays it")
 {
     TypeRegistry registry;
     RegisterBuiltinTypes(registry);
@@ -100,7 +104,7 @@ TEST_CASE("a finished non-looping source is gone the next tick")
     // A single-frame one-shot: it exhausts within one pump.
     scene->Add<AudioSource>(entity, AudioSource{.Clip = MakePcmClip(0.5f, 1),
                                                 .Looping = false,
-                                                .PlayOnStart = true,
+                                                .Playing = true,
                                                 .Spatial = false});
 
     AudioSystem system;
@@ -108,19 +112,23 @@ TEST_CASE("a finished non-looping source is gone the next tick")
     system.OnUpdate(*scene, 1.0f / 60.0f, services.Make());
     CHECK(system.HasVoice(entity));
 
-    // Pump plays the one-shot out and drains the retired-voice channel.
+    // Pump plays the one-shot out and drains the retired-voice channel; the system learns of the
+    // retirement through IsVoiceLive, drops the voice and clears Playing, so it stays silent.
     for (int i = 0; i < 4 && device.GetEngine().GetActiveVoiceCount() > 0; ++i)
     {
         device.Pump(1.0f / 60.0f);
     }
-
-    // The system learns of the retirement through IsVoiceLive and drops the voice, and does not
-    // restart the finished one-shot on any later tick.
     system.OnUpdate(*scene, 1.0f / 60.0f, services.Make());
     CHECK_FALSE(system.HasVoice(entity));
-    CHECK(device.GetEngine().GetActiveVoiceCount() == 0);
+    CHECK_FALSE(scene->Get<AudioSource>(entity).Playing);
     system.OnUpdate(*scene, 1.0f / 60.0f, services.Make());
     CHECK(device.GetEngine().GetActiveVoiceCount() == 0);
+
+    // Setting Playing again replays the clip from its start.
+    scene->Get<AudioSource>(entity).Playing = true;
+    system.OnUpdate(*scene, 1.0f / 60.0f, services.Make());
+    CHECK(system.HasVoice(entity));
+    CHECK(device.GetEngine().GetActiveVoiceCount() == 1);
 }
 
 TEST_CASE("a looping source persists across pumps")
@@ -135,7 +143,7 @@ TEST_CASE("a looping source persists across pumps")
     scene->Add<Transform>(entity, Transform{});
     scene->Add<AudioSource>(entity, AudioSource{.Clip = MakePcmClip(0.5f, 64),
                                                 .Looping = true,
-                                                .PlayOnStart = true,
+                                                .Playing = true,
                                                 .Spatial = false});
 
     AudioSystem system;
@@ -170,7 +178,7 @@ TEST_CASE("the voice cap keeps the loudest sources")
         const Entity entity = scene->CreateEntity();
         scene->Add<Transform>(entity, Transform{});
         scene->Add<AudioSource>(
-            entity, AudioSource{.Clip = clip, .Gain = gain, .PlayOnStart = true, .Spatial = false});
+            entity, AudioSource{.Clip = clip, .Gain = gain, .Playing = true, .Spatial = false});
         sources.push_back(entity);
     }
 
@@ -197,7 +205,7 @@ TEST_CASE("the system places a source at its interpolated drawn pose, not the ra
     const Entity entity = scene->CreateEntity();
     scene->Add<Transform>(entity, Transform{.Position = {0.0f, 0.0f, 0.0f}});
     scene->Add<AudioSource>(
-        entity, AudioSource{.Clip = MakePcmClip(0.5f, 4800), .PlayOnStart = true, .Spatial = true});
+        entity, AudioSource{.Clip = MakePcmClip(0.5f, 4800), .Playing = true, .Spatial = true});
 
     // Two ticks of motion so the history ring holds {x=0, x=10}; the raw transform is x=10.
     scene->SnapshotTransformHistory();
@@ -336,7 +344,7 @@ TEST_CASE("a paused runner world's source voice is held, and plays again on resu
     scene.Add<Transform>(emitter, Transform{});
     scene.Add<AudioSource>(emitter, AudioSource{.Clip = MakePcmClip(0.5f, 4800),
                                                 .Looping = true,
-                                                .PlayOnStart = true,
+                                                .Playing = true,
                                                 .Spatial = false});
 
     const auto frame = [&]
@@ -409,4 +417,247 @@ TEST_CASE("a runner world's MusicState plays while presented, and fades out when
     }
     CHECK_FALSE(engine.Music().Current().IsValid());
     CHECK(engine.Music().GetVoiceCount() == 0);
+}
+
+namespace
+{
+    // A generator rendering a constant: what it plays does not matter here, only where and how often.
+    class ConstantGenerator final : public IAudioGenerator
+    {
+    public:
+        void Render(f32* out, const u32 frames, const u32 channels, u32 /*sampleRate*/) override
+        {
+            std::fill_n(out, static_cast<usize>(frames) * channels, 0.25f);
+        }
+    };
+
+    // A bare scene over the bundle's application scope, with a listener at the origin facing -Z.
+    struct SourceScene
+    {
+        TypeRegistry Types;
+        TestSupport::TestServices Services;
+        Unique<Veng::Scene> Scene;
+        AudioSystem System;
+
+        SourceScene()
+        {
+            RegisterBuiltinTypes(Types);
+            Scene = Veng::Scene::Create(Types);
+            const Entity listener = Scene->CreateEntity();
+            Scene->Add<Transform>(listener, Transform{});
+            Scene->Add<AudioListener>(listener, AudioListener{});
+            System.OnStart(*Scene, Services.Make());
+        }
+
+        Entity Spawn(AudioSource source, const vec3 position = vec3(0.0f))
+        {
+            const Entity entity = Scene->CreateEntity();
+            Scene->Add<Transform>(entity, Transform{.Position = position});
+            Scene->Add<AudioSource>(entity, std::move(source));
+            return entity;
+        }
+
+        // One View update and the engine's frame advance, without a pump.
+        void Update()
+        {
+            System.OnUpdate(*Scene, 1.0f / 60.0f, Services.Make());
+            Services.GetAudio().Update(1.0f / 60.0f);
+        }
+
+        // One whole frame: the update, then the device pump that mixes and reclaims.
+        void Frame()
+        {
+            Update();
+            Services.GetAudioDevice().Pump(1.0f / 60.0f);
+        }
+
+        [[nodiscard]] vector<VoiceInfo> Voices() { return Services.GetAudio().GetVoiceInfos(); }
+    };
+}
+
+TEST_CASE("a spatial generator source plays at its entity's drawn pose and follows it")
+{
+    SourceScene world;
+    const auto generator = CreateRef<ConstantGenerator>();
+    const Entity emitter = world.Spawn(
+        AudioSource{
+            .Playing = true, .Spatial = true, .MaxDistance = 100.0f, .Generator = generator},
+        vec3(3.0f, 0.0f, 0.0f));
+
+    world.Update();
+    vector<VoiceInfo> voices = world.Voices();
+    REQUIRE(voices.size() == 1);
+    CHECK(voices.front().Generator);
+    CHECK(voices.front().Spatial);
+    CHECK(glm::all(glm::epsilonEqual(voices.front().Position, vec3(3.0f, 0.0f, 0.0f), 1e-4f)));
+    CHECK(voices.front().Pan > 0.5f);
+
+    // Moving the entity moves the voice, and a live mix edit reaches it.
+    world.Scene->Get<Transform>(emitter).Position = vec3(-5.0f, 0.0f, 0.0f);
+    world.Scene->Get<AudioSource>(emitter).OcclusionFactor = 0.5f;
+    world.Update();
+    voices = world.Voices();
+    REQUIRE(voices.size() == 1);
+    CHECK(glm::all(glm::epsilonEqual(voices.front().Position, vec3(-5.0f, 0.0f, 0.0f), 1e-4f)));
+    CHECK(voices.front().Pan < -0.5f);
+    CHECK(voices.front().Occlusion == doctest::Approx(0.5f));
+}
+
+TEST_CASE("Playing is a live control: clearing it stops the voice, setting it starts it again")
+{
+    SourceScene world;
+    const Entity emitter = world.Spawn(AudioSource{
+        .Clip = MakePcmClip(0.5f, 48000), .Looping = true, .Playing = true, .Spatial = false});
+
+    world.Frame();
+    CHECK(world.Voices().size() == 1);
+
+    world.Scene->Get<AudioSource>(emitter).Playing = false;
+    world.Frame();
+    CHECK(world.Voices().empty());
+    CHECK_FALSE(world.System.HasVoice(emitter));
+
+    world.Scene->Get<AudioSource>(emitter).Playing = true;
+    world.Frame();
+    CHECK(world.Voices().size() == 1);
+}
+
+TEST_CASE("a source added at runtime sounds on the next update only while Playing")
+{
+    SourceScene world;
+    const AssetHandle<Audio::AudioClip> clip = MakePcmClip(0.5f, 48000);
+    world.Frame();
+
+    const Entity stopped =
+        world.Spawn(AudioSource{.Clip = clip, .Looping = true, .Spatial = false});
+    for (int i = 0; i < 3; ++i)
+    {
+        world.Frame();
+    }
+    CHECK_FALSE(world.System.HasVoice(stopped));
+
+    const Entity playing =
+        world.Spawn(AudioSource{.Clip = clip, .Looping = true, .Playing = true, .Spatial = false});
+    world.Frame();
+    CHECK(world.System.HasVoice(playing));
+    CHECK(world.Voices().size() == 1);
+}
+
+TEST_CASE("removing a generator source's component or entity releases its generator")
+{
+    for (const bool destroyEntity : {false, true})
+    {
+        CAPTURE(destroyEntity);
+        SourceScene world;
+        const auto generator = CreateRef<ConstantGenerator>();
+        const Entity emitter =
+            world.Spawn(AudioSource{.Playing = true, .Spatial = false, .Generator = generator});
+        world.Frame();
+        REQUIRE(world.Voices().size() == 1);
+        REQUIRE(world.Services.GetAudio().IsGeneratorInUse(*generator));
+
+        if (destroyEntity)
+        {
+            world.Scene->DestroyEntity(emitter);
+        }
+        else
+        {
+            REQUIRE(world.Scene->Remove<AudioSource>(emitter).has_value());
+        }
+        world.Frame();
+
+        // The voice stopped, and the pump that mixed past it completed the reclamation handshake:
+        // the test's reference is the only one left.
+        CHECK(world.Voices().empty());
+        CHECK_FALSE(world.Services.GetAudio().IsGeneratorInUse(*generator));
+        CHECK(generator.use_count() == 1);
+    }
+}
+
+TEST_CASE("a generator replaced on a live source restarts the voice on the new one")
+{
+    SourceScene world;
+    const auto first = CreateRef<ConstantGenerator>();
+    const auto second = CreateRef<ConstantGenerator>();
+    const Entity emitter =
+        world.Spawn(AudioSource{.Playing = true, .Spatial = false, .Generator = first});
+    world.Frame();
+
+    world.Scene->Get<AudioSource>(emitter).Generator = second;
+    world.Frame();
+    CHECK(world.Voices().size() == 1);
+    CHECK(world.Services.GetAudio().IsGeneratorInUse(*second));
+    CHECK_FALSE(world.Services.GetAudio().IsGeneratorInUse(*first));
+}
+
+TEST_CASE("a buffered generator source toggled within a frame never registers its generator twice")
+{
+    SourceScene world;
+    AudioEngine& engine = world.Services.GetAudio();
+    const auto generator = CreateRef<ConstantGenerator>();
+    const Entity emitter = world.Spawn(
+        AudioSource{.Playing = true, .Spatial = false, .Buffered = true, .Generator = generator});
+
+    // The only sources in play are this generator's, so live generator voices plus sources awaiting
+    // reclamation counts every place the engine holds it.
+    usize mostRegistrations = 0;
+    const auto measure = [&]
+    {
+        const vector<VoiceInfo> voices = engine.GetVoiceInfos();
+        const auto live = static_cast<usize>(
+            std::ranges::count_if(voices, [](const VoiceInfo& voice) { return voice.Generator; }));
+        mostRegistrations = std::max(mostRegistrations, live + engine.GetPendingReclaimCount());
+    };
+
+    world.Frame();
+    measure();
+    for (int cycle = 0; cycle < 3; ++cycle)
+    {
+        // Off and on again before any pump: the stopped voice's wrapper is still unreclaimed.
+        world.Scene->Get<AudioSource>(emitter).Playing = false;
+        world.Update();
+        measure();
+        world.Scene->Get<AudioSource>(emitter).Playing = true;
+        world.Update();
+        measure();
+        // The restart waits out the fill thread's release ack, then plays again.
+        for (int i = 0; i < 500 && !world.System.HasVoice(emitter); ++i)
+        {
+            world.Services.GetAudioDevice().Pump(1.0f / 60.0f);
+            world.Update();
+            measure();
+            if (!world.System.HasVoice(emitter))
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+        REQUIRE(world.System.HasVoice(emitter));
+    }
+    CHECK(mostRegistrations == 1);
+}
+
+TEST_CASE("a spatial stereo generator source starts no voice and warns once")
+{
+    SourceScene world;
+    int warnings = 0;
+    Log::SetSink(
+        [&](const Log::Level level, std::string_view)
+        {
+            if (level == Log::Level::Warn)
+            {
+                ++warnings;
+            }
+        });
+    world.Spawn(AudioSource{.Playing = true,
+                            .Spatial = true,
+                            .Channels = 2,
+                            .Generator = CreateRef<ConstantGenerator>()});
+    for (int i = 0; i < 3; ++i)
+    {
+        world.Frame();
+    }
+    Log::SetSink(nullptr);
+
+    CHECK(world.Voices().empty());
+    CHECK(warnings == 1);
 }

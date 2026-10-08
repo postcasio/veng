@@ -196,11 +196,33 @@ Doppler velocities, and drives the `AudioEngine` voice table (which `Publish`es 
 system — `DistanceAttenuation`, `StereoPan`, `DopplerRatio`, `ReverbSend` — produce the **final**
 `VoiceParams` the mixer consumes, so the unit tests (`tests/unit/audio_spatial.cpp`) pin the shipped
 math, not a shadow of it. A non-spatial source (`Spatial = false`) skips all of it and routes to its
-bus at `Gain`. `PlayOnStart` sources begin with the simulation, looping sources persist, and a
-finished non-looping source is dropped once the device reports it retired through the retired-voice
-channel (surfaced by `IsVoiceLive`, never a callback into the scene). When active sources exceed the
-voice cap the loudest-after-attenuation survive, a cheap partial sort matching the renderer's
-`MaxLights` clamp.
+bus at `Gain`. When active sources exceed the voice cap the loudest-after-attenuation survive, a
+cheap partial sort matching the renderer's `MaxLights` clamp.
+
+**`Playing` is the source's one control, and it is live.** A source authored `Playing` sounds from
+the first View update that sees it — at spawn, or when the component is added at runtime. A system
+sets it `true` to start the source and `false` to stop it. When a non-looping clip finishes (the
+device reports it retired through the retired-voice channel, surfaced by `IsVoiceLive`, never a
+callback into the scene) the system clears `Playing`, so setting it again replays the clip from its
+start; a looping clip or a generator the mixer dropped (an eviction) restarts while it stays
+`Playing`. So a transient sound is an entity: spawn it playing, and it reads `Playing` false when it
+is done — removing the entity is its owner's call.
+
+**A source plays a clip or a generator through the one gather.** `AudioSource::Generator` is a
+runtime-only `Ref<IAudioGenerator>` (no `VE_FIELD`: never reflected, cooked or inspected, null on
+load); set, it is the source's sample source and `Clip` is ignored, and the authored `Channels`,
+`Buffered` and `BufferSeconds` carry its `GeneratorVoiceParams` registration. The system starts a
+clip source through `AddClipVoice` and a generator source through `PlayGenerator`, both through the
+scene's facade, and drives both from the drawn pose, attenuation, pan, Doppler, occlusion and the
+cap: a non-spatial generator is retuned with `SetVoiceParams` like a clip, a spatial one is moved
+with `SetVoicePose` and retuned with `SetVoiceMix` (its gain, rolloff and occlusion stay live). A
+source whose registration changes — a replaced generator, a flipped `Spatial`, a new width or
+buffering — restarts. **One generator plays as one voice**: a stopped voice's generator may still be
+rendered until it is reclaimed (see [Runtime-generated audio](#runtime-generated-audio)), so the
+system restarts a source on the same instance only once `IsGeneratorInUse` reads false — a toggle,
+an eviction or a re-registration re-acquires a frame or two later, and two sources sharing one
+instance never both play. A spatial source asking for a stereo or buffered generator starts nothing
+and warns once, as `PlayGenerator` would refuse it.
 
 **`OcclusionFactor` is an input the engine mixes, not one it computes.** The engine turns the
 factor into a per-voice low-pass (`VoiceParams::Occlusion`, `0` an exact bypass); it does **not**
@@ -225,9 +247,10 @@ It does not advance the engine — that is the application's once-per-frame `Aud
 and replay fall out of the scope's states with no world ids. The engine's starting calls take the
 scope explicitly — `AddVoice(scope, …)`, `AddClipVoice(scope, …)`, `PlayOneShot(scope, …)`,
 `PlayAt(scope, …)`, `PlayGenerator(scope, …)` — and refuse to start in a scope that has closed (or
-was never handed out); the handle-keyed controls (`SetVoicePose`, `SetVoiceParams`, `StopVoice`,
-`IsVoiceLive`, `GetVoiceParams`) take none. A voice is judged at its start, so one started in a `Held`
-scope is published held from its first snapshot and stays fresh until the lease returns.
+was never handed out); the handle-keyed controls (`SetVoicePose`, `SetVoiceMix`, `SetVoiceParams`,
+`StopVoice`, `IsVoiceLive`, `GetVoiceParams`) take none. A voice is judged at its start, so one
+started in a `Held` scope is published held from its first snapshot and stays fresh until the lease
+returns.
 
 **`AudioEngine::Update(delta)` runs once per frame**, in `Application::Frame`'s presentation step right
 after `PresentationScopes::Resolve()` — never from a system, so nothing advances once per world. Per
@@ -269,7 +292,9 @@ Beyond authored `AudioSource`s, any system fires sound through `SystemContext::A
   (default `SFX`). **`PlayAt(clip, worldPos, SpatialOneShotParams)`** — a spatial voice fixed at a
   world position, spatialized against its scene's listener exactly as an `AudioSource` is.
   **`SetVoicePose(handle, pos, vel)`** repositions a `PlayAt` voice each frame — the general
-  capability a moving positioned voice (a projectile, a tracked remote emitter) reaches for.
+  capability a moving positioned voice (a projectile, a tracked remote emitter) reaches for — and
+  **`SetVoiceMix(handle, SpatialVoiceMix)`** retunes its bus, base gain and pitch, rolloff and
+  occlusion in place.
 - These share one **engine-owned pool** (`MaxOneShotVoices`) inside the wider `MaxVoices` budget:
   a full pool drops its quietest voice for a louder incoming one, else rejects the request. Each
   slot carries `Managed` metadata (kind, world pose, rolloff) parallel to the voice table; the
@@ -322,8 +347,12 @@ Two runtime paths put code-made sound into the mix; pick by whether the sound is
   and `AssetManager::Adopt`s it as an `AudioClip` handle. The result is a Pcm clip in every respect
   except provenance: it plays through `PlayOneShot`/`PlayAt`, attaches to an `AudioSource`, or feeds
   the director, indistinguishable downstream from a cooked clip.
-- **`IAudioGenerator` + `PlayGenerator(gen, GeneratorVoiceParams)`** (through a facade) — for an
-  **unbounded, continuously-varying voice** the mixer pulls from. `PlayGenerator` takes a
+- **`IAudioGenerator` on an `AudioSource`, or `PlayGenerator(gen, GeneratorVoiceParams)`** (through
+  a facade) — for an **unbounded, continuously-varying voice** the mixer pulls from. A generator that
+  belongs to a scene entity — positioned at it, living and dying with it — goes on the entity's
+  `AudioSource` (see [The scene-facing AudioSystem](#the-scene-facing-audiosystem)), which is the
+  positioned path; `PlayGenerator` remains for the rest (an application-scope audition, a voice no
+  entity carries), with its caller moving and stopping the voice itself. `PlayGenerator` takes a
   `Ref<IAudioGenerator>` and the voice shares ownership of it: the caller keeps its own reference
   to drive the generator's params, or drops it whenever it likes; `Render` fills the
   samples on the mixing thread at the device rate. Pitch (Doppler) is applied by resampling that
@@ -360,6 +389,9 @@ fill thread, and whichever reference goes last destroys it: a caller still holdi
 generator alive past the voice. The flip side is that **a stopped generator may still be rendered
 until it is reclaimed**, so a caller holding a reference changes it only through its
 `GeneratorParams` block, even after the stop; to restart with different state, start a new generator.
+A caller restarting a voice on the **same** instance waits for `AudioEngine::IsGeneratorInUse` to read
+false — true while any voice renders it and until its last stopped voice is reclaimed — since
+registering it again sooner would have two voices render it.
 
 ## The Dsp primitive library
 
@@ -413,8 +445,9 @@ never the parameters.
 `IAudioGenerator` — two `Oscillator`s a fifth apart, spread across a stereo pair, through a resonant
 `Filter` low-pass (cutoff eased by a `Smoother`), amplitude-shaped by an `Envelope`, into an
 **embedded `Reverb`** (`Prepare`d once off the RT thread, `ProcessBlock` wetting only this voice) —
-registered non-spatial **stereo** (`GeneratorVoiceParams{ .Channels = 2, .Spatial = false }`) on the
-Music bus and driven live by a clock nudging the cutoff through a `GeneratorParams` block. It exercises
+played non-spatial **stereo** from an `AudioSource` on an entity of the template's world
+(`Channels = 2`, `Spatial = false`, bus `Music`, `Playing`) and driven live by a clock nudging the
+cutoff through a `GeneratorParams` block the app keeps its own reference to. It exercises
 the primitive library, the public reverb, and the stereo generator path in one place, out-of-tree via
 `find_package(veng)` — the consumer proof the toolkit is held to. It is a **demonstrator of
 composition, not a synth to reuse**: the oscillator count, the interval, and the routing are the
@@ -486,7 +519,7 @@ session confirms "the right things are playing" without a speaker. It reaches th
 [mcp/CLAUDE.md](../../../mcp/CLAUDE.md). The engine's own consumption exemplars wire the whole
 subsystem — an authored looping `AudioSource` and an `AudioListener`, a code-triggered `PlayOneShot`
 through `SystemContext::Audio` (owned by its scene and replay-gated with no code of its own), an
-authored `MusicState`, and a trivial `IAudioGenerator` + `CreateClip` demo through
-`GetApplicationAudio()` — in `examples/hello-triangle`; `examples/template` takes the minimal
-listener + source plus the composed `DemoSynth` above (also application-scoped), the consumer proof a
-new capability is held to.
+authored `MusicState`, a trivial `IAudioGenerator` played from an `AudioSource` on a world entity,
+and a `CreateClip` one-shot through `GetApplicationAudio()` — in `examples/hello-triangle`;
+`examples/template` takes the minimal listener + source plus the composed `DemoSynth` above (also
+played from a world entity's source), the consumer proof a new capability is held to.

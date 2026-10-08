@@ -6,11 +6,10 @@
 #include <Veng/Asset/AssetType.h>
 #include <Veng/Asset/DataTable.h>
 #include <Veng/Asset/Level.h>
-#include <Veng/Audio/AudioEngine.h>
+#include <Veng/Audio/AudioComponents.h>
 #include <Veng/Audio/AudioGenerator.h>
 #include <Veng/Audio/Dsp.h>
 #include <Veng/Audio/Reverb.h>
-#include <Veng/Log.h>
 #include <Veng/Gui/BindingContext.h>
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/Driver.h>
@@ -21,6 +20,7 @@
 #include <Veng/LevelOverlay.h>
 #include <Veng/Log.h>
 #include <Veng/Reflection/Reflect.h>
+#include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SystemRegistry.h>
@@ -379,21 +379,26 @@ private:
         m_Markers = *markers;
 
         ReportBeacon(world);
-        SetupSynth();
+        SetupSynth(world);
     }
 
-    // Registers the demonstrator instrument as a live stereo, non-spatial voice on the Music bus, in
-    // the application scope since no scene owns it. The reverb is prepared here, off the mixing
-    // thread, before the mixer is ever handed the generator; OnUpdate then drives its cutoff live
-    // through the param block. It runs in every mode (silent under the headless null device the smoke
-    // path uses), so the voice exists whenever the app does.
-    void SetupSynth()
+    // Plays the demonstrator instrument from an AudioSource on an entity of the world, so it belongs
+    // to the scene: it holds while the world is paused and stops with it. The generator is
+    // runtime-only, so it is attached here rather than authored; its reverb is prepared first, off
+    // the mixing thread, and OnUpdate drives its cutoff live through the param block. It runs in
+    // every mode (silent under the headless null device the smoke path uses).
+    void SetupSynth(Scene& world)
     {
         m_Synth->Prepare(SynthSampleRate);
-        m_SynthVoice = GetApplicationAudio().PlayGenerator(
-            m_Synth,
-            Audio::GeneratorVoiceParams{
-                .Bus = Audio::AudioBuses::Music(), .Spatial = false, .Channels = 2, .Gain = 0.5f});
+        const Entity synth = world.CreateEntity();
+        world.Add<Name>(synth).Value = "Demo Synth";
+        world.Add<Transform>(synth, Transform{});
+        world.Add<AudioSource>(synth, AudioSource{.Bus = string(Audio::AudioBuses::MusicName),
+                                                  .Gain = 0.5f,
+                                                  .Playing = true,
+                                                  .Spatial = false,
+                                                  .Channels = 2,
+                                                  .Generator = m_Synth});
     }
 
     // Reads the prefab-authored reference to the game-defined asset and reports what it resolved
@@ -544,11 +549,10 @@ private:
     // The game-defined asset, held resident for the app's lifetime.
     AssetHandle<Template::MarkerSet> m_Markers;
 
-    // The demonstrator instrument, its live voice handle, and the clock driving its cutoff sweep. The
-    // standard output rate the reverb and envelope timings are sized against (the mixer runs at it).
+    // The demonstrator instrument (kept here to drive its params; its source plays it) and the clock
+    // driving its cutoff sweep. The standard output rate the reverb and envelope timings are sized against (the mixer runs at it).
     static constexpr u32 SynthSampleRate = 48000;
     Ref<DemoSynth> m_Synth = CreateRef<DemoSynth>();
-    Audio::VoiceHandle m_SynthVoice;
     f32 m_SynthClock = 0.0f;
 
     // Enough frames for the world load, the first spawn, and a couple of rendered frames to

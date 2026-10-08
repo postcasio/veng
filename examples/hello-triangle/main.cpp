@@ -917,6 +917,7 @@ protected:
         ReconfigureScene();
 
         SetupSocketDemo(scene);
+        SetupToneSource(scene);
 
         if (m_SmokeOutput)
         {
@@ -1465,20 +1466,12 @@ private:
         m_McpServer = Mcp::McpServer::Create(info, *m_McpHost);
     }
 
-    // Sets up the runtime-generation demo, the exemplar of its two code paths:
-    //  - PlayGenerator registers the ToneGenerator as a live voice the mixer pulls samples from
-    //    each block; PollAudioDemo drives its frequency each frame through the param block.
-    //  - CreateClip wraps a short code-built PCM buffer as a one-shot clip, fired on a key (Key::G).
-    // Both are non-spatial, route to their bus, and belong to the application scope — no scene owns
-    // them, so no world's pause or presentation silences them. Started here so the generator voice
-    // exists in every mode (silent at amplitude 0 until PollAudioDemo runs, which the smoke path never reaches, so the
-    // golden capture is unaffected).
+    // Sets up the code-built half of the runtime-generation demo: CreateClip wraps a short PCM
+    // buffer as a one-shot clip, fired on a key (Key::G) through the application scope, so no
+    // world's pause or presentation silences it. The generator half lives on a scene entity (see
+    // SetupToneSource).
     void SetupAudioDemo()
     {
-        m_ToneVoice = GetApplicationAudio().PlayGenerator(
-            m_Tone, Audio::GeneratorVoiceParams{
-                        .Bus = Audio::AudioBuses::SFX(), .Spatial = false, .Gain = 0.12f});
-
         // A short descending two-partial chirp, built in code and adopted as a clip — a finite
         // one-shot with no source file, indistinguishable downstream from a cooked one.
         constexpr u32 rate = 48000;
@@ -1493,6 +1486,23 @@ private:
         }
         m_GeneratedClip = GetApplicationAudio().CreateClip(
             samples, Audio::AudioBufferFormat{.SampleRate = rate, .Channels = 1});
+    }
+
+    // Plays the ToneGenerator from an AudioSource on an entity of the managed world, so the voice
+    // belongs to the scene: it holds while the world is paused and stops when the world closes. The
+    // generator is runtime-only, so it is attached here rather than authored; PollAudioDemo drives
+    // its frequency through the param block. It exists in every mode, silent at amplitude 0 until
+    // PollAudioDemo runs, which the smoke path never reaches, so the golden capture is unaffected.
+    void SetupToneSource(Scene& scene)
+    {
+        const Entity tone = scene.CreateEntity();
+        scene.Add<Name>(tone).Value = "Tone Generator";
+        scene.Add<Transform>(tone, Transform{});
+        scene.Add<AudioSource>(tone, AudioSource{.Bus = string(Audio::AudioBuses::SFXName),
+                                                 .Gain = 0.12f,
+                                                 .Playing = true,
+                                                 .Spatial = false,
+                                                 .Generator = m_Tone});
     }
 
     // Drives the generator voice's frequency from a clock (the live-parameter half of the demo) and
@@ -1923,11 +1933,9 @@ private:
     optional<Mcp::McpHost> m_McpHost;
     Unique<Mcp::McpServer> m_McpServer;
 
-    // The runtime-generation demo: the app-owned sine generator (its Render runs on the mixing
-    // thread while this voice is live, so it must outlive the voice — stopped in the destructor), the
-    // handle to its live voice, the clock driving its frequency, and the code-built one-shot clip.
+    // The runtime-generation demo: the sine generator (held here to drive its params; its scene
+    // source plays it), the clock driving its frequency, and the code-built one-shot clip.
     Ref<ToneGenerator> m_Tone = CreateRef<ToneGenerator>();
-    Audio::VoiceHandle m_ToneVoice;
     f32 m_ToneClock = 0.0f;
     AssetHandle<Audio::AudioClip> m_GeneratedClip;
 

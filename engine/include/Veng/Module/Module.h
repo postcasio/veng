@@ -347,10 +347,15 @@ extern "C"
 /// and PresentationScopeStatus grows the scope's presentation rank. A module spawns prefabs carrying
 /// builtin components, calls the facade every tick and reads the engine and the scope listing, so a
 /// stale module lays MusicState out short and calls a facade entry point the host no longer exports.
+/// Version 84 lets an authored source play a generator and replaces its start flag with a live
+/// control: the builtin AudioSource trades PlayOnStart for Playing and grows the generator's Channels,
+/// Buffered, BufferSeconds and runtime-only Generator, and AudioEngine and ScopedAudio grow
+/// SetVoiceMix and IsGeneratorInUse. A module spawns prefabs carrying the builtin and its systems
+/// write it, so a stale module lays AudioSource out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 83u
+#define VENG_MODULE_ABI_VERSION 84u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

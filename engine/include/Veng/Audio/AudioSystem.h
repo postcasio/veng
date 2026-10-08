@@ -11,6 +11,12 @@
 namespace Veng
 {
     class Scene;
+    struct AudioSource;
+
+    namespace Audio
+    {
+        struct IAudioGenerator;
+    }
 
     /// @brief View-phase system that places, spatializes, and mixes the scene's AudioSources.
     ///
@@ -20,10 +26,17 @@ namespace Veng
     /// none, so non-spatial sound still plays), walks View<Transform, AudioSource> up to a voice cap,
     /// computes each voice's distance attenuation, pan, Doppler pitch, reverb send, and occlusion
     /// low-pass drive, and drives the AudioEngine's voice table (which publishes the immutable
-    /// snapshot to the device). PlayOnStart sources begin with the simulation, looping sources
-    /// persist, and a finished non-looping source is dropped once the device reports it retired
-    /// through the lock-free retired-voice channel. When active sources exceed the cap the loudest
-    /// after attenuation survive, matching the renderer's light clamp.
+    /// snapshot to the device). A source sounds while its Playing control is set: one authored or
+    /// added playing starts on the first update that sees it, clearing Playing stops it, and a
+    /// non-looping clip that finishes clears Playing, so setting it again replays it. When active
+    /// sources exceed the cap the loudest after attenuation survive, matching the renderer's light
+    /// clamp.
+    ///
+    /// A source carrying a Generator plays it through the same gather: it starts as a generator voice
+    /// (spatial ones moved to the drawn pose each update), a replaced generator restarts the voice on
+    /// the new one, and a restart on the same instance waits until the engine no longer holds it, so
+    /// one generator never plays as two voices. A spatial source asking for a stereo or buffered
+    /// generator starts nothing and warns once, as the engine would refuse it.
     ///
     /// It drives the engine through SystemContext::Audio, the facade bound to the scene's
     /// presentation scope, so its voices belong to the scene: a paused world's sources hold, an
@@ -70,12 +83,44 @@ namespace Veng
         [[nodiscard]] optional<vec3> GetDebugSourcePosition(Entity entity) const;
 
     private:
+        /// @brief How a source asks to be voiced: its sample source and a generator voice's
+        ///        registration. A live voice started under a different shape restarts.
+        struct VoiceShape
+        {
+            /// @brief The generator played, compared by identity only; null for a clip voice.
+            const Audio::IAudioGenerator* Generator = nullptr;
+            /// @brief Whether a generator voice is registered positioned (moved by SetVoicePose).
+            bool Spatial = false;
+            /// @brief A generator voice's registered channel count.
+            u32 Channels = 1;
+            /// @brief Whether a generator voice is registered buffered.
+            bool Buffered = false;
+            /// @brief A buffered generator voice's registered depth in seconds.
+            f32 BufferSeconds = 0.0f;
+
+            /// @brief Compares every field.
+            bool operator==(const VoiceShape&) const = default;
+        };
+
+        /// @brief The voice a playing source holds, and the shape it was started under.
+        struct SourceVoice
+        {
+            /// @brief The live voice.
+            Audio::VoiceHandle Voice;
+            /// @brief The shape the voice was started under.
+            VoiceShape Shape;
+        };
+
+        /// @brief Returns the shape a source asks to be voiced under; every clip source shares one,
+        ///        since a clip voice is retuned whatever its fields.
+        [[nodiscard]] static VoiceShape ShapeOf(const AudioSource& source);
+
         /// @brief The concurrent source-voice cap; the loudest survive when exceeded.
         u32 m_VoiceCap = 32;
         /// @brief The live voice each playing source holds, keyed by source entity.
-        std::unordered_map<Entity, Audio::VoiceHandle> m_Voices;
-        /// @brief Non-looping sources that have finished, so they are not restarted.
-        std::unordered_set<Entity> m_Finished;
+        std::unordered_map<Entity, SourceVoice> m_Voices;
+        /// @brief Sources already warned about asking for a generator voice the engine refuses.
+        std::unordered_set<Entity> m_Rejected;
         /// @brief Each placed source's previous-frame world position, for velocity (Doppler).
         std::unordered_map<Entity, vec3> m_SourcePosition;
         /// @brief The listener's previous-frame world position, for its velocity.

@@ -62,6 +62,26 @@ namespace Veng::Audio
         vec3 Velocity{0.0f};
     };
 
+    /// @brief The authored mix of a positioned voice apart from its pose (AudioEngine::SetVoiceMix).
+    ///
+    /// What a caller retunes on a live PlayAt voice or spatial generator while SetVoicePose moves it:
+    /// the engine re-spatializes the voice against its scope's listener from these and its pose.
+    struct SpatialVoiceMix
+    {
+        /// @brief The bus the voice mixes into; an id absent from the active graph routes to Master.
+        BusId Bus = AudioBuses::SFX();
+        /// @brief Linear gain applied before spatialization; 0 = silent, 1 = unity.
+        f32 Gain = 1.0f;
+        /// @brief Base playback pitch (resample ratio); Doppler multiplies this.
+        f32 Pitch = 1.0f;
+        /// @brief Distance at or within which the voice plays at full Gain.
+        f32 MinDistance = 1.0f;
+        /// @brief Distance at or beyond which the voice is silent.
+        f32 MaxDistance = 50.0f;
+        /// @brief Occlusion low-pass drive, 0 = clear (bypass) to 1 = fully occluded.
+        f32 OcclusionFactor = 0.0f;
+    };
+
     /// @brief What role a live voice plays, for read-only inspection.
     enum class VoiceOrigin : u8
     {
@@ -389,6 +409,25 @@ namespace Veng::Audio
         /// @param worldPos The new world position.
         /// @param velocity The new world velocity, units per second (for Doppler).
         void SetVoicePose(VoiceHandle voice, vec3 worldPos, vec3 velocity);
+
+        /// @brief Retunes a positioned voice's authored mix, keeping its pose (no effect on a stale
+        ///        handle or a voice that is not positioned).
+        ///
+        /// The companion of SetVoicePose for a caller whose emitter's gain, rolloff or occlusion
+        /// changes while it plays: the voice is re-spatialized against its scope's listener from
+        /// @p mix and its current pose. Applies to a PlayAt voice and a spatial generator voice.
+        /// @param voice The handle returned by PlayAt or a spatial PlayGenerator.
+        /// @param mix   The voice's new bus, base gain and pitch, rolloff and occlusion.
+        void SetVoiceMix(VoiceHandle voice, const SpatialVoiceMix& mix);
+
+        /// @brief Returns whether the engine still holds @p generator for any voice.
+        ///
+        /// True while a voice renders it, and after that voice stops until the reclamation
+        /// handshake releases the engine's reference (for a buffered voice, once the fill thread has
+        /// acknowledged the removal too). A caller restarting a voice on the same generator waits for
+        /// false: registering an instance the engine still holds would have two voices render it.
+        /// @param generator The generator.
+        [[nodiscard]] bool IsGeneratorInUse(const IAudioGenerator& generator) const;
 
         /// @brief Sets the listener a scope's spatial voices are spatialized against.
         ///

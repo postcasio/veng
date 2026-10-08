@@ -2,6 +2,7 @@
 
 #include <Veng/Audio/AudioComponents.h>
 #include <Veng/Audio/ScopedAudio.h>
+#include <Veng/Log.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Transforms.h>
@@ -126,12 +127,38 @@ namespace Veng
             params.ReverbSend = Audio::ReverbSend(distance, source.MinDistance, source.MaxDistance);
             return params;
         }
+
+        // The authored mix a positioned generator voice is spatialized from by the engine.
+        Audio::SpatialVoiceMix MixOf(const AudioSource& source)
+        {
+            return Audio::SpatialVoiceMix{.Bus = Audio::BusId{source.Bus},
+                                          .Gain = source.Gain,
+                                          .Pitch = source.Pitch,
+                                          .MinDistance = source.MinDistance,
+                                          .MaxDistance = source.MaxDistance,
+                                          .OcclusionFactor = source.OcclusionFactor};
+        }
+    }
+
+    AudioSystem::VoiceShape AudioSystem::ShapeOf(const AudioSource& source)
+    {
+        if (source.Generator == nullptr)
+        {
+            return {};
+        }
+        return VoiceShape{
+            .Generator = source.Generator.get(),
+            .Spatial = source.Spatial,
+            .Channels = source.Channels == 2 ? 2u : 1u,
+            .Buffered = source.Buffered,
+            .BufferSeconds = source.Buffered ? source.BufferSeconds : 0.0f,
+        };
     }
 
     void AudioSystem::OnStart(Scene& /*scene*/, const SystemContext& /*context*/)
     {
         m_Voices.clear();
-        m_Finished.clear();
+        m_Rejected.clear();
         m_SourcePosition.clear();
         m_HasListenerPosition = false;
     }
@@ -140,10 +167,10 @@ namespace Veng
     {
         for (const auto& [entity, voice] : m_Voices)
         {
-            context.Audio.StopVoice(voice);
+            context.Audio.StopVoice(voice.Voice);
         }
         m_Voices.clear();
-        m_Finished.clear();
+        m_Rejected.clear();
         m_SourcePosition.clear();
         m_HasListenerPosition = false;
         // A stopped system no longer speaks for its scene's music.
@@ -197,29 +224,37 @@ namespace Veng
         }
 
         // Drop voices the device retired (surfaced through IsVoiceLive once Pump drained the
-        // retired-voice channel): a finished non-looping source stays finished and is not restarted.
+        // retired-voice channel). A non-looping clip that played out reads Playing false, so setting
+        // it again replays it; anything else the mixer dropped — an evicted looping clip or generator
+        // — restarts below while it stays Playing.
         for (auto it = m_Voices.begin(); it != m_Voices.end();)
         {
-            if (audio.IsVoiceLive(it->second))
+            if (audio.IsVoiceLive(it->second.Voice))
             {
                 ++it;
                 continue;
             }
-            const AudioSource* source = scene.TryGet<AudioSource>(it->first);
-            if (source != nullptr && !source->Looping)
+            if (it->second.Shape.Generator == nullptr)
             {
-                m_Finished.insert(it->first);
+                if (auto* source = scene.TryGet<AudioSource>(it->first);
+                    source != nullptr && !source->Looping)
+                {
+                    source->Playing = false;
+                }
             }
             it = m_Voices.erase(it);
         }
 
-        // Gather the sources that should be sounding this tick, with their spatialized parameters
-        // and post-attenuation loudness (the cap's priority key).
+        // Gather the sources that should be sounding this update, with their spatialized parameters
+        // and post-attenuation loudness (the cap's priority key). The component pointers stay valid
+        // through the rest of the update: nothing below adds or removes a component.
         struct Candidate
         {
             Entity Source;
-            AssetHandle<Audio::AudioClip> Clip;
+            const AudioSource* Component;
             Audio::VoiceParams Params;
+            vec3 Position;
+            vec3 Velocity;
         };
         std::vector<Candidate> candidates;
         std::unordered_set<Entity> present;
@@ -228,26 +263,36 @@ namespace Veng
             [&](const Entity entity, Transform&, AudioSource& source)
             {
                 present.insert(entity);
-                if (m_Finished.contains(entity))
+                if (!source.Playing)
                 {
                     return;
                 }
 
-                // Only a PlayOnStart source (or one already sounding) plays here; a code-triggered
-                // one-shot is a later capability.
-                const bool playing = m_Voices.contains(entity);
-                if (!source.PlayOnStart && !playing)
+                const bool generator = source.Generator != nullptr;
+                if (generator && source.Spatial && (source.Channels == 2 || source.Buffered))
                 {
+                    // The engine places a spatial voice as one mono point with per-frame pan and
+                    // Doppler, which a stereo image or an ahead-of-time ring cannot carry.
+                    if (m_Rejected.insert(entity).second)
+                    {
+                        Log::Warn("AudioSystem: entity {} asks for a spatial {} generator voice, "
+                                  "which cannot be spatialized; it plays nothing",
+                                  entity.Index, source.Buffered ? "buffered" : "stereo");
+                    }
                     return;
                 }
 
-                // A Pcm clip plays off its resident buffer, an Encoded clip through the streaming
-                // path; only an unresident clip (neither resident nor encoded) is silent.
-                const Audio::AudioClip* clip = source.Clip.Get();
-                if (clip == nullptr ||
-                    (clip->Buffer() == nullptr && clip->Storage() != Audio::AudioStorage::Encoded))
+                // Only starting a clip voice needs the clip: a Pcm clip plays off its resident
+                // buffer, an Encoded clip through the streaming path, an unresident clip not at all.
+                // A sounding voice holds its own reference to what it plays.
+                if (!generator && !m_Voices.contains(entity))
                 {
-                    return;
+                    const Audio::AudioClip* clip = source.Clip.Get();
+                    if (clip == nullptr || (clip->Buffer() == nullptr &&
+                                            clip->Storage() != Audio::AudioStorage::Encoded))
+                    {
+                        return;
+                    }
                 }
 
                 const mat4 world = DrawnPose(scene, entity, alpha);
@@ -260,27 +305,41 @@ namespace Veng
                 }
                 m_SourcePosition[entity] = position;
 
+                Audio::VoiceParams params = Spatialize(source, position, velocity, listener);
+                // A generator never ends; Looping is a clip's.
+                params.Loop = params.Loop && !generator;
                 candidates.push_back(Candidate{
                     .Source = entity,
-                    .Clip = source.Clip,
-                    .Params = Spatialize(source, position, velocity, listener),
+                    .Component = &source,
+                    .Params = params,
+                    .Position = position,
+                    .Velocity = velocity,
                 });
             });
 
-        // Stop voices whose source vanished, and forget bookkeeping for entities no longer present.
+        // Stop the voice of every source no longer sounding as it was started: gone, stopped, or
+        // re-shaped (a replaced generator, a changed generator registration). A re-shaped source
+        // starts again below.
+        std::unordered_map<Entity, const AudioSource*> wanted;
+        wanted.reserve(candidates.size());
+        for (const Candidate& candidate : candidates)
+        {
+            wanted.emplace(candidate.Source, candidate.Component);
+        }
         for (auto it = m_Voices.begin(); it != m_Voices.end();)
         {
-            if (present.contains(it->first))
+            const auto want = wanted.find(it->first);
+            if (want != wanted.end() && ShapeOf(*want->second) == it->second.Shape)
             {
                 ++it;
                 continue;
             }
-            audio.StopVoice(it->second);
+            audio.StopVoice(it->second.Voice);
             it = m_Voices.erase(it);
         }
         std::erase_if(m_SourcePosition,
                       [&](const auto& entry) { return !present.contains(entry.first); });
-        std::erase_if(m_Finished, [&](const Entity entity) { return !present.contains(entity); });
+        std::erase_if(m_Rejected, [&](const Entity entity) { return !present.contains(entity); });
 
         // Cap: keep the loudest-after-attenuation, stopping the voices of the dropped sources.
         if (candidates.size() > m_VoiceCap)
@@ -293,7 +352,7 @@ namespace Veng
             {
                 if (const auto it = m_Voices.find(candidates[i].Source); it != m_Voices.end())
                 {
-                    audio.StopVoice(it->second);
+                    audio.StopVoice(it->second.Voice);
                     m_Voices.erase(it);
                 }
             }
@@ -303,16 +362,61 @@ namespace Veng
         // Start the new voices and retune the live ones.
         for (const Candidate& candidate : candidates)
         {
-            const auto it = m_Voices.find(candidate.Source);
-            if (it != m_Voices.end())
+            const AudioSource& source = *candidate.Component;
+            if (const auto it = m_Voices.find(candidate.Source); it != m_Voices.end())
             {
-                audio.SetVoiceParams(it->second, candidate.Params);
+                const SourceVoice& voice = it->second;
+                if (voice.Shape.Generator != nullptr && voice.Shape.Spatial)
+                {
+                    // A positioned generator voice is spatialized by the engine from its mix and
+                    // pose, against the same listener this update set.
+                    audio.SetVoiceMix(voice.Voice, MixOf(source));
+                    audio.SetVoicePose(voice.Voice, candidate.Position, candidate.Velocity);
+                }
+                else
+                {
+                    audio.SetVoiceParams(voice.Voice, candidate.Params);
+                }
                 continue;
             }
-            const Audio::VoiceHandle voice = audio.AddClipVoice(candidate.Clip, candidate.Params);
-            if (voice.IsValid())
+
+            const VoiceShape shape = ShapeOf(source);
+            Audio::VoiceHandle handle;
+            if (source.Generator != nullptr)
             {
-                m_Voices[candidate.Source] = voice;
+                // The instance's previous voice is still being released; registering it again now
+                // would have two voices render it.
+                if (audio.IsGeneratorInUse(*source.Generator))
+                {
+                    continue;
+                }
+                Audio::GeneratorVoiceParams params{.Bus = candidate.Params.Bus,
+                                                   .Spatial = shape.Spatial,
+                                                   .Channels = shape.Channels,
+                                                   .Buffered = shape.Buffered,
+                                                   .BufferSeconds = source.BufferSeconds,
+                                                   .Gain = candidate.Params.Gain,
+                                                   .Pitch = candidate.Params.Pitch};
+                if (shape.Spatial)
+                {
+                    const Audio::SpatialVoiceMix mix = MixOf(source);
+                    params.Gain = mix.Gain;
+                    params.Pitch = mix.Pitch;
+                    params.Position = candidate.Position;
+                    params.Velocity = candidate.Velocity;
+                    params.MinDistance = mix.MinDistance;
+                    params.MaxDistance = mix.MaxDistance;
+                    params.OcclusionFactor = mix.OcclusionFactor;
+                }
+                handle = audio.PlayGenerator(source.Generator, params);
+            }
+            else
+            {
+                handle = audio.AddClipVoice(source.Clip, candidate.Params);
+            }
+            if (handle.IsValid())
+            {
+                m_Voices[candidate.Source] = SourceVoice{.Voice = handle, .Shape = shape};
             }
         }
     }

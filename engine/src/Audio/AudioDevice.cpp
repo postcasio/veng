@@ -2034,6 +2034,40 @@ namespace Veng::Audio
             SpatializeManaged(managed, GetListener(m_Voices[voice.Slot].Scope));
     }
 
+    void AudioEngine::SetVoiceMix(const VoiceHandle voice, const SpatialVoiceMix& mix)
+    {
+        if (!IsVoiceLive(voice) || m_Managed[voice.Slot].Kind != ManagedKind::Spatial)
+        {
+            return;
+        }
+        Managed& managed = m_Managed[voice.Slot];
+        managed.Bus = mix.Bus;
+        managed.BaseGain = mix.Gain;
+        managed.BasePitch = mix.Pitch;
+        managed.MinDistance = mix.MinDistance;
+        managed.MaxDistance = mix.MaxDistance;
+        managed.Occlusion = mix.OcclusionFactor;
+        m_Voices[voice.Slot].Params =
+            SpatializeManaged(managed, GetListener(m_Voices[voice.Slot].Scope));
+    }
+
+    bool AudioEngine::IsGeneratorInUse(const IAudioGenerator& generator) const
+    {
+        // A buffered voice's wrapper holds the generator too, and keeps holding it in the deferred
+        // queue until the fill thread acknowledges the removal.
+        const auto holds = [&generator](const Ref<IAudioGenerator>& held,
+                                        const Unique<BufferedGenerator>& buffered)
+        {
+            return held.get() == &generator ||
+                   (buffered != nullptr && buffered->Generator.get() == &generator);
+        };
+        return std::ranges::any_of(
+                   m_Voices, [&](const Voice& voice)
+                   { return voice.Active && holds(voice.Generator, voice.Buffered); }) ||
+               std::ranges::any_of(m_Deferred, [&](const Deferred& deferred)
+                                   { return holds(deferred.Generator, deferred.Buffered); });
+    }
+
     void AudioEngine::SetListener(const PresentationScopeId scope, const ListenerPose& listener)
     {
         m_Listeners[scope.Value] = listener;

@@ -44,6 +44,19 @@ namespace Veng::Audio
         }
     }
 
+    void ScopedAudio::SetVoiceMix(const VoiceHandle voice, const SpatialVoiceMix& mix) const
+    {
+        if (m_Engine != nullptr)
+        {
+            m_Engine->SetVoiceMix(voice, mix);
+        }
+    }
+
+    bool ScopedAudio::IsGeneratorInUse(const IAudioGenerator& generator) const
+    {
+        return m_Engine != nullptr && m_Engine->IsGeneratorInUse(generator);
+    }
+
     void ScopedAudio::SetVoiceParams(const VoiceHandle voice, const VoiceParams& params) const
     {
         if (m_Engine != nullptr)

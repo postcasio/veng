@@ -47,6 +47,10 @@ exemplar, built as part of the engine tree via `add_subdirectory`.
   switches on while a seat drives the slab, played by the level's `HapticsSystem`. The Gamepads
   debug window offers the jump clip to play on any pad. Both clips are placeholders that touch the
   motors, not tuned effects — see [engine/src/Haptics/CLAUDE.md](../engine/src/Haptics/CLAUDE.md).
+- **It is the live consumer of a generator source.** `OnWorldLoaded` adds an entity carrying an
+  `AudioSource` whose runtime-only `Generator` is the sample's `ToneGenerator`, so the tone belongs to
+  the world (held by its pause, stopped with it) while the app sweeps its frequency through the
+  reference it keeps; the code-built `CreateClip` chirp on Key::G stays an application-scope one-shot.
 - Its MCP wiring (`StartMcpServerIfRequested`, env-gated behind `HT_MCP`; the fixed-port
   `hello_triangle-run` / editor convenience targets) is the worked MCP reference — see
   [mcp/CLAUDE.md](../mcp/CLAUDE.md).
@@ -96,10 +100,13 @@ cube whose mesh is an inline `CubeShape` recipe and which carries a `ConstantMot
 HUD), owns the running scene + simulation, ticks the level's system set (the engine
 `ConstantMotionSystem`), and pushes the resolved camera each frame — the cube, panel, mirror, and
 HUD are authored data driven by the engine, not built in code. On top of that, `main.cpp` layers a
-**thin `Application` subclass** doing the two things data cannot:
+**thin `Application` subclass** doing the three things data cannot:
 
 - it binds the primary `GuiOverlay` HUD its view-model (the one thing the engine cannot do from
-  data alone), and
+  data alone),
+- it plays its composed `DemoSynth` generator from an `AudioSource` on an entity it adds to the
+  world in `OnWorldLoaded` (a generator is runtime-only, so it is attached in code, not authored),
+  driving the synth's cutoff from `OnUpdate` through the reference it keeps, and
 - it opens a **secondary overlay level** on a key through `LevelOverlay` — a preset over
   `WorldRunner::OpenWorld` that opens an owned, runner-ticked world plus the overlay policy. The
   overlay is a live sub-scene with its own input seat, its own `systems` (the builtin

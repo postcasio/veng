@@ -82,6 +82,14 @@ namespace Veng::Audio
         /// @brief Repositions a spatial voice (AudioEngine::SetVoicePose); works inside a replay.
         void SetVoicePose(VoiceHandle voice, vec3 worldPos, vec3 velocity) const;
 
+        /// @brief Retunes a positioned voice's authored mix (AudioEngine::SetVoiceMix); works inside
+        ///        a replay.
+        void SetVoiceMix(VoiceHandle voice, const SpatialVoiceMix& mix) const;
+
+        /// @brief Returns whether the engine still holds @p generator for any voice
+        ///        (AudioEngine::IsGeneratorInUse); false over nothing.
+        [[nodiscard]] bool IsGeneratorInUse(const IAudioGenerator& generator) const;
+
         /// @brief Updates a live voice's mix parameters (AudioEngine::SetVoiceParams).
         void SetVoiceParams(VoiceHandle voice, const VoiceParams& params) const;
 
