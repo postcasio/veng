@@ -240,8 +240,9 @@ namespace Veng
         /// The frame-accumulated companion to Phase == Started: InputMappingSystem ORs this across
         /// every Sim tick of a frame and resets it on the frame's first tick, so a once-per-frame
         /// reader (a View system) sees a Started edge that landed on a non-final tick of a multi-tick
-        /// frame — which the single-valued Phase would have overwritten. A frame that runs no Sim tick
-        /// clears it (ResetFrameActionEdges), so it never carries an edge into the next frame. Not
+        /// frame — which the single-valued Phase would have overwritten. A frame that runs no Sim tick,
+        /// including every frame its world is paused, clears it (ResetFrameActionEdges), so it never
+        /// carries an edge into the next frame. Not
         /// reflected: a transient, locally-derived view of Phase, never cooked or replicated.
         bool StartedThisFrame = false;
 
@@ -299,9 +300,9 @@ namespace Veng
         /// application code) samples: under the fixed timestep a frame runs 0..N Sim ticks and a
         /// Started pulse on a non-final tick is overwritten in Phase before the frame's single View
         /// pass reads it. This survives that, reading the ORed StartedThisFrame the InputMappingSystem
-        /// maintains. A frame that runs no Sim tick reads false, so an edge is seen on exactly one
-        /// frame however the frame rate and the tick rate interleave. A per-tick Sim system uses
-        /// WasTriggered.
+        /// maintains. A frame that runs no Sim tick — its world paused, or the frame short of a whole
+        /// tick — reads false, so an edge is seen on exactly one frame however the frame rate and the
+        /// tick rate interleave. A per-tick Sim system uses WasTriggered.
         /// @param id  The action to look up.
         /// @return True if the action activated on any tick this frame.
         [[nodiscard]] bool WasTriggeredThisFrame(ActionId id) const;

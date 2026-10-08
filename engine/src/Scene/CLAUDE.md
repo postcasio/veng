@@ -434,8 +434,16 @@ which a game-specific control system reads to produce the abstract `Intent` game
   View pass. A frame that runs **no** step — every other frame when the display outpaces the tick
   rate — never reaches the system, so the world drive (`WorldRunner::Tick`, and the editor's Play
   drive) clears the frame edges with `ResetFrameActionEdges` before that frame's View pass, leaving
-  `Phase` and `Value` for the next step to derive from. A frame edge is therefore read on exactly one
-  frame: the first that ticks after the input lands.
+  `Phase` and `Value` for the next step to derive from. A **paused or unstarted** world runs no step
+  either and is cleared the same way, though it gets no View pass, so per-frame code reading its
+  `PlayerInput` sees no edge for as long as it is paused. A frame edge is therefore read on exactly
+  one frame: the first that ticks after the input lands.
+    **A pause drops a press it lands on; a key held through it is not lost.** A world with no active
+  sim rolls the raw snapshot every frame like a UI (see `Input::BeginFrame`), so a tap pressed and
+  released while the world is paused — or still latched for a step when the pause lands — never
+  reaches a step, as the paused clock chases no backlog. A key still down when the world resumes is
+  read by level: the first step derives `Started` from the `Phase` the world paused on, so a press
+  made during the pause fires on resume, and one already `Ongoing` at the pause does not fire again.
     **A context can be gated on gameplay focus as authored data.** An `InputMapData`
   (`Veng/Asset/InputMappingContext.h`) carries a reflected **`RequiresGameplayFocus`** flag
   (authored `"RequiresGameplayFocus"`, tolerant-read so existing cooked maps are unchanged); when

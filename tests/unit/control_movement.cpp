@@ -563,13 +563,18 @@ namespace
             scene.Add<SeatInput>(seat, SeatInput{});
         }
 
-        // Runs one frame of @p delta seconds, pressing Space first when asked; returns the steps run.
-        u64 Frame(const f32 delta, const bool press = false)
+        // Runs one frame of @p delta seconds, pressing then releasing Space first when asked;
+        // returns the steps run.
+        u64 Frame(const f32 delta, const bool press = false, const bool release = false)
         {
             Storage.HeadlessInput.BeginFrame(!Latched);
             if (press)
             {
                 Storage.HeadlessInput.ApplyEvent(KeyPressedEvent(Key::Space, 0, 0));
+            }
+            if (release)
+            {
+                Storage.HeadlessInput.ApplyEvent(KeyReleasedEvent(Key::Space, 0, 0));
             }
             const World& world = *Runner.ResolveWorld(Id);
             const u64 before = world.Clock.GetTick();
@@ -588,6 +593,19 @@ namespace
             });
             Latched = result.AnyActive && !result.AnyTicked;
             return world.Clock.GetTick() - before;
+        }
+
+        void Pause(const bool paused) { Runner.SetWorldPaused(Id, paused); }
+
+        // The seat's PlayerInput as per-frame application code reads it, View pass or not.
+        [[nodiscard]] const PlayerInput& Seat() const
+        {
+            const Scene& scene = Runner.ResolveWorld(Id)->GetScene();
+            const PlayerInput* found = nullptr;
+            scene.Each<PlayerInput>([&](const Entity, const PlayerInput& input)
+                                    { found = &input; });
+            REQUIRE(found != nullptr);
+            return *found;
         }
     };
 
@@ -631,6 +649,55 @@ TEST_CASE("A press landing on a frame that runs no Sim step is read on the next 
     REQUIRE(rig.Frame(Half60) == 1);
     REQUIRE(rig.Frame(Half60) == 0);
     CHECK(FrameEdgeProbe::Triggered == 1);
+}
+
+TEST_CASE("A paused world's PlayerInput carries no frame edge from the frame before the pause")
+{
+    FrameEdgeRig rig;
+
+    REQUIRE(rig.Frame(Tick60, /*press=*/true) == 1);
+    REQUIRE(rig.Seat().WasTriggeredThisFrame(Jump));
+
+    rig.Pause(true);
+    REQUIRE(rig.Frame(Tick60) == 0);
+    CHECK_FALSE(rig.Seat().WasTriggeredThisFrame(Jump));
+    CHECK(rig.Seat().IsHeld(Jump));
+
+    // Held through the pause, the press was already seen: resuming does not fire it again.
+    rig.Pause(false);
+    REQUIRE(rig.Frame(Tick60) == 1);
+    CHECK_FALSE(rig.Seat().WasTriggeredThisFrame(Jump));
+    CHECK(FrameEdgeProbe::Triggered == 1);
+}
+
+TEST_CASE("A key pressed while its world is paused fires once when the world resumes")
+{
+    FrameEdgeRig rig;
+
+    REQUIRE(rig.Frame(Tick60) == 1);
+    rig.Pause(true);
+    REQUIRE(rig.Frame(Tick60, /*press=*/true) == 0);
+    REQUIRE(rig.Frame(Tick60) == 0);
+    CHECK_FALSE(rig.Seat().WasTriggeredThisFrame(Jump));
+
+    rig.Pause(false);
+    REQUIRE(rig.Frame(Tick60) == 1);
+    REQUIRE(rig.Frame(Tick60) == 1);
+    CHECK(FrameEdgeProbe::Triggered == 1);
+}
+
+TEST_CASE("A tap made and released while its world is paused does not fire on resume")
+{
+    FrameEdgeRig rig;
+
+    REQUIRE(rig.Frame(Tick60) == 1);
+    rig.Pause(true);
+    REQUIRE(rig.Frame(Tick60, /*press=*/true, /*release=*/true) == 0);
+    REQUIRE(rig.Frame(Tick60) == 0);
+
+    rig.Pause(false);
+    REQUIRE(rig.Frame(Tick60) == 1);
+    CHECK(FrameEdgeProbe::Triggered == 0);
 }
 
 TEST_CASE("ResetFrameActionEdges clears the frame edges and keeps each sample's phase and value")

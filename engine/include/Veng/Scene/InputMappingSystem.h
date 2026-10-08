@@ -32,9 +32,11 @@ namespace Veng
     /// scene, leaving each sample's Phase and Value untouched. A frame that runs no Sim step never
     /// reaches InputMappingSystem, whose first step is what otherwise starts a frame's accumulation
     /// afresh; without this the edges a previous frame accumulated would read again in this frame's
-    /// View pass. Phase is left alone because the next Sim step derives its phase from it.
+    /// View pass, or to per-frame code reading a paused world. Phase is left alone because the next
+    /// Sim step derives its phase from it.
     /// @param scene  The scene whose PlayerInputs are cleared.
-    /// @pre Called on a frame whose step plan ran zero Sim steps, before that frame's View pass.
+    /// @pre Called on a frame whose step plan ran zero Sim steps — including a frame its world is
+    ///      paused or unstarted — before that frame's View pass.
     /// @post Every WasTriggeredThisFrame / WasReleasedThisFrame query in @p scene reads false.
     VE_API void ResetFrameActionEdges(Scene& scene);
 

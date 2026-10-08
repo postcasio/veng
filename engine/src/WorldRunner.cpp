@@ -321,9 +321,11 @@ namespace Veng
                 sim != nullptr && sim->IsStarted() && !sim->IsPaused() && !world->IsPaused();
             if (!active)
             {
-                // A paused or unstarted world drops its accumulator so resuming chases no backlog.
+                // A paused or unstarted world drops its accumulator so resuming chases no backlog. It
+                // runs no step either, so it clears its frame edges as a stepless frame does below.
                 world->Clock.Reset();
                 world->LastAlpha = 0.0f;
+                ResetFrameActionEdges(scene);
                 continue;
             }
             result.AnyActive = true;

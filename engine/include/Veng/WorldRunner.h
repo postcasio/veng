@@ -325,7 +325,9 @@ namespace Veng
         /// driving the caller's per-step hooks. A world's steps stop at its MaxTicksPerFrame and, when
         /// set, its MaxSimMillisecondsPerFrame; transform history is recorded only after the steps
         /// interpolation reads (SimStepInfo::RecordsHistory). A paused or unstarted world resets its
-        /// accumulator so resuming chases no backlog.
+        /// accumulator so resuming chases no backlog. Any world that runs no step this frame —
+        /// paused, unstarted, or short of a whole tick — has its frame action edges cleared
+        /// (ResetFrameActionEdges), so per-frame code reading its PlayerInput sees no stale edge.
         ///
         /// A system may open and close worlds from its own update: an open lands at once and first
         /// ticks next frame, a close is deferred to the end of the walk (see OpenWorld and
