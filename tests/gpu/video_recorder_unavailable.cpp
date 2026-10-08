@@ -10,6 +10,7 @@
 #include <Veng/Audio/AudioDevice.h>
 #include <Veng/Capture/VideoRecorder.h>
 #include <Veng/Renderer/ViewportCompositor.h>
+#include "support/TestAudio.h"
 
 #include <gpu/fixture.h>
 
@@ -20,6 +21,7 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 {
     Renderer::ViewportCompositor compositor(Context);
     const Unique<Audio::AudioDevice> device = Audio::AudioDevice::Create(
+        TestSupport::SharedPresentationScopes(),
         Audio::AudioDeviceInfo{.Backend = Audio::AudioBackend::Null, .Channels = 2});
 
     Capture::VideoRecorder recorder(Context, compositor, *device,

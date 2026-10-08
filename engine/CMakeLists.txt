@@ -86,6 +86,7 @@ add_library(veng SHARED
         src/Audio/AudioClip.cpp
         src/Audio/AudioDevice.cpp
         src/Audio/AudioSystem.cpp
+        src/Audio/ScopedAudio.cpp
         src/Audio/Reverb.cpp
         src/Behavior/BehaviorSystem.cpp
         src/Behavior/BehaviorTree.cpp

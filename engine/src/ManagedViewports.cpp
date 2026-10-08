@@ -100,10 +100,9 @@ namespace Veng
     ManagedViewportSet::ManagedViewportSet(Renderer::Context& context, AssetManager& assets,
                                            Renderer::ViewportCompositor& compositor,
                                            InputRouter& router, GuiDriverRegistry* const drivers,
-                                           Audio::AudioEngine* const audio,
                                            const Gui::GuiTranslator* const translator)
         : m_Context(context), m_Assets(assets), m_Compositor(compositor), m_Router(router),
-          m_GuiDrivers(drivers), m_Audio(audio), m_GuiTranslator(translator)
+          m_GuiDrivers(drivers), m_GuiTranslator(translator)
     {
     }
 
@@ -184,8 +183,6 @@ namespace Veng
             // Hand the viewport the driver catalog so a claimed, driver-authored GuiOverlay
             // instantiates its driver on the first drive; null leaves every overlay undriven.
             viewport->SetGuiDriverRegistry(m_GuiDrivers);
-            // And the audio engine its drivers fire sound through; null hands them a silent frame.
-            viewport->SetAudioEngine(m_Audio);
             // And the translator its overlay documents localize markup loc-keys through; null renders keys.
             viewport->SetGuiTranslator(m_GuiTranslator);
             // And the service its drivers compose runtime strings through; null hands the null-object.
@@ -688,11 +685,10 @@ namespace Veng
     {
         // A bound viewport is created by its caller, not by this set, so it has none of the engine
         // services a set-created viewport is handed in ReconfigureManagedViewports.
-        // Wire the same four the set owns, so an engine-driven GuiOverlay/GuiSurface presented here
+        // Wire the same three the set owns, so an engine-driven GuiOverlay/GuiSurface presented here
         // instantiates its driver and localizes its markup exactly as one on a managed viewport does;
-        // without them the overlay renders raw loc-keys, plays no sound, and never drives its driver.
+        // without them the overlay renders raw loc-keys and never drives its driver.
         viewport.SetGuiDriverRegistry(m_GuiDrivers);
-        viewport.SetAudioEngine(m_Audio);
         viewport.SetGuiTranslator(m_GuiTranslator);
         viewport.SetLocalization(m_Localization);
 
@@ -714,7 +710,6 @@ namespace Veng
         // A viewport its owner keeps past the binding presents nothing of the engine's, so it drives
         // no overlay the way an unbound viewport does not.
         viewport.SetGuiDriverRegistry(nullptr);
-        viewport.SetAudioEngine(nullptr);
         viewport.SetGuiTranslator(nullptr);
         viewport.SetLocalization(nullptr);
     }

@@ -3,12 +3,14 @@
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Mesh.h>
+#include <Veng/Audio/ScopedAudio.h>
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/DrawList.h>
 #include <Veng/Gui/Overlay.h>
 #include <Veng/Gui/RenderTarget.h>
 #include <Veng/Gui/Surface.h>
+#include <Veng/Haptics/ScopedHaptics.h>
 #include <Veng/Renderer/BindlessRegistry.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
@@ -700,7 +702,8 @@ namespace Veng::Renderer
                     .View = SystemViewInfo{.Camera = m_ViewState.Camera,
                                            .Region = m_Region,
                                            .UiScale = m_UiScale},
-                    .Audio = m_Audio,
+                    .Audio = MakeDriverAudio(world),
+                    .Haptics = MakeDriverHaptics(world),
                     .Localization = m_Localization,
                 };
             }
@@ -708,6 +711,31 @@ namespace Veng::Renderer
             surface.Drive(m_Context, m_Assets, cmd, m_SurfaceSamplerHandle, material,
                           m_ViewState.Delta, driver);
         }
+    }
+
+    Audio::ScopedAudio Viewport::MakeDriverAudio(const Scene& scene) const
+    {
+        if (m_Devices.Audio == nullptr)
+        {
+            return Audio::ScopedAudio::Unbound();
+        }
+        // A scene holding no scope (an asset preview) files under the invalid id, which reads Closed,
+        // so the facade starts nothing rather than borrowing the application scope.
+        const PresentationScope* scope = scene.GetPresentationScope();
+        return Audio::ScopedAudio(*m_Devices.Audio,
+                                  scope != nullptr ? scope->GetId() : PresentationScopeId{}, false);
+    }
+
+    Haptics::ScopedHaptics Viewport::MakeDriverHaptics(const Scene& scene) const
+    {
+        if (m_Devices.Haptics == nullptr || m_Devices.Input == nullptr)
+        {
+            return Haptics::ScopedHaptics::Unbound();
+        }
+        const PresentationScope* scope = scene.GetPresentationScope();
+        return Haptics::ScopedHaptics(*m_Devices.Haptics,
+                                      scope != nullptr ? scope->GetId() : PresentationScopeId{},
+                                      *m_Devices.Input, &scene, false);
     }
 
     bool Viewport::ClaimsSurface(const Scene& world, const GuiSurface& surface) const
@@ -803,8 +831,8 @@ namespace Veng::Renderer
             }
             if (ClaimsOverlay(world, entity, overlay))
             {
-                overlay.Drive(*this, m_Assets, world, entity, m_GuiDrivers, m_Audio,
-                              m_GuiTranslator, m_Localization);
+                overlay.Drive(*this, m_Assets, world, entity, m_GuiDrivers, MakeDriverAudio(world),
+                              MakeDriverHaptics(world), m_GuiTranslator, m_Localization);
             }
         }
     }
@@ -857,8 +885,9 @@ namespace Veng::Renderer
             const vec2 docExtent =
                 worldAnchored ? vec2(overlay.SurfaceResolution) : vec2(m_Region.Extent) / m_UiScale;
 
-            overlay.DriveHdr(*this, m_Assets, world, entity, m_GuiDrivers, m_Audio, docExtent,
-                             m_ViewState.Delta, drawList, m_GuiTranslator, m_Localization);
+            overlay.DriveHdr(*this, m_Assets, world, entity, m_GuiDrivers, MakeDriverAudio(world),
+                             MakeDriverHaptics(world), docExtent, m_ViewState.Delta, drawList,
+                             m_GuiTranslator, m_Localization);
 
             // The plane's anchor is composed onto the carrying entity's world transform, so an
             // overlay authored on a moving entity rides it — its anchor is entity-local, an offset

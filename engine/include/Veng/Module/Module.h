@@ -334,10 +334,17 @@ extern "C"
 /// context every tick, calls the engine and spawns prefabs carrying builtin components, so a stale
 /// module reads the context at the old layout and calls haptics entry points the host no longer
 /// exports.
+/// Version 82 makes sound scene-owned: SystemContext::Audio becomes an Audio::ScopedAudio held by
+/// value, every AudioEngine starting call takes the presentation scope its voice belongs to,
+/// GuiDriverFrame carries audio and haptics facades by value, GuiSurfaceDriveContext and the
+/// GuiOverlay drive calls take facades, AssetEditorContext::Audio becomes the application-scope
+/// facade, and the device engines a driver plays through move onto the ViewportCompositor. A module
+/// reads the context every tick, implements drivers handed the frame, and opens editors handed the
+/// asset-editor context, so a stale module reads all three at their old layouts.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 81u
+#define VENG_MODULE_ABI_VERSION 82u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

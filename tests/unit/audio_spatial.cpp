@@ -14,6 +14,7 @@
 #include <Veng/Audio/AudioEngine.h>
 #include <Veng/Audio/AudioSystem.h>
 #include <Veng/Audio/Voice.h>
+#include "support/TestAudio.h"
 
 #include <cmath>
 #include <numbers>
@@ -119,16 +120,18 @@ namespace
     f32 OccludedPeak(const f32 occlusion)
     {
         const Unique<AudioDevice> device = AudioDevice::Create(
+            TestSupport::SharedPresentationScopes(),
             AudioDeviceInfo{.Backend = AudioBackend::Null, .SampleRate = 48000, .Channels = 2});
         AudioEngine& engine = device->GetEngine();
 
         const std::vector<f32> alternating = {1.0f, -1.0f};
         const Ref<AudioBuffer> buffer = AudioBuffer::Create(alternating, 1, 48000);
-        engine.AddVoice(buffer, VoiceParams{.Bus = AudioBuses::SFX(),
-                                            .Gain = 1.0f,
-                                            .Pan = 0.0f,
-                                            .Occlusion = occlusion,
-                                            .Loop = true});
+        engine.AddVoice(TestSupport::AppScope(), buffer,
+                        VoiceParams{.Bus = AudioBuses::SFX(),
+                                    .Gain = 1.0f,
+                                    .Pan = 0.0f,
+                                    .Occlusion = occlusion,
+                                    .Loop = true});
         engine.Publish();
 
         constexpr u32 frames = 256;
@@ -160,12 +163,13 @@ TEST_CASE("occlusion drives the low-pass monotonically, and zero is an exact byp
     CHECK(open == doctest::Approx(equalPower));
 
     const Unique<AudioDevice> device = AudioDevice::Create(
+        TestSupport::SharedPresentationScopes(),
         AudioDeviceInfo{.Backend = AudioBackend::Null, .SampleRate = 48000, .Channels = 2});
     AudioEngine& engine = device->GetEngine();
     const std::vector<f32> alternating = {1.0f, -1.0f};
     const Ref<AudioBuffer> buffer = AudioBuffer::Create(alternating, 1, 48000);
     engine.AddVoice(
-        buffer,
+        TestSupport::AppScope(), buffer,
         VoiceParams{.Bus = AudioBuses::SFX(), .Gain = 1.0f, .Occlusion = 0.0f, .Loop = true});
     engine.Publish();
     std::vector<f32> output(8, 0.0f);

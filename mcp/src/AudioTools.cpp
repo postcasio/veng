@@ -1,4 +1,5 @@
 #include "AudioTools.h"
+#include "PresentationStateName.h"
 
 #include <Veng/Mcp/McpHost.h>
 #include <Veng/Mcp/McpServer.h>
@@ -44,17 +45,18 @@ namespace Veng::Mcp
 
     void RegisterAudioTools(McpServer& server, const McpHost& host)
     {
-        // audio.list_voices — the live mix of the presented world: every active voice's routing and
-        // pose, plus the music director's current track. Read-only, so it is always registered.
+        // audio.list_voices — the device's live mix: every active voice's routing, pose and owning
+        // scope, plus the music director's current track. Read-only, so it is always registered.
         McpTool tool;
         tool.Name = "audio.list_voices";
         tool.Description =
-            "Lists the active audio voices in the presented world's mix: each voice's bus, gain, "
-            "pan, pitch, occlusion, reverb send, looping flag, whether it is a clip or a "
-            "generator, "
-            "its role (source/oneshot/spatial/music), and — for a spatial voice — its world "
-            "position and velocity. Also reports the music director's current track (a hex AssetId "
-            "or null) and gain, and the total active-voice count. Takes no arguments.";
+            "Lists every active audio voice on the device: each voice's bus, gain, pan, pitch, "
+            "occlusion, reverb send, looping flag, whether it is a clip or a generator, its role "
+            "(source/oneshot/spatial/music), its owning presentation scope and that scope's state "
+            "(live, muted — mixed silent while it advances — or held — frozen), and — for a "
+            "spatial voice — its world position and velocity. Also reports the music director's "
+            "current track (a hex AssetId or null) and gain, and the total active-voice count. "
+            "Takes no arguments.";
         tool.InputSchemaJson = R"({"type":"object","properties":{}})";
         tool.Handler = [&host](string_view) -> Result<string>
         {
@@ -81,6 +83,8 @@ namespace Veng::Mcp
                     {"reverb_send", info.ReverbSend},
                     {"loop", info.Loop},
                     {"spatial", info.Spatial},
+                    {"scope", info.Scope.Value},
+                    {"state", PresentationStateName(info.State)},
                 };
                 if (info.Spatial)
                 {

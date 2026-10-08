@@ -29,11 +29,18 @@ namespace Veng::Haptics
     /// while nothing presents it, and ends when its scene goes. Application::GetApplicationHaptics is
     /// the same facade over the application scope, for code outside every scene.
     ///
+    /// An unbound facade (Unbound()) is over nothing — a Gui driver in a viewport handed no engine —
+    /// and plays nothing, so a caller needs no null-guard. It has no public default, so a context that
+    /// omits its facade does not compile.
+    ///
     /// Cheap to copy: it borrows everything it holds, and every borrowed object outlives the context
     /// it rides on.
     class ScopedHaptics
     {
     public:
+        /// @brief Returns a facade over nothing: it plays nothing and resolves every target to no pad.
+        [[nodiscard]] static ScopedHaptics Unbound() { return {}; }
+
         /// @brief Binds the facade.
         /// @param engine    The engine plays route into.
         /// @param scope     The scope that owns everything played through this facade.
@@ -73,7 +80,11 @@ namespace Veng::Haptics
         /// @return The pad slot, or GamepadId::None.
         [[nodiscard]] GamepadId Resolve(const RumbleTarget& target) const;
 
+        /// @brief Returns whether the facade is bound to an engine.
+        [[nodiscard]] bool IsBound() const { return m_Engine != nullptr; }
+
         /// @brief Returns the engine plays route into.
+        /// @pre The facade is bound (IsBound()).
         [[nodiscard]] HapticsEngine& GetEngine() const { return *m_Engine; }
 
         /// @brief Returns the scope that owns what this facade plays.
@@ -83,15 +94,18 @@ namespace Veng::Haptics
         [[nodiscard]] bool IsReplay() const { return m_IsReplay; }
 
     private:
-        /// @brief The engine plays route into.
-        HapticsEngine* m_Engine;
+        /// @brief The unbound facade Unbound returns.
+        ScopedHaptics() = default;
+
+        /// @brief The engine plays route into; null when unbound.
+        HapticsEngine* m_Engine = nullptr;
         /// @brief The owning scope.
         PresentationScopeId m_Scope;
-        /// @brief The input the implicit seat resolves against.
-        const Input* m_Input;
+        /// @brief The input the implicit seat resolves against; null when unbound.
+        const Input* m_Input = nullptr;
         /// @brief The scene a seat target resolves in; null for none.
-        const Scene* m_Scene;
+        const Scene* m_Scene = nullptr;
         /// @brief Whether calls run inside a reconciliation replay.
-        bool m_IsReplay;
+        bool m_IsReplay = false;
     };
 }

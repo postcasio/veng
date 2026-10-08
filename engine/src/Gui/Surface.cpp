@@ -255,6 +255,7 @@ namespace Veng
             .View = services.View,
             .Assets = assets,
             .Audio = services.Audio,
+            .Haptics = services.Haptics,
             .Localization = strings,
         };
 

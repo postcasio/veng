@@ -302,9 +302,11 @@ void OnUpdate(Scene& scene, f32 delta, const SystemContext& context) override
 ```
 
 `IsReplay` is false on every live tick and in the View phase; it is true only during a
-reconciliation replay. **Rumble played through the context needs no gate**: `SystemContext::Haptics`
-carries the flag and its `PlayOneShot` starts nothing inside a replay, so a Sim system fires a pulse
-unconditionally. During replay the world around the predicted set is frozen at the
+reconciliation replay. **Sound and rumble started through the context need no gate**:
+`SystemContext::Audio` and `SystemContext::Haptics` carry the flag, and inside a replay every start
+through them (`PlayOneShot`, `PlayAt`, `PlayGenerator`, `AddClipVoice`; rumble's `PlayOneShot`) starts
+nothing while the controls on what is already playing work as usual, so a Sim system fires a sound or
+a pulse unconditionally. During replay the world around the predicted set is frozen at the
 present (remote entities hold their current interpolated pose, no View systems run), so a
 predicted-vs-world interaction in the replay window uses present-world context — the server
 remains the arbiter of what actually happened.

@@ -6,7 +6,8 @@
 //   - a runtime-removed component detaches its document (the drive-list reconciled);
 //   - multi-viewport claim by seat: two Presented viewports on two seats each attach only their
 //     seat's overlay, and an unbound overlay attaches to the sole/primary presenter;
-//   - a failed document load surfaces as a null document, not an abort — the viewport still renders.
+//   - a failed document load surfaces as a null document, not an abort — the viewport still renders;
+//   - a driver's sound belongs to the scene it drives, through any viewport on a compositor.
 
 #include <filesystem>
 
@@ -14,21 +15,29 @@
 #include <fmt/format.h>
 
 #include <Veng/Asset/AssetManager.h>
+#include <Veng/Audio/AudioDevice.h>
+#include <Veng/Audio/AudioEngine.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
 #include <Veng/Gui/BindingContext.h>
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/DocumentHost.h>
 #include <Veng/Gui/DocumentLayer.h>
+#include <Veng/Gui/Driver.h>
+#include <Veng/Gui/DriverRegistry.h>
 #include <Veng/Gui/Overlay.h>
+#include <Veng/Haptics/Haptics.h>
+#include <Veng/Input.h>
 #include <Veng/Reflection/JsonSerialize.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/Viewport.h>
+#include <Veng/Renderer/ViewportCompositor.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Camera.h>
+#include <Veng/Scene/PresentationScope.h>
 #include <Veng/Scene/Scene.h>
 
 #include <gpu/fixture.h>
@@ -76,12 +85,12 @@ namespace
         });
     }
 
-    void RenderOnce(Context& context, Viewport& viewport)
+    void RenderOnce(const Context& context, Viewport& viewport)
     {
         context.ImmediateCommands([&](CommandBuffer& cmd) { viewport.Render(cmd); });
     }
 
-    vector<u8> RenderOutput(Context& context, Viewport& viewport)
+    vector<u8> RenderOutput(const Context& context, Viewport& viewport)
     {
         RenderOnce(context, viewport);
         return viewport.GetOutput()->GetImage()->Download();
@@ -96,7 +105,34 @@ namespace
         hooks.WriteReference = [](Entity) -> nlohmann::json { return nlohmann::json(nullptr); };
         return hooks;
     }
+
+    // What the chime driver saw of its frame's facades, and the one voice it started.
+    struct ChimeTrace
+    {
+        AssetHandle<Audio::AudioClip> Clip;
+        Audio::VoiceHandle Voice;
+        bool AudioBound = false;
+        bool HapticsBound = false;
+    };
+
+    ChimeTrace g_Chime;
+
+    // Starts one looping voice through its frame's audio facade on its first update.
+    struct ChimeDriver final : GuiDriver
+    {
+        void OnUpdate(const GuiDriverFrame& frame) override
+        {
+            g_Chime.AudioBound = frame.Audio.IsBound();
+            g_Chime.HapticsBound = frame.Haptics.IsBound();
+            if (!g_Chime.Voice.IsValid())
+            {
+                g_Chime.Voice = frame.Audio.PlayOneShot(g_Chime.Clip, {.Loop = true});
+            }
+        }
+    };
 }
+
+VE_GUI_DRIVER(::ChimeDriver, 0x11083B92FD6D271BULL, "Chime");
 
 VE_REFLECT(::DocHostPlayer, 0x1D6E9E2B0A4C7711ULL)
 VE_FIELD(health)
@@ -431,5 +467,77 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(overlay.GetDocument() != nullptr);
     CHECK(instantiated);
 
+    std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "gui overlay: a driver's sound belongs to the scene it drives, through any viewport "
+    "registered on a compositor")
+{
+    RegisterBuiltinTypes(Types);
+
+    const path archive = CookUiPack();
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(archive).has_value());
+
+    // The device engines a compositor hands its viewports, over a registry this case latches.
+    PresentationScopes scopes;
+    const Unique<Audio::AudioDevice> audio = Audio::AudioDevice::Create(
+        scopes, Audio::AudioDeviceInfo{.Backend = Audio::AudioBackend::Null});
+    Haptics::HapticsEngine haptics(scopes);
+    const Input input(nullptr);
+    ViewportCompositor compositor(Context);
+    compositor.SetDevices(
+        ViewportDevices{.Audio = &audio->GetEngine(), .Haptics = &haptics, .Input = &input});
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    scene->SetPresentationScope(scopes.Open());
+    const Entity entity = scene->CreateEntity();
+    auto& overlay = scene->Add<GuiOverlay>(entity);
+    overlay.Document = *assets.LoadSync<Gui::UIDocument>(UIDocumentId);
+    overlay.Driver = GuiDriverIdOf<ChimeDriver>();
+    GuiDriverRegistry drivers;
+    drivers.Register<ChimeDriver>();
+
+    const vector<f32> samples(480, 0.5f);
+    g_Chime = ChimeTrace{
+        .Clip = audio->GetEngine().CreateClip(samples, Audio::AudioBufferFormat{.Channels = 1})};
+
+    // Registered straight on the compositor with no managed binding — the shape of an editor's or a
+    // consumer's own viewport — yet its driver is handed live facades.
+    const Unique<Viewport> viewport = MakeViewport(Context, assets);
+    compositor.RegisterViewport(*viewport);
+    viewport->SetGuiDriverRegistry(&drivers);
+    viewport->SetViewState({.World = scene.get(), .Delta = 0.016f});
+    RenderOnce(Context, *viewport);
+    CHECK(g_Chime.AudioBound);
+    CHECK(g_Chime.HapticsBound);
+    REQUIRE(g_Chime.Voice.IsValid());
+
+    // The voice is filed under the driven scene's scope: held while that scope is unrenewed, and
+    // live once the scene's lease is renewed audibly.
+    const auto voiceInfo = [&]
+    {
+        for (const Audio::VoiceInfo& info : audio->GetEngine().GetVoiceInfos())
+        {
+            if (info.Handle == g_Chime.Voice)
+            {
+                return info;
+            }
+        }
+        return Audio::VoiceInfo{};
+    };
+    CHECK(voiceInfo().Scope == scene->GetPresentationScope()->GetId());
+    scopes.Resolve();
+    audio->GetEngine().Update(0.016f);
+    CHECK(voiceInfo().State == PresentationState::Held);
+
+    scene->GetPresentationScope()->Renew(true);
+    scopes.Resolve();
+    audio->GetEngine().Update(0.016f);
+    CHECK(voiceInfo().State == PresentationState::Live);
+
+    g_Chime = {};
     std::filesystem::remove(archive);
 }

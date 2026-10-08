@@ -1,7 +1,7 @@
 #include <Veng/Audio/AudioSystem.h>
 
 #include <Veng/Audio/AudioComponents.h>
-#include <Veng/Audio/AudioEngine.h>
+#include <Veng/Audio/ScopedAudio.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Transforms.h>
@@ -159,7 +159,7 @@ namespace Veng
 
     void AudioSystem::OnUpdate(Scene& scene, const f32 delta, const SystemContext& context)
     {
-        Audio::AudioEngine& engine = context.Audio;
+        const Audio::ScopedAudio& audio = context.Audio;
         const f32 alpha = context.Alpha;
 
         // Resolve the single listener from its live drawn pose, and difference its position for
@@ -185,12 +185,15 @@ namespace Veng
         }
         m_ListenerPosition = listener.Position;
         m_HasListenerPosition = listenerEntity != Entity::Null;
+        // This scene's listener: what its sources here, and every PlayAt its systems fire, are
+        // spatialized against, whatever other worlds' listeners are.
+        audio.SetListener(listener);
 
         // Drop voices the device retired (surfaced through IsVoiceLive once Pump drained the
         // retired-voice channel): a finished non-looping source stays finished and is not restarted.
         for (auto it = m_Voices.begin(); it != m_Voices.end();)
         {
-            if (engine.IsVoiceLive(it->second))
+            if (audio.IsVoiceLive(it->second))
             {
                 ++it;
                 continue;
@@ -265,7 +268,7 @@ namespace Veng
                 ++it;
                 continue;
             }
-            engine.StopVoice(it->second);
+            audio.StopVoice(it->second);
             it = m_Voices.erase(it);
         }
         std::erase_if(m_SourcePosition,
@@ -283,7 +286,7 @@ namespace Veng
             {
                 if (const auto it = m_Voices.find(candidates[i].Source); it != m_Voices.end())
                 {
-                    engine.StopVoice(it->second);
+                    audio.StopVoice(it->second);
                     m_Voices.erase(it);
                 }
             }
@@ -296,19 +299,15 @@ namespace Veng
             const auto it = m_Voices.find(candidate.Source);
             if (it != m_Voices.end())
             {
-                engine.SetVoiceParams(it->second, candidate.Params);
+                audio.SetVoiceParams(it->second, candidate.Params);
                 continue;
             }
-            const Audio::VoiceHandle voice = engine.AddClipVoice(candidate.Clip, candidate.Params);
+            const Audio::VoiceHandle voice = audio.AddClipVoice(candidate.Clip, candidate.Params);
             if (voice.IsValid())
             {
                 m_Voices[candidate.Source] = voice;
             }
         }
-
-        // Merge the engine's code-triggered voices into the same snapshot: advance the music
-        // crossfade and re-spatialize every PlayAt voice against this frame's listener.
-        engine.UpdateManagedVoices(listener, delta);
     }
 
     optional<vec3> AudioSystem::GetDebugSourcePosition(const Entity entity) const

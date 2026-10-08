@@ -43,9 +43,11 @@
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/LightPacking.h>
 #include <Veng/Renderer/Viewport.h>
+#include <Veng/Renderer/ViewportCompositor.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
+#include "support/TestAudio.h"
 
 #include <gpu/fixture.h>
 #include "support/TempPath.h"
@@ -151,7 +153,7 @@ namespace
     // Builds a scene: a bright brick backdrop cube filling the view, a directional light, and a panel
     // quad cube (extent 1.4) at the origin carrying the given material and a GuiSurface driving the
     // panel document. Keeps the built meshes alive in `meshes`.
-    Unique<Scene> BuildPanelScene(Context& context, AssetManager& assets, TypeRegistry& types,
+    Unique<Scene> BuildPanelScene(Context& context, const AssetManager& assets, TypeRegistry& types,
                                   GuiSurfaceDomain domain,
                                   const AssetHandle<MaterialInstance>& panelMaterial,
                                   const AssetHandle<MaterialInstance>& backdropMaterial,
@@ -224,7 +226,7 @@ namespace
             g_Trace.Alpha = frame.Alpha;
             g_Trace.RegionExtent = frame.View.Region.Extent;
             g_Trace.Assets = &frame.Assets;
-            g_Trace.Audio = frame.Audio;
+            g_Trace.Audio = frame.Audio.GetEngine();
             g_Trace.UpdateStrings = &frame.Localization;
 
             Gui::Element& root = frame.Document.Root();
@@ -435,14 +437,15 @@ TEST_CASE_FIXTURE(
     GuiDriverRegistry drivers;
     drivers.Register<PanelDriver>();
 
-    // The engine a driver fires sound through rides the viewport exactly like the driver catalog.
-    const Unique<Audio::AudioDevice> audio =
-        Audio::AudioDevice::Create(Audio::AudioDeviceInfo{.Backend = Audio::AudioBackend::Null});
+    // The engine a driver fires sound through reaches the viewport from the compositor it registers on.
+    const Unique<Audio::AudioDevice> audio = TestSupport::MakeNullAudioDevice();
     REQUIRE(audio != nullptr);
+    ViewportCompositor compositor(Context);
+    compositor.SetDevices(ViewportDevices{.Audio = &audio->GetEngine()});
 
     const Unique<Viewport> viewport = MakeViewport(Context, assets);
+    compositor.RegisterViewport(*viewport);
     viewport->SetGuiDriverRegistry(&drivers);
-    viewport->SetAudioEngine(&audio->GetEngine());
     // The localization service rides the viewport the same way; a default-constructed one is a
     // distinct object from the engine's shared fallback, so identity proves which one arrived.
     const Localization::Localization strings;

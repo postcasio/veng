@@ -13,10 +13,12 @@
 #include <Veng/Audio/AudioDevice.h>
 #include <Veng/Audio/AudioEngine.h>
 #include <Veng/Audio/AudioSystem.h>
+#include <Veng/Audio/ScopedAudio.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSystem.h>
+#include "support/TestAudio.h"
 #include "support/TestServices.h"
 
 #include <algorithm>
@@ -31,6 +33,7 @@ namespace
     Unique<AudioDevice> MakeNullDevice()
     {
         return AudioDevice::Create(
+            TestSupport::SharedPresentationScopes(),
             AudioDeviceInfo{.Backend = AudioBackend::Null, .SampleRate = 48000, .Channels = 2});
     }
 
@@ -78,8 +81,9 @@ TEST_CASE("a one-shot appears in the snapshot, retires after its duration, and s
     AudioEngine& engine = device->GetEngine();
 
     // A short one-shot: one pump (800 frames at 48 kHz / 60 Hz) plays its 8 frames out.
-    const VoiceHandle voice = engine.PlayOneShot(
-        MakePcmClip(0.5f, 8), OneShotParams{.Bus = AudioBuses::SFX(), .Gain = 0.8f});
+    const VoiceHandle voice =
+        engine.PlayOneShot(TestSupport::AppScope(), MakePcmClip(0.5f, 8),
+                           OneShotParams{.Bus = AudioBuses::SFX(), .Gain = 0.8f});
     REQUIRE(voice.IsValid());
     CHECK(engine.GetActiveVoiceCount() == 1);
     CHECK(engine.IsVoiceLive(voice));
@@ -92,8 +96,8 @@ TEST_CASE("a one-shot appears in the snapshot, retires after its duration, and s
     CHECK(engine.GetActiveVoiceCount() == 0);
 
     // The returned handle stops a still-playing voice early.
-    const VoiceHandle held =
-        engine.PlayOneShot(MakePcmClip(0.5f, 48000), OneShotParams{.Loop = true});
+    const VoiceHandle held = engine.PlayOneShot(TestSupport::AppScope(), MakePcmClip(0.5f, 48000),
+                                                OneShotParams{.Loop = true});
     REQUIRE(held.IsValid());
     CHECK(engine.GetActiveVoiceCount() == 1);
     engine.StopVoice(held);
@@ -108,15 +112,15 @@ TEST_CASE("PlayAt places a spatial voice that pans toward the source")
     const AssetHandle<AudioClip> clip = MakePcmClip(0.5f, 48000);
 
     // Listener at the origin, identity rotation (its +X is right). A source hard-left (-X) pans left.
-    const VoiceHandle left =
-        engine.PlayAt(clip, vec3(-10.0f, 0.0f, 0.0f), SpatialOneShotParams{.MaxDistance = 100.0f});
+    const VoiceHandle left = engine.PlayAt(TestSupport::AppScope(), clip, vec3(-10.0f, 0.0f, 0.0f),
+                                           SpatialOneShotParams{.MaxDistance = 100.0f});
     REQUIRE(left.IsValid());
     const optional<VoiceParams> leftParams = engine.GetVoiceParams(left);
     REQUIRE(leftParams.has_value());
     CHECK(leftParams->Pan < -0.5f);
 
-    const VoiceHandle right =
-        engine.PlayAt(clip, vec3(10.0f, 0.0f, 0.0f), SpatialOneShotParams{.MaxDistance = 100.0f});
+    const VoiceHandle right = engine.PlayAt(TestSupport::AppScope(), clip, vec3(10.0f, 0.0f, 0.0f),
+                                            SpatialOneShotParams{.MaxDistance = 100.0f});
     REQUIRE(right.IsValid());
     CHECK(engine.GetVoiceParams(right)->Pan > 0.5f);
 
@@ -139,7 +143,8 @@ TEST_CASE("the one-shot pool caps at MaxOneShotVoices and drops the quietest")
     {
         const f32 gain = 0.1f + 0.01f * static_cast<f32>(i);
         gains.push_back(gain);
-        handles.push_back(engine.PlayOneShot(clip, OneShotParams{.Gain = gain, .Loop = true}));
+        handles.push_back(engine.PlayOneShot(TestSupport::AppScope(), clip,
+                                             OneShotParams{.Gain = gain, .Loop = true}));
     }
 
     // Aggregate: exactly the cap survive, and every survivor is louder than every dropped voice.
@@ -191,7 +196,7 @@ TEST_CASE("the music director keeps one logical track and crossfades equal-power
     CHECK(GainOf(atStart, false) == doctest::Approx(0.0f));
 
     // Midpoint: equal-power means both sit at cos(pi/4) and the power sum stays unity.
-    engine.UpdateManagedVoices(ListenerPose{}, 0.5f);
+    engine.Update(0.5f);
     const vector<MusicDirector::VoiceState> atMid = music.GetVoiceStates();
     const f32 outMid = GainOf(atMid, true);
     const f32 inMid = GainOf(atMid, false);
@@ -200,7 +205,7 @@ TEST_CASE("the music director keeps one logical track and crossfades equal-power
     CHECK(outMid * outMid + inMid * inMid == doctest::Approx(1.0f).epsilon(0.01f));
 
     // After the full fade exactly one voice remains: B, no longer fading.
-    engine.UpdateManagedVoices(ListenerPose{}, 0.5f);
+    engine.Update(0.5f);
     CHECK(music.GetVoiceCount() == 1);
     CHECK(music.Current().Get() == trackB.Get());
     const vector<MusicDirector::VoiceState> atEnd = music.GetVoiceStates();
@@ -222,9 +227,9 @@ TEST_CASE("Stop empties the Music bus after its fade and Current reports none")
     CHECK_FALSE(music.Current().IsValid());
 
     // The bus is still fading for the half second, then empty.
-    engine.UpdateManagedVoices(ListenerPose{}, 0.25f);
+    engine.Update(0.25f);
     CHECK(music.GetVoiceCount() == 1);
-    engine.UpdateManagedVoices(ListenerPose{}, 0.25f);
+    engine.Update(0.25f);
     CHECK(music.GetVoiceCount() == 0);
 }
 
@@ -233,15 +238,14 @@ TEST_CASE("an authored MusicState starts its track once on world start")
     TypeRegistry registry;
     RegisterBuiltinTypes(registry);
     const Unique<Scene> scene = Scene::Create(registry);
-    const Unique<AudioDevice> device = MakeNullDevice();
-    AudioEngine& engine = device->GetEngine();
+    TestSupport::TestServices services;
+    AudioEngine& engine = services.GetAudio();
 
     const AssetHandle<AudioClip> track = MakePcmClip(0.5f, 48000);
     const Entity settings = scene->CreateEntity();
     scene->Add<MusicState>(settings, MusicState{.Track = track, .FadeSeconds = 0.0f, .Loop = true});
 
     AudioSystem system;
-    TestSupport::TestServices services({.Audio = &engine});
     system.OnStart(*scene, services.Make());
     REQUIRE(engine.Music().GetVoiceCount() == 1);
     CHECK(engine.Music().Current().Get() == track.Get());
@@ -254,4 +258,37 @@ TEST_CASE("an authored MusicState starts its track once on world start")
     }
     CHECK(engine.Music().GetVoiceCount() == 1);
     CHECK(engine.Music().GetVoiceStates().front().Voice == voice);
+}
+
+TEST_CASE("a replay-built facade starts nothing, and still controls a live voice")
+{
+    const Unique<AudioDevice> device = MakeNullDevice();
+    AudioEngine& engine = device->GetEngine();
+    const AssetHandle<AudioClip> clip = MakePcmClip(0.5f, 48000);
+
+    struct Silence final : IAudioGenerator
+    {
+        void Render(f32* out, const u32 frames, const u32 channels, u32 /*sampleRate*/) override
+        {
+            std::fill_n(out, static_cast<usize>(frames) * channels, 0.0f);
+        }
+    };
+
+    // A reconciliation replay re-runs a tick whose sound already played: every start is refused.
+    const ScopedAudio replay(engine, TestSupport::AppScope(), true);
+    CHECK_FALSE(replay.PlayOneShot(clip).IsValid());
+    CHECK_FALSE(replay.PlayAt(clip, vec3(0.0f)).IsValid());
+    CHECK_FALSE(replay.AddClipVoice(clip, VoiceParams{}).IsValid());
+    CHECK_FALSE(replay.PlayGenerator(CreateRef<Silence>(), GeneratorVoiceParams{}).IsValid());
+    // And so is every start through a facade bound to no engine.
+    CHECK_FALSE(ScopedAudio::Unbound().PlayOneShot(clip).IsValid());
+    CHECK(engine.GetActiveVoiceCount() == 0);
+
+    // Controls on what is already playing work as usual inside a replay.
+    const VoiceHandle voice =
+        ScopedAudio(engine, TestSupport::AppScope(), false).PlayOneShot(clip, {.Loop = true});
+    REQUIRE(voice.IsValid());
+    CHECK(replay.IsVoiceLive(voice));
+    replay.StopVoice(voice);
+    CHECK_FALSE(engine.IsVoiceLive(voice));
 }

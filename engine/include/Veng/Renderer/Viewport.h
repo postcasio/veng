@@ -7,6 +7,7 @@
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/SceneRenderer.h>
 #include <Veng/Renderer/Types.h>
+#include <Veng/Renderer/ViewportDevices.h>
 #include <Veng/Renderer/ViewportId.h>
 #include <Veng/Renderer/ViewportRegion.h>
 
@@ -27,7 +28,12 @@ namespace Veng
 
 namespace Veng::Audio
 {
-    class AudioEngine;
+    class ScopedAudio;
+}
+
+namespace Veng::Haptics
+{
+    class ScopedHaptics;
 }
 
 namespace Veng::Gui
@@ -520,14 +526,6 @@ namespace Veng::Renderer
         /// @param drivers  The driver catalog, or nullptr to drive no overlays.
         void SetGuiDriverRegistry(GuiDriverRegistry* drivers) { m_GuiDrivers = drivers; }
 
-        /// @brief Sets the audio engine a claimed driver fires sound through (GuiDriverFrame::Audio).
-        ///
-        /// Borrowed and host-owned, threaded through exactly like the driver catalog: the engine sets
-        /// it on each managed viewport, and null — the default — hands every driver a silent frame
-        /// (an editor preview, a driver-free test). Never consulted by the render path itself.
-        /// @param audio  The device-wide audio engine, or nullptr for silent drivers.
-        void SetAudioEngine(Audio::AudioEngine* audio) { m_Audio = audio; }
-
         /// @brief Sets the translator engine-driven GuiOverlay documents resolve their loc-keys through.
         ///
         /// Borrowed and host-owned, threaded like the driver catalog: the engine sets it on each
@@ -759,8 +757,36 @@ namespace Veng::Renderer
         /// @pre This viewport is not already attached to a drive-list.
         void AttachToDriveList(vector<Viewport*>& driveList);
 
+        /// @brief Returns the device engines the compositor this viewport is registered on handed it.
+        ///
+        /// Empty for a viewport registered on no compositor, whose drivers then play nothing.
+        [[nodiscard]] const ViewportDevices& GetDevices() const { return m_Devices; }
+
+        /// @brief Returns the audio facade a driver of @p scene starts its sound through.
+        ///
+        /// Bound to this viewport's audio engine and the scene's presentation scope, so the driver's
+        /// sound belongs to the scene it drives; unbound when the viewport was handed no engine, and
+        /// starting nothing when the scene holds no scope. A driver never runs inside a replay.
+        /// @param scene  The scene the driver drives.
+        [[nodiscard]] Audio::ScopedAudio MakeDriverAudio(const Scene& scene) const;
+
+        /// @brief Returns the haptics facade a driver of @p scene plays rumble through.
+        ///
+        /// The haptics peer of MakeDriverAudio: bound to this viewport's haptics engine and input and
+        /// the scene's presentation scope, with seat targets resolved in @p scene.
+        /// @param scene  The scene the driver drives.
+        [[nodiscard]] Haptics::ScopedHaptics MakeDriverHaptics(const Scene& scene) const;
+
     private:
+        friend class ViewportCompositor;
+
         explicit Viewport(const ViewportInfo& info);
+
+        /// @brief Sets the device engines this viewport hands the Gui drivers it drives.
+        ///
+        /// Set by the ViewportCompositor at RegisterViewport and on its SetDevices.
+        /// @param devices  The device engines.
+        void SetDevices(const ViewportDevices& devices) { m_Devices = devices; }
 
         /// @brief Re-registers the output view into bindless, releasing the prior slot.
         ///
@@ -1048,8 +1074,8 @@ namespace Veng::Renderer
         /// @brief The translator engine-driven overlay documents resolve loc-keys through, or null.
         const Gui::GuiTranslator* m_GuiTranslator = nullptr;
 
-        /// @brief The audio engine handed to a claimed driver's frame; null hands a silent frame.
-        Audio::AudioEngine* m_Audio = nullptr;
+        /// @brief The device engines a claimed driver's facades are built over; empty until registered.
+        ViewportDevices m_Devices;
 
         /// @brief The localization service handed to a claimed driver; null hands the null-object.
         const Localization::Localization* m_Localization = nullptr;

@@ -382,14 +382,15 @@ private:
         SetupSynth();
     }
 
-    // Registers the demonstrator instrument as a live stereo, non-spatial voice on the Music bus. The
-    // reverb is prepared here, off the mixing thread, before the mixer is ever handed the generator;
-    // OnUpdate then drives its cutoff live through the param block. It runs in every mode (silent under
-    // the headless null device the smoke path uses), so the voice exists whenever the app does.
+    // Registers the demonstrator instrument as a live stereo, non-spatial voice on the Music bus, in
+    // the application scope since no scene owns it. The reverb is prepared here, off the mixing
+    // thread, before the mixer is ever handed the generator; OnUpdate then drives its cutoff live
+    // through the param block. It runs in every mode (silent under the headless null device the smoke
+    // path uses), so the voice exists whenever the app does.
     void SetupSynth()
     {
         m_Synth->Prepare(SynthSampleRate);
-        m_SynthVoice = GetAudioEngine().PlayGenerator(
+        m_SynthVoice = GetApplicationAudio().PlayGenerator(
             m_Synth,
             Audio::GeneratorVoiceParams{
                 .Bus = Audio::AudioBuses::Music(), .Spatial = false, .Channels = 2, .Gain = 0.5f});

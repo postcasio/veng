@@ -42,7 +42,7 @@ namespace Veng::Haptics
     void ScopedHaptics::PlayOneShot(const RumbleTarget& target, const AssetHandle<RumbleClip>& clip,
                                     const f32 intensity) const
     {
-        if (m_IsReplay)
+        if (m_IsReplay || m_Engine == nullptr)
         {
             return;
         }
@@ -51,11 +51,15 @@ namespace Veng::Haptics
 
     void ScopedHaptics::Submit(const GamepadId pad, const RumbleChannels& channels) const
     {
-        m_Engine->SubmitLayer(m_Scope, pad, channels);
+        if (m_Engine != nullptr)
+        {
+            m_Engine->SubmitLayer(m_Scope, pad, channels);
+        }
     }
 
     GamepadId ScopedHaptics::Resolve(const RumbleTarget& target) const
     {
-        return ResolveRumbleTarget(target, m_Scene, *m_Input);
+        return m_Input != nullptr ? ResolveRumbleTarget(target, m_Scene, *m_Input)
+                                  : GamepadId::None;
     }
 }

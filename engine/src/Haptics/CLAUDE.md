@@ -129,7 +129,10 @@ them before its short duration lapses, so a stalled frame loop lets a pad fall s
 - **`SystemContext::Haptics` is a `ScopedHaptics` held by value**, bound by the context factory
   (`Application::MakeSystemContext`) to the request scene's presentation scope, the scene, the
   input and the request's replay flag. It has no default, so a context that omits it does not
-  compile; there is no inert engine. A unit test takes it from `tests/support/TestServices.h`, whose
+  compile; there is no inert engine (`ScopedHaptics::Unbound()` is the explicit facade over nothing,
+  which plays nothing). A Gui driver gets the same facade as `GuiDriverFrame::Haptics`, built by its
+  presenting viewport over the driven scene's scope from the engine the `ViewportCompositor` hands it.
+  A unit test takes it from `tests/support/TestServices.h`, whose
   `Make(request)` binds the request scene's scope and whose request-less `Make()` binds the
   application scope.
 - **`HapticsEngineInfo`** carries only `WriteMotors`, optional, so a test builds an engine over

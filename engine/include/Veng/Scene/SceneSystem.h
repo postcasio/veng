@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/InputRouter.h>
+#include <Veng/Audio/ScopedAudio.h>
 #include <Veng/Haptics/ScopedHaptics.h>
 #include <Veng/Math/Ray.h>
 #include <Veng/Renderer/ViewportRegion.h>
@@ -15,11 +16,6 @@ namespace Veng
     class AssetManager;
     class Input;
     class TaskSystem;
-}
-
-namespace Veng::Audio
-{
-    class AudioEngine;
 }
 
 namespace Veng::Localization
@@ -139,13 +135,16 @@ namespace Veng
         /// A scene-agnostic Application service, always present. A reference (not a pointer), so an
         /// async-using system needs no null-guard.
         TaskSystem& Tasks;
-        /// @brief The device-wide audio engine a system triggers sound through.
+        /// @brief The audio engine as this scene reaches it: the sound a system starts.
         ///
-        /// The mixer-facing engine every system reaches to fire one-shots (PlayOneShot / PlayAt) and
-        /// set the background music (Music()). A scene-agnostic Application service backed by a null
-        /// device when there is no hardware, so every call is a no-op that still tracks the request
-        /// and no audio-triggering system needs a null-guard.
-        Audio::AudioEngine& Audio;
+        /// Held by value and bound by the context factory to the calling scene's presentation scope,
+        /// so every voice it starts (PlayOneShot, PlayAt, PlayGenerator, AddClipVoice) belongs to that
+        /// scope — it holds while the world is paused, is silent while nothing presents the scene, and
+        /// stops when the scene goes — and is spatialized against this scene's listener. The facade
+        /// applies the replay gate itself: inside a reconciliation replay a start starts nothing, so a
+        /// Sim system fires sound without gating on IsReplay. Backed by a null device when there is no
+        /// hardware, so no audio-triggering system needs a null-guard.
+        Audio::ScopedAudio Audio;
         /// @brief The haptics engine as this scene reaches it: rumble a system plays on pads.
         ///
         /// Held by value and bound by the context factory to the calling scene's presentation scope,

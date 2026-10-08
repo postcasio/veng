@@ -232,12 +232,10 @@ namespace Veng
         /// @param compositor  The compositor the viewports register into; must outlive the set.
         /// @param router      The input router viewport↔seat associations are made through; must outlive the set.
         /// @param drivers     The host-owned GuiDriver catalog set on each built viewport, or nullptr (undriven).
-        /// @param audio       The audio engine set on each built viewport for its drivers, or nullptr (silent).
         /// @param translator  The host's translator set on each built viewport so overlay loc-keys localize, or nullptr.
         ManagedViewportSet(Renderer::Context& context, AssetManager& assets,
                            Renderer::ViewportCompositor& compositor, InputRouter& router,
                            GuiDriverRegistry* drivers = nullptr,
-                           Audio::AudioEngine* audio = nullptr,
                            const Gui::GuiTranslator* translator = nullptr);
 
         /// @brief Clears the set, self-unregistering each viewport and its router association.
@@ -491,11 +489,11 @@ namespace Veng
         /// (CollectPresentingSeats). When @p info.PullsCamera, PushViews resolves and pushes its camera
         /// each frame through the identical { World, Viewer } path a managed viewport uses, pulling
         /// the world's own interpolation fraction; otherwise the caller pushes its own ViewState.
-        /// The viewport is handed the set's Gui driver catalog, audio engine, translator and
-        /// localization, so an engine-driven overlay presented through it drives as on a managed
-        /// viewport. The set never owns the viewport — the caller unregisters the binding
-        /// (UnregisterBoundViewport) before dropping the viewport. Bound viewports are not indexed and
-        /// Get / Build / Reconfigure never touch them.
+        /// The viewport is handed the set's Gui driver catalog, translator and localization, so an
+        /// engine-driven overlay presented through it drives as on a managed viewport (its sound and
+        /// rumble engines come from the compositor it is registered on). The set never owns the
+        /// viewport — the caller unregisters the binding (UnregisterBoundViewport) before dropping the
+        /// viewport. Bound viewports are not indexed and Get / Build / Reconfigure never touch them.
         /// @param viewport  The caller-owned viewport.
         /// @param info      The world, seat, knobs, look and camera-pull choice of the binding.
         void RegisterBoundViewport(Renderer::Viewport& viewport, const BoundViewportInfo& info);
@@ -503,7 +501,7 @@ namespace Veng
         /// @brief Removes a bound viewport's binding; a no-op if it is not bound.
         ///
         /// The counterpart to RegisterBoundViewport, called before the caller drops the viewport so no
-        /// stale pointer lingers in the pull. Clears the four services the registration handed the
+        /// stale pointer lingers in the pull. Clears the three services the registration handed the
         /// viewport, so a viewport kept after it stops presenting (a tool's, between play sessions)
         /// drives no overlay. Does not touch the compositor drive-list or the router.
         /// @param viewport  The bound viewport whose binding to remove.
@@ -653,8 +651,6 @@ namespace Veng
         InputRouter& m_Router;
         /// @brief The host-owned GuiDriver catalog set on each built viewport; null drives none.
         GuiDriverRegistry* m_GuiDrivers = nullptr;
-        /// @brief The audio engine set on each built viewport for its drivers; null hands silence.
-        Audio::AudioEngine* m_Audio = nullptr;
         /// @brief The translator set on each built viewport so overlay loc-keys localize; null renders keys.
         const Gui::GuiTranslator* m_GuiTranslator = nullptr;
         /// @brief The localization service set on each built viewport for its drivers; null hands the null-object.

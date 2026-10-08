@@ -68,8 +68,12 @@ namespace Veng
         f32 Alpha = 0.0f;
         /// @brief The presenting viewport's resolved camera, region, and UI scale this frame.
         SystemViewInfo View;
-        /// @brief The audio engine handed to the driver's frame, or null for a silent driver.
-        Audio::AudioEngine* Audio = nullptr;
+        /// @brief The audio facade handed to the driver's frame: the presenting viewport's engine over
+        ///        the surface's scene's scope, or unbound for a silent driver.
+        Audio::ScopedAudio Audio = Audio::ScopedAudio::Unbound();
+        /// @brief The haptics facade handed to the driver's frame, or unbound for a driver that plays
+        ///        no rumble.
+        Haptics::ScopedHaptics Haptics = Haptics::ScopedHaptics::Unbound();
         /// @brief The localization service handed to the driver, or null for the inert null-object.
         const Localization::Localization* Localization = nullptr;
     };

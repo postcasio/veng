@@ -3,6 +3,7 @@
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Asset/AssetType.h>
+#include <Veng/Audio/ScopedAudio.h>
 #include <Veng/Path.h>
 #include <Veng/Reflection/TypeId.h>
 #include <Veng/Reflection/FieldDescriptor.h>
@@ -28,10 +29,6 @@ namespace Veng
     {
         class Context;
     }
-    namespace Audio
-    {
-        class AudioEngine;
-    }
 
     /// @brief Engine services an asset-editor factory receives when it opens a panel.
     ///
@@ -46,8 +43,12 @@ namespace Veng
         AssetManager& Assets;
         /// @brief The render context, for a panel that builds GPU resources (a preview target).
         Renderer::Context& Context;
-        /// @brief The host audio engine, for a panel that auditions sound through PlayGenerator.
-        Audio::AudioEngine& Audio;
+        /// @brief The host audio facade over the application scope, for a panel that auditions sound.
+        ///
+        /// An audition belongs to no scene, so what a panel starts here is never held or muted by a
+        /// world's pause or presentation. Device configuration stays on the engine
+        /// (ScopedAudio::GetEngine).
+        Audio::ScopedAudio Audio;
         /// @brief The host task system, for a panel that offloads heavy work (a bake, an offline
         ///        render, an export) off the UI thread, the same one the cook-on-demand runs on.
         TaskSystem& Tasks;

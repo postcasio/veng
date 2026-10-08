@@ -23,8 +23,6 @@ namespace Veng::TestSupport
         AssetManager* Assets = nullptr;
         /// @brief An input snapshot the case drives with events; null reads the headless one.
         const Veng::Input* Input = nullptr;
-        /// @brief An audio engine the case inspects; null plays through the bundle's null device.
-        Audio::AudioEngine* Audio = nullptr;
     };
 
     /// @brief Real, device-free instances of every service a SystemContext carries, for tests.
@@ -46,10 +44,11 @@ namespace Veng::TestSupport
         /// @param info  The case's own services the contexts read instead.
         explicit TestServices(const TestServicesInfo& info)
             : m_Assets(m_Context, m_Tasks, m_Types),
-              m_Audio(Audio::AudioDevice::Create(Audio::AudioDeviceInfo{
-                  .Backend = Audio::AudioBackend::Null, .SampleRate = 48000, .Channels = 2})),
-              m_AssetsOverride(info.Assets), m_InputOverride(info.Input),
-              m_AudioOverride(info.Audio)
+              m_Audio(Audio::AudioDevice::Create(
+                  m_Presentation, Audio::AudioDeviceInfo{.Backend = Audio::AudioBackend::Null,
+                                                         .SampleRate = 48000,
+                                                         .Channels = 2})),
+              m_AssetsOverride(info.Assets), m_InputOverride(info.Input)
         {
         }
 
@@ -58,7 +57,7 @@ namespace Veng::TestSupport
 
         /// @brief Returns a context over the services with every per-call field at its default.
         ///
-        /// Names no scene, so its haptics facade plays in the always-Live application scope.
+        /// Names no scene, so its audio and haptics facades play in the always-Live application scope.
         [[nodiscard]] SystemContext Make()
         {
             const Veng::Input& input = m_InputOverride != nullptr ? *m_InputOverride : m_Input;
@@ -66,7 +65,8 @@ namespace Veng::TestSupport
                 .Assets = m_AssetsOverride != nullptr ? *m_AssetsOverride : m_Assets,
                 .Input = input,
                 .Tasks = m_Tasks,
-                .Audio = m_AudioOverride != nullptr ? *m_AudioOverride : m_Audio->GetEngine(),
+                .Audio = Audio::ScopedAudio(m_Audio->GetEngine(),
+                                            m_Presentation.GetApplicationScope(), false),
                 .Haptics = Haptics::ScopedHaptics(m_Haptics, m_Presentation.GetApplicationScope(),
                                                   input, nullptr, false),
                 .Localization = m_Localization,
@@ -76,8 +76,8 @@ namespace Veng::TestSupport
         /// @brief Returns the context @p request describes, as a WorldRunner's factory builds it.
         ///
         /// Stamps the world, tick, alpha, step edges and the replay flag from the request, and binds the
-        /// haptics facade to the request scene's presentation scope (the application scope for a
-        /// scene a case built itself, which holds none); the role stays Server, and
+        /// audio and haptics facades to the request scene's presentation scope (the application scope
+        /// for a scene a case built itself, which holds none); the role stays Server, and
         /// Pointer, View and Debug stay empty (a test presents nothing, so a ticking world is Muted).
         /// @param request  The world, scene, phase and step the context is for.
         /// @return The context.
@@ -91,9 +91,11 @@ namespace Veng::TestSupport
             context.LastStepThisFrame = request.LastStep;
             context.IsReplay = request.Phase == SystemContextPhase::Replay;
             const PresentationScope* scope = request.Scene.GetPresentationScope();
-            context.Haptics = Haptics::ScopedHaptics(
-                m_Haptics, scope != nullptr ? scope->GetId() : m_Presentation.GetApplicationScope(),
-                context.Input, &request.Scene, context.IsReplay);
+            const PresentationScopeId scopeId =
+                scope != nullptr ? scope->GetId() : m_Presentation.GetApplicationScope();
+            context.Audio = Audio::ScopedAudio(m_Audio->GetEngine(), scopeId, context.IsReplay);
+            context.Haptics = Haptics::ScopedHaptics(m_Haptics, scopeId, context.Input,
+                                                     &request.Scene, context.IsReplay);
             return context;
         }
 
@@ -113,8 +115,11 @@ namespace Veng::TestSupport
         /// @brief Returns the bundle's own headless input, for a case to feed events through.
         [[nodiscard]] Input& GetInput() { return m_Input; }
 
-        /// @brief Returns the audio engine over the null device.
+        /// @brief Returns the audio engine over the null device, judged by GetPresentationScopes().
         [[nodiscard]] Audio::AudioEngine& GetAudio() { return m_Audio->GetEngine(); }
+
+        /// @brief Returns the null audio device, for a case that pumps the mix.
+        [[nodiscard]] Audio::AudioDevice& GetAudioDevice() { return *m_Audio; }
 
         /// @brief Returns the haptics engine, driving no pads, judged by GetPresentationScopes().
         [[nodiscard]] Haptics::HapticsEngine& GetHaptics() { return m_Haptics; }
@@ -146,8 +151,6 @@ namespace Veng::TestSupport
         AssetManager* m_AssetsOverride = nullptr;
         /// @brief The case's own input, read in place of m_Input; null for none.
         const Input* m_InputOverride = nullptr;
-        /// @brief The case's own audio engine, read in place of m_Audio's; null for none.
-        Audio::AudioEngine* m_AudioOverride = nullptr;
     };
 
     /// @brief Returns a bundle that lives for the whole process, for a helper outside any case.

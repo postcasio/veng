@@ -11,6 +11,7 @@
 #include <Veng/Audio/AudioDevice.h>
 #include <Veng/Audio/AudioEngine.h>
 #include <Veng/Audio/Voice.h>
+#include "support/TestAudio.h"
 
 #include <vector>
 
@@ -27,8 +28,8 @@ namespace
 
 TEST_CASE("ConfigureBusGraph republishes cleanly under a device")
 {
-    const Unique<AudioDevice> device =
-        AudioDevice::Create(AudioDeviceInfo{.Backend = AudioBackend::Auto});
+    const Unique<AudioDevice> device = AudioDevice::Create(
+        TestSupport::SharedPresentationScopes(), AudioDeviceInfo{.Backend = AudioBackend::Auto});
     AudioEngine& engine = device->GetEngine();
 
     // Adopt a game-shaped graph before any meaningful mixing.
@@ -42,7 +43,8 @@ TEST_CASE("ConfigureBusGraph republishes cleanly under a device")
     const std::vector<f32> samples(4800, 0.25f);
     const Ref<AudioBuffer> clip = AudioBuffer::Create(samples, 1, device->GetSampleRate());
     const VoiceHandle voice =
-        engine.AddVoice(clip, VoiceParams{.Bus = BusId{"Engines"}, .Gain = 1.0f, .Loop = true});
+        engine.AddVoice(TestSupport::AppScope(), clip,
+                        VoiceParams{.Bus = BusId{"Engines"}, .Gain = 1.0f, .Loop = true});
     CHECK(voice.IsValid());
 
     for (int i = 0; i < 4; ++i)
@@ -69,8 +71,8 @@ TEST_CASE("ConfigureBusGraph republishes cleanly under a device")
 
 TEST_CASE("StopVoice returns on a driven hardware device")
 {
-    const Unique<AudioDevice> device =
-        AudioDevice::Create(AudioDeviceInfo{.Backend = AudioBackend::Auto});
+    const Unique<AudioDevice> device = AudioDevice::Create(
+        TestSupport::SharedPresentationScopes(), AudioDeviceInfo{.Backend = AudioBackend::Auto});
     if (device->IsNull())
     {
         MESSAGE("skipped: no hardware audio device in this session");
@@ -86,7 +88,8 @@ TEST_CASE("StopVoice returns on a driven hardware device")
     const std::vector<f32> samples(4800, 0.25f);
     const Ref<AudioBuffer> clip = AudioBuffer::Create(samples, 1, device->GetSampleRate());
     const VoiceHandle voice =
-        engine.AddVoice(clip, VoiceParams{.Bus = AudioBuses::Master(), .Gain = 1.0f, .Loop = true});
+        engine.AddVoice(TestSupport::AppScope(), clip,
+                        VoiceParams{.Bus = AudioBuses::Master(), .Gain = 1.0f, .Loop = true});
     CHECK(voice.IsValid());
     device->Pump(1.0f / 60.0f);
 

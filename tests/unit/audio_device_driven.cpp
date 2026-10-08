@@ -9,6 +9,7 @@
 
 #include <Veng/Audio/AudioDevice.h>
 #include <Veng/Audio/AudioEngine.h>
+#include "support/TestAudio.h"
 
 #include <vector>
 
@@ -21,8 +22,10 @@ namespace
 
     Unique<AudioDevice> MakeNullDevice()
     {
-        return AudioDevice::Create(AudioDeviceInfo{
-            .Backend = AudioBackend::Null, .SampleRate = TestSampleRate, .Channels = 2});
+        return AudioDevice::Create(TestSupport::SharedPresentationScopes(),
+                                   AudioDeviceInfo{.Backend = AudioBackend::Null,
+                                                   .SampleRate = TestSampleRate,
+                                                   .Channels = 2});
     }
 
     // Accumulates every tapped block: the total frames, the number of calls, whether every block's

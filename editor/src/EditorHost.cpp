@@ -782,7 +782,7 @@ namespace VengEditor
         const AssetEditorContext ctx{
             .Assets = GetAssetManager(),
             .Context = GetRenderContext(),
-            .Audio = GetAudioEngine(),
+            .Audio = GetApplicationAudio(),
             .Tasks = GetTaskSystem(),
             .Status = *m_Status,
             .SourcePath = entry != nullptr ? entry->Source : path{},

@@ -10,11 +10,6 @@ namespace Veng
     class AssetManager;
     class Scene;
 
-    namespace Audio
-    {
-        class AudioEngine;
-    }
-
     namespace Gui
     {
         class Document;
@@ -87,13 +82,20 @@ namespace Veng
         /// @brief The asset manager the driven document loads through; what a driver loads its own
         /// assets (a sound, an icon) with.
         AssetManager& Assets;
-        /// @brief The device-wide audio engine a driver fires sound through, or null.
+        /// @brief The audio engine as the driven scene reaches it: the sound a driver starts.
         ///
-        /// The audio peer of SystemContext::Audio, reaching the driver from the presenting viewport
-        /// (Viewport::SetAudioEngine, which the engine sets on each managed viewport). Null when the
-        /// viewport was handed no engine — an editor preview, a driver-free test — so a driver that
-        /// plays sound treats null as silence, never as an error.
-        Audio::AudioEngine* Audio = nullptr;
+        /// The audio peer of SystemContext::Audio, built by the presenting viewport over the engine
+        /// its compositor handed it (ViewportCompositor::SetDevices) and the driven scene's
+        /// presentation scope, so a driver's sound belongs to that scene: it holds while the world is
+        /// paused, is silent while nothing presents it, and stops when the scene goes. A viewport
+        /// registered on no compositor, or a scene with no scope, hands a facade that starts nothing,
+        /// so a driver needs no null-guard. A driver never runs inside a replay.
+        Audio::ScopedAudio Audio;
+        /// @brief The haptics engine as the driven scene reaches it: the rumble a driver plays.
+        ///
+        /// The haptics peer of Audio and of SystemContext::Haptics, bound the same way: a seat target
+        /// resolves in the driven scene, and a one-shot belongs to its scope.
+        Haptics::ScopedHaptics Haptics;
         /// @brief The localization service a driver composes user-facing text through.
         ///
         /// The string peer of SystemContext::Localization, reaching the driver from the presenting
@@ -112,7 +114,7 @@ namespace Veng
     /// its elements against, the scene and seat it answers to, and the host services that are stable
     /// for the run — so a driver binding a localized view-model needs no back-channel component to
     /// reach the application. Everything that moves per frame (timing, the resolved view, the
-    /// claiming viewport's audio engine) lives on GuiDriverFrame instead.
+    /// sound and rumble facades) lives on GuiDriverFrame instead.
     struct GuiDriverContext
     {
         /// @brief The freshly instantiated live document this driver drives.

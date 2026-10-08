@@ -9,6 +9,7 @@
 #include <Capture/RecorderCore.h>
 
 #include <Veng/Audio/AudioDevice.h>
+#include "support/TestAudio.h"
 
 #include <support/FakeVideoRecorderBackend.h>
 
@@ -46,8 +47,10 @@ namespace
 
 TEST_CASE("video recorder audio: a driven pump's own samples reach the file, contiguous from zero")
 {
-    const Unique<Audio::AudioDevice> device = Audio::AudioDevice::Create(Audio::AudioDeviceInfo{
-        .Backend = Audio::AudioBackend::Null, .SampleRate = SampleRate, .Channels = Channels});
+    const Unique<Audio::AudioDevice> device = Audio::AudioDevice::Create(
+        TestSupport::SharedPresentationScopes(),
+        Audio::AudioDeviceInfo{
+            .Backend = Audio::AudioBackend::Null, .SampleRate = SampleRate, .Channels = Channels});
     REQUIRE(device->GetSampleRate() == SampleRate);
 
     const Unique<RecorderCore> core = CreateUnique<RecorderCore>();

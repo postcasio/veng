@@ -6,8 +6,10 @@ per-bus gain and a small effect surface, degrades to a silent null device when t
 and reclaims the resources a voice references without ever touching them while the mixer is mid-mix.
 
 The public surface is `engine/include/Veng/Audio/` (`AudioBus.h`, `AudioBuffer.h`, `Voice.h`,
-`AudioDevice.h`, `AudioEngine.h`); the real-time internals are `engine/src/Audio/`. `AudioDevice`
-is owned by `Application` for the whole run, mirroring `Renderer::Context`.
+`AudioDevice.h`, `AudioEngine.h`, `ScopedAudio.h`); the real-time internals are `engine/src/Audio/`.
+`AudioDevice` is owned by `Application` for the whole run, mirroring `Renderer::Context`, and is
+constructed over the application's `PresentationScopes` registry, which every voice is judged by (see
+[Every voice belongs to a scope](#every-voice-belongs-to-a-scope)).
 
 ## The one thread rule this subsystem adds
 
@@ -59,6 +61,12 @@ caller** — whatever the source, `StopVoice` only retires the slot and queues t
 release happens later inside `Pump` (`CollectDeferred`), on the main thread. That is why the engine
 owns a reference to every source a voice reads, a generator included: a source the caller could free
 on return would force the stop to wait for every audio thread first.
+
+**A voice snapshot carries a `Held` flag** — one more POD field. The mixer skips a held voice
+outright, before its cursor, its generator or its ring is touched: no samples, no cursor advance, no
+`Render` call, no drain of a stream or buffered ring (the decode and fill threads find the ring full
+and wait). So a held voice resumes on the exact sample it stopped on, and a held finite voice cannot
+retire. A **muted** voice is not held: it is published at zero gain and mixes on, advancing.
 
 The reverse channel is a lock-free SPSC ring (`SpscRing.h`): when a finite voice exhausts, the
 callback posts its `{slot, generation}` and the main thread drains it in `DrainRetired()` — the
@@ -199,17 +207,55 @@ factor into a per-voice low-pass (`VoiceParams::Occlusion`, `0` an exact bypass)
 trace geometry to decide what occludes — the game supplies the factor from whatever it knows (a ray,
 a portal test). This keeps the engine general while shipping the DSP.
 
-**A voice belongs to no scene.** The code API below takes no owner, so a paused world's voices keep
-playing at their last parameters, an unpresented world is audible, and each world's `AudioSystem`
-advances the device-wide listener and music clock. The per-scene ownership model the engine has for
-this is the scene's presentation scope ([../Scene/CLAUDE.md](../Scene/CLAUDE.md), "Presentation
-scopes"): a scope dying with its scene, held by its View phase's lease, muted when unpresented, and
-resolved once per frame in the application's presentation step.
-
-The system drives `SystemContext::Audio` — the device-wide engine every system reaches, backed by
+The system drives `SystemContext::Audio` — the facade bound to its scene's presentation scope, over
 the null device when there is no hardware — so it is never inert: a headless scene simply mixes
-through the null device. Each update it also calls `AudioEngine::UpdateManagedVoices` with the
-resolved listener, merging the engine's code-triggered one-shots and music into the same snapshot.
+through the null device. Its source voices therefore belong to the scene: a **paused** world runs no
+View pass, so its scope is `Held` and its sources freeze where they are, with no system code; an
+**unpresented** world's are muted; a **closed** scene's stop. Each update it also sets the scene's
+listener on that scope (`ScopedAudio::SetListener`), which is what the scene's `PlayAt` voices are
+spatialized against too. `OnStop` still stops the voices it holds; the scope's closure would also.
+It does not advance the engine — that is the application's once-per-frame `AudioEngine::Update`.
+
+## Every voice belongs to a scope
+
+**Every voice carries the `PresentationScopeId` it was started in**
+([../Scene/CLAUDE.md](../Scene/CLAUDE.md), "Presentation scopes"), so pause, presentation, closure
+and replay fall out of the scope's states with no world ids. The engine's starting calls take the
+scope explicitly — `AddVoice(scope, …)`, `AddClipVoice(scope, …)`, `PlayOneShot(scope, …)`,
+`PlayAt(scope, …)`, `PlayGenerator(scope, …)` — and refuse to start in a scope that has closed (or
+was never handed out); the handle-keyed controls (`SetVoicePose`, `SetVoiceParams`, `StopVoice`,
+`IsVoiceLive`, `GetVoiceParams`) take none. A voice is judged at its start, so one started in a `Held`
+scope is published held from its first snapshot and stays fresh until the lease returns.
+
+**`AudioEngine::Update(delta)` runs once per frame**, in `Application::Frame`'s presentation step right
+after `PresentationScopes::Resolve()` — never from a system, so nothing advances once per world. Per
+voice, by its scope's latched state: `Closed` stops it through the ordinary retire-and-reclaim path
+(so a world's end stops its one-shots, generators and source voices alike), `Held` publishes it
+frozen, `Muted` publishes it at zero gain while it advances (a muted one-shot ends exactly when it
+would have ended audibly), `Live` publishes it as authored. Then every spatial voice is
+re-spatialized against **its own scope's** listener, and the music director advances once by the
+frame delta.
+
+**A listener per scope.** `SetListener(scope, pose)` keeps one pose per open scope (dropped by the
+`Update` that finds the scope closed); a scope that never set one — the application scope — listens
+from the origin. A `PlayAt` voice is spatialized against the listener of the scene that started it,
+whatever order the worlds tick in.
+
+**`Audio::ScopedAudio` is what a scene reaches** (`Veng/Audio/ScopedAudio.h`): the engine, the scope
+and the replay flag, held by value as `SystemContext::Audio` and bound by the context factory, so a
+system never names a scope. Its starts (`PlayOneShot`, `PlayAt`, `PlayGenerator`, `AddClipVoice`) go
+into its scope and **start nothing inside a reconciliation replay** — a Sim system fires sound with
+no `IsReplay` gate of its own — while its controls work as usual in a replay. `SetListener` sets the
+scope's listener. `CreateClip` and `GetOutputSampleRate` pass through unscoped (a clip is an asset,
+not a voice), as does `Music()`. Bus gains, bus DSP and the master reverb are device-wide settings,
+not a scene's sound, so they stay on the engine (`Application::GetAudioEngine()`). An unbound facade
+(`ScopedAudio::Unbound()`) starts nothing; it has no public default, so a context omitting its facade
+does not compile. **`Application::GetApplicationAudio()`** is the same facade over the always-`Live`
+application scope — application code, tooling and an editor's audition — and never a scene system's
+path. A Gui driver reaches the same facade as `GuiDriverFrame::Audio`, built by its presenting
+viewport over the driven scene's scope (see [../Gui/CLAUDE.md](../Gui/CLAUDE.md), "The driver"), so a
+HUD's click in a paused world is held with that world. A unit test takes its contexts from
+`tests/support/TestServices.h`, whose null device is judged by the bundle's own registry.
 
 ## The code API and the music director
 
@@ -217,22 +263,24 @@ Beyond authored `AudioSource`s, any system fires sound through `SystemContext::A
 
 - **`PlayOneShot(clip, OneShotParams)`** — a non-spatial fire-and-forget voice on a chosen bus
   (default `SFX`). **`PlayAt(clip, worldPos, SpatialOneShotParams)`** — a spatial voice fixed at a
-  world position, spatialized against the listener exactly as an `AudioSource` is.
+  world position, spatialized against its scene's listener exactly as an `AudioSource` is.
   **`SetVoicePose(handle, pos, vel)`** repositions a `PlayAt` voice each frame — the general
   capability a moving positioned voice (a projectile, a tracked remote emitter) reaches for.
 - These share one **engine-owned pool** (`MaxOneShotVoices`) inside the wider `MaxVoices` budget:
   a full pool drops its quietest voice for a louder incoming one, else rejects the request. Each
   slot carries `Managed` metadata (kind, world pose, rolloff) parallel to the voice table; the
-  `AudioSystem`'s per-frame `UpdateManagedVoices` re-spatializes the `Spatial` ones against the
-  listener. A slot's metadata is reset on `AddVoice` / `RetireSlot`, so a reused slot never
-  inherits a stale role.
+  engine's per-frame `Update` re-spatializes the `Spatial` ones against their scope's listener. A
+  slot's metadata is reset on `AddVoice` / `RetireSlot`, so a reused slot never inherits a stale
+  role.
 - **`Music()`** returns the **`MusicDirector`**, the one-track policy over the Music bus. `Set(track,
   MusicTransition)` makes `track` the one logical background track, **equal-power crossfading** from
   the current one over `FadeSeconds` (0 is a hard cut); re-setting the playing track is a no-op. It
   holds at most the crossfade pair — two live Music voices — collapsing to one when the fade
   completes, and offers `Stop(fade)`, `SetGain`, `Current()`. It does not layer, stinger, or
   sequence. A level's authored initial track is the reflected `MusicState` component, read via
-  `Scene::TryGetFirst` on world start and handed to the director once at its authored fade.
+  `Scene::TryGetFirst` on world start and handed to the director once at its authored fade. The
+  director is device-wide: its voices belong to the application scope, and its crossfade advances
+  in the engine's once-per-frame `Update`.
 
 ## Runtime-generated audio
 
@@ -244,7 +292,7 @@ Two runtime paths put code-made sound into the mix; pick by whether the sound is
   and `AssetManager::Adopt`s it as an `AudioClip` handle. The result is a Pcm clip in every respect
   except provenance: it plays through `PlayOneShot`/`PlayAt`, attaches to an `AudioSource`, or feeds
   the director, indistinguishable downstream from a cooked clip.
-- **`IAudioGenerator` + `AudioEngine::PlayGenerator(gen, GeneratorVoiceParams)`** — for an
+- **`IAudioGenerator` + `PlayGenerator(gen, GeneratorVoiceParams)`** (through a facade) — for an
   **unbounded, continuously-varying voice** the mixer pulls from. `PlayGenerator` takes a
   `Ref<IAudioGenerator>` and the voice shares ownership of it: the caller keeps its own reference
   to drive the generator's params, or drops it whenever it likes; `Render` fills the
@@ -252,7 +300,8 @@ Two runtime paths put code-made sound into the mix; pick by whether the sound is
   stream, so a generator voice shares the clip attenuation/pan/Doppler/occlusion path with **no
   generator-specific case** — a spatial generator is a `Spatial` `Managed` voice moved each frame
   with `SetVoicePose` (position is a placement, never a generator param). A generator voice never
-  retires by exhaustion; only `StopVoice` removes it.
+  retires by exhaustion; only `StopVoice` (or its scope's closure) removes it, and a held one is not
+  rendered at all.
 
   **A generator voice is mono by default, and a non-spatial one may declare stereo.** A voice
   registers its width through `GeneratorVoiceParams::Channels` — `1` (mono) or `2` (an interleaved
@@ -395,15 +444,18 @@ stream and resident tracks); a long authored ambient bed on an `AudioSource` is 
 `AudioEngine::GetVoiceInfos()` returns a read-only `vector<VoiceInfo>` — one record per live voice,
 in slot order — carrying each voice's handle, bus, final gain/pan/pitch/occlusion/reverb-send, its
 loop flag, whether it is a clip or a generator, its role (`VoiceOrigin`:
-source/one-shot/spatial/music), and — for a spatial voice — the world position and velocity the
-engine holds. It takes no lock and mutates nothing: a seam for tooling, not for the mix.
+source/one-shot/spatial/music), its owning `Scope` and that scope's `State` as the voice was last
+judged (held is frozen, muted is silent), and — for a spatial voice — the world position and velocity
+the engine holds. It takes no lock and mutates nothing: a seam for tooling, not for the mix.
 
 The MCP surface exposes it as **`audio.list_voices`** (`veng/mcp`, `src/AudioTools.cpp`): a read-only
-tool reporting every voice on the device (a voice carries no world) plus the music director's current track, so a driven
+tool reporting every voice on the device with its scope and state, plus the music director's current track, so a driven
 session confirms "the right things are playing" without a speaker. It reaches the engine through
 `McpHost::Audio` and runs at the frame pump point like the other engine tools; see
 [mcp/CLAUDE.md](../../../mcp/CLAUDE.md). The engine's own consumption exemplars wire the whole
 subsystem — an authored looping `AudioSource` and an `AudioListener`, a code-triggered `PlayOneShot`
-through `SystemContext::Audio`, an authored `MusicState`, and a trivial `IAudioGenerator` +
-`CreateClip` demo — in `examples/hello-triangle`; `examples/template` takes the minimal
-listener + source plus the composed `DemoSynth` above, the consumer proof a new capability is held to.
+through `SystemContext::Audio` (owned by its scene and replay-gated with no code of its own), an
+authored `MusicState`, and a trivial `IAudioGenerator` + `CreateClip` demo through
+`GetApplicationAudio()` — in `examples/hello-triangle`; `examples/template` takes the minimal
+listener + source plus the composed `DemoSynth` above (also application-scoped), the consumer proof a
+new capability is held to.

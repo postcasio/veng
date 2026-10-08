@@ -66,6 +66,13 @@ namespace Veng::Audio
         f32 ReverbSend = 0.0f;
         /// @brief Whether the voice loops.
         bool Loop = false;
+        /// @brief Whether the voice is frozen: the mixer skips it entirely.
+        ///
+        /// Set for a voice whose presentation scope is Held. A held voice renders no samples,
+        /// advances no cursor, calls no generator and drains no ring, so it resumes on the exact
+        /// sample it stopped on and cannot retire while held. A muted voice is not held: it is
+        /// published at zero gain and advances.
+        bool Held = false;
     };
 
     /// @brief The immutable per-block snapshot the main thread publishes to the mixing thread.

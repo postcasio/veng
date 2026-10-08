@@ -12,6 +12,7 @@
 #include <Veng/Audio/AudioEngine.h>
 #include <Veng/Audio/AudioGenerator.h>
 #include <Veng/Audio/Voice.h>
+#include "support/TestAudio.h"
 
 #include <algorithm>
 #include <cmath>
@@ -26,6 +27,7 @@ namespace
     Unique<AudioDevice> MakeNullDevice()
     {
         return AudioDevice::Create(
+            TestSupport::SharedPresentationScopes(),
             AudioDeviceInfo{.Backend = AudioBackend::Null, .SampleRate = 48000, .Channels = 2});
     }
 
@@ -75,7 +77,7 @@ namespace
         engine.SetReverbParams(ReverbParams{.RoomSize = 0.8f, .Wet = 1.0f});
 
         const VoiceHandle voice = engine.PlayGenerator(
-            gen,
+            TestSupport::AppScope(), gen,
             GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false, .Channels = 2});
         REQUIRE(voice.IsValid());
         engine.SetVoiceParams(
@@ -98,7 +100,8 @@ TEST_CASE("a stereo generator keeps its channels independent through the mix")
     AudioEngine& engine = device->GetEngine();
 
     const VoiceHandle voice = engine.PlayGenerator(
-        gen, GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false, .Channels = 2});
+        TestSupport::AppScope(), gen,
+        GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false, .Channels = 2});
     REQUIRE(voice.IsValid());
 
     engine.Publish();
@@ -125,7 +128,8 @@ TEST_CASE("a stereo generator bypasses the pan stage")
     AudioEngine& engine = device->GetEngine();
 
     const VoiceHandle voice = engine.PlayGenerator(
-        gen, GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false, .Channels = 2});
+        TestSupport::AppScope(), gen,
+        GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false, .Channels = 2});
     REQUIRE(voice.IsValid());
 
     // Hard-pan left on the snapshot: a mono voice would collapse entirely to the left channel. The
@@ -152,8 +156,9 @@ TEST_CASE("a mono generator still renders through the pan stage unchanged")
 
     // Default width (mono). Hard-pan left: equal-power pan puts the whole signal in the left channel
     // and silence in the right — the mono-then-pan behaviour the additive stereo branch leaves be.
-    const VoiceHandle voice = engine.PlayGenerator(
-        gen, GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false});
+    const VoiceHandle voice =
+        engine.PlayGenerator(TestSupport::AppScope(), gen,
+                             GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false});
     REQUIRE(voice.IsValid());
     engine.SetVoiceParams(voice,
                           VoiceParams{.Bus = AudioBuses::Master(), .Gain = 1.0f, .Pan = -1.0f});
@@ -176,7 +181,8 @@ TEST_CASE("a spatial stereo generator request is rejected")
     AudioEngine& engine = device->GetEngine();
 
     const VoiceHandle voice = engine.PlayGenerator(
-        gen, GeneratorVoiceParams{.Spatial = true, .Channels = 2, .MaxDistance = 100.0f});
+        TestSupport::AppScope(), gen,
+        GeneratorVoiceParams{.Spatial = true, .Channels = 2, .MaxDistance = 100.0f});
     CHECK_FALSE(voice.IsValid());
     CHECK(engine.GetActiveVoiceCount() == 0);
 }

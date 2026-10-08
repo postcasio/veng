@@ -299,10 +299,12 @@ namespace Veng
         // backend; a windowed run tries the hardware device and falls to null when none initializes.
         // The self-test tone is gated behind an environment flag so it never sounds on an ordinary
         // launch.
-        m_AudioDevice = Audio::AudioDevice::Create(Audio::AudioDeviceInfo{
-            .Backend = m_Info.Headless ? Audio::AudioBackend::Null : Audio::AudioBackend::Auto,
-            .RunSelfTest = std::getenv("VENG_AUDIO_SELFTEST") != nullptr,
-        });
+        m_AudioDevice = Audio::AudioDevice::Create(
+            m_PresentationScopes,
+            Audio::AudioDeviceInfo{
+                .Backend = m_Info.Headless ? Audio::AudioBackend::Null : Audio::AudioBackend::Auto,
+                .RunSelfTest = std::getenv("VENG_AUDIO_SELFTEST") != nullptr,
+            });
 
         // The video recorder, over the services it records from: the compositor it installs itself
         // on as a capture sink, the context whose frames it rides, and the device whose mix becomes
@@ -411,11 +413,16 @@ namespace Veng
         // before the first frame) and installed on every managed viewport.
         m_GuiTranslator = CreateUnique<LocalizationGuiTranslator>(*this);
 
+        // Every viewport registered on the compositor hands its Gui drivers these, so a driver in a
+        // consumer's or a tool's viewport reaches sound and rumble as one in a managed viewport does.
+        m_Compositor.SetDevices(Renderer::ViewportDevices{.Audio = &m_AudioDevice->GetEngine(),
+                                                          .Haptics = m_Haptics.get(),
+                                                          .Input = m_Input.get()});
+
         // The managed-viewport policy collaborator, over the compositor + router. Presentation-only:
         // it owns the Presented viewports the engine drives and pulls their cameras from the runner.
         m_ManagedViewports = CreateUnique<ManagedViewportSet>(
             m_RenderContext, *m_AssetManager, m_Compositor, *m_InputRouter, m_GuiDriverRegistry,
-            m_AudioDevice != nullptr ? &m_AudioDevice->GetEngine() : nullptr,
             m_GuiTranslator.get());
 
         // Every viewport configured from a level's authored look resolves it through the graphics
@@ -2519,6 +2526,12 @@ namespace Veng
         return *m_Haptics;
     }
 
+    Audio::ScopedAudio Application::GetApplicationAudio()
+    {
+        return Audio::ScopedAudio(GetAudioEngine(), m_PresentationScopes.GetApplicationScope(),
+                                  false);
+    }
+
     Haptics::ScopedHaptics Application::GetApplicationHaptics() const
     {
         return Haptics::ScopedHaptics(GetHaptics(), m_PresentationScopes.GetApplicationScope(),
@@ -2585,7 +2598,9 @@ namespace Veng
             .Assets = *m_AssetManager,
             .Input = *m_Input,
             .Tasks = *m_TaskSystem,
-            .Audio = m_AudioDevice->GetEngine(),
+            .Audio = Audio::ScopedAudio(m_AudioDevice->GetEngine(),
+                                        request.Scene.GetPresentationScope()->GetId(),
+                                        request.Phase == SystemContextPhase::Replay),
             .Haptics = Haptics::ScopedHaptics(
                 *m_Haptics, request.Scene.GetPresentationScope()->GetId(), *m_Input, &request.Scene,
                 request.Phase == SystemContextPhase::Replay),
@@ -3166,6 +3181,10 @@ namespace Veng
         {
             VE_PROFILE_SCOPE("Frame/Presentation");
             m_PresentationScopes.Resolve();
+            if (m_AudioDevice)
+            {
+                m_AudioDevice->GetEngine().Update(delta);
+            }
             const bool padsLive =
                 !m_Window || m_Window->IsFocused() || m_InputRouter->IsBackgroundInput();
             m_Haptics->Update(

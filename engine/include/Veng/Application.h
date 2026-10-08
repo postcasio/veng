@@ -5,6 +5,7 @@
 #include <Veng/FrameClock.h>
 #include <Veng/LaunchArguments.h>
 #include <Veng/Window.h>
+#include <Veng/Audio/ScopedAudio.h>
 #include <Veng/Haptics/ScopedHaptics.h>
 #include <Veng/Input.h>
 #include <Veng/InputRouter.h>
@@ -836,10 +837,20 @@ namespace Veng
 
         /// @brief Returns the mixer-facing audio engine.
         ///
-        /// The device-wide engine every system reaches through SystemContext::Audio to trigger
-        /// sound; backed by a null device when there is no hardware.
+        /// What every scene's SystemContext::Audio facade routes into, and what device
+        /// configuration (bus gains, bus DSP, the master reverb, the bus graph) and tooling
+        /// (GetVoiceInfos) reach; backed by a null device when there is no hardware. Sound is
+        /// started through a facade, which names the scope it belongs to.
         /// @pre Run() has initialized the engine — the audio device exists only inside Run().
         [[nodiscard]] Audio::AudioEngine& GetAudioEngine();
+
+        /// @brief Returns the audio facade over the application scope, for code outside every scene.
+        ///
+        /// An editor audition, a runtime-generation demo, OnUpdate code: what it starts belongs to the
+        /// always-Live application scope, so it is never held or muted, and never replay-gated. Never
+        /// for a scene's systems, which start sound through their context.
+        /// @pre Run() has initialized the engine.
+        [[nodiscard]] Audio::ScopedAudio GetApplicationAudio();
 
         /// @brief Returns the audio device: the output backend and the real-time mixing path.
         ///

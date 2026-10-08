@@ -4,6 +4,7 @@
 #include <Veng/Renderer/CaptureSink.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/GatherPass.h>
+#include <Veng/Renderer/ViewportDevices.h>
 #include <Veng/Renderer/ViewportRegion.h>
 
 namespace Veng
@@ -69,11 +70,23 @@ namespace Veng::Renderer
 
         /// @brief Registers a viewport into the render-order drive-list rendered each frame.
         ///
-        /// Stores a non-owning pointer in registration order (which is render order) and hands the
-        /// viewport a back-reference so dropping its owning Unique self-unregisters it. Double-registering
-        /// a viewport is a fatal assert.
+        /// Stores a non-owning pointer in registration order (which is render order), hands the
+        /// viewport a back-reference so dropping its owning Unique self-unregisters it, and hands it
+        /// the compositor's device engines (SetDevices) for the Gui drivers it drives.
+        /// Double-registering a viewport is a fatal assert.
         /// @param viewport  The viewport to drive; its lifetime stays with the caller.
         void RegisterViewport(Viewport& viewport);
+
+        /// @brief Sets the device engines every registered viewport hands the Gui drivers it drives.
+        ///
+        /// Applied to every viewport already registered and to every later registration, so a driver
+        /// in any viewport on this compositor reaches sound and rumble. The engines are borrowed and
+        /// must outlive every drive; pass an empty set to withdraw them.
+        /// @param devices  The device engines, any of which may be null.
+        void SetDevices(const ViewportDevices& devices);
+
+        /// @brief Returns the device engines handed to every registered viewport.
+        [[nodiscard]] const ViewportDevices& GetDevices() const { return m_Devices; }
 
         /// @brief Registers a scene capture into the drive-list rendered ahead of the viewports.
         ///
@@ -165,6 +178,9 @@ namespace Veng::Renderer
 
         /// @brief Non-owning, ordered list of viewports rendered each frame; registration order is render order.
         vector<Viewport*> m_Viewports;
+
+        /// @brief The device engines handed to every registered viewport.
+        ViewportDevices m_Devices;
 
         /// @brief Non-owning, ordered list of scene captures rendered ahead of the viewports.
         vector<SceneCapture*> m_Captures;

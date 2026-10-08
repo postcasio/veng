@@ -12,6 +12,7 @@
 #include <Veng/Audio/AudioDevice.h>
 #include <Veng/Audio/AudioEngine.h>
 #include <Veng/Audio/AudioGenerator.h>
+#include "support/TestAudio.h"
 
 #include <algorithm>
 #include <atomic>
@@ -29,6 +30,7 @@ namespace
     Unique<AudioDevice> MakeNullDevice()
     {
         return AudioDevice::Create(
+            TestSupport::SharedPresentationScopes(),
             AudioDeviceInfo{.Backend = AudioBackend::Null, .SampleRate = 48000, .Channels = 2});
     }
 
@@ -154,7 +156,8 @@ TEST_CASE("CreateClip wraps a code-built buffer as an ordinary, playable clip")
     CHECK(maxDiff == 0.0f);
 
     // It plays through the ordinary voice path: a non-looping voice retires after its duration.
-    const VoiceHandle once = engine.PlayOneShot(clip, OneShotParams{.Loop = false});
+    const VoiceHandle once =
+        engine.PlayOneShot(TestSupport::AppScope(), clip, OneShotParams{.Loop = false});
     REQUIRE(once.IsValid());
     for (int i = 0; i < 4 && engine.IsVoiceLive(once); ++i)
     {
@@ -163,7 +166,8 @@ TEST_CASE("CreateClip wraps a code-built buffer as an ordinary, playable clip")
     CHECK_FALSE(engine.IsVoiceLive(once));
 
     // A looping voice on the same clip is still live long past its 16-frame duration.
-    const VoiceHandle looping = engine.PlayOneShot(clip, OneShotParams{.Loop = true});
+    const VoiceHandle looping =
+        engine.PlayOneShot(TestSupport::AppScope(), clip, OneShotParams{.Loop = true});
     REQUIRE(looping.IsValid());
     for (int i = 0; i < 4; ++i)
     {
@@ -279,10 +283,10 @@ TEST_CASE("a spatial generator is placed and panned through the clip spatializat
 
     // Hard-left of a listener at the origin (identity rotation, +X right): the voice pans left,
     // using the same StereoPan a PlayAt clip does — no generator-specific spatialization exists.
-    const VoiceHandle voice =
-        engine.PlayGenerator(generator, GeneratorVoiceParams{.Spatial = true,
-                                                             .Position = vec3(-10.0f, 0.0f, 0.0f),
-                                                             .MaxDistance = 100.0f});
+    const VoiceHandle voice = engine.PlayGenerator(
+        TestSupport::AppScope(), generator,
+        GeneratorVoiceParams{
+            .Spatial = true, .Position = vec3(-10.0f, 0.0f, 0.0f), .MaxDistance = 100.0f});
     REQUIRE(voice.IsValid());
     const optional<VoiceParams> params = engine.GetVoiceParams(voice);
     REQUIRE(params.has_value());
@@ -305,7 +309,7 @@ TEST_CASE("a generator voice mixes through the null device and StopVoice reclaim
     generator->Value = 0.5f;
 
     const VoiceHandle voice = engine.PlayGenerator(
-        generator,
+        TestSupport::AppScope(), generator,
         GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false, .Gain = 1.0f});
     REQUIRE(voice.IsValid());
     CHECK(engine.GetActiveVoiceCount() == 1);
@@ -338,7 +342,7 @@ TEST_CASE("stopping generator voices waits for no mixer frame and reclaims them 
     for (int i = 0; i < VoiceCount; ++i)
     {
         voices.push_back(engine.PlayGenerator(
-            CreateRef<LifetimeGenerator>(probe),
+            TestSupport::AppScope(), CreateRef<LifetimeGenerator>(probe),
             GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false, .Gain = 0.3f}));
         REQUIRE(voices.back().IsValid());
     }
@@ -373,8 +377,9 @@ TEST_CASE("a caller's own reference keeps a generator alive past the voice's rec
     AudioEngine& engine = device->GetEngine();
     auto generator = CreateRef<LifetimeGenerator>(probe);
 
-    const VoiceHandle voice = engine.PlayGenerator(
-        generator, GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false});
+    const VoiceHandle voice =
+        engine.PlayGenerator(TestSupport::AppScope(), generator,
+                             GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false});
     REQUIRE(voice.IsValid());
     device->Pump(1.0f / 60.0f);
 
@@ -396,11 +401,11 @@ TEST_CASE("stopping a dead or invalid handle is a no-op")
     AudioEngine& engine = device->GetEngine();
 
     const VoiceHandle voice =
-        engine.PlayGenerator(CreateRef<LifetimeGenerator>(probe),
+        engine.PlayGenerator(TestSupport::AppScope(), CreateRef<LifetimeGenerator>(probe),
                              GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false});
     REQUIRE(voice.IsValid());
     const VoiceHandle survivor =
-        engine.PlayGenerator(CreateRef<LifetimeGenerator>(probe),
+        engine.PlayGenerator(TestSupport::AppScope(), CreateRef<LifetimeGenerator>(probe),
                              GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Spatial = false});
     REQUIRE(survivor.IsValid());
 

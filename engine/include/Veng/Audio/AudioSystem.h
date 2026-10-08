@@ -8,11 +8,6 @@
 #include <unordered_map>
 #include <unordered_set>
 
-namespace Veng::Audio
-{
-    class AudioEngine;
-}
-
 namespace Veng
 {
     class Scene;
@@ -30,10 +25,12 @@ namespace Veng
     /// through the lock-free retired-voice channel. When active sources exceed the cap the loudest
     /// after attenuation survive, matching the renderer's light clamp.
     ///
-    /// The engine it drives is SystemContext::Audio — the device-wide mixer-facing engine every
-    /// system reaches. Each update it also merges the engine's code-triggered one-shots and music
-    /// (AudioEngine::UpdateManagedVoices) against the resolved listener, so a PlayOneShot or PlayAt
-    /// fired from any system is spatialized and mixed through the same snapshot.
+    /// It drives the engine through SystemContext::Audio, the facade bound to the scene's
+    /// presentation scope, so its voices belong to the scene: a paused world's sources hold, an
+    /// unpresented one's are silent, and a closed scene's stop. Each update it sets the scene's
+    /// listener on that scope, which every PlayAt a system of this scene fires is spatialized
+    /// against too. The engine's once-per-frame advance (AudioEngine::Update) is the application's,
+    /// not this system's.
     class AudioSystem final : public SceneSystem
     {
     public:

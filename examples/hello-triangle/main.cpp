@@ -319,8 +319,8 @@ public:
                 // builtin VehicleSystem drains it — so nothing game-side runs inside the resolve query.
                 if (player.WasTriggered(Actions::Interact))
                 {
-                    // Fire a code-triggered UI blip through SystemContext::Audio, the fire-and-forget
-                    // path any system reaches; the clip retires itself when it ends.
+                    // A fire-and-forget UI blip owned by this scene: a pause holds it, and a --join
+                    // client's replay of this tick starts nothing, so it needs no IsReplay gate.
                     context.Audio.PlayOneShot(
                         m_Blip, Audio::OneShotParams{.Bus = Audio::AudioBuses::UI(), .Gain = 0.8f});
                     FireInteract(scene, possesses.Pawn);
@@ -1469,12 +1469,13 @@ private:
     //  - PlayGenerator registers the ToneGenerator as a live voice the mixer pulls samples from
     //    each block; PollAudioDemo drives its frequency each frame through the param block.
     //  - CreateClip wraps a short code-built PCM buffer as a one-shot clip, fired on a key (Key::G).
-    // Both are non-spatial and route to their bus. Started here so the generator voice exists in every
-    // mode (silent at amplitude 0 until PollAudioDemo runs, which the smoke path never reaches, so the
+    // Both are non-spatial, route to their bus, and belong to the application scope — no scene owns
+    // them, so no world's pause or presentation silences them. Started here so the generator voice
+    // exists in every mode (silent at amplitude 0 until PollAudioDemo runs, which the smoke path never reaches, so the
     // golden capture is unaffected).
     void SetupAudioDemo()
     {
-        m_ToneVoice = GetAudioEngine().PlayGenerator(
+        m_ToneVoice = GetApplicationAudio().PlayGenerator(
             m_Tone, Audio::GeneratorVoiceParams{
                         .Bus = Audio::AudioBuses::SFX(), .Spatial = false, .Gain = 0.12f});
 
@@ -1490,7 +1491,7 @@ private:
             const f32 freq = 720.0f - 240.0f * (static_cast<f32>(i) / static_cast<f32>(frames));
             samples[i] = 0.6f * env * std::sin(2.0f * std::numbers::pi_v<f32> * freq * t);
         }
-        m_GeneratedClip = GetAudioEngine().CreateClip(
+        m_GeneratedClip = GetApplicationAudio().CreateClip(
             samples, Audio::AudioBufferFormat{.SampleRate = rate, .Channels = 1});
     }
 
@@ -1504,8 +1505,8 @@ private:
 
         if (GetInput().WasKeyPressed(Key::G))
         {
-            GetAudioEngine().PlayOneShot(m_GeneratedClip,
-                                         Audio::OneShotParams{.Bus = Audio::AudioBuses::UI()});
+            GetApplicationAudio().PlayOneShot(m_GeneratedClip,
+                                              Audio::OneShotParams{.Bus = Audio::AudioBuses::UI()});
         }
     }
 

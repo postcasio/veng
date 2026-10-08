@@ -12,6 +12,7 @@
 #include <Veng/Audio/AudioDevice.h>
 #include <Veng/Audio/AudioEngine.h>
 #include <Veng/Audio/AudioGenerator.h>
+#include "support/TestAudio.h"
 
 #include <algorithm>
 #include <atomic>
@@ -29,6 +30,7 @@ namespace
     Unique<AudioDevice> MakeStereoNullDevice()
     {
         return AudioDevice::Create(
+            TestSupport::SharedPresentationScopes(),
             AudioDeviceInfo{.Backend = AudioBackend::Null, .SampleRate = 48000, .Channels = 2});
     }
 
@@ -123,8 +125,9 @@ TEST_CASE("a buffered generator eventually plays exactly what it produces, conti
     const auto generator = CreateRef<StereoRampGenerator>();
 
     const VoiceHandle voice = engine.PlayGenerator(
-        generator, GeneratorVoiceParams{
-                       .Bus = AudioBuses::Master(), .Channels = 2, .Buffered = true, .Gain = 1.0f});
+        TestSupport::AppScope(), generator,
+        GeneratorVoiceParams{
+            .Bus = AudioBuses::Master(), .Channels = 2, .Buffered = true, .Gain = 1.0f});
     REQUIRE(voice.IsValid());
 
     // Give the fill thread time to render the head of the ramp into the ring before draining begins.
@@ -172,12 +175,13 @@ TEST_CASE("a buffered spatial generator request is rejected; a non-spatial one i
     // Buffered carries no per-frame pan or Doppler, so a spatial buffered request is invalid, exactly
     // as a stereo spatial one is.
     const VoiceHandle spatial =
-        engine.PlayGenerator(generator, GeneratorVoiceParams{.Spatial = true, .Buffered = true});
+        engine.PlayGenerator(TestSupport::AppScope(), generator,
+                             GeneratorVoiceParams{.Spatial = true, .Buffered = true});
     CHECK_FALSE(spatial.IsValid());
     CHECK(engine.GetActiveVoiceCount() == 0);
 
     const VoiceHandle ok = engine.PlayGenerator(
-        generator,
+        TestSupport::AppScope(), generator,
         GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Buffered = true, .Gain = 1.0f});
     CHECK(ok.IsValid());
     CHECK(engine.GetActiveVoiceCount() == 1);
@@ -194,7 +198,7 @@ TEST_CASE("a stopped buffered generator lives until neither audio thread can rea
 
     // The engine's reference is the only one: the generator's life is the voice's to decide.
     const VoiceHandle voice = engine.PlayGenerator(
-        CreateRef<LifetimeProbeGenerator>(probe),
+        TestSupport::AppScope(), CreateRef<LifetimeProbeGenerator>(probe),
         GeneratorVoiceParams{
             .Bus = AudioBuses::Master(), .Channels = 2, .Buffered = true, .Gain = 1.0f});
     REQUIRE(voice.IsValid());
@@ -242,7 +246,7 @@ TEST_CASE("a buffered generator underrun is silence, never a hang or garbage")
     const auto generator = CreateRef<ConstantGenerator>();
 
     const VoiceHandle voice = engine.PlayGenerator(
-        generator,
+        TestSupport::AppScope(), generator,
         GeneratorVoiceParams{.Bus = AudioBuses::Master(), .Buffered = true, .Gain = 1.0f});
     REQUIRE(voice.IsValid());
 

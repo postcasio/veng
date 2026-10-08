@@ -10,6 +10,7 @@
 #include <Veng/Audio/AudioDevice.h>
 #include <Veng/Audio/AudioEngine.h>
 #include <Veng/Audio/Voice.h>
+#include "support/TestAudio.h"
 
 #include <vector>
 
@@ -21,6 +22,7 @@ namespace
     Unique<AudioDevice> MakeNullDevice()
     {
         return AudioDevice::Create(
+            TestSupport::SharedPresentationScopes(),
             AudioDeviceInfo{.Backend = AudioBackend::Null, .SampleRate = 48000, .Channels = 2});
     }
 
@@ -55,7 +57,7 @@ TEST_CASE("the default graph reproduces the historical five-bus mix")
     AudioEngine& engine = device->GetEngine();
 
     engine.AddVoice(
-        ConstantMono(1.0f, 64),
+        TestSupport::AppScope(), ConstantMono(1.0f, 64),
         VoiceParams{.Bus = AudioBuses::SFX(), .Gain = 1.0f, .Pan = -1.0f, .Loop = true});
     engine.Publish();
 
@@ -85,9 +87,9 @@ TEST_CASE("gain composes down the tree")
     engine.ConfigureBusGraph(*AudioBusGraph::Create(data));
 
     const VoiceHandle a =
-        engine.AddVoice(ConstantMono(1.0f, 64),
+        engine.AddVoice(TestSupport::AppScope(), ConstantMono(1.0f, 64),
                         VoiceParams{.Bus = BusId{"A"}, .Gain = 1.0f, .Pan = -1.0f, .Loop = true});
-    engine.AddVoice(ConstantMono(1.0f, 64),
+    engine.AddVoice(TestSupport::AppScope(), ConstantMono(1.0f, 64),
                     VoiceParams{.Bus = BusId{"B"}, .Gain = 1.0f, .Pan = -1.0f, .Loop = true});
 
     // Both leaves at unity: A and B each contribute 1.0 to the left → 2.0.
@@ -134,7 +136,7 @@ TEST_CASE("per-bus DSP is leaf-only")
     // A low cutoff on the leaf attenuates the one-pole's opening transient: the first output sample
     // is far below the steady 1.0 a bypassed bus would pass. A constant DC voice through a non-leaf
     // (ignored) lowpass would show no such attenuation.
-    engine.AddVoice(ConstantMono(1.0f, 64),
+    engine.AddVoice(TestSupport::AppScope(), ConstantMono(1.0f, 64),
                     VoiceParams{.Bus = BusId{"A"}, .Gain = 1.0f, .Pan = -1.0f, .Loop = true});
     engine.SetBusLowpassCutoff(BusId{"A"}, 100.0f);
     CHECK(RenderFirstLeft(*device, engine) < 0.2f);
@@ -147,7 +149,7 @@ TEST_CASE("an unknown bus falls back to Master")
     const Unique<AudioDevice> device = MakeNullDevice();
     AudioEngine& engine = device->GetEngine();
 
-    engine.AddVoice(ConstantMono(1.0f, 64),
+    engine.AddVoice(TestSupport::AppScope(), ConstantMono(1.0f, 64),
                     VoiceParams{.Bus = BusId{"Engines"}, .Gain = 1.0f, .Pan = -1.0f, .Loop = true});
     // Master is unity, so the fallback plays at full level.
     CHECK(RenderFirstLeft(*device, engine) == doctest::Approx(1.0f).epsilon(0.001));
@@ -172,7 +174,7 @@ TEST_CASE("the flatten is deterministic")
 
     for (AudioEngine* engine : {&d0->GetEngine(), &d1->GetEngine()})
     {
-        engine->AddVoice(ConstantMono(1.0f, 64),
+        engine->AddVoice(TestSupport::AppScope(), ConstantMono(1.0f, 64),
                          VoiceParams{.Bus = BusId{"A"}, .Gain = 1.0f, .Pan = -1.0f, .Loop = true});
     }
     CHECK(RenderFirstLeft(*d0, d0->GetEngine()) ==

@@ -166,6 +166,16 @@ namespace Veng::Renderer
 
         m_Viewports.emplace_back(&viewport);
         viewport.AttachToDriveList(m_Viewports);
+        viewport.SetDevices(m_Devices);
+    }
+
+    void ViewportCompositor::SetDevices(const ViewportDevices& devices)
+    {
+        m_Devices = devices;
+        for (Viewport* viewport : m_Viewports)
+        {
+            viewport->SetDevices(devices);
+        }
     }
 
     void ViewportCompositor::RegisterCapture(SceneCapture& capture)

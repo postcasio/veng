@@ -119,7 +119,7 @@ namespace Veng
 
     void GuiOverlay::Drive(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene,
                            const Entity owner, GuiDriverRegistry* const drivers,
-                           Audio::AudioEngine* const audio,
+                           const Audio::ScopedAudio& audio, const Haptics::ScopedHaptics& haptics,
                            const Gui::GuiTranslator* const translator,
                            const Localization::Localization* const localization) const
     {
@@ -173,6 +173,7 @@ namespace Veng
                                    .UiScale = viewport.GetUiScale()},
             .Assets = assets,
             .Audio = audio,
+            .Haptics = haptics,
             .Localization = strings,
         };
 
@@ -216,7 +217,8 @@ namespace Veng
 
     void GuiOverlay::DriveHdr(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene,
                               const Entity owner, GuiDriverRegistry* const drivers,
-                              Audio::AudioEngine* const audio, const vec2 docExtent,
+                              const Audio::ScopedAudio& audio,
+                              const Haptics::ScopedHaptics& haptics, const vec2 docExtent,
                               const f32 delta, Gui::DrawList& out,
                               const Gui::GuiTranslator* const translator,
                               const Localization::Localization* const localization) const
@@ -291,6 +293,7 @@ namespace Veng
                                    .UiScale = viewport.GetUiScale()},
             .Assets = assets,
             .Audio = audio,
+            .Haptics = haptics,
             .Localization = strings,
         };
 

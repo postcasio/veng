@@ -25,6 +25,7 @@
 #include <Veng/Scene/SystemRegistry.h>
 #include <Veng/Settings/SettingsSchema.h>
 #include <Veng/Settings/SettingsStore.h>
+#include "support/TestAudio.h"
 
 using namespace Veng;
 using namespace Veng::Audio;
@@ -68,6 +69,7 @@ namespace
     Unique<AudioDevice> MakeNullDevice()
     {
         return AudioDevice::Create(
+            TestSupport::SharedPresentationScopes(),
             AudioDeviceInfo{.Backend = AudioBackend::Null, .SampleRate = 48000, .Channels = 2});
     }
 

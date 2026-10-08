@@ -1,4 +1,5 @@
 #include "HapticsTools.h"
+#include "PresentationStateName.h"
 
 #include <Veng/Mcp/McpHost.h>
 #include <Veng/Mcp/McpServer.h>
@@ -33,23 +34,6 @@ namespace Veng::Mcp
                         {"high_frequency", channels.HighFrequency},
                         {"left_trigger", channels.LeftTrigger},
                         {"right_trigger", channels.RightTrigger}};
-        }
-
-        /// @brief A presentation state's name.
-        const char* StateName(const PresentationState state)
-        {
-            switch (state)
-            {
-            case PresentationState::Live:
-                return "live";
-            case PresentationState::Muted:
-                return "muted";
-            case PresentationState::Held:
-                return "held";
-            case PresentationState::Closed:
-                break;
-            }
-            return "closed";
         }
     }
 
@@ -109,7 +93,7 @@ namespace Veng::Mcp
             {
                 shots.push_back(Json{
                     {"scope", info.Scope.Value},
-                    {"state", StateName(info.State)},
+                    {"state", PresentationStateName(info.State)},
                     {"pad", PadOrNull(info.Gamepad)},
                     {"clip", fmt::format("0x{:016X}", info.Clip.Value)},
                     {"time", info.Time},
@@ -122,7 +106,7 @@ namespace Veng::Mcp
             for (const Haptics::RumbleLayerInfo& info : layers)
             {
                 mixed.push_back(Json{{"scope", info.Scope.Value},
-                                     {"state", StateName(info.State)},
+                                     {"state", PresentationStateName(info.State)},
                                      {"pad", PadOrNull(info.Gamepad)},
                                      {"channels", ChannelsJson(info.Channels)}});
             }

@@ -1087,10 +1087,16 @@ addition **bumped `VENG_MODULE_ABI_VERSION` 5 → 6**). A `GuiOverlay` names one
 the named driver on the first drive, owns it in the runtime (destroyed with it), re-runs
 `OnInstantiate` whenever the document (re)instantiates — exactly like `SetOnInstantiate` — and calls
 `OnUpdate` each drive with a `GuiDriverFrame { Document, Root, Scene, Owner, Seat, Delta, Alpha,
-View, Assets, Audio, Localization }` carrying the claiming viewport's real view, the asset manager
-the document loads through, the audio engine a driver fires sound through (`Audio` is the peer of
-`SystemContext::Audio`, set per viewport by `Viewport::SetAudioEngine` — the engine sets it on each
-managed viewport, and null hands a driver a silent frame), and the localization service it composes
+View, Assets, Audio, Haptics, Localization }` carrying the claiming viewport's real view, the asset
+manager the document loads through, the sound and rumble a driver plays (`Audio` and `Haptics` are
+the peers of `SystemContext::Audio` and `SystemContext::Haptics`, held by value and built by the
+viewport — `MakeDriverAudio` / `MakeDriverHaptics` — over the device engines the
+`ViewportCompositor` it is registered on hands it (`SetDevices`, set once by the Application) and the
+**driven scene's presentation scope**, so a driver's sound and rumble belong to that scene: held while
+its world is paused, silent while it is unpresented, stopped when it goes. Every viewport on the
+compositor gets them — managed, consumer-registered or an editor's — and one registered on no
+compositor, or a scene with no scope, hands facades that play nothing, so a driver needs no
+null-guard; a driver never runs inside a replay), and the localization service it composes
 runtime strings through (`Localization` is the peer of `SystemContext::Localization`, set per
 viewport by `Viewport::SetLocalization`; it is a **reference, never null** — a viewport handed no
 service hands the driver `Localization::NullService()`, which resolves every key to itself).

@@ -403,10 +403,12 @@ family registers from the editor side.
   image. Both handlers read through const accessors, so neither drives a solve nor dirties one; a
   world with no document, or an entity presenting none, is an empty result or a located error
   rather than a null deref.
-- **`audio.*`** (`src/AudioTools.cpp`, read-only) — `audio.list_voices` reports the presented world's
-  live mix over `AudioEngine::GetVoiceInfos`: every active voice's bus, gain, pan/pitch, occlusion,
+- **`audio.*`** (`src/AudioTools.cpp`, read-only) — `audio.list_voices` reports the device's live
+  mix over `AudioEngine::GetVoiceInfos`: every active voice's bus, gain, pan/pitch, occlusion,
   reverb send, looping flag, whether it is a clip or a generator, its role
-  (source/oneshot/spatial/music), and — for a spatial voice — its world position and velocity, plus
+  (source/oneshot/spatial/music), its owning presentation `scope` and that scope's `state` (`live`,
+  `muted` — mixed silent while it advances — or `held` — frozen), and — for a spatial voice — its
+  world position and velocity, plus
   the music director's current track (a hex `AssetId` or null) and gain and the active-voice count. It
   is the "what is playing?" check a driven session uses to confirm audio state without a speaker,
   reached through `McpHost::Audio`; a host that leaves it null makes the tool report audio

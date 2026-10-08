@@ -105,7 +105,8 @@ across the whole project's one AssetId namespace, not just its own pack.
   ordered write → clear-dirty → cook sequence) and `CookGate` (`Request`/`Complete`, one in flight
   and at most one queued) — which is what makes the model testable in the device-free `editor_unit`
   band. It and `AssetEditorPanel` are public `VengEditor/` headers, so a game-defined asset type can
-  ship a first-class save/preview editor (the `AssetEditorContext` carries the audio engine, the
+  ship a first-class save/preview editor (the `AssetEditorContext` carries the audio facade over the
+  application scope — an audition belongs to no scene, so no world's pause or presentation mutes it — the
   host task system, the status tracker, the asset's source path, and the recook `CookDriver` a game
   factory needs beyond the render context — a game panel's background task brackets itself with the
   status tracker's `Begin`/`End` so it shows in the status bar exactly as the cook does). **No panel carries a countdown that reaches a file**: a cook debounce that *follows* an

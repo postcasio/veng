@@ -5,6 +5,11 @@
 
 #include <span>
 
+namespace Veng
+{
+    class PresentationScopes;
+}
+
 namespace Veng::Audio
 {
     class AudioEngine;
@@ -83,9 +88,12 @@ namespace Veng::Audio
         using BlockTap = function<void(std::span<const f32> interleaved, u32 frames)>;
 
         /// @brief Creates a device from its descriptor; never fails (falls to the null backend).
-        /// @param info The construction descriptor.
+        /// @param scopes The presentation-scope registry the engine judges every voice by; borrowed,
+        ///               so it must outlive the device.
+        /// @param info   The construction descriptor.
         /// @return A unique-ownership device.
-        static Unique<AudioDevice> Create(const AudioDeviceInfo& info);
+        static Unique<AudioDevice> Create(const PresentationScopes& scopes,
+                                          const AudioDeviceInfo& info);
 
         /// @brief Stops and joins the mixing thread, then releases every referenced resource.
         ///
@@ -197,7 +205,7 @@ namespace Veng::Audio
         [[nodiscard]] Native& GetNative() const;
 
     private:
-        explicit AudioDevice(const AudioDeviceInfo& info);
+        AudioDevice(const PresentationScopes& scopes, const AudioDeviceInfo& info);
 
         /// @brief The mixer-facing main-thread API; constructed over this device.
         Unique<AudioEngine> m_Engine;

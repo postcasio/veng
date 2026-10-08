@@ -723,6 +723,12 @@ namespace Veng::Audio
                 {
                     continue;
                 }
+                // A held voice is frozen, not silenced: skipped before its cursor, its generator or
+                // its ring is touched, so it resumes on the sample it stopped on and cannot retire.
+                if (voice.Held)
+                {
+                    continue;
+                }
                 if (rt.Generation != voice.Generation)
                 {
                     rt.Cursor = 0.0;
@@ -909,8 +915,8 @@ namespace Veng::Audio
         }
     }
 
-    AudioDevice::AudioDevice(const AudioDeviceInfo& info)
-        : m_Engine(CreateUnique<AudioEngine>(*this)), m_Native(CreateUnique<Native>()),
+    AudioDevice::AudioDevice(const PresentationScopes& scopes, const AudioDeviceInfo& info)
+        : m_Engine(CreateUnique<AudioEngine>(*this, scopes)), m_Native(CreateUnique<Native>()),
           m_Channels(info.Channels == 0 ? 2 : info.Channels),
           m_SampleRate(info.SampleRate == 0 ? 48000 : info.SampleRate)
     {
@@ -983,9 +989,10 @@ namespace Veng::Audio
         }
     }
 
-    Unique<AudioDevice> AudioDevice::Create(const AudioDeviceInfo& info)
+    Unique<AudioDevice> AudioDevice::Create(const PresentationScopes& scopes,
+                                            const AudioDeviceInfo& info)
     {
-        return Unique<AudioDevice>(new AudioDevice(info));
+        return Unique<AudioDevice>(new AudioDevice(scopes, info));
     }
 
     AudioDevice::Native& AudioDevice::GetNative() const
@@ -1008,7 +1015,8 @@ namespace Veng::Audio
         const SelfTestTone tone = GenerateSelfTestTone(m_SampleRate);
         const Ref<AudioBuffer> buffer =
             AudioBuffer::Create(tone.Samples, tone.Channels, tone.SampleRate);
-        m_Engine->AddVoice(buffer,
+        // A device diagnostic belongs to no scene, so it plays in the always-Live application scope.
+        m_Engine->AddVoice(m_Engine->GetScopes().GetApplicationScope(), buffer,
                            VoiceParams{.Bus = AudioBuses::Master(), .Gain = 1.0f, .Loop = false});
     }
 
@@ -1174,8 +1182,8 @@ namespace Veng::Audio
 
     // -- engine --------------------------------------------------------------
 
-    AudioEngine::AudioEngine(AudioDevice& device)
-        : m_Device(device), m_Music(CreateUnique<MusicDirector>(*this))
+    AudioEngine::AudioEngine(AudioDevice& device, const PresentationScopes& scopes)
+        : m_Device(device), m_Scopes(scopes), m_Music(CreateUnique<MusicDirector>(*this))
     {
         // Start on the roots-only default graph, so voices submitted before a game adopts its own
         // graph mix correctly. The default is known-valid, so it installs without validation.
@@ -1422,9 +1430,25 @@ namespace Veng::Audio
         return quietest;
     }
 
-    VoiceHandle AudioEngine::AddVoice(const Ref<AudioBuffer>& buffer, const VoiceParams& params)
+    bool AudioEngine::CanStartIn(const PresentationScopeId scope) const
+    {
+        return m_Scopes.GetState(scope) != PresentationState::Closed;
+    }
+
+    void AudioEngine::BindScope(const u32 slot, const PresentationScopeId scope)
+    {
+        m_Voices[slot].Scope = scope;
+        m_Voices[slot].State = m_Scopes.GetState(scope);
+    }
+
+    VoiceHandle AudioEngine::AddVoice(const PresentationScopeId scope,
+                                      const Ref<AudioBuffer>& buffer, const VoiceParams& params)
     {
         VE_ASSERT(buffer, "AddVoice requires a non-null buffer");
+        if (!CanStartIn(scope))
+        {
+            return {};
+        }
 
         const u32 slot = AllocateSlot(params.Gain);
         if (slot == VoiceHandle::InvalidSlot)
@@ -1439,6 +1463,7 @@ namespace Veng::Audio
         voice.Generator = nullptr;
         voice.GeneratorChannels = 1;
         voice.Params = params;
+        BindScope(slot, scope);
         // A raw voice carries no engine-owned metadata; PlayOneShot / PlayAt / the director stamp the
         // slot after this returns, so a reused slot never inherits its predecessor's managed role.
         m_Managed[slot] = Managed{};
@@ -1446,9 +1471,14 @@ namespace Veng::Audio
         return VoiceHandle{.Slot = slot, .Generation = voice.Generation};
     }
 
-    VoiceHandle AudioEngine::AddStreamVoice(const AssetHandle<AudioClip>& clip,
+    VoiceHandle AudioEngine::AddStreamVoice(const PresentationScopeId scope,
+                                            const AssetHandle<AudioClip>& clip,
                                             const VoiceParams& params)
     {
+        if (!CanStartIn(scope))
+        {
+            return {};
+        }
         AudioClip* resolved = clip.Get();
         if (resolved == nullptr || resolved->Storage() != AudioStorage::Encoded)
         {
@@ -1484,6 +1514,7 @@ namespace Veng::Audio
         voice.GeneratorChannels = 1;
         voice.Stream = std::move(stream);
         voice.Params = params;
+        BindScope(slot, scope);
         m_Managed[slot] = Managed{};
         ++m_ActiveCount;
 
@@ -1496,7 +1527,8 @@ namespace Veng::Audio
         return VoiceHandle{.Slot = slot, .Generation = voice.Generation};
     }
 
-    VoiceHandle AudioEngine::AddClipVoice(const AssetHandle<AudioClip>& clip,
+    VoiceHandle AudioEngine::AddClipVoice(const PresentationScopeId scope,
+                                          const AssetHandle<AudioClip>& clip,
                                           const VoiceParams& params)
     {
         AudioClip* resolved = clip.Get();
@@ -1506,11 +1538,11 @@ namespace Veng::Audio
         }
         if (resolved->Storage() == AudioStorage::Encoded)
         {
-            return AddStreamVoice(clip, params);
+            return AddStreamVoice(scope, clip, params);
         }
         if (resolved->Buffer())
         {
-            return AddVoice(resolved->Buffer(), params);
+            return AddVoice(scope, resolved->Buffer(), params);
         }
         return {};
     }
@@ -1525,10 +1557,15 @@ namespace Veng::Audio
         return AssetManager::Adopt<AudioClip>(AudioClip::CreatePcm(std::move(buffer)));
     }
 
-    VoiceHandle AudioEngine::PlayGenerator(Ref<IAudioGenerator> generator,
+    VoiceHandle AudioEngine::PlayGenerator(const PresentationScopeId scope,
+                                           Ref<IAudioGenerator> generator,
                                            const GeneratorVoiceParams& params)
     {
         VE_ASSERT(generator != nullptr, "PlayGenerator requires a non-null generator");
+        if (!CanStartIn(scope))
+        {
+            return {};
+        }
 
         // Stereo is a non-spatial-only width: spatialization is a mono-source-then-pan model, so a
         // stereo point source has no defined pan. Reject it the way a full budget rejects a voice.
@@ -1544,8 +1581,8 @@ namespace Veng::Audio
         }
 
         // A spatial generator carries the same Managed metadata a PlayAt voice does, so it is
-        // re-spatialized by UpdateManagedVoices and moved by SetVoicePose through the one shared
-        // path; a non-spatial generator routes straight to its bus with static params.
+        // re-spatialized by Update and moved by SetVoicePose through the one shared path; a
+        // non-spatial generator routes straight to its bus with static params.
         Managed managed;
         VoiceParams voiceParams;
         if (params.Spatial)
@@ -1560,7 +1597,7 @@ namespace Veng::Audio
                               .MinDistance = params.MinDistance,
                               .MaxDistance = params.MaxDistance,
                               .Occlusion = params.OcclusionFactor};
-            voiceParams = SpatializeManaged(managed, m_Listener);
+            voiceParams = SpatializeManaged(managed, GetListener(scope));
         }
         else
         {
@@ -1581,6 +1618,7 @@ namespace Veng::Audio
         voice.Generator = generator;
         voice.GeneratorChannels = params.Channels == 2 ? 2 : 1;
         voice.Params = voiceParams;
+        BindScope(slot, scope);
         m_Managed[slot] = managed;
 
         if (params.Buffered)
@@ -1687,6 +1725,8 @@ namespace Veng::Audio
                 .Spatial = spatial,
                 .Position = spatial ? managed.WorldPos : vec3(0.0f),
                 .Velocity = spatial ? managed.Velocity : vec3(0.0f),
+                .Scope = voice.Scope,
+                .State = voice.State,
             });
         }
         return infos;
@@ -1799,7 +1839,10 @@ namespace Veng::Audio
                     snapshot.PcmSampleRate = voice.Stream ? voice.Stream->SampleRate : 0;
                 }
                 snapshot.BusIndex = ResolveBusIndexWarn(voice.Params.Bus);
-                snapshot.Gain = voice.Params.Gain;
+                // A muted voice mixes at zero gain and keeps advancing; a held one is skipped by the
+                // mixer outright. Only the published copy changes, so the authored gain survives.
+                snapshot.Held = voice.State == PresentationState::Held;
+                snapshot.Gain = voice.State == PresentationState::Muted ? 0.0f : voice.Params.Gain;
                 snapshot.Pan = voice.Params.Pan;
                 snapshot.Pitch = voice.Params.Pitch;
                 snapshot.Occlusion = voice.Params.Occlusion;
@@ -1809,6 +1852,7 @@ namespace Veng::Audio
             else
             {
                 snapshot.Active = false;
+                snapshot.Held = false;
                 snapshot.Generator = nullptr;
                 snapshot.Stream = nullptr;
                 snapshot.Buffered = nullptr;
@@ -1916,11 +1960,12 @@ namespace Veng::Audio
         return true;
     }
 
-    VoiceHandle AudioEngine::PlayOneShot(const AssetHandle<AudioClip>& clip,
-                                         const OneShotParams& params)
+    VoiceHandle AudioEngine::FireManaged(const PresentationScopeId scope,
+                                         const AssetHandle<AudioClip>& clip, const Managed& managed,
+                                         const VoiceParams& params)
     {
         AudioClip* resolved = clip.Get();
-        if (resolved == nullptr)
+        if (resolved == nullptr || !CanStartIn(scope))
         {
             return {};
         }
@@ -1929,42 +1974,39 @@ namespace Veng::Audio
         {
             return {};
         }
-        if (!ReserveOneShotSlot(params.Gain))
+        if (!ReserveOneShotSlot(managed.BaseGain))
         {
             return {};
         }
-        const VoiceParams voiceParams{
-            .Bus = params.Bus, .Gain = params.Gain, .Pitch = params.Pitch, .Loop = params.Loop};
-        const VoiceHandle handle =
-            encoded ? AddStreamVoice(clip, voiceParams) : AddVoice(resolved->Buffer(), voiceParams);
+        const VoiceHandle handle = encoded ? AddStreamVoice(scope, clip, params)
+                                           : AddVoice(scope, resolved->Buffer(), params);
         if (handle.IsValid())
         {
-            m_Managed[handle.Slot] = Managed{.Kind = ManagedKind::OneShot,
-                                             .Bus = params.Bus,
-                                             .BaseGain = params.Gain,
-                                             .BasePitch = params.Pitch,
-                                             .Loop = params.Loop};
+            m_Managed[handle.Slot] = managed;
         }
         return handle;
     }
 
-    VoiceHandle AudioEngine::PlayAt(const AssetHandle<AudioClip>& clip, const vec3 worldPos,
+    VoiceHandle AudioEngine::PlayOneShot(const PresentationScopeId scope,
+                                         const AssetHandle<AudioClip>& clip,
+                                         const OneShotParams& params)
+    {
+        return FireManaged(scope, clip,
+                           Managed{.Kind = ManagedKind::OneShot,
+                                   .Bus = params.Bus,
+                                   .BaseGain = params.Gain,
+                                   .BasePitch = params.Pitch,
+                                   .Loop = params.Loop},
+                           VoiceParams{.Bus = params.Bus,
+                                       .Gain = params.Gain,
+                                       .Pitch = params.Pitch,
+                                       .Loop = params.Loop});
+    }
+
+    VoiceHandle AudioEngine::PlayAt(const PresentationScopeId scope,
+                                    const AssetHandle<AudioClip>& clip, const vec3 worldPos,
                                     const SpatialOneShotParams& params)
     {
-        AudioClip* resolved = clip.Get();
-        if (resolved == nullptr)
-        {
-            return {};
-        }
-        const bool encoded = resolved->Storage() == AudioStorage::Encoded;
-        if (!encoded && !resolved->Buffer())
-        {
-            return {};
-        }
-        if (!ReserveOneShotSlot(params.Gain))
-        {
-            return {};
-        }
         const Managed managed{.Kind = ManagedKind::Spatial,
                               .Bus = params.Bus,
                               .BaseGain = params.Gain,
@@ -1975,14 +2017,7 @@ namespace Veng::Audio
                               .MinDistance = params.MinDistance,
                               .MaxDistance = params.MaxDistance,
                               .Occlusion = params.OcclusionFactor};
-        const VoiceParams voiceParams = SpatializeManaged(managed, m_Listener);
-        const VoiceHandle handle =
-            encoded ? AddStreamVoice(clip, voiceParams) : AddVoice(resolved->Buffer(), voiceParams);
-        if (handle.IsValid())
-        {
-            m_Managed[handle.Slot] = managed;
-        }
-        return handle;
+        return FireManaged(scope, clip, managed, SpatializeManaged(managed, GetListener(scope)));
     }
 
     void AudioEngine::SetVoicePose(const VoiceHandle voice, const vec3 worldPos,
@@ -1995,20 +2030,51 @@ namespace Veng::Audio
         Managed& managed = m_Managed[voice.Slot];
         managed.WorldPos = worldPos;
         managed.Velocity = velocity;
-        m_Voices[voice.Slot].Params = SpatializeManaged(managed, m_Listener);
+        m_Voices[voice.Slot].Params =
+            SpatializeManaged(managed, GetListener(m_Voices[voice.Slot].Scope));
     }
 
-    void AudioEngine::UpdateManagedVoices(const ListenerPose& listener, const f32 delta)
+    void AudioEngine::SetListener(const PresentationScopeId scope, const ListenerPose& listener)
     {
-        m_Listener = listener;
-        m_Music->Advance(delta);
+        m_Listeners[scope.Value] = listener;
+    }
+
+    ListenerPose AudioEngine::GetListener(const PresentationScopeId scope) const
+    {
+        const auto it = m_Listeners.find(scope.Value);
+        return it != m_Listeners.end() ? it->second : ListenerPose{};
+    }
+
+    void AudioEngine::Update(const f32 delta)
+    {
+        // Judge every voice by its scope as this frame latched it. A closed scope's voices stop
+        // here, whatever started them, through the same retire-and-reclaim path as StopVoice.
         for (u32 slot = 0; slot < MaxVoices; ++slot)
         {
-            if (m_Voices[slot].Active && m_Managed[slot].Kind == ManagedKind::Spatial)
+            Voice& voice = m_Voices[slot];
+            if (!voice.Active)
             {
-                m_Voices[slot].Params = SpatializeManaged(m_Managed[slot], listener);
+                continue;
+            }
+            voice.State = m_Scopes.GetState(voice.Scope);
+            if (voice.State == PresentationState::Closed)
+            {
+                RetireSlot(slot);
+                continue;
+            }
+            if (m_Managed[slot].Kind == ManagedKind::Spatial)
+            {
+                voice.Params = SpatializeManaged(m_Managed[slot], GetListener(voice.Scope));
             }
         }
+        std::erase_if(m_Listeners,
+                      [this](const auto& entry)
+                      {
+                          return m_Scopes.GetState(PresentationScopeId{entry.first}) ==
+                                 PresentationState::Closed;
+                      });
+
+        m_Music->Advance(delta);
     }
 
     MusicDirector& AudioEngine::Music()
@@ -2108,9 +2174,11 @@ namespace Veng::Audio
             incoming.Phase = 0.0f;
             incoming.FadeDuration = transition.FadeSeconds;
             incoming.Steady = hardCut;
-            incoming.Voice = m_Engine.AddClipVoice(track, VoiceParams{.Bus = AudioBuses::Music(),
-                                                                      .Gain = TrackGain(incoming),
-                                                                      .Loop = transition.Loop});
+            // The director is device-wide, so its voices belong to the always-Live application scope.
+            incoming.Voice = m_Engine.AddClipVoice(m_Engine.m_Scopes.GetApplicationScope(), track,
+                                                   VoiceParams{.Bus = AudioBuses::Music(),
+                                                               .Gain = TrackGain(incoming),
+                                                               .Loop = transition.Loop});
             if (incoming.Voice.IsValid())
             {
                 m_Engine.m_Managed[incoming.Voice.Slot].Kind = AudioEngine::ManagedKind::Music;

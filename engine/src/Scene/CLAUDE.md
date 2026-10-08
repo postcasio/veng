@@ -342,6 +342,12 @@ registered and retains the world's scene counts as presenting it whether or not 
 stays `Live`. The registry's one **application scope** (`GetApplicationScope()`) is always `Live`; it
 owns what plays outside any scene, and nothing a scene's system starts belongs in it.
 
+Two device engines file under scopes: the **audio engine** — every voice, started through the
+`ScopedAudio` facade a scene's `SystemContext::Audio` (or a Gui driver's frame) is, with a listener per
+scope ([../Audio/CLAUDE.md](../Audio/CLAUDE.md)) — and the **haptics engine** — every rumble one-shot
+and layer ([../Haptics/CLAUDE.md](../Haptics/CLAUDE.md)). Each judges what it holds once per frame in
+the presentation step, after `Resolve`.
+
 ## Bounds & broadphase inputs
 
 A `Scene` reduces to a world-space bound on demand: `SceneBounds(scene)`

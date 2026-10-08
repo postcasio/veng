@@ -8,6 +8,7 @@
 #include <Veng/Audio/AudioGenerator.h>
 #include <Veng/Audio/Voice.h>
 #include <Veng/Asset/AssetHandle.h>
+#include <Veng/Scene/PresentationScope.h>
 
 #include <array>
 #include <span>
@@ -37,8 +38,8 @@ namespace Veng::Audio
 
     /// @brief Parameters of a code-triggered spatial voice placed at a fixed world position.
     ///
-    /// The voice is attenuated, panned, Doppler-shifted, and reverb-sent against the current
-    /// listener exactly as an authored AudioSource is. A moving positioned voice is registered with
+    /// The voice is attenuated, panned, Doppler-shifted, and reverb-sent against the listener of the
+    /// scope it plays in, exactly as an authored AudioSource is. A moving positioned voice is registered with
     /// PlayAt and then repositioned each frame through AudioEngine::SetVoicePose.
     struct SpatialOneShotParams
     {
@@ -105,6 +106,10 @@ namespace Veng::Audio
         vec3 Position{0.0f};
         /// @brief World velocity (units per second), for a Spatial voice.
         vec3 Velocity{0.0f};
+        /// @brief The presentation scope the voice belongs to.
+        PresentationScopeId Scope;
+        /// @brief The scope's state as the voice was last judged: Held is frozen, Muted is silent.
+        PresentationState State = PresentationState::Live;
     };
 
     /// @brief How the music director transitions to a new track.
@@ -122,18 +127,27 @@ namespace Veng::Audio
     /// snapshot to the device's mixing thread each frame, and reaps finished voices and reclaimed
     /// resources through the device's generation counter. Every call is main-thread only; the
     /// real-time thread never touches it.
+    ///
+    /// Every voice belongs to a presentation scope, named by whatever starts it, and the engine
+    /// judges it by that scope's state: a Held voice is frozen, a Muted one advances silently, a
+    /// Closed one is stopped. A scene's systems reach the engine through Audio::ScopedAudio, which
+    /// names their scene's scope; the bus, reverb and device configuration here is device-wide.
     class AudioEngine
     {
     public:
         /// @brief Constructs the engine over its owning device.
         /// @param device The device whose snapshot bridge and generation counter the engine drives.
-        explicit AudioEngine(AudioDevice& device);
+        /// @param scopes The registry every voice's scope is judged by; outlives the engine.
+        AudioEngine(AudioDevice& device, const PresentationScopes& scopes);
 
         /// @brief Destroys the engine and its music director.
         ~AudioEngine();
 
         AudioEngine(const AudioEngine&) = delete;
         AudioEngine& operator=(const AudioEngine&) = delete;
+
+        /// @brief Returns the registry the engine judges every voice's scope by.
+        [[nodiscard]] const PresentationScopes& GetScopes() const { return m_Scopes; }
 
         /// @brief The device's negotiated output sample rate in Hz.
         ///
@@ -241,16 +255,18 @@ namespace Veng::Audio
         /// reference goes last, never on the real-time thread. Because a stopped voice's generator may
         /// still be rendered until it is reclaimed, a caller holding a reference changes it only
         /// through its GeneratorParams block, even after StopVoice. A Spatial voice is placed at
-        /// params.Position and spatialized against the listener exactly as a clip is (move it later
-        /// with SetVoicePose); a non-spatial voice routes to its bus at params.Gain. A Buffered voice
-        /// renders ahead of time on the fill thread into a ring the real-time callback only drains,
-        /// moving heavy synthesis off the real-time thread; it is non-spatial, so a Buffered &&
-        /// Spatial request is rejected. Same budget arbitration as AddVoice.
+        /// params.Position and spatialized against its scope's listener exactly as a clip is (move it
+        /// later with SetVoicePose); a non-spatial voice routes to its bus at params.Gain. A Buffered
+        /// voice renders ahead of time on the fill thread into a ring the real-time callback only
+        /// drains, moving heavy synthesis off the real-time thread; it is non-spatial, so a Buffered
+        /// && Spatial request is rejected. A held generator is not rendered at all. Same budget
+        /// arbitration as AddVoice.
+        /// @param scope     The presentation scope the voice belongs to; a Closed one starts nothing.
         /// @param generator The sample source (must be non-null); the voice shares ownership of it.
         /// @param params    The voice registration parameters.
         /// @return A handle to the voice, or an invalid handle if it was rejected (the engine then
         ///         holds no reference to @p generator).
-        VoiceHandle PlayGenerator(Ref<IAudioGenerator> generator,
+        VoiceHandle PlayGenerator(PresentationScopeId scope, Ref<IAudioGenerator> generator,
                                   const GeneratorVoiceParams& params);
 
         /// @brief Registers a voice playing a buffer, arbitrating against the voice budget.
@@ -258,10 +274,12 @@ namespace Veng::Audio
         /// Takes a free slot when one exists; when the budget is full, evicts the quietest active
         /// voice if the incoming voice is louder, and otherwise rejects the request. The evicted or
         /// rejected outcome is reported by an invalid handle.
+        /// @param scope  The presentation scope the voice belongs to; a Closed one starts nothing.
         /// @param buffer The PCM source (held for the voice's lifetime).
         /// @param params The mix parameters.
         /// @return A handle to the voice, or an invalid handle if it was rejected.
-        VoiceHandle AddVoice(const Ref<AudioBuffer>& buffer, const VoiceParams& params);
+        VoiceHandle AddVoice(PresentationScopeId scope, const Ref<AudioBuffer>& buffer,
+                             const VoiceParams& params);
 
         /// @brief Registers a voice for a clip, choosing the resident or streaming path by storage.
         ///
@@ -269,10 +287,12 @@ namespace Veng::Audio
         /// streaming voice, decoded incrementally on the engine's decode thread and drained by the
         /// mixer exactly as a resident voice is — indistinguishable downstream. Same budget
         /// arbitration as AddVoice. A null or unresident clip is rejected with an invalid handle.
+        /// @param scope  The presentation scope the voice belongs to; a Closed one starts nothing.
         /// @param clip   The clip to play.
         /// @param params The mix parameters.
         /// @return A handle to the voice, or an invalid handle if it was rejected.
-        VoiceHandle AddClipVoice(const AssetHandle<AudioClip>& clip, const VoiceParams& params);
+        VoiceHandle AddClipVoice(PresentationScopeId scope, const AssetHandle<AudioClip>& clip,
+                                 const VoiceParams& params);
 
         /// @brief Returns whether a handle still names a live voice.
         /// @param voice The handle.
@@ -310,23 +330,25 @@ namespace Veng::Audio
         /// engine one-shot pool; when the pool is full the quietest pooled voice is dropped if the
         /// incoming voice is louder, and otherwise the request is rejected. An Encoded clip plays
         /// through the streaming path like any other; an unresident clip plays nothing.
+        /// @param scope  The presentation scope the voice belongs to; a Closed one starts nothing.
         /// @param clip   The clip to play.
         /// @param params The mix parameters (bus, gain, pitch, loop).
         /// @return A handle to the voice for early stop, or an invalid handle if it was rejected.
-        VoiceHandle PlayOneShot(const AssetHandle<AudioClip>& clip,
+        VoiceHandle PlayOneShot(PresentationScopeId scope, const AssetHandle<AudioClip>& clip,
                                 const OneShotParams& params = {});
 
         /// @brief Fires a spatial one-shot voice at a fixed world position.
         ///
-        /// The voice is spatialized against the current listener like an authored AudioSource. It is
+        /// The voice is spatialized against its scope's listener like an authored AudioSource. It is
         /// fixed by default; call SetVoicePose each frame to move it. Same pool policy as
         /// PlayOneShot; an Encoded clip plays through the streaming path, an unresident clip nothing.
+        /// @param scope    The presentation scope the voice belongs to; a Closed one starts nothing.
         /// @param clip     The clip to play.
         /// @param worldPos The voice's world position.
         /// @param params   The spatial mix parameters.
         /// @return A handle to the voice for early stop or repositioning, or an invalid handle.
-        VoiceHandle PlayAt(const AssetHandle<AudioClip>& clip, vec3 worldPos,
-                           const SpatialOneShotParams& params = {});
+        VoiceHandle PlayAt(PresentationScopeId scope, const AssetHandle<AudioClip>& clip,
+                           vec3 worldPos, const SpatialOneShotParams& params = {});
 
         /// @brief Repositions an imperatively-placed spatial voice (no effect on a stale handle).
         ///
@@ -338,14 +360,32 @@ namespace Veng::Audio
         /// @param velocity The new world velocity, units per second (for Doppler).
         void SetVoicePose(VoiceHandle voice, vec3 worldPos, vec3 velocity);
 
-        /// @brief Advances the engine-owned managed voices against the listener for one frame.
+        /// @brief Sets the listener a scope's spatial voices are spatialized against.
         ///
-        /// Advances the music director's crossfade and re-spatializes every positioned one-shot
-        /// against @p listener, folding both into the voice table before the next Publish. The
-        /// View-phase AudioSystem calls this each update with the resolved listener pose.
-        /// @param listener The listener pose to spatialize positioned voices against.
-        /// @param delta    Time in seconds since the previous update.
-        void UpdateManagedVoices(const ListenerPose& listener, f32 delta);
+        /// One pose per open scope: a scene's AudioSystem sets its scene's every View update, so a
+        /// voice is placed against the listener of the scene that started it, whatever order the
+        /// worlds tick in. A scope that never set one listens from the origin; a closed scope's pose is
+        /// dropped at the next Update.
+        /// @param scope    The scope whose listener this is.
+        /// @param listener The listener pose.
+        void SetListener(PresentationScopeId scope, const ListenerPose& listener);
+
+        /// @brief Returns a scope's listener pose, or the origin pose when it set none.
+        /// @param scope The scope.
+        [[nodiscard]] ListenerPose GetListener(PresentationScopeId scope) const;
+
+        /// @brief Judges every voice by its scope, re-spatializes the positioned ones, and advances
+        ///        the music director — once per frame.
+        ///
+        /// Per voice, by its scope's state as the registry latched it this frame: Closed stops it
+        /// (through the ordinary reclamation handshake), Held publishes it frozen, Muted publishes it
+        /// at zero gain while it advances, and Live publishes it as authored. Then every spatial
+        /// voice is re-spatialized against its own scope's listener, and the music crossfade advances
+        /// by @p delta. The application calls it in its presentation step, right after
+        /// PresentationScopes::Resolve and never from a system, so the crossfade advances once a
+        /// frame however many worlds run.
+        /// @param delta Time in seconds since the previous update.
+        void Update(f32 delta);
 
         /// @brief Returns the music director, the one-track policy over the Music bus.
         [[nodiscard]] MusicDirector& Music();
@@ -380,6 +420,10 @@ namespace Veng::Audio
             bool Active = false;
             /// @brief The slot's current generation.
             u32 Generation = 0;
+            /// @brief The presentation scope the voice belongs to.
+            PresentationScopeId Scope;
+            /// @brief The scope's state as the voice was last judged (at start, then every Update).
+            PresentationState State = PresentationState::Held;
             /// @brief The owned PCM source (null for a generator or stream voice).
             Ref<AudioBuffer> Source;
             /// @brief The shared on-demand source (null for a buffer or stream voice).
@@ -464,13 +508,33 @@ namespace Veng::Audio
         /// Opens an incremental decoder over the clip, hands it to a StreamVoice the decode thread
         /// fills, and takes a slot (evicting the quietest louder-than-incoming voice when full). The
         /// clip handle is held on the StreamVoice so its bytes outlive the borrowing decoder.
+        /// @param scope  The presentation scope the voice belongs to.
         /// @param clip   The Encoded clip to stream.
         /// @param params The mix parameters.
         /// @return A handle to the voice, or an invalid handle if it was rejected or undecodable.
-        VoiceHandle AddStreamVoice(const AssetHandle<AudioClip>& clip, const VoiceParams& params);
+        VoiceHandle AddStreamVoice(PresentationScopeId scope, const AssetHandle<AudioClip>& clip,
+                                   const VoiceParams& params);
+
+        /// @brief Returns whether a voice may start in @p scope: false once it has closed.
+        [[nodiscard]] bool CanStartIn(PresentationScopeId scope) const;
+
+        /// @brief Stamps a freshly taken slot with its scope and that scope's current state.
+        ///
+        /// A voice started in a Held scope is published held from its first snapshot, so a voice
+        /// started while its scene is paused or not yet renewed stays fresh until the lease returns.
+        void BindScope(u32 slot, PresentationScopeId scope);
 
         /// @brief Deactivates a slot and routes its source to reclamation.
         void RetireSlot(u32 slot);
+
+        /// @brief Fires a clip into the one-shot pool: the shared body of PlayOneShot and PlayAt.
+        /// @param scope    The presentation scope the voice belongs to.
+        /// @param clip     The clip to play.
+        /// @param managed  The voice's managed metadata (its kind, base gain and pose).
+        /// @param params   The voice's initial mix parameters.
+        /// @return A handle to the voice, or an invalid handle if it was rejected.
+        VoiceHandle FireManaged(PresentationScopeId scope, const AssetHandle<AudioClip>& clip,
+                                const Managed& managed, const VoiceParams& params);
 
         /// @brief Reserves a voice slot, evicting the quietest active voice when the budget is full.
         ///
@@ -530,6 +594,8 @@ namespace Veng::Audio
 
         /// @brief The owning device.
         AudioDevice& m_Device;
+        /// @brief The registry every voice's scope is judged by.
+        const PresentationScopes& m_Scopes;
         /// @brief The authored data of the active graph, kept for GetActiveBusGraphData.
         ///
         /// The topology as adopted (or the roots-only default), retained so a consumer can read each
@@ -551,8 +617,9 @@ namespace Veng::Audio
         std::array<Managed, MaxVoices> m_Managed;
         /// @brief The one-track policy over the Music bus.
         Unique<MusicDirector> m_Music;
-        /// @brief The last listener pose managed voices were spatialized against.
-        ListenerPose m_Listener;
+        /// @brief Each scope's listener pose, keyed by scope id; a scope absent here listens from the
+        ///        origin. Pruned of closed scopes by Update.
+        std::unordered_map<u64, ListenerPose> m_Listeners;
         /// @brief Sources awaiting reclamation.
         vector<Deferred> m_Deferred;
         /// @brief The last published snapshot serial.

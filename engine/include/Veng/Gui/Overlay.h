@@ -268,11 +268,13 @@ namespace Veng
         /// @param scene     The presented scene the overlay lives in, handed to the driver.
         /// @param owner     The entity carrying this overlay, handed to the driver as its instance.
         /// @param drivers   The driver catalog the Driver id resolves against, or nullptr (undriven).
-        /// @param audio     The audio engine handed to the driver's frame, or nullptr (silent).
+        /// @param audio     The audio facade handed to the driver's frame (Viewport::MakeDriverAudio).
+        /// @param haptics   The haptics facade handed to the driver's frame (Viewport::MakeDriverHaptics).
         /// @param translator The translator the document's loc-keys resolve through, or nullptr (keys render).
         /// @param localization The service handed to the driver, or nullptr for the inert null-object.
         void Drive(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene, Entity owner,
-                   GuiDriverRegistry* drivers, Audio::AudioEngine* audio = nullptr,
+                   GuiDriverRegistry* drivers, const Audio::ScopedAudio& audio,
+                   const Haptics::ScopedHaptics& haptics,
                    const Gui::GuiTranslator* translator = nullptr,
                    const Localization::Localization* localization = nullptr) const;
 
@@ -289,16 +291,17 @@ namespace Veng
         /// @param scene     The presented scene the overlay lives in, handed to the driver.
         /// @param owner     The entity carrying this overlay, handed to the driver as its instance.
         /// @param drivers   The driver catalog the Driver id resolves against, or nullptr (undriven).
-        /// @param audio     The audio engine handed to the driver's frame, or nullptr (silent).
+        /// @param audio     The audio facade handed to the driver's frame (Viewport::MakeDriverAudio).
+        /// @param haptics   The haptics facade handed to the driver's frame (Viewport::MakeDriverHaptics).
         /// @param docExtent The logical-point extent to lay the document out at.
         /// @param delta     Frame delta seconds advanced into the document's animation clock.
         /// @param out       The draw list the built geometry is appended into (cleared first).
         /// @param translator The translator the document's loc-keys resolve through, or nullptr (keys render).
         /// @param localization The service handed to the driver, or nullptr for the inert null-object.
         void DriveHdr(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene,
-                      Entity owner, GuiDriverRegistry* drivers, Audio::AudioEngine* audio,
-                      vec2 docExtent, f32 delta, Gui::DrawList& out,
-                      const Gui::GuiTranslator* translator = nullptr,
+                      Entity owner, GuiDriverRegistry* drivers, const Audio::ScopedAudio& audio,
+                      const Haptics::ScopedHaptics& haptics, vec2 docExtent, f32 delta,
+                      Gui::DrawList& out, const Gui::GuiTranslator* translator = nullptr,
                       const Localization::Localization* localization = nullptr) const;
 
         /// @brief Instantiates the overlay's document ahead of its first drive, without blocking.

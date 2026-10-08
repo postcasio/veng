@@ -49,7 +49,10 @@ Each major system's architecture lives in a `CLAUDE.md` inside its source direct
   (a game-authored topology adopted at boot, flattened into the snapshot for a tree-free RT fold),
   the real-time mixing thread fed by a triple-buffered voice snapshot, the reclamation
   handshake and lock-free retired-voice channel, the master reverb node, the single `MaxVoices`
-  budget, and the null device (headless / device-loss). The callback thread is the one sanctioned
+  budget, and the null device (headless / device-loss). Every voice belongs to its scene's presentation
+  scope, started through the `ScopedAudio` facade `SystemContext::Audio` is (with its replay gate), so a
+  paused world's sound holds, an unpresented one's is silent, and a closed one's stops; each scope has
+  its own listener, and the engine advances once per frame. The callback thread is the one sanctioned
   exception to the single-thread rule, and touches no engine state.
 - **[src/Haptics/CLAUDE.md](src/Haptics/CLAUDE.md)** — `Veng/Haptics/`, gamepad rumble: the
   general `Curve1D` keyframed scalar, the cooked CPU-only `RumbleClip` asset (four motor curves), the
@@ -180,7 +183,8 @@ above and three collaborators it drives each frame:
   `RegisterViewport(Viewport&)` / `RegisterCapture(SceneCapture&)` forward to it:
   each stores a non-owning pointer (registration order = render order) and hands the resource a
   back-reference, so dropping the owner's `Unique` self-unregisters it and the caller keeps
-  ownership — only the *driving* is central. It also resolves each `Layout`-carrying viewport's
+  ownership — only the *driving* is central. It also hands every viewport it registers the device
+  engines its Gui drivers play sound and rumble through (`SetDevices`, set once by the Application). It also resolves each `Layout`-carrying viewport's
   pixel region + UI scale on swapchain resize. See [src/Renderer/CLAUDE.md](src/Renderer/CLAUDE.md).
 - **`ManagedViewportSet`** (`Veng/ManagedViewports.h`) — the managed-viewport policy. It owns the
   engine-managed `Presented` viewports, registers them into the compositor, and each frame **pulls**
@@ -238,8 +242,9 @@ scene's world a `View` after those, as `IsWorldPresented` still counts it. `Pull
 true) has `PushViews` pull the seat's camera into the viewport each frame; false leaves the
 viewport's `ViewState` to its owner — the editor's Offscreen document viewport, which renders Play
 through a camera it resolves itself. Registration hands the viewport the set's Gui driver catalog,
-audio engine, translator and localization, and `UnregisterBoundViewport` clears them again, so a
-viewport kept past its binding drives no overlay. `ResolvePresentationSeat(scene, boundViewer)` (also
+translator and localization, and `UnregisterBoundViewport` clears them again, so a viewport kept
+past its binding drives no overlay; the sound and rumble engines its drivers play through come from
+the compositor it is registered on, bound or not. `ResolvePresentationSeat(scene, boundViewer)` (also
 in `Veng/ManagedViewports.h`) is the seat rule a rebind applies and a binder resolves its `Viewer`
 with.
 
@@ -415,7 +420,9 @@ replacement scene of `InstallScene` — and the scene owns it (see
 [src/Scene/CLAUDE.md](src/Scene/CLAUDE.md), "Presentation scopes"). `Application::Frame` runs one
 **presentation step** after `OnUpdate`: `PresentationScopes::Resolve()` latches every scope's state
 from the leases the worlds' View phases renewed this frame, then the device engines run their
-once-per-frame updates (the haptics engine's rumble mix), after the states are latched and after every
+once-per-frame updates (the audio engine's `Update` — every voice judged by its scope, spatialized
+against its scope's listener, the music crossfade advanced — and the haptics engine's rumble mix),
+after the states are latched and after every
 system and `OnUpdate` has started what it will this frame, once per frame rather than once per world.
 The registry's **application scope** (`GetApplicationScope()`) is the one
 sanctioned owner of what plays outside any scene — a debug panel's test, an editor audition — and is
@@ -652,7 +659,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 81** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 82** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative, and its prose records why each version moved). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the

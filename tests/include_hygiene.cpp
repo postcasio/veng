@@ -51,6 +51,7 @@
 #include <Veng/Audio/AudioSystem.h>
 #include <Veng/Audio/Dsp.h>
 #include <Veng/Audio/Reverb.h>
+#include <Veng/Audio/ScopedAudio.h>
 #include <Veng/Audio/Voice.h>
 
 #include <Veng/Behavior/BehaviorAgent.h>
@@ -218,6 +219,7 @@
 #include <Veng/Renderer/Types.h>
 #include <Veng/Renderer/VertexBufferLayout.h>
 #include <Veng/Renderer/Viewport.h>
+#include <Veng/Renderer/ViewportDevices.h>
 #include <Veng/Renderer/ViewportId.h>
 #include <Veng/Renderer/ViewportRegistry.h>
 #include <Veng/Renderer/VolumeField.h>

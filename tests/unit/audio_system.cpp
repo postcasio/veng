@@ -15,14 +15,21 @@
 #include <Veng/Audio/AudioDevice.h>
 #include <Veng/Audio/AudioEngine.h>
 #include <Veng/Audio/AudioSystem.h>
+#include <Veng/Audio/ScopedAudio.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/PresentationScope.h>
 #include <Veng/Scene/SceneSystem.h>
+#include <Veng/Scene/SystemRegistry.h>
+#include <Veng/World.h>
+#include <Veng/WorldRunner.h>
 #include "support/TestServices.h"
 
+#include <cmath>
 #include <cstring>
+#include <numbers>
 #include <vector>
 
 using namespace Veng;
@@ -30,13 +37,6 @@ using namespace Veng::Audio;
 
 namespace
 {
-
-    Unique<AudioDevice> MakeNullDevice()
-    {
-        return AudioDevice::Create(
-            AudioDeviceInfo{.Backend = AudioBackend::Null, .SampleRate = 48000, .Channels = 2});
-    }
-
     // A resident Pcm clip wrapped in an AssetHandle via Adopt — the cheapest loadable clip a source
     // can name, built without a cook by hand-assembling the cooked blob a Pcm decode expects.
     AssetHandle<Audio::AudioClip> MakePcmClip(const f32 value, const u32 frames)
@@ -67,7 +67,8 @@ TEST_CASE("a PlayOnStart non-spatial source plays with no listener in the scene"
     TypeRegistry registry;
     RegisterBuiltinTypes(registry);
     const Unique<Scene> scene = Scene::Create(registry);
-    const Unique<AudioDevice> device = MakeNullDevice();
+    TestSupport::TestServices services;
+    const AudioDevice& device = services.GetAudioDevice();
 
     const Entity entity = scene->CreateEntity();
     scene->Add<Transform>(entity, Transform{});
@@ -77,12 +78,11 @@ TEST_CASE("a PlayOnStart non-spatial source plays with no listener in the scene"
                                                 .Spatial = false});
 
     AudioSystem system;
-    TestSupport::TestServices services({.Audio = &device->GetEngine()});
     system.OnStart(*scene, services.Make());
     system.OnUpdate(*scene, 1.0f / 60.0f, services.Make());
 
     // No AudioListener anywhere, yet the non-spatial voice plays — the listener-at-origin fallback.
-    CHECK(device->GetEngine().GetActiveVoiceCount() == 1);
+    CHECK(device.GetEngine().GetActiveVoiceCount() == 1);
     CHECK(system.HasVoice(entity));
 }
 
@@ -91,7 +91,8 @@ TEST_CASE("a finished non-looping source is gone the next tick")
     TypeRegistry registry;
     RegisterBuiltinTypes(registry);
     const Unique<Scene> scene = Scene::Create(registry);
-    const Unique<AudioDevice> device = MakeNullDevice();
+    TestSupport::TestServices services;
+    AudioDevice& device = services.GetAudioDevice();
 
     const Entity entity = scene->CreateEntity();
     scene->Add<Transform>(entity, Transform{});
@@ -102,24 +103,23 @@ TEST_CASE("a finished non-looping source is gone the next tick")
                                                 .Spatial = false});
 
     AudioSystem system;
-    TestSupport::TestServices services({.Audio = &device->GetEngine()});
     system.OnStart(*scene, services.Make());
     system.OnUpdate(*scene, 1.0f / 60.0f, services.Make());
     CHECK(system.HasVoice(entity));
 
     // Pump plays the one-shot out and drains the retired-voice channel.
-    for (int i = 0; i < 4 && device->GetEngine().GetActiveVoiceCount() > 0; ++i)
+    for (int i = 0; i < 4 && device.GetEngine().GetActiveVoiceCount() > 0; ++i)
     {
-        device->Pump(1.0f / 60.0f);
+        device.Pump(1.0f / 60.0f);
     }
 
     // The system learns of the retirement through IsVoiceLive and drops the voice, and does not
     // restart the finished one-shot on any later tick.
     system.OnUpdate(*scene, 1.0f / 60.0f, services.Make());
     CHECK_FALSE(system.HasVoice(entity));
-    CHECK(device->GetEngine().GetActiveVoiceCount() == 0);
+    CHECK(device.GetEngine().GetActiveVoiceCount() == 0);
     system.OnUpdate(*scene, 1.0f / 60.0f, services.Make());
-    CHECK(device->GetEngine().GetActiveVoiceCount() == 0);
+    CHECK(device.GetEngine().GetActiveVoiceCount() == 0);
 }
 
 TEST_CASE("a looping source persists across pumps")
@@ -127,7 +127,8 @@ TEST_CASE("a looping source persists across pumps")
     TypeRegistry registry;
     RegisterBuiltinTypes(registry);
     const Unique<Scene> scene = Scene::Create(registry);
-    const Unique<AudioDevice> device = MakeNullDevice();
+    TestSupport::TestServices services;
+    AudioDevice& device = services.GetAudioDevice();
 
     const Entity entity = scene->CreateEntity();
     scene->Add<Transform>(entity, Transform{});
@@ -137,16 +138,15 @@ TEST_CASE("a looping source persists across pumps")
                                                 .Spatial = false});
 
     AudioSystem system;
-    TestSupport::TestServices services({.Audio = &device->GetEngine()});
     system.OnStart(*scene, services.Make());
     system.OnUpdate(*scene, 1.0f / 60.0f, services.Make());
     for (int i = 0; i < 10; ++i)
     {
-        device->Pump(1.0f / 60.0f);
+        device.Pump(1.0f / 60.0f);
         system.OnUpdate(*scene, 1.0f / 60.0f, services.Make());
     }
     CHECK(system.HasVoice(entity));
-    CHECK(device->GetEngine().GetActiveVoiceCount() == 1);
+    CHECK(device.GetEngine().GetActiveVoiceCount() == 1);
 }
 
 TEST_CASE("the voice cap keeps the loudest sources")
@@ -154,7 +154,8 @@ TEST_CASE("the voice cap keeps the loudest sources")
     TypeRegistry registry;
     RegisterBuiltinTypes(registry);
     const Unique<Scene> scene = Scene::Create(registry);
-    const Unique<AudioDevice> device = MakeNullDevice();
+    TestSupport::TestServices services;
+    const AudioDevice& device = services.GetAudioDevice();
 
     const AssetHandle<Audio::AudioClip> clip = MakePcmClip(0.5f, 64);
     const Entity listener = scene->CreateEntity();
@@ -174,11 +175,10 @@ TEST_CASE("the voice cap keeps the loudest sources")
 
     AudioSystem system;
     system.SetVoiceCap(2);
-    TestSupport::TestServices services({.Audio = &device->GetEngine()});
     system.OnStart(*scene, services.Make());
     system.OnUpdate(*scene, 1.0f / 60.0f, services.Make());
 
-    CHECK(device->GetEngine().GetActiveVoiceCount() == 2);
+    CHECK(device.GetEngine().GetActiveVoiceCount() == 2);
     CHECK_FALSE(system.HasVoice(sources[0])); // gain 0.1 — dropped
     CHECK_FALSE(system.HasVoice(sources[1])); // gain 0.2 — dropped
     CHECK(system.HasVoice(sources[2]));       // gain 0.3 — kept
@@ -190,7 +190,8 @@ TEST_CASE("the system places a source at its interpolated drawn pose, not the ra
     TypeRegistry registry;
     RegisterBuiltinTypes(registry);
     const Unique<Scene> scene = Scene::Create(registry);
-    const Unique<AudioDevice> device = MakeNullDevice();
+    TestSupport::TestServices services;
+    const AudioDevice& device = services.GetAudioDevice();
 
     const Entity entity = scene->CreateEntity();
     scene->Add<Transform>(entity, Transform{.Position = {0.0f, 0.0f, 0.0f}});
@@ -204,7 +205,6 @@ TEST_CASE("the system places a source at its interpolated drawn pose, not the ra
     REQUIRE(scene->HasTransformInterpolation());
 
     AudioSystem system;
-    TestSupport::TestServices services({.Audio = &device->GetEngine()});
     system.OnStart(*scene, services.Make());
     system.OnUpdate(*scene, 1.0f / 60.0f, services.Make().WithAlpha(0.5f));
 
@@ -213,4 +213,151 @@ TEST_CASE("the system places a source at its interpolated drawn pose, not the ra
     const optional<vec3> position = system.GetDebugSourcePosition(entity);
     REQUIRE(position.has_value());
     CHECK(glm::all(glm::epsilonEqual(*position, vec3(5.0f, 0.0f, 0.0f), 1e-4f)));
+}
+
+namespace
+{
+    // A scene holding a scope of the bundle's registry, with a listener at `listenerX` facing -Z
+    // (right is +X), the shape every scene a runner holds has.
+    struct ListeningScene
+    {
+        Unique<Veng::Scene> Scene;
+        AudioSystem System;
+
+        ListeningScene(TypeRegistry& types, TestSupport::TestServices& services,
+                       const f32 listenerX)
+            : Scene(Veng::Scene::Create(types))
+        {
+            Scene->SetPresentationScope(services.GetPresentationScopes().Open());
+            const Entity listener = Scene->CreateEntity();
+            Scene->Add<Transform>(listener, Transform{.Position = vec3(listenerX, 0.0f, 0.0f)});
+            Scene->Add<AudioListener>(listener, AudioListener{});
+        }
+
+        SystemContext Context(TestSupport::TestServices& services) const
+        {
+            return services.Make(SystemContextRequest{
+                .World = WorldInstanceId{1}, .Scene = *Scene, .Phase = SystemContextPhase::View});
+        }
+    };
+}
+
+TEST_CASE(
+    "a PlayAt voice pans toward the listener of its own scene, whatever order scenes update in")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    TestSupport::TestServices services;
+    AudioEngine& engine = services.GetAudio();
+    ListeningScene left(types, services, -10.0f);
+    ListeningScene right(types, services, 10.0f);
+    const AssetHandle<Audio::AudioClip> clip = MakePcmClip(0.5f, 48000);
+    constexpr f32 Delta = 1.0f / 60.0f;
+
+    // Each scene fires one voice at the origin: to the left scene's listener it is on the right.
+    left.System.OnUpdate(*left.Scene, Delta, left.Context(services));
+    right.System.OnUpdate(*right.Scene, Delta, right.Context(services));
+    const SpatialOneShotParams params{.Loop = true, .MaxDistance = 100.0f};
+    const VoiceHandle fromLeft = left.Context(services).Audio.PlayAt(clip, vec3(0.0f), params);
+    const VoiceHandle fromRight = right.Context(services).Audio.PlayAt(clip, vec3(0.0f), params);
+    REQUIRE(fromLeft.IsValid());
+    REQUIRE(fromRight.IsValid());
+
+    for (const bool leftFirst : {true, false})
+    {
+        ListeningScene& first = leftFirst ? left : right;
+        ListeningScene& second = leftFirst ? right : left;
+        first.System.OnUpdate(*first.Scene, Delta, first.Context(services));
+        second.System.OnUpdate(*second.Scene, Delta, second.Context(services));
+        engine.Update(Delta);
+        CHECK(engine.GetVoiceParams(fromLeft)->Pan > 0.5f);
+        CHECK(engine.GetVoiceParams(fromRight)->Pan < -0.5f);
+    }
+}
+
+TEST_CASE("the music crossfade advances once a frame however many scenes run an AudioSystem")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    TestSupport::TestServices services;
+    AudioEngine& engine = services.GetAudio();
+    vector<Unique<ListeningScene>> scenes;
+    for (int i = 0; i < 3; ++i)
+    {
+        scenes.push_back(CreateUnique<ListeningScene>(types, services, 0.0f));
+    }
+
+    constexpr f32 Fade = 1.0f;
+    constexpr f32 Delta = 1.0f / 60.0f;
+    constexpr int Frames = 30;
+    engine.Music().Set(MakePcmClip(0.5f, 48000), MusicTransition{.FadeSeconds = Fade});
+    for (int frame = 0; frame < Frames; ++frame)
+    {
+        for (const Unique<ListeningScene>& scene : scenes)
+        {
+            scene->System.OnUpdate(*scene->Scene, Delta, scene->Context(services));
+        }
+        engine.Update(Delta);
+    }
+
+    // The incoming track's equal-power gain at fade progress T / FadeSeconds.
+    const vector<MusicDirector::VoiceState> states = engine.Music().GetVoiceStates();
+    REQUIRE(states.size() == 1);
+    const f32 progress = static_cast<f32>(Frames) * Delta / Fade;
+    CHECK(states.front().Gain ==
+          doctest::Approx(std::sin(progress * std::numbers::pi_v<f32> * 0.5f)).epsilon(1e-3));
+}
+
+TEST_CASE("a paused runner world's source voice is held, and plays again on resume")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+    systems.Register<AudioSystem>();
+    TestSupport::TestServices services;
+    PresentationScopes& scopes = services.GetPresentationScopes();
+    AudioEngine& engine = services.GetAudio();
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &scopes});
+    // A presented world, so its scope is Live while it runs; the factory is otherwise the bundle's.
+    runner.SetContextFactory(
+        [&services](const SystemContextRequest& request)
+        {
+            SystemContext context = services.Make(request);
+            context.View = SystemViewInfo{};
+            return context;
+        });
+    const WorldInstanceId world =
+        runner.OpenWorld(WorldOpenInfo{.Systems = vector<SystemId>{SystemIdOf<AudioSystem>()}});
+    Scene& scene = runner.ResolveWorld(world)->GetScene();
+    const Entity emitter = scene.CreateEntity();
+    scene.Add<Transform>(emitter, Transform{});
+    scene.Add<AudioSource>(emitter, AudioSource{.Clip = MakePcmClip(0.5f, 4800),
+                                                .Looping = true,
+                                                .PlayOnStart = true,
+                                                .Spatial = false});
+
+    const auto frame = [&]
+    {
+        runner.Tick(WorldTickInfo{.Delta = 1.0f / 60.0f});
+        scopes.Resolve();
+        engine.Update(1.0f / 60.0f);
+    };
+    const auto state = [&]
+    {
+        const vector<VoiceInfo> voices = engine.GetVoiceInfos();
+        REQUIRE(voices.size() == 1);
+        return voices.front().State;
+    };
+
+    frame();
+    CHECK(state() == PresentationState::Live);
+
+    runner.SetWorldPaused(world, true);
+    frame();
+    CHECK(state() == PresentationState::Held);
+
+    runner.SetWorldPaused(world, false);
+    frame();
+    CHECK(state() == PresentationState::Live);
 }
