@@ -175,6 +175,11 @@ TEST_CASE("the snapshot triple buffer is race-free by construction")
         back.B = serial;
         buffer.Publish();
     }
+    // A starved consumer may not have run yet; the newest frame stays fetchable until it does.
+    while (reads.load(std::memory_order_relaxed) == 0)
+    {
+        std::this_thread::yield();
+    }
     stop.store(true, std::memory_order_release);
     consumer.join();
 
