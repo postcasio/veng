@@ -213,7 +213,9 @@ through the null device. Its source voices therefore belong to the scene: a **pa
 View pass, so its scope is `Held` and its sources freeze where they are, with no system code; an
 **unpresented** world's are muted; a **closed** scene's stop. Each update it also sets the scene's
 listener on that scope (`ScopedAudio::SetListener`), which is what the scene's `PlayAt` voices are
-spatialized against too. `OnStop` still stops the voices it holds; the scope's closure would also.
+spatialized against too, and submits the scene's `MusicState` as that scope's music request (see
+[The code API and the music director](#the-code-api-and-the-music-director)). `OnStop` still stops
+the voices it holds and withdraws the request; the scope's closure would also.
 It does not advance the engine — that is the application's once-per-frame `AudioEngine::Update`.
 
 ## Every voice belongs to a scope
@@ -233,8 +235,9 @@ voice, by its scope's latched state: `Closed` stops it through the ordinary reti
 (so a world's end stops its one-shots, generators and source voices alike), `Held` publishes it
 frozen, `Muted` publishes it at zero gain while it advances (a muted one-shot ends exactly when it
 would have ended audibly), `Live` publishes it as authored. Then every spatial voice is
-re-spatialized against **its own scope's** listener, and the music director advances once by the
-frame delta.
+re-spatialized against **its own scope's** listener, the music requests are arbitrated (see
+[The code API and the music director](#the-code-api-and-the-music-director)), and the music director
+advances once by the frame delta.
 
 **A listener per scope.** `SetListener(scope, pose)` keeps one pose per open scope (dropped by the
 `Update` that finds the scope closed); a scope that never set one — the application scope — listens
@@ -246,8 +249,9 @@ and the replay flag, held by value as `SystemContext::Audio` and bound by the co
 system never names a scope. Its starts (`PlayOneShot`, `PlayAt`, `PlayGenerator`, `AddClipVoice`) go
 into its scope and **start nothing inside a reconciliation replay** — a Sim system fires sound with
 no `IsReplay` gate of its own — while its controls work as usual in a replay. `SetListener` sets the
-scope's listener. `CreateClip` and `GetOutputSampleRate` pass through unscoped (a clip is an asset,
-not a voice), as does `Music()`. Bus gains, bus DSP and the master reverb are device-wide settings,
+scope's listener, and `SetMusicRequest` sets or withdraws its scope's standing music request (state,
+not a start, so not replay-gated). `CreateClip` and `GetOutputSampleRate` pass through unscoped (a
+clip is an asset, not a voice). Bus gains, bus DSP and the master reverb are device-wide settings,
 not a scene's sound, so they stay on the engine (`Application::GetAudioEngine()`). An unbound facade
 (`ScopedAudio::Unbound()`) starts nothing; it has no public default, so a context omitting its facade
 does not compile. **`Application::GetApplicationAudio()`** is the same facade over the always-`Live`
@@ -272,14 +276,40 @@ Beyond authored `AudioSource`s, any system fires sound through `SystemContext::A
   engine's per-frame `Update` re-spatializes the `Spatial` ones against their scope's listener. A
   slot's metadata is reset on `AddVoice` / `RetireSlot`, so a reused slot never inherits a stale
   role.
-- **`Music()`** returns the **`MusicDirector`**, the one-track policy over the Music bus. `Set(track,
-  MusicTransition)` makes `track` the one logical background track, **equal-power crossfading** from
-  the current one over `FadeSeconds` (0 is a hard cut); re-setting the playing track is a no-op. It
-  holds at most the crossfade pair — two live Music voices — collapsing to one when the fade
-  completes, and offers `Stop(fade)`, `SetGain`, `Current()`. It does not layer, stinger, or
-  sequence. A level's authored initial track is the reflected `MusicState` component, read via
-  `Scene::TryGetFirst` on world start and handed to the director once at its authored fade. The
-  director is device-wide: its voices belong to the application scope, and its crossfade advances
+- **Music is requested, not set.** Each presentation scope holds at most one standing
+  **`MusicRequest`** (`Track`, `FadeSeconds`, `Loop`, `Priority`) — set or withdrawn through
+  `ScopedAudio::SetMusicRequest` (`AudioEngine::SetMusicRequest(scope, …)`), held until replaced or
+  until the scope closes. A scene's `AudioSystem` submits its **`MusicState`** component (the first
+  the scene finds; absent → withdrawn) every View update, so a runtime edit is live and a **paused**
+  scene, whose View phase does not run, keeps its last request standing; application code requests
+  through `Application::GetApplicationAudio().SetMusicRequest(…)`. A request with no `Track` asks
+  for silence at its priority.
+- **The arbitration** runs once a frame in `AudioEngine::Update`, after the scope states are latched.
+  A closed scope's request is dropped. A request is **eligible** when its scope is the application
+  scope, `Live` (presented and running), or `Held` **while still presented** — it carries a
+  presentation rank, so it is paused on screen (or has not yet run its first View pass). A `Muted`
+  scope (an open scene nothing presents) is never eligible, even alone, and neither is a `Held` one
+  with no rank (a paused scene nothing presents): the director's voices are always heard, so letting
+  an unpresented scene take the music would make it audible. The **winner** has the highest
+  `Priority`; ties go to the lower **presentation rank** — the registration index of the first
+  viewport presenting the scope's scene, 0 being the primary viewport, stamped each frame by the
+  Application ([../Scene/CLAUDE.md](../Scene/CLAUDE.md), "Presentation scopes") — a ranked scope
+  beating an unranked one (so the application scope loses a tie to any presented scene), and then to
+  the older scope. The director crossfades to the winner's track at the winner's `FadeSeconds`
+  when its track or loop differs from what plays (the same track never re-triggers), and fades out
+  over the last winner's `FadeSeconds` when nothing is eligible. So closing the winning world returns
+  the music to the next request the next frame, closing the last fades it out, a pause neither
+  restarts nor stops the track, an overlay outranks the world it covers only by its `Priority`, and a
+  world opened in the background never takes the music. `GetMusicRequests()` and `GetMusicWinner()`
+  expose the standing requests and the winner for tooling. A track the director crossfades back to
+  restarts from its beginning.
+- **`Music()`** returns the **`MusicDirector`**, the one-track policy over the Music bus the
+  arbitration drives (its `Set`/`Stop` are engine-internal). It **equal-power crossfades** from the
+  current track over the transition's fade (0 is a hard cut), holds at most the crossfade pair — two
+  live Music voices — collapsing to one when the fade completes, starts a track whose clip was still
+  loading when it became current once the clip is resident, and offers `SetGain`, `Current()` and
+  `GetVoiceStates()` for the music volume and inspection. It does not layer, stinger, or sequence.
+  The director is device-wide: its voices belong to the application scope, and its crossfade advances
   in the engine's once-per-frame `Update`.
 
 ## Runtime-generated audio
@@ -430,7 +460,7 @@ touched:
 through `AddVoice` off its resident buffer, an `Encoded` clip through `AddStreamVoice`. Every clip
 consumer routes through it — the `AudioSystem`'s authored `AudioSource`s, `PlayOneShot`/`PlayAt`, and
 the `MusicDirector` — so a stream clip is accepted anywhere a resident one is. Music is the expected
-stream case (`MusicDirector::Set` streams an Encoded track and crossfades it against any mix of
+stream case (the music director streams an Encoded track and crossfades it against any mix of
 stream and resident tracks); a long authored ambient bed on an `AudioSource` is the other.
 
 ## The self-test tone
@@ -449,7 +479,8 @@ judged (held is frozen, muted is silent), and — for a spatial voice — the wo
 the engine holds. It takes no lock and mutates nothing: a seam for tooling, not for the mix.
 
 The MCP surface exposes it as **`audio.list_voices`** (`veng/mcp`, `src/AudioTools.cpp`): a read-only
-tool reporting every voice on the device with its scope and state, plus the music director's current track, so a driven
+tool reporting every voice on the device with its scope and state, plus the music director's current track, the winning
+scope and every scope's standing music request, so a driven
 session confirms "the right things are playing" without a speaker. It reaches the engine through
 `McpHost::Audio` and runs at the frame pump point like the other engine tools; see
 [mcp/CLAUDE.md](../../../mcp/CLAUDE.md). The engine's own consumption exemplars wire the whole

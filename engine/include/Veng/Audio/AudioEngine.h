@@ -15,6 +15,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace Veng::Audio
 {
@@ -119,6 +120,35 @@ namespace Veng::Audio
         f32 FadeSeconds = 0.0f;
         /// @brief Whether the incoming track loops.
         bool Loop = true;
+    };
+
+    /// @brief What one presentation scope asks the music director to play.
+    ///
+    /// A scope's standing request (AudioEngine::SetMusicRequest), held until it is replaced or the
+    /// scope closes. Each frame the engine plays the request of the highest-priority eligible scope
+    /// (see AudioEngine::Update); a request with no Track asks for silence at its priority.
+    struct MusicRequest
+    {
+        /// @brief The track to play; an empty handle asks for silence.
+        AssetHandle<AudioClip> Track;
+        /// @brief The crossfade into this track in seconds (0 is a hard cut); also the fade-out when
+        ///        this request was the last one playing and no request remains.
+        f32 FadeSeconds = 0.0f;
+        /// @brief Whether the track loops.
+        bool Loop = true;
+        /// @brief The request's priority: the highest eligible one plays.
+        i32 Priority = 0;
+    };
+
+    /// @brief One scope's standing music request, as AudioEngine::GetMusicRequests lists it.
+    struct MusicRequestInfo
+    {
+        /// @brief The requesting scope.
+        PresentationScopeId Scope;
+        /// @brief Its standing request.
+        MusicRequest Request;
+        /// @brief Whether the request could play this frame (its scope is eligible).
+        bool Eligible = false;
     };
 
     /// @brief The mixer-facing, main-thread API: buses and voices.
@@ -374,20 +404,45 @@ namespace Veng::Audio
         /// @param scope The scope.
         [[nodiscard]] ListenerPose GetListener(PresentationScopeId scope) const;
 
-        /// @brief Judges every voice by its scope, re-spatializes the positioned ones, and advances
-        ///        the music director — once per frame.
+        /// @brief Judges every voice by its scope, re-spatializes the positioned ones, arbitrates the
+        ///        music requests and advances the music director — once per frame.
         ///
         /// Per voice, by its scope's state as the registry latched it this frame: Closed stops it
         /// (through the ordinary reclamation handshake), Held publishes it frozen, Muted publishes it
         /// at zero gain while it advances, and Live publishes it as authored. Then every spatial
-        /// voice is re-spatialized against its own scope's listener, and the music crossfade advances
-        /// by @p delta. The application calls it in its presentation step, right after
-        /// PresentationScopes::Resolve and never from a system, so the crossfade advances once a
-        /// frame however many worlds run.
+        /// voice is re-spatialized against its own scope's listener. Then the music requests are
+        /// arbitrated: a closed scope's request is dropped, and among the eligible ones — the
+        /// application scope's, a Live scope's, and a Held scope's whose scene is still presented
+        /// (it has a presentation rank) — the highest Priority wins, ties going to the lower
+        /// presentation rank (a ranked scope beats an unranked one) and then to the older scope. A
+        /// Muted scope's request is never eligible. The director crossfades to the winner's track
+        /// when its track or loop differs from what plays, and fades out over the last winner's fade
+        /// when nothing is eligible. Finally the music crossfade advances by @p delta. The
+        /// application calls it in its presentation step, right after PresentationScopes::Resolve and
+        /// never from a system, so the crossfade advances once a frame however many worlds run.
         /// @param delta Time in seconds since the previous update.
         void Update(f32 delta);
 
+        /// @brief Sets or withdraws a scope's standing music request.
+        ///
+        /// The request stands until it is replaced or the scope closes, so a scene that stops
+        /// submitting — a paused one, whose View phase does not run — keeps its last request. A
+        /// scene's AudioSystem submits its MusicState here every View update; application code
+        /// submits through Application::GetApplicationAudio. Takes effect at the next Update.
+        /// @param scope    The requesting scope; a closed scope's request is refused.
+        /// @param request  The request, or nullopt to withdraw it.
+        void SetMusicRequest(PresentationScopeId scope, const optional<MusicRequest>& request);
+
+        /// @brief Lists every standing music request, oldest scope first (for tooling and tests).
+        /// @return One entry per scope holding a request, with its eligibility as of the last Update.
+        [[nodiscard]] vector<MusicRequestInfo> GetMusicRequests() const;
+
+        /// @brief Returns the scope whose request the last Update chose, or an invalid id for none.
+        [[nodiscard]] PresentationScopeId GetMusicWinner() const { return m_MusicWinner; }
+
         /// @brief Returns the music director, the one-track policy over the Music bus.
+        ///
+        /// For inspection and the music volume; what it plays is decided by the music requests.
         [[nodiscard]] MusicDirector& Music();
 
         /// @brief Returns a live voice's current mix parameters, or nullopt for a stale handle.
@@ -518,6 +573,15 @@ namespace Veng::Audio
         /// @brief Returns whether a voice may start in @p scope: false once it has closed.
         [[nodiscard]] bool CanStartIn(PresentationScopeId scope) const;
 
+        /// @brief Returns whether a scope's music request may play this frame.
+        ///
+        /// The application scope always; a Live scope; a Held scope whose scene is still presented
+        /// (paused on screen); never a Muted or Closed one.
+        [[nodiscard]] bool IsMusicEligible(PresentationScopeId scope) const;
+
+        /// @brief Drops closed scopes' music requests and points the director at the winner.
+        void ArbitrateMusic();
+
         /// @brief Stamps a freshly taken slot with its scope and that scope's current state.
         ///
         /// A voice started in a Held scope is published held from its first snapshot, so a voice
@@ -620,6 +684,13 @@ namespace Veng::Audio
         /// @brief Each scope's listener pose, keyed by scope id; a scope absent here listens from the
         ///        origin. Pruned of closed scopes by Update.
         std::unordered_map<u64, ListenerPose> m_Listeners;
+        /// @brief Each scope's standing music request, in ascending scope id (oldest first). Pruned
+        ///        of closed scopes by Update.
+        vector<std::pair<PresentationScopeId, MusicRequest>> m_MusicRequests;
+        /// @brief The scope whose request the last Update chose; invalid for none.
+        PresentationScopeId m_MusicWinner;
+        /// @brief The last winner's fade, the fade-out when no request remains.
+        f32 m_MusicFade = 0.0f;
         /// @brief Sources awaiting reclamation.
         vector<Deferred> m_Deferred;
         /// @brief The last published snapshot serial.
@@ -632,8 +703,9 @@ namespace Veng::Audio
 
     /// @brief The one-track background-music policy over the Music bus.
     ///
-    /// Keeps exactly one logical track playing, crossfading (equal-power) to a new track on Set and
-    /// looping it. It holds at most two live Music voices — the crossfade pair — collapsing to one
+    /// Driven by the engine's music arbitration (AudioEngine::SetMusicRequest), which is its one
+    /// caller: it keeps exactly one logical track playing, crossfading (equal-power) to a new track
+    /// when the winning request changes and looping it. It holds at most two live Music voices — the crossfade pair — collapsing to one
     /// when a fade completes. It does not layer, stinger, or sequence; that richer interactive-music
     /// surface is a separate capability. A stream-mode (Encoded) clip is the expected long-track
     /// input, decoded incrementally through a streaming voice, and crossfades against a resident
@@ -648,19 +720,6 @@ namespace Veng::Audio
         MusicDirector(const MusicDirector&) = delete;
         MusicDirector& operator=(const MusicDirector&) = delete;
 
-        /// @brief Makes @p track the one logical background track, crossfading from the current one.
-        ///
-        /// Fades the outgoing track out and the incoming in over the transition's FadeSeconds (0 is a
-        /// hard cut). Calling it with the already-playing track is a no-op — no re-trigger, no gain
-        /// glitch.
-        /// @param track      The clip to play as the background track.
-        /// @param transition The crossfade duration and loop flag.
-        void Set(const AssetHandle<AudioClip>& track, const MusicTransition& transition = {});
-
-        /// @brief Fades the current track out over @p fadeSeconds, leaving the Music bus silent.
-        /// @param fadeSeconds The fade-out duration in seconds; 0 stops immediately.
-        void Stop(f32 fadeSeconds);
-
         /// @brief Sets the director's overall linear gain, scaling every Music voice.
         /// @param gain Linear gain (clamped to >= 0).
         void SetGain(f32 gain);
@@ -670,10 +729,6 @@ namespace Veng::Audio
 
         /// @brief Returns the current logical track, or an invalid handle when none plays.
         [[nodiscard]] AssetHandle<AudioClip> Current() const { return m_Current; }
-
-        /// @brief Advances the crossfade envelope one frame, retuning and reaping Music voices.
-        /// @param delta Time in seconds since the previous update.
-        void Advance(f32 delta);
 
         /// @brief A live Music voice's state (test seam).
         struct VoiceState
@@ -695,6 +750,26 @@ namespace Veng::Audio
         [[nodiscard]] usize GetVoiceCount() const { return m_Tracks.size(); }
 
     private:
+        friend class AudioEngine;
+
+        /// @brief Makes @p track the one logical background track, crossfading from the current one.
+        ///
+        /// Fades the outgoing track out and the incoming in over the transition's FadeSeconds (0 is a
+        /// hard cut). Calling it with the current track and loop is a no-op — no re-trigger, no gain
+        /// glitch — except that a track whose clip was still loading when it became current starts
+        /// once it is resident. An empty @p track fades the current one out.
+        /// @param track      The clip to play as the background track.
+        /// @param transition The crossfade duration and loop flag.
+        void Set(const AssetHandle<AudioClip>& track, const MusicTransition& transition);
+
+        /// @brief Fades the current track out over @p fadeSeconds, leaving the Music bus silent.
+        /// @param fadeSeconds The fade-out duration in seconds; 0 stops immediately.
+        void Stop(f32 fadeSeconds);
+
+        /// @brief Advances the crossfade envelope one frame, retuning and reaping Music voices.
+        /// @param delta Time in seconds since the previous update.
+        void Advance(f32 delta);
+
         /// @brief One live Music voice and its fade state.
         struct Track
         {
@@ -720,10 +795,17 @@ namespace Veng::Audio
         /// @brief Pushes a track's current gain into its engine voice.
         void Apply(const Track& track) const;
 
+        /// @brief Starts @p track's voice as the incoming member of the pair, fading in.
+        /// @param track      The clip to start; nothing starts when it is not resident.
+        /// @param transition The fade-in duration and loop flag.
+        void StartIncoming(const AssetHandle<AudioClip>& track, const MusicTransition& transition);
+
         /// @brief The owning engine.
         AudioEngine& m_Engine;
         /// @brief The current logical track (invalid when stopped).
         AssetHandle<AudioClip> m_Current;
+        /// @brief Whether the current logical track loops.
+        bool m_CurrentLoop = true;
         /// @brief The live voices: the incoming/steady track and at most one outgoing.
         vector<Track> m_Tracks;
         /// @brief The overall linear gain scaling every Music voice.

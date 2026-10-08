@@ -54,6 +54,9 @@ namespace Veng
         PresentationScopeId Id;
         /// @brief The state the last Resolve latched (Held for a scope opened since).
         PresentationState State = PresentationState::Held;
+        /// @brief The presentation rank the last Resolve latched, or nullopt when nothing presented
+        ///        the scope's scene (see PresentationScopes::SetPresentationRank).
+        optional<u32> Rank;
     };
 
     /// @brief The owning handle of one presentation scope: renews its lease, and closes it on drop.
@@ -144,8 +147,28 @@ namespace Veng
         ///
         /// A scope renewed audible reads Live, one renewed only inaudibly reads Muted, and one not
         /// renewed reads Held; the application scope reads Live regardless. A lease is therefore
-        /// exactly one frame. Called once per frame, before the device engines' updates.
+        /// exactly one frame. Each scope's presentation rank is latched the same way, from the ranks
+        /// stamped since the last Resolve. Called once per frame, before the device engines' updates.
         void Resolve();
+
+        /// @brief Stamps where a scope's scene is presented this frame, for the next Resolve to latch.
+        ///
+        /// The rank is the position, in the compositor's registration order, of the first viewport
+        /// presenting the scope's scene — 0 is the primary viewport — so a device engine choosing
+        /// between scopes (the music arbitration) can prefer the one on the primary viewport. Unlike
+        /// the lease it is independent of the View phase, so a paused scene still on screen keeps its
+        /// rank. Several stamps in one frame keep the lowest; a scope not stamped latches no rank. The
+        /// application stamps every scope it presents in its presentation step, just before Resolve.
+        /// @param id    The scope whose scene is presented; the application scope and an id not open
+        ///              are ignored.
+        /// @param rank  The presenting viewport's registration index.
+        void SetPresentationRank(PresentationScopeId id, u32 rank);
+
+        /// @brief Returns a scope's presentation rank as the last Resolve latched it.
+        /// @param id  The scope to query.
+        /// @return Its rank, or nullopt when nothing presented its scene (always for the application
+        ///         scope, a closed scope and an id never handed out).
+        [[nodiscard]] optional<u32> GetPresentationRank(PresentationScopeId id) const;
 
         /// @brief Returns the reserved scope owning what plays outside any scene.
         ///
@@ -174,6 +197,10 @@ namespace Veng
             bool Renewed = false;
             /// @brief Whether any renewal since the last Resolve was audible.
             bool Audible = false;
+            /// @brief The rank the last Resolve latched.
+            optional<u32> Rank;
+            /// @brief The lowest rank stamped since the last Resolve.
+            optional<u32> PendingRank;
         };
 
         /// @brief Records a renewal of an open scope (PresentationScope::Renew).
@@ -188,6 +215,10 @@ namespace Veng
         /// @brief Returns an open scope's record, or null when the id is not open.
         /// @param id  The scope to find.
         [[nodiscard]] const Record* Find(PresentationScopeId id) const;
+
+        /// @brief Returns an open scope's record for writing, or null when the id is not open.
+        /// @param id  The scope to find.
+        [[nodiscard]] Record* Find(PresentationScopeId id);
 
         /// @brief The open scopes in ascending id order; minting appends, so the order is free.
         vector<Record> m_Records;

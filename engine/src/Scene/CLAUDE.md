@@ -345,6 +345,16 @@ its time advances, and a bound viewport so released stops counting for `IsWorldP
 `CollectPresentingSeats` too, until its owner pushes again. The registry's one **application scope** (`GetApplicationScope()`) is always `Live`; it
 owns what plays outside any scene, and nothing a scene's system starts belongs in it.
 
+**A scope also latches where its scene is presented.** Just before `Resolve`, the application stamps
+each held scene's scope with a **presentation rank** (`SetPresentationRank`) — the registration index,
+in the compositor's order, of the first viewport whose retained scene is that scene, so the primary
+viewport is rank 0 and an overlay registered after it ranks higher. `Resolve` latches it like the lease
+(`GetPresentationRank`, nullopt when nothing presented the scene; the application scope never has one),
+and `GetScopes` lists it. Unlike the lease it does not depend on the View phase, so a paused scene still
+on screen keeps its rank — which is how the audio engine's music arbitration tells a paused, presented
+scene (eligible) from a paused one nothing shows (not), and breaks priority ties toward the primary
+viewport ([../Audio/CLAUDE.md](../Audio/CLAUDE.md), "The code API and the music director").
+
 Two device engines file under scopes: the **audio engine** — every voice, started through the
 `ScopedAudio` facade a scene's `SystemContext::Audio` (or a Gui driver's frame) is, with a listener per
 scope ([../Audio/CLAUDE.md](../Audio/CLAUDE.md)) — and the **haptics engine** — every rumble one-shot

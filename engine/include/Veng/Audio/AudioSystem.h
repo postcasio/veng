@@ -29,8 +29,9 @@ namespace Veng
     /// presentation scope, so its voices belong to the scene: a paused world's sources hold, an
     /// unpresented one's are silent, and a closed scene's stop. Each update it sets the scene's
     /// listener on that scope, which every PlayAt a system of this scene fires is spatialized
-    /// against too. The engine's once-per-frame advance (AudioEngine::Update) is the application's,
-    /// not this system's.
+    /// against too, and submits the scene's MusicState as that scope's music request, which the engine
+    /// arbitrates against every other scope's. The engine's once-per-frame advance
+    /// (AudioEngine::Update) is the application's, not this system's.
     class AudioSystem final : public SceneSystem
     {
     public:
@@ -41,20 +42,22 @@ namespace Veng
         /// @param cap  The voice cap; the loudest-after-attenuation sources survive when exceeded.
         void SetVoiceCap(u32 cap) { m_VoiceCap = cap; }
 
-        /// @brief Hands any authored MusicState to the music director and resets voice bookkeeping.
+        /// @brief Resets the voice bookkeeping.
         /// @param scene    The scene the system operates over.
-        /// @param context  Per-tick services (the audio engine and its music director).
+        /// @param context  Per-tick services (unused).
         void OnStart(Scene& scene, const SystemContext& context) override;
 
-        /// @brief Places, spatializes, caps, and publishes the scene's AudioSource voices.
+        /// @brief Places, spatializes, caps, and publishes the scene's AudioSource voices, and
+        ///        submits the scene's MusicState (or its absence) as its scope's music request.
         /// @param scene    The scene whose AudioSources are placed.
         /// @param delta    Time in seconds since the previous tick.
         /// @param context  Per-tick services (carries the interpolation Alpha).
         void OnUpdate(Scene& scene, f32 delta, const SystemContext& context) override;
 
-        /// @brief Stops every held voice and clears the bookkeeping.
+        /// @brief Stops every held voice, withdraws the scene's music request, and clears the
+        ///        bookkeeping.
         /// @param scene    The scene the system operates over.
-        /// @param context  Per-tick services (unused).
+        /// @param context  Per-tick services (the scene's audio facade).
         void OnStop(Scene& scene, const SystemContext& context) override;
 
         /// @brief Returns whether the system currently holds a live voice for an entity (test seam).

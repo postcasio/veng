@@ -251,10 +251,11 @@ TEST_CASE("the music director plays a stream track and Current reports it")
 
     const Unique<AudioDevice> device = MakeMonoNullDevice(rate);
     AudioEngine& engine = device->GetEngine();
-    MusicDirector& music = engine.Music();
+    const MusicDirector& music = engine.Music();
     const AssetHandle<AudioClip> track = MakeEncodedClip(ogg, rate, channels, mono.size());
 
-    music.Set(track, MusicTransition{.FadeSeconds = 0.0f, .Loop = true});
+    engine.SetMusicRequest(TestSupport::AppScope(), MusicRequest{.Track = track});
+    engine.Update(0.0f);
     REQUIRE(music.GetVoiceCount() == 1);
     CHECK(music.Current().Get() == track.Get());
 

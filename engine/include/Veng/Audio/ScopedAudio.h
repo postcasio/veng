@@ -23,6 +23,9 @@ namespace Veng::Audio
     /// or was never handed out (a scene with no scope). It has no public default, so a context that
     /// omits its facade does not compile.
     ///
+    /// Its music request is the scope's too: the engine arbitrates every scope's request and plays
+    /// the winner, so a scene asks for music rather than setting it, and its ask ends with the scene.
+    ///
     /// Cheap to copy: it borrows the engine, which outlives every context it rides on. Bus gains, bus
     /// DSP and the master reverb are device-wide settings, not a scene's sound, so they stay on the
     /// engine and are not reached through here.
@@ -105,9 +108,13 @@ namespace Veng::Audio
         /// @brief Returns the device's output sample rate in Hz, or 0 over nothing.
         [[nodiscard]] u32 GetOutputSampleRate() const;
 
-        /// @brief Returns the device-wide music director.
-        /// @pre The facade is bound to an engine (IsBound()).
-        [[nodiscard]] MusicDirector& Music() const;
+        /// @brief Sets or withdraws this scope's standing music request (AudioEngine::SetMusicRequest).
+        ///
+        /// The request stands until replaced or until the scope closes, and the engine plays the
+        /// highest-priority eligible request each frame. Not gated on a replay: it is state, not a
+        /// start, and re-submitting it is idempotent. Over nothing it does nothing.
+        /// @param request  The request, or nullopt to withdraw it.
+        void SetMusicRequest(const optional<MusicRequest>& request) const;
 
         /// @brief Returns whether the facade is bound to an engine.
         [[nodiscard]] bool IsBound() const { return m_Engine != nullptr; }

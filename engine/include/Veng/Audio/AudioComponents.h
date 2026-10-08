@@ -57,20 +57,27 @@ namespace Veng
         f32 Gain = 1.0f;
     };
 
-    /// @brief The level's authored initial background-music track, read on world start.
+    /// @brief The scene's live background-music request.
     ///
-    /// Placed on a level's settings entity, this is the "this level starts with this music" the
-    /// AudioSystem hands to the music director once when the simulation starts (at the authored
-    /// fade). Changing the track at runtime is the director's Set call; a level with no MusicState
-    /// simply starts silent on the Music bus.
+    /// Present, it means "this scene wants this track"; absent, the scene wants none. The scene's
+    /// AudioSystem submits it as its presentation scope's music request every View update, so any
+    /// field may change at runtime — a new Track crossfades to it. The engine plays the request of
+    /// the highest-Priority eligible scope (a scene on screen, running or paused; never one nothing
+    /// presents), breaking ties toward the scene on the primary viewport, and returns to the next
+    /// request when the winning scene ends, fading out when none remain. Placed on a level's settings
+    /// entity; the first one the scene finds is the request.
     struct MusicState
     {
-        /// @brief The track the director plays when the level starts.
+        /// @brief The track to play; an empty track asks for silence at this Priority.
         AssetHandle<Audio::AudioClip> Track;
-        /// @brief The fade-in duration in seconds; 0 starts the track at full gain.
+        /// @brief The crossfade into this track in seconds (0 is a hard cut); also the fade-out when
+        ///        this scene's music ends with no other request standing.
         f32 FadeSeconds = 0.0f;
         /// @brief Whether the track loops.
         bool Loop = true;
+        /// @brief The request's priority: the highest among eligible scenes plays, so an overlay can
+        ///        outrank the scene it covers.
+        i32 Priority = 0;
     };
 }
 
@@ -100,4 +107,5 @@ VE_REFLECT(::Veng::MusicState, 0x52BEE4008DB11531ULL)
 VE_FIELD(Track, .DisplayName = "Track")
 VE_FIELD(FadeSeconds, .DisplayName = "Fade Seconds", .Display = {.Min = 0.0, .Step = 0.05})
 VE_FIELD(Loop, .DisplayName = "Loop")
+VE_FIELD(Priority, .DisplayName = "Priority")
 VE_REFLECT_END();

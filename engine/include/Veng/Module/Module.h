@@ -341,10 +341,16 @@ extern "C"
 /// facade, and the device engines a driver plays through move onto the ViewportCompositor. A module
 /// reads the context every tick, implements drivers handed the frame, and opens editors handed the
 /// asset-editor context, so a stale module reads all three at their old layouts.
+/// Version 83 makes music a request each presentation scope makes and the engine arbitrates: the
+/// builtin MusicState grows Priority, ScopedAudio trades Music() for SetMusicRequest, AudioEngine
+/// grows the standing requests and its winner, MusicDirector's Set and Stop become engine-internal,
+/// and PresentationScopeStatus grows the scope's presentation rank. A module spawns prefabs carrying
+/// builtin components, calls the facade every tick and reads the engine and the scope listing, so a
+/// stale module lays MusicState out short and calls a facade entry point the host no longer exports.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 82u
+#define VENG_MODULE_ABI_VERSION 83u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

@@ -3,6 +3,7 @@
 #include <Veng/Assert.h>
 
 #include <algorithm>
+#include <utility>
 
 namespace Veng
 {
@@ -56,6 +57,11 @@ namespace Veng
         return it != m_Records.end() && it->Id == id ? &*it : nullptr;
     }
 
+    PresentationScopes::Record* PresentationScopes::Find(const PresentationScopeId id)
+    {
+        return const_cast<Record*>(std::as_const(*this).Find(id));
+    }
+
     PresentationState PresentationScopes::GetState(const PresentationScopeId id) const
     {
         const Record* record = Find(id);
@@ -64,12 +70,26 @@ namespace Veng
 
     void PresentationScopes::Renew(const PresentationScopeId id, const bool audible)
     {
-        const auto it = std::ranges::lower_bound(m_Records, id.Value, {},
-                                                 [](const Record& r) { return r.Id.Value; });
-        VE_ASSERT(it != m_Records.end() && it->Id == id,
-                  "PresentationScopes: renewing scope {}, which is not open", id.Value);
-        it->Renewed = true;
-        it->Audible = it->Audible || audible;
+        Record* record = Find(id);
+        VE_ASSERT(record != nullptr, "PresentationScopes: renewing scope {}, which is not open",
+                  id.Value);
+        record->Renewed = true;
+        record->Audible = record->Audible || audible;
+    }
+
+    void PresentationScopes::SetPresentationRank(const PresentationScopeId id, const u32 rank)
+    {
+        // The application scope is presented by no viewport, so it never holds a rank.
+        if (Record* record = Find(id); record != nullptr && id != m_Application)
+        {
+            record->PendingRank = std::min(record->PendingRank.value_or(rank), rank);
+        }
+    }
+
+    optional<u32> PresentationScopes::GetPresentationRank(const PresentationScopeId id) const
+    {
+        const Record* record = Find(id);
+        return record != nullptr ? record->Rank : std::nullopt;
     }
 
     void PresentationScopes::Close(const PresentationScopeId id)
@@ -81,6 +101,7 @@ namespace Veng
     {
         for (Record& record : m_Records)
         {
+            record.Rank = std::exchange(record.PendingRank, std::nullopt);
             if (record.Id == m_Application)
             {
                 continue;
@@ -104,7 +125,8 @@ namespace Veng
         out.reserve(m_Records.size());
         for (const Record& record : m_Records)
         {
-            out.push_back(PresentationScopeStatus{.Id = record.Id, .State = record.State});
+            out.push_back(PresentationScopeStatus{
+                .Id = record.Id, .State = record.State, .Rank = record.Rank});
         }
         return out;
     }

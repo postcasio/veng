@@ -1,7 +1,8 @@
 // The View-phase AudioSystem over a Scene and a null device: it publishes a well-formed voice
 // snapshot (a PlayOnStart source sounds, a no-listener scene still plays non-spatial voices, the cap
 // keeps the loudest, a finished non-looping source is gone next tick), and it reads the interpolated
-// drawn pose rather than the raw Sim transform. Pure CPU — the null device runs the whole mix path
+// drawn pose rather than the raw Sim transform; a world's MusicState plays while it is presented and
+// stops with the world. Pure CPU — the null device runs the whole mix path
 // on the main thread, so no hardware is touched.
 
 #include <doctest/doctest.h>
@@ -290,7 +291,8 @@ TEST_CASE("the music crossfade advances once a frame however many scenes run an 
     constexpr f32 Fade = 1.0f;
     constexpr f32 Delta = 1.0f / 60.0f;
     constexpr int Frames = 30;
-    engine.Music().Set(MakePcmClip(0.5f, 48000), MusicTransition{.FadeSeconds = Fade});
+    engine.SetMusicRequest(services.GetPresentationScopes().GetApplicationScope(),
+                           MusicRequest{.Track = MakePcmClip(0.5f, 48000), .FadeSeconds = Fade});
     for (int frame = 0; frame < Frames; ++frame)
     {
         for (const Unique<ListeningScene>& scene : scenes)
@@ -360,4 +362,51 @@ TEST_CASE("a paused runner world's source voice is held, and plays again on resu
     runner.SetWorldPaused(world, false);
     frame();
     CHECK(state() == PresentationState::Live);
+}
+
+TEST_CASE("a runner world's MusicState plays while presented, and fades out when the world closes")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+    systems.Register<AudioSystem>();
+    TestSupport::TestServices services;
+    PresentationScopes& scopes = services.GetPresentationScopes();
+    AudioEngine& engine = services.GetAudio();
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &scopes});
+    runner.SetContextFactory(
+        [&services](const SystemContextRequest& request)
+        {
+            SystemContext context = services.Make(request);
+            context.View = SystemViewInfo{};
+            return context;
+        });
+    const WorldInstanceId world =
+        runner.OpenWorld(WorldOpenInfo{.Systems = vector<SystemId>{SystemIdOf<AudioSystem>()}});
+    Scene& scene = runner.ResolveWorld(world)->GetScene();
+    const AssetHandle<Audio::AudioClip> track = MakePcmClip(0.5f, 48000);
+    constexpr f32 Fade = 0.1f;
+    scene.Add<MusicState>(scene.CreateEntity(), MusicState{.Track = track, .FadeSeconds = Fade});
+
+    constexpr f32 Delta = 1.0f / 60.0f;
+    const auto frame = [&]
+    {
+        runner.Tick(WorldTickInfo{.Delta = Delta});
+        scopes.Resolve();
+        engine.Update(Delta);
+    };
+    frame();
+    frame();
+    CHECK(engine.Music().Current().Get() == track.Get());
+    CHECK(engine.Music().GetVoiceCount() == 1);
+
+    // Eight frames outlast the fade.
+    runner.CloseWorld(world);
+    for (int i = 0; i < 8; ++i)
+    {
+        frame();
+    }
+    CHECK_FALSE(engine.Music().Current().IsValid());
+    CHECK(engine.Music().GetVoiceCount() == 0);
 }

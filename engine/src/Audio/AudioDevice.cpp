@@ -2074,7 +2074,108 @@ namespace Veng::Audio
                                  PresentationState::Closed;
                       });
 
+        ArbitrateMusic();
         m_Music->Advance(delta);
+    }
+
+    void AudioEngine::SetMusicRequest(const PresentationScopeId scope,
+                                      const optional<MusicRequest>& request)
+    {
+        const auto it = std::ranges::lower_bound(
+            m_MusicRequests, scope.Value, {}, [](const auto& entry) { return entry.first.Value; });
+        const bool present = it != m_MusicRequests.end() && it->first == scope;
+        if (!request.has_value())
+        {
+            if (present)
+            {
+                m_MusicRequests.erase(it);
+            }
+            return;
+        }
+        if (!CanStartIn(scope))
+        {
+            return;
+        }
+        if (present)
+        {
+            it->second = *request;
+        }
+        else
+        {
+            m_MusicRequests.insert(it, {scope, *request});
+        }
+    }
+
+    vector<MusicRequestInfo> AudioEngine::GetMusicRequests() const
+    {
+        vector<MusicRequestInfo> out;
+        out.reserve(m_MusicRequests.size());
+        for (const auto& [scope, request] : m_MusicRequests)
+        {
+            out.push_back(MusicRequestInfo{
+                .Scope = scope, .Request = request, .Eligible = IsMusicEligible(scope)});
+        }
+        return out;
+    }
+
+    bool AudioEngine::IsMusicEligible(const PresentationScopeId scope) const
+    {
+        switch (m_Scopes.GetState(scope))
+        {
+        case PresentationState::Live:
+            return true;
+        case PresentationState::Held:
+            // Paused (or not yet renewed) while still on screen: a pause keeps its music. A held
+            // scene nothing presents is as unpresented as a muted one.
+            return m_Scopes.GetPresentationRank(scope).has_value();
+        case PresentationState::Muted:
+        case PresentationState::Closed:
+            return false;
+        }
+        return false;
+    }
+
+    void AudioEngine::ArbitrateMusic()
+    {
+        std::erase_if(m_MusicRequests, [this](const auto& entry)
+                      { return m_Scopes.GetState(entry.first) == PresentationState::Closed; });
+
+        // Highest priority, then the lower presentation rank (a ranked scope beats an unranked one),
+        // then the older scope — the iteration order, so a later scope must strictly outrank.
+        const std::pair<PresentationScopeId, MusicRequest>* winner = nullptr;
+        optional<u32> winnerRank;
+        for (const auto& entry : m_MusicRequests)
+        {
+            if (!IsMusicEligible(entry.first))
+            {
+                continue;
+            }
+            const optional<u32> rank = m_Scopes.GetPresentationRank(entry.first);
+            const bool outranks =
+                winner == nullptr || entry.second.Priority > winner->second.Priority ||
+                (entry.second.Priority == winner->second.Priority && rank.has_value() &&
+                 (!winnerRank.has_value() || *rank < *winnerRank));
+            if (outranks)
+            {
+                winner = &entry;
+                winnerRank = rank;
+            }
+        }
+
+        if (winner == nullptr)
+        {
+            m_MusicWinner = {};
+            if (m_Music->Current().IsValid())
+            {
+                m_Music->Stop(m_MusicFade);
+            }
+            return;
+        }
+        const MusicRequest& request = winner->second;
+        m_MusicWinner = winner->first;
+        m_MusicFade = request.FadeSeconds;
+        m_Music->Set(request.Track,
+                     MusicTransition{.FadeSeconds = request.FadeSeconds, .Loop = request.Loop});
     }
 
     MusicDirector& AudioEngine::Music()
@@ -2130,11 +2231,44 @@ namespace Veng::Audio
             VoiceParams{.Bus = AudioBuses::Music(), .Gain = TrackGain(track), .Loop = track.Loop});
     }
 
+    namespace
+    {
+        // Whether two handles name the same track: by asset id when both carry one, else by the
+        // resident clip (a runtime-adopted clip has no id). Two empty handles are the same silence.
+        bool SameTrack(const AssetHandle<AudioClip>& a, const AssetHandle<AudioClip>& b)
+        {
+            if (!a.IsValid() || !b.IsValid())
+            {
+                return a.IsValid() == b.IsValid();
+            }
+            if (a.Id().IsValid() && b.Id().IsValid())
+            {
+                return a.Id().Value == b.Id().Value;
+            }
+            return a.Get() == b.Get();
+        }
+
+        bool IsPlayable(const AssetHandle<AudioClip>& track)
+        {
+            const AudioClip* resolved = track.Get();
+            return resolved != nullptr &&
+                   (resolved->Buffer() != nullptr || resolved->Storage() == AudioStorage::Encoded);
+        }
+    }
+
     void MusicDirector::Set(const AssetHandle<AudioClip>& track, const MusicTransition& transition)
     {
         // Already the one logical track: a no-op, so re-setting the playing track never re-triggers.
-        if (m_Current.Get() != nullptr && m_Current.Get() == track.Get())
+        // A track that became current while its clip was still loading has no incoming voice yet, so
+        // it starts here once the clip is resident.
+        if (SameTrack(m_Current, track) && (!track.IsValid() || m_CurrentLoop == transition.Loop))
         {
+            const bool started =
+                std::ranges::any_of(m_Tracks, [](const Track& t) { return !t.FadingOut; });
+            if (!started && IsPlayable(track))
+            {
+                StartIncoming(track, transition);
+            }
             return;
         }
 
@@ -2162,31 +2296,35 @@ namespace Veng::Audio
             m_Tracks.clear();
         }
 
-        AudioClip* resolved = track.Get();
-        const bool playable = resolved != nullptr && (resolved->Buffer() != nullptr ||
-                                                      resolved->Storage() == AudioStorage::Encoded);
-        if (playable)
+        if (IsPlayable(track))
         {
-            Track incoming;
-            incoming.Clip = track;
-            incoming.Loop = transition.Loop;
-            incoming.FadingOut = false;
-            incoming.Phase = 0.0f;
-            incoming.FadeDuration = transition.FadeSeconds;
-            incoming.Steady = hardCut;
-            // The director is device-wide, so its voices belong to the always-Live application scope.
-            incoming.Voice = m_Engine.AddClipVoice(m_Engine.m_Scopes.GetApplicationScope(), track,
-                                                   VoiceParams{.Bus = AudioBuses::Music(),
-                                                               .Gain = TrackGain(incoming),
-                                                               .Loop = transition.Loop});
-            if (incoming.Voice.IsValid())
-            {
-                m_Engine.m_Managed[incoming.Voice.Slot].Kind = AudioEngine::ManagedKind::Music;
-                m_Tracks.push_back(incoming);
-            }
+            StartIncoming(track, transition);
         }
 
         m_Current = track;
+        m_CurrentLoop = transition.Loop;
+    }
+
+    void MusicDirector::StartIncoming(const AssetHandle<AudioClip>& track,
+                                      const MusicTransition& transition)
+    {
+        Track incoming;
+        incoming.Clip = track;
+        incoming.Loop = transition.Loop;
+        incoming.FadingOut = false;
+        incoming.Phase = 0.0f;
+        incoming.FadeDuration = transition.FadeSeconds;
+        incoming.Steady = transition.FadeSeconds <= 0.0f;
+        // The director is device-wide, so its voices belong to the always-Live application scope.
+        incoming.Voice = m_Engine.AddClipVoice(m_Engine.m_Scopes.GetApplicationScope(), track,
+                                               VoiceParams{.Bus = AudioBuses::Music(),
+                                                           .Gain = TrackGain(incoming),
+                                                           .Loop = transition.Loop});
+        if (incoming.Voice.IsValid())
+        {
+            m_Engine.m_Managed[incoming.Voice.Slot].Kind = AudioEngine::ManagedKind::Music;
+            m_Tracks.push_back(incoming);
+        }
     }
 
     void MusicDirector::Stop(const f32 fadeSeconds)

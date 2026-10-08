@@ -128,21 +128,12 @@ namespace Veng
         }
     }
 
-    void AudioSystem::OnStart(Scene& scene, const SystemContext& context)
+    void AudioSystem::OnStart(Scene& /*scene*/, const SystemContext& /*context*/)
     {
         m_Voices.clear();
         m_Finished.clear();
         m_SourcePosition.clear();
         m_HasListenerPosition = false;
-
-        // Hand any authored initial track to the music director once, at its authored fade — a level
-        // with no MusicState simply starts silent on the Music bus.
-        if (const MusicState* music = scene.TryGetFirst<MusicState>(); music != nullptr)
-        {
-            context.Audio.Music().Set(
-                music->Track,
-                Audio::MusicTransition{.FadeSeconds = music->FadeSeconds, .Loop = music->Loop});
-        }
     }
 
     void AudioSystem::OnStop(Scene& /*scene*/, const SystemContext& context)
@@ -155,6 +146,8 @@ namespace Veng
         m_Finished.clear();
         m_SourcePosition.clear();
         m_HasListenerPosition = false;
+        // A stopped system no longer speaks for its scene's music.
+        context.Audio.SetMusicRequest(std::nullopt);
     }
 
     void AudioSystem::OnUpdate(Scene& scene, const f32 delta, const SystemContext& context)
@@ -188,6 +181,20 @@ namespace Veng
         // This scene's listener: what its sources here, and every PlayAt its systems fire, are
         // spatialized against, whatever other worlds' listeners are.
         audio.SetListener(listener);
+
+        // The scene's music request, renewed every View update so a runtime edit is live; absent, the
+        // scene wants none. A paused scene runs no View pass, so its last request keeps standing.
+        if (const MusicState* music = scene.TryGetFirst<MusicState>(); music != nullptr)
+        {
+            audio.SetMusicRequest(Audio::MusicRequest{.Track = music->Track,
+                                                      .FadeSeconds = music->FadeSeconds,
+                                                      .Loop = music->Loop,
+                                                      .Priority = music->Priority});
+        }
+        else
+        {
+            audio.SetMusicRequest(std::nullopt);
+        }
 
         // Drop voices the device retired (surfaced through IsVoiceLive once Pump drained the
         // retired-voice channel): a finished non-looping source stays finished and is not restarted.

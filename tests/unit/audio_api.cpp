@@ -1,8 +1,9 @@
 // The code-facing audio surface over a null device — all pure CPU, no hardware. A one-shot lands in
 // the snapshot then retires on its own or on demand; a PlayAt voice shares the spatialization path;
 // the one-shot pool caps and drops the quietest; and the music director holds one logical track,
-// crossfading equal-power between two and collapsing to one, with an authored MusicState starting a
-// level's track once on world start.
+// crossfading equal-power between two and collapsing to one, playing the request of the
+// highest-priority scope that is presented — running or paused — and following it as scopes close
+// and requests change.
 
 #include <doctest/doctest.h>
 
@@ -22,6 +23,7 @@
 #include "support/TestServices.h"
 
 #include <algorithm>
+#include <initializer_list>
 #include <cstring>
 #include <vector>
 
@@ -60,6 +62,64 @@ namespace
         REQUIRE(clip.has_value());
         return AssetManager::Adopt<AudioClip>(*clip);
     }
+
+    // How a scope is presented in one MusicFrame: renewed audibly, renewed silently, or not renewed.
+    enum class Shown : u8
+    {
+        Live,
+        Muted,
+        Held,
+    };
+
+    // One scope's presentation for one frame, and the rank of the viewport presenting it (none when
+    // nothing does).
+    struct ScopeShown
+    {
+        PresentationScope* Scope = nullptr;
+        Shown How = Shown::Live;
+        optional<u32> Rank;
+    };
+
+    ScopeShown Live(PresentationScope* scope, const optional<u32> rank = std::nullopt)
+    {
+        return ScopeShown{.Scope = scope, .How = Shown::Live, .Rank = rank};
+    }
+
+    ScopeShown Muted(PresentationScope* scope)
+    {
+        return ScopeShown{.Scope = scope, .How = Shown::Muted};
+    }
+
+    ScopeShown Held(PresentationScope* scope, const optional<u32> rank = std::nullopt)
+    {
+        return ScopeShown{.Scope = scope, .How = Shown::Held, .Rank = rank};
+    }
+
+    // One application frame's presentation step: renews and ranks the listed scopes, latches every
+    // scope's state, then runs the engine's once-per-frame update (the music arbitration included).
+    struct MusicFrame
+    {
+        PresentationScopes& Scopes;
+        AudioEngine& Engine;
+
+        void operator()(const std::initializer_list<ScopeShown> shown,
+                        const f32 delta = 1.0f / 60.0f) const
+        {
+            for (const ScopeShown& entry : shown)
+            {
+                if (entry.How != Shown::Held)
+                {
+                    entry.Scope->Renew(entry.How == Shown::Live);
+                }
+                if (entry.Rank.has_value())
+                {
+                    Scopes.SetPresentationRank(entry.Scope->GetId(), *entry.Rank);
+                }
+            }
+            Scopes.Resolve();
+            Engine.Update(delta);
+        }
+    };
 
     // The applied gain of the pair member that is (or is not) fading out; -1 when absent.
     f32 GainOf(const vector<MusicDirector::VoiceState>& states, const bool fadingOut)
@@ -172,23 +232,27 @@ TEST_CASE("the music director keeps one logical track and crossfades equal-power
 {
     const Unique<AudioDevice> device = MakeNullDevice();
     AudioEngine& engine = device->GetEngine();
-    MusicDirector& music = engine.Music();
+    const MusicDirector& music = engine.Music();
     const AssetHandle<AudioClip> trackA = MakePcmClip(0.5f, 48000);
     const AssetHandle<AudioClip> trackB = MakePcmClip(0.4f, 48000);
+    const PresentationScopeId app = TestSupport::AppScope();
 
     // Hard-cut A in: it is the one logical track at full gain.
-    music.Set(trackA, MusicTransition{.FadeSeconds = 0.0f, .Loop = true});
+    engine.SetMusicRequest(app, MusicRequest{.Track = trackA, .FadeSeconds = 0.0f});
+    engine.Update(0.0f);
     REQUIRE(music.GetVoiceCount() == 1);
     CHECK(music.Current().Get() == trackA.Get());
     const VoiceHandle aVoice = music.GetVoiceStates().front().Voice;
 
-    // Set(A) again is a no-op: no re-trigger, no second voice.
-    music.Set(trackA, MusicTransition{.FadeSeconds = 0.5f});
+    // Requesting A again at another fade is a no-op: no re-trigger, no second voice.
+    engine.SetMusicRequest(app, MusicRequest{.Track = trackA, .FadeSeconds = 0.5f});
+    engine.Update(0.0f);
     CHECK(music.GetVoiceCount() == 1);
     CHECK(music.GetVoiceStates().front().Voice == aVoice);
 
     // Crossfade to B over one second. At the start A is full, B silent.
-    music.Set(trackB, MusicTransition{.FadeSeconds = 1.0f, .Loop = true});
+    engine.SetMusicRequest(app, MusicRequest{.Track = trackB, .FadeSeconds = 1.0f});
+    engine.Update(0.0f);
     REQUIRE(music.GetVoiceCount() == 2);
     CHECK(music.Current().Get() == trackB.Get());
     const vector<MusicDirector::VoiceState> atStart = music.GetVoiceStates();
@@ -214,50 +278,200 @@ TEST_CASE("the music director keeps one logical track and crossfades equal-power
     CHECK(atEnd.front().Gain == doctest::Approx(1.0f));
 }
 
-TEST_CASE("Stop empties the Music bus after its fade and Current reports none")
+TEST_CASE("withdrawing the last request fades the music out over its fade")
 {
     const Unique<AudioDevice> device = MakeNullDevice();
     AudioEngine& engine = device->GetEngine();
-    MusicDirector& music = engine.Music();
+    const MusicDirector& music = engine.Music();
+    const PresentationScopeId app = TestSupport::AppScope();
 
-    music.Set(MakePcmClip(0.5f, 48000), MusicTransition{.FadeSeconds = 0.0f, .Loop = true});
+    engine.SetMusicRequest(app,
+                           MusicRequest{.Track = MakePcmClip(0.5f, 48000), .FadeSeconds = 0.5f});
+    engine.Update(0.5f);
     REQUIRE(music.GetVoiceCount() == 1);
 
-    music.Stop(0.5f);
-    CHECK_FALSE(music.Current().IsValid());
-
-    // The bus is still fading for the half second, then empty.
+    engine.SetMusicRequest(app, std::nullopt);
     engine.Update(0.25f);
+    CHECK_FALSE(music.Current().IsValid());
+    CHECK_FALSE(engine.GetMusicWinner().IsValid());
     CHECK(music.GetVoiceCount() == 1);
     engine.Update(0.25f);
     CHECK(music.GetVoiceCount() == 0);
 }
 
-TEST_CASE("an authored MusicState starts its track once on world start")
+TEST_CASE("the highest-priority music request plays, and swapping priorities crossfades")
+{
+    TestSupport::TestServices services;
+    PresentationScopes& scopes = services.GetPresentationScopes();
+    AudioEngine& engine = services.GetAudio();
+    const Unique<PresentationScope> first = scopes.Open();
+    const Unique<PresentationScope> second = scopes.Open();
+    const AssetHandle<AudioClip> firstTrack = MakePcmClip(0.5f, 48000);
+    const AssetHandle<AudioClip> secondTrack = MakePcmClip(0.4f, 48000);
+    const MusicFrame frame{.Scopes = scopes, .Engine = engine};
+
+    engine.SetMusicRequest(first->GetId(),
+                           MusicRequest{.Track = firstTrack, .FadeSeconds = 0.5f, .Priority = 0});
+    engine.SetMusicRequest(second->GetId(),
+                           MusicRequest{.Track = secondTrack, .FadeSeconds = 0.5f, .Priority = 1});
+    frame({Live(first.get()), Live(second.get())});
+    CHECK(engine.Music().Current().Get() == secondTrack.Get());
+    CHECK(engine.GetMusicWinner() == second->GetId());
+
+    engine.SetMusicRequest(first->GetId(),
+                           MusicRequest{.Track = firstTrack, .FadeSeconds = 0.5f, .Priority = 2});
+    frame({Live(first.get()), Live(second.get())});
+    CHECK(engine.Music().Current().Get() == firstTrack.Get());
+    CHECK(engine.Music().GetVoiceCount() == 2);
+}
+
+TEST_CASE("at equal priority the scene on the earlier viewport takes the music")
+{
+    TestSupport::TestServices services;
+    PresentationScopes& scopes = services.GetPresentationScopes();
+    AudioEngine& engine = services.GetAudio();
+    const Unique<PresentationScope> first = scopes.Open();
+    const Unique<PresentationScope> second = scopes.Open();
+    const AssetHandle<AudioClip> firstTrack = MakePcmClip(0.5f, 48000);
+    const AssetHandle<AudioClip> secondTrack = MakePcmClip(0.4f, 48000);
+    const MusicFrame frame{.Scopes = scopes, .Engine = engine};
+    engine.SetMusicRequest(first->GetId(), MusicRequest{.Track = firstTrack});
+    engine.SetMusicRequest(second->GetId(), MusicRequest{.Track = secondTrack});
+
+    frame({Live(first.get(), 1), Live(second.get(), 0)});
+    CHECK(engine.Music().Current().Get() == secondTrack.Get());
+
+    frame({Live(first.get(), 0), Live(second.get(), 1)});
+    CHECK(engine.Music().Current().Get() == firstTrack.Get());
+
+    // A ranked scene beats one with no rank, however old.
+    frame({Live(first.get()), Live(second.get(), 3)});
+    CHECK(engine.Music().Current().Get() == secondTrack.Get());
+}
+
+TEST_CASE("closing the winning scope returns the music to the next request, then fades it out")
+{
+    TestSupport::TestServices services;
+    PresentationScopes& scopes = services.GetPresentationScopes();
+    AudioEngine& engine = services.GetAudio();
+    Unique<PresentationScope> winner = scopes.Open();
+    Unique<PresentationScope> runnerUp = scopes.Open();
+    const AssetHandle<AudioClip> winnerTrack = MakePcmClip(0.5f, 48000);
+    const AssetHandle<AudioClip> runnerUpTrack = MakePcmClip(0.4f, 48000);
+    const MusicFrame frame{.Scopes = scopes, .Engine = engine};
+    constexpr f32 Fade = 0.25f;
+    engine.SetMusicRequest(winner->GetId(),
+                           MusicRequest{.Track = winnerTrack, .FadeSeconds = Fade, .Priority = 1});
+    engine.SetMusicRequest(runnerUp->GetId(),
+                           MusicRequest{.Track = runnerUpTrack, .FadeSeconds = Fade});
+    frame({Live(winner.get()), Live(runnerUp.get())});
+    REQUIRE(engine.Music().Current().Get() == winnerTrack.Get());
+
+    winner.reset();
+    frame({Live(runnerUp.get())});
+    CHECK(engine.Music().Current().Get() == runnerUpTrack.Get());
+    CHECK(engine.GetMusicRequests().size() == 1);
+
+    runnerUp.reset();
+    frame({}, Fade);
+    frame({}, Fade);
+    CHECK_FALSE(engine.Music().Current().IsValid());
+    CHECK(engine.Music().GetVoiceCount() == 0);
+    CHECK(engine.GetMusicRequests().empty());
+}
+
+TEST_CASE("a scene nothing presents never takes the music")
+{
+    TestSupport::TestServices services;
+    PresentationScopes& scopes = services.GetPresentationScopes();
+    AudioEngine& engine = services.GetAudio();
+    Unique<PresentationScope> shown = scopes.Open();
+    const Unique<PresentationScope> muted = scopes.Open();
+    const Unique<PresentationScope> heldOffscreen = scopes.Open();
+    const AssetHandle<AudioClip> shownTrack = MakePcmClip(0.5f, 48000);
+    const MusicFrame frame{.Scopes = scopes, .Engine = engine};
+    engine.SetMusicRequest(shown->GetId(), MusicRequest{.Track = shownTrack});
+    engine.SetMusicRequest(muted->GetId(),
+                           MusicRequest{.Track = MakePcmClip(0.4f, 48000), .Priority = 100});
+    engine.SetMusicRequest(heldOffscreen->GetId(),
+                           MusicRequest{.Track = MakePcmClip(0.3f, 48000), .Priority = 100});
+
+    frame({Live(shown.get()), Muted(muted.get())});
+    CHECK(engine.Music().Current().Get() == shownTrack.Get());
+
+    // Alone, neither a muted scene nor a held one with no presentation rank plays at all.
+    shown.reset();
+    frame({Muted(muted.get())});
+    CHECK_FALSE(engine.Music().Current().IsValid());
+    CHECK(engine.Music().GetVoiceCount() == 0);
+}
+
+TEST_CASE("a paused scene still on screen keeps its music without renewing its request")
+{
+    TestSupport::TestServices services;
+    PresentationScopes& scopes = services.GetPresentationScopes();
+    AudioEngine& engine = services.GetAudio();
+    const Unique<PresentationScope> scope = scopes.Open();
+    const AssetHandle<AudioClip> track = MakePcmClip(0.5f, 48000);
+    const MusicFrame frame{.Scopes = scopes, .Engine = engine};
+    engine.SetMusicRequest(scope->GetId(), MusicRequest{.Track = track});
+    frame({Live(scope.get(), 0)});
+    REQUIRE(engine.Music().GetVoiceCount() == 1);
+    const VoiceHandle voice = engine.Music().GetVoiceStates().front().Voice;
+
+    for (int i = 0; i < 3; ++i)
+    {
+        frame({Held(scope.get(), 0)});
+    }
+    REQUIRE(scopes.GetState(scope->GetId()) == PresentationState::Held);
+    CHECK(engine.GetMusicWinner() == scope->GetId());
+    REQUIRE(engine.Music().GetVoiceCount() == 1);
+    CHECK(engine.Music().GetVoiceStates().front().Voice == voice);
+}
+
+TEST_CASE("a runtime MusicState edit crossfades, and an unchanged one never re-triggers")
 {
     TypeRegistry registry;
     RegisterBuiltinTypes(registry);
-    const Unique<Scene> scene = Scene::Create(registry);
     TestSupport::TestServices services;
     AudioEngine& engine = services.GetAudio();
-
-    const AssetHandle<AudioClip> track = MakePcmClip(0.5f, 48000);
+    const Unique<Scene> scene = Scene::Create(registry);
+    scene->SetPresentationScope(services.GetPresentationScopes().Open());
+    const SystemContext context = services.Make(SystemContextRequest{
+        .World = WorldInstanceId{1}, .Scene = *scene, .Phase = SystemContextPhase::View});
+    const MusicFrame frame{.Scopes = services.GetPresentationScopes(), .Engine = engine};
+    const AssetHandle<AudioClip> first = MakePcmClip(0.5f, 48000);
+    const AssetHandle<AudioClip> second = MakePcmClip(0.4f, 48000);
     const Entity settings = scene->CreateEntity();
-    scene->Add<MusicState>(settings, MusicState{.Track = track, .FadeSeconds = 0.0f, .Loop = true});
+    scene->Add<MusicState>(settings, MusicState{.Track = first, .FadeSeconds = 0.5f});
 
     AudioSystem system;
-    system.OnStart(*scene, services.Make());
-    REQUIRE(engine.Music().GetVoiceCount() == 1);
-    CHECK(engine.Music().Current().Get() == track.Get());
-    const VoiceHandle voice = engine.Music().GetVoiceStates().front().Voice;
-
-    // Ticking does not re-trigger the authored track: the same voice persists.
+    system.OnStart(*scene, context);
+    const auto update = [&]
+    {
+        system.OnUpdate(*scene, 1.0f / 60.0f, context);
+        frame({Live(scene->GetPresentationScope())});
+    };
+    update();
+    REQUIRE(engine.Music().Current().Get() == first.Get());
+    const VoiceHandle voice = engine.Music().GetVoiceStates().back().Voice;
     for (int i = 0; i < 3; ++i)
     {
-        system.OnUpdate(*scene, 1.0f / 60.0f, services.Make());
+        update();
     }
-    CHECK(engine.Music().GetVoiceCount() == 1);
-    CHECK(engine.Music().GetVoiceStates().front().Voice == voice);
+    CHECK(engine.Music().GetVoiceStates().back().Voice == voice);
+
+    scene->Get<MusicState>(settings).Track = second;
+    update();
+    CHECK(engine.Music().Current().Get() == second.Get());
+    CHECK(engine.Music().GetVoiceCount() == 2);
+
+    // Removing the component withdraws the request.
+    REQUIRE(scene->Remove<MusicState>(settings));
+    update();
+    CHECK(engine.GetMusicRequests().empty());
+    CHECK_FALSE(engine.Music().Current().IsValid());
+    system.OnStop(*scene, context);
 }
 
 TEST_CASE("a replay-built facade starts nothing, and still controls a live voice")

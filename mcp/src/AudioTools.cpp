@@ -46,7 +46,8 @@ namespace Veng::Mcp
     void RegisterAudioTools(McpServer& server, const McpHost& host)
     {
         // audio.list_voices — the device's live mix: every active voice's routing, pose and owning
-        // scope, plus the music director's current track. Read-only, so it is always registered.
+        // scope, plus the music director's current track and the music requests it arbitrates.
+        // Read-only, so it is always registered.
         McpTool tool;
         tool.Name = "audio.list_voices";
         tool.Description =
@@ -55,8 +56,11 @@ namespace Veng::Mcp
             "(source/oneshot/spatial/music), its owning presentation scope and that scope's state "
             "(live, muted — mixed silent while it advances — or held — frozen), and — for a "
             "spatial voice — its world position and velocity. Also reports the music director's "
-            "current track (a hex AssetId or null) and gain, and the total active-voice count. "
-            "Takes no arguments.";
+            "current track (a hex AssetId or null) and gain, the scope whose music request won "
+            "(or null), and every scope's standing request — its track, priority, fade and loop, "
+            "the scope's state and presentation rank (0 is the primary viewport; null when "
+            "nothing presents it), and whether it is eligible to play — and the total active-voice "
+            "count. Takes no arguments.";
         tool.InputSchemaJson = R"({"type":"object","properties":{}})";
         tool.Handler = [&host](string_view) -> Result<string>
         {
@@ -96,11 +100,30 @@ namespace Veng::Mcp
                 voices.push_back(std::move(item));
             }
 
+            const PresentationScopes& scopes = engine->GetScopes();
+            Json requests = Json::array();
+            for (const Audio::MusicRequestInfo& info : engine->GetMusicRequests())
+            {
+                const optional<u32> rank = scopes.GetPresentationRank(info.Scope);
+                requests.push_back(Json{
+                    {"scope", info.Scope.Value},
+                    {"state", PresentationStateName(scopes.GetState(info.Scope))},
+                    {"rank", rank.has_value() ? Json(*rank) : Json(nullptr)},
+                    {"eligible", info.Eligible},
+                    {"track", HexIdOrNull(info.Request.Track.Id())},
+                    {"priority", info.Request.Priority},
+                    {"fade_seconds", info.Request.FadeSeconds},
+                    {"loop", info.Request.Loop},
+                });
+            }
+            const PresentationScopeId winner = engine->GetMusicWinner();
             const Audio::MusicDirector& music = engine->Music();
             Json musicJson{
                 {"track", HexIdOrNull(music.Current().Id())},
                 {"gain", music.GetGain()},
                 {"voice_count", music.GetVoiceCount()},
+                {"winner_scope", winner.IsValid() ? Json(winner.Value) : Json(nullptr)},
+                {"requests", std::move(requests)},
             };
 
             return Json{{"active_count", engine->GetActiveVoiceCount()},

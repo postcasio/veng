@@ -1606,6 +1606,33 @@ namespace Veng
                                    { return viewport->GetPresentedScene() == scene; });
     }
 
+    void Application::StampPresentationRanks()
+    {
+        const vector<Renderer::Viewport*>& viewports = m_Compositor.GetViewports();
+        if (viewports.empty())
+        {
+            return;
+        }
+        for (const Unique<World>& world : m_WorldRunner->GetWorlds())
+        {
+            const Scene* scene = world->LiveScene;
+            const PresentationScope* scope =
+                scene != nullptr ? scene->GetPresentationScope() : nullptr;
+            if (scope == nullptr)
+            {
+                continue;
+            }
+            const auto presenting =
+                std::ranges::find_if(viewports, [scene](const Renderer::Viewport* viewport)
+                                     { return viewport->GetPresentedScene() == scene; });
+            if (presenting != viewports.end())
+            {
+                m_PresentationScopes.SetPresentationRank(
+                    scope->GetId(), static_cast<u32>(presenting - viewports.begin()));
+            }
+        }
+    }
+
     void Application::SyncPresentationPins()
     {
         const usize count = m_ManagedViewports->GetCount();
@@ -3180,6 +3207,7 @@ namespace Veng
         // window focus.
         {
             VE_PROFILE_SCOPE("Frame/Presentation");
+            StampPresentationRanks();
             m_PresentationScopes.Resolve();
             if (m_AudioDevice)
             {

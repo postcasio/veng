@@ -409,7 +409,10 @@ family registers from the editor side.
   (source/oneshot/spatial/music), its owning presentation `scope` and that scope's `state` (`live`,
   `muted` — mixed silent while it advances — or `held` — frozen), and — for a spatial voice — its
   world position and velocity, plus
-  the music director's current track (a hex `AssetId` or null) and gain and the active-voice count. It
+  the music director's current track (a hex `AssetId` or null) and gain, the scope whose music
+  request won (`winner_scope`, or null), every scope's standing music request (its track, priority,
+  fade and loop, the scope's state and presentation `rank`, and whether it is `eligible`), and the
+  active-voice count. It
   is the "what is playing?" check a driven session uses to confirm audio state without a speaker,
   reached through `McpHost::Audio`; a host that leaves it null makes the tool report audio
   unavailable. Always registered — reading the mix mutates nothing.

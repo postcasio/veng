@@ -90,9 +90,11 @@ namespace Veng::Audio
         return m_Engine != nullptr ? m_Engine->GetOutputSampleRate() : 0;
     }
 
-    MusicDirector& ScopedAudio::Music() const
+    void ScopedAudio::SetMusicRequest(const optional<MusicRequest>& request) const
     {
-        VE_ASSERT(m_Engine != nullptr, "ScopedAudio::Music on a facade bound to no engine");
-        return m_Engine->Music();
+        if (m_Engine != nullptr)
+        {
+            m_Engine->SetMusicRequest(m_Scope, request);
+        }
     }
 }

@@ -423,10 +423,12 @@ outlives every scene the runner destroys, and hands it to the runner (`WorldRunn
 required). The runner installs a fresh scope on every scene it holds — at `OpenWorld`, and on the
 replacement scene of `InstallScene` — and the scene owns it (see
 [src/Scene/CLAUDE.md](src/Scene/CLAUDE.md), "Presentation scopes"). `Application::Frame` runs one
-**presentation step** after `OnUpdate`: `PresentationScopes::Resolve()` latches every scope's state
-from the leases the worlds' View phases renewed this frame, then the device engines run their
-once-per-frame updates (the audio engine's `Update` — every voice judged by its scope, spatialized
-against its scope's listener, the music crossfade advanced — and the haptics engine's rumble mix),
+**presentation step** after `OnUpdate`: each held scene's scope is stamped with the presentation rank
+of the first registered viewport presenting it, `PresentationScopes::Resolve()` latches every scope's
+state from the leases the worlds' View phases renewed this frame (and each rank), then the device
+engines run their once-per-frame updates (the audio engine's `Update` — every voice judged by its
+scope, spatialized against its scope's listener, the scopes' music requests arbitrated and the music
+crossfade advanced — and the haptics engine's rumble mix),
 after the states are latched and after every
 system and `OnUpdate` has started what it will this frame, once per frame rather than once per world.
 The registry's **application scope** (`GetApplicationScope()`) is the one
@@ -664,7 +666,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 82** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 83** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative, and its prose records why each version moved). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the

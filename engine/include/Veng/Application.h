@@ -1923,6 +1923,16 @@ namespace Veng
         /// open reaches OnWorldDeparted first, before it is unpinned.
         void SyncPresentationPins();
 
+        /// @brief Stamps each held scene's presentation scope with the rank of the first registered
+        ///        viewport presenting it, for this frame's PresentationScopes::Resolve to latch.
+        ///
+        /// The rank is the viewport's position in the compositor's registration order, so the
+        /// primary viewport presents rank 0 and an overlay registered after it a higher one; the
+        /// music arbitration breaks priority ties with it. A viewport's retained scene is compared
+        /// against the runner's live scenes by address and never dereferenced, since a viewport may
+        /// still retain a scene its world has since closed.
+        void StampPresentationRanks();
+
         /// @brief Fires OnWorldArrival for any pending travel whose rebind has now landed.
         ///
         /// Run once per frame right after the rebinds are applied: a pending arrival whose viewport
