@@ -2162,7 +2162,8 @@ namespace Veng
                              .Audio = m_AudioDevice->GetEngine(),
                              .Haptics = *m_Haptics,
                              .Localization = GetLocalization(),
-                             .Role = RoleForWorld(world)};
+                             .Role = RoleForWorld(world),
+                             .World = world};
     }
 
     void Application::PresentJoinedWorld(const Net::JoinId join, const WorldInstanceId world)

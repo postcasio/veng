@@ -25,7 +25,7 @@ namespace Veng
         // goes neutral while the overlay is up. Each overlay owns its own, released on close.
         AssetHandle<InputMappingContext> MakeSuspendContext()
         {
-            constexpr AssetId SuspendContextId{.Value = 0x5E00'0000'0000'0001ULL};
+            constexpr AssetId SuspendContextId{.Value = 0x181FA3B5C5BA27EFULL};
             auto entry = CreateRef<Detail::AssetCacheEntry>(Detail::AssetCacheEntry{
                 .Id = SuspendContextId,
                 .Type = AssetTypeTrait<InputMappingContext>::Type,
