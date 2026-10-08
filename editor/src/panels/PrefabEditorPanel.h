@@ -6,6 +6,7 @@
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Result.h>
 #include <Veng/Localization/Localization.h>
+#include <Veng/Renderer/ViewportId.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SimClock.h>
 
@@ -218,6 +219,11 @@ namespace VengEditor
         /// @brief The viewport child instance, for a subclass to drive renderer-facing state (e.g. level render settings).
         SceneViewportPanel* m_Viewport = nullptr;
 
+        /// @brief The viewport SyncPlayPointer associated with the cursor seat, or invalid for none.
+        ///
+        /// Kept by id so the association clears even after the viewport is gone.
+        Veng::Renderer::ViewportId m_PlayPointerViewport;
+
         /// @brief The human label part of the title (e.g. "Prefab 0x42"), before the marker/id.
         ///
         /// A subclass (the level editor) sets it to its own label; GetTitle() composes the unsaved
@@ -239,6 +245,9 @@ namespace VengEditor
         void CaptureForPlay();
         /// @brief Pops gameplay input focus (releasing the cursor) if currently held.
         void ReleaseFromPlay();
+        /// @brief Associates the viewport with the cursor seat exactly while this document's play
+        ///        session holds the cursor capture, so the captured pointer routes to the play scene.
+        void SyncPlayPointer();
 
         Veng::AssetId m_Id;
 
@@ -250,7 +259,8 @@ namespace VengEditor
         /// @brief GetTitle()'s recomputed buffer: the marker + label + stable id suffix.
         mutable Veng::string m_DisplayTitle;
 
-        /// @brief The host the play session reports its frames to, for the input edge latch.
+        /// @brief The host the play session prepares its steps' input through and reports its
+        ///        frames to.
         Veng::Application& m_App;
         Veng::AssetManager& m_Assets;
         Veng::Input& m_Input;

@@ -300,10 +300,13 @@ extern "C"
 /// Version 74 replaces Application's one-flag input edge latch with an InputEdgeLatch that a driver
 /// stepping its own clock reports into (ReportSimFrame). A module subclasses Application, so a stale
 /// module lays the application out short.
+/// Version 75 replaces that latch with a SimInputFrame, which also carries the frame's pointer
+/// routing to a driver stepping its own clock (Application::BeginSimStep / GetSimPointer), so
+/// Application grows again and a stale module lays it out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 74u
+#define VENG_MODULE_ABI_VERSION 75u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

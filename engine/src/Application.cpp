@@ -2476,10 +2476,6 @@ namespace Veng
 
     Application::ScopedPointer Application::ComputePointerRouting() const
     {
-        if (!m_WorldRunner->HasWorlds())
-        {
-            return {};
-        }
         const World* managed = m_WorldRunner->ResolveWorld(m_ManagedWorld);
         const Scene* managedScene = managed != nullptr ? &managed->GetScene() : nullptr;
 
@@ -3001,10 +2997,9 @@ namespace Veng
 
             // Roll the input snapshot forward, then poll the window and route this frame's events
             // through the router (folding into the snapshot, forwarding to ImGui by focus). Headless
-            // borrows no window, so no events arrive and the snapshot stays neutral. The roll is held
-            // only when the previous frame latched (an active sim ran no tick), so a pressed edge on a
-            // zero-tick frame survives to the next tick-running frame.
-            m_Input->BeginFrame(m_EdgeLatch.TakeRollEdges());
+            // borrows no window, so no events arrive and the snapshot stays neutral. What the previous
+            // frame simulated decides the roll and whether its unconsumed Sim deltas survive.
+            m_SimInput.BeginFrame(*m_Input);
             if (m_Window)
             {
                 {
@@ -3096,17 +3091,16 @@ namespace Veng
         // keys replication dirty state and the buffered wire input fills each seat before the systems
         // run; client-side the local seat's resolved input is stamped after the systems.
         const ScopedPointer scoped = ComputePointerRouting();
+        m_SimInput.SetPointer(scoped.Routing, scoped.Scene);
         const WorldTickResult ticked = m_WorldRunner->Tick(WorldTickInfo{
             .Delta = delta,
             .RunViewPhase = !dedicatedServer,
             .BuildContext =
-                [this, &scoped](const WorldInstanceId world, const Scene& scene, const u64 tick,
-                                const f32 alpha, const bool firstStep)
+                [this](const WorldInstanceId world, const Scene& scene, const u64 tick,
+                       const f32 alpha, const bool firstStep)
             {
-                const PointerRouting pointer =
-                    &scene == scoped.Scene ? scoped.Routing : PointerRouting{};
-                return BuildSystemContext(scene, world, RoleForWorld(world), pointer, tick, alpha,
-                                          firstStep);
+                return BuildSystemContext(scene, world, RoleForWorld(world),
+                                          m_SimInput.GetPointer(scene), tick, alpha, firstStep);
             },
             .SimScale = [this](const WorldInstanceId world) -> f32
             {
@@ -3121,23 +3115,9 @@ namespace Veng
                 return 1.0f;
             },
             .BeforeSimStep =
-                [this, &scoped](const WorldInstanceId world, Scene& scene, const u64 tick)
+                [this](const WorldInstanceId world, Scene& scene, const u64 tick)
             {
-                // Latch the pointer motion accumulated since this world's previous step as the step's
-                // delta, so a seat resolving at the fixed rate reads the motion since the last tick
-                // rather than since the last frame. The accumulation is one shared pointer stream and
-                // the call consumes it, so only the routed scene's steps take it: another world's
-                // seats read neutral mouse anyway (SeatInputView::OwnsPointer), and draining on their
-                // behalf would leave the routed world nothing. With no scene routed nothing can read
-                // the mouse, so every step drains — that keeps an unrouted stretch from banking.
-                if (scoped.Scene == nullptr || &scene == scoped.Scene)
-                {
-                    m_Input->BeginSimTick();
-                }
-
-                // A touchpad is a seat's device, not the pointer, so its motion latches on every
-                // world's step rather than only the pointer-routed one's.
-                m_Input->BeginGamepadSimTick();
+                m_SimInput.BeginSimStep(*m_Input, scene);
 
                 if (IsWorldNetActive(world) && RoleForWorld(world) == NetRole::Server)
                 {
@@ -3178,20 +3158,10 @@ namespace Veng
         SyncLocalControl();
 
         // The runner's worlds report as one simulation; a driver outside it reports through
-        // ReportSimFrame later in the frame, and the next frame's roll weighs them together.
+        // ReportSimFrame later in the frame, and the next frame's BeginFrame weighs them together.
         if (ticked.AnyActive)
         {
-            m_EdgeLatch.Report(ticked.AnyTicked);
-        }
-
-        // The Sim-delta accumulation follows the same distinction. A frame that ran no tick under a
-        // live world is mid-accumulation and holds its motion for the tick-running frame to come; a
-        // frame with nothing simulating drops it, so a stopped or paused stretch's whole travel does
-        // not arrive as the resuming tick's look. Mirrors the runner resetting an inactive world's
-        // clock so resuming chases no backlog.
-        if (!ticked.AnyActive)
-        {
-            m_Input->DropSimDeltas();
+            m_SimInput.Report(ticked.AnyTicked);
         }
 
         {

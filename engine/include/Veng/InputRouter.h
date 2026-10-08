@@ -369,10 +369,13 @@ namespace Veng
         /// axis edit never gating, and goes to the virtual-gamepad sink. Empty queue is a no-op.
         void DrainInjectedEvents();
 
-        /// @brief Associates a Presented viewport's region with the seat it feeds pointer input to.
+        /// @brief Associates a viewport's region with the seat it feeds pointer input to.
         ///
         /// The app associates the viewport it renders a seat's camera into with that seat's Viewer
-        /// entity, so a pointer over the viewport routes to the seat. The association stores the
+        /// entity, so a pointer over the viewport routes to the seat. The viewport is usually a
+        /// Presented one; an Offscreen viewport whose region is kept at the window placement it is
+        /// drawn at (a tool panel showing a running scene) associates the same way, and associated
+        /// with the cursor seat it scopes the captured pointer to the scene it presents. The association stores the
         /// viewport's ViewportId — resolved live against the registry every hit-test — so a later
         /// destruction of the viewport makes the association an inert no-op rather than a dangling
         /// deref. Associating an already-associated id updates its seat in place, keeping its
@@ -385,7 +388,7 @@ namespace Veng
         /// viewport churn. An unassociated Presented viewport's region routes no pointer, so the app
         /// must associate a viewport in the same step it registers it, leaving no live region without
         /// a seat.
-        /// @param viewport  The Presented viewport whose region owns pointer input for the seat.
+        /// @param viewport  The viewport whose region owns pointer input for the seat.
         /// @param seat      The seat the viewport's pointer input routes to.
         void AssociateViewportSeat(const Renderer::Viewport& viewport, SeatRef seat);
 
@@ -423,7 +426,7 @@ namespace Veng
         [[nodiscard]] PointerRouting ResolvePointer(ivec2 pointerWindowPoint, bool captured,
                                                     Entity captureOwner) const;
 
-        /// @brief Resolves the Presented viewport that owns the pointer this frame, or null.
+        /// @brief Resolves the associated viewport that owns the pointer this frame, or null.
         ///
         /// The scene-scoping companion to ResolvePointer: the resolved routing applies only to the
         /// simulation whose scene this viewport presents. Each association's ViewportId is resolved
@@ -436,7 +439,7 @@ namespace Veng
         /// primary world).
         /// @param pointerWindowPoint  The pointer position in window framebuffer pixels.
         /// @param captured            Whether the cursor is captured (gameplay focus).
-        /// @return The owning Presented viewport, or nullptr when none applies.
+        /// @return The owning associated viewport, or nullptr when none applies.
         [[nodiscard]] const Renderer::Viewport* ResolvePointerViewport(ivec2 pointerWindowPoint,
                                                                        bool captured) const;
 

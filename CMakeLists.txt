@@ -1239,6 +1239,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/sim_clock.cpp
             tests/unit/transform_interpolation.cpp
             tests/unit/input_edge_latch.cpp
+            tests/unit/sim_input_frame.cpp
             tests/unit/net_transport.cpp
             tests/unit/net_connection.cpp
             tests/unit/net_lifecycle.cpp

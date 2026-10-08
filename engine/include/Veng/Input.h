@@ -341,7 +341,7 @@ namespace Veng
         /// roll, guaranteeing every physical press is observed down for at least one tick and released on
         /// a later one. The caller passes false to hold the latched state while no tick ran, and true
         /// once a tick has consumed it (which then applies any deferred releases). A key/button held
-        /// across ticks is unaffected either way. InputEdgeLatch decides the value from what simulated.
+        /// across ticks is unaffected either way. SimInputFrame decides the value from what simulated.
         /// @param rollEdges  True to roll edges and apply deferred releases this frame (the previous
         ///                   frame ran a Sim tick); false to hold them latched for the next
         ///                   tick-running frame.
@@ -362,9 +362,10 @@ namespace Veng
         /// however many systems read it.
         ///
         /// @pre Called once per Sim step, before the step's systems run — and for **one** stepping
-        ///      consumer of the pointer, since the call consumes the shared accumulation. The engine
-        ///      calls it for the steps of the single world the pointer routes to; a second world's
-        ///      steps must not, or the routed world is left with nothing.
+        ///      consumer of the pointer, since the call consumes the shared accumulation.
+        ///      SimInputFrame::BeginSimStep calls it for the steps of the single simulation the
+        ///      pointer routes to; a second simulation's steps must not, or the routed one is left
+        ///      with nothing.
         void BeginSimTick();
 
         /// @brief Latches each pad's touchpad motion accumulated since the previous Sim step as
@@ -373,13 +374,13 @@ namespace Veng
         /// The touchpad counterpart of BeginSimTick, read through GetSimGamepadAxis's
         /// TouchpadDeltaX / TouchpadDeltaY. It is kept per pad and is separate from the pointer's
         /// latch because a pad is a seat's device, not the pointer: BeginSimTick runs only for the
-        /// world the pointer routes to, so a touchpad latched there would bank its motion while the
-        /// pointer routes elsewhere. The latched delta is zero on the first step that sees a finger
-        /// down, so a landing finger never reads as a jump from wherever the last one lifted.
+        /// simulation the pointer routes to, so a touchpad latched there would bank its motion while
+        /// the pointer routes elsewhere. The latched delta is zero on the first step that sees a
+        /// finger down, so a landing finger never reads as a jump from wherever the last one lifted.
         ///
-        /// @pre Called once per Sim step of every world, before the step's systems run. Two worlds
-        ///      stepping in one frame share the accumulation, so the first step takes the frame's
-        ///      motion and the other reads zero.
+        /// @pre Called once per Sim step of every simulation, before the step's systems run
+        ///      (SimInputFrame::BeginSimStep). Two simulations stepping in one frame share the
+        ///      accumulation, so the first step takes the frame's motion and the other reads zero.
         void BeginGamepadSimTick();
 
         /// @brief Discards the accumulated and latched Sim deltas without a tick consuming them.
@@ -389,7 +390,8 @@ namespace Veng
         /// not bank into the delta the resuming tick reads, which would arrive as one jump of the
         /// whole stopped stretch's travel. A frame that ran no step merely because the accumulator has
         /// not yet filled a tick calls neither, holding the motion for the tick-running frame that
-        /// follows. Covers the pointer, the wheel and every pad's touchpad.
+        /// follows. SimInputFrame::BeginFrame makes that call for a frame on which nothing simulated.
+        /// Covers the pointer, the wheel and every pad's touchpad.
         void DropSimDeltas();
 
         /// @brief Folds one input event into the current snapshot.
@@ -638,45 +640,6 @@ namespace Veng
         std::array<vec2, MaxGamepads> m_SimTouchDelta{};
         /// @brief Per-slot: whether a finger was down at the last BeginGamepadSimTick.
         std::array<bool, MaxGamepads> m_SimTouchDown{};
-    };
-
-    /// @brief Decides, frame by frame, whether the raw input edges roll or hold (Input::BeginFrame).
-    ///
-    /// Every simulation driven during a frame reports that frame here: a scheduler's worlds as one
-    /// report, and any driver stepping a clock of its own (a tool's play session, a preview) as
-    /// another. The next frame holds the edges when something simulated and nothing stepped, so a
-    /// press and release landing between two steps is still read down by the next one; a frame
-    /// with nothing simulating rolls like an ordinary UI. Every report counts alike, so a driver
-    /// outside the scheduler holds a tap across its zero-step frames exactly as a scheduled world
-    /// does.
-    class InputEdgeLatch
-    {
-    public:
-        /// @brief Records one simulation's frame.
-        /// @param stepped  Whether the simulation ran one or more Sim steps this frame.
-        void Report(const bool stepped)
-        {
-            m_Active = true;
-            m_Stepped = m_Stepped || stepped;
-        }
-
-        /// @brief Closes the reported frame, returning whether the next frame rolls its edges.
-        ///
-        /// Clears the reports, so each frame is judged on its own.
-        /// @return False when a simulation reported this frame and none stepped; true otherwise.
-        [[nodiscard]] bool TakeRollEdges()
-        {
-            const bool roll = !m_Active || m_Stepped;
-            m_Active = false;
-            m_Stepped = false;
-            return roll;
-        }
-
-    private:
-        /// @brief Whether any simulation reported the current frame.
-        bool m_Active = false;
-        /// @brief Whether any reporting simulation ran a Sim step in the current frame.
-        bool m_Stepped = false;
     };
 }
 

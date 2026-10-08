@@ -7,6 +7,7 @@
 #include <Veng/Window.h>
 #include <Veng/Input.h>
 #include <Veng/InputRouter.h>
+#include <Veng/Input/SimInputFrame.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/InputMappingContext.h>
 #include <Veng/Asset/Level.h>
@@ -733,17 +734,46 @@ namespace Veng
         /// all-zeros state rather than being absent.
         [[nodiscard]] Input& GetInput() const { return *m_Input; }
 
-        /// @brief Reports a simulation stepped outside the WorldRunner, for the input edge latch.
+        /// @brief Reports a frame of a simulation stepped outside the WorldRunner.
         ///
-        /// The raw snapshot holds its pressed/released edges over a frame on which an active
-        /// simulation ran no Sim step, so a press and release made between two steps is still read
-        /// down by the next one (InputEdgeLatch, Input::BeginFrame). The engine reports the runner's
-        /// worlds itself; a driver stepping a SimClock of its own reports each frame it runs here,
-        /// and counts exactly as a runner world does.
+        /// The frame's simulations decide together what the next frame does with the input
+        /// (SimInputFrame): the raw snapshot holds its pressed/released edges over a frame on which
+        /// something simulated and nothing stepped, so a press and release made between two steps is
+        /// still read down by the next one, and the Sim deltas are kept while anything simulates and
+        /// dropped once nothing does. The engine reports the runner's worlds itself; a driver stepping
+        /// a SimClock of its own reports each frame it runs here, and counts exactly as a runner world
+        /// does.
         /// @param stepped  Whether the driver ran one or more Sim steps this frame.
         /// @pre Called on the main thread, once per frame the driver runs, before the frame ends; a
-        ///      frame the driver is not running goes unreported.
-        void ReportSimFrame(const bool stepped) { m_EdgeLatch.Report(stepped); }
+        ///      frame the driver is not running (stopped or paused) goes unreported.
+        void ReportSimFrame(const bool stepped) { m_SimInput.Report(stepped); }
+
+        /// @brief Prepares the input for one Sim step of a simulation stepped outside the WorldRunner.
+        ///
+        /// The runner prepares each of its worlds' steps the same way: every pad's touchpad motion is
+        /// latched for the step, and the pointer's when this frame's pointer routes to @p scene or to
+        /// no scene (SimInputFrame::BeginSimStep). Without it the step's seats read zero look, wheel
+        /// and touchpad motion.
+        /// @param scene  The scene the step simulates.
+        /// @pre Called on the main thread before each of the driver's Sim steps, after this frame's
+        ///      worlds have ticked (from OnUpdate, OnRender, or a panel they draw).
+        void BeginSimStep(const Scene& scene) { m_SimInput.BeginSimStep(*m_Input, scene); }
+
+        /// @brief Returns this frame's pointer routing as a simulation of a scene reads it.
+        ///
+        /// The pointer belongs to one scene per frame, resolved before the worlds tick: while the
+        /// cursor is captured, the scene presented by the viewport associated with the cursor seat
+        /// (InputRouter::AssociateViewportSeat), else the managed world's; while it is free, the scene
+        /// of the associated viewport under it. A driver stepping a scene the routing names passes
+        /// this as its SystemContext::Pointer so its seats read the pointer; any other scene gets an
+        /// empty routing and reads a neutral pointer.
+        /// @param scene  The scene the driver steps.
+        /// @return The frame's routing when it is scoped to @p scene; otherwise an empty routing.
+        /// @pre Called after this frame's worlds have ticked, as BeginSimStep.
+        [[nodiscard]] PointerRouting GetSimPointer(const Scene& scene) const
+        {
+            return m_SimInput.GetPointer(scene);
+        }
 
         /// @brief Returns the input router that routes window events to ImGui and the Input snapshot.
         ///
@@ -2129,9 +2159,9 @@ namespace Veng
         /// owns it (ResolvePointerViewport): while captured the cursor seat's viewport, else the
         /// associated viewport under the free cursor. The routing is scoped to that viewport's
         /// presented scene, resolving the owner seat scene-locally so no cross-scene handle leaks;
-        /// while captured with no associated viewport it falls back to the primary world. Fed into
-        /// each ticked sim's SystemContext so only the owning scene's InputMappingSystem sees the
-        /// pointer.
+        /// while captured with no associated viewport it falls back to the primary world. Handed to
+        /// the frame's SimInputFrame before the worlds tick, so only the owning scene's simulation — a
+        /// runner world or a driver outside it — sees the pointer.
         /// @return The routing and the scene it applies to, or an empty routing scoped to no scene.
         [[nodiscard]] ScopedPointer ComputePointerRouting() const;
 
@@ -2521,13 +2551,13 @@ namespace Veng
         /// @brief This frame's interpolation fraction (GetSimAlpha), retained for the view pushes.
         f32 m_SimAlpha = 0.0f;
 
-        /// @brief The input edge latch, fed by the runner's tick and by ReportSimFrame.
+        /// @brief The frame's Sim input protocol, fed by the runner's tick and by ReportSimFrame.
         ///
-        /// Read at the top of the next frame: BeginFrame skips the pressed/released edge roll after a
-        /// frame that had a live simulation but ran no tick, so an edge survives to the next
-        /// tick-running frame. A frame with no active simulation (an editor with no play session, a
-        /// full pause) reports nothing and rolls like an ordinary UI, as does the first frame.
-        InputEdgeLatch m_EdgeLatch;
+        /// Closed at the top of the next frame: the edges hold after a frame that had a live
+        /// simulation but ran no tick, and the Sim deltas drop after one with no live simulation (an
+        /// editor with no play session, a full pause). Carries the pointer routing from the world tick
+        /// to any driver stepping later in the frame.
+        SimInputFrame m_SimInput;
 
         bool m_ShouldExit = false;
 

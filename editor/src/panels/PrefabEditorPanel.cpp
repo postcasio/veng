@@ -237,6 +237,7 @@ namespace VengEditor
         {
             m_Context.PlayCapture = m_Router.PushFocus(InputFocus::Gameplay);
         }
+        SyncPlayPointer();
     }
 
     void PrefabEditorPanel::ReleaseFromPlay()
@@ -246,6 +247,26 @@ namespace VengEditor
             m_Router.PopFocus(m_Context.PlayCapture);
         }
         m_Context.PlayCapture = {};
+        SyncPlayPointer();
+    }
+
+    void PrefabEditorPanel::SyncPlayPointer()
+    {
+        // Only while this document holds the capture: two documents can be playing at once, and the
+        // router routes a captured pointer through the first viewport associated with the cursor seat.
+        const bool holdsCapture =
+            m_Context.IsPlaying() && m_Router.IsFocusTokenLive(m_Context.PlayCapture);
+        const Renderer::Viewport* viewport = holdsCapture ? GetDocumentViewport() : nullptr;
+        if (viewport != nullptr)
+        {
+            m_Router.AssociateViewportSeat(*viewport, m_Router.GetCursorSeat());
+            m_PlayPointerViewport = viewport->GetId();
+        }
+        else if (m_PlayPointerViewport.IsValid())
+        {
+            m_Router.ClearViewportSeat(m_PlayPointerViewport);
+            m_PlayPointerViewport = {};
+        }
     }
 
     void PrefabEditorPanel::TickPlaySimulation()
@@ -260,6 +281,10 @@ namespace VengEditor
             ReleaseFromPlay();
         }
 
+        // The capture also comes and goes outside this document's own calls: the viewport re-grabs
+        // it on a click, and a ReleaseFocus role press pops it.
+        SyncPlayPointer();
+
         // Advance the play clone before the document body draws; the engine renders the viewport
         // at the next frame's start from the ViewState the viewport child pushes this frame, so
         // the tick and the camera carry the same one-frame latency. A subclass that overrides
@@ -270,21 +295,26 @@ namespace VengEditor
             // Adopt the launcher's fixed-timestep accumulator: this frame's whole Sim steps at the
             // fixed delta and shared tick numbers (snapshotting transform history after the steps
             // interpolation reads), then one View pass carrying the interpolation alpha the viewport
-            // push reads.
-            const auto context = [this](const u64 tick, const f32 alpha)
+            // push reads. The pointer reaches the seats only while SyncPlayPointer has the play scene
+            // holding it.
+            const PointerRouting pointer = m_App.GetSimPointer(*m_PlayScene);
+            const auto context = [this, &pointer](const u64 tick, const f32 alpha)
             {
                 return SystemContext{.Assets = m_Assets,
                                      .Input = m_Input,
                                      .Tasks = m_Assets.GetTaskSystem(),
                                      .Audio = m_Audio,
                                      .Localization = m_Localization,
+                                     .Pointer = pointer,
                                      .Tick = tick,
-                                     .Alpha = alpha};
+                                     .Alpha = alpha,
+                                     .GameplayFocused = m_Router.IsGameplayFocused()};
             };
             const SimStep step = m_PlaySimClock.Run(
                 Time::GetDeltaTime(),
                 [&](const SimStepInfo& simStep)
                 {
+                    m_App.BeginSimStep(*m_PlayScene);
                     SystemContext stepContext = context(simStep.Tick, 0.0f);
                     stepContext.FirstStepThisFrame = simStep.First;
                     stepContext.LastStepThisFrame = simStep.Last;

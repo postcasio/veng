@@ -149,6 +149,7 @@ add_library(veng SHARED
         src/Input/RawInput.cpp
         src/Input/RoleResolver.cpp
         src/Input/SeatFocusScope.cpp
+        src/Input/SimInputFrame.cpp
         src/InputRouter.cpp
         src/LevelOverlay.cpp
         src/LaunchArguments.cpp

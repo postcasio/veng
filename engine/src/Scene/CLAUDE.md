@@ -440,10 +440,15 @@ which a game-specific control system reads to produce the abstract `Intent` game
   one frame: the first that ticks after the input lands.
     **The raw snapshot is held for a step the same way, across every simulation driving a frame.**
   `Input::BeginFrame` holds the pressed/released edges after a frame on which something simulated
-  and nothing stepped, deferring a tap's release so the next step still reads it down. Whether to
-  hold is the `InputEdgeLatch` `Application` owns: the runner's worlds report into it as one, and a
-  driver stepping a `SimClock` of its own (the editor's Play) reports through
-  `Application::ReportSimFrame`, so its zero-step frames hold a tap exactly as a runner world's do.
+  and nothing stepped, deferring a tap's release so the next step still reads it down. Per-tick
+  motion follows the same rule: what no step has consumed is kept while anything simulates, and
+  dropped at the top of a frame following one on which nothing did. Both are decided by the
+  `SimInputFrame` `Application` owns (`Veng/Input/SimInputFrame.h`), which also carries the frame's
+  pointer scope and prepares every step — the pointer latch for the routed scene's steps, the
+  touchpad latch for every step. The runner's worlds report into it as one, and a driver stepping a
+  `SimClock` of its own (the editor's Play) goes through `Application::BeginSimStep`,
+  `GetSimPointer` and `ReportSimFrame`, so it reads input exactly as a runner world does, however
+  late in the frame it steps.
     **A pause drops a press it lands on; a key held through it is not lost.** A frame on which nothing
   simulates rolls the raw snapshot like a UI, so a tap pressed and released while the world is paused
   — or still latched for a step when the pause lands — never reaches a step, as the paused clock
@@ -479,7 +484,7 @@ which a game-specific control system reads to produce the abstract `Intent` game
   **inert while the cursor is captured** — a captured pointer belongs wholly to the single
   `UsesKeyboardMouse` seat (delta-look needs no position); it applies only for a free cursor. The
   `InputRouter` computes the per-frame `PointerRouting` (which seat owns the free pointer,
-  hit-testing `WindowToViewport` against each `Presented` viewport's region in association order);
+  hit-testing `WindowToViewport` against each associated viewport's region in association order);
   `Application` threads it onto the `SystemContext`. A **`DeviceAssignmentSystem`** (a Sim system
   registered before `InputMappingSystem`) reconciles each seat's `Gamepad` against
   `Veng::Input::ConnectedGamepads`: a connected-but-unheld pad is auto-assigned to the first
@@ -511,8 +516,8 @@ connect/disconnect raised as events. The button and axis enums are positional an
 **append-only** (a cooked binding stores the index): the Xbox-layout set, then `Misc`, the
 touchpad's click and touch, and four back paddles; the axes add the first touchpad finger's
 position and motion. **Touchpad motion has two cadences, like the mouse**: per frame through
-`GetGamepadAxis`, per Sim tick through `GetSimGamepadAxis`, latched per pad on every world's step
-(`Input::BeginGamepadSimTick`, not tied to the pointer routing), zero on the tick a finger lands.
+`GetGamepadAxis`, per Sim tick through `GetSimGamepadAxis`, latched per pad on every simulation's
+step (`Input::BeginGamepadSimTick`, not tied to the pointer routing), zero on the tick a finger lands.
 **Physical pads read neutral while the window is unfocused** (still connected, so a seat keeps its
 pad) unless background input is retained, matching keyboard and mouse. **Virtual pads** occupy
 slots like physical ones and are driven through `VirtualGamepadEvent`, posted to

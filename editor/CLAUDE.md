@@ -202,20 +202,31 @@ across the whole project's one AssetId namespace, not just its own pack.
   (`HasUnsavedChanges`). Play runs **exactly the level's ordered system set** through the base's
   play machinery (`GetPlaySystems`), distinct from a bare prefab document's "all registered" set.
 - **The editor's Play seat is single, keyboard/mouse; multi-seat is a game-runtime concern.**
-  Play ticks the play-clone `SceneSimulation` (`PrefabEditorPanel::TickPlaySimulation`) with a
-  `SystemContext{ .Assets, .Input }` that leaves `Pointer` at its default (empty `PointerRouting`,
-  `Owner == Entity::Null`), so `InputMappingSystem` resolves each authored `SeatInput` seat's
-  device-and-keyboard arms but every seat reads **neutral pointer** — the editor's play scene
-  renders through its own `Offscreen` `SceneViewportPanel` viewport, which is never a `Presented`
-  managed viewport and so is neither gathered into the window nor pointer-associated with the
-  `InputRouter`. Split-screen (`ReconfigureManagedViewports`, the managed viewport list, and the
-  region-gated pointer) is an `Application`-level game-runtime capability the editor does not
-  exercise: it registers no `Presented` viewport, drives no managed-viewport list, and previews a
-  scene's single authored `Viewer` seat. A seat's `SeatInput` is edited through the ordinary
-  reflection inspector like any other component. Play steps a `SimClock` of its own rather than a
-  runner world, so it reports each frame to `Application::ReportSimFrame`: a tap made within a
-  zero-step Play frame is held for the next step exactly as a runner world's is, and that frame's
-  action frame edges are cleared (`ResetFrameActionEdges`) as the runner clears its worlds'.
+  Play ticks the play-clone `SceneSimulation` (`PrefabEditorPanel::TickPlaySimulation`) on a
+  `SimClock` of its own rather than as a runner world, so it drives its steps through the same
+  seams a runner world's go through, and its seats read input exactly as they would in the game:
+  - **Each step is prepared by `Application::BeginSimStep`** before its systems run, latching the
+    per-tick mouse, wheel and touchpad motion (`SimInputFrame`). A multi-step frame's motion lands
+    on its first step, a zero-step frame holds it for the next, and a frame with nothing playing
+    drops it.
+  - **Each frame is reported to `Application::ReportSimFrame`**, so a tap made within a zero-step
+    Play frame is held for the next step exactly as a runner world's is; that frame's action frame
+    edges are cleared (`ResetFrameActionEdges`) as the runner clears its worlds'.
+  - **The pointer is Play's while the document holds the cursor capture.** The play scene renders
+    through the document's `Offscreen` `SceneViewportPanel` viewport, whose region tracks the
+    panel's on-window placement; while the document's capture token is live it associates that
+    viewport with the cursor seat (`SyncPlayPointer`, `InputRouter::AssociateViewportSeat`), so the
+    engine scopes the captured pointer to the play scene and Play passes
+    `Application::GetSimPointer` as its `SystemContext::Pointer`. The scene's `UsesKeyboardMouse`
+    seat then reads mouse look, buttons and wheel; released, paused or stopped, the association is
+    dropped and every seat reads a neutral pointer, so editor clicks never drive the game.
+    `SystemContext::GameplayFocused` is stamped from the router as the engine stamps it, so a
+    context authored `RequiresGameplayFocus` resolves while captured.
+  - **Split-screen is not exercised.** `ReconfigureManagedViewports`, the managed viewport list and
+    the region-gated free pointer are `Application`-level game-runtime capabilities: the editor
+    registers no `Presented` viewport, drives no managed-viewport list, and previews a scene's
+    single authored `Viewer` seat. A seat's `SeatInput` is edited through the ordinary reflection
+    inspector like any other component.
 
 ## The reflection-driven inspector
 
