@@ -924,7 +924,7 @@ namespace VengEditor
         // try_emplace no-ops if the game module already registered a factory for these types.
         if (m_Info.ProjectPath)
         {
-            auto cookFor = [this]
+            const auto cookFor = [this]
             {
                 return VengEditor::CookDriver([this](const VengEditor::CookRequest& request,
                                                      function<void(Result<MountHandle>)> onComplete)
@@ -990,20 +990,21 @@ namespace VengEditor
             browserPacks.push_back(EditorPackPath(packSource));
         }
         m_Panels.push_back(
-            {CreateUnique<AssetBrowserPanel>(std::move(browserPacks), *m_Sources, *this), true});
-        m_Panels.push_back({CreateUnique<ConsolePanel>(), true});
-        m_Panels.push_back({CreateUnique<PerformanceEditorPanel>(*this), true});
+            {.Panel = CreateUnique<AssetBrowserPanel>(std::move(browserPacks), *m_Sources, *this),
+             .Open = true});
+        m_Panels.push_back({.Panel = CreateUnique<ConsolePanel>(), .Open = true});
+        m_Panels.push_back({.Panel = CreateUnique<PerformanceEditorPanel>(*this), .Open = true});
         m_Panels.push_back(
-            {CreateUnique<ProjectSettingsPanel>(
+            {.Panel = CreateUnique<ProjectSettingsPanel>(
                  m_ProjectSettings, m_ProjectFile, GetAssetManager(), m_Registries->Editor,
                  *m_Sources, GetRenderContext(),
                  [this]() -> const optional<string>& { return GetPreviewShipConfig(); },
                  [this](optional<string> name) { SetPreviewShipConfig(std::move(name)); }),
-             true});
+             .Open = true});
 
         for (Unique<EditorPanel>& panel : m_Registries->Editor.Panels())
         {
-            m_Panels.push_back({std::move(panel), true});
+            m_Panels.push_back({.Panel = std::move(panel), .Open = true});
         }
 
         // Open the project's startup level as the initial document so the editor starts on
@@ -1260,9 +1261,9 @@ namespace VengEditor
 
     void EditorHost::DrawMenuBar()
     {
-        if (auto bar = UI::MainMenuBar())
+        if (const auto bar = UI::MainMenuBar())
         {
-            if (auto file = UI::Menu("File"))
+            if (const auto file = UI::Menu("File"))
             {
                 // Save targets the focused document; enabled only when one is focused and has a
                 // dirty stack, so the action reflects whether there is anything to write.
@@ -1283,7 +1284,7 @@ namespace VengEditor
                 }
             }
 
-            if (auto edit = UI::Menu("Edit"))
+            if (const auto edit = UI::Menu("Edit"))
             {
                 // The Edit menu targets whichever document is focused; with none focused (or one
                 // without a stack) the items are disabled. The labels carry the next edit's title.
@@ -1304,7 +1305,7 @@ namespace VengEditor
                 }
             }
 
-            if (auto window = UI::Menu("Window"))
+            if (const auto window = UI::Menu("Window"))
             {
                 for (PanelSlot& slot : m_Panels)
                 {
@@ -1387,7 +1388,7 @@ namespace VengEditor
                 }
             }
 
-            if (auto popup = UI::Popup("##StatusTaskList"))
+            if (const auto popup = UI::Popup("##StatusTaskList"))
             {
                 UI::SeparatorText("Running tasks");
                 for (const string& task : status.Tasks)

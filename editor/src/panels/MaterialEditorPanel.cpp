@@ -583,7 +583,7 @@ namespace VengEditor
         ImNodes::EditorContextSet(m_NodeEditorContext);
 
         // The add-node context menu: lists every catalog type.
-        if (auto menu = UI::Popup("AddNodeMenu"))
+        if (const auto menu = UI::Popup("AddNodeMenu"))
         {
             const vec2 mouse = UI::PopupMousePosition();
             for (const NodeType& type : m_Catalog.Types())
@@ -781,8 +781,8 @@ namespace VengEditor
             .Assets = m_Assets, .Sources = m_Sources, .Editors = m_Editors};
 
         {
-            auto disabled = UI::Disabled(m_ReadOnly);
-            if (auto table = UI::PropertyTable("##nodeprops"))
+            const auto disabled = UI::Disabled(m_ReadOnly);
+            if (const auto table = UI::PropertyTable("##nodeprops"))
             {
                 (void)DrawFields(scratch.data(), type->Properties, ctx);
             }
@@ -836,7 +836,7 @@ namespace VengEditor
         }
 
         // Toolbar.
-        if (auto bar = UI::Toolbar("##material-toolbar"))
+        if (const auto bar = UI::Toolbar("##material-toolbar"))
         {
             {
                 const UI::DisabledScope disabled = UI::Disabled(m_ReadOnly || !m_Dirty);
@@ -892,7 +892,7 @@ namespace VengEditor
         // Layout: a preview + node inspector column on the left, the canvas on the
         // right.
         const f32 sideWidth = 280.0f;
-        if (auto side = UI::Child("MatSide", vec2(sideWidth, 0)))
+        if (const auto side = UI::Child("MatSide", vec2(sideWidth, 0)))
         {
             if (m_PreviewReady)
             {
@@ -909,7 +909,7 @@ namespace VengEditor
         UI::SameLine();
 
         bool mutated = false;
-        if (auto canvas = UI::Child("MatCanvas"))
+        if (const auto canvas = UI::Child("MatCanvas"))
         {
             mutated = DrawCanvas();
         }

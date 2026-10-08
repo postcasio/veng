@@ -224,7 +224,7 @@ namespace VengEditor
             return;
         }
 
-        if (auto table = UI::PropertyTable("##inputmappreview"))
+        if (const auto table = UI::PropertyTable("##inputmappreview"))
         {
             for (const ActionSample& sample : state.Actions)
             {
@@ -268,7 +268,7 @@ namespace VengEditor
         const FieldWidgetContext ctx{
             .Assets = m_Assets, .Sources = m_Sources, .Editors = m_Editors};
         bool changed = false;
-        if (auto table = UI::PropertyTable("##inputmap"))
+        if (const auto table = UI::PropertyTable("##inputmap"))
         {
             changed = DrawFields(&m_Doc, info.Fields, ctx);
         }
@@ -282,7 +282,7 @@ namespace VengEditor
 
         UI::Separator();
 
-        if (auto bar = UI::Toolbar("##inputmap-toolbar"))
+        if (const auto bar = UI::Toolbar("##inputmap-toolbar"))
         {
             {
                 const UI::DisabledScope disabled = UI::Disabled(!m_Dirty);

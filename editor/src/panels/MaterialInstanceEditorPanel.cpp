@@ -368,7 +368,7 @@ namespace VengEditor
         }
 
         // Toolbar.
-        if (auto bar = UI::Toolbar("##matinst-toolbar"))
+        if (const auto bar = UI::Toolbar("##matinst-toolbar"))
         {
             {
                 const UI::DisabledScope disabled = UI::Disabled(!m_Dirty);
@@ -395,7 +395,7 @@ namespace VengEditor
         UI::Separator();
 
         const f32 sideWidth = 280.0f;
-        if (auto side = UI::Child("InstSide", vec2(sideWidth, 0)))
+        if (const auto side = UI::Child("InstSide", vec2(sideWidth, 0)))
         {
             if (m_PreviewReady)
             {
@@ -410,7 +410,7 @@ namespace VengEditor
         UI::SameLine();
 
         bool mutated = false;
-        if (auto canvas = UI::Child("InstFields"))
+        if (const auto canvas = UI::Child("InstFields"))
         {
             // Parent picker.
             UI::Text("Parent");
@@ -446,7 +446,7 @@ namespace VengEditor
             // Per-field override toggle over the parent's exposed schema.
             for (OverrideSlot& slot : m_Slots)
             {
-                auto id = UI::PushId(slot.Name);
+                const auto id = UI::PushId(slot.Name);
 
                 if (UI::Checkbox("##ovr", slot.Overridden))
                 {
@@ -455,7 +455,7 @@ namespace VengEditor
                 UI::SameLine();
                 UI::Text(slot.Name);
 
-                auto disabled = UI::Disabled(!slot.Overridden);
+                const auto disabled = UI::Disabled(!slot.Overridden);
                 if (slot.IsTexture)
                 {
                     const AssetChipInfo texChip{

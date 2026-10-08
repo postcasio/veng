@@ -20,7 +20,7 @@ namespace VengEditor
             padding.emplace(UI::StyleVar(UI::StyleVarId::WindowPadding, vec2(0, 0)));
         }
 
-        if (auto window = UI::Window(GetTitle(), open, flags))
+        if (const auto window = UI::Window(GetTitle(), open, flags))
         {
             OnUI();
         }

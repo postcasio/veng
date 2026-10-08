@@ -181,7 +181,7 @@ namespace VengEditor
     {
         const AssetTypeRegistry& types = sources.GetAssetTypes();
         const string scope(info.IdScope);
-        auto idScope = UI::PushId(scope);
+        const auto idScope = UI::PushId(scope);
 
         const string name =
             info.Name.empty() ? AssetDisplayName(info.Id, sources) : string(info.Name);
@@ -205,7 +205,7 @@ namespace VengEditor
         // A drag source carries the asset's id + type and previews itself as a fixed-width chip.
         if (info.DragSource && info.Id.IsValid())
         {
-            if (auto source = UI::DragDropSource())
+            if (const auto source = UI::DragDropSource())
             {
                 const AssetDragPayload payload{.Id = info.Id, .Type = info.Type};
                 UI::SetDragDropPayload(AssetPayload, &payload, sizeof(payload));
@@ -216,7 +216,7 @@ namespace VengEditor
         // A drop target accepts a same-type asset dropped onto the box.
         if (info.DropTarget)
         {
-            if (auto target = UI::DragDropTarget())
+            if (const auto target = UI::DragDropTarget())
             {
                 if (const void* payload = UI::AcceptDragDropPayload(AssetPayload))
                 {
@@ -248,7 +248,7 @@ namespace VengEditor
 
         if (info.DropTarget)
         {
-            if (auto popup = UI::Popup(popupId))
+            if (const auto popup = UI::Popup(popupId))
             {
                 string& filter = PickerFilters()[scope];
                 UI::SetNextItemWidth(260.0f);
@@ -259,7 +259,7 @@ namespace VengEditor
                 (void)UI::InputTextWithHint("##search", "Search", filter);
 
                 const string lowered = ToLower(filter);
-                if (auto list = UI::Child("##candidates", vec2{280.0f, 320.0f}))
+                if (const auto list = UI::Child("##candidates", vec2{280.0f, 320.0f}))
                 {
                     if (UI::Selectable("(none)##clear"))
                     {

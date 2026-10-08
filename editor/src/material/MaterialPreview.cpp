@@ -378,7 +378,7 @@ namespace VengEditor
 
     void MaterialPreview::DrawSettings()
     {
-        auto popup = UI::Popup("PreviewSettings");
+        const auto popup = UI::Popup("PreviewSettings");
         if (!popup)
         {
             return;

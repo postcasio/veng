@@ -311,7 +311,7 @@ namespace VengEditor
         const f32 length = placement.Scale;
         const GizmoHandle active = m_Dragging ? m_DragHandle : m_Hovered;
 
-        auto axisColor = [&](const i32 axis, const GizmoHandle handle)
+        const auto axisColor = [&](const i32 axis, const GizmoHandle handle)
         { return active == handle ? HighlightColor : AxisColor[axis]; };
 
         if (drawMode == GizmoMode::Rotate)
@@ -322,7 +322,7 @@ namespace VengEditor
             {
                 const vec3 u = placement.Axes[(axis + 1) % 3];
                 const vec3 v = placement.Axes[(axis + 2) % 3];
-                const GizmoHandle handle =
+                const auto handle =
                     static_cast<GizmoHandle>(static_cast<u8>(GizmoHandle::AxisX) + axis);
                 const vec4 color = axisColor(axis, handle);
                 vec3 prev;
@@ -346,7 +346,7 @@ namespace VengEditor
         for (i32 axis = 0; axis < 3; ++axis)
         {
             const vec3 tip = placement.Origin + placement.Axes[axis] * length;
-            const GizmoHandle handle =
+            const auto handle =
                 static_cast<GizmoHandle>(static_cast<u8>(GizmoHandle::AxisX) + axis);
             const vec4 color = axisColor(axis, handle);
             debug.DrawLine(placement.Origin, tip, color, GizmoLineWidth);
@@ -355,7 +355,8 @@ namespace VengEditor
             {
                 // A small box at the tip marks a scale grab.
                 const f32 half = AxisPickTolerance * length * 0.9f;
-                debug.DrawBox({tip - vec3(half), tip + vec3(half)}, color, GizmoLineWidth);
+                debug.DrawBox({.Min = tip - vec3(half), .Max = tip + vec3(half)}, color,
+                              GizmoLineWidth);
             }
         }
 
@@ -367,7 +368,7 @@ namespace VengEditor
             {
                 const vec3 u = placement.Axes[(axis + 1) % 3];
                 const vec3 v = placement.Axes[(axis + 2) % 3];
-                const GizmoHandle handle =
+                const auto handle =
                     static_cast<GizmoHandle>(static_cast<u8>(GizmoHandle::PlaneX) + axis);
                 const vec4 color = active == handle ? HighlightColor : AxisColor[axis];
                 const vec3 a = placement.Origin + u * lo + v * lo;
@@ -385,8 +386,9 @@ namespace VengEditor
         {
             const f32 half = AxisPickTolerance * length * 1.5f;
             const vec4 color = active == GizmoHandle::Uniform ? HighlightColor : UniformColor;
-            debug.DrawBox({placement.Origin - vec3(half), placement.Origin + vec3(half)}, color,
-                          GizmoLineWidth);
+            debug.DrawBox(
+                {.Min = placement.Origin - vec3(half), .Max = placement.Origin + vec3(half)}, color,
+                GizmoLineWidth);
         }
     }
 
@@ -414,7 +416,7 @@ namespace VengEditor
         {
             return false;
         }
-        const Transform* transform = scene.TryGet<Transform>(entity);
+        const auto* transform = scene.TryGet<Transform>(entity);
         if (transform == nullptr)
         {
             return false;
@@ -609,7 +611,7 @@ namespace VengEditor
         Transform final = m_StartTransform;
         if (!entity.IsNull() && scene.IsAlive(entity))
         {
-            if (const Transform* current = scene.TryGet<Transform>(entity))
+            if (const auto* current = scene.TryGet<Transform>(entity))
             {
                 final = *current;
             }

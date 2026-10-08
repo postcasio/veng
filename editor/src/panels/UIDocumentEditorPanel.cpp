@@ -415,7 +415,7 @@ namespace VengEditor
 
         UI::Separator();
 
-        if (auto bar = UI::Toolbar("##uidoc-toolbar"))
+        if (const auto bar = UI::Toolbar("##uidoc-toolbar"))
         {
             {
                 const UI::DisabledScope disabled = UI::Disabled(!m_Dirty);

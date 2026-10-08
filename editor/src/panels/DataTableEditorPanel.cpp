@@ -205,9 +205,9 @@ namespace VengEditor
         }
 
         bool changed = false;
-        if (auto popup = UI::Popup("##cell"))
+        if (const auto popup = UI::Popup("##cell"))
         {
-            if (auto table = UI::PropertyTable("##cellfields"))
+            if (const auto table = UI::PropertyTable("##cellfields"))
             {
                 changed = DrawFieldWidget(cell, field, ctx);
             }
@@ -225,7 +225,7 @@ namespace VengEditor
         const usize columnCount = m_Columns.size();
         const i32 tableColumns = static_cast<i32>(columnCount) + 2;
 
-        if (auto table = UI::Table("##rows", tableColumns))
+        if (const auto table = UI::Table("##rows", tableColumns))
         {
             UI::TableSetupColumn("#");
             for (const TableColumnDescriptor& column : m_Columns)
@@ -244,7 +244,7 @@ namespace VengEditor
                 for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
                 {
                     const auto row = static_cast<usize>(i);
-                    auto rowId = UI::PushId(fmt::format("row{}", row));
+                    const auto rowId = UI::PushId(fmt::format("row{}", row));
                     UI::TableNextRow();
 
                     UI::TableNextColumn();
@@ -262,7 +262,7 @@ namespace VengEditor
                     for (usize column = 0; column < columnCount; ++column)
                     {
                         UI::TableNextColumn();
-                        auto cellId = UI::PushId(fmt::format("c{}", column));
+                        const auto cellId = UI::PushId(fmt::format("c{}", column));
                         changed = DrawCell(row, column) || changed;
                     }
 
@@ -322,7 +322,7 @@ namespace VengEditor
 
     void DataTableEditorPanel::OnUI()
     {
-        if (auto bar = UI::Toolbar("##table-toolbar"))
+        if (const auto bar = UI::Toolbar("##table-toolbar"))
         {
             {
                 const UI::DisabledScope disabled = UI::Disabled(!m_Dirty);

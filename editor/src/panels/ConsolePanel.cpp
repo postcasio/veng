@@ -30,7 +30,7 @@ namespace VengEditor
 
     void ConsolePanel::OnUI()
     {
-        if (auto bar = UI::Toolbar("##console-toolbar"))
+        if (const auto bar = UI::Toolbar("##console-toolbar"))
         {
             if (UI::IconButton(Icons::Clear))
             {
@@ -39,7 +39,7 @@ namespace VengEditor
             UI::Tooltip("Clear the console");
         }
 
-        if (auto log = UI::Child("ConsoleScroll", {}, UI::WindowFlags::HorizontalScrollbar))
+        if (const auto log = UI::Child("ConsoleScroll", {}, UI::WindowFlags::HorizontalScrollbar))
         {
             for (const Entry& entry : m_Entries)
             {

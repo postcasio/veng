@@ -489,7 +489,7 @@ namespace VengEditor
 
     void SceneViewportPanel::DrawToolbar()
     {
-        if (auto bar = UI::ViewportOverlay("##viewport-toolbar", UI::OverlayAnchor::TopLeft))
+        if (const auto bar = UI::ViewportOverlay("##viewport-toolbar", UI::OverlayAnchor::TopLeft))
         {
             f32 flySpeed = m_Camera.GetFlySpeed();
             UI::SetNextItemWidth(110.0f);
@@ -555,7 +555,7 @@ namespace VengEditor
 
     void SceneViewportPanel::DrawSettings()
     {
-        auto popup = UI::Popup(SettingsPopup);
+        const auto popup = UI::Popup(SettingsPopup);
         if (!popup)
         {
             return;
@@ -635,7 +635,8 @@ namespace VengEditor
     void SceneViewportPanel::DrawCaptureNotice()
     {
         const UI::Theme& theme = UI::GetTheme();
-        if (auto banner = UI::ViewportOverlay("##capture-notice", UI::OverlayAnchor::TopCenter))
+        if (const auto banner =
+                UI::ViewportOverlay("##capture-notice", UI::OverlayAnchor::TopCenter))
         {
             UI::TextColored(theme.Accent, "Mouse captured  —  Shift+Esc to release");
         }

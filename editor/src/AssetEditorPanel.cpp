@@ -43,7 +43,7 @@ namespace VengEditor
 
         const UI::WindowFlags flags =
             HasUnsavedChanges() ? UI::WindowFlags::UnsavedDocument : UI::WindowFlags::None;
-        if (auto window = UI::Window(GetTitle(), open, flags))
+        if (const auto window = UI::Window(GetTitle(), open, flags))
         {
             if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
             {
@@ -62,7 +62,7 @@ namespace VengEditor
 
         // Modal, so the question cannot be left unanswered: clicking away or pressing Escape
         // does nothing, and the three buttons below are the only exits.
-        if (auto popup = UI::Modal(m_ClosePromptName))
+        if (const auto popup = UI::Modal(m_ClosePromptName))
         {
             UI::Text(fmt::format("Save changes to {} before closing?", GetTitle()));
             UI::Separator();
@@ -152,7 +152,7 @@ namespace VengEditor
             // field being edited in a docked child.
             const UI::WindowFlags docFlags =
                 HasUnsavedChanges() ? UI::WindowFlags::UnsavedDocument : UI::WindowFlags::None;
-            if (auto window = UI::Window(GetTitle(), open, docFlags))
+            if (const auto window = UI::Window(GetTitle(), open, docFlags))
             {
                 documentVisible = true;
                 if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
@@ -214,7 +214,7 @@ namespace VengEditor
                 padding.emplace(UI::StyleVar(UI::StyleVarId::WindowPadding, vec2(0, 0)));
             }
 
-            if (auto window = UI::Window(child.WindowName, &child.Open, flags))
+            if (const auto window = UI::Window(child.WindowName, &child.Open, flags))
             {
                 if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
                 {

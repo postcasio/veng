@@ -62,7 +62,7 @@ namespace VengEditor
         // Reads an Entity drop on the previous widget; returns the dropped entity or nullopt.
         optional<Entity> AcceptEntityDrop()
         {
-            auto target = UI::DragDropTarget();
+            const auto target = UI::DragDropTarget();
             if (!target)
             {
                 return std::nullopt;

@@ -81,7 +81,7 @@ namespace VengEditor
         if (tex.contains("sampler") && tex["sampler"].is_object())
         {
             const nlohmann::json& sampler = tex["sampler"];
-            auto readFilter = [&](const char* key, Renderer::Filter& out)
+            const auto readFilter = [&](const char* key, Renderer::Filter& out)
             {
                 if (sampler.contains(key) && sampler[key].is_string())
                 {
@@ -91,7 +91,7 @@ namespace VengEditor
                     }
                 }
             };
-            auto readWrap = [&](const char* key, Renderer::AddressMode& out)
+            const auto readWrap = [&](const char* key, Renderer::AddressMode& out)
             {
                 if (sampler.contains(key) && sampler[key].is_string())
                 {
@@ -291,7 +291,7 @@ namespace VengEditor
             UI::TextDisabled(fmt::format("Previewing through '{}'", m_PreviewConfig().Name));
         }
 
-        auto filterCombo = [&](string_view label, Renderer::Filter& value)
+        const auto filterCombo = [&](string_view label, Renderer::Filter& value)
         {
             i32 current = static_cast<i32>(value);
             if (UI::Combo(label, current, FilterItems))
@@ -300,7 +300,7 @@ namespace VengEditor
                 changed = true;
             }
         };
-        auto wrapCombo = [&](string_view label, Renderer::AddressMode& value)
+        const auto wrapCombo = [&](string_view label, Renderer::AddressMode& value)
         {
             i32 current = static_cast<i32>(value);
             if (UI::Combo(label, current, WrapItems))
@@ -323,7 +323,7 @@ namespace VengEditor
 
         UI::Separator();
 
-        if (auto bar = UI::Toolbar("##texture-toolbar"))
+        if (const auto bar = UI::Toolbar("##texture-toolbar"))
         {
             {
                 const UI::DisabledScope disabled = UI::Disabled(!m_Dirty);

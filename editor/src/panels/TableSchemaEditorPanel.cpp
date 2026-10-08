@@ -143,7 +143,7 @@ namespace VengEditor
 
     const TypeInfo* TableSchemaEditorPanel::DrawTypePicker(const string_view id, string& filter)
     {
-        auto popup = UI::Popup(id);
+        const auto popup = UI::Popup(id);
         if (!popup)
         {
             return nullptr;
@@ -164,7 +164,7 @@ namespace VengEditor
         }
         std::ranges::sort(candidates, {}, [](const TypeInfo* info) { return info->QualifiedName; });
 
-        if (auto list = UI::Child("##typelist", vec2{240.0f, 260.0f}))
+        if (const auto list = UI::Child("##typelist", vec2{240.0f, 260.0f}))
         {
             for (const TypeInfo* info : candidates)
             {
@@ -223,7 +223,7 @@ namespace VengEditor
         optional<usize> removed;
         optional<std::pair<usize, usize>> moved;
 
-        if (auto table = UI::Table("##columns", 4))
+        if (const auto table = UI::Table("##columns", 4))
         {
             UI::TableSetupColumn("Name");
             UI::TableSetupColumn("Type");
@@ -234,7 +234,7 @@ namespace VengEditor
             for (usize i = 0; i < m_Document.Columns.size(); ++i)
             {
                 const TableSchemaColumn& column = m_Document.Columns[i];
-                auto rowId = UI::PushId(fmt::format("col{}", i));
+                const auto rowId = UI::PushId(fmt::format("col{}", i));
 
                 UI::TableNextRow();
 
@@ -331,7 +331,7 @@ namespace VengEditor
 
     void TableSchemaEditorPanel::OnUI()
     {
-        if (auto bar = UI::Toolbar("##schema-toolbar"))
+        if (const auto bar = UI::Toolbar("##schema-toolbar"))
         {
             {
                 const UI::DisabledScope disabled = UI::Disabled(!m_Dirty);
@@ -384,7 +384,7 @@ namespace VengEditor
         bool changed = DrawColumns();
 
         UI::Separator();
-        if (auto table = UI::PropertyTable("##schema-key"))
+        if (const auto table = UI::PropertyTable("##schema-key"))
         {
             changed = DrawKeyColumn() || changed;
         }

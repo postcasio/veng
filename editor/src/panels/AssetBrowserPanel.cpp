@@ -218,7 +218,7 @@ namespace VengEditor
             }
         };
 
-        if (auto view = UI::Child("##view"))
+        if (const auto view = UI::Child("##view"))
         {
             switch (m_ViewMode)
             {
@@ -256,7 +256,7 @@ namespace VengEditor
             }
             case ViewMode::Columns:
             {
-                if (auto table = UI::Table("##assets", 4))
+                if (const auto table = UI::Table("##assets", 4))
                 {
                     UI::TableSetupColumn("Name");
                     UI::TableSetupColumn("Type");
@@ -338,7 +338,7 @@ namespace VengEditor
                     return clicked;
                 };
 
-                if (auto table = UI::Table("##grid", columns))
+                if (const auto table = UI::Table("##grid", columns))
                 {
                     for (const auto& [name, child] : folder.Children)
                     {
@@ -376,7 +376,7 @@ namespace VengEditor
         }
 
         // Toolbar: one exclusive view-mode button group plus a fill-width search box.
-        if (auto bar = UI::Toolbar("##asset-toolbar"))
+        if (const auto bar = UI::Toolbar("##asset-toolbar"))
         {
             const UI::ButtonGroupItem viewModes[] = {
                 {.Label = Icons::ViewList, .Tooltip = "Detail list"},
@@ -394,13 +394,13 @@ namespace VengEditor
         }
 
         constexpr f32 TreeWidth = 220.0f;
-        if (auto tree = UI::Child("##tree", {TreeWidth, 0.0f}))
+        if (const auto tree = UI::Child("##tree", {TreeWidth, 0.0f}))
         {
             vector<string> path;
             DrawTree(m_Root, path);
         }
         UI::SameLine();
-        if (auto content = UI::Child("##content"))
+        if (const auto content = UI::Child("##content"))
         {
             DrawContent();
         }

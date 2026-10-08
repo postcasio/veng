@@ -127,7 +127,7 @@ namespace VengEditor
 
         // A stable per-type id keeps headers from collapsing into one another when two
         // components share a display name.
-        auto scope = UI::PushId(fmt::format("{}", id));
+        const auto scope = UI::PushId(fmt::format("{}", id));
 
         // Hierarchy topology is owned by the hierarchy panel, so it offers no removal.
         const bool removable = id != TypeIdOf<Hierarchy>();
@@ -143,13 +143,13 @@ namespace VengEditor
         {
             ImGui::SetNextItemAllowOverlap();
         }
-        auto header = UI::CollapsingHeader("##header", UI::TreeFlags::DefaultOpen);
+        const auto header = UI::CollapsingHeader("##header", UI::TreeFlags::DefaultOpen);
         const bool open = static_cast<bool>(header);
         const vec2 afterHeader = UI::CursorPos();
 
         // Bind the context menu to the full-width header (right-click anywhere on it), before the
         // overlaid label/button below become the "last item".
-        if (auto menu = UI::PopupContextItem("##compmenu"))
+        if (const auto menu = UI::PopupContextItem("##compmenu"))
         {
             if (removable && UI::MenuItem("Remove Component"))
             {
@@ -203,7 +203,7 @@ namespace VengEditor
         const FieldWidgetContext ctx{
             .Assets = m_Assets, .Sources = m_Sources, .Editors = m_Editors};
         bool changed = false;
-        if (auto table = UI::PropertyTable("##fields"))
+        if (const auto table = UI::PropertyTable("##fields"))
         {
             changed = DrawFields(component, info.Fields, ctx);
         }
@@ -236,7 +236,7 @@ namespace VengEditor
             UI::OpenPopup("##addcomp");
         }
 
-        auto popup = UI::Popup("##addcomp");
+        const auto popup = UI::Popup("##addcomp");
         if (!popup)
         {
             return;

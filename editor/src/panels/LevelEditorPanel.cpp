@@ -157,7 +157,7 @@ namespace VengEditor
         }
 
         const TypeRegistry& types = m_Context.Scene->GetTypeRegistry();
-        auto readConfig = [&](const char* key, void* obj, TypeId type)
+        const auto readConfig = [&](const char* key, void* obj, TypeId type)
         {
             if (!level.contains(key) || !level[key].is_object())
             {
@@ -189,7 +189,7 @@ namespace VengEditor
         level["systems"] = std::move(systems);
 
         const TypeRegistry& types = m_Context.Scene->GetTypeRegistry();
-        auto writeConfig = [&](const char* key, const void* obj, TypeId type)
+        const auto writeConfig = [&](const char* key, const void* obj, TypeId type)
         { JsonWriteFields(level[key], obj, types.Info(type), types); };
 
         writeConfig("gameMode", &m_GameMode, TypeIdOf<GameModeConfig>());
@@ -272,7 +272,7 @@ namespace VengEditor
         // This overrides the base OnUI, so it owns driving the play tick the base would have run.
         TickPlaySimulation();
 
-        if (auto bar = UI::Toolbar("##level-toolbar"))
+        if (const auto bar = UI::Toolbar("##level-toolbar"))
         {
             DrawDocumentToolbar();
             UI::SameLine();
@@ -323,18 +323,18 @@ namespace VengEditor
                 }
             }
 
-            auto rowId = UI::PushId(fmt::format("active{}", i));
+            const auto rowId = UI::PushId(fmt::format("active{}", i));
 
             const string label =
                 fmt::format("{}. {}  [{}]", i + 1, name, phase ? PhaseName(*phase) : "?");
             (void)UI::Selectable(label);
 
-            if (auto source = UI::DragDropSource())
+            if (const auto source = UI::DragDropSource())
             {
                 UI::SetDragDropPayload(SystemReorderPayload, &i, sizeof(i));
                 UI::Text(name);
             }
-            if (auto target = UI::DragDropTarget())
+            if (const auto target = UI::DragDropTarget())
             {
                 if (const void* payload = UI::AcceptDragDropPayload(SystemReorderPayload))
                 {
@@ -361,7 +361,7 @@ namespace VengEditor
         // active set; the catalog drives the list, so a game's own systems appear here.
         for (const SystemEntry& entry : m_Catalog.Entries())
         {
-            auto rowId = UI::PushId(fmt::format("cat{:X}", entry.Id));
+            const auto rowId = UI::PushId(fmt::format("cat{:X}", entry.Id));
 
             const auto active = std::ranges::find(m_Systems, entry.Id);
             bool enabled = active != m_Systems.end();
@@ -402,11 +402,11 @@ namespace VengEditor
 
         bool changed = false;
 
-        auto drawConfig = [&](string_view title, void* obj, TypeId type)
+        const auto drawConfig = [&](string_view title, void* obj, TypeId type)
         {
             UI::SeparatorText(title);
             const TypeInfo& info = types.Info(type);
-            if (auto table = UI::PropertyTable(fmt::format("##{}", info.Name)))
+            if (const auto table = UI::PropertyTable(fmt::format("##{}", info.Name)))
             {
                 changed |= DrawFields(obj, info.Fields, ctx);
             }
@@ -432,7 +432,7 @@ namespace VengEditor
                    (field.Name != "DofFocusDistance" && field.Name != "DofAperture");
         };
         const TypeInfo& renderInfo = types.Info(TypeIdOf<LevelRenderSettings>());
-        if (auto table = UI::PropertyTable("##LevelRenderSettings"))
+        if (const auto table = UI::PropertyTable("##LevelRenderSettings"))
         {
             changed |= DrawFields(&m_Render, renderInfo.Fields, renderCtx);
         }

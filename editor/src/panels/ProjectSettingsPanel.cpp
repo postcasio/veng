@@ -83,7 +83,7 @@ namespace VengEditor
         // and the FieldClass::Array add/remove widget make the configuration list editable.
         const FieldWidgetContext ctx{
             .Assets = m_Assets, .Sources = m_Sources, .Editors = m_Editors};
-        if (auto table = UI::PropertyTable("##projectsettings"))
+        if (const auto table = UI::PropertyTable("##projectsettings"))
         {
             (void)DrawFields(&m_Settings, info.Fields, ctx);
         }
@@ -127,10 +127,10 @@ namespace VengEditor
         UI::Separator();
 
         const bool canSave = !m_ProjectFile.empty();
-        if (auto bar = UI::Toolbar("##project-toolbar"))
+        if (const auto bar = UI::Toolbar("##project-toolbar"))
         {
             {
-                auto disabled = UI::Disabled(!canSave);
+                const auto disabled = UI::Disabled(!canSave);
                 if (UI::IconButton(Icons::Save))
                 {
                     Save();
@@ -190,7 +190,7 @@ namespace VengEditor
             }
         }
 
-        if (auto combo = UI::ComboBox("Preview as ship config", preview))
+        if (const auto combo = UI::ComboBox("Preview as ship config", preview))
         {
             // The host-safe default is always selectable; it is the never-stuck fallback.
             if (UI::Selectable("Host-safe (uncompressed)", !current))
@@ -203,7 +203,7 @@ namespace VengEditor
                 const PreviewCapability cap = IsConfigPreviewable(config, m_Context);
                 const bool selected = current && *current == config.Name;
 
-                auto disabled = UI::Disabled(!cap.Previewable);
+                const auto disabled = UI::Disabled(!cap.Previewable);
                 const string label =
                     cap.Previewable ? config.Name : fmt::format("{} ({})", config.Name, cap.Reason);
                 if (UI::Selectable(label, selected) && cap.Previewable)

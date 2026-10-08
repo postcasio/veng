@@ -127,7 +127,7 @@ namespace VengEditor
         m_Pending.clear();
 
         // Toolbar: add a root entity, delete the selection, then the name filter.
-        if (auto bar = UI::Toolbar("##explorer-toolbar"))
+        if (const auto bar = UI::Toolbar("##explorer-toolbar"))
         {
             if (UI::IconButton(Icons::Add))
             {
@@ -161,7 +161,7 @@ namespace VengEditor
         // A full-width drop zone past the last root reparents a dropped entity to the
         // root; the empty-space context menu adds a root entity.
         UI::Dummy(vec2(UI::ContentRegionAvail().x, 12.0f));
-        if (auto target = UI::DragDropTarget())
+        if (const auto target = UI::DragDropTarget())
         {
             if (const void* payload = UI::AcceptDragDropPayload(PrefabEditContext::EntityPayload))
             {
@@ -174,7 +174,7 @@ namespace VengEditor
             }
         }
 
-        if (auto menu = UI::PopupContextWindow("hierarchy_empty_menu"))
+        if (const auto menu = UI::PopupContextWindow("hierarchy_empty_menu"))
         {
             if (UI::MenuItem("Add Entity"))
             {
@@ -238,7 +238,7 @@ namespace VengEditor
         const auto childrenIt = m_Children.find(entity);
         const bool hasChildren = childrenIt != m_Children.end();
 
-        auto idScope = UI::PushId(fmt::format("e{}.{}", entity.Index, entity.Generation));
+        const auto idScope = UI::PushId(fmt::format("e{}.{}", entity.Index, entity.Generation));
 
         if (m_Renaming == entity)
         {
@@ -259,7 +259,7 @@ namespace VengEditor
 
             // Keep the tree-node guard alive across the child draw below: it owns the
             // TreePop, which must run after the children, not when the node is queried.
-            auto node = UI::TreeNode(LabelOf(entity), flags);
+            const auto node = UI::TreeNode(LabelOf(entity), flags);
             const bool open = static_cast<bool>(node);
 
             // Double-click on the label enters rename; a single click (not on the
@@ -282,13 +282,13 @@ namespace VengEditor
                 }
             }
 
-            if (auto source = UI::DragDropSource())
+            if (const auto source = UI::DragDropSource())
             {
                 UI::SetDragDropPayload(PrefabEditContext::EntityPayload, &entity, sizeof(Entity));
                 UI::Text(LabelOf(entity));
             }
 
-            if (auto target = UI::DragDropTarget())
+            if (const auto target = UI::DragDropTarget())
             {
                 if (const void* payload =
                         UI::AcceptDragDropPayload(PrefabEditContext::EntityPayload))
@@ -303,7 +303,7 @@ namespace VengEditor
                 }
             }
 
-            if (auto menu = UI::PopupContextItem("entity_menu"))
+            if (const auto menu = UI::PopupContextItem("entity_menu"))
             {
                 // Right-clicking a row that is not selected makes it the sole selection,
                 // so the menu's selection-wide actions act on what the user clicked.
@@ -349,10 +349,10 @@ namespace VengEditor
     {
         const Scene* scene = m_Ctx.Scene;
 
-        auto idScope =
+        const auto idScope =
             UI::PushId(fmt::format("reorder{}.{}.{}", before.Index, before.Generation, depth));
         UI::Dummy(vec2(UI::ContentRegionAvail().x, 3.0f));
-        if (auto target = UI::DragDropTarget())
+        if (const auto target = UI::DragDropTarget())
         {
             if (const void* payload = UI::AcceptDragDropPayload(PrefabEditContext::EntityPayload))
             {
