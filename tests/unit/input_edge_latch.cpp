@@ -8,6 +8,7 @@
 
 #include <Veng/Input.h>
 #include <Veng/InputEvents.h>
+#include <Veng/Scene/SimClock.h>
 
 using namespace Veng;
 
@@ -254,4 +255,57 @@ TEST_CASE("input latch: repeats within one latched window leave the press a sing
     Release(input, Key::A);
     CHECK(input.WasKeyReleased(Key::A));
     CHECK_FALSE(input.IsKeyDown(Key::A));
+}
+
+TEST_CASE("input latch: the edges hold after a frame that simulated without a step, else roll")
+{
+    InputEdgeLatch latch;
+    CHECK(latch.TakeRollEdges());
+
+    latch.Report(false);
+    CHECK_FALSE(latch.TakeRollEdges());
+    CHECK(latch.TakeRollEdges());
+
+    // Any simulation stepping consumes the held edges for every one of them.
+    latch.Report(false);
+    latch.Report(true);
+    CHECK(latch.TakeRollEdges());
+}
+
+TEST_CASE("input latch: a tap within a self-clocked driver's zero-step frame reaches its next step")
+{
+    // A driver stepping a SimClock of its own, outside any scheduler, reporting its frames the way
+    // Application::ReportSimFrame takes them; nothing else simulates.
+    Input input(nullptr);
+    InputEdgeLatch latch;
+    SimClock clock(SimClockInfo{.TickRate = 60});
+    int stepsReadingDown = 0;
+    const auto frame = [&](const f32 delta, const bool tap)
+    {
+        input.BeginFrame(latch.TakeRollEdges());
+        if (tap)
+        {
+            Press(input, Key::Space);
+            Release(input, Key::Space);
+        }
+        const SimStep step = clock.Run(
+            delta,
+            [&](const SimStepInfo&)
+            {
+                stepsReadingDown += input.IsKeyDown(Key::Space) ? 1 : 0;
+                return true;
+            },
+            [] { return 0.0; });
+        latch.Report(step.Steps > 0);
+        return step.Steps;
+    };
+
+    constexpr f32 Half60 = 0.5f / 60.0f;
+    REQUIRE(frame(Half60, /*tap=*/true) == 0);
+    REQUIRE(frame(Half60, /*tap=*/false) == 1);
+    CHECK(stepsReadingDown == 1);
+
+    // The step consumed the tap, so the next roll applies its deferred release.
+    REQUIRE(frame(Half60 * 2.0f, /*tap=*/false) == 1);
+    CHECK(stepsReadingDown == 1);
 }

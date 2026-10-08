@@ -297,10 +297,13 @@ extern "C"
 /// every Gui::Element carries with each run's span ends and sizes, so a paragraph of styled spans
 /// shapes as one run. A module's drivers read elements and shaped runs, so a stale module reads
 /// every Element field after the cache, and every glyph past the first, at a shifted offset.
+/// Version 74 replaces Application's one-flag input edge latch with an InputEdgeLatch that a driver
+/// stepping its own clock reports into (ReportSimFrame). A module subclasses Application, so a stale
+/// module lays the application out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 73u
+#define VENG_MODULE_ABI_VERSION 74u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

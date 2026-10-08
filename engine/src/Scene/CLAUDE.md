@@ -438,10 +438,16 @@ which a game-specific control system reads to produce the abstract `Intent` game
   either and is cleared the same way, though it gets no View pass, so per-frame code reading its
   `PlayerInput` sees no edge for as long as it is paused. A frame edge is therefore read on exactly
   one frame: the first that ticks after the input lands.
-    **A pause drops a press it lands on; a key held through it is not lost.** A world with no active
-  sim rolls the raw snapshot every frame like a UI (see `Input::BeginFrame`), so a tap pressed and
-  released while the world is paused — or still latched for a step when the pause lands — never
-  reaches a step, as the paused clock chases no backlog. A key still down when the world resumes is
+    **The raw snapshot is held for a step the same way, across every simulation driving a frame.**
+  `Input::BeginFrame` holds the pressed/released edges after a frame on which something simulated
+  and nothing stepped, deferring a tap's release so the next step still reads it down. Whether to
+  hold is the `InputEdgeLatch` `Application` owns: the runner's worlds report into it as one, and a
+  driver stepping a `SimClock` of its own (the editor's Play) reports through
+  `Application::ReportSimFrame`, so its zero-step frames hold a tap exactly as a runner world's do.
+    **A pause drops a press it lands on; a key held through it is not lost.** A frame on which nothing
+  simulates rolls the raw snapshot like a UI, so a tap pressed and released while the world is paused
+  — or still latched for a step when the pause lands — never reaches a step, as the paused clock
+  chases no backlog. A key still down when the world resumes is
   read by level: the first step derives `Started` from the `Phase` the world paused on, so a press
   made during the pause fires on resume, and one already `Ongoing` at the pause does not fire again.
     **A context can be gated on gameplay focus as authored data.** An `InputMapData`

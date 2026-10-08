@@ -212,7 +212,10 @@ across the whole project's one AssetId namespace, not just its own pack.
   region-gated pointer) is an `Application`-level game-runtime capability the editor does not
   exercise: it registers no `Presented` viewport, drives no managed-viewport list, and previews a
   scene's single authored `Viewer` seat. A seat's `SeatInput` is edited through the ordinary
-  reflection inspector like any other component.
+  reflection inspector like any other component. Play steps a `SimClock` of its own rather than a
+  runner world, so it reports each frame to `Application::ReportSimFrame`: a tap made within a
+  zero-step Play frame is held for the next step exactly as a runner world's is, and that frame's
+  action frame edges are cleared (`ResetFrameActionEdges`) as the runner clears its worlds'.
 
 ## The reflection-driven inspector
 

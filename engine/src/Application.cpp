@@ -3003,9 +3003,8 @@ namespace Veng
             // through the router (folding into the snapshot, forwarding to ImGui by focus). Headless
             // borrows no window, so no events arrive and the snapshot stays neutral. The roll is held
             // only when the previous frame latched (an active sim ran no tick), so a pressed edge on a
-            // zero-tick frame survives to the next tick-running frame; a frame with no active sim (the
-            // editor, a full pause) rolls every frame like an ordinary UI.
-            m_Input->BeginFrame(!m_PreviousFrameLatchedInput);
+            // zero-tick frame survives to the next tick-running frame.
+            m_Input->BeginFrame(m_EdgeLatch.TakeRollEdges());
             if (m_Window)
             {
                 {
@@ -3178,9 +3177,12 @@ namespace Veng
         // before the frame renders — and each move raises OnClientPossession, in every mode.
         SyncLocalControl();
 
-        // The edge latch: a frame with a live world that ran no tick holds its edges for the next
-        // tick-running frame; a frame with no active world never latches (it rolls next frame).
-        m_PreviousFrameLatchedInput = ticked.AnyActive && !ticked.AnyTicked;
+        // The runner's worlds report as one simulation; a driver outside it reports through
+        // ReportSimFrame later in the frame, and the next frame's roll weighs them together.
+        if (ticked.AnyActive)
+        {
+            m_EdgeLatch.Report(ticked.AnyTicked);
+        }
 
         // The Sim-delta accumulation follows the same distinction. A frame that ran no tick under a
         // live world is mid-accumulation and holds its motion for the tick-running frame to come; a

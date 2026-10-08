@@ -250,6 +250,8 @@ namespace VengEditor
         /// @brief GetTitle()'s recomputed buffer: the marker + label + stable id suffix.
         mutable Veng::string m_DisplayTitle;
 
+        /// @brief The host the play session reports its frames to, for the input edge latch.
+        Veng::Application& m_App;
         Veng::AssetManager& m_Assets;
         Veng::Input& m_Input;
         Veng::Audio::AudioEngine& m_Audio;

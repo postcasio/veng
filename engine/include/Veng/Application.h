@@ -733,6 +733,18 @@ namespace Veng
         /// all-zeros state rather than being absent.
         [[nodiscard]] Input& GetInput() const { return *m_Input; }
 
+        /// @brief Reports a simulation stepped outside the WorldRunner, for the input edge latch.
+        ///
+        /// The raw snapshot holds its pressed/released edges over a frame on which an active
+        /// simulation ran no Sim step, so a press and release made between two steps is still read
+        /// down by the next one (InputEdgeLatch, Input::BeginFrame). The engine reports the runner's
+        /// worlds itself; a driver stepping a SimClock of its own reports each frame it runs here,
+        /// and counts exactly as a runner world does.
+        /// @param stepped  Whether the driver ran one or more Sim steps this frame.
+        /// @pre Called on the main thread, once per frame the driver runs, before the frame ends; a
+        ///      frame the driver is not running goes unreported.
+        void ReportSimFrame(const bool stepped) { m_EdgeLatch.Report(stepped); }
+
         /// @brief Returns the input router that routes window events to ImGui and the Input snapshot.
         ///
         /// Push InputFocus::Gameplay to give the running game exclusive input (and capture the
@@ -2509,14 +2521,13 @@ namespace Veng
         /// @brief This frame's interpolation fraction (GetSimAlpha), retained for the view pushes.
         f32 m_SimAlpha = 0.0f;
 
-        /// @brief Whether the previous frame latched input (an active sim ran zero Sim ticks).
+        /// @brief The input edge latch, fed by the runner's tick and by ReportSimFrame.
         ///
-        /// The edge latch: BeginFrame skips the pressed/released edge roll on a frame following one
-        /// that had a live simulation but ran no tick, so an edge survives to the next tick-running
-        /// frame. A frame with no active simulation (the editor, a full pause) does not latch — its
-        /// input rolls every frame like an ordinary UI, so this stays false there. Starts false so
-        /// the first frame rolls cleanly.
-        bool m_PreviousFrameLatchedInput = false;
+        /// Read at the top of the next frame: BeginFrame skips the pressed/released edge roll after a
+        /// frame that had a live simulation but ran no tick, so an edge survives to the next
+        /// tick-running frame. A frame with no active simulation (an editor with no play session, a
+        /// full pause) reports nothing and rolls like an ordinary UI, as does the first frame.
+        InputEdgeLatch m_EdgeLatch;
 
         bool m_ShouldExit = false;
 

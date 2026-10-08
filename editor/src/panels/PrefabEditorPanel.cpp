@@ -56,7 +56,7 @@ namespace VengEditor
                                          InputRouter& router, SystemRegistry& systems,
                                          const PreviewLook* look)
         : m_Id(worldPrefab), m_Look(look), m_BaseTitle(std::move(title)),
-          m_TitleId(fmt::format("##doc0x{:X}", worldPrefab.Value)), m_Assets(assets),
+          m_TitleId(fmt::format("##doc0x{:X}", worldPrefab.Value)), m_App(app), m_Assets(assets),
           m_Input(input), m_Audio(app.GetAudioEngine()), m_Router(router), m_Systems(systems)
     {
         m_Scene = Scene::Create(types);
@@ -297,6 +297,8 @@ namespace VengEditor
                     return true;
                 },
                 [] { return 0.0; });
+            // This clock is not the runner's, so the engine learns of its zero-step frames only here.
+            m_App.ReportSimFrame(step.Steps > 0);
             if (step.Steps == 0)
             {
                 ResetFrameActionEdges(*m_PlayScene);

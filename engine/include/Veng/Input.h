@@ -341,7 +341,7 @@ namespace Veng
         /// roll, guaranteeing every physical press is observed down for at least one tick and released on
         /// a later one. The caller passes false to hold the latched state while no tick ran, and true
         /// once a tick has consumed it (which then applies any deferred releases). A key/button held
-        /// across ticks is unaffected either way.
+        /// across ticks is unaffected either way. InputEdgeLatch decides the value from what simulated.
         /// @param rollEdges  True to roll edges and apply deferred releases this frame (the previous
         ///                   frame ran a Sim tick); false to hold them latched for the next
         ///                   tick-running frame.
@@ -638,6 +638,45 @@ namespace Veng
         std::array<vec2, MaxGamepads> m_SimTouchDelta{};
         /// @brief Per-slot: whether a finger was down at the last BeginGamepadSimTick.
         std::array<bool, MaxGamepads> m_SimTouchDown{};
+    };
+
+    /// @brief Decides, frame by frame, whether the raw input edges roll or hold (Input::BeginFrame).
+    ///
+    /// Every simulation driven during a frame reports that frame here: a scheduler's worlds as one
+    /// report, and any driver stepping a clock of its own (a tool's play session, a preview) as
+    /// another. The next frame holds the edges when something simulated and nothing stepped, so a
+    /// press and release landing between two steps is still read down by the next one; a frame
+    /// with nothing simulating rolls like an ordinary UI. Every report counts alike, so a driver
+    /// outside the scheduler holds a tap across its zero-step frames exactly as a scheduled world
+    /// does.
+    class InputEdgeLatch
+    {
+    public:
+        /// @brief Records one simulation's frame.
+        /// @param stepped  Whether the simulation ran one or more Sim steps this frame.
+        void Report(const bool stepped)
+        {
+            m_Active = true;
+            m_Stepped = m_Stepped || stepped;
+        }
+
+        /// @brief Closes the reported frame, returning whether the next frame rolls its edges.
+        ///
+        /// Clears the reports, so each frame is judged on its own.
+        /// @return False when a simulation reported this frame and none stepped; true otherwise.
+        [[nodiscard]] bool TakeRollEdges()
+        {
+            const bool roll = !m_Active || m_Stepped;
+            m_Active = false;
+            m_Stepped = false;
+            return roll;
+        }
+
+    private:
+        /// @brief Whether any simulation reported the current frame.
+        bool m_Active = false;
+        /// @brief Whether any reporting simulation ran a Sim step in the current frame.
+        bool m_Stepped = false;
     };
 }
 
