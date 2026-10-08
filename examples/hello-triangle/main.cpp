@@ -879,7 +879,7 @@ protected:
         // gradient-roughness ground plane (at the engine-default half SSR resolution).
         m_SceneSettings.SSR = true;
 
-        // BloomThreshold is not a level field; the sample lifts the knee so the weak lights bloom.
+        // The sample lifts the bloom knee so the weak lights bloom.
         GetWorldViewState(world).BloomThreshold = 0.5f;
 
         // HT_DEBUG_VIEW pins a debug visualization mode by its DebugView enum index (the headless
@@ -1548,7 +1548,7 @@ private:
             const f32 x11 = glm::mix(c(0, 1, 1), c(1, 1, 1), u.x);
             return glm::mix(glm::mix(x00, x10, u.y), glm::mix(x01, x11, u.y), u.z);
         };
-        auto fbm = [&](vec3 p) -> f32
+        const auto fbm = [&](vec3 p) -> f32
         {
             f32 sum = 0.0f;
             f32 amp = 0.5f;
@@ -1638,7 +1638,7 @@ private:
         // means a topology field changed, so the sample owns the Configure (the engine helper
         // reports the edit but never reconfigures). The per-frame view knobs are the engine's
         // managed-world ViewState, edited in place and pushed by the engine each frame.
-        if (auto settingsWindow = UI::Window("Render Settings"))
+        if (const auto settingsWindow = UI::Window("Render Settings"))
         {
             if (UI::RenderSettingsEditor(m_SceneSettings, GetWorldViewState(GetManagedWorldId()),
                                          viewport))
@@ -1648,7 +1648,7 @@ private:
         }
 
         // The renderer's read-only stats, plus the sample's own pause-spin control beneath them.
-        if (auto statsWindow = UI::Window("Stats"))
+        if (const auto statsWindow = UI::Window("Stats"))
         {
             UI::RendererStatsPanel(viewport);
 
@@ -1669,20 +1669,20 @@ private:
 
         // The performance panel; the stateful helper samples the CPU/GPU timers and the profiler's
         // per-scope aggregates itself and draws its five bands.
-        if (auto graphWindow = UI::Window("Frame Time"))
+        if (const auto graphWindow = UI::Window("Frame Time"))
         {
             m_Performance.Draw(viewport);
         }
 
         // Every connected pad's live controls, as the action layer reads them.
-        if (auto padWindow = UI::Window("Gamepads"))
+        if (const auto padWindow = UI::Window("Gamepads"))
         {
             const UI::GamepadPanelClip clips[] = {{.Name = "jump", .Clip = m_JumpRumble}};
             UI::GamepadPanel(*this, clips);
         }
 
         // The scene's composited output, drawn last so it fills its own window.
-        if (auto sceneWindow = UI::Window("Scene"))
+        if (const auto sceneWindow = UI::Window("Scene"))
         {
             const vec2 available = UI::ContentRegionAvail();
             const Ref<Renderer::ImageView> output = viewport.GetRenderer().GetOutput();
