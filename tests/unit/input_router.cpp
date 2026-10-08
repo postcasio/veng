@@ -11,6 +11,7 @@
 #include <Veng/Gui/Element.h>
 #include <Veng/Input.h>
 #include <Veng/Input/InputConsumer.h>
+#include <Veng/Input/SeatFocusScope.h>
 #include <Veng/Input/RawInput.h>
 #include <Veng/InputEvents.h>
 #include <Veng/InputRouter.h>
@@ -274,6 +275,44 @@ TEST_CASE("InputRouter: ReleaseGameplayFocus pops only a gameplay top")
     router.Dispatch(gained);
     CHECK(router.ReleaseGameplayFocus(cursor) == gameplay);
     CHECK(router.GetFocus() == InputFocus::UI);
+}
+
+TEST_CASE("InputRouter: a closed world's focus is forgotten, and its holders still pop safely")
+{
+    Input input(nullptr);
+    const Renderer::ViewportRegistry registry;
+    InputRouter router(nullptr, input, registry);
+    CaptureRecorder recorder;
+    router.RegisterConsumer(recorder);
+
+    // One Viewer handle in two worlds: only the closed world's seat may be forgotten.
+    constexpr Entity viewer{.Index = 1, .Generation = 1};
+    const SeatRef closing{.World = WorldInstanceId{.Value = 1}, .Viewer = viewer};
+    const SeatRef survivor{.World = WorldInstanceId{.Value = 2}, .Viewer = viewer};
+
+    router.SetCursorSeat(closing);
+    const FocusToken capture = router.PushFocus(closing, InputFocus::Gameplay);
+    const FocusToken kept = router.PushFocus(survivor, InputFocus::Gameplay);
+    REQUIRE(recorder.Captured);
+    {
+        const SeatFocusScope scope(router, InputSeat{.Viewer = viewer, .WorldId = closing.World},
+                                   nullptr);
+        router.ForgetWorld(closing.World);
+
+        // The closed seat holds nothing, its capture released, and its tokens are retired rather
+        // than live; the other world's seat is untouched.
+        CHECK(router.GetFocus(closing) == InputFocus::UI);
+        CHECK_FALSE(recorder.Captured);
+        CHECK_FALSE(router.IsFocusTokenLive(capture));
+        CHECK(router.IsFocusTokenRetired(capture));
+        CHECK(router.IsGameplayFocused(survivor));
+    }
+
+    // The scope's own pop of its retired token was silent; so is this holder's, which forgets it.
+    router.PopFocus(capture);
+    CHECK_FALSE(router.IsFocusTokenRetired(capture));
+    router.PopFocus(kept);
+    CHECK(router.GetFocus(survivor) == InputFocus::UI);
 }
 
 TEST_CASE("InputRouter: background input holds a gameplay focus across a window-focus loss")

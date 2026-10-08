@@ -374,6 +374,45 @@ TEST_CASE("A FocusRequest releases its capture after the cursor carried it to an
     CHECK(router.GetFocus() == InputFocus::UI);
 }
 
+TEST_CASE("Closing a world drops the request-driven focus token it held")
+{
+    TypeRegistry types;
+    RegisterRequests(types);
+    SystemRegistry systems;
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    const WorldInstanceId closing = OpenEmpty(runner);
+    const WorldInstanceId peer = OpenEmpty(runner);
+
+    Input input(nullptr);
+    const Renderer::ViewportRegistry viewportRegistry;
+    InputRouter router(nullptr, input, viewportRegistry);
+
+    FocusRequestTokens tokens;
+    RequestDispatch dispatch;
+    dispatch.Focus =
+        [&](const WorldInstanceId from, const FocusRequest& request, std::string& error)
+    { return ReconcileFocusRequest(router, tokens, from, request, error); };
+    runner.SetWorldClosedHook([&](const WorldInstanceId world)
+                              { ForgetWorldFocus(router, tokens, world); });
+
+    Stamp<FocusRequest>(runner, closing,
+                        FocusRequest{.Seat = SeatA, .Focus = InputFocus::Gameplay});
+    Stamp<FocusRequest>(runner, peer, FocusRequest{.Seat = SeatA, .Focus = InputFocus::Gameplay});
+    DrainRequests(runner, dispatch);
+    REQUIRE(tokens.size() == 2);
+    const FocusToken dropped = tokens.front();
+
+    runner.CloseWorld(closing);
+
+    // The closed world's token is gone from the engine's list and from the router — popped as well as
+    // forgotten, so the router keeps no retired record of it — while the peer's capture holds.
+    CHECK(tokens.size() == 1);
+    CHECK_FALSE(router.IsFocusTokenLive(dropped));
+    CHECK_FALSE(router.IsFocusTokenRetired(dropped));
+    CHECK(router.GetFocus(SeatRef{.World = closing, .Viewer = SeatA}) == InputFocus::UI);
+    CHECK(router.IsGameplayFocused(SeatRef{.World = peer, .Viewer = SeatA}));
+}
+
 TEST_CASE("A host request in a client-tier world fails without reaching server state")
 {
     TypeRegistry types;

@@ -355,6 +355,12 @@ namespace Veng
                 }
             });
 
+        // The router's focus stacks and the request-driven tokens are keyed by seat, and a seat names
+        // its world; a closed world's entries would otherwise outlive it for the process.
+        m_WorldRunner->SetWorldClosedHook(
+            [this](const WorldInstanceId world)
+            { ForgetWorldFocus(*m_InputRouter, m_FocusRequestTokens, world); });
+
         // ImGui needs a window (GLFW backend), so it's only available windowed.
         if (!m_Info.Headless && m_Info.ImGui)
         {
@@ -1256,19 +1262,6 @@ namespace Veng
         m_Net->Role = NetRole::Client;
         m_Net->Info = net;
 
-        // The auto-join binds the managed world #0 as the Client-tier join target: its Sim displays
-        // replicated state and advances only its client-local (and predicted) entities, and the fixed
-        // DefaultWorldKey reply loads into it (queued FIFO like any join). With the auto-join off, the
-        // managed world is left as it is — a consumer joins the worlds it wants through JoinWorld, each
-        // into its own runner world.
-        if (net.AutoJoinDefaultWorld)
-        {
-            m_Net->WorldRoles[m_ManagedWorld.Value] = NetRole::Client;
-            m_Net->ClientWorlds[m_ManagedWorld.Value].Send =
-                InputSendBuffer(InputSendBuffer::Settings{.Redundancy = net.InputRedundancyTicks});
-            m_Net->PendingJoinWorlds.push_back(m_ManagedWorld);
-        }
-
         // The local account (the Identity hook's result, resolved at bootstrap) is what this
         // connection presents at the handshake; the server binds every seat and join to it.
         Result<Unique<Net::Client>> client = Net::Client::Connect(Net::ClientInfo{
@@ -1286,6 +1279,23 @@ namespace Veng
                 fmt::format("client failed to connect to {}:{}: {}", host, port, client.error()));
         }
         m_Net->Client = std::move(*client);
+
+        // The auto-join binds the managed world #0 as the Client-tier join target: its Sim displays
+        // replicated state and advances only its client-local (and predicted) entities, and the fixed
+        // DefaultWorldKey reply loads into it (queued FIFO like any join). With the auto-join off, the
+        // managed world is left as it is — a consumer joins the worlds it wants through JoinWorld, each
+        // into its own runner world. Retargeted only once the connect succeeds, so a failed one leaves
+        // the standalone world running.
+        if (net.AutoJoinDefaultWorld)
+        {
+            // A running standalone scene stops under the role its systems ran under, and the world
+            // then holds still until the join reply installs the joined level over it.
+            m_WorldRunner->StopWorld(m_ManagedWorld);
+            m_Net->WorldRoles[m_ManagedWorld.Value] = NetRole::Client;
+            m_Net->ClientWorlds[m_ManagedWorld.Value].Send =
+                InputSendBuffer(InputSendBuffer::Settings{.Redundancy = net.InputRedundancyTicks});
+            m_Net->PendingJoinWorlds.push_back(m_ManagedWorld);
+        }
 
         // The per-key client hooks the mounted host resolves each join through; a registered policy
         // supersedes the closures, its nullopt returns falling back to the same shared envelope and
@@ -1986,6 +1996,10 @@ namespace Veng
         dispatch.Connect =
             [this](const WorldInstanceId world, const ConnectRequest& request, string& error)
         {
+            // Read before connecting: a connect may stop the requesting world, and an OnStop editing
+            // its scene can move the component this reference points into.
+            const Net::WorldKey join = request.Join;
+            Net::Blob payload = request.Payload;
             if (VoidResult result = Connect(request.Host, request.Port); !result)
             {
                 error = std::move(result.error());
@@ -1993,10 +2007,10 @@ namespace Veng
             }
             // The connect-and-enter front door: a non-default Join key travels after connecting, an
             // invalid (default) key is connect-only.
-            if (!(request.Join == Net::WorldKey{}))
+            if (!(join == Net::WorldKey{}))
             {
-                if (VoidResult result = Travel(TravelInfo{.Key = request.Join,
-                                                          .Payload = request.Payload,
+                if (VoidResult result = Travel(TravelInfo{.Key = join,
+                                                          .Payload = std::move(payload),
                                                           .ViewportIndex = 0,
                                                           .Present = true});
                     !result)
@@ -2752,6 +2766,14 @@ namespace Veng
         {
             m_Sessions->SaveAll();
         }
+
+        // End-play for every world, last of the operations: OnShutdown and the save above read live
+        // worlds, and each OnStop here runs with every engine service and application member alive.
+        // A destructor has no context to stop a world with, so this is the only place it can happen.
+        m_WorldRunner->CloseAllWorlds();
+
+        // An OnStop may have queued work; drain it before any member it could land on is destroyed.
+        m_TaskSystem->WaitForAll();
 
         // The status a RequestExit(i32) named, or 0 for a run that ended without naming one.
         return m_ExitStatus;

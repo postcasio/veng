@@ -480,7 +480,10 @@ namespace Veng
 
         /// @brief Called once when play/simulation ends, after the last OnUpdate.
         ///
-        /// The default does nothing.
+        /// A runner world's simulation ends when the world closes, when WorldRunner::StopWorld stops
+        /// it, when InstallScene replaces its scene, and at application shutdown (after OnShutdown and
+        /// the session save, while every service is alive). A destructor runs no OnStop, so this is
+        /// where a system releases what its OnStart acquired. The default does nothing.
         /// @param scene    The scene the system operates over.
         /// @param context  Per-tick services (assets, input).
         virtual void OnStop(Scene& scene, const SystemContext& context) {}

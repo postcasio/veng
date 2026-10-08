@@ -116,6 +116,14 @@ namespace Veng
             }
         }
 
+        // A token whose entry went with its world: the holder's one pop forgets it.
+        if (const auto retired = std::ranges::find(m_RetiredTokens, token);
+            retired != m_RetiredTokens.end())
+        {
+            m_RetiredTokens.erase(retired);
+            return;
+        }
+
         VE_ASSERT(false,
                   "PopFocus given a token naming no live focus entry (mispaired or double pop)");
     }
@@ -147,6 +155,41 @@ namespace Veng
                                                                   [token](const FocusEntry& focus)
                                                                   { return focus.Token == token; });
                                    });
+    }
+
+    bool InputRouter::IsFocusTokenRetired(const FocusToken token) const
+    {
+        return token.IsValid() &&
+               std::ranges::find(m_RetiredTokens, token) != m_RetiredTokens.end();
+    }
+
+    void InputRouter::ForgetWorld(const WorldInstanceId world)
+    {
+        // Stack keys are StackKey'd, so the implicit seat is filed under no world and never matches.
+        const auto names = [world](const SeatRef& seat)
+        { return !seat.IsImplicit() && seat.World == world; };
+
+        bool cursorDropped = false;
+        for (auto it = m_Stacks.begin(); it != m_Stacks.end();)
+        {
+            if (!names(it->first))
+            {
+                ++it;
+                continue;
+            }
+            for (const FocusEntry& entry : it->second)
+            {
+                m_RetiredTokens.push_back(entry.Token);
+            }
+            cursorDropped |= it->first == m_CursorSeat;
+            it = m_Stacks.erase(it);
+        }
+        std::erase_if(m_Associations, [&names](const ViewportAssociation& association)
+                      { return names(association.Seat); });
+        if (cursorDropped)
+        {
+            SyncCursorState();
+        }
     }
 
     bool InputRouter::IsFocusTokenOn(SeatRef seat, FocusToken token) const

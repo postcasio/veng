@@ -230,7 +230,8 @@ namespace Veng
         // 1. Release the covered-world pause (refcount decrement; a no-op when none was held).
         m_PauseScope = WorldPauseScope{};
 
-        // 2. Pop the focus scope (restores the suspended seat's contexts and pops its token).
+        // 2. Pop the focus scope (restores the suspended seat's contexts and pops its token). Safe when
+        //    the suspended seat's world has closed: the router retired the token with it.
         m_Suspend.reset();
 
         // 3. Restore the cursor seat and drop the overlay-seat pointer association by id (~Viewport
@@ -245,8 +246,13 @@ namespace Veng
         // 4. Drop the viewport (self-unregisters from the compositor drive-list).
         m_Viewport.reset();
 
-        // 5. Close the owned world: its systems stop (OnStop) and its scene drops.
-        runner.CloseWorld(m_World);
+        // 5. Close the owned world: its systems stop (OnStop) and its scene drops. A world already
+        //    closed under the handle — the runner's shutdown sweep runs before an application's members
+        //    drop — has stopped and dropped already, and is skipped.
+        if (runner.ResolveWorld(m_World) != nullptr)
+        {
+            runner.CloseWorld(m_World);
+        }
         m_World = {};
         m_App = nullptr;
     }

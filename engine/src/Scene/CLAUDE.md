@@ -400,7 +400,9 @@ which a game-specific control system reads to produce the abstract `Intent` game
   `{ Focus = UI }` to release, and the engine drain owns a single per-seat focus token behind it,
   reconciling idempotently. This lets a stateless system drive focus — which a `FocusToken` held
   across frames otherwise could not — and the request-driven token composes with, and never pops,
-  a token pushed by an overlay suspend or a `SeatFocusScope`. It is a local-only request like its
+  a token pushed by an overlay suspend or a `SeatFocusScope`. When the seat's world closes the engine
+  drops that token along with every router entry naming the world (`InputRouter::ForgetWorld`, which
+  retires the tokens it drops, so their holders' later pops are silent). It is a local-only request like its
   siblings; see **The system catalog** and the request family in `Veng/Scene/Requests.h`.
   **The engine binds no key to releasing it.** An application declares a Button action with the
   **`ReleaseFocus`** role in a map its seat resolves under gameplay focus; the role resolver (below)

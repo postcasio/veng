@@ -6,6 +6,30 @@
 
 namespace Veng
 {
+    namespace
+    {
+        // Forgets every held token the router no longer holds an entry for. A retired token (its
+        // world closed) is popped, which is how the router forgets it; any other dead token was popped
+        // out from under the seam — an anonymous PopFocus() on the cursor seat — and kept, would be
+        // popped by a later release: a fatal mispaired pop.
+        void DropDeadTokens(InputRouter& router, FocusRequestTokens& tokens)
+        {
+            std::erase_if(tokens,
+                          [&router](const FocusToken token)
+                          {
+                              if (router.IsFocusTokenLive(token))
+                              {
+                                  return false;
+                              }
+                              if (router.IsFocusTokenRetired(token))
+                              {
+                                  router.PopFocus(token);
+                              }
+                              return true;
+                          });
+        }
+    }
+
     RequestResult ReconcileFocusRequest(InputRouter& router, FocusRequestTokens& tokens,
                                         const WorldInstanceId world, const FocusRequest& request,
                                         string&)
@@ -16,10 +40,7 @@ namespace Veng
                                  ? router.GetCursorSeat()
                                  : SeatRef{.World = world, .Viewer = request.Seat};
 
-        // Forget tokens the router popped out from under us — an anonymous PopFocus() on the cursor
-        // seat. Kept, a dead token would be popped by a later release: a fatal mispaired pop.
-        std::erase_if(tokens, [&router](const FocusToken token)
-                      { return !router.IsFocusTokenLive(token); });
+        DropDeadTokens(router, tokens);
         const auto held = std::ranges::find_if(tokens, [&router, seat](const FocusToken token)
                                                { return router.IsFocusTokenOn(seat, token); });
         const bool haveToken = held != tokens.end();
@@ -45,5 +66,12 @@ namespace Veng
         }
 
         return RequestResult::Handled;
+    }
+
+    void ForgetWorldFocus(InputRouter& router, FocusRequestTokens& tokens,
+                          const WorldInstanceId world)
+    {
+        router.ForgetWorld(world);
+        DropDeadTokens(router, tokens);
     }
 }

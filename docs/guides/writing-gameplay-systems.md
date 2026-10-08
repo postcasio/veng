@@ -39,7 +39,10 @@ public:
 - **`OnUpdate`** runs once per tick with the `delta` (seconds since the previous
   tick). This is the only pure-virtual — every system advances *something*.
 - **`OnStop`** runs once when play ends, after the last `OnUpdate`. Tear down what
-  `OnStart` built. The default does nothing.
+  `OnStart` built. The default does nothing. A runner world's play ends when the world
+  closes, when its scene is replaced, and when the application shuts down — after its
+  `OnShutdown` and session save, with every service still alive — so anything an
+  `OnStop` touches must survive those points.
 
 A `SceneSimulation` owns the registered systems and drives this lifecycle:
 `Start` → repeated `Update` → `Stop`. The runtime app and the editor's Play mode

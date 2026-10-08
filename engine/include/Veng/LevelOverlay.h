@@ -124,7 +124,9 @@ namespace Veng
         /// focus scope, restores the cursor seat and clears the viewport's pointer association
         /// (while the viewport is still alive), unregisters and drops the viewport, then closes the
         /// world (stopping its simulation and dropping its scene).
-        /// Idempotent — a second call, or a call on a moved-from handle, does nothing.
+        /// Idempotent — a second call, or a call on a moved-from handle, does nothing. The handle may
+        /// outlive its world — the application closes every world at shutdown before its members drop
+        /// — and then Close skips the stop and the close and still unwinds the rest of the policy.
         void Close();
 
         /// @brief Returns whether this handle currently holds an open overlay.

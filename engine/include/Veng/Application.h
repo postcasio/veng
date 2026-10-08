@@ -714,6 +714,14 @@ namespace Veng
         /// that simply ends reports success. The launcher returns this value from main, making a
         /// failed start distinguishable from a completed run to a supervisor or a script. Not
         /// [[nodiscard]]: a host that only needs the app to run may ignore the status.
+        ///
+        /// Once the loop exits, Run ends with its shutdown operations, in order: a running video
+        /// capture is finalized; the GPU and the worker pool are drained; OnShutdown runs; the session
+        /// records are saved; then every open world is closed, newest first, running each system's
+        /// OnStop; and the worker pool is drained again for anything an OnStop queued. So OnShutdown
+        /// and the session save see every world open, every world's systems stop while every engine
+        /// service and every application member is still alive, and only then, after Run returns,
+        /// are the members destroyed.
         /// @param arguments  Command-line arguments forwarded from the launcher.
         /// @return The process exit status: 0 for a clean run, otherwise the requested status.
         i32 Run(vector<string> arguments);
@@ -1728,6 +1736,12 @@ namespace Veng
         /// durability save). It is *not* for resource release: an app releases its resources in its own
         /// destructor, which runs while every engine service is still live, so most apps need no
         /// override. Default is a no-op.
+        ///
+        /// Every world is still open here, and stays open through the session save; each world's
+        /// systems stop (OnStop) after both. So a service this override stops is already gone when
+        /// those OnStops run — an OnStop needing it releases through it itself, or tolerates its
+        /// absence. An OnStop wanting its effect made durable flushes it itself, since the save has
+        /// already run.
         virtual void OnShutdown() {}
 
         /// @brief Called when the pawn this machine's own seat controls changes (or clears).
@@ -2226,8 +2240,8 @@ namespace Veng
         ///
         /// First of the ordered lifetime members below: they are declared so reverse-declaration
         /// destruction runs the teardown sequence — each releases while every service it borrows is
-        /// still alive. Run() ends at its operations (quiesce, OnShutdown, SaveAll) and does no
-        /// explicit release; destruction owns the release.
+        /// still alive. Run() ends at its operations (quiesce, OnShutdown, SaveAll, closing every
+        /// world) and does no explicit release; destruction owns the release.
         Unique<Window> m_Window;
 
         /// @brief Frame-coherent input; borrows m_Window, so declared after it (destructs first).

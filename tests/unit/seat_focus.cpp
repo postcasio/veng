@@ -418,6 +418,32 @@ TEST_CASE("SeatFocusScope round-trips push + swap + associate, restoring in inve
     CHECK(restored.Active[0].Id().Value == 0xAA11);
 }
 
+TEST_CASE("A SeatFocusScope whose world closed restores nothing into its scene")
+{
+    Input input(nullptr);
+    const Renderer::ViewportRegistry viewportRegistry;
+    InputRouter router(nullptr, input, viewportRegistry);
+
+    TypeRegistry registry = MakeRegistry();
+    const Unique<Scene> scene = Scene::Create(registry);
+    const Entity seatEntity = scene->CreateEntity();
+    scene->Add<Viewer>(seatEntity);
+    scene->Add<PlayerInput>(seatEntity);
+    scene->Add<InputContextStack>(seatEntity).Active.push_back(MakeContext(0xAA11));
+    const InputSeat seat = ResolveInputSeat(scene.get(), TestWorld);
+    REQUIRE(seat.Viewer == seatEntity);
+
+    {
+        const SeatFocusScope scope(router, seat, nullptr, MakeContext(0xBB22));
+        router.ForgetWorld(TestWorld);
+    }
+
+    // The scene stands in for one its world's close destroyed: the scope wrote nothing back into it.
+    const InputContextStack& untouched = scene->Get<InputContextStack>(seatEntity);
+    REQUIRE(untouched.Active.size() == 1);
+    CHECK(untouched.Active[0].Id().Value == 0xBB22);
+}
+
 TEST_CASE("A SeatFocusScope suspends its seat's gameplay resolution, the other seat plays on")
 {
     // Two full seats, each holding the same W → Move.y context; both hold the keyboard/mouse so

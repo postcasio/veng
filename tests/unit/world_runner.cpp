@@ -59,8 +59,8 @@ namespace
     };
 
     // A probe recording how many times its OnStop (end-play) ran per scene, so a close path that
-    // must run OnStop exactly once — never zero, never twice — is checkable by handle. Reads only
-    // the scene, never the forwarded context.
+    // must run OnStop exactly once — never zero, never twice — is checkable by handle, and which
+    // world each stop's context named, in stop order.
     //
     // Cascade scripts the one case where end-play itself closes a world: set to a live handle, the
     // first OnStop to run closes it and clears the script, so the deferred drain is asked to honour
@@ -68,20 +68,23 @@ namespace
     struct StopProbe final : SceneSystem
     {
         static inline std::map<const Scene*, int> Stops;
+        static inline vector<WorldInstanceId> StoppedWorlds;
         static inline WorldRunner* Runner = nullptr;
         static inline WorldInstanceId Cascade;
 
         static void Reset()
         {
             Stops.clear();
+            StoppedWorlds.clear();
             Runner = nullptr;
             Cascade = WorldInstanceId{};
         }
 
         void OnUpdate(Scene&, f32, const SystemContext&) override {}
-        void OnStop(Scene& scene, const SystemContext&) override
+        void OnStop(Scene& scene, const SystemContext& context) override
         {
             ++Stops[&scene];
+            StoppedWorlds.push_back(context.World);
             if (Runner != nullptr && Cascade.IsValid())
             {
                 const WorldInstanceId target = Cascade;
@@ -545,6 +548,104 @@ TEST_CASE("A world stopped before closing runs OnStop once, not twice")
     runner.CloseWorld(a);
     CHECK(StopProbe::Stops[key] == 1);
     CHECK(runner.ResolveWorld(a) == nullptr);
+}
+
+TEST_CASE("Installing over a started scene stops it once, under the world's id")
+{
+    StopProbe::Reset();
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<StopProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
+    const WorldInstanceId a = runner.OpenWorld(StopWorld());
+    const Scene* replaced = &runner.ResolveWorld(a)->GetScene();
+
+    runner.InstallScene(a, Scene::Create(types));
+
+    // The replaced scene ended play exactly once, with the context naming its world; the world stays
+    // open on the installed scene.
+    CHECK(StopProbe::Stops[replaced] == 1);
+    CHECK(StopProbe::StoppedWorlds == vector<WorldInstanceId>{a});
+    CHECK(runner.ResolveWorld(a) != nullptr);
+}
+
+TEST_CASE("A stopped world holds still, and a later install or close runs no second OnStop")
+{
+    StopProbe::Reset();
+    TickProbe::Reset();
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<StopProbe>();
+    systems.Register<TickProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
+    const WorldInstanceId closing =
+        runner.OpenWorld(WorldOf({SystemIdOf<StopProbe>(), SystemIdOf<TickProbe>()}));
+    const WorldInstanceId installing = runner.OpenWorld(StopWorld());
+    const Scene* closingScene = &runner.ResolveWorld(closing)->GetScene();
+    const Scene* installingScene = &runner.ResolveWorld(installing)->GetScene();
+    runner.Tick(OneStep());
+    REQUIRE(TickProbe::Updates[closingScene] == 1);
+
+    runner.StopWorld(closing);
+    runner.StopWorld(closing);
+    runner.StopWorld(installing);
+    CHECK(StopProbe::Stops[closingScene] == 1);
+    CHECK(StopProbe::Stops[installingScene] == 1);
+
+    // Open but unticked: no phase runs and the clock stands.
+    runner.Tick(OneStep());
+    REQUIRE(runner.ResolveWorld(closing) != nullptr);
+    CHECK(TickProbe::Updates[closingScene] == 1);
+    CHECK(runner.ResolveWorld(closing)->Clock.GetTick() == 1);
+
+    runner.InstallScene(installing, Scene::Create(types));
+    runner.CloseWorld(closing);
+    CHECK(StopProbe::Stops[closingScene] == 1);
+    CHECK(StopProbe::Stops[installingScene] == 1);
+}
+
+TEST_CASE("Closing every world stops each once, newest first, and tells the closed hook after each")
+{
+    StopProbe::Reset();
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<StopProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
+
+    // Each call records the id and whether it still resolved: a hook fired before the erase would
+    // hand a holder an id that still names a live world.
+    vector<std::pair<WorldInstanceId, bool>> closed;
+    runner.SetWorldClosedHook(
+        [&](const WorldInstanceId world)
+        { closed.emplace_back(world, runner.ResolveWorld(world) != nullptr); });
+
+    const WorldInstanceId a = runner.OpenWorld(StopWorld());
+    const WorldInstanceId b = runner.OpenWorld(StopWorld());
+    const WorldInstanceId c = runner.OpenWorld(StopWorld());
+
+    // Replacing a scene closes no world, so it is not reported.
+    runner.InstallScene(b, Scene::Create(types));
+    CHECK(closed.empty());
+
+    runner.CloseAllWorlds();
+
+    // b's replaced scene stopped at the install; the sweep stops c, then a (b's installed scene runs
+    // no system), and reports all three closes newest first, each once erased.
+    CHECK(StopProbe::StoppedWorlds == vector<WorldInstanceId>{b, c, a});
+    CHECK(closed == vector<std::pair<WorldInstanceId, bool>>{{c, false}, {b, false}, {a, false}});
+    CHECK_FALSE(runner.HasWorlds());
 }
 
 TEST_CASE("A runner with no context factory closes a started world without running OnStop")

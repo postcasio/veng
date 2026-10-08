@@ -97,8 +97,9 @@ namespace Veng
         }
 
         // Restore through a fresh resolve: a structural change while the scope was open moved the
-        // pool, and a destroyed seat entity resolves to nullptr — a correct no-op.
-        if (m_SwappedContext)
+        // pool, and a destroyed seat entity resolves to nullptr — a correct no-op. A retired token
+        // means the seat's world closed and its scene is gone, so there is nothing to restore into.
+        if (m_SwappedContext && !m_Router.IsFocusTokenRetired(m_Token))
         {
             if (InputContextStack* contexts = m_Seat.ResolveContexts())
             {

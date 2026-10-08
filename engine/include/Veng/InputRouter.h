@@ -232,10 +232,13 @@ namespace Veng
 
         /// @brief Pops the focus entry the token names, wherever it sits in its seat's stack.
         ///
-        /// The entry is removed and its seat's owning top recomputed. A token that names no live
-        /// entry — a mispaired or double pop — is a fatal assert, not a silent no-op. If the popped
-        /// entry belonged to the cursor seat, the OS cursor capture is recomputed from its new top.
-        /// @param token  The token a PushFocus returned; must name a live entry.
+        /// The entry is removed and its seat's owning top recomputed. If the popped entry belonged to
+        /// the cursor seat, the OS cursor capture is recomputed from its new top. A **retired** token —
+        /// one whose entry ForgetWorld dropped with its world — is a silent no-op that forgets it, so a
+        /// holder outliving the world still pops exactly once. Any other token naming no live entry — a
+        /// mispaired or double pop, or a retired token popped a second time — is a fatal assert, not a
+        /// silent no-op.
+        /// @param token  The token a PushFocus returned; must name a live entry or a retired one.
         void PopFocus(FocusToken token);
 
         /// @brief Pops the top focus entry of the cursor seat, restoring the one beneath.
@@ -248,13 +251,35 @@ namespace Veng
         /// @brief Returns whether a focus token still names a live entry in any seat's stack.
         ///
         /// A token goes stale when its entry is popped by a path other than its holder — most
-        /// notably ReleaseGameplayFocus, which a ReleaseFocus press drives. An entry suspended by a
+        /// notably ReleaseGameplayFocus, which a ReleaseFocus press drives — or is dropped with its
+        /// world (ForgetWorld, which retires it; see IsFocusTokenRetired). An entry suspended by a
         /// window-focus loss stays live. A holder that caches tokens across frames (the FocusRequest
         /// seam) checks this to detect such an external pop and drop the dead token rather than treat
         /// the seat as still held.
         /// @param token  The token to test; a default (invalid) token is never live.
         /// @return True if the token names a live focus entry.
         [[nodiscard]] bool IsFocusTokenLive(FocusToken token) const;
+
+        /// @brief Returns whether a focus token was retired by ForgetWorld and not yet popped.
+        ///
+        /// A retired token is not live: its entry went with its world, and its holder's PopFocus is
+        /// what forgets it. A holder telling a world's close apart from an external pop (after which a
+        /// PopFocus would assert) asks this.
+        /// @param token  The token to test; a default (invalid) token is never retired.
+        /// @return True if the token's entry was dropped with its world and the token not yet popped.
+        [[nodiscard]] bool IsFocusTokenRetired(FocusToken token) const;
+
+        /// @brief Drops every focus stack and viewport association whose seat names a closed world.
+        ///
+        /// World ids are never reused, so a closed world's entries could never be misread, but they
+        /// would otherwise accumulate for the process. Each dropped entry's token is **retired**: it
+        /// is no longer live, and its holder's PopFocus forgets it silently rather than asserting, so a
+        /// holder that outlives the world — a SeatFocusScope, a cached request token — keeps its
+        /// pop-exactly-once discipline. A cursor seat naming the world has its stack dropped like any
+        /// other, releasing a held cursor capture; the cursor seat itself stays where it is (moving it
+        /// is presentation's decision). The implicit seat belongs to no world and is untouched.
+        /// @param world  The world that closed.
+        void ForgetWorld(WorldInstanceId world);
 
         /// @brief Releases a seat's gameplay focus by popping its top entry, when that entry holds it.
         ///
@@ -555,6 +580,8 @@ namespace Veng
         bool m_CursorCaptured = false;
         /// @brief Monotonic source of focus-token identities; never reuses a value, 0 stays invalid.
         u64 m_NextToken = 1;
+        /// @brief Tokens whose entries ForgetWorld dropped, each held until its holder pops it.
+        vector<FocusToken> m_RetiredTokens;
 
         /// @brief A Presented viewport's id paired with the seat its region routes pointer input to.
         struct ViewportAssociation

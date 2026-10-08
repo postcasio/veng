@@ -258,7 +258,11 @@ namespace Veng
         /// @param info  The type/system registries (required) and optional asset manager / context.
         explicit WorldRunner(const WorldRunnerInfo& info);
 
-        /// @brief Destroys the runner and every world it owns.
+        /// @brief Destroys the runner and every world it owns, running no system's OnStop.
+        ///
+        /// A destructor has no SystemContext to stop a simulation with, so an owner that installed a
+        /// context factory calls CloseAllWorlds first, while the services the factory reads are still
+        /// alive. A device-free runner, which has no factory, simply drops its worlds.
         ~WorldRunner();
 
         WorldRunner(const WorldRunner&) = delete;
@@ -291,16 +295,28 @@ namespace Veng
         /// @pre A context factory is installed, @p world resolves, and its simulation is not started.
         void StartWorld(WorldInstanceId world);
 
+        /// @brief Stops a started world's simulation and leaves the world open and unticked.
+        ///
+        /// Each system's OnStop runs with the factory's Stop context naming the world, under the role
+        /// it ran under; the world then holds still (Tick runs no phase on an unstarted world) until a
+        /// later InstallScene replaces its scene, StartWorld starts it again, or it closes. Stopping is
+        /// idempotent: a world whose simulation is unstarted or already stopped, or that carries none,
+        /// stops nothing, and a later close or InstallScene runs no second OnStop.
+        /// @param world  The world to stop; an unminted or already-closed id is a no-op.
+        /// @pre Not inside Tick. A context factory is installed when @p world's simulation is started.
+        void StopWorld(WorldInstanceId world);
+
         /// @brief Installs the one factory every SystemContext the runner's worlds receive is built by.
         ///
         /// The runner builds through it at every lifecycle point it drives — a world's start (OpenWorld,
-        /// StartWorld), each Sim step and View pass (Tick), and its stop (CloseWorld) — and a caller
+        /// StartWorld), each Sim step and View pass (Tick), and its stop (StopWorld, CloseWorld,
+        /// CloseAllWorlds, and a started scene InstallScene replaces) — and a caller
         /// stepping a world's scene outside those (a reconciliation replay, ReplaySimStep) builds
         /// through BuildContext, so every context names its world and carries the same services.
         ///
-        /// Unset — the default — is the device-free contract: CloseWorld drops a started world without
-        /// running OnStop rather than fabricating a context, and starting or ticking a simulation
-        /// asserts.
+        /// Unset — the default — is the device-free contract: CloseWorld and InstallScene drop a started
+        /// scene without running OnStop rather than fabricating a context, and starting, stopping
+        /// (StopWorld) or ticking a simulation asserts.
         /// @param factory  The context factory, or an empty function to clear it.
         void SetContextFactory(SystemContextFactory factory);
 
@@ -339,7 +355,7 @@ namespace Veng
         /// @brief Sets the hook told a world's scene is about to be destroyed.
         ///
         /// Called with the scene while it is still live, once per scene the runner destroys: a world
-        /// dropped by CloseWorld (after its OnStop), or a placeholder scene InstallScene replaces. A
+        /// dropped by CloseWorld (after its OnStop), or a scene InstallScene replaces (likewise). A
         /// presentation layer that retains a raw scene pointer across frames uses it to drop that
         /// pointer before it dangles.
         /// @param hook  The retiring hook, or an empty function to clear it.
@@ -356,6 +372,23 @@ namespace Veng
         /// once, and a close issued from a system's OnStop during the drain drains in its turn.
         /// @param world  The world to close; an unminted or already-closed id is a no-op.
         void CloseWorld(WorldInstanceId world);
+
+        /// @brief Closes every open world, newest first, each exactly as CloseWorld closes one.
+        ///
+        /// Descending id order stops a world opened over another (an overlay) before the world it
+        /// covers. A world an OnStop opens during the sweep is closed in its turn, so the runner holds
+        /// no world when this returns. The owner's teardown step: a runner destroyed with worlds open
+        /// runs no OnStop for them.
+        /// @pre Not inside Tick.
+        void CloseAllWorlds();
+
+        /// @brief Sets the hook told a world has closed.
+        ///
+        /// Called once per closed world with its id, after the world is erased — so the id no longer
+        /// resolves — and in close order, for a holder of state keyed by world id to drop it. A scene
+        /// InstallScene replaces closes no world and fires no call.
+        /// @param hook  The closed hook, or an empty function to clear it.
+        void SetWorldClosedHook(function<void(WorldInstanceId)> hook);
 
         /// @brief Resolves a world by handle, or null for an unminted, closed, or invalid id.
         /// @param world  The handle to resolve.
@@ -431,7 +464,9 @@ namespace Veng
         /// The client-join seam: world #0 is opened as an empty join target, then the accepted level
         /// loads into a scene the runner takes ownership of here (replacing the empty placeholder), so
         /// the joined scene is a runner-owned world rather than a parallel one. The caller starts it
-        /// once the install lands.
+        /// once the install lands. A replaced scene whose simulation is started is stopped first
+        /// (OnStop with the world's Stop context, as CloseWorld stops one), then retired and dropped;
+        /// the world itself stays open, so the closed hook does not fire.
         /// @param world  The open world to install the scene into.
         /// @param scene  The loaded scene the runner takes ownership of.
         /// @return The installed scene.
@@ -492,6 +527,14 @@ namespace Veng
         /// @param world  The world to close; an unminted or already-closed id is a no-op.
         void CloseWorldNow(WorldInstanceId world);
 
+        /// @brief Runs each system's OnStop on a world's scene when its simulation is started.
+        ///
+        /// Builds the Stop context through the factory; a runner with none stops nothing rather than
+        /// fabricating a context. Idempotent, since an already-stopped simulation runs no OnStop.
+        /// @param world  The world the scene belongs to, named by the Stop context.
+        /// @param scene  The world's live scene.
+        void StopScene(WorldInstanceId world, Scene& scene);
+
         /// @brief Closes every world a deferred close queued, in issue order, until the queue empties.
         void DrainPendingCloses();
 
@@ -550,6 +593,9 @@ namespace Veng
 
         /// @brief Told a scene is about to be destroyed; unset tells no one.
         function<void(const Scene&)> m_SceneRetiringHook;
+
+        /// @brief Told a world has closed, after it is erased; unset tells no one.
+        function<void(WorldInstanceId)> m_WorldClosedHook;
 
         /// @brief Worlds a close issued inside Tick queued, in issue order; drained after the walk.
         vector<WorldInstanceId> m_PendingCloses;

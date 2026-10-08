@@ -308,10 +308,13 @@ extern "C"
 /// becomes the context factory, and SystemContext::Haptics loses its default. A module opens worlds
 /// and ticks runners, so a stale module lays both info structs out with fields the host no longer
 /// reads and leaves the start context it expects unbuilt.
+/// Version 77 grows WorldRunner with a world-closed hook and InputRouter with its retired focus
+/// tokens, so a stale module lays both classes out short; a module drives both through their inline
+/// accessors and the members after the new ones.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 76u
+#define VENG_MODULE_ABI_VERSION 77u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

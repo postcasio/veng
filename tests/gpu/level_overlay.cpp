@@ -273,6 +273,49 @@ TEST_CASE("LevelOverlay open/close leaves the router byte-restored, no per-frame
     app.Run({});
 }
 
+TEST_CASE("An overlay whose world closed under it drops cleanly and restores the cursor seat")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    OverlayApp app(HeadlessInfo(), types, systems);
+    AssetHandle<Level> level;
+    SeatRef priorCursor;
+
+    app.InitFn = [&](OverlayApp& a)
+    { level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {}); };
+
+    app.StepFn = [&](OverlayApp& a, int frame)
+    {
+        const InputRouter& router = a.GetInputRouter();
+        if (frame == 0)
+        {
+            priorCursor = router.GetCursorSeat();
+            a.A = LevelOverlay::Open(a, LevelOverlayInfo{.Source = level});
+            a.A->GetViewport().SetEnabled(false);
+            REQUIRE(router.ResolvePointer(ivec2(100, 100), false, Entity::Null).Owner ==
+                    SeatOf(*a.A).Viewer);
+        }
+        else if (frame == 1)
+        {
+            // The shutdown shape: the world goes first, the application-held handle after it. The
+            // close itself forgets the overlay seat's pointer association.
+            a.GetWorldRunner().CloseWorld(a.A->GetWorld());
+            CHECK(router.ResolvePointer(ivec2(100, 100), false, Entity::Null).Owner ==
+                  Entity::Null);
+        }
+        else if (frame == 2)
+        {
+            a.A.reset();
+            CHECK(router.GetCursorSeat() == priorCursor);
+        }
+    };
+
+    app.Frames = 4;
+    app.Run({});
+}
+
 TEST_CASE("LevelOverlay runs the populate hook before StartSimulation")
 {
     TypeRegistry types;

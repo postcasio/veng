@@ -99,6 +99,19 @@ that outlives the context still fails loudly: the `Disposed` tripwire (set in `~
 on any handle retiring after teardown. The ownership rule these serve (`Ref` vs `Unique`, the
 per-frame retire path) is in [the root CLAUDE.md](../CLAUDE.md#resource-ownership--lifetime).
 
+**`Run` ends with its operations, in a fixed order:** (1) a running video capture is stopped and
+finalized; (2) quiesce — `WaitIdle`, `WaitForAll`; (3) `OnShutdown()`; (4) the session `SaveAll()`;
+(5) **`WorldRunner::CloseAllWorlds()`** — every open world closed newest first, each system's `OnStop`
+running with a context the factory builds over the live services, the world's own id and its own
+role; (6) `WaitForAll()` again, for anything an `OnStop` queued. So **`OnShutdown` and the save see
+every world open; then every world's systems stop, while every engine service and every application
+member is still alive; then members are destroyed.** The close comes after rather than before the
+two because both read live worlds (a shutdown checkpoint captures each open world's state). The
+consequences for a consumer: a service `OnShutdown` stops is already gone when the `OnStop`s run, an
+`OnStop` wanting its effect durable flushes it itself, and an application-held handle onto a world —
+a `LevelOverlay`, a `SeatFocusScope` — routinely outlives its world and must tolerate it (both
+do).
+
 **The engine writes nothing relative to the working directory, and does not move it.** A shipped
 application cannot assume its working directory is writable — inside a macOS bundle it is the
 bundle, whose contents are sealed by the code signature — so every engine-owned file has an
@@ -374,13 +387,35 @@ empty-scene worlds without a GPU).
 **Every `SystemContext` a world receives is built by one factory.** `Application` installs it on its
 runner at initialization (`WorldRunner::SetContextFactory`), and the runner builds through it at every
 lifecycle point it drives — a world's start (`OpenWorld`, and `StartWorld` for a world opened
-unstarted: a client join target, an overlay), each Sim step and View pass, and the stop at
-`CloseWorld` — so every context names its world, carries every service, and stamps the world's own
+unstarted: a client join target, an overlay), each Sim step and View pass, and every stop (below)
+— so every context names its world, carries every service, and stamps the world's own
 role. A caller stepping a world outside those points builds through `WorldRunner::BuildContext` with a
 `SystemContextRequest` (world, scene, phase, tick, alpha, step edges): the reconciliation replay does,
 through `ReplaySimStep`, and so does the editor's Play session, which names no world because it is no
 runner world. A runner with no factory (a device-free one) drops a started world at `CloseWorld`
-without running `OnStop`, and asserts on any start or tick.
+(or a started scene at `InstallScene`) without running `OnStop`, and asserts on any start, stop or
+tick.
+
+**The runner stops every scene it lets go of.** `CloseWorld` stops a started world before dropping
+it; **`InstallScene`** stops a started scene it replaces before retiring and dropping it (the world
+stays open); **`StopWorld(id)`** stops a started world and leaves it open and unticked until a later
+`InstallScene`, `StartWorld` or close — the runtime connect uses it, stopping a running standalone
+managed world under the role its systems ran under before retargeting it as the `Client` join target,
+so the world holds still from the connect to the join reply; and **`CloseAllWorlds()`** closes every
+world in descending id order, so an overlay stops before the world it covers. Stopping is idempotent
+— a second stop, or a close after a stop, runs no second `OnStop` — and `StopWorld` / `CloseAllWorlds`
+are not legal inside `Tick`. `~WorldRunner` still drops its worlds without `OnStop` (a destructor has
+no context); an owner with a factory calls `CloseAllWorlds` first, as `Application::Run` does.
+
+**A closed world drops its input focus.** The runner's **world-closed hook**
+(`SetWorldClosedHook`, fired once per closed world after it is erased, in close order — not by
+`InstallScene`, which closes no world) is where `Application` calls `InputRouter::ForgetWorld` and
+forgets its request-driven focus tokens for that world. `ForgetWorld` drops every focus stack and
+viewport association whose seat names the world and **retires** each dropped entry's token: a retired
+token is not live, and its holder's `PopFocus` is a silent no-op that forgets it, so a holder
+outliving the world (a `SeatFocusScope`, an editor capture) keeps its pop-exactly-once discipline,
+while a never-issued or double-popped token still asserts. A held cursor capture on the world's seat
+releases; where the cursor seat goes next is presentation's call.
 
 **A system may open and close worlds from its own tick.** `WorldRunner::Tick` walks the worlds it
 holds, so a system deciding mid-update that a world must go — reaping a finished match, reloading a
@@ -398,7 +433,8 @@ world opened or closed stamps a request component a system acts on from its tick
 scene it last presented until its next view push, and the push runs after the tick, so a world
 closed at the top of a frame (a departure, a reap, a drained request) would otherwise leave
 `GetPresentedScene` dangling for the frame-top pointer routing. The runner's scene-retiring hook
-(`SetSceneRetiringHook`, fired by a close and by `InstallScene`'s replacement) lets the
+(`SetSceneRetiringHook`, fired by a close and by `InstallScene`'s replacement, each after the
+scene's `OnStop`) lets the
 `Application` call `Viewport::ReleasePresentedScene` on every registered viewport first.
 
 The world drive is an accumulator: each world's Sim phase steps at its own fixed `SimTickRate`
@@ -480,7 +516,8 @@ outcome before re-stamping. **`Application::Travel(TravelInfo)`** is the one tra
 `TravelRequest` drain lowers onto — resolving standalone (directory get-or-place → present-on-ready
 rebind → pin/unpin), client (travel-request → server-directed travel), or listen-host — and
 `FocusRequest` drives the `InputRouter`'s coarse gameplay/UI focus for a seat through an
-engine-owned per-seat token (so a stateless system can capture or release focus). See
+engine-owned per-seat token (so a stateless system can capture or release focus), dropped when the
+seat's world closes. See
 [src/Scene/CLAUDE.md](src/Scene/CLAUDE.md) for the request idiom and
 [src/Net/CLAUDE.md](src/Net/CLAUDE.md) for `Travel`.
 
@@ -498,7 +535,9 @@ scheduler. **Input focus and simulation pause are separate knobs:** taking the o
 always suspends the covered seat's *input*, but a world simulates unless a `CoveredWorld` pause is
 held. An overlay's `GetViewState()` knobs are resolved from its level at open and again on every
 `ApplyGraphicsSettings` — not an in-place per-frame edit. Dropping the handle (or `Close`) unwinds the policy LIFO, restoring
-every router / cursor-seat / pause value to the state it captured at open, and closing the world;
+every router / cursor-seat / pause value to the state it captured at open, and closing the world
+(skipped when the world has already closed — an application-held overlay outlives its world at
+shutdown);
 overlays **stack** (a dialog over a modal) and the handles drop LIFO. Results flow back through a
 game-owned channel (a component the opener drains, a callback) — no overlay system reaches into the
 covered scene.
@@ -538,8 +577,8 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 76** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
-  header is authoritative). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
+  load**. The ABI is at **version 77** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  header is authoritative, and its prose records why each version moved). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the
   per-instance presentation-binding catalog, see [src/Gui/CLAUDE.md](src/Gui/CLAUDE.md)) bumped

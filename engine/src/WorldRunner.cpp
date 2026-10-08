@@ -161,6 +161,40 @@ namespace Veng
             .World = world, .Scene = scene, .Phase = SystemContextPhase::Start}));
     }
 
+    void WorldRunner::StopWorld(const WorldInstanceId world)
+    {
+        // Mid-walk a stop could land between a world's Sim steps, running OnStop under a system still
+        // inside its own update; the callers (a drained request, a net connect) run between ticks.
+        VE_ASSERT(!m_Ticking, "WorldRunner::StopWorld is not legal inside Tick");
+        World* resolved = ResolveWorld(world);
+        if (resolved == nullptr)
+        {
+            return;
+        }
+        Scene& scene = resolved->GetScene();
+        if (const SceneSimulation* sim = scene.GetSimulation(); sim != nullptr && sim->IsStarted())
+        {
+            VE_ASSERT(m_ContextFactory != nullptr,
+                      "WorldRunner::StopWorld: stopping a started world needs a context factory");
+        }
+        StopScene(world, scene);
+    }
+
+    void WorldRunner::StopScene(const WorldInstanceId world, Scene& scene)
+    {
+        // A destructor has no SystemContext to supply, so this stop is the one place OnStop runs; a
+        // system releasing an engine-owned resource there depends on it. Stopping is idempotent, so a
+        // caller that already stopped takes a harmless no-op here.
+        const SceneSimulation* sim = scene.GetSimulation();
+        if (sim == nullptr || !sim->IsStarted() || !m_ContextFactory)
+        {
+            return;
+        }
+        VE_PROFILE_SCOPE("World/Stop");
+        scene.StopSimulation(BuildContext(SystemContextRequest{
+            .World = world, .Scene = scene, .Phase = SystemContextPhase::Stop}));
+    }
+
     void WorldRunner::SetContextFactory(SystemContextFactory factory)
     {
         m_ContextFactory = std::move(factory);
@@ -195,6 +229,22 @@ namespace Veng
     void WorldRunner::SetSceneRetiringHook(function<void(const Scene&)> hook)
     {
         m_SceneRetiringHook = std::move(hook);
+    }
+
+    void WorldRunner::SetWorldClosedHook(function<void(WorldInstanceId)> hook)
+    {
+        m_WorldClosedHook = std::move(hook);
+    }
+
+    void WorldRunner::CloseAllWorlds()
+    {
+        VE_ASSERT(!m_Ticking, "WorldRunner::CloseAllWorlds is not legal inside Tick");
+        // m_Worlds is in ascending id order, so its back is the newest world. Re-read after each close,
+        // since an OnStop may open a world (which is then the newest) or close another.
+        while (!m_Worlds.empty())
+        {
+            CloseWorldNow(m_Worlds.back()->Id);
+        }
     }
 
     void WorldRunner::CloseWorld(const WorldInstanceId world)
@@ -243,21 +293,9 @@ namespace Veng
             return;
         }
 
-        // End-play before teardown: run each system's OnStop while its scene is still live, symmetric
-        // with a simulation start. Destructing the world (Scene::~Scene → the systems) runs no
-        // OnStop — a destructor has no SystemContext to supply — so a system that releases an
-        // engine-owned resource in OnStop depends on this stop, not on destruction. A runner with no
-        // factory drops a started world without running OnStop rather than fabricating a context.
-        // Stopping is idempotent, so a caller that already stopped takes a harmless no-op here.
-        const World& closing = **it;
-        Scene& scene = closing.GetScene();
-        if (const SceneSimulation* sim = scene.GetSimulation();
-            sim != nullptr && sim->IsStarted() && m_ContextFactory)
-        {
-            VE_PROFILE_SCOPE("World/Stop");
-            scene.StopSimulation(BuildContext(SystemContextRequest{
-                .World = closing.Id, .Scene = scene, .Phase = SystemContextPhase::Stop}));
-        }
+        // End-play before teardown: each system's OnStop runs while its scene is still live.
+        Scene& scene = (*it)->GetScene();
+        StopScene(world, scene);
 
         if (m_SceneRetiringHook)
         {
@@ -267,8 +305,15 @@ namespace Veng
         // Erase by id rather than through the iterator found above: a system's OnStop may close a
         // world itself, and an immediate close of another world moves this one's slot out from under
         // a held iterator (one issued inside a tick is queued instead, and cannot).
-        VE_PROFILE_SCOPE("World/Destroy");
-        std::erase_if(m_Worlds, [world](const Unique<World>& w) { return w->Id == world; });
+        {
+            VE_PROFILE_SCOPE("World/Destroy");
+            std::erase_if(m_Worlds, [world](const Unique<World>& w) { return w->Id == world; });
+        }
+
+        if (m_WorldClosedHook)
+        {
+            m_WorldClosedHook(world);
+        }
     }
 
     const World* WorldRunner::ResolveWorld(const WorldInstanceId world) const
@@ -313,9 +358,13 @@ namespace Veng
     {
         World* resolved = ResolveWorld(world);
         VE_ASSERT(resolved != nullptr, "WorldRunner::InstallScene: unminted world");
-        if (resolved->OwnedScene != nullptr && m_SceneRetiringHook)
+        if (resolved->OwnedScene != nullptr)
         {
-            m_SceneRetiringHook(*resolved->OwnedScene);
+            StopScene(world, *resolved->OwnedScene);
+            if (m_SceneRetiringHook)
+            {
+                m_SceneRetiringHook(*resolved->OwnedScene);
+            }
         }
         resolved->OwnedScene = std::move(scene);
         resolved->LiveScene = resolved->OwnedScene.get();

@@ -80,7 +80,9 @@ namespace Veng
     ///
     /// The scope stores the viewport's ViewportId, not a pointer, so it need not outlive its
     /// viewport: a viewport that dies mid-scope leaves the id-keyed clear an equality no-op, and the
-    /// focus pop and context restore proceed untouched.
+    /// focus pop and context restore proceed untouched. Nor need it outlive its seat's world: once the
+    /// world closes the router retires the scope's token (InputRouter::ForgetWorld), and destruction
+    /// then restores no context into the destroyed scene and its pop is a silent no-op.
     class SeatFocusScope
     {
     public:

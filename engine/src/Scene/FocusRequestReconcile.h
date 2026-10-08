@@ -43,4 +43,14 @@ namespace Veng
     RequestResult ReconcileFocusRequest(InputRouter& router, FocusRequestTokens& tokens,
                                         WorldInstanceId world, const FocusRequest& request,
                                         string& error);
+
+    /// @brief Drops a closed world's focus from the router and the engine-held request tokens.
+    ///
+    /// The runner's world-closed hook body: InputRouter::ForgetWorld drops the world's stacks and
+    /// associations, then every held token that is no longer live is forgotten — popping a retired
+    /// one, which the router forgets silently, so the router holds no record of it either.
+    /// @param router  The router whose per-seat state names the world.
+    /// @param tokens  The engine-owned held tokens, updated in place.
+    /// @param world   The world that closed.
+    void ForgetWorldFocus(InputRouter& router, FocusRequestTokens& tokens, WorldInstanceId world);
 }

@@ -53,17 +53,29 @@ namespace Veng
                 }
 
                 string error;
-                switch (dispatch(id, std::as_const(request), error))
+                const RequestResult result = dispatch(id, std::as_const(request), error);
+                // Re-resolved before the outcome lands: the dispatch may have closed the world, or
+                // stopped it and let an OnStop restructure its scene under the request reference.
+                World* const after = runner.ResolveWorld(id);
+                Scene* const live = after != nullptr ? &after->GetScene() : nullptr;
+                T* const held = live != nullptr && live->IsAlive(holder)
+                                    ? live->template TryGet<T>(holder)
+                                    : nullptr;
+                if (held == nullptr)
+                {
+                    continue;
+                }
+                switch (result)
                 {
                 case RequestResult::Handled:
-                    (void)scene.template Remove<T>(holder);
+                    (void)live->template Remove<T>(holder);
                     break;
                 case RequestResult::Pending:
                     // Left in place, retried next frame.
                     break;
                 case RequestResult::Failed:
-                    request.Status = RequestStatus::Failed;
-                    request.Error = std::move(error);
+                    held->Status = RequestStatus::Failed;
+                    held->Error = std::move(error);
                     break;
                 }
             }
