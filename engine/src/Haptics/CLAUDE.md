@@ -53,8 +53,9 @@ each live instance's clip, time, duration, intensity, fade, flags, world and the
 
 ## The frame
 
-`Application::Frame` calls `Update` once, as `Frame/Haptics`, **after `OnUpdate`** — every play this
-frame (the worlds' systems and `OnUpdate`) has landed. Update:
+`Application::Frame` calls `Update` once, in its **presentation step** (`Frame/Presentation`) **after
+`OnUpdate`** and after the presentation scopes are resolved — every play this frame (the worlds' systems
+and `OnUpdate`) has landed. Update:
 
 1. **Advances** every instance by the frame's unscaled delta. A freshly played instance holds at time
    zero on its first Update, so its clip's start is what sounds first. An instance whose world is
@@ -90,5 +91,11 @@ them before its short duration lapses, so a stalled frame loop lets a pad fall s
 - **Tooling** — `UI::GamepadPanel` shows each pad's mix and instances and plays a host-offered clip
   through `Play`; MCP's `haptics.state` reports the same, so a driven session with a virtual pad
   verifies rumble with no hardware (see [mcp/CLAUDE.md](../../../mcp/CLAUDE.md)).
+
+**Ownership is by world id, not by scene.** An instance's owner is the `WorldInstanceId` in its
+params, judged through the `WorldState` hook, so an open world reads open whether or not anything
+presents it. The scene-owned alternative — a scope dying with its scene, held by the View phase's lease
+and muted when unpresented — is the presentation scope ([../Scene/CLAUDE.md](../Scene/CLAUDE.md),
+"Presentation scopes"), whose states the haptics update already runs after.
 
 The authoring walkthrough is [docs/guides/authoring-rumble-clips.md](../../../docs/guides/authoring-rumble-clips.md).

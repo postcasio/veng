@@ -199,6 +199,13 @@ factor into a per-voice low-pass (`VoiceParams::Occlusion`, `0` an exact bypass)
 trace geometry to decide what occludes — the game supplies the factor from whatever it knows (a ray,
 a portal test). This keeps the engine general while shipping the DSP.
 
+**A voice belongs to no scene.** The code API below takes no owner, so a paused world's voices keep
+playing at their last parameters, an unpresented world is audible, and each world's `AudioSystem`
+advances the device-wide listener and music clock. The per-scene ownership model the engine has for
+this is the scene's presentation scope ([../Scene/CLAUDE.md](../Scene/CLAUDE.md), "Presentation
+scopes"): a scope dying with its scene, held by its View phase's lease, muted when unpresented, and
+resolved once per frame in the application's presentation step.
+
 The system drives `SystemContext::Audio` — the device-wide engine every system reaches, backed by
 the null device when there is no hardware — so it is never inert: a headless scene simply mixes
 through the null device. Each update it also calls `AudioEngine::UpdateManagedVoices` with the

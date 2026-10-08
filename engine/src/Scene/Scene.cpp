@@ -10,6 +10,7 @@
 #include <Veng/Reflection/Serialize.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/EffectPool.h>
+#include <Veng/Scene/PresentationScope.h>
 #include <Veng/Scene/SceneClone.h>
 #include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/Transforms.h>
@@ -154,9 +155,8 @@ namespace Veng
 
     Scene::Scene(TypeRegistry& registry) : m_Registry(&registry) {}
 
-    // Out-of-line so the SceneSimulation, PhysicsWorld, PhysicsPoseResolver and PoseHistory types
-    // are complete at their Unique<T> destruction sites; the scene owns nothing else needing a
-    // hand-written teardown.
+    // Out-of-line so every forward-declared type the scene owns through a Unique is complete at its
+    // destruction site; the scene owns nothing else needing a hand-written teardown.
     Scene::~Scene() = default;
 
     Unique<Scene> Scene::Create(TypeRegistry& registry)
@@ -200,6 +200,19 @@ namespace Veng
         m_EffectPool = std::move(pool);
     }
 
+    void Scene::SetPresentationScope(Unique<PresentationScope> scope)
+    {
+        m_PresentationScope = std::move(scope);
+    }
+
+    void Scene::RenewPresentationScope(const SystemContext& context)
+    {
+        if (m_PresentationScope)
+        {
+            m_PresentationScope->Renew(context.View.has_value());
+        }
+    }
+
     void Scene::StartSimulation(const SystemContext& context)
     {
         if (m_Simulation)
@@ -213,6 +226,7 @@ namespace Veng
         // Stamp every in-place edit this tick makes with the tick number, so the net layer can tell
         // what changed since a connection last acked.
         SetChangeTick(context.Tick);
+        RenewPresentationScope(context);
         if (m_Simulation)
         {
             m_Simulation->Update(*this, delta, context);
@@ -228,6 +242,12 @@ namespace Veng
                                     const SystemContext& context, const bool recordHistory)
     {
         SetChangeTick(context.Tick);
+        // Renewed before any View system runs, by the phase rather than by a system, so a level
+        // listing no audio or haptics system still holds and releases what its Sim systems started.
+        if (phase == SceneSystem::Phase::View)
+        {
+            RenewPresentationScope(context);
+        }
         if (m_Simulation)
         {
             m_Simulation->UpdatePhase(*this, phase, delta, context);

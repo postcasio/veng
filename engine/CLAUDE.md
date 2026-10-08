@@ -404,6 +404,21 @@ path. `World` unset leaves the app to load and drive its own scene (the editor, 
 full control), and the runner is device-free when given no asset manager or context (it drives
 empty-scene worlds without a GPU).
 
+**Every scene the runner holds owns a presentation scope, and device work runs once per frame in one
+place.** `Application` owns a **`PresentationScopes`** registry (`Veng/Scene/PresentationScope.h`,
+`GetPresentationScopes()`) beside its audio device and haptics engine, declared before the runner so it
+outlives every scene the runner destroys, and hands it to the runner (`WorldRunnerInfo::Presentation`,
+required). The runner installs a fresh scope on every scene it holds — at `OpenWorld`, and on the
+replacement scene of `InstallScene` — and the scene owns it (see
+[src/Scene/CLAUDE.md](src/Scene/CLAUDE.md), "Presentation scopes"). `Application::Frame` runs one
+**presentation step** after `OnUpdate`: `PresentationScopes::Resolve()` latches every scope's state
+from the leases the worlds' View phases renewed this frame, then the device engines run their
+once-per-frame updates (the haptics engine's rumble mix), after the states are latched and after every
+system and `OnUpdate` has started what it will this frame, once per frame rather than once per world.
+The registry's **application scope** (`GetApplicationScope()`) is the one
+sanctioned owner of what plays outside any scene — a debug panel's test, an editor audition — and is
+always `Live`.
+
 **Every `SystemContext` a world receives is built by one factory.** `Application` installs it on its
 runner at initialization (`WorldRunner::SetContextFactory`), and the runner builds through it at every
 lifecycle point it drives — a world's start (`OpenWorld`, and `StartWorld` for a world opened
@@ -411,8 +426,9 @@ unstarted: a client join target, an overlay), each Sim step and View pass, and e
 — so every context names its world, carries every service, and stamps the world's own
 role. A caller stepping a world outside those points builds through `WorldRunner::BuildContext` with a
 `SystemContextRequest` (world, scene, phase, tick, alpha, step edges): the reconciliation replay does,
-through `ReplaySimStep`. **Every context names a world** — `BuildContext` asserts a valid id — since
-every simulation the engine drives, the editor's Play included, is a runner world (below); there is
+through `ReplaySimStep`. **Every context names a world** — `BuildContext` asserts a valid id, and that
+the request's scene carries a presentation scope (a scene the runner does not hold presents nothing and
+gets no context) — since every simulation the engine drives, the editor's Play included, is a runner world (below); there is
 no separate drive with input hooks of its own to keep in step. A runner with no factory (a device-free one) drops a started world at `CloseWorld`
 (or a started scene at `InstallScene`) without running `OnStop`, and asserts on any start, stop or
 tick.
@@ -634,7 +650,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 79** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 80** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative, and its prose records why each version moved). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the

@@ -1195,9 +1195,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // The drive reads its alpha off the world it is walking, so hand the scene to a runner and set
     // that world's alpha — the same field the frame's tick leaves behind.
     SystemRegistry systems;
+    PresentationScopes presentation;
     WorldRunner runner({
         .Types = &Types,
         .Systems = &systems,
+        .Presentation = &presentation,
         .Assets = &assets,
         .Context = &Context,
     });
@@ -1273,9 +1275,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     // Two live worlds, each carrying one on-demand capture surface — the ordinary state of a runner
     // holding worlds warm while one of them is on screen.
     SystemRegistry systems;
+    PresentationScopes presentation;
     WorldRunner runner({
         .Types = &Types,
         .Systems = &systems,
+        .Presentation = &presentation,
         .Assets = &assets,
         .Context = &Context,
     });
@@ -1356,9 +1360,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(backdrop.has_value());
 
     SystemRegistry systems;
+    PresentationScopes presentation;
     WorldRunner runner({
         .Types = &Types,
         .Systems = &systems,
+        .Presentation = &presentation,
         .Assets = &assets,
         .Context = &Context,
     });
@@ -1422,9 +1428,11 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(backdrop.has_value());
 
     SystemRegistry systems;
+    PresentationScopes presentation;
     WorldRunner runner({
         .Types = &Types,
         .Systems = &systems,
+        .Presentation = &presentation,
         .Assets = &assets,
         .Context = &Context,
     });

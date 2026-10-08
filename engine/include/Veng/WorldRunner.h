@@ -6,6 +6,7 @@
 #include <Veng/Asset/Level.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Entity.h>
+#include <Veng/Scene/PresentationScope.h>
 #include <Veng/Scene/SceneSystem.h>
 
 namespace Veng
@@ -30,8 +31,9 @@ namespace Veng
 {
     /// @brief Borrowed services a WorldRunner drives its worlds through.
     ///
-    /// Types and Systems are required — every world's scene is created against the type registry and
-    /// its simulation built from the system registry. Assets and Context are optional: a runner given
+    /// Types, Systems and Presentation are required — every world's scene is created against the type
+    /// registry, its simulation built from the system registry, and its presentation scope opened in
+    /// the scope registry. Assets and Context are optional: a runner given
     /// neither is device-free, driving only empty-scene worlds (no cooked-level spawn, no
     /// capture-surface discovery). All borrowed pointers must outlive the runner and every world it
     /// creates.
@@ -41,6 +43,10 @@ namespace Veng
         TypeRegistry* Types = nullptr;
         /// @brief The system registry a world's SceneSimulation is built from.
         SystemRegistry* Systems = nullptr;
+        /// @brief The registry every scene the runner holds opens its presentation scope in.
+        ///
+        /// Each scope borrows it, so it outlives the runner and every scene the runner destroys.
+        PresentationScopes* Presentation = nullptr;
         /// @brief The asset manager a cooked-level world spawns through; null for a device-free runner.
         AssetManager* Assets = nullptr;
         /// @brief The render context capture-surface discovery uses; null for a device-free runner.
@@ -283,7 +289,8 @@ namespace Veng
         /// @brief Opens a world (spawning a level or an empty scene) and returns its handle.
         ///
         /// Mints an id, spawns the world (@p info.Source resident → the level; empty → an empty
-        /// scene), builds its simulation, runs @p info.OnLoaded with the spawned scene, and starts the
+        /// scene), builds its simulation, installs a fresh presentation scope on the scene
+        /// (Scene::SetPresentationScope), runs @p info.OnLoaded with the spawned scene, and starts the
         /// simulation when @p info.StartSimulation, with the factory's Start context naming the new
         /// world. Runtime open is first-class. Returns only the handle, never a viewport or a Scene&.
         ///
@@ -303,9 +310,10 @@ namespace Veng
         /// resolves and closes like any other world, so a tool simulating a scene it built itself (an
         /// editor's play session over a clone of the scene it edits) gets every runner behaviour by
         /// opening it rather than stepping it by hand. Mints an id; when @p info.Systems is engaged,
-        /// builds the scene's SceneSimulation from that set, replacing any the scene carried; then
-        /// runs @p info.OnLoaded and starts the simulation when @p info.StartSimulation, as the other
-        /// overload does. Immediate from inside Tick, as the other overload is.
+        /// builds the scene's SceneSimulation from that set, replacing any the scene carried; installs
+        /// a fresh presentation scope, replacing any the scene carried; then runs @p info.OnLoaded and
+        /// starts the simulation when @p info.StartSimulation, as the other overload does. Immediate
+        /// from inside Tick, as the other overload is.
         /// @param info   How to start the world; Source must be empty.
         /// @param scene  The scene the world adopts, created against this runner's type registry.
         /// @return The opened world's handle.
@@ -358,7 +366,9 @@ namespace Veng
         /// one.
         /// @param request  The world, scene, phase and step the context is for.
         /// @return The context the factory built.
-        /// @pre A context factory is installed, and @p request.World is a valid id.
+        /// @pre A context factory is installed, @p request.World is a valid id, and @p request.Scene
+        ///      carries a presentation scope — every scene the runner holds does, and a context's
+        ///      device services are bound to its scene's scope.
         [[nodiscard]] SystemContext BuildContext(const SystemContextRequest& request) const;
 
         /// @brief Returns the world whose live scene is @p scene, or an invalid id when none is.
@@ -497,8 +507,10 @@ namespace Veng
         /// The client-join seam: world #0 is opened as an empty join target, then the accepted level
         /// loads into a scene the runner takes ownership of here (replacing the empty placeholder), so
         /// the joined scene is a runner-owned world rather than a parallel one. The caller starts it
-        /// once the install lands. A replaced scene whose simulation is started is stopped first
-        /// (OnStop with the world's Stop context, as CloseWorld stops one), then retired and dropped;
+        /// once the install lands. The installed scene gets a fresh presentation scope, replacing any
+        /// it carried. A replaced scene whose simulation is started is stopped first
+        /// (OnStop with the world's Stop context, as CloseWorld stops one), then retired and dropped —
+        /// its presentation scope closing with it;
         /// the world itself stays open, so the closed hook does not fire. The replaced simulation's pause
         /// (its held refs and explicit toggle) is carried onto the installed scene's simulation, so a
         /// pause held across the replacement survives it; a side with no simulation carries nothing.
@@ -623,6 +635,8 @@ namespace Veng
         TypeRegistry* m_Types = nullptr;
         /// @brief The system registry a world's simulation is built from.
         SystemRegistry* m_Systems = nullptr;
+        /// @brief The registry every held scene's presentation scope is opened in.
+        PresentationScopes* m_Presentation = nullptr;
         /// @brief The asset manager cooked-level worlds spawn through; null on a device-free runner.
         AssetManager* m_Assets = nullptr;
         /// @brief The render context capture-surface discovery uses; null on a device-free runner.

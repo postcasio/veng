@@ -22,6 +22,7 @@ namespace Veng
     class PoseHistory;
     class SeatReleaseLog;
     class EffectPool;
+    class PresentationScope;
     struct PhysicsPoseResolver;
     struct SystemContext;
     struct AABB;
@@ -331,6 +332,23 @@ namespace Veng
         /// @brief Returns the installed effect pool, or null when the scene has none.
         [[nodiscard]] EffectPool* GetEffectPool() const { return m_EffectPool.get(); }
 
+        /// @brief Installs (or replaces) the presentation scope this scene's sound and rumble belong to.
+        ///
+        /// Scene-owned so the scope lives exactly as long as the scene: replacing it, detaching it or
+        /// destroying the scene closes it, and that closure ends everything it owns, so no component
+        /// holds a pointer to it. The scene's View phase renews it every frame it runs
+        /// (TickSimulationPhase). The WorldRunner installs one on every scene it holds; a scene it
+        /// does not hold (a preview, an offscreen render's private scene) has none and presents
+        /// nothing. Passing null detaches and closes the held one; Clone() does not copy it.
+        /// @param scope  The scope to own, or null to detach.
+        void SetPresentationScope(Unique<PresentationScope> scope);
+
+        /// @brief Returns the installed presentation scope, or null when the scene has none.
+        [[nodiscard]] PresentationScope* GetPresentationScope() const
+        {
+            return m_PresentationScope.get();
+        }
+
         /// @brief Starts the attached simulation over this scene; a no-op when none is attached.
         ///
         /// Forwards to SceneSimulation::Start(*this, context) — calls OnStart on each system.
@@ -339,8 +357,9 @@ namespace Veng
 
         /// @brief Advances the attached simulation one tick over this scene; a no-op when none.
         ///
-        /// Forwards to SceneSimulation::Update(*this, delta, context) — the Sim-then-View phase pass —
-        /// then clears the seat release log the tick has read.
+        /// Forwards to SceneSimulation::Update(*this, delta, context) — the Sim-then-View phase pass,
+        /// renewing the presentation scope as TickSimulationPhase's View phase does — then clears the
+        /// seat release log the tick has read.
         /// @param delta    Time in seconds since the previous tick.
         /// @param context  Per-tick services forwarded to each system.
         void TickSimulation(f32 delta, const SystemContext& context);
@@ -348,7 +367,9 @@ namespace Veng
         /// @brief Runs one phase of the attached simulation, snapshotting transform history after Sim.
         ///
         /// The fixed-timestep drive calls this once per fixed step for Phase::Sim (advancing the tick)
-        /// and once per frame for Phase::View (carrying the interpolation alpha). After a Sim phase it
+        /// and once per frame for Phase::View (carrying the interpolation alpha). A View phase first
+        /// renews the scene's presentation scope, audible when @p context carries a View, so the lease
+        /// is held by the phase itself rather than by any system a level lists. After a Sim phase it
         /// snapshots the scene's spatial state into the transform-history ring, so the render gather
         /// and View systems can interpolate between the last two ticks, and clears the seat release log
         /// the tick has read. A no-op when no simulation is attached (the snapshot and the clear still
@@ -927,6 +948,10 @@ namespace Veng
         /// @param out  Destination buffer, stamped with a fresh capture then filled.
         void CaptureTransforms(TransformHistoryBuffer& out);
 
+        /// @brief Renews the presentation scope's lease for a View pass; a no-op when none is held.
+        /// @param context  The View pass's context; its View decides whether the renewal is audible.
+        void RenewPresentationScope(const SystemContext& context);
+
         /// @brief Returns an entity's interpolated local matrix from the history ring, or its live one.
         ///
         /// The per-level step of GetInterpolatedWorldTransform: blends the entity's previous/current
@@ -1049,6 +1074,9 @@ namespace Veng
 
         /// @brief The pool this scene's short-lived effects are drawn from, or null when none.
         Unique<EffectPool> m_EffectPool;
+
+        /// @brief The presentation scope this scene's sound and rumble belong to, or null when none.
+        Unique<PresentationScope> m_PresentationScope;
 
         template <class...>
         friend class SceneView;

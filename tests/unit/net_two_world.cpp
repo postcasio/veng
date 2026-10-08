@@ -1112,7 +1112,9 @@ TEST_CASE("A client join loads into the WorldRunner's world #0, not a parallel s
     TypeRegistry clientTypes;
     RegisterBuiltinTypes(clientTypes);
     SystemRegistry clientSystems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &clientTypes, .Systems = &clientSystems});
+    PresentationScopes presentation;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &clientTypes, .Systems = &clientSystems, .Presentation = &presentation});
 
     const WorldInstanceId world0 =
         runner.OpenWorld(WorldOpenInfo{.SimTickRate = 60, .StartSimulation = false});
@@ -1222,7 +1224,9 @@ TEST_CASE("Two worlds in one runner carry distinct NetRoles; authority gates eac
     SystemRegistry systems;
     systems.Register<MovementSystem>(); // the authoritative advancer HasAuthority gates
 
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
 
     // The host-side world→role map the drive consults, filled as each world opens: Server for A,
     // Client for B. A world opens under the role its entry names.
@@ -1727,7 +1731,9 @@ TEST_CASE(
     TypeRegistry clientTypes;
     RegisterBuiltinTypes(clientTypes);
     SystemRegistry clientSystems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &clientTypes, .Systems = &clientSystems});
+    PresentationScopes presentation;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &clientTypes, .Systems = &clientSystems, .Presentation = &presentation});
 
     // A front-end world #0 the client owns independently of any join; it is never a join target, so it
     // must stay untouched — the crash was a second join freeing world #0's scene out from under it.
@@ -3156,7 +3162,9 @@ TEST_CASE("The world directory reaps after the dwell, reuses warm, and never rea
     TypeRegistry types;
     RegisterBuiltinTypes(types);
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
 
     u32 openCount = 0;
     u64 nextLevel = 0x4000;
@@ -3234,7 +3242,9 @@ TEST_CASE("A local standing presence keeps a world warm past a remote join's dep
     TypeRegistry types;
     RegisterBuiltinTypes(types);
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
 
     u32 openCount = 0;
     u64 nextLevel = 0x5000;

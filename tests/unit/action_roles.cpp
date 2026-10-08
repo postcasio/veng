@@ -153,7 +153,9 @@ namespace
         Input Snapshot{nullptr};
         Renderer::ViewportRegistry Viewports;
         InputRouter Router{nullptr, Snapshot, Viewports};
-        WorldRunner Runner{WorldRunnerInfo{.Types = &Types, .Systems = &Systems}};
+        PresentationScopes Presentation;
+        WorldRunner Runner{
+            WorldRunnerInfo{.Types = &Types, .Systems = &Systems, .Presentation = &Presentation}};
         RoleResolver Resolver;
         RoleRecorder Recorder;
         AssetHandle<InputMappingContext> DefaultUi = MakeHandle(0xD1, UiContext());

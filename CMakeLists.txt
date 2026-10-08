@@ -1147,6 +1147,7 @@ if (VENG_BUILD_TESTS)
             tests/unit/scene_clone.cpp
             tests/unit/scene_simulation.cpp
             tests/unit/world_runner.cpp
+            tests/unit/presentation_scope.cpp
             tests/unit/hierarchy.cpp
             tests/unit/scene_broadphase.cpp
             tests/unit/net_replication.cpp

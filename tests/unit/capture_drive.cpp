@@ -52,7 +52,9 @@ TEST_CASE("The capture drive skips a world no view presents, and reports what it
 
     // Device-free: no AssetManager and no Context, so any attempt to drive a capture surface here
     // would fail its own precondition. Completing the pass is the proof the worlds were skipped.
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
 
     const WorldInstanceId dark = OpenCaptureWorld(runner, CaptureRefresh::EveryFrame);
     const WorldInstanceId alsoDark = OpenCaptureWorld(runner, CaptureRefresh::OnDemand);
@@ -109,7 +111,9 @@ TEST_CASE("The capture drive leaves a disabled surface empty in a presented worl
 
     // Device-free again: a presented world's enabled surface would need a device to materialize, so
     // completing the pass proves the disabled one was passed over before anything was built for it.
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
     const WorldInstanceId world = OpenCaptureWorld(runner, CaptureRefresh::EveryFrame);
     Scene& scene = runner.ResolveWorld(world)->GetScene();
     for (auto [entity, surface] : scene.View<CaptureSurface>())

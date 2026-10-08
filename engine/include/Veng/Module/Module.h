@@ -323,10 +323,14 @@ extern "C"
 /// and Application gains per-world request policies while losing BeginSimStep, ReportSimFrame and
 /// GetSimPointer. A module opens worlds, registers bound viewports and subclasses Application, so a
 /// stale module calls a registration the host no longer exports and lays the application out short.
+/// Version 80 gives every scene a presentation scope: Scene grows the owned scope, WorldRunnerInfo
+/// grows the required scope registry, and Application grows the registry it owns. A module is handed
+/// scenes, constructs runner infos and subclasses Application, so a stale module lays all three out
+/// short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 79u
+#define VENG_MODULE_ABI_VERSION 80u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

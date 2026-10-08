@@ -59,7 +59,9 @@ namespace
         Input Snapshot{nullptr};
         SimInputFrame Frame;
         TestSupport::TestServices Services{TestSupport::TestServicesInfo{.Input = &Snapshot}};
-        WorldRunner Runner{WorldRunnerInfo{.Types = &Types, .Systems = &Systems}};
+        WorldRunner Runner{WorldRunnerInfo{.Types = &Types,
+                                           .Systems = &Systems,
+                                           .Presentation = &Services.GetPresentationScopes()}};
         WorldInstanceId World;
         Unique<Scene> DriverScene = Scene::Create(Types);
         SimClock DriverClock{SimClockInfo{.TickRate = 60}};

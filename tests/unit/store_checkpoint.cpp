@@ -98,7 +98,9 @@ TEST_CASE("StoreCheckpoint captures every live world and the flush survives a co
     const TempSlot slot;
     TypeRegistry types = MakeRegistry();
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
     OpenMarkedWorld(runner, 1, 11);
     OpenMarkedWorld(runner, 2, 22);
 
@@ -135,7 +137,9 @@ TEST_CASE("StoreCheckpoint's cadence fires only once the interval accrues, and n
     const TempSlot slot;
     TypeRegistry types = MakeRegistry();
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
     OpenMarkedWorld(runner, 7, 77);
 
     Result<Unique<Store>> store = Store::Open(slot.Dir);
@@ -172,7 +176,9 @@ TEST_CASE("StoreCheckpoint's waited checkpoint commits every family, whatever it
     const TempSlot slot;
     TypeRegistry types = MakeRegistry();
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
     OpenMarkedWorld(runner, 3, 33);
 
     // Every write runs inline, so the background checkpoint's outcome is visible on return.

@@ -364,10 +364,11 @@ TEST_CASE("A device-free WorldRunner opens two empty worlds and ticks both, reso
     SystemRegistry systems;
     systems.Register<TickProbe>();
 
-    // No AssetManager, no Context: the runner is device-free and drives only empty-scene worlds.
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    // No AssetManager, no Context: the runner is device-free and drives only empty-scene worlds.
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
     const WorldInstanceId a = runner.OpenWorld(EmptyWorld());
     const WorldInstanceId b = runner.OpenWorld(EmptyWorld());
@@ -404,8 +405,9 @@ TEST_CASE("An empty world runs exactly its opener-named system set; an empty set
     SystemRegistry systems;
     systems.Register<TickProbe>();
     systems.Register<OtherProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
     runner.SetContextFactory(services.Factory());
 
     // Named set: exactly TickProbe, though the registry also holds OtherProbe.
@@ -458,9 +460,10 @@ TEST_CASE("Closing a world resolves its id to nothing and leaves a peer untouche
     TypeRegistry types;
     SystemRegistry systems;
     systems.Register<TickProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
     const WorldInstanceId a = runner.OpenWorld(EmptyWorld());
     const WorldInstanceId b = runner.OpenWorld(EmptyWorld());
@@ -490,9 +493,10 @@ TEST_CASE("Closing a runner-started world runs its systems' OnStop exactly once"
     TypeRegistry types;
     SystemRegistry systems;
     systems.Register<StopProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
     const WorldInstanceId a = runner.OpenWorld(StopWorld());
     const Scene* scene = &runner.ResolveWorld(a)->GetScene();
@@ -520,8 +524,9 @@ TEST_CASE("A world opened over a handed scene starts, ticks and stops as any wor
     systems.Register<StartProbe>();
     systems.Register<StopProbe>();
     systems.Register<OtherProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
     runner.SetContextFactory(services.Factory());
 
     // A scene its caller built, carrying an entity and a simulation of its own that the opener's
@@ -566,9 +571,10 @@ TEST_CASE("Closing an externally-started world runs its systems' OnStop exactly 
     TypeRegistry types;
     SystemRegistry systems;
     systems.Register<StopProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
 
     // The join/travel shape: open a world deferred, install a scene carrying a simulation, then start
@@ -602,9 +608,10 @@ TEST_CASE("A world stopped before closing runs OnStop once, not twice")
     TypeRegistry types;
     SystemRegistry systems;
     systems.Register<StopProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
     const WorldInstanceId a = runner.OpenWorld(StopWorld());
     Scene& scene = runner.ResolveWorld(a)->GetScene();
@@ -629,9 +636,10 @@ TEST_CASE("Installing over a started scene stops it once, under the world's id")
     TypeRegistry types;
     SystemRegistry systems;
     systems.Register<StopProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
     const WorldInstanceId a = runner.OpenWorld(StopWorld());
     const Scene* replaced = &runner.ResolveWorld(a)->GetScene();
@@ -654,9 +662,10 @@ TEST_CASE("A stopped world holds still, and a later install or close runs no sec
     SystemRegistry systems;
     systems.Register<StopProbe>();
     systems.Register<TickProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
     const WorldInstanceId closing =
         runner.OpenWorld(WorldOf({SystemIdOf<StopProbe>(), SystemIdOf<TickProbe>()}));
@@ -691,9 +700,10 @@ TEST_CASE("Closing every world stops each once, newest first, and tells the clos
     TypeRegistry types;
     SystemRegistry systems;
     systems.Register<StopProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
 
     // Each call records the id and whether it still resolved: a hook fired before the erase would
@@ -727,9 +737,10 @@ TEST_CASE("A runner with no context factory closes a started world without runni
     TypeRegistry types;
     SystemRegistry systems;
     systems.Register<StopProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
     const WorldInstanceId a = runner.OpenWorld(StopWorld());
     const Scene* scene = &runner.ResolveWorld(a)->GetScene();
@@ -753,9 +764,10 @@ TEST_CASE("A paused world's sim does not advance while a peer's does")
     TypeRegistry types;
     SystemRegistry systems;
     systems.Register<TickProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
     const WorldInstanceId a = runner.OpenWorld(EmptyWorld());
     const WorldInstanceId b = runner.OpenWorld(EmptyWorld());
@@ -791,9 +803,10 @@ TEST_CASE("Two pause scopes and the toggle hold one pause the scene sees, releas
     TypeRegistry types;
     SystemRegistry systems;
     systems.Register<TickProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
     const WorldInstanceId a = runner.OpenWorld(EmptyWorld());
     const Scene& scene = runner.ResolveWorld(a)->GetScene();
@@ -826,9 +839,10 @@ TEST_CASE("A pause scope outliving its world, or opened on one with no simulatio
     TypeRegistry types;
     SystemRegistry systems;
     systems.Register<TickProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
     const WorldInstanceId closing = runner.OpenWorld(EmptyWorld());
     const WorldInstanceId peer = runner.OpenWorld(EmptyWorld());
@@ -855,9 +869,10 @@ TEST_CASE("A paused world runs neither its Sim nor its View systems")
     SystemRegistry systems;
     systems.Register<TickProbe>();
     systems.Register<ViewProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
     const WorldInstanceId a =
         runner.OpenWorld(WorldOf({SystemIdOf<TickProbe>(), SystemIdOf<ViewProbe>()}));
@@ -875,9 +890,10 @@ TEST_CASE("A pause held across InstallScene survives it and releases onto the in
     TypeRegistry types;
     SystemRegistry systems;
     systems.Register<TickProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
     const WorldInstanceId a = runner.OpenWorld(EmptyWorld());
 
@@ -906,9 +922,10 @@ TEST_CASE("A system closing its own world from its update stops it after the wal
     systems.Register<CloseProbe>();
     systems.Register<ViewProbe>();
     systems.Register<StopProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
     CloseProbe::Runner = &runner;
 
@@ -943,9 +960,10 @@ TEST_CASE("A world closed from an earlier world's update takes no phase at all t
     SystemRegistry systems;
     systems.Register<CloseProbe>();
     systems.Register<ViewProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
     CloseProbe::Runner = &runner;
 
@@ -979,9 +997,10 @@ TEST_CASE("A world opened from inside a tick is live at once and first ticks the
     SystemRegistry systems;
     systems.Register<OpenProbe>();
     systems.Register<TickProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
     OpenProbe::Runner = &runner;
     OpenProbe::Open = [] { return WorldOf({SystemIdOf<TickProbe>()}); };
@@ -1021,9 +1040,10 @@ TEST_CASE("An open that reallocates the world vector leaves the opening world's 
     systems.Register<OpenProbe>();
     systems.Register<TickProbe>();
     systems.Register<ViewProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
     OpenProbe::Runner = &runner;
     OpenProbe::Open = [] { return WorldOf({SystemIdOf<TickProbe>()}); };
@@ -1062,9 +1082,10 @@ TEST_CASE("Two closes of one world within a tick close it once")
     SystemRegistry systems;
     systems.Register<CloseProbe>();
     systems.Register<StopProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
     CloseProbe::Runner = &runner;
     CloseProbe::Calls = 2;
@@ -1090,9 +1111,10 @@ TEST_CASE("A close issued from a system's OnStop is drained in its turn")
     SystemRegistry systems;
     systems.Register<CloseProbe>();
     systems.Register<StopProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
     CloseProbe::Runner = &runner;
     StopProbe::Runner = &runner;
@@ -1124,9 +1146,10 @@ TEST_CASE("The scene-retiring hook names each scene the runner destroys, while i
     TypeRegistry types;
     SystemRegistry systems;
     systems.Register<CloseProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
     CloseProbe::Runner = &runner;
 
@@ -1180,9 +1203,10 @@ TEST_CASE("A close issued outside a tick applies before the call returns")
     TypeRegistry types;
     SystemRegistry systems;
     systems.Register<StopProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
     const WorldInstanceId a = runner.OpenWorld(WorldOf({SystemIdOf<StopProbe>()}));
     const Scene* scene = &runner.ResolveWorld(a)->GetScene();
@@ -1202,9 +1226,10 @@ TEST_CASE("OpenWorld's MaxTicksPerFrame caps the Sim steps a world runs in one f
     TypeRegistry types;
     SystemRegistry systems;
     systems.Register<TickProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
+
     runner.SetContextFactory(services.Factory());
     WorldOpenInfo info = EmptyWorld();
     info.MaxTicksPerFrame = 2;
@@ -1247,11 +1272,13 @@ TEST_CASE(
 
     // Five steps (ticks 1..5) against two steps over the same final ticks (4, 5), both half a step
     // into the next tick.
-    WorldRunner fiveRunner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    WorldRunner fiveRunner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
     const auto [five, fiveEntity] = open(fiveRunner);
     fiveRunner.Tick(Frame(Step * 5.5f));
 
-    WorldRunner twoRunner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    WorldRunner twoRunner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
     const auto [two, twoEntity] = open(twoRunner);
     twoRunner.ResolveWorld(two)->Clock.SetTick(3);
     twoRunner.Tick(Frame(Step * 2.5f));
@@ -1287,8 +1314,9 @@ TEST_CASE("An EveryNth system runs on the ticks its period selects, however fram
     TypeRegistry types;
     SystemRegistry systems;
     systems.Register<PolicyProbe<0>>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
     runner.SetContextFactory(services.Factory());
     const WorldInstanceId world = runner.OpenWorld(WorldOf({SystemIdOf<PolicyProbe<0>>()}));
     constexpr f32 Step = 1.0f / 60.0f;
@@ -1326,8 +1354,9 @@ TEST_CASE("Frame-keyed systems run once per frame and are handed the time since 
     SystemRegistry systems;
     systems.Register<PolicyProbe<1>>();
     systems.Register<PolicyProbe<2>>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
     runner.SetContextFactory(services.Factory());
     const WorldInstanceId world =
         runner.OpenWorld(WorldOf({SystemIdOf<PolicyProbe<1>>(), SystemIdOf<PolicyProbe<2>>()}));
@@ -1422,8 +1451,9 @@ TEST_CASE("A world's start context names the world, whether it starts at open or
     TypeRegistry types;
     SystemRegistry systems;
     systems.Register<WorldProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
     runner.SetContextFactory(services.Factory());
 
     const WorldInstanceId atOpen = runner.OpenWorld(WorldOf({SystemIdOf<WorldProbe>()}));
@@ -1444,8 +1474,9 @@ TEST_CASE("The runner builds every context through its factory, each naming the 
     TypeRegistry types;
     SystemRegistry systems;
     systems.Register<TickProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
 
     std::map<SystemContextPhase, int> counts;
     vector<WorldInstanceId> named;
@@ -1480,8 +1511,9 @@ TEST_CASE("A replayed step runs under the world holding its scene, at that world
     TypeRegistry types;
     SystemRegistry systems;
     systems.Register<WorldProbe>();
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
     runner.SetContextFactory(services.Factory());
 
     WorldOpenInfo first = WorldOf({SystemIdOf<WorldProbe>()});

@@ -41,6 +41,7 @@
 #include <Veng/Render/GraphicsSchema.h>
 #include <Veng/Render/GraphicsSettings.h>
 #include <Veng/Scene/LocalControl.h>
+#include <Veng/Scene/PresentationScope.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SimClock.h>
 #include <Veng/Scene/SystemRegistry.h>
@@ -757,6 +758,22 @@ namespace Veng
         /// host too, where there is simply no device to write; pad state is read through GetInput.
         /// @pre Run() has initialized the engine — the haptics engine exists only inside Run().
         [[nodiscard]] Haptics::HapticsEngine& GetHaptics() const;
+
+        /// @brief Returns the registry of presentation scopes: what each scene's sound and rumble does
+        ///        this frame.
+        ///
+        /// Every scene the world runner holds owns a scope here, renewed by its View phase; once per
+        /// frame, after OnUpdate, the presentation step resolves every scope's state and then runs each
+        /// device engine's once-per-frame update. Its application scope (GetApplicationScope) is the
+        /// owner of what application code plays outside any scene. Exists for the application's whole
+        /// life and outlives every scene the runner destroys.
+        [[nodiscard]] PresentationScopes& GetPresentationScopes() { return m_PresentationScopes; }
+
+        /// @brief Returns the registry of presentation scopes, read-only.
+        [[nodiscard]] const PresentationScopes& GetPresentationScopes() const
+        {
+            return m_PresentationScopes;
+        }
 
         /// @brief Returns the render context.
         [[nodiscard]] Renderer::Context& GetRenderContext() { return m_RenderContext; }
@@ -2327,6 +2344,12 @@ namespace Veng
         /// the asset manager and context are still live.
         AssetHandle<Level> m_WorldLevel;
 
+        /// @brief The presentation scopes of every scene the runner holds, plus the application scope.
+        ///
+        /// Declared before m_WorldRunner so it outlives every scene the runner destroys: each scene's
+        /// scope closes into it as the scene goes.
+        PresentationScopes m_PresentationScopes;
+
         /// @brief The sim-domain scheduler owning and ticking every open world.
         ///
         /// Constructed in Initialize over the borrowed registries, asset manager, and context. Declared
@@ -2363,7 +2386,8 @@ namespace Veng
         /// @brief The haptics engine, mixing every playing rumble clip into the pads' motors.
         ///
         /// Its instances hold clip handles, so it is declared after the asset manager and destructs
-        /// before it. Constructed in Initialize and updated once per frame after OnUpdate.
+        /// before it. Constructed in Initialize and updated once per frame in the presentation step
+        /// after OnUpdate.
         Unique<Haptics::HapticsEngine> m_Haptics;
 
         /// @brief The video recorder, recording the presented frame through the platform's encoder.

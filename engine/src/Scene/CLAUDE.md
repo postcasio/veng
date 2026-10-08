@@ -302,6 +302,46 @@ updates it each frame after advancing the sprites, so the level must run `Flipbo
   an effect copies what it needs at spawn. `Retire` ends one early. A lifetime of 0 or less lets the
   sprite alone decide, so a looping sprite with no lifetime lives until recycled or retired.
 
+## Presentation scopes — what a scene's sound and rumble does this frame
+
+**A scene owns its presentation scope the way it owns its effect pool.** A
+**`PresentationScope`** (`Veng/Scene/PresentationScope.h`) is a `Unique` handle the scene holds
+(`Scene::SetPresentationScope` / `GetPresentationScope`): installing one replaces and closes the old,
+passing null detaches and closes it, destroying the scene closes it, and `Clone()` does not copy it.
+Its **`PresentationScopeId`** is a `u64` minted by the **`PresentationScopes`** registry and never
+reused, the tag a device engine files the output a scene owns under. Nothing in the scene points at the
+scope — no component holds it — so the order `~Scene` destroys its members in is irrelevant to it: the
+scope's closure is what ends everything it owns. The `WorldRunner` installs a fresh scope on every
+scene it holds (at `OpenWorld`, and on `InstallScene`'s replacement, the replaced scene's scope closing
+with it); a scene it does not hold — an editor preview, a capture's private scene — has none, presents
+nothing, and gets no `SystemContext` (`WorldRunner::BuildContext` asserts the scope). A test's runner
+takes its registry from the `TestServices` bundle (`GetPresentationScopes()`), declared ahead of the
+runner since every scope borrows the registry until it closes.
+
+**The View phase holds the scope by lease.** `TickSimulationPhase` renews the scope at the top of every
+`Phase::View` pass, before any View system runs, audible when the pass's `SystemContext::View` is set
+— so the lease belongs to the phase, and a level listing no audio or haptics system still holds and
+releases its scope. Once per frame, after every world's View pass and `OnUpdate`, the application's
+presentation step calls `PresentationScopes::Resolve`, which latches each open scope's
+**`PresentationState`** and clears the renewals, so a lease is exactly one frame:
+
+| state | latched when | the contract for output a device files under the scope |
+|---|---|---|
+| `Live` | renewed, audibly | advances, and is heard or felt |
+| `Muted` | renewed, not audibly | advances in time and produces nothing (zero gain, zero rumble), so a scene that becomes presented resumes in step |
+| `Held` | not renewed (and from `Open` until the first renewal) | frozen — no cursor or time advance, nothing heard or felt — resuming exactly where it stopped |
+| `Closed` | the handle dropped, or an id never handed out | stopped and released at the device's next update |
+
+What follows with no further code: a **paused** world runs no View pass, so its scope is `Held`; a
+dedicated server runs no View phase, so every scope it holds is `Held`; a world **closed mid-tick** has
+its scope closed by the deferred drain, before that frame's `Resolve`; and an open world **no viewport
+presents** has an empty `View` and is `Muted`. Presentation is exactly what the context factory resolves
+`View` from (`FindPresentingViewport`, then a self-driven `Presented` viewport), so a viewport that is
+registered and retains the world's scene counts as presenting it whether or not anything is on screen
+— an editor document's Play viewport in a hidden dock tab keeps its last pushed scene and its world
+stays `Live`. The registry's one **application scope** (`GetApplicationScope()`) is always `Live`; it
+owns what plays outside any scene, and nothing a scene's system starts belongs in it.
+
 ## Bounds & broadphase inputs
 
 A `Scene` reduces to a world-space bound on demand: `SceneBounds(scene)`

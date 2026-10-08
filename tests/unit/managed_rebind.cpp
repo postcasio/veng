@@ -111,8 +111,9 @@ TEST_CASE("IsWorldPresentable gates on resolve, started sim, residency, and a fi
     TypeRegistry types;
     RegisterBuiltinTypes(types);
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
     runner.SetContextFactory(services.Factory());
 
     SUBCASE("An unresolved (unminted) world is never presentable")
@@ -164,8 +165,9 @@ TEST_CASE("A consumer present-ready gate composes onto the engine's readiness ra
     TypeRegistry types;
     RegisterBuiltinTypes(types);
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
     runner.SetContextFactory(services.Factory());
 
     const WorldInstanceId world = runner.OpenWorld(StartedEmptyWorld());
@@ -219,8 +221,9 @@ TEST_CASE("A two-world runner carries overlay components, and GuiOverlay::Detach
     TypeRegistry types;
     RegisterBuiltinTypes(types);
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
     TestSupport::TestServices services;
+    WorldRunner runner(WorldRunnerInfo{
+        .Types = &types, .Systems = &systems, .Presentation = &services.GetPresentationScopes()});
     runner.SetContextFactory(services.Factory());
 
     // Two worlds, each with a seat and an overlay-carrying entity — the departed/destination pair a

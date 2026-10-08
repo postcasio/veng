@@ -511,7 +511,9 @@ namespace
         TypeRegistry Types = MakeRegistry();
         SystemRegistry Systems;
         TestSupport::TestServices Services;
-        WorldRunner Runner{WorldRunnerInfo{.Types = &Types, .Systems = &Systems}};
+        WorldRunner Runner{WorldRunnerInfo{.Types = &Types,
+                                           .Systems = &Systems,
+                                           .Presentation = &Services.GetPresentationScopes()}};
         WorldInstanceId Id;
         bool Latched = false;
 

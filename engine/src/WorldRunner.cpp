@@ -11,6 +11,7 @@
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/InputMappingSystem.h>
+#include <Veng/Scene/PresentationScope.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Time.h>
@@ -71,11 +72,12 @@ namespace Veng
     // ---- WorldRunner -------------------------------------------------------------------------------
 
     WorldRunner::WorldRunner(const WorldRunnerInfo& info)
-        : m_Types(info.Types), m_Systems(info.Systems), m_Assets(info.Assets),
-          m_Context(info.Context)
+        : m_Types(info.Types), m_Systems(info.Systems), m_Presentation(info.Presentation),
+          m_Assets(info.Assets), m_Context(info.Context)
     {
         VE_ASSERT(m_Types != nullptr, "WorldRunner requires a TypeRegistry");
         VE_ASSERT(m_Systems != nullptr, "WorldRunner requires a SystemRegistry");
+        VE_ASSERT(m_Presentation != nullptr, "WorldRunner requires a PresentationScopes registry");
         if (m_Context != nullptr && m_Assets != nullptr)
         {
             m_CapturePool = CreateRef<Renderer::SceneCapturePool>();
@@ -153,6 +155,8 @@ namespace Veng
     WorldInstanceId WorldRunner::AdoptWorld(Unique<World> world, const WorldOpenInfo& info)
     {
         world->LiveScene = world->OwnedScene.get();
+        // Before the load hook and the start, so every context built for the scene finds its scope.
+        world->LiveScene->SetPresentationScope(m_Presentation->Open());
 
         const WorldInstanceId id = world->Id;
         Scene& scene = *world->LiveScene;
@@ -238,6 +242,9 @@ namespace Veng
     {
         VE_ASSERT(m_ContextFactory != nullptr, "WorldRunner::BuildContext: no context factory");
         VE_ASSERT(request.World.IsValid(), "WorldRunner::BuildContext: the context names no world");
+        VE_ASSERT(request.Scene.GetPresentationScope() != nullptr,
+                  "WorldRunner::BuildContext: world {}'s scene carries no presentation scope",
+                  request.World.Value);
         return m_ContextFactory(request);
     }
 
@@ -393,6 +400,8 @@ namespace Veng
     {
         World* resolved = ResolveWorld(world);
         VE_ASSERT(resolved != nullptr, "WorldRunner::InstallScene: unminted world");
+        VE_ASSERT(scene != nullptr, "WorldRunner::InstallScene: no scene to install");
+        scene->SetPresentationScope(m_Presentation->Open());
         if (resolved->OwnedScene != nullptr)
         {
             StopScene(world, *resolved->OwnedScene);
@@ -405,7 +414,7 @@ namespace Veng
         // pause (an overlay over a world a client join replaces) still holds it, and releases here.
         SceneSimulation* const previous =
             resolved->OwnedScene != nullptr ? resolved->OwnedScene->GetSimulation() : nullptr;
-        SceneSimulation* const next = scene != nullptr ? scene->GetSimulation() : nullptr;
+        SceneSimulation* const next = scene->GetSimulation();
         if (previous != nullptr && next != nullptr)
         {
             next->AdoptPause(*previous);

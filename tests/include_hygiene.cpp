@@ -177,6 +177,7 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
 #include <Veng/Scene/InputMappingSystem.h>
+#include <Veng/Scene/PresentationScope.h>
 #include <Veng/Scene/Requests.h>
 #include <Veng/Scene/Resolve.h>
 #include <Veng/Scene/Scene.h>

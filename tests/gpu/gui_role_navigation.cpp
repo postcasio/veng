@@ -83,7 +83,8 @@ namespace
             : GpuContext(context), Assets(assets),
               Router(nullptr, Snapshot, context.GetViewportRegistry()),
               Consumer(Router, Snapshot, nullptr, Viewports),
-              Runner(WorldRunnerInfo{.Types = &WorldTypes, .Systems = &Systems})
+              Runner(WorldRunnerInfo{
+                  .Types = &WorldTypes, .Systems = &Systems, .Presentation = &Presentation})
         {
             RegisterBuiltinTypes(WorldTypes);
             Router.RegisterConsumer(Consumer);
@@ -145,6 +146,7 @@ namespace
         Gui::GuiConsumer Consumer;
         TypeRegistry WorldTypes;
         SystemRegistry Systems;
+        PresentationScopes Presentation;
         WorldRunner Runner;
         RoleResolver Resolver;
         Ref<InputMappingContext> UiMap = MakeUiMap();

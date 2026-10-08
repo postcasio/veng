@@ -334,6 +334,7 @@ namespace Veng
         m_WorldRunner = CreateUnique<WorldRunner>(WorldRunnerInfo{
             .Types = &m_TypeRegistry,
             .Systems = &m_SystemRegistry,
+            .Presentation = &m_PresentationScopes,
             .Assets = m_AssetManager.get(),
             .Context = &m_RenderContext,
         });
@@ -3178,10 +3179,14 @@ namespace Veng
             OnUpdate(delta);
         }
 
-        // Every play this frame has landed, from the worlds' systems and from OnUpdate: advance and
-        // mix the rumble, silenced while the pads read neutral for want of window focus.
+        // The presentation step: every scene's View phase has renewed its scope and every play this
+        // frame has landed, from the worlds' systems and from OnUpdate. Latch each scope's state, then
+        // run every once-per-frame device advance here and nowhere else — never inside a system's
+        // call, never once per world. The rumble is silenced while the pads read neutral for want of
+        // window focus.
         {
-            VE_PROFILE_SCOPE("Frame/Haptics");
+            VE_PROFILE_SCOPE("Frame/Presentation");
+            m_PresentationScopes.Resolve();
             const bool padsLive =
                 !m_Window || m_Window->IsFocused() || m_InputRouter->IsBackgroundInput();
             m_Haptics->Update(

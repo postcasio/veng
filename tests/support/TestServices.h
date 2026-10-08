@@ -10,6 +10,7 @@
 #include <Veng/Localization/Localization.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Renderer/Context.h>
+#include <Veng/Scene/PresentationScope.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Task/TaskSystem.h>
 
@@ -31,7 +32,10 @@ namespace Veng::TestSupport
     /// A system under test that touches a service reaches a working one: an asset manager over an
     /// uninitialized render context and a one-worker task system, a headless input snapshot (all
     /// zeros), an audio engine over the null device, a haptics engine driving no pads, and the inert
-    /// localization that resolves every key to itself. Construct one per case; it is not copyable.
+    /// localization that resolves every key to itself. It also owns the presentation-scope registry a
+    /// test's WorldRunner opens its scenes' scopes in (WorldRunnerInfo::Presentation), so a bundle
+    /// declared ahead of the runner outlives every scene holding one. Construct one per case; it is
+    /// not copyable.
     class TestServices
     {
     public:
@@ -90,6 +94,9 @@ namespace Veng::TestSupport
             return [this](const SystemContextRequest& request) { return Make(request); };
         }
 
+        /// @brief Returns the presentation-scope registry a test's runner opens its scenes' scopes in.
+        [[nodiscard]] PresentationScopes& GetPresentationScopes() { return m_Presentation; }
+
         /// @brief Returns the asset manager.
         [[nodiscard]] AssetManager& GetAssets() { return m_Assets; }
 
@@ -103,6 +110,9 @@ namespace Veng::TestSupport
         [[nodiscard]] Localization::Localization& GetLocalization() { return m_Localization; }
 
     private:
+        /// @brief The presentation-scope registry; first, so it outlives every service that may
+        /// reference a scope.
+        PresentationScopes m_Presentation;
         /// @brief The render context the asset manager is bound to; never initialized.
         Renderer::Context m_Context;
         /// @brief The task system the asset manager and the context's Tasks run on.

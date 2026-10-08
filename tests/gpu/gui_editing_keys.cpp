@@ -100,7 +100,8 @@ namespace
                   .Role = Renderer::ViewportRole::Offscreen,
               })),
               Consumer(Router, Snapshot, nullptr, Viewports),
-              Runner(WorldRunnerInfo{.Types = &types, .Systems = &Systems})
+              Runner(WorldRunnerInfo{
+                  .Types = &types, .Systems = &Systems, .Presentation = &Presentation})
         {
             Viewports.push_back(View.get());
             Router.RegisterConsumer(Consumer);
@@ -158,6 +159,7 @@ namespace
         Unique<Renderer::Viewport> View;
         Gui::GuiConsumer Consumer;
         SystemRegistry Systems;
+        PresentationScopes Presentation;
         WorldRunner Runner;
         RoleResolver Resolver;
         Ref<InputMappingContext> UiMap = MakeUiMap();

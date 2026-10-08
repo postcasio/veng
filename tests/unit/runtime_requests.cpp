@@ -95,7 +95,9 @@ TEST_CASE("An ExitRequest is handled and removed the same frame")
     TypeRegistry types;
     RegisterRequests(types);
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
     const WorldInstanceId world = OpenEmpty(runner);
 
     bool exited = false;
@@ -118,7 +120,9 @@ TEST_CASE("A failed request holds Status + Error for exactly one frame, then ret
     TypeRegistry types;
     RegisterRequests(types);
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
     const WorldInstanceId world = OpenEmpty(runner);
 
     int hostCalls = 0;
@@ -152,7 +156,9 @@ TEST_CASE("A pending request is retried and can be withdrawn before it is acted 
     TypeRegistry types;
     RegisterRequests(types);
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
     const WorldInstanceId world = OpenEmpty(runner);
 
     int connectCalls = 0;
@@ -188,7 +194,9 @@ TEST_CASE("Two requests in two worlds drain in world-id order")
     TypeRegistry types;
     RegisterRequests(types);
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
 
     // World a is opened first, so it holds the lower id; the drain visits worlds in id order.
     const WorldInstanceId a = OpenEmpty(runner);
@@ -217,7 +225,9 @@ TEST_CASE("The fixed type order lets a same-frame stop-net + host re-host rather
     TypeRegistry types;
     RegisterRequests(types);
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
     const WorldInstanceId world = OpenEmpty(runner);
 
     bool netActive = true; // a net mode is already active this frame
@@ -275,7 +285,9 @@ TEST_CASE("A FocusRequest drain reconciles the engine-owned per-seat focus token
     TypeRegistry types;
     RegisterRequests(types);
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
     const WorldInstanceId world = OpenEmpty(runner);
 
     // The reconcile is device-free: a headless router (no window, no ICD) over a bare token list.
@@ -335,7 +347,9 @@ TEST_CASE("A FocusRequest with a null seat resolves to the router's cursor seat"
     TypeRegistry types;
     RegisterRequests(types);
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
     const WorldInstanceId world = OpenEmpty(runner);
 
     Input input(nullptr);
@@ -363,7 +377,9 @@ TEST_CASE("A FocusRequest releases its capture after the cursor carried it to an
     TypeRegistry types;
     RegisterRequests(types);
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
     const WorldInstanceId first = OpenEmpty(runner);
     const WorldInstanceId second = OpenEmpty(runner);
 
@@ -403,7 +419,9 @@ TEST_CASE("Closing a world drops the request-driven focus token it held")
     TypeRegistry types;
     RegisterRequests(types);
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
     const WorldInstanceId closing = OpenEmpty(runner);
     const WorldInstanceId peer = OpenEmpty(runner);
 
@@ -442,7 +460,9 @@ TEST_CASE("A host request in a client-tier world fails without reaching server s
     TypeRegistry types;
     RegisterRequests(types);
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
     const WorldInstanceId clientWorld = OpenEmpty(runner);
 
     const bool serverTouched = false;
@@ -470,7 +490,9 @@ TEST_CASE("A PauseRequest pauses its own world the same frame through one engine
     TypeRegistry types;
     RegisterRequests(types);
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
     const WorldInstanceId world = OpenSimulated(runner);
     const WorldInstanceId peer = OpenSimulated(runner);
 
@@ -511,7 +533,9 @@ TEST_CASE("A PauseRequest on a client-tier world fails and is held one frame")
     TypeRegistry types;
     RegisterRequests(types);
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
     const WorldInstanceId world = OpenSimulated(runner);
 
     PauseRequestScopes scopes;
@@ -535,7 +559,9 @@ TEST_CASE("Closing a world drops its request-driven pause")
     TypeRegistry types;
     RegisterRequests(types);
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
     const WorldInstanceId closing = OpenSimulated(runner);
     const WorldInstanceId peer = OpenSimulated(runner);
 
@@ -574,7 +600,9 @@ TEST_CASE("A sandboxed world's travel fails, its focus reconciles, and its exit 
     TypeRegistry types;
     RegisterRequests(types);
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
     const WorldInstanceId world = OpenEmpty(runner);
 
     PolicyMap policies;
@@ -650,7 +678,9 @@ TEST_CASE(
     TypeRegistry types;
     RegisterRequests(types);
     SystemRegistry systems;
-    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    PresentationScopes presentation;
+    WorldRunner runner(
+        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
     const WorldInstanceId handled = OpenEmpty(runner);
     const WorldInstanceId plain = OpenEmpty(runner);
 

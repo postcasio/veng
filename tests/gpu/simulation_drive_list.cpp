@@ -37,6 +37,8 @@
 #include <Veng/Scene/SystemRegistry.h>
 #include <Veng/Task/TaskSystem.h>
 
+#include "support/TestServices.h"
+
 using namespace Veng;
 
 namespace
@@ -191,19 +193,19 @@ TEST_CASE("Opening a world ticks it, closing it stops, and an unopened scene nev
     DriveApp app(HeadlessInfo(), types, systems);
 
     // A scene never opened as a world the engine must never auto-tick (the opt-in), kept alive here.
+    // The engine builds contexts only for its worlds' scenes, so the test's own services start it.
+    TestSupport::TestServices services;
     Unique<Scene> unopened;
 
     app.InitFn = [&](DriveApp& a)
     {
         a.AddWorld({SystemIdOf<ProbeSystem<1>>()});
 
-        // Started under the opened world's id, since every context names a world: being started is
-        // not what makes the engine tick a scene, being one of its worlds is.
+        // Being started is not what makes the engine tick a scene, being one of its worlds is.
         unopened = Scene::Create(a.GetTypeRegistry());
         unopened->SetSimulation(CreateUnique<SceneSimulation>(
             a.GetSystemRegistry(), std::vector<SystemId>{SystemIdOf<ProbeSystem<2>>()}));
-        unopened->StartSimulation(a.GetWorldRunner().BuildContext(SystemContextRequest{
-            .World = a.SimIds[0], .Scene = *unopened, .Phase = SystemContextPhase::Start}));
+        unopened->StartSimulation(services.Make());
     };
 
     int atClose = 0;
