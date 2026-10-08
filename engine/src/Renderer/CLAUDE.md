@@ -1201,8 +1201,8 @@ gather-based depth of field on a deferred pipeline, and the engine accepts it.
 ### IBL and the sky
 
 **Image-based lighting is a split-sum IBL battery driven by a per-scene environment map.** A
-resident `AssetHandle<EnvironmentMap>` rides the per-frame `SceneView` (set by the app through the
-`Viewport`'s `ViewState`, like `Exposure`); a renderer-owned **`EnvironmentIbl`** helper
+resident `AssetHandle<EnvironmentMap>` rides the per-frame `SceneView` (resolved by the renderer
+from the scene's `Sky` component each `Execute`, never pushed by a consumer); a renderer-owned **`EnvironmentIbl`** helper
 (`engine/src/Renderer/EnvironmentIbl.{h,cpp}`) generates the maps it derives — a **radiance
 cubemap** (the skybox source), a **diffuse irradiance cubemap**, a **GGX-prefiltered specular
 cubemap** (roughness mip chain), and the environment-independent **BRDF integration LUT** — all

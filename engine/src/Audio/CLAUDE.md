@@ -392,7 +392,7 @@ source/one-shot/spatial/music), and — for a spatial voice — the world positi
 engine holds. It takes no lock and mutates nothing: a seam for tooling, not for the mix.
 
 The MCP surface exposes it as **`audio.list_voices`** (`veng/mcp`, `src/AudioTools.cpp`): a read-only
-tool reporting the presented world's voices plus the music director's current track, so a driven
+tool reporting every voice on the device (a voice carries no world) plus the music director's current track, so a driven
 session confirms "the right things are playing" without a speaker. It reaches the engine through
 `McpHost::Audio` and runs at the frame pump point like the other engine tools; see
 [mcp/CLAUDE.md](../../../mcp/CLAUDE.md). The engine's own consumption exemplars wire the whole

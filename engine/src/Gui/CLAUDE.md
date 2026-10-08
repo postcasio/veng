@@ -1139,13 +1139,10 @@ capture's output onto the sibling `MeshRenderer`'s material each frame so a mirr
 monitor is authored data. Its `Refresh` is `EveryFrame` or `OnDemand` (render once, then
 idle until `MarkDirty`).
 
-**The locality is per mesh *asset*, not per entity.** The bound target is the first
-`MaterialInstance` of the mesh the sibling `MeshRenderer` names — a **cooked, shared** asset, so two
-entities drawing one mesh asset resolve to one instance and one texture slot: the last driven wins
-and both sample that single probe. N independently captured surfaces therefore need N mesh assets (or
-N material instances), and the engine **warns once per run** when one drive pass binds two captures
-onto the same instance rather than resolving it silently. A per-entity material override is
-deliberately *not* built — that is a change to the material model, not to the capture.
+**The locality is per entity.** The drive binds into a per-entity clone of the sibling
+`MeshRenderer`'s first material, installed as that entity's `InstanceMaterials` override on its
+first drive, so two entities drawing one mesh asset each sample only their own capture and every
+uncaptured sharer keeps the asset's instance — see [../Renderer/CLAUDE.md](../Renderer/CLAUDE.md).
 
 **A capture also publishes where it was rendered from.** `CenterSlot` (empty = off, beside
 `TextureSlot`/`SamplerSlot`) names a `Param` field the drive fills with `vec4(probe position,
