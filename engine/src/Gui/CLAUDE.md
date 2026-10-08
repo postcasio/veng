@@ -1139,11 +1139,12 @@ overlay HUD binding are drivers, their levels' `systems` arrays carrying no bind
 
 The **third** family member is **`CaptureSurface`** (`Veng/Renderer/CaptureSurface.h`), the
 render-to-texture sibling: a reflected component that puts a `SceneCapture` on an entity,
-discovered and driven by the engine (built on first sight, fed to the `RegisterCapture` drive-list
-against its lifetime, self-unregistering when the component/entity/scene goes), rebinding the
-capture's output onto the sibling `MeshRenderer`'s material each frame so a mirror / probe /
-monitor is authored data. Its `Refresh` is `EveryFrame` or `OnDemand` (render once, then
-idle until `MarkDirty`).
+discovered and driven by the viewport that presents its scene — the compositor's capture pre-pass,
+the counterpart of `Viewport::RenderSurfaces` — (built on first sight, fed to the `RegisterCapture`
+drive-list against its lifetime, self-unregistering when the component/entity/scene goes), rebinding
+the capture's output onto the sibling `MeshRenderer`'s material each frame so a mirror / probe /
+monitor is authored data, in any viewport showing it. Its `Refresh` is `EveryFrame` or `OnDemand`
+(render once, then idle until `MarkDirty`, or until its viewport skips a frame).
 
 **The locality is per entity.** The drive binds into a per-entity clone of the sibling
 `MeshRenderer`'s first material, installed as that entity's `InstanceMaterials` override on its
@@ -1178,17 +1179,16 @@ correcting a sample declares both slots or neither. `PackCaptureOrientation` is 
 device-free beside the component.
 
 **The capture is placed at the pose its entity is *drawn* at, not the one it was simulated at.** The
-drive resolves the position through `Scene::GetInterpolatedWorldTransform` at the world's own
-`LastAlpha` and hands that alpha to `Drive` as well, so `CaptureView::Position` (the face cameras and
+drive resolves the position through `Scene::GetInterpolatedWorldTransform` at the alpha its
+presenting viewport draws the scene at and hands that alpha to `Drive` as well, so `CaptureView::Position` (the face cameras and
 the published centre) and `CaptureView::Alpha` (the content the face renders draw) sit on one pose —
 the same pose the renderer draws the mesh the capture feeds at. This is the `CameraRigSystem` rule
 applied to a probe, and for the same reason: a capture resolved against the un-interpolated pose sits
 a partial tick from its own carrier, so everything rigidly attached to that carrier is sampled from
 the wrong place by an offset that **reopens and collapses once per tick** as the alpha sweeps — read
 as vibration rather than lag, growing with the carrier's speed and turn rate and with the mount
-radius. See [../Scene/CLAUDE.md](../Scene/CLAUDE.md) for the camera-rig statement of it. Because the
-drive walks every world and each ticks on its own clock, the alpha is read per world, not once per
-frame.
+radius. See [../Scene/CLAUDE.md](../Scene/CLAUDE.md) for the camera-rig statement of it. Because each
+world ticks on its own clock, the alpha is the presenting viewport's, not one per frame.
 
 **Teardown is the exact inverse of the bind.** `CaptureSurface::Unbind` — the `GuiOverlay::Detach`
 counterpart — writes the unbound state back onto the material the last drive bound: an invalid handle

@@ -1367,7 +1367,8 @@ renderer-owned `SceneBroadphase` (`Veng/Scene/SceneBroadphase.h`) holds a boundi
 hierarchy whose **leaves are per-submesh** — one leaf per `SubMesh`, on its local-space `AABB`
 folded over the submesh's index range at load (no cooked-format change). Each `Execute` calls
 `SceneBroadphase::Sync`: **only on a frame the scene's spatial version moved** (or a still-loading
-mesh became resident) it re-gathers the candidates (the pure `GatherMeshes` pass,
+mesh became resident, or the scene is another instance — told apart by `Scene::GetInstanceSerial`, never
+by address, which a scene built after another's destruction reuses) it re-gathers the candidates (the pure `GatherMeshes` pass,
 `Veng/Scene/Visibility.h`, over every resident `(Transform, MeshRenderer)` entity — world matrix +
 world-space `AABB` + resident mesh) and brings the tree current: a **refit** when the candidates are
 the same entities and meshes as before (only their bounds moved), a rebuild when the set changed or
@@ -2039,16 +2040,21 @@ the set-0 bindless array — so it binds onto a material through `Material::SetT
 nothing. `ViewportCompositor` drives the registered captures ahead of every viewport — within the
 view budget it can leave those viewports, round-robin across frames when they do not all fit — so a
 material sampling one reads this frame's result. `CaptureSurface` (the reflected component, see
-[../Gui/CLAUDE.md](../Gui/CLAUDE.md)) is the authoring front end.
+[../Gui/CLAUDE.md](../Gui/CLAUDE.md)) is the authoring front end, and **the viewport that presents
+its scene is what drives it**, exactly as a `GuiSurface` is driven by the viewport that renders it: a
+mirror authored in a level works in any viewport showing that level, an editor's scene viewport
+included, with no simulation host involved.
 
 **The probe binds into a per-entity clone of the sibling material, not the shared mesh instance.**
 The drive writes its output — the octahedral map handle and the `ProbeCenter` validity flag a
 consumer gates the reflection on — into `materials[0]` of the sibling `MeshRenderer`. That instance
 belongs to the **mesh asset**, shared by every entity drawing that mesh, so writing it directly
 would make every sharer sample this probe (the classic case: two ships of one model, only the
-player's cockpit should reflect). So `WorldRunner::DriveCaptureSurfaces`, on a captured entity's
-first drive, **clones the sibling `materials[0]` (`MaterialInstance::Clone`) and installs it as that
-entity's `MeshRenderer::InstanceMaterials` override** — the per-entity material seam the render
+player's cockpit should reflect). So the component's scene drive (`CaptureSurface::Drive` taking the
+scene mutable — the `RenderSurfaces` precedent, which hands drivers the presented scene mutable the
+same way), on a captured entity's first drive, **clones the sibling `materials[0]`
+(`MaterialInstance::Clone`) and installs it as that entity's `MeshRenderer::InstanceMaterials`
+override** — the per-entity material seam the render
 gather honours (`GatherMeshes` → `VisibleMesh::Materials`, see [../Scene/CLAUDE.md](../Scene/CLAUDE.md)
 and [../Asset/CLAUDE.md](../Asset/CLAUDE.md)). The probe then writes only the clone: the capturing
 entity draws the reflective copy and every other sharer keeps the untouched asset instance, sampling
@@ -2071,34 +2077,45 @@ discontinuity yields a distance at which nothing is. Off, none of the distance p
 atlas, no distance map, no extra pipelines or slots). Nothing in the engine consumes it; a consuming
 material walks it (see the parallax-correction note under "Deliberately not here").
 
-**A capture in a world nothing presents is not driven.** A capture feeds a material sampled by a mesh
-drawn in some view, so a world no view shows has nowhere its capture could be seen — and worlds are
-flat peers of which several are live at once in the ordinary case, so driving every live world's
-captures multiplies the per-frame view budget by the number of worlds held warm. `WorldRunner`'s
-per-frame drive therefore asks presentation first (`Application::IsWorldPresented` — a managed or
-bound viewport's binding, a viewport a consumer drives itself, or an in-flight rebind's destination
-for its whole wait, so a make-before-break swap presents a warm probe) and skips an unpresented world
-whole, re-arming its already-materialized captures (`CaptureSurface::MarkDirty`) so a world that
-becomes visible again rebuilds its maps instead of resuming from what it saw before it went dark.
+**A capture is driven by the viewport that will render its scene, and by nothing else.** A capture
+feeds a material sampled by a mesh drawn in some view, so a scene no view shows has nowhere its
+capture could be seen — and worlds are flat peers of which several are live at once in the ordinary
+case, so driving every live scene's captures would multiply the per-frame view budget by the number
+of worlds held warm. So `ViewportCompositor::RenderRegistered` opens with a **capture pre-pass**: for
+each registered viewport, in registration order, that **will render this frame**
+(`Viewport::WillRender` — enabled, holding a scene, and for an on-demand viewport pushed a fresh view,
+which is exactly `Render`'s early-outs), it drives the `CaptureSurface`s of the scene it presents.
+**Each scene is driven once per frame, by its first such viewport** (`ClaimCaptureScenes`,
+`CaptureDrive.h`, the device-free rule), placed at that viewport's interpolation alpha — the pose that
+viewport draws the carrier at. A viewport the compositor will not render — disabled, or an on-demand
+one whose owner stopped pushing (a hidden editor tab) — drives nothing. **A present-on-ready rebind's
+destination is warmed too**: while a managed viewport waits on a destination, `ManagedViewportSet`
+hands it the destination scene (`Viewport::SetPendingScene`) and the pre-pass drives that scene's
+captures as well, so a make-before-break swap presents a probe already rendered. **A gap re-arms**:
+the runtime records the `Context` frame serial it was last driven at, and a drive that finds a frame
+passed since (`CaptureDriveSkippedFrame`) restarts the refresh first, as `MarkDirty` does — so an
+on-demand capture whose scene went unrendered rebuilds its map rather than resuming from what it saw
+before it went dark.
 
 **A capture is built at most one per frame, and a released one is reused.** A `SceneCapture` owns a
 whole face renderer, and a world presented for the first time can arrive with several capture
-surfaces at once — so the world drive builds at most `WorldCaptureDriveInfo::MaxNewCaptures` (one)
-new capture per pass, leaving a surface past the budget unmaterialized and undriven until a later
-frame. A capture whose surface is destroyed — its entity, its component, or its whole world closing
-— goes to the runner's `SceneCapturePool` (`WorldRunner::GetCapturePool`) instead of being freed:
+surfaces at once — so the pre-pass builds at most `ViewportCompositor::MaxNewCapturesPerFrame` (one)
+new capture per frame, leaving a surface past the budget unmaterialized and undriven until a later
+frame. A capture whose surface is destroyed — its entity, its component, or its whole scene going —
+goes to the compositor's `SceneCapturePool` (`ViewportCompositor::GetCapturePool`) instead of being freed:
 detached from the drive-list and reset (`SceneCapture::ResetForReuse` — the pushed view, the
 round-robin, the first-render atlas clears, and the scene its face renderer last gathered, through
 `SceneRenderer::ReleaseScene`), it is handed to the next surface asking for an identical
 configuration (`SceneCapture::IsConfiguredFor`: face resolution, renderer settings, distance and cube
 paths) before any build is considered, and that reuse costs no budget. The pool holds a bounded
 number (`SceneCapturePool::DefaultCapacity`) and drops the longest-held past it. A surface driven
-directly through `CaptureSurface::Drive`, outside the world drive, still builds its own on first use
-and frees it when it goes.
+directly through `CaptureSurface::Drive`, outside the pre-pass, still builds its own on first use
+and frees it when it goes. `ViewportCompositor::GetCaptureSurfaceDrive` reports what the last
+pre-pass drove, built, reused, deferred and released.
 
 **A surface can be switched off without losing its settings.** `CaptureSurface::Enabled` false makes
-the world drive release the surface's runtime — the capture to the pool, the material slots it bound
-cleared — and build nothing for it while it stays off (`WorldCaptureDriveResult::SurfacesDisabled`
+the pre-pass release the surface's runtime — the capture to the pool, the material slots it bound
+cleared — and build nothing for it while it stays off (`CaptureSurfaceDriveResult::SurfacesDisabled`
 counts them); `IsRefreshing` reads false. Re-enabling it materializes a capture on a later pass, from
 the pool when one matches. It is the switch for a probe wanted only some of the time — one that
 matters only while a viewer is inside what it captures — so its owner flips one flag instead of

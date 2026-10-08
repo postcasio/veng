@@ -18,6 +18,11 @@
 //  - teardown: a capture built and registered against a component unregisters itself from the
 //    drive-list when the component is removed, its entity destroyed, or its scene dropped — and the
 //    material it fed stops sampling the capture rather than freezing on a released bindless slot;
+//  - the viewport drive: a compositor drives the captures of the scenes its viewports will render —
+//    with no runner or application behind it — placing each at its viewport's alpha, binding it into
+//    a per-entity clone of the mesh's material, driving a scene shown twice once a frame, warming a
+//    pending destination, building one capture a frame, reusing a released one from its pool, and
+//    restarting an on-demand refresh after a frame its viewport did not render;
 //  - slot ownership: a surface built, driven and dropped leaves the bindless registry's free counts
 //    where it found them, so a consumer building and dropping scenes over a run holds a steady count
 //    rather than walking each array's fixed capacity down to its fatal exhaustion.
@@ -49,9 +54,6 @@
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
-#include <Veng/Scene/SystemRegistry.h>
-#include <Veng/World.h>
-#include <Veng/WorldRunner.h>
 
 #include <cmath>
 #include <utility>
@@ -1152,8 +1154,65 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(excluded.g > excluded.r + 0.2f);
 }
 
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "capture surface: a viewport on a bare compositor drives its scene's capture into "
+    "the entity's own material")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> probe =
+        assets.LoadSync<MaterialInstance>(ProbeInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> backdrop =
+        assets.LoadSync<MaterialInstance>(BackdropInstance);
+    REQUIRE(probe.has_value());
+    REQUIRE(backdrop.has_value());
+
+    // The editor's shape: an Offscreen viewport registered on a compositor, with no runner and no
+    // application behind it, presenting a scene that authors a capture surface.
+    ViewportCompositor compositor(Context);
+    const Unique<Viewport> viewport = MakeViewport(Context, assets);
+    compositor.RegisterViewport(*viewport);
+
+    vector<Ref<Mesh>> meshes;
+    Entity surfaceEntity;
+    const Unique<Scene> scene =
+        BuildCaptureScene(Context, assets, Types, *probe, *backdrop, CaptureRefresh::EveryFrame,
+                          meshes, surfaceEntity);
+    const AssetHandle<MaterialInstance> assetMaterial = SurfaceMaterial(*scene, surfaceEntity);
+    const u32 assetRevision = assetMaterial.Get()->GetRevision();
+
+    vector<u8> output;
+    for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
+    {
+        viewport->SetViewState({.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f});
+        Context.ImmediateCommands([&](CommandBuffer& cmd) { compositor.RenderRegistered(cmd); });
+        output = viewport->GetOutput()->GetImage()->Download();
+    }
+    CHECK(compositor.GetCaptureSurfaceDrive().SurfacesDriven == 1);
+    REQUIRE(scene->Get<CaptureSurface>(surfaceEntity).GetCapture() != nullptr);
+
+    // The capture binds into a clone installed on the entity; the mesh asset's own instance, which
+    // every other entity drawing the mesh shares, is never written.
+    const auto* renderer = std::as_const(*scene).TryGet<MeshRenderer>(surfaceEntity);
+    REQUIRE(renderer != nullptr);
+    REQUIRE_FALSE(renderer->InstanceMaterials.empty());
+    CHECK(renderer->InstanceMaterials[0].Get() != assetMaterial.Get());
+    CHECK(assetMaterial.Get()->GetRevision() == assetRevision);
+
+    // The surface shows the backdrop below it, which the camera cannot see directly — the colour
+    // reached the frame only through the capture the compositor built, drove and bound.
+    const vec4 center = SampleBlock(output, Extent, vec2(0.5f, 0.5f));
+    CHECK(center.g > 0.6f);
+    CHECK(center.g > center.r + 0.3f);
+    CHECK(center.g > center.b + 0.3f);
+}
+
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "capture surface: the world drive centres the probe on the drawn pose")
+                  "capture surface: the drive centres the probe on the pose its viewport draws")
 {
     RegisterBuiltinTypes(Types);
 
@@ -1167,98 +1226,69 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(parallax.has_value());
     REQUIRE(backdrop.has_value());
 
+    ViewportCompositor compositor(Context);
+    const Unique<Viewport> viewport = MakeViewport(Context, assets);
+    compositor.RegisterViewport(*viewport);
+
     vector<Ref<Mesh>> meshes;
     Entity surfaceEntity;
-    Unique<Scene> built = BuildCaptureScene(Context, assets, Types, *parallax, *backdrop,
-                                            CaptureRefresh::EveryFrame, meshes, surfaceEntity);
+    const Unique<Scene> scene =
+        BuildCaptureScene(Context, assets, Types, *parallax, *backdrop, CaptureRefresh::EveryFrame,
+                          meshes, surfaceEntity);
 
     // Mount the capture-bearing entity on a carrier that moved a whole tick, so the pose it is drawn
     // at depends on the alpha. The travel is along the camera's own axis, which keeps the surface
     // centred in frame at every alpha — the sample point has to stay on the surface for the frame to
     // read its material at all. The constant y keeps the published centre's green non-zero
     // throughout, so a frame that read a centre is distinguishable from one that read nothing.
-    const Entity carrier = built->CreateEntity();
-    built->Add<Transform>(carrier).Position = vec3(0.0f, 0.5f, 0.0f);
-    built->SetParent(surfaceEntity, carrier);
+    const Entity carrier = scene->CreateEntity();
+    scene->Add<Transform>(carrier).Position = vec3(0.0f, 0.5f, 0.0f);
+    scene->SetParent(surfaceEntity, carrier);
 
-    built->SnapshotTransformHistory();
-    built->Get<Transform>(carrier).Position = vec3(0.0f, 0.5f, 1.0f);
-    built->SnapshotTransformHistory();
-    REQUIRE(built->HasTransformInterpolation());
+    scene->SnapshotTransformHistory();
+    scene->Get<Transform>(carrier).Position = vec3(0.0f, 0.5f, 1.0f);
+    scene->SnapshotTransformHistory();
+    REQUIRE(scene->HasTransformInterpolation());
 
-    auto& capture = built->Get<CaptureSurface>(surfaceEntity);
-    capture.CenterSlot = "Center";
-    const AssetHandle<MaterialInstance> material = SurfaceMaterial(*built, surfaceEntity);
-    // Display the published centre as radiance rather than the captured colour.
-    material.Get()->SetParam("Display", vec4(1.0f, 0.0f, 0.0f, 0.0f));
+    scene->Get<CaptureSurface>(surfaceEntity).CenterSlot = "Center";
+    // Display the published centre as radiance rather than the captured colour; the clone the drive
+    // installs carries the parameter over.
+    SurfaceMaterial(*scene, surfaceEntity).Get()->SetParam("Display", vec4(1.0f, 0.0f, 0.0f, 0.0f));
 
-    // The drive reads its alpha off the world it is walking, so hand the scene to a runner and set
-    // that world's alpha — the same field the frame's tick leaves behind.
-    SystemRegistry systems;
-    PresentationScopes presentation;
-    WorldRunner runner({
-        .Types = &Types,
-        .Systems = &systems,
-        .Presentation = &presentation,
-        .Assets = &assets,
-        .Context = &Context,
-    });
-    // Run state does not gate capture driving, so the world needs no started simulation (which would
-    // in turn need a start context this case has no use for) — only presentation does.
-    const WorldInstanceId world = runner.OpenWorld(WorldOpenInfo{.StartSimulation = false});
-    Scene& scene = runner.InstallScene(world, std::move(built));
-    const Unique<Viewport> viewport = MakeViewport(Context, assets);
-
-    // Drives every capture surface in the runner's worlds at the world's alpha, then renders one
-    // frame; the surface fills the frame centre, so the sample *is* the centre the drive published.
+    // The capture is placed at the alpha its viewport draws the scene at; the surface fills the frame
+    // centre, so the sample *is* the centre the drive published.
     const auto DriveAndRender = [&](const f32 alpha)
     {
-        runner.ResolveWorld(world)->LastAlpha = alpha;
-        SceneCapture* driven = nullptr;
-        runner.DriveCaptureSurfaces({
-            .Register = [&](SceneCapture& c) { driven = &c; },
-            .IsPresented = [](WorldInstanceId) { return true; },
-        });
-        if (driven == nullptr)
-        {
-            driven = scene.Get<CaptureSurface>(surfaceEntity).GetCapture();
-        }
-        viewport->SetViewState({.World = &scene, .Camera = FrontCamera(), .Delta = 0.016f});
-        Context.ImmediateCommands(
-            [&](CommandBuffer& cmd)
-            {
-                driven->Render(cmd);
-                viewport->Render(cmd);
-            });
+        viewport->SetViewState(
+            {.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f, .Alpha = alpha});
+        Context.ImmediateCommands([&](CommandBuffer& cmd) { compositor.RenderRegistered(cmd); });
         const vector<u8> output = viewport->GetOutput()->GetImage()->Download();
         return SampleBlock(output, Extent, vec2(0.5f, 0.5f));
     };
 
-    // Alpha 1 is the pose the carrier ended the tick at, which is what the un-interpolated world
-    // matrix also reads — so the published centre carries the carrier's whole tick of travel.
+    // Alpha 1 is the pose the carrier ended the tick at, so the published centre carries the
+    // carrier's whole tick of travel.
     const vec4 atOne = DriveAndRender(1.0f);
     CHECK(atOne.g > 0.1f);
     CHECK(atOne.b > 0.1f);
 
-    // Alpha 0 is the pose it started the tick at: the same entity, the same frame, a centre with no
-    // travel in it at all. That the two differ is the property the drive exists to provide — a probe
-    // pinned to the un-interpolated pose would publish the alpha-1 centre on every frame regardless,
-    // which is what makes it disagree with the mesh it feeds by a fraction of a tick's motion.
+    // Alpha 0 is the pose it started the tick at: a centre with no travel in it at all. A probe
+    // pinned to the un-interpolated pose would publish the alpha-1 centre on every frame regardless.
     const vec4 atZero = DriveAndRender(0.0f);
     CHECK(atZero.g > 0.1f);
     CHECK(atZero.b < 0.05f);
     CHECK(atOne.b > atZero.b + 0.1f);
 
     // Midway lies between the two, so the centre tracks the alpha continuously rather than snapping
-    // between snapshots — which is why a wrong alpha reads as a per-frame wobble and not as a jump.
+    // between snapshots.
     const vec4 atHalf = DriveAndRender(0.5f);
     CHECK(atHalf.b > atZero.b + 0.02f);
     CHECK(atHalf.b < atOne.b - 0.02f);
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "capture surface: only a presented world's captures are driven, and a world that "
-                  "goes dark is re-armed")
+                  "capture surface: each rendered scene is driven once a frame, a pending "
+                  "destination is warmed, and an unrendered scene builds nothing")
 {
     RegisterBuiltinTypes(Types);
 
@@ -1272,148 +1302,78 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(probe.has_value());
     REQUIRE(backdrop.has_value());
 
-    // Two live worlds, each carrying one on-demand capture surface — the ordinary state of a runner
-    // holding worlds warm while one of them is on screen.
-    SystemRegistry systems;
-    PresentationScopes presentation;
-    WorldRunner runner({
-        .Types = &Types,
-        .Systems = &systems,
-        .Presentation = &presentation,
-        .Assets = &assets,
-        .Context = &Context,
-    });
+    ViewportCompositor compositor(Context);
+    const Unique<Viewport> first = MakeViewport(Context, assets);
+    const Unique<Viewport> second = MakeViewport(Context, assets);
+    const Unique<Viewport> hidden = MakeViewport(Context, assets);
+    compositor.RegisterViewport(*first);
+    compositor.RegisterViewport(*second);
+    compositor.RegisterViewport(*hidden);
 
+    // One scene both visible viewports show, one a disabled viewport shows, and one the first
+    // viewport is waiting to swap to.
     vector<Ref<Mesh>> meshes;
-    Entity firstEntity;
-    Entity secondEntity;
-    Unique<Scene> firstScene = BuildCaptureScene(Context, assets, Types, *probe, *backdrop,
-                                                 CaptureRefresh::OnDemand, meshes, firstEntity);
-    Unique<Scene> secondScene = BuildCaptureScene(Context, assets, Types, *probe, *backdrop,
-                                                  CaptureRefresh::OnDemand, meshes, secondEntity);
-
-    const WorldInstanceId first = runner.OpenWorld(WorldOpenInfo{.StartSimulation = false});
-    runner.InstallScene(first, std::move(firstScene));
-    const WorldInstanceId second = runner.OpenWorld(WorldOpenInfo{.StartSimulation = false});
-    runner.InstallScene(second, std::move(secondScene));
-
-    const auto SurfaceOf = [&](const WorldInstanceId world, const Entity entity) -> const auto&
-    { return runner.ResolveWorld(world)->GetScene().Get<CaptureSurface>(entity); };
-
-    WorldInstanceId presented = first;
-    u32 registered = 0;
-    const auto Drive = [&]
+    Entity sharedEntity;
+    Entity hiddenEntity;
+    Entity pendingEntity;
+    const Unique<Scene> shared = BuildCaptureScene(Context, assets, Types, *probe, *backdrop,
+                                                   CaptureRefresh::OnDemand, meshes, sharedEntity);
+    const Unique<Scene> unrendered = BuildCaptureScene(
+        Context, assets, Types, *probe, *backdrop, CaptureRefresh::OnDemand, meshes, hiddenEntity);
+    const Unique<Scene> pending = BuildCaptureScene(
+        Context, assets, Types, *probe, *backdrop, CaptureRefresh::OnDemand, meshes, pendingEntity);
+    for (Scene* scene : {shared.get(), unrendered.get(), pending.get()})
     {
-        return runner.DriveCaptureSurfaces({
-            .Register = [&registered](SceneCapture&) { ++registered; },
-            .IsPresented = [&presented](const WorldInstanceId world) { return world == presented; },
-        });
-    };
-
-    // Only the presented world is walked: its surface materializes and registers a capture, while the
-    // world nothing shows is skipped whole — no capture built, so no face render and no view slot.
-    const WorldCaptureDriveResult firstPass = Drive();
-    CHECK(firstPass.WorldsDriven == 1);
-    CHECK(firstPass.WorldsSkipped == 1);
-    CHECK(firstPass.SurfacesDriven == 1);
-    CHECK(registered == 1);
-    CHECK(SurfaceOf(first, firstEntity).GetCapture() != nullptr);
-    CHECK(SurfaceOf(second, secondEntity).GetCapture() == nullptr);
-    // The unpresented capture is not quietly settled either: it still owes its first refresh, so
-    // presenting that world renders a map rather than leaving one blank.
-    CHECK(SurfaceOf(second, secondEntity).IsRefreshing());
-
-    // Settle the presented world's on-demand refresh: one face per driven frame.
-    for (u32 face = 1; face < SceneCapture::FaceCount; ++face)
-    {
-        Drive();
+        for (auto [entity, surface] : scene->View<CaptureSurface>())
+        {
+            surface.Resolution = 32;
+        }
     }
-    CHECK_FALSE(SurfaceOf(first, firstEntity).IsRefreshing());
+    hidden->SetEnabled(false);
+    first->SetPendingScene(pending.get(), 0.0f);
 
-    // Presentation moves to the other world. The world that went dark drives nothing, and its settled
-    // capture is re-armed — so when it is presented again it rebuilds its map instead of resuming from
-    // the scene as it stood before it went out of view.
-    presented = second;
-    const WorldCaptureDriveResult secondPass = Drive();
-    CHECK(secondPass.WorldsDriven == 1);
-    CHECK(secondPass.WorldsSkipped == 1);
-    CHECK(secondPass.SurfacesDriven == 1);
-    CHECK(secondPass.SurfacesReArmed == 1);
-    CHECK(SurfaceOf(first, firstEntity).IsRefreshing());
-    CHECK(SurfaceOf(second, secondEntity).GetCapture() != nullptr);
-    CHECK(registered == 2);
-}
-
-TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "capture surface: a pass builds one capture, and a second surface waits a pass")
-{
-    RegisterBuiltinTypes(Types);
-
-    AssetManager assets(Context, Tasks, Types);
-    REQUIRE(assets.Mount(CookCapturePack()).has_value());
-
-    const AssetResult<AssetHandle<MaterialInstance>> probe =
-        assets.LoadSync<MaterialInstance>(ProbeInstance);
-    const AssetResult<AssetHandle<MaterialInstance>> backdrop =
-        assets.LoadSync<MaterialInstance>(BackdropInstance);
-    REQUIRE(probe.has_value());
-    REQUIRE(backdrop.has_value());
-
-    SystemRegistry systems;
-    PresentationScopes presentation;
-    WorldRunner runner({
-        .Types = &Types,
-        .Systems = &systems,
-        .Presentation = &presentation,
-        .Assets = &assets,
-        .Context = &Context,
-    });
-
-    // Two surfaces arriving in one frame — the shape of a world presented for the first time.
-    vector<Ref<Mesh>> meshes;
-    Entity firstEntity;
-    Entity secondEntity;
-    const WorldInstanceId first = runner.OpenWorld(WorldOpenInfo{.StartSimulation = false});
-    runner.InstallScene(first, BuildCaptureScene(Context, assets, Types, *probe, *backdrop,
-                                                 CaptureRefresh::EveryFrame, meshes, firstEntity));
-    const WorldInstanceId second = runner.OpenWorld(WorldOpenInfo{.StartSimulation = false});
-    runner.InstallScene(second,
-                        BuildCaptureScene(Context, assets, Types, *probe, *backdrop,
-                                          CaptureRefresh::EveryFrame, meshes, secondEntity));
-
-    u32 registered = 0;
-    const auto Drive = [&]
+    const auto RenderFrame = [&]
     {
-        return runner.DriveCaptureSurfaces({
-            .Register = [&registered](SceneCapture&) { ++registered; },
-            .IsPresented = [](WorldInstanceId) { return true; },
-        });
+        first->SetViewState({.World = shared.get(), .Camera = FrontCamera(), .Delta = 0.016f});
+        second->SetViewState({.World = shared.get(), .Camera = FrontCamera(), .Delta = 0.016f});
+        hidden->SetViewState({.World = unrendered.get(), .Camera = FrontCamera(), .Delta = 0.016f});
+        Context.ImmediateCommands([&](CommandBuffer& cmd) { compositor.RenderRegistered(cmd); });
+        return compositor.GetCaptureSurfaceDrive();
     };
-    const auto CaptureOf = [&](const WorldInstanceId world, const Entity entity)
-    { return runner.ResolveWorld(world)->GetScene().Get<CaptureSurface>(entity).GetCapture(); };
+    const auto& sharedSurface = shared->Get<CaptureSurface>(sharedEntity);
 
-    // The first pass builds one capture and leaves the other surface unmaterialized and undriven.
-    const WorldCaptureDriveResult firstPass = Drive();
-    CHECK(firstPass.CapturesBuilt == 1);
-    CHECK(firstPass.SurfacesDeferred == 1);
-    CHECK(firstPass.SurfacesDriven == 1);
-    CHECK(registered == 1);
-    CHECK((CaptureOf(first, firstEntity) == nullptr) !=
-          (CaptureOf(second, secondEntity) == nullptr));
+    // Two surfaces arrive at once, and one frame builds one: the shared scene's, claimed first.
+    const CaptureSurfaceDriveResult arrival = RenderFrame();
+    CHECK(arrival.ScenesDriven == 2);
+    CHECK(arrival.CapturesBuilt == 1);
+    CHECK(arrival.SurfacesDeferred == 1);
+    CHECK(arrival.SurfacesDriven == 1);
+    CHECK(sharedSurface.GetCapture() != nullptr);
+    CHECK(pending->Get<CaptureSurface>(pendingEntity).GetCapture() == nullptr);
 
-    // The next pass builds the second, and drives both.
-    const WorldCaptureDriveResult secondPass = Drive();
-    CHECK(secondPass.CapturesBuilt == 1);
-    CHECK(secondPass.SurfacesDeferred == 0);
-    CHECK(secondPass.SurfacesDriven == 2);
-    CHECK(registered == 2);
-    CHECK(CaptureOf(first, firstEntity) != nullptr);
-    CHECK(CaptureOf(second, secondEntity) != nullptr);
+    // The next frame builds the destination's, so the swap would present a warm map.
+    const CaptureSurfaceDriveResult next = RenderFrame();
+    CHECK(next.CapturesBuilt == 1);
+    CHECK(next.SurfacesDriven == 2);
+    CHECK(pending->Get<CaptureSurface>(pendingEntity).GetCapture() != nullptr);
+
+    // Shown by two viewports, the shared capture is pushed once a frame: its on-demand refresh is
+    // still owed a face after FaceCount - 1 frames, and settles on the FaceCount-th.
+    for (u32 frame = 2; frame < SceneCapture::FaceCount - 1; ++frame)
+    {
+        RenderFrame();
+    }
+    CHECK(sharedSurface.IsRefreshing());
+    RenderFrame();
+    CHECK_FALSE(sharedSurface.IsRefreshing());
+
+    // A scene only a viewport that does not render shows has nowhere its capture could be seen.
+    CHECK(unrendered->Get<CaptureSurface>(hiddenEntity).GetCapture() == nullptr);
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
-                  "capture surface: a released capture is reused by a surface of the same "
-                  "configuration, and only by one")
+                  "capture surface: a released capture returns to the compositor's pool and is "
+                  "reused by one surface of its configuration")
 {
     RegisterBuiltinTypes(Types);
 
@@ -1427,64 +1387,128 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     REQUIRE(probe.has_value());
     REQUIRE(backdrop.has_value());
 
-    SystemRegistry systems;
-    PresentationScopes presentation;
-    WorldRunner runner({
-        .Types = &Types,
-        .Systems = &systems,
-        .Presentation = &presentation,
-        .Assets = &assets,
-        .Context = &Context,
-    });
-    REQUIRE(runner.GetCapturePool() != nullptr);
+    ViewportCompositor compositor(Context);
+    const Unique<Viewport> left = MakeViewport(Context, assets);
+    const Unique<Viewport> right = MakeViewport(Context, assets);
+    compositor.RegisterViewport(*left);
+    compositor.RegisterViewport(*right);
+    const SceneCapturePool& pool = compositor.GetCapturePool();
 
-    const auto Drive = [&]
+    const auto RenderFrame = [&]
     {
-        return runner.DriveCaptureSurfaces({
-            .Register = [](SceneCapture&) {},
-            .IsPresented = [](WorldInstanceId) { return true; },
-        });
+        Context.ImmediateCommands([&](CommandBuffer& cmd) { compositor.RenderRegistered(cmd); });
+        return compositor.GetCaptureSurfaceDrive();
     };
 
     vector<Ref<Mesh>> meshes;
     Entity departingEntity;
-    const WorldInstanceId departing = runner.OpenWorld(WorldOpenInfo{.StartSimulation = false});
-    runner.InstallScene(departing,
-                        BuildCaptureScene(Context, assets, Types, *probe, *backdrop,
-                                          CaptureRefresh::EveryFrame, meshes, departingEntity));
-    REQUIRE(Drive().CapturesBuilt == 1);
-    const SceneCapture* const released = runner.ResolveWorld(departing)
-                                             ->GetScene()
-                                             .Get<CaptureSurface>(departingEntity)
-                                             .GetCapture();
+    Unique<Scene> departing =
+        BuildCaptureScene(Context, assets, Types, *probe, *backdrop, CaptureRefresh::EveryFrame,
+                          meshes, departingEntity);
+    left->SetViewState({.World = departing.get(), .Camera = FrontCamera(), .Delta = 0.016f});
+    REQUIRE(RenderFrame().CapturesBuilt == 1);
+    const SceneCapture* const released =
+        departing->Get<CaptureSurface>(departingEntity).GetCapture();
     REQUIRE(released != nullptr);
 
-    // Closing the world destroys its surface, which hands its capture to the pool.
-    runner.CloseWorld(departing);
-    CHECK(runner.GetCapturePool()->GetHeldCount() == 1);
+    // Destroying the scene destroys its surface, which hands its capture to the pool.
+    left->ReleasePresentedScene(*departing);
+    departing.reset();
+    CHECK(pool.GetHeldCount() == 1);
 
     // An arriving surface of the same configuration takes it — building nothing — while one of a
     // different resolution builds its own.
     Entity sameEntity;
-    const WorldInstanceId same = runner.OpenWorld(WorldOpenInfo{.StartSimulation = false});
-    runner.InstallScene(same, BuildCaptureScene(Context, assets, Types, *probe, *backdrop,
-                                                CaptureRefresh::EveryFrame, meshes, sameEntity));
+    const Unique<Scene> same = BuildCaptureScene(Context, assets, Types, *probe, *backdrop,
+                                                 CaptureRefresh::EveryFrame, meshes, sameEntity);
     Entity otherEntity;
-    const WorldInstanceId other = runner.OpenWorld(WorldOpenInfo{.StartSimulation = false});
-    runner.InstallScene(other, BuildCaptureScene(Context, assets, Types, *probe, *backdrop,
-                                                 CaptureRefresh::EveryFrame, meshes, otherEntity));
-    runner.ResolveWorld(other)->GetScene().Get<CaptureSurface>(otherEntity).Resolution = 64;
+    const Unique<Scene> other = BuildCaptureScene(Context, assets, Types, *probe, *backdrop,
+                                                  CaptureRefresh::EveryFrame, meshes, otherEntity);
+    other->Get<CaptureSurface>(otherEntity).Resolution = 64;
+    left->SetViewState({.World = same.get(), .Camera = FrontCamera(), .Delta = 0.016f});
+    right->SetViewState({.World = other.get(), .Camera = FrontCamera(), .Delta = 0.016f});
 
-    const WorldCaptureDriveResult arrival = Drive();
+    const CaptureSurfaceDriveResult arrival = RenderFrame();
     CHECK(arrival.CapturesReused == 1);
     CHECK(arrival.CapturesBuilt == 1);
-    CHECK(runner.GetCapturePool()->GetHeldCount() == 0);
-    CHECK(runner.ResolveWorld(same)->GetScene().Get<CaptureSurface>(sameEntity).GetCapture() ==
-          released);
-    const SceneCapture* const built =
-        runner.ResolveWorld(other)->GetScene().Get<CaptureSurface>(otherEntity).GetCapture();
+    CHECK(pool.GetHeldCount() == 0);
+    CHECK(same->Get<CaptureSurface>(sameEntity).GetCapture() == released);
+    const SceneCapture* const built = other->Get<CaptureSurface>(otherEntity).GetCapture();
     REQUIRE(built != nullptr);
     CHECK(built != released);
+
+    // Switching a surface off releases its runtime the same way, settings kept.
+    auto& switched = same->Get<CaptureSurface>(sameEntity);
+    switched.Enabled = false;
+    const CaptureSurfaceDriveResult off = RenderFrame();
+    CHECK(off.SurfacesDisabled == 1);
+    CHECK(switched.Runtime == nullptr);
+    CHECK_FALSE(switched.IsRefreshing());
+    CHECK(pool.GetHeldCount() == 1);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "capture surface: an on-demand capture whose viewport skips a frame refreshes "
+                  "again when it is next driven")
+{
+    RegisterBuiltinTypes(Types);
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookCapturePack()).has_value());
+
+    const AssetResult<AssetHandle<MaterialInstance>> probe =
+        assets.LoadSync<MaterialInstance>(ProbeInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> backdrop =
+        assets.LoadSync<MaterialInstance>(BackdropInstance);
+    REQUIRE(probe.has_value());
+    REQUIRE(backdrop.has_value());
+
+    // A tool panel's viewport: it renders only on a frame its owner pushed a view.
+    ViewportCompositor compositor(Context);
+    const Unique<Viewport> viewport = Viewport::Create({
+        .Context = Context,
+        .Assets = assets,
+        .Region = {.Offset = {0, 0}, .Extent = Extent},
+        .ColorFormat = Format::RGBA16Sfloat,
+        .Role = ViewportRole::Offscreen,
+        .RenderOnDemand = true,
+    });
+    compositor.RegisterViewport(*viewport);
+
+    vector<Ref<Mesh>> meshes;
+    Entity surfaceEntity;
+    const Unique<Scene> scene = BuildCaptureScene(Context, assets, Types, *probe, *backdrop,
+                                                  CaptureRefresh::OnDemand, meshes, surfaceEntity);
+    const auto& surface = scene->Get<CaptureSurface>(surfaceEntity);
+
+    // Whole frames, so each drive reads a fresh frame serial.
+    const auto Frame = [&](const bool shown)
+    {
+        if (shown)
+        {
+            viewport->SetViewState(
+                {.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f});
+        }
+        compositor.RenderRegistered(Context.BeginFrame());
+        Context.EndFrame();
+    };
+
+    // Driven on consecutive frames, the refresh resumes each time and settles.
+    for (u32 frame = 0; frame < SceneCapture::FaceCount; ++frame)
+    {
+        Frame(true);
+    }
+    REQUIRE_FALSE(surface.IsRefreshing());
+
+    // The panel stops drawing: its viewport renders nothing, so the capture is not driven.
+    Frame(false);
+    CHECK(compositor.GetCaptureSurfaceDrive().ScenesDriven == 0);
+    CHECK_FALSE(surface.IsRefreshing());
+
+    // Shown again, the drive finds the frame it missed and rebuilds the map rather than holding the
+    // scene as it stood before the gap.
+    Frame(true);
+    CHECK(surface.IsRefreshing());
 }
 
 TEST_CASE_FIXTURE(

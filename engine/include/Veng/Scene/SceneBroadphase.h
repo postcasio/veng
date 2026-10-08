@@ -147,13 +147,15 @@ namespace Veng
         AABB m_SceneBounds = AABB::Empty();
         /// @brief World-space union of the shadow-casting candidates' bounds.
         AABB m_CasterBounds = AABB::Empty();
-        /// @brief The scene the current tree was gathered from; a different instance forces a rebuild.
+        /// @brief Instance serial of the scene the current tree was gathered from (0 for none); a
+        ///        different instance forces a rebuild.
         ///
         /// The spatial version is a per-scene counter, so a broadphase re-pointed at another scene
         /// (a persistent renderer whose presented world was swapped) could be handed a coinciding
         /// version and keep the previous scene's candidates — whose pointers name the wrong scene's
-        /// entities. Scene identity is its own rebuild trigger, like the view properties below.
-        const Scene* m_LastScene = nullptr;
+        /// entities. Scene identity is its own rebuild trigger, like the view properties below, and is
+        /// the serial rather than the address, which a scene built after another's destruction reuses.
+        u64 m_LastSceneSerial = 0;
         /// @brief != any real version on construction, so the first Sync rebuilds.
         u64 m_LastVersion = ~0ull;
         /// @brief The entity the current tree was gathered without; a change forces a rebuild.

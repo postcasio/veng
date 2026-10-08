@@ -350,7 +350,9 @@ component (`Veng/Renderer/CaptureSurface.h`) on the entity whose material sample
 }
 ```
 
-The engine **discovers** the component in the driven scene and **drives** it: it builds the
+The engine **discovers** the component in every scene a viewport renders and **drives** it from that
+viewport — the editor's scene viewport included, so a mirror shows while the level is being edited.
+It builds the
 owned `SceneCapture` from the authored config on first sight, feeds it to the capture drive-list
 (`RegisterCapture`) against the component's lifetime, and drops it — **self-unregistering** —
 when the component, its entity, or its scene goes away. Each frame it renders the scene from the
@@ -359,13 +361,11 @@ entity's world position and **rebinds the capture's output handle onto the sibli
 rebound every frame. The material authors the named texture slot; the component fills it. So a
 mirror is **authored data**: no app-side `RegisterCapture`, no per-frame game code.
 
-**The bound material is the mesh *asset*'s, so give each capturing entity its own mesh.** The
-target is the first `MaterialInstance` of the mesh the `MeshRenderer` names — a cooked, shared
-asset. Two entities drawing the *same* mesh asset therefore resolve to one material instance and
-one texture slot: the last driven wins, and both surfaces sample that single probe. The engine
-logs a warning the first time it sees one frame bind two captures onto one instance, so the case
-is reported rather than silent; the fix is authoring-side — a mesh asset (or a material instance)
-per capturing entity.
+**The bound material is the entity's own.** The first `MaterialInstance` of the mesh the
+`MeshRenderer` names is a cooked asset every entity drawing that mesh shares, so on the first drive
+the engine clones it into the entity's `MeshRenderer::InstanceMaterials` and binds the capture there:
+two entities drawing one mesh each sample their own capture, and an entity with no capture keeps the
+shared instance, sampling nothing.
 
 **Teardown reverts the material.** When the component, its entity, or its scene goes away, the
 slots the drive filled are cleared: the texture and sampler slots take an invalid handle and the

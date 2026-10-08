@@ -446,12 +446,28 @@ namespace Veng::Renderer
 
     void Viewport::ReleasePresentedScene(const Scene& scene)
     {
+        if (m_PendingScene == &scene)
+        {
+            m_PendingScene = nullptr;
+        }
         if (m_ViewState.World != &scene)
         {
             return;
         }
         OnPresentedSceneChanging();
         m_ViewState.World = nullptr;
+    }
+
+    void Viewport::SetPendingScene(const Scene* scene, const f32 alpha)
+    {
+        m_PendingScene = scene;
+        m_PendingAlpha = alpha;
+    }
+
+    bool Viewport::WillRender() const
+    {
+        // Mirrors Render's early-outs, which it must stay in step with.
+        return m_Enabled && (!m_RenderOnDemand || m_ViewStateFresh) && m_ViewState.World != nullptr;
     }
 
     void Viewport::OnPresentedSceneChanging()

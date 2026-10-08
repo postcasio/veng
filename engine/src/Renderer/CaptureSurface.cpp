@@ -1,11 +1,19 @@
 #include <Veng/Renderer/CaptureSurface.h>
 
+#include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Material.h>
 #include <Veng/Asset/MaterialInstance.h>
+#include <Veng/Asset/Mesh.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Sampler.h>
 #include <Veng/Renderer/SceneCapture.h>
 #include <Veng/Renderer/SceneCapturePool.h>
+#include <Veng/Scene/Components.h>
+#include <Veng/Scene/Scene.h>
+
+#include "CaptureDrive.h"
+
+#include <utility>
 
 namespace Veng::Renderer
 {
@@ -36,6 +44,8 @@ namespace Veng::Renderer
         SamplerHandle SamplerHandle;
         /// @brief Faces still owed before the current refresh settles; 0 leaves an OnDemand capture idle.
         u32 PendingFaces = SceneCapture::FaceCount;
+        /// @brief Context frame serial of the last drive; 0 before the first.
+        u64 LastDrivenSerial = 0;
 
         /// @brief The material the last drive bound onto, held resident so the unbind can reach it.
         AssetHandle<MaterialInstance> BoundMaterial;
@@ -144,6 +154,41 @@ namespace Veng::Renderer
             runtime.BoundOrientation = {};
             runtime.BoundDepthTexture = {};
             runtime.BoundDepthSampler = {};
+        }
+
+        /// @brief Returns the material a surface on @p entity binds into, installing its per-entity clone.
+        ///
+        /// The sibling MeshRenderer's first material belongs to the mesh asset and is shared by every
+        /// entity drawing that mesh, so binding the capture there would make every sharer sample it.
+        /// The first drive clones it into the entity's InstanceMaterials override, which the render
+        /// gather honours; later drives find the clone installed and read it const.
+        AssetHandle<MaterialInstance> ResolveCaptureMaterial(const AssetManager& assets,
+                                                             Scene& world, const Entity entity)
+        {
+            const auto* renderer = std::as_const(world).TryGet<MeshRenderer>(entity);
+            if (renderer == nullptr || !renderer->Mesh.IsLoaded())
+            {
+                return {};
+            }
+            if (!renderer->InstanceMaterials.empty())
+            {
+                return renderer->InstanceMaterials[0];
+            }
+            const std::span<const AssetHandle<MaterialInstance>> meshMaterials =
+                renderer->Mesh.Get()->GetMaterials();
+            if (meshMaterials.empty() || !meshMaterials[0].IsLoaded())
+            {
+                return {};
+            }
+            // The one mutable access bumps the scene's spatial version once, which the broadphase
+            // re-gathers on.
+            vector<AssetHandle<MaterialInstance>> overrides(meshMaterials.begin(),
+                                                            meshMaterials.end());
+            overrides[0] = assets.Adopt<MaterialInstance>(
+                meshMaterials[0].Get()->Clone(meshMaterials[0].Get()->GetName() + " (capture)"));
+            AssetHandle<MaterialInstance> material = overrides[0];
+            world.Get<MeshRenderer>(entity).InstanceMaterials = std::move(overrides);
+            return material;
         }
 
         /// @brief A lean renderer config for a capture: the heavy per-view batteries multiply by six
@@ -322,6 +367,15 @@ namespace Veng::Renderer
         }
         CaptureSurfaceRuntime& runtime = *Runtime;
 
+        // A capture its driver skipped for a frame holds the scene as it last saw it, so the drive
+        // that finds the gap restarts the refresh rather than resuming mid-refresh.
+        const u64 serial = context.GetFrameSerial();
+        if (CaptureDriveSkippedFrame(runtime.LastDrivenSerial, serial))
+        {
+            runtime.PendingFaces = SceneCapture::FaceCount;
+        }
+        runtime.LastDrivenSerial = serial;
+
         // Build the capture on first use when no driver installed one ahead of this drive.
         if (!runtime.Capture)
         {
@@ -351,9 +405,8 @@ namespace Veng::Renderer
         // SetTextureHandle writes the current frame-in-flight region, so the handle must land
         // regardless of the push decision. The slot names default to Texture/Sampler.
         //
-        // Every viewport presenting this world drives the component, and the material is shared
-        // across them — but each value written here is derived from the capture and its carrier
-        // entity, never from the recording view, so the viewports write identical bytes and the
+        // The material is shared by every viewport presenting this scene, but each value written here
+        // is derived from the capture and its carrier entity, never from a recording view, so the
         // shared block is correct for all of them. This is the view-independent case
         // BindlessRegistry::MaterialArenaBytes describes; a per-view value would need a per-view
         // instance instead.
@@ -441,5 +494,29 @@ namespace Veng::Renderer
         }
 
         return runtime.Capture.get();
+    }
+
+    SceneCapture* CaptureSurface::Drive(Context& context, AssetManager& assets, Scene& world,
+                                        const Entity entity, const f32 alpha) const
+    {
+        // The capture renders from the pose the entity is drawn at — the pose the mesh it feeds is
+        // drawn at — so the probe, its published centre and everything rigidly attached to its
+        // carrier agree at every alpha instead of sitting a fraction of a tick apart.
+        const mat4 drawTransform = world.GetInterpolatedWorldTransform(entity, alpha);
+        const vec3 position = vec3(drawTransform[3]);
+
+        // An Entity-aligned capture orients its faces in the carrier's frame: the draw rotation with
+        // any scale divided out.
+        mat3 faceBasis(1.0f);
+        if (Alignment == CaptureAlignment::Entity)
+        {
+            faceBasis = mat3(drawTransform);
+            faceBasis[0] = glm::normalize(faceBasis[0]);
+            faceBasis[1] = glm::normalize(faceBasis[1]);
+            faceBasis[2] = glm::normalize(faceBasis[2]);
+        }
+
+        return Drive(context, assets, world, entity, position, alpha, faceBasis,
+                     ResolveCaptureMaterial(assets, world, entity));
     }
 }

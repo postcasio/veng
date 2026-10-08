@@ -220,6 +220,41 @@ TEST_CASE("SceneBroadphase: version gate — a second Sync of an unmutated scene
     CHECK(scene->GetSpatialVersion() == v1);
 }
 
+TEST_CASE("SceneBroadphase: a scene built like a destroyed one rebuilds, even at its address")
+{
+    Renderer::Context context;
+    TaskSystem tasks;
+    TypeRegistry types;
+    RegisterBuiltins(types);
+
+    const AssetManager manager(context, tasks, types);
+    const AssetHandle<Mesh> mesh =
+        manager.Adopt<Mesh>(BoundsMesh(AABB{.Min = vec3(-0.5f), .Max = vec3(0.5f)}));
+    const auto build = [&]
+    {
+        Unique<Scene> scene = Scene::Create(types);
+        const Entity e = scene->CreateEntity();
+        scene->Add<Transform>(e, Transform{});
+        scene->Add<MeshRenderer>(e, MeshRenderer{.Mesh = mesh});
+        return scene;
+    };
+
+    SceneBroadphase broadphase;
+    Unique<Scene> departed = build();
+    broadphase.Sync(*departed);
+    const u64 departedSerial = departed->GetInstanceSerial();
+    const u64 departedVersion = departed->GetSpatialVersion();
+    departed.reset();
+
+    // Built the same way, the next scene reaches the same spatial version and may well be allocated
+    // where the destroyed one was; its serial is what tells the two apart.
+    const Unique<Scene> arrived = build();
+    CHECK(arrived->GetSpatialVersion() == departedVersion);
+    CHECK(arrived->GetInstanceSerial() != departedSerial);
+    broadphase.Sync(*arrived);
+    CHECK(broadphase.DidRebuildLastSync());
+}
+
 TEST_CASE("SceneBroadphase: a changed layer mask forces a rebuild without a spatial mutation")
 {
     Renderer::Context context;
@@ -274,7 +309,7 @@ TEST_CASE("SceneBroadphase: a move refits, a changed candidate set rebuilds, and
     const AssetHandle<Mesh> mesh =
         manager.Adopt<Mesh>(BoundsMesh(AABB{.Min = vec3(-0.5f), .Max = vec3(0.5f)}));
 
-    auto AddMesh = [&](vec3 position) -> Entity
+    const auto AddMesh = [&](vec3 position) -> Entity
     {
         const Entity e = scene->CreateEntity();
         scene->Add<Transform>(e, Transform{.Position = position});
@@ -298,7 +333,7 @@ TEST_CASE("SceneBroadphase: a move refits, a changed candidate set rebuilds, and
         Refit,
         Rebuild,
     };
-    auto CheckConverges = [&](const Expect expect)
+    const auto CheckConverges = [&](const Expect expect)
     {
         CHECK(broadphase.DidRebuildLastSync() == (expect == Expect::Rebuild));
         CHECK(broadphase.DidRefitLastSync() == (expect == Expect::Refit));

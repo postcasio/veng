@@ -1,6 +1,6 @@
 // The Application world drive: WorldRunner::OpenWorld makes the engine tick a world each frame
-// (started, non-paused, in id order) and drive its CaptureSurface components, decoupled from
-// rendering. Drives a real headless Application (its own Context, no window, no ImGui) through Run(),
+// (started, non-paused, in id order), decoupled from rendering, while the viewport rendering a
+// world's scene drives its CaptureSurface components. Drives a real headless Application (its own Context, no window, no ImGui) through Run(),
 // opening worlds from OnInitialize and asserting from OnUpdate:
 //
 //  - opening a world ticks it, closing it stops, and a scene never opened as a world never ticks
@@ -9,7 +9,7 @@
 //    handle (SetWorldPaused / IsWorldPaused are handle-keyed; no privileged primary);
 //  - SystemContext carries Tasks always, View + Debug for a presented world, and View == nullopt for
 //    a view-less world and around a never-pushed viewport (no crash);
-//  - the engine drives a presented world's captures even while its sim is paused, and drives none of
+//  - the engine drives a rendered world's captures even while its sim is paused, and drives none of
 //    an unpresented world's (presentation, not run-state, gates capture driving).
 //
 // It needs a Context for the Application (viewports, captures), so it rides the gpu band though it
@@ -375,12 +375,13 @@ TEST_CASE("The engine drives a presented world's captures even paused, and none 
         addCapture(*dark, darkCapture);
         dark->GetSimulation()->SetPaused(true);
 
-        a.AddPresentedViewport();
+        // Captures are driven by a viewport that renders their scene, so this one renders.
+        a.AddPresentedViewport().SetEnabled(true);
     };
 
     app.StepFn = [&](DriveApp& a, int frame)
     {
-        // Presented from the first frame on: the engine resolves presentation from the scene a
+        // Presented from the first frame on: the compositor drives the captures of the scene a
         // registered viewport's pushed ViewState names, so a consumer driving its own viewport is
         // covered as an engine-managed binding is.
         a.Viewports.front()->SetViewState({.World = presented, .Delta = 0.016f});

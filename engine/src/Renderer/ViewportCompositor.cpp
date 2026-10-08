@@ -4,6 +4,7 @@
 #include <Veng/ImGui/ImGuiLayer.h>
 #include <Veng/Log.h>
 #include <Veng/Renderer/BindlessRegistry.h>
+#include <Veng/Renderer/CaptureSurface.h>
 #include <Veng/Renderer/CommandBuffer.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/GatherPass.h>
@@ -11,10 +12,14 @@
 #include <Veng/Renderer/ImageView.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/SceneCapture.h>
+#include <Veng/Renderer/SceneCapturePool.h>
 #include <Veng/Renderer/SwapChainCompositePass.h>
 #include <Veng/Renderer/Viewport.h>
+#include <Veng/Diagnostics/Profiler.h>
+#include <Veng/Scene/Scene.h>
 #include <Veng/Window.h>
 
+#include "CaptureDrive.h"
 #include "CaptureRotation.h"
 #include "CompositeSource.h"
 
@@ -40,7 +45,10 @@ namespace Veng::Renderer
         }
     }
 
-    ViewportCompositor::ViewportCompositor(Context& context) : m_Context(context) {}
+    ViewportCompositor::ViewportCompositor(Context& context)
+        : m_Context(context), m_CapturePool(CreateRef<SceneCapturePool>())
+    {
+    }
 
     ViewportCompositor::~ViewportCompositor()
     {
@@ -189,6 +197,10 @@ namespace Veng::Renderer
 
     void ViewportCompositor::RenderRegistered(CommandBuffer& cmd)
     {
+        // The viewports about to render decide which scenes' captures are worth a face this frame, so
+        // the pre-pass reads them before any Render consumes its push.
+        DriveCaptureSurfaces();
+
         // Scene captures render first, so a material sampling a capture's output reads this frame's
         // result during the viewport renders that follow. Rendering first is also what puts them
         // ahead of the viewports in the frame's view budget, so the drive spends only what it can
@@ -203,6 +215,92 @@ namespace Veng::Renderer
         {
             viewport->Render(cmd);
         }
+    }
+
+    void ViewportCompositor::DriveCaptureSurfaces()
+    {
+        VE_PROFILE_SCOPE("Capture/DriveSurfaces");
+        m_CaptureSurfaceDrive = {};
+
+        vector<CapturePresenter> presenters;
+        presenters.reserve(m_Viewports.size());
+        for (const Viewport* viewport : m_Viewports)
+        {
+            presenters.push_back({
+                .WillRender = viewport->WillRender(),
+                .Presented = viewport->GetPresentedScene(),
+                .Pending = viewport->GetPendingScene(),
+            });
+        }
+        vector<CaptureClaim> claims;
+        ClaimCaptureScenes(presenters, claims);
+
+        u32 built = 0;
+        for (const CaptureClaim& claim : claims)
+        {
+            Viewport& viewport = *m_Viewports[claim.Presenter];
+            const f32 alpha = claim.Pending ? viewport.GetPendingAlpha() : viewport.GetViewAlpha();
+            // A viewport borrows its scene const for rendering; the drive is the sanctioned point that
+            // installs a capturing entity's material clone, as RenderSurfaces drives its drivers.
+            DriveSceneCaptures(const_cast<Scene&>(*claim.World), alpha, viewport.m_Assets, built);
+        }
+    }
+
+    void ViewportCompositor::DriveSceneCaptures(Scene& scene, const f32 alpha, AssetManager& assets,
+                                                u32& built)
+    {
+        ++m_CaptureSurfaceDrive.ScenesDriven;
+        for (auto [entity, surface] : scene.View<CaptureSurface>())
+        {
+            // A disabled surface holds nothing: releasing its runtime returns the capture to the pool
+            // and clears the slots it bound, as removing the component would.
+            if (!surface.Enabled)
+            {
+                surface.Release();
+                ++m_CaptureSurfaceDrive.SurfacesDisabled;
+                continue;
+            }
+
+            // A capture installed this pass is registered below; one the surface already held is on
+            // the drive-list.
+            const bool fresh = surface.GetCapture() == nullptr;
+            if (fresh && !MaterializeCapture(surface, assets, built))
+            {
+                ++m_CaptureSurfaceDrive.SurfacesDeferred;
+                continue;
+            }
+
+            SceneCapture* const capture = surface.Drive(m_Context, assets, scene, entity, alpha);
+            ++m_CaptureSurfaceDrive.SurfacesDriven;
+            if (capture != nullptr && fresh)
+            {
+                RegisterCapture(*capture);
+            }
+        }
+    }
+
+    bool ViewportCompositor::MaterializeCapture(const CaptureSurface& surface, AssetManager& assets,
+                                                u32& built)
+    {
+        const SceneCaptureInfo captureInfo = surface.GetCaptureInfo(m_Context, assets);
+        Unique<SceneCapture> capture = m_CapturePool->Take(captureInfo);
+        if (capture != nullptr)
+        {
+            ++m_CaptureSurfaceDrive.CapturesReused;
+        }
+        else
+        {
+            if (built >= MaxNewCapturesPerFrame)
+            {
+                return false;
+            }
+            VE_PROFILE_SCOPE("Capture/Materialize");
+            capture = SceneCapture::Create(captureInfo);
+            ++built;
+            ++m_CaptureSurfaceDrive.CapturesBuilt;
+        }
+        surface.Materialize(m_Context, std::move(capture), m_CapturePool);
+        return true;
     }
 
     void ViewportCompositor::DriveCaptures(CommandBuffer& cmd)

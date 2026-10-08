@@ -2,12 +2,7 @@
 
 #include <Veng/Assert.h>
 #include <Veng/Asset/AssetManager.h>
-#include <Veng/Asset/MaterialInstance.h>
-#include <Veng/Asset/Mesh.h>
 #include <Veng/Diagnostics/Profiler.h>
-#include <Veng/Renderer/CaptureSurface.h>
-#include <Veng/Renderer/SceneCapture.h>
-#include <Veng/Renderer/SceneCapturePool.h>
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/InputMappingSystem.h>
@@ -73,15 +68,11 @@ namespace Veng
 
     WorldRunner::WorldRunner(const WorldRunnerInfo& info)
         : m_Types(info.Types), m_Systems(info.Systems), m_Presentation(info.Presentation),
-          m_Assets(info.Assets), m_Context(info.Context)
+          m_Assets(info.Assets)
     {
         VE_ASSERT(m_Types != nullptr, "WorldRunner requires a TypeRegistry");
         VE_ASSERT(m_Systems != nullptr, "WorldRunner requires a SystemRegistry");
         VE_ASSERT(m_Presentation != nullptr, "WorldRunner requires a PresentationScopes registry");
-        if (m_Context != nullptr && m_Assets != nullptr)
-        {
-            m_CapturePool = CreateRef<Renderer::SceneCapturePool>();
-        }
     }
 
     WorldRunner::~WorldRunner() = default;
@@ -576,172 +567,5 @@ namespace Veng
         }
         sim->AcquirePause();
         return WorldPauseScope(*this, world);
-    }
-
-    WorldCaptureDriveResult WorldRunner::DriveCaptureSurfaces(const WorldCaptureDriveInfo& info)
-    {
-        VE_ASSERT(
-            info.Register != nullptr && info.IsPresented != nullptr,
-            "WorldRunner::DriveCaptureSurfaces needs both a Register and an IsPresented hook");
-
-        WorldCaptureDriveResult result;
-        u32 built = 0;
-
-        // Pause is not what gates capture driving: a paused world a viewport still presents drives its
-        // mirrors. Presentation is — a capture feeds a material sampled by a mesh drawn in some view,
-        // so a world no view shows has nowhere its capture could be seen.
-        for (const Unique<World>& world : m_Worlds)
-        {
-            if (!info.IsPresented(world->Id))
-            {
-                ++result.WorldsSkipped;
-                result.SurfacesReArmed += ReArmCaptureSurfaces(*world);
-                continue;
-            }
-            ++result.WorldsDriven;
-
-            Scene& scene = world->GetScene();
-            // The world's own interpolation fraction, not the frame's: the drive walks every world,
-            // and each advances its Sim on its own clock.
-            const f32 alpha = world->LastAlpha;
-
-            for (auto [entity, surface] : scene.View<Renderer::CaptureSurface>())
-            {
-                // A disabled surface holds nothing: releasing its runtime returns the capture to the
-                // pool and clears the slots it bound, as removing the component would.
-                if (!surface.Enabled)
-                {
-                    surface.Release();
-                    ++result.SurfacesDisabled;
-                    continue;
-                }
-
-                // A capture installed this pass — built or taken from the pool — is registered
-                // below; one the surface already held is on the drive-list.
-                const bool fresh = surface.GetCapture() == nullptr;
-                if (fresh)
-                {
-                    VE_ASSERT(m_Context != nullptr && m_Assets != nullptr,
-                              "WorldRunner::DriveCaptureSurfaces: driving a presented world's "
-                              "capture surface needs a context and asset manager");
-                    if (!MaterializeCapture(surface, info.MaxNewCaptures, built, result))
-                    {
-                        ++result.SurfacesDeferred;
-                        continue;
-                    }
-                }
-
-                // The capture renders from the pose the entity is *drawn* at (a probe centered on it,
-                // a mirror placed at it) — the same pose the mesh it feeds is drawn at, since the
-                // renderer blends a drawn transform between the last two Sim ticks by this alpha.
-                // Resolving the un-interpolated pose instead puts the probe a partial tick from that
-                // mesh and from everything else rigidly attached to it, by an offset that reopens and
-                // collapses each tick as the alpha sweeps and grows with speed and turn rate.
-                const mat4 drawTransform = scene.GetInterpolatedWorldTransform(entity, alpha);
-                const vec3 position = vec3(drawTransform[3]);
-
-                // An Entity-aligned capture orients its faces in the carrier's own frame, so a
-                // body-fixed environment stays still in the map as the body turns; a World-aligned one
-                // keeps the identity and renders along fixed world axes. The basis is the draw
-                // transform's rotation with any scale divided out.
-                mat3 faceBasis(1.0f);
-                if (surface.Alignment == Renderer::CaptureAlignment::Entity)
-                {
-                    faceBasis = mat3(drawTransform);
-                    faceBasis[0] = glm::normalize(faceBasis[0]);
-                    faceBasis[1] = glm::normalize(faceBasis[1]);
-                    faceBasis[2] = glm::normalize(faceBasis[2]);
-                }
-
-                // The surface's material is the sibling MeshRenderer's first — but the capture
-                // writes its probe output (a texture handle, and the ProbeCenter validity flag the
-                // shader gates the reflection on) into it, so binding onto the shared mesh-asset
-                // instance would make every other entity drawing that mesh sample this probe. Draw
-                // this entity through a private clone instead: on first drive, clone materials[0]
-                // and install a per-entity InstanceMaterials override the render gather honours, so
-                // the write reaches only this entity while every sharer keeps the untouched asset
-                // instance. The one mutable access bumps the scene's spatial version once, which the
-                // broadphase re-gathers on — subsequent frames read the installed clone const.
-                AssetHandle<MaterialInstance> material;
-                if (const auto* renderer = std::as_const(scene).TryGet<MeshRenderer>(entity);
-                    renderer != nullptr && renderer->Mesh.IsLoaded())
-                {
-                    if (!renderer->InstanceMaterials.empty())
-                    {
-                        material = renderer->InstanceMaterials[0];
-                    }
-                    else if (const std::span<const AssetHandle<MaterialInstance>> meshMaterials =
-                                 renderer->Mesh.Get()->GetMaterials();
-                             !meshMaterials.empty() && meshMaterials[0].IsLoaded())
-                    {
-                        vector<AssetHandle<MaterialInstance>> overrides(meshMaterials.begin(),
-                                                                        meshMaterials.end());
-                        overrides[0] =
-                            m_Assets->Adopt<MaterialInstance>(meshMaterials[0].Get()->Clone(
-                                meshMaterials[0].Get()->GetName() + " (capture)"));
-                        material = overrides[0];
-                        scene.Get<MeshRenderer>(entity).InstanceMaterials = std::move(overrides);
-                    }
-                }
-
-                // Register the capture on first materialization; the SceneCapture erases its own
-                // pointer on destruction, so removing the component/entity/scene unregisters it.
-                VE_ASSERT(m_Context != nullptr && m_Assets != nullptr,
-                          "WorldRunner::DriveCaptureSurfaces: driving a presented world's capture "
-                          "surface needs a context and asset manager");
-                Renderer::SceneCapture* capture = surface.Drive(
-                    *m_Context, *m_Assets, scene, entity, position, alpha, faceBasis, material);
-                ++result.SurfacesDriven;
-                if (capture != nullptr && fresh)
-                {
-                    info.Register(*capture);
-                }
-            }
-        }
-
-        return result;
-    }
-
-    bool WorldRunner::MaterializeCapture(const Renderer::CaptureSurface& surface, const u32 maxNew,
-                                         u32& built, WorldCaptureDriveResult& result)
-    {
-        const Renderer::SceneCaptureInfo captureInfo =
-            surface.GetCaptureInfo(*m_Context, *m_Assets);
-        Unique<Renderer::SceneCapture> capture = m_CapturePool->Take(captureInfo);
-        if (capture != nullptr)
-        {
-            ++result.CapturesReused;
-        }
-        else
-        {
-            if (built >= maxNew)
-            {
-                return false;
-            }
-            VE_PROFILE_SCOPE("Capture/Materialize");
-            capture = Renderer::SceneCapture::Create(captureInfo);
-            ++built;
-            ++result.CapturesBuilt;
-        }
-        surface.Materialize(*m_Context, std::move(capture), m_CapturePool);
-        return true;
-    }
-
-    u32 WorldRunner::ReArmCaptureSurfaces(const World& world)
-    {
-        // Only a capture that has already rendered holds content to go stale; one that never
-        // materialized has nothing to re-arm and materializing it here would allocate for a world
-        // nothing is looking at. An EveryFrame capture refreshes on its own, so the re-arm is what
-        // an OnDemand one needs to not resume mid-refresh from a scene that has since moved on.
-        u32 reArmed = 0;
-        for (auto [entity, surface] : world.GetScene().View<Renderer::CaptureSurface>())
-        {
-            if (surface.GetCapture() != nullptr)
-            {
-                surface.MarkDirty();
-                ++reArmed;
-            }
-        }
-        return reArmed;
     }
 }

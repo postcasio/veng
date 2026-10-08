@@ -352,10 +352,16 @@ extern "C"
 /// Buffered, BufferSeconds and runtime-only Generator, and AudioEngine and ScopedAudio grow
 /// SetVoiceMix and IsGeneratorInUse. A module spawns prefabs carrying the builtin and its systems
 /// write it, so a stale module lays AudioSource out short.
+/// Version 85 drives capture surfaces from the viewports that present their scenes: WorldRunnerInfo
+/// and WorldRunner lose the render context, the capture pool and the capture drive, Application
+/// loses IsWorldPresented, ViewportCompositor grows the capture pool and its pre-pass, Viewport grows
+/// the pending scene, CaptureSurface grows the scene drive, and Scene grows its instance serial. A
+/// module constructs runner infos, subclasses Application, registers viewports and is handed scenes,
+/// so a stale module lays all four out at the old layouts.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 84u
+#define VENG_MODULE_ABI_VERSION 85u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

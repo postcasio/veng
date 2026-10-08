@@ -11,6 +11,7 @@ namespace Veng
 {
     class AssetManager;
     class ImGuiLayer;
+    class Scene;
 }
 
 namespace Veng::Renderer
@@ -18,8 +19,27 @@ namespace Veng::Renderer
     class CommandBuffer;
     class Viewport;
     class SceneCapture;
+    class SceneCapturePool;
     class SwapChainCompositePass;
     class CompiledGraph;
+    struct CaptureSurface;
+
+    /// @brief What one frame's capture pre-pass did across the scenes the viewports will render.
+    struct CaptureSurfaceDriveResult
+    {
+        /// @brief Scenes whose capture surfaces were driven — each once, by its first presenter.
+        u32 ScenesDriven = 0;
+        /// @brief Capture surfaces driven across those scenes.
+        u32 SurfacesDriven = 0;
+        /// @brief Captures built new this pass, at most ViewportCompositor::MaxNewCapturesPerFrame.
+        u32 CapturesBuilt = 0;
+        /// @brief Captures taken from the compositor's pool of released ones instead of building.
+        u32 CapturesReused = 0;
+        /// @brief Surfaces left unmaterialized and undriven because the build budget was spent.
+        u32 SurfacesDeferred = 0;
+        /// @brief Disabled surfaces, whose runtime is released and left empty.
+        u32 SurfacesDisabled = 0;
+    };
 
     /// @brief Renders the registered viewports and composites them to the swapchain each frame.
     ///
@@ -32,6 +52,9 @@ namespace Veng::Renderer
     /// registered before its consumer renders first — and hands a back-reference, so dropping its
     /// owning Unique self-unregisters it. The compositor never owns a viewport or capture; the
     /// drive-lists hold non-owning pointers whose lifetime stays with the caller.
+    ///
+    /// It also drives the scenes' authored CaptureSurface components, from the viewports that present
+    /// them (see RenderRegistered), and owns the pool their released captures return to.
     ///
     /// Borrows the Context for the swapchain and the per-frame command buffer. The tail is built
     /// only through InitializeTail (present alongside an ImGui overlay); without it RenderRegistered
@@ -98,7 +121,16 @@ namespace Veng::Renderer
 
         /// @brief Renders every registered capture then every registered viewport into Sample layout.
         ///
-        /// Captures render first (each into its own target), then every viewport in registration order
+        /// First a capture pre-pass drives the CaptureSurface components of every scene a registered
+        /// viewport will render this frame (Viewport::WillRender) — each scene once, by the first such
+        /// viewport in registration order, at that viewport's interpolation fraction — and of every
+        /// scene a rendering viewport names as its pending destination (Viewport::SetPendingScene), so
+        /// a swap presents warm maps. A scene no viewport renders drives nothing. The pre-pass builds
+        /// at most MaxNewCapturesPerFrame captures, takes a released capture of a surface's
+        /// configuration from the pool first (GetCapturePool), registers each newly materialized
+        /// capture, and releases a disabled surface's runtime. Its tally is GetCaptureSurfaceDrive.
+        ///
+        /// Captures then render (each into its own target), then every viewport in registration order
         /// (each doing its own Execute + Sample barrier), so every output is in Sample layout before a
         /// later consumer samples it.
         ///
@@ -137,6 +169,25 @@ namespace Veng::Renderer
         /// @param sink  The sink to composite into, or null to clear.
         void SetCaptureSink(CaptureSink* sink);
 
+        /// @brief The most captures one frame's pre-pass builds new; a surface past it waits a frame.
+        ///
+        /// Building a capture builds a whole face renderer, so a scene presented for the first time
+        /// with several capture surfaces would otherwise pay for all of them in one frame. A surface
+        /// handed a released capture from the pool builds nothing and is not counted.
+        static constexpr u32 MaxNewCapturesPerFrame = 1;
+
+        /// @brief Returns what the last RenderRegistered's capture pre-pass did.
+        [[nodiscard]] const CaptureSurfaceDriveResult& GetCaptureSurfaceDrive() const
+        {
+            return m_CaptureSurfaceDrive;
+        }
+
+        /// @brief Returns the pool a destroyed or disabled surface's capture returns to.
+        ///
+        /// A capture surface the pre-pass materialized hands its capture here when it goes, and the
+        /// next surface asking for the same configuration takes it before any build is considered.
+        [[nodiscard]] SceneCapturePool& GetCapturePool() const { return *m_CapturePool; }
+
         /// @brief Returns the render-order viewport drive-list.
         ///
         /// The registration-order list of every driven viewport; a consumer walks it to resolve the
@@ -164,6 +215,30 @@ namespace Veng::Renderer
         void ResolveTrackingLayouts();
 
     private:
+        /// @brief Drives the capture surfaces of the scenes the viewports will render this frame.
+        ///
+        /// Claims each scene once, for the first viewport that will render it or names it pending
+        /// (ClaimCaptureScenes), then drives every surface in each claimed scene. Records its tally in
+        /// m_CaptureSurfaceDrive.
+        void DriveCaptureSurfaces();
+
+        /// @brief Drives every CaptureSurface in one scene, materializing and registering as needed.
+        /// @param scene   The claimed scene, taken mutably for the surfaces' material clones.
+        /// @param alpha   The interpolation fraction its claiming viewport draws it at.
+        /// @param assets  The asset manager of the claiming viewport.
+        /// @param built   The captures this pass has built so far; incremented on a build.
+        void DriveSceneCaptures(Scene& scene, f32 alpha, AssetManager& assets, u32& built);
+
+        /// @brief Gives an unmaterialized surface its capture, from the pool or newly built.
+        ///
+        /// A pooled capture of the surface's configuration is taken first and costs no build; past
+        /// that, a capture is built only while @p built is under MaxNewCapturesPerFrame.
+        /// @param surface  The surface to materialize; it holds no capture yet.
+        /// @param assets   The asset manager the capture is built against.
+        /// @param built    The captures this pass has built so far; incremented on a build.
+        /// @return True when the surface now holds a capture; false when the build budget is spent.
+        bool MaterializeCapture(const CaptureSurface& surface, AssetManager& assets, u32& built);
+
         /// @brief Renders the registered captures against the view budget left over from the viewports.
         ///
         /// Reserves one view slot per registered viewport, then drives captures round-robin from
@@ -184,6 +259,15 @@ namespace Veng::Renderer
 
         /// @brief Non-owning, ordered list of scene captures rendered ahead of the viewports.
         vector<SceneCapture*> m_Captures;
+
+        /// @brief Released scene captures held for reuse by a surface of the same configuration.
+        ///
+        /// Shared because each surface holds it weakly, so a surface outliving the compositor drops
+        /// its capture instead of returning it to a dead pool.
+        Ref<SceneCapturePool> m_CapturePool;
+
+        /// @brief The last capture pre-pass's tally.
+        CaptureSurfaceDriveResult m_CaptureSurfaceDrive;
 
         /// @brief Index into m_Captures the next frame's bounded capture drive resumes at.
         usize m_CaptureCursor = 0;

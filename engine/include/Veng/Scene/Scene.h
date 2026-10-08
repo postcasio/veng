@@ -202,6 +202,14 @@ namespace Veng
         /// Read-only consumers use the const View/Each path to avoid bumping.
         [[nodiscard]] u64 GetSpatialVersion() const { return m_SpatialVersion; }
 
+        /// @brief Returns this scene's instance serial: unique in the process and never reused.
+        ///
+        /// What a cache keyed on a scene identifies it by. A scene's address is reused once it is
+        /// destroyed, and a scene built the same way as a destroyed one reaches the same spatial
+        /// version, so a renderer handed the new scene at the old address would otherwise keep
+        /// serving the old one's gathered state. A Clone gets a serial of its own.
+        [[nodiscard]] u64 GetInstanceSerial() const { return m_InstanceSerial; }
+
         /// @brief The lowest tick a write can stamp; a Scene's change tick never falls below it.
         ///
         /// Tick zero is reserved to mean *before any tick*: it is what a component the entity does
@@ -886,6 +894,8 @@ namespace Veng
         usize m_LiveCount = 0;
         /// @brief Monotonic counter for spatial-pool changes.
         u64 m_SpatialVersion = 0;
+        /// @brief The process-unique serial minted at construction (see GetInstanceSerial).
+        u64 m_InstanceSerial = 0;
         /// @brief Monotonic counter for changes to which entities carry a world transform or a parent.
         u64 m_TopologyVersion = 0;
         /// @brief The sim tick a non-const component access stamps as the touched component's change tick.

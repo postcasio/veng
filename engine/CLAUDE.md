@@ -185,18 +185,19 @@ above and three collaborators it drives each frame:
   back-reference, so dropping the owner's `Unique` self-unregisters it and the caller keeps
   ownership — only the *driving* is central. It also hands every viewport it registers the device
   engines its Gui drivers play sound and rumble through (`SetDevices`, set once by the Application). It also resolves each `Layout`-carrying viewport's
-  pixel region + UI scale on swapchain resize. See [src/Renderer/CLAUDE.md](src/Renderer/CLAUDE.md).
+  pixel region + UI scale on swapchain resize. And it **drives the scenes' authored
+  `CaptureSurface`s from the viewports that present them**: a pre-pass ahead of the capture renders
+  drives each scene a registered viewport will render this frame — once, from its first such
+  viewport — plus a waiting rebind's destination, building at most one new capture per frame and
+  reusing a released one from the compositor's `SceneCapturePool`. See
+  [src/Renderer/CLAUDE.md](src/Renderer/CLAUDE.md).
 - **`ManagedViewportSet`** (`Veng/ManagedViewports.h`) — the managed-viewport policy. It owns the
   engine-managed `Presented` viewports, registers them into the compositor, and each frame **pulls**
   each viewport's camera from the `WorldRunner` by the viewport's `{ WorldInstanceId, Viewer }`
   binding and pushes it (`PushViews`) — a one-directional gameplay→render bridge.
 - **`WorldRunner`** (`Veng/WorldRunner.h`) — the sim-domain scheduler. It owns a **flat set of
-  first-class worlds** and ticks every one each frame. Its per-frame render-side drive is narrower
-  than its tick: `DriveCaptureSurfaces` walks only the worlds a view **presents**, asked through the
-  caller's `IsPresented` hook (`Application::IsWorldPresented`), since a capture rendered from a world
-  nothing shows can be sampled by nothing, builds at most one new capture per frame, and reuses a
-  released capture from its `SceneCapturePool` before building one — see
-  [src/Renderer/CLAUDE.md](src/Renderer/CLAUDE.md).
+  first-class worlds** and ticks every one each frame. It carries no render state: what a world
+  presents is drawn, and its captures driven, by the viewports presenting its scene.
 
 **Every `Viewport` has a `ViewportId`.** Minted at `Viewport::Create` and retired at destruction,
 resolved through the `Context`-owned **`ViewportRegistry`** (the render-domain registry joining
@@ -231,14 +232,15 @@ playing document's viewport to its play world as below.
 **A viewport the engine did not build presents a world by registering as its presentation.**
 `ManagedViewportSet::RegisterBoundViewport(viewport, BoundViewportInfo)` binds a caller-owned
 viewport of **any role** to a world — `{ World, Viewer, Knobs, Look, PullsCamera }` — and from then
-on that world is presented exactly as a managed viewport's is: `IsWorldPresented` counts it (capture
-surfaces, presentation pins), `CollectPresentingSeats` returns its `Viewer` so `SyncLocalControl`
+on that world is presented exactly as a managed viewport's is: `CollectPresentingSeats` returns its
+`Viewer` so `SyncLocalControl`
 stamps `LocalControl` on that seat's pawn, and the context factory resolves the world's
 `SystemContext::View`/`Debug` from it through **`FindPresentingViewport(world, scene)`** — managed
 viewports in index order, then bound ones in registration order, each matching only once its
 retained scene is the world's live scene (so a bound viewport not yet pushed engages nothing). A
 `Presented` viewport a consumer registers and drives itself, never binding it, still gives its
-scene's world a `View` after those, as `IsWorldPresented` still counts it. `PullsCamera` (default
+scene's world a `View` after those. Captures need no binding at all: any registered viewport that
+renders a scene drives that scene's capture surfaces. `PullsCamera` (default
 true) has `PushViews` pull the seat's camera into the viewport each frame; false leaves the
 viewport's `ViewState` to its owner — the editor's Offscreen document viewport, which renders Play
 through a camera it resolves itself. Registration hands the viewport the set's Gui driver catalog,
@@ -247,7 +249,7 @@ past its binding drives no overlay; the sound and rumble engines its drivers pla
 the compositor it is registered on, bound or not. **A viewport its host stops drawing stops
 presenting.** An on-demand viewport (`RenderOnDemand`) whose owner lets a whole frame pass without
 pushing a view releases its scene at that render and reads `IsShown() == false`, so a bound one stops
-counting for `IsWorldPresented` and `CollectPresentingSeats` and gives its world no `View` — the
+counting for `CollectPresentingSeats` and gives its world no `View` — the
 world's sound and rumble mute, its captures stop, its seat's `LocalControl` lifts — until the next
 push. That is what makes a hidden editor Play tab unpresented, with no editor code. `ResolvePresentationSeat(scene, boundViewer)` (also
 in `Veng/ManagedViewports.h`) is the seat rule a rebind applies and a binder resolves its `Viewer`
@@ -413,8 +415,8 @@ handle (a viewport names its world; `ManagedViewportSet` asks `WorldRunner::Reso
 pure query), and the runner holds no pointer back. The **minimal game writes no lifecycle or
 per-frame code at all** — the bootstrap auto-bind (world #0 → managed viewport #0) is the zero-code
 path. `World` unset leaves the app to load and drive its own scene (the editor, or a game wanting
-full control), and the runner is device-free when given no asset manager or context (it drives
-empty-scene worlds without a GPU).
+full control), and the runner is device-free when given no asset manager (it drives empty-scene
+worlds without a GPU).
 
 **Every scene the runner holds owns a presentation scope, and device work runs once per frame in one
 place.** `Application` owns a **`PresentationScopes`** registry (`Veng/Scene/PresentationScope.h`,
@@ -476,7 +478,7 @@ adopts a ready scene as the world's own (`info.Source` empty): an engaged `info.
 attaches its `SceneSimulation`, replacing any the scene carried, and the load hook and the start run
 as for the other overloads. That is how the editor's Play runs — the document's scene is cloned,
 seeded, and opened as a world — so Play gets every runner behaviour (the change tick, `World`,
-haptics, the request drain, role resolution, `LocalControl`, edge resets while paused, captures,
+haptics, the request drain, role resolution, `LocalControl`, edge resets while paused,
 `OnStop` on every exit) by being one, rather than by copying each across. A caller wanting every
 registered system enumerates `SystemRegistry::Entries()`.
 
@@ -666,7 +668,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 84** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 85** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative, and its prose records why each version moved). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the

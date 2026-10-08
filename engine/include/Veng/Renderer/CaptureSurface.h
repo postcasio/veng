@@ -77,11 +77,14 @@ namespace Veng::Renderer
     /// A reflected scene component, the render-to-texture sibling of GuiSurface: where GuiSurface maps a
     /// document onto a world mesh, a CaptureSurface renders the scene into a texture from the entity's
     /// world position and binds that texture's handle onto the material of the mesh it shares an entity
-    /// with (its sibling MeshRenderer). The engine discovers the component in the scene it drives, builds
-    /// the owned SceneCapture from the authored config on first sight, feeds it to the capture drive-list
-    /// (RegisterCapture) against the component's lifetime, and drops it — self-unregistering — when the
-    /// component, its entity, or its scene goes away. So a reflective or refractive surface, a mirror, or
-    /// a monitor is authored data on the entity: no app-side RegisterCapture, no per-frame game code.
+    /// with (its sibling MeshRenderer). It is driven by the viewport that presents its scene, exactly as
+    /// a GuiSurface is: each frame the ViewportCompositor's capture pre-pass walks the scenes its
+    /// registered viewports will render, builds a surface's SceneCapture from the authored config on
+    /// first sight, feeds it to the capture drive-list (RegisterCapture) against the component's
+    /// lifetime, and drops it — self-unregistering — when the component, its entity, or its scene goes
+    /// away. So a reflective or refractive surface, a mirror, or a monitor is authored data on the
+    /// entity — no app-side RegisterCapture, no per-frame game code — and works in any viewport that
+    /// shows it, an editor's included. A scene no viewport renders drives none of its captures.
     ///
     /// The capture renders the scene *around* the entity, never the entity itself: the mesh the capture
     /// feeds is excluded from its own capture (CaptureView::Exclude), in every domain the capture draws.
@@ -96,15 +99,16 @@ namespace Veng::Renderer
     /// it, beside a sampler slot and the optional probe-centre and capture-frame slots (see
     /// CenterSlot and OrientationSlot).
     ///
-    /// **The bound material is per entity.** Drive binds onto whatever MaterialInstance it is handed.
-    /// The engine's world drive hands it the entity's own: the sibling mesh's first MaterialInstance
-    /// belongs to the mesh *asset* and is shared by every entity drawing it, so on the first drive
-    /// the world drive installs a clone as the entity's MeshRenderer::InstanceMaterials and binds the
-    /// capture into the clone, leaving every other sharer of the mesh sampling nothing.
+    /// **The bound material is per entity.** The sibling mesh's first MaterialInstance belongs to the
+    /// mesh *asset* and is shared by every entity drawing it, so the scene drive (the Drive overload
+    /// taking the scene mutable) installs a clone as the entity's MeshRenderer::InstanceMaterials on
+    /// its first drive and binds the capture into the clone, leaving every other sharer of the mesh
+    /// sampling nothing. The pose drive (the overload taking a position and material) binds onto
+    /// whatever MaterialInstance it is handed.
     ///
     /// The runtime resources (the SceneCapture and its sampler) are materialized on the first Drive, which
     /// needs the render context and asset manager the engine supplies; a component that never drives
-    /// allocates none. The engine's world drive materializes them ahead of Drive instead (see
+    /// allocates none. The compositor's pre-pass materializes them ahead of Drive instead (see
     /// Materialize), building at most one new capture per frame and reusing a released one of the same
     /// configuration from its SceneCapturePool, to which the capture returns when the component goes.
     /// Teardown is the exact inverse of the bind: the component's destruction clears the slots it
@@ -131,7 +135,7 @@ namespace Veng::Renderer
 
         /// @brief Whether the engine drives this capture at all.
         ///
-        /// A disabled surface keeps its authored settings and holds nothing else: the world drive
+        /// A disabled surface keeps its authored settings and holds nothing else: the engine's drive
         /// releases its runtime — the capture back to the pool, and the material slots it filled
         /// cleared, exactly as the component's removal would — and builds none while it stays off.
         /// Re-enabling it materializes a capture again on a later drive. This is the switch for a
@@ -298,7 +302,7 @@ namespace Veng::Renderer
         ///
         /// The capture goes back to the pool it came from and the material slots the last drive bound
         /// are cleared, exactly as the component's destruction does; the next drive of an enabled
-        /// surface materializes a fresh one. What the world drive does to a disabled surface.
+        /// surface materializes a fresh one. What the engine's drive does to a disabled surface.
         void Release() const;
 
         /// @brief Returns the owned capture, or nullptr before the first Drive materializes it.
@@ -330,9 +334,9 @@ namespace Veng::Renderer
 
         /// @brief Installs @p capture as this surface's capture, ahead of the first Drive.
         ///
-        /// For a driver that decides when a capture is built and where it comes from — the world
-        /// drive paces new builds and reuses released captures — rather than leaving Drive to build
-        /// one on first use. Takes the shared sampler slots Drive would. When @p pool is live as the
+        /// For a driver that decides when a capture is built and where it comes from — the
+        /// compositor's pre-pass paces new builds and reuses released captures — rather than leaving
+        /// Drive to build one on first use. Takes the shared sampler slots Drive would. When @p pool is live as the
         /// surface is destroyed, the capture is returned to it rather than dropped.
         /// @param context  The render context the samplers are acquired from.
         /// @param capture  A capture configured as GetCaptureInfo describes, detached from any
@@ -361,6 +365,11 @@ namespace Veng::Renderer
         /// The pushed source excludes @p entity (CaptureView::Exclude), so the capture never draws the
         /// mesh it feeds — the rule has no authoring surface and cannot be misconfigured.
         ///
+        /// A drive that finds a frame passed since the last one (Context::GetFrameSerial moved by
+        /// more than one) restarts the refresh first, as MarkDirty does: a capture its viewport
+        /// stopped rendering holds the scene as it last saw it, and resuming an OnDemand refresh
+        /// from there would settle on content that may since have moved.
+        ///
         /// The material is taken as a resident handle rather than a raw pointer because the component
         /// keeps whatever it bound resident, so its teardown can clear those slots (see Unbind) after
         /// every other owner of the material has let go.
@@ -385,6 +394,25 @@ namespace Veng::Renderer
         SceneCapture* Drive(Context& context, AssetManager& assets, const Scene& world,
                             Entity entity, const vec3& position, f32 alpha, const mat3& faceBasis,
                             const AssetHandle<MaterialInstance>& material) const;
+
+        /// @brief Drives the capture from its entity's drawn pose and binds it into the entity's material.
+        ///
+        /// The drive a presenting viewport runs. Resolves the entity's world transform at @p alpha
+        /// (Scene::GetInterpolatedWorldTransform) — the pose the renderer draws the mesh the capture
+        /// feeds at — as the capture's position, and its rotation, scale divided out, as the face basis
+        /// when Alignment is Entity (the identity otherwise); resolves the sibling MeshRenderer's first
+        /// material, on the first drive cloning the mesh asset's into the entity's
+        /// MeshRenderer::InstanceMaterials so no other entity drawing the mesh samples this capture;
+        /// then drives as the pose overload does. A sibling with no resident mesh or material binds
+        /// nothing.
+        /// @param context  The render context the capture allocates on.
+        /// @param assets   The asset manager the face renderer loads through and the clone is adopted by.
+        /// @param world    The scene the entity lives in, taken mutably for the one clone install.
+        /// @param entity   The entity this component belongs to.
+        /// @param alpha    Interpolation fraction the presenting viewport draws the scene at, in [0, 1).
+        /// @return The owned capture (built on first use), or nullptr when the resolution is invalid.
+        SceneCapture* Drive(Context& context, AssetManager& assets, Scene& world, Entity entity,
+                            f32 alpha) const;
 
         /// @brief Clears the material slots the last Drive filled — the exact inverse of its bind.
         ///

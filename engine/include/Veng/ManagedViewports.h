@@ -102,10 +102,9 @@ namespace Veng
     /// @brief One viewport a caller owns, registered as a presentation of a world (RegisterBoundViewport).
     ///
     /// A bound presentation is how a viewport the engine did not build — an overlay's, a tool's
-    /// document viewport — tells the engine which world it shows, so that world counts as presented
-    /// (capture surfaces, presentation pins), its systems' contexts resolve their View and Debug from
-    /// it, and its seat is marked locally controlled, exactly as for a managed viewport. Any viewport
-    /// role may be bound.
+    /// document viewport — tells the engine which world it shows, so that world's systems' contexts
+    /// resolve their View and Debug from it and its seat is marked locally controlled, exactly as for
+    /// a managed viewport. Any viewport role may be bound.
     struct BoundViewportInfo
     {
         /// @brief The world the viewport presents.
@@ -372,20 +371,6 @@ namespace Veng
         [[nodiscard]] Renderer::Viewport* FindPresentingViewport(WorldInstanceId world,
                                                                  const Scene& scene) const;
 
-        /// @brief Returns whether any viewport in this set presents a world, in-flight rebinds included.
-        ///
-        /// The presentation query the sim domain has no back-reference for: a world is presented when
-        /// some indexed managed viewport's applied binding names it, some bound (overlay) viewport its
-        /// owner is showing (Renderer::Viewport::IsShown) names it, or an in-flight rebind of either
-        /// kind is destined for it. A **pending destination
-        /// counts**, which is what make-before-break needs — the destination of a
-        /// RebindWorldWhenReady is presented for its whole wait, so the per-world work its
-        /// presentation gates (its capture surfaces above all) is warm on the frame it becomes
-        /// visible rather than blank.
-        /// @param world  The world to test; an invalid handle is never presented.
-        /// @return True when a viewport in this set presents or is being rebound onto @p world.
-        [[nodiscard]] bool IsWorldPresented(WorldInstanceId world) const;
-
         /// @brief Returns the destination of a viewport's in-flight rebind, or nullopt when none is pending.
         ///
         /// The world a recorded rebind (deferred RebindWorld or present-on-ready RebindWorldWhenReady)
@@ -486,7 +471,7 @@ namespace Veng
         /// How a viewport the set did not build — an overlay's Presented viewport, a tool's Offscreen
         /// document viewport — presents a world: the caller owns the viewport (and registers it with
         /// the compositor for render and layout tracking), and this binds it to @p info.World. The
-        /// world then counts as presented, its systems resolve View and Debug from the viewport
+        /// world's systems then resolve View and Debug from the viewport
         /// (FindPresentingViewport), and its seat is marked locally controlled
         /// (CollectPresentingSeats). When @p info.PullsCamera, PushViews resolves and pushes its camera
         /// each frame through the identical { World, Viewer } path a managed viewport uses, pulling
@@ -536,7 +521,9 @@ namespace Veng
         /// invalid World is left untouched for the game to drive. Each registered bound viewport
         /// (RegisterBoundViewport) that pulls its camera is pushed the same way with its own carried
         /// knobs and its world's own interpolation fraction; one that does not is left to its owner.
-        /// The runner never learns a viewport asked.
+        /// Each managed viewport is also handed the live scene of its in-flight rebind's destination,
+        /// or none (Renderer::Viewport::SetPendingScene), so the compositor warms that scene's
+        /// captures for the whole wait. The runner never learns a viewport asked.
         /// @param runner  The world runner cameras are resolved through.
         /// @param knobs   The per-frame tone/bloom/environment view knobs carried into each managed push.
         /// @param delta   Frame delta in seconds, forwarded to the renderer.

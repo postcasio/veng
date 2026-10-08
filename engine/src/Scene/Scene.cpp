@@ -16,6 +16,7 @@
 #include <Veng/Scene/Transforms.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <utility>
 
@@ -153,7 +154,12 @@ namespace Veng
         }
     }
 
-    Scene::Scene(TypeRegistry& registry) : m_Registry(&registry) {}
+    Scene::Scene(TypeRegistry& registry) : m_Registry(&registry)
+    {
+        // Atomic because a level may be spawned into a scene built on a worker.
+        static std::atomic<u64> s_NextInstanceSerial{1};
+        m_InstanceSerial = s_NextInstanceSerial.fetch_add(1, std::memory_order_relaxed);
+    }
 
     // Out-of-line so every forward-declared type the scene owns through a Unique is complete at its
     // destruction site; the scene owns nothing else needing a hand-written teardown.

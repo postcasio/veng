@@ -341,8 +341,8 @@ registered and retains the world's scene counts as presenting it. A viewport ret
 its owner stops showing it: an **on-demand** viewport (`ViewportInfo::RenderOnDemand`) whose owner lets
 a whole frame pass without pushing a view — an editor document's Play viewport in a hidden dock tab —
 releases its scene at that render (`Viewport::IsShown` reads false), so its world reads `Muted` while
-its time advances, and a bound viewport so released stops counting for `IsWorldPresented` and
-`CollectPresentingSeats` too, until its owner pushes again. The registry's one **application scope** (`GetApplicationScope()`) is always `Live`; it
+its time advances, a bound viewport so released stops counting for `CollectPresentingSeats` too, and
+the viewport drives none of the scene's captures, until its owner pushes again. The registry's one **application scope** (`GetApplicationScope()`) is always `Live`; it
 owns what plays outside any scene, and nothing a scene's system starts belongs in it.
 
 **A scope also latches where its scene is presented.** Just before `Resolve`, the application stamps

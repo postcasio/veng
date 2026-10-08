@@ -20,7 +20,7 @@ namespace Veng
         m_Pending.clear();
         m_SceneBounds = AABB::Empty();
         m_CasterBounds = AABB::Empty();
-        m_LastScene = nullptr;
+        m_LastSceneSerial = 0;
         m_LastVersion = ~0ull;
         m_LastExclude = Entity::Null;
         m_LastLayerMask = AllRenderLayers;
@@ -41,8 +41,8 @@ namespace Veng
         // The exclusion and the layer mask are properties of the caller's view, not of the scene, so
         // neither moves a spatial version — each has to force its own rebuild or the tree keeps the
         // previous caller's candidate set.
-        const bool viewChanged =
-            (&scene != m_LastScene) || (exclude != m_LastExclude) || (layerMask != m_LastLayerMask);
+        const bool viewChanged = (scene.GetInstanceSerial() != m_LastSceneSerial) ||
+                                 (exclude != m_LastExclude) || (layerMask != m_LastLayerMask);
         bool needGather = viewChanged || (version != m_LastVersion);
 
         // A mesh finishing async load does not mutate the scene, so it does not bump
@@ -75,7 +75,7 @@ namespace Veng
         if (needGather)
         {
             Update(scene, exclude, layerMask, !viewChanged);
-            m_LastScene = &scene;
+            m_LastSceneSerial = scene.GetInstanceSerial();
             m_LastVersion = version;
             m_LastExclude = exclude;
             m_LastLayerMask = layerMask;

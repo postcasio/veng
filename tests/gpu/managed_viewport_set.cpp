@@ -919,7 +919,8 @@ TEST_CASE(
             const SystemContext context = contextFor(app);
             CHECK(context.View.has_value());
             CHECK(context.Debug == &viewport->GetDebugDraw());
-            CHECK(app.IsWorldPresented(a.World));
+            CHECK(app.GetManagedViewports().FindPresentingViewport(a.World, scene) ==
+                  viewport.get());
             const auto* control = scene.TryGet<LocalControl>(pawn);
             REQUIRE(control != nullptr);
             CHECK(control->Seat == a.Seat);
@@ -977,7 +978,9 @@ TEST_CASE("An on-demand bound viewport its owner stops showing presents nothing 
     const auto show = [&] { viewport->SetViewState({.World = a.Scene, .Delta = 0.016f}); };
     const auto presented = [&](MvApp& app)
     {
-        return viewport->IsShown() && app.IsWorldPresented(a.World) &&
+        return viewport->IsShown() &&
+               app.GetManagedViewports().FindPresentingViewport(a.World, *a.Scene) ==
+                   viewport.get() &&
                a.Scene->TryGet<LocalControl>(pawn) != nullptr;
     };
 
@@ -1002,7 +1005,7 @@ TEST_CASE("An on-demand bound viewport its owner stops showing presents nothing 
             // by it no longer, and its seat's marker lifted.
             CHECK_FALSE(viewport->IsShown());
             CHECK(viewport->GetPresentedScene() == nullptr);
-            CHECK_FALSE(app.IsWorldPresented(a.World));
+            CHECK(app.GetManagedViewports().FindPresentingViewport(a.World, *a.Scene) == nullptr);
             CHECK(a.Scene->TryGet<LocalControl>(pawn) == nullptr);
             break;
         case 4:

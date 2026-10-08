@@ -545,36 +545,6 @@ namespace Veng
         return nullptr;
     }
 
-    bool ManagedViewportSet::IsWorldPresented(const WorldInstanceId world) const
-    {
-        if (!world.IsValid())
-        {
-            return false;
-        }
-
-        for (const ManagedViewport& managed : m_Viewports)
-        {
-            if (managed.Info.World == world)
-            {
-                return true;
-            }
-        }
-        for (const BoundViewport& bound : m_Bound)
-        {
-            if (bound.World == world && bound.Viewport->IsShown())
-            {
-                return true;
-            }
-        }
-
-        // A rebind's destination is presented for the whole in-flight window, including a
-        // present-on-ready wait that spans many frames: the swap happens in one frame, so the
-        // destination's presentation-gated work has to already be warm when it does.
-        const auto destinedFor = [world](const auto& pending) { return pending.World == world; };
-        return std::ranges::any_of(m_PendingRebinds, destinedFor) ||
-               std::ranges::any_of(m_PendingReadyRebinds, destinedFor);
-    }
-
     optional<WorldInstanceId> ManagedViewportSet::GetPendingViewportWorld(const usize index) const
     {
         // Supersession keeps at most one pending rebind per index across both lists, so the first match
@@ -662,10 +632,26 @@ namespace Veng
     void ManagedViewportSet::PushViews(WorldRunner& runner, const Renderer::ViewState& knobs,
                                        f32 delta, f32 alpha)
     {
-        for (const ManagedViewport& managed : m_Viewports)
+        for (usize index = 0; index < m_Viewports.size(); ++index)
         {
+            const ManagedViewport& managed = m_Viewports[index];
             PushViewportView(*managed.Viewport, managed.Info.World, managed.Info.Viewer, runner,
                              knobs, delta, alpha);
+
+            // A rebind's destination drives its captures for the whole wait, through the viewport
+            // about to present it, so the frame that swaps presents maps already rendered.
+            const Scene* pending = nullptr;
+            f32 pendingAlpha = 0.0f;
+            if (const optional<WorldInstanceId> destination = GetPendingViewportWorld(index))
+            {
+                if (const World* world = runner.ResolveWorld(*destination);
+                    world != nullptr && world->LiveScene != nullptr)
+                {
+                    pending = world->LiveScene;
+                    pendingAlpha = runner.ResolveAlpha(*destination);
+                }
+            }
+            managed.Viewport->SetPendingScene(pending, pendingAlpha);
         }
 
         // Bound viewports (overlays) carry their own knobs and present a world other than the one

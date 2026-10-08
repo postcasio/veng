@@ -415,14 +415,14 @@ namespace Veng::Renderer
         /// @param state  The scene, camera, and per-frame tone/bloom knobs to render with.
         void SetViewState(const ViewState& state);
 
-        /// @brief Drops the retained scene when it is the given one; a no-op otherwise.
+        /// @brief Drops the retained scene, and the pending one, wherever it is the given one.
         ///
         /// The retained ViewState outlives the frame it was pushed in, but not the scene it names: a
         /// scene destroyed between two pushes would leave GetPresentedScene dangling for whatever
         /// reads it before the next push. The scene's owner calls this before destroying it. The
         /// viewport then presents no scene, exactly as a pushed null-scene ViewState leaves it, until
         /// its owner pushes again. It is not a fresh push, so an on-demand viewport does not render
-        /// for it.
+        /// for it. A pending scene (SetPendingScene) that is the given one is dropped the same way.
         /// @param scene  The scene about to be destroyed.
         void ReleasePresentedScene(const Scene& scene);
 
@@ -618,10 +618,35 @@ namespace Veng::Renderer
         /// (ViewportInfo::RenderOnDemand) whose owner lets a whole frame pass without pushing a
         /// ViewState — a hidden editor tab, any panel its host stopped drawing — reads false from the
         /// render that finds no push, and releases its retained scene there, so the scene reads
-        /// unpresented: its sound and rumble mute, and the world it is bound to (RegisterBoundViewport)
-        /// counts as presented by it no longer, for captures and the locally-controlled marker alike.
-        /// The owner's next push shows it again.
+        /// unpresented: its sound and rumble mute, the viewport drives none of its captures (it will
+        /// not render; see WillRender), and the world it is bound to (RegisterBoundViewport) has its
+        /// seat marked locally controlled by it no longer. The owner's next push shows it again.
         [[nodiscard]] bool IsShown() const { return m_Shown; }
+
+        /// @brief Returns whether this frame's Render will render the scene.
+        ///
+        /// True exactly when none of Render's early-outs applies: the viewport is enabled, it holds a
+        /// scene, and — for an on-demand viewport — its owner pushed a ViewState since the last
+        /// Render. Valid between the push and the Render that consumes it, which is when the
+        /// compositor's capture pre-pass reads it, so a hidden or disabled viewport drives no capture.
+        [[nodiscard]] bool WillRender() const;
+
+        /// @brief Names the scene an in-flight rebind of this viewport will present, or clears it.
+        ///
+        /// A viewport waiting to swap to another scene keeps presenting its current one; naming the
+        /// destination here lets the compositor drive that scene's captures too, so the swap presents
+        /// maps that are already rendered rather than blank ones. Retained until changed, or until
+        /// ReleasePresentedScene names the scene. Nothing else reads it: the viewport renders only
+        /// its presented scene.
+        /// @param scene  The destination scene, or null when no rebind is in flight.
+        /// @param alpha  The destination's interpolation fraction, its captures' pose.
+        void SetPendingScene(const Scene* scene, f32 alpha);
+
+        /// @brief Returns the scene an in-flight rebind of this viewport will present, or null.
+        [[nodiscard]] const Scene* GetPendingScene() const { return m_PendingScene; }
+
+        /// @brief Returns the interpolation fraction the pending scene's captures are placed at.
+        [[nodiscard]] f32 GetPendingAlpha() const { return m_PendingAlpha; }
 
         /// @brief Returns the camera the last-pushed ViewState renders through (the retained view).
         ///
@@ -900,6 +925,12 @@ namespace Veng::Renderer
 
         /// @brief The bound per-frame render source.
         ViewState m_ViewState;
+
+        /// @brief The scene an in-flight rebind will present (see SetPendingScene); null when none.
+        const Scene* m_PendingScene = nullptr;
+
+        /// @brief The pending scene's interpolation fraction.
+        f32 m_PendingAlpha = 0.0f;
 
         /// @brief True once SetViewState has bound a render source.
         ///

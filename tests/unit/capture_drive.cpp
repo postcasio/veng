@@ -1,27 +1,23 @@
-// The two bounded decisions the per-frame capture drive makes, both device-free:
+// The bounded decisions the per-frame capture drive makes, all device-free:
 //
-//  - WorldRunner::DriveCaptureSurfaces walks only the worlds its IsPresented hook accepts. A capture
-//    feeds a material sampled by a mesh drawn in some view, so an unpresented world's captures are
-//    work nobody can see — and since worlds are flat peers of which several are live at once, driving
-//    them all multiplies the frame's fixed view budget by the number of worlds held warm. The runner
-//    here is device-free (no Context, no AssetManager), which is exactly what makes the gate testable:
-//    reaching a capture surface at all would need a device, so a skipped world is proven skipped by
-//    the pass completing and reporting it. The driving half needs a device and rides the gpu band
-//    (tests/gpu/capture_surface.cpp).
+//  - The claim rule (Renderer/CaptureDrive.h): which scenes' capture surfaces a frame drives, and from
+//    which viewport. Only a scene some viewport will render — or a rendering viewport's pending
+//    destination — is driven, each once, by its first presenter, so a scene no view shows costs
+//    nothing and a scene shown twice is not pushed twice.
+//  - The gap rule: a capture driven on consecutive frames resumes its refresh, one whose driver
+//    skipped a frame restarts it rather than settling on content that may since have moved.
 //  - The capture rotation (Renderer/CaptureRotation.h): the arithmetic ViewportCompositor spends the
 //    frame's leftover view budget through — the viewport reservation, and the round-robin that makes a
 //    capture set larger than the budget refresh in turn instead of starving its tail.
+//
+// Driving the claimed scenes needs a device and rides the gpu band (tests/gpu/capture_surface.cpp).
 
 #include <doctest/doctest.h>
 
 #include <Veng/Reflection/TypeRegistry.h>
-#include <Veng/Renderer/CaptureSurface.h>
-#include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Scene.h>
-#include <Veng/Scene/SystemRegistry.h>
-#include <Veng/World.h>
-#include <Veng/WorldRunner.h>
 
+#include "Renderer/CaptureDrive.h"
 #include "Renderer/CaptureRotation.h"
 
 #include <set>
@@ -29,115 +25,92 @@
 using namespace Veng;
 using namespace Veng::Renderer;
 
-namespace
+TEST_CASE("The capture pre-pass claims each rendered scene once, for its first presenter")
 {
-    // A world with one entity carrying an authored CaptureSurface. Nothing materializes its runtime,
-    // so no GPU resource exists — the drive gate is what decides whether one would be built.
-    WorldInstanceId OpenCaptureWorld(WorldRunner& runner, const CaptureRefresh refresh)
+    TypeRegistry types;
+    const Unique<Scene> a = Scene::Create(types);
+    const Unique<Scene> b = Scene::Create(types);
+    vector<CaptureClaim> claims;
+
+    SUBCASE("Two viewports presenting one scene claim it once, for the earlier")
     {
-        const WorldInstanceId world = runner.OpenWorld(WorldOpenInfo{.StartSimulation = false});
-        Scene& scene = runner.ResolveWorld(world)->GetScene();
-        const Entity entity = scene.CreateEntity();
-        scene.Add<Transform>(entity);
-        scene.Add<CaptureSurface>(entity).Refresh = refresh;
-        return world;
+        const CapturePresenter presenters[] = {
+            {.WillRender = true, .Presented = a.get()},
+            {.WillRender = true, .Presented = a.get()},
+        };
+        ClaimCaptureScenes(presenters, claims);
+        REQUIRE(claims.size() == 1);
+        CHECK(claims[0].World == a.get());
+        CHECK(claims[0].Presenter == 0);
+        CHECK_FALSE(claims[0].Pending);
+    }
+
+    SUBCASE("A viewport that will not render claims nothing, so a later one presenting it does")
+    {
+        const CapturePresenter presenters[] = {
+            {.WillRender = false, .Presented = a.get(), .Pending = b.get()},
+            {.WillRender = true, .Presented = a.get()},
+        };
+        ClaimCaptureScenes(presenters, claims);
+        REQUIRE(claims.size() == 1);
+        CHECK(claims[0].World == a.get());
+        CHECK(claims[0].Presenter == 1);
+    }
+
+    SUBCASE("No viewport rendering claims no scene at all")
+    {
+        const CapturePresenter presenters[] = {
+            {.WillRender = false, .Presented = a.get()},
+            {.WillRender = false, .Presented = b.get(), .Pending = a.get()},
+        };
+        ClaimCaptureScenes(presenters, claims);
+        CHECK(claims.empty());
+    }
+
+    SUBCASE("A rendering viewport's pending destination is claimed beside its presented scene")
+    {
+        const CapturePresenter presenters[] = {
+            {.WillRender = true, .Presented = a.get(), .Pending = b.get()},
+        };
+        ClaimCaptureScenes(presenters, claims);
+        REQUIRE(claims.size() == 2);
+        CHECK(claims[1].World == b.get());
+        CHECK(claims[1].Presenter == 0);
+        CHECK(claims[1].Pending);
+    }
+
+    SUBCASE("A destination an earlier viewport already presents is not claimed twice")
+    {
+        const CapturePresenter presenters[] = {
+            {.WillRender = true, .Presented = b.get()},
+            {.WillRender = true, .Presented = a.get(), .Pending = b.get()},
+        };
+        ClaimCaptureScenes(presenters, claims);
+        REQUIRE(claims.size() == 2);
+        CHECK(claims[0].World == b.get());
+        CHECK_FALSE(claims[0].Pending);
+        CHECK(claims[1].World == a.get());
+    }
+
+    SUBCASE("A viewport holding no scene contributes nothing")
+    {
+        const CapturePresenter presenters[] = {{.WillRender = true}};
+        ClaimCaptureScenes(presenters, claims);
+        CHECK(claims.empty());
     }
 }
 
-TEST_CASE("The capture drive skips a world no view presents, and reports what it walked")
+TEST_CASE("A capture's drive restarts its refresh only after a skipped frame")
 {
-    TypeRegistry types;
-    RegisterBuiltinTypes(types);
-    SystemRegistry systems;
-
-    // Device-free: no AssetManager and no Context, so any attempt to drive a capture surface here
-    // would fail its own precondition. Completing the pass is the proof the worlds were skipped.
-    PresentationScopes presentation;
-    WorldRunner runner(
-        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
-
-    const WorldInstanceId dark = OpenCaptureWorld(runner, CaptureRefresh::EveryFrame);
-    const WorldInstanceId alsoDark = OpenCaptureWorld(runner, CaptureRefresh::OnDemand);
-
-    // A world nothing presents is skipped whole: its scene is not walked and no capture is built.
-    vector<WorldInstanceId> asked;
-    const WorldCaptureDriveResult none = runner.DriveCaptureSurfaces({
-        .Register = [](SceneCapture&) { FAIL("an unpresented world registered a capture"); },
-        .IsPresented =
-            [&asked](const WorldInstanceId world)
-        {
-            asked.push_back(world);
-            return false;
-        },
-    });
-
-    CHECK(none.WorldsDriven == 0);
-    CHECK(none.WorldsSkipped == 2);
-    CHECK(none.SurfacesDriven == 0);
-    // Presentation is asked once per world, by handle — the runner holds no back-reference and cannot
-    // answer for itself.
-    REQUIRE(asked.size() == 2);
-    CHECK(asked[0] == dark);
-    CHECK(asked[1] == alsoDark);
-
-    // Neither surface materialized a capture, so nothing was allocated for a world out of view.
-    for (const WorldInstanceId world : {dark, alsoDark})
-    {
-        const Scene& scene = runner.ResolveWorld(world)->GetScene();
-        for (auto [entity, surface] : scene.View<CaptureSurface>())
-        {
-            CHECK(surface.GetCapture() == nullptr);
-        }
-    }
-
-    // A presented world is walked rather than skipped — the positive direction of the same gate, on a
-    // world carrying no capture surface so the walk needs no device.
-    const WorldInstanceId presented = runner.OpenWorld(WorldOpenInfo{.StartSimulation = false});
-    const WorldCaptureDriveResult one = runner.DriveCaptureSurfaces({
-        .Register = [](SceneCapture&) { FAIL("a surface-free world registered a capture"); },
-        .IsPresented = [presented](const WorldInstanceId world) { return world == presented; },
-    });
-
-    CHECK(one.WorldsDriven == 1);
-    CHECK(one.WorldsSkipped == 2);
-    CHECK(one.SurfacesDriven == 0);
-}
-
-TEST_CASE("The capture drive leaves a disabled surface empty in a presented world")
-{
-    TypeRegistry types;
-    RegisterBuiltinTypes(types);
-    SystemRegistry systems;
-
-    // Device-free again: a presented world's enabled surface would need a device to materialize, so
-    // completing the pass proves the disabled one was passed over before anything was built for it.
-    PresentationScopes presentation;
-    WorldRunner runner(
-        WorldRunnerInfo{.Types = &types, .Systems = &systems, .Presentation = &presentation});
-    const WorldInstanceId world = OpenCaptureWorld(runner, CaptureRefresh::EveryFrame);
-    Scene& scene = runner.ResolveWorld(world)->GetScene();
-    for (auto [entity, surface] : scene.View<CaptureSurface>())
-    {
-        surface.Enabled = false;
-        // A surface marked dirty before it is disabled holds a runtime; the drive releases it.
-        surface.MarkDirty();
-    }
-
-    const WorldCaptureDriveResult result = runner.DriveCaptureSurfaces({
-        .Register = [](SceneCapture&) { FAIL("a disabled surface registered a capture"); },
-        .IsPresented = [world](const WorldInstanceId presented) { return presented == world; },
-    });
-
-    CHECK(result.WorldsDriven == 1);
-    CHECK(result.SurfacesDisabled == 1);
-    CHECK(result.SurfacesDriven == 0);
-    CHECK(result.CapturesBuilt == 0);
-    for (auto [entity, surface] : scene.View<CaptureSurface>())
-    {
-        CHECK(surface.GetCapture() == nullptr);
-        CHECK(surface.Runtime == nullptr);
-        CHECK_FALSE(surface.IsRefreshing());
-    }
+    constexpr u64 Serial = 40;
+    // Consecutive frames, or a second drive within one, resume the refresh.
+    CHECK_FALSE(CaptureDriveSkippedFrame(Serial, Serial + 1));
+    CHECK_FALSE(CaptureDriveSkippedFrame(Serial, Serial));
+    // A frame the driver did not render the scene on restarts it, however long the gap.
+    CHECK(CaptureDriveSkippedFrame(Serial, Serial + 2));
+    CHECK(CaptureDriveSkippedFrame(Serial, Serial + 500));
+    // A capture never driven owes its whole first refresh already.
+    CHECK_FALSE(CaptureDriveSkippedFrame(0, Serial));
 }
 
 TEST_CASE("The capture rotation reserves the viewports' slots and starves no capture")

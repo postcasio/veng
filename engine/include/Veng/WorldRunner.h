@@ -19,24 +19,15 @@ namespace Veng
     class WorldRunner;
 }
 
-namespace Veng::Renderer
-{
-    class Context;
-    struct CaptureSurface;
-    class SceneCapture;
-    class SceneCapturePool;
-}
-
 namespace Veng
 {
     /// @brief Borrowed services a WorldRunner drives its worlds through.
     ///
     /// Types, Systems and Presentation are required — every world's scene is created against the type
     /// registry, its simulation built from the system registry, and its presentation scope opened in
-    /// the scope registry. Assets and Context are optional: a runner given
-    /// neither is device-free, driving only empty-scene worlds (no cooked-level spawn, no
-    /// capture-surface discovery). All borrowed pointers must outlive the runner and every world it
-    /// creates.
+    /// the scope registry. Assets is optional: a runner given none is device-free, driving only
+    /// empty-scene and adopted-scene worlds (no cooked-level spawn). All borrowed pointers must
+    /// outlive the runner and every world it creates.
     struct WorldRunnerInfo
     {
         /// @brief The type registry every world's scene is created against.
@@ -49,8 +40,6 @@ namespace Veng
         PresentationScopes* Presentation = nullptr;
         /// @brief The asset manager a cooked-level world spawns through; null for a device-free runner.
         AssetManager* Assets = nullptr;
-        /// @brief The render context capture-surface discovery uses; null for a device-free runner.
-        Renderer::Context* Context = nullptr;
     };
 
     /// @brief Parameters for opening a world through WorldRunner::OpenWorld.
@@ -166,53 +155,6 @@ namespace Veng
         function<void(WorldInstanceId world, Scene& scene, u64 tick)> BeforeSimStep;
         /// @brief Runs after each of a world's Sim steps (net client: stamp input + record prediction).
         function<void(WorldInstanceId world, Scene& scene, u64 tick)> AfterSimStep;
-    };
-
-    /// @brief How one WorldRunner::DriveCaptureSurfaces pass resolves presentation and registration.
-    ///
-    /// The runner holds no back-reference out of the sim domain, so it cannot know which of its worlds
-    /// a view shows; presentation answers that through IsPresented, and the compositor drive-list is
-    /// joined through Register. Both hooks are required.
-    struct WorldCaptureDriveInfo
-    {
-        /// @brief Registers a newly-materialized capture on the compositor drive-list.
-        function<void(Renderer::SceneCapture&)> Register;
-        /// @brief Whether any view presents a world — the gate on driving that world's captures.
-        ///
-        /// A capture feeds a material sampled by a mesh drawn in some view, so a world no view shows
-        /// can have no capture of its own sampled and its captures are work nobody can see. A world
-        /// being rebound onto a viewport counts as presented for the whole rebind (see
-        /// ManagedViewportSet::IsWorldPresented), so a make-before-break swap presents a warm probe
-        /// rather than a blank one.
-        function<bool(WorldInstanceId)> IsPresented;
-        /// @brief The most captures this pass builds new; a surface past it waits for a later pass.
-        ///
-        /// Building a capture builds a whole face renderer, so a world arriving with several capture
-        /// surfaces would otherwise pay for all of them in its first presented frame. A surface handed
-        /// a released capture of its configuration from the runner's pool builds nothing and is not
-        /// counted. The engine drives one pass per frame, so the default is one new build per frame.
-        u32 MaxNewCaptures = 1;
-    };
-
-    /// @brief What one WorldRunner::DriveCaptureSurfaces pass did across the open worlds.
-    struct WorldCaptureDriveResult
-    {
-        /// @brief Worlds whose capture surfaces were driven, because a view presents them.
-        u32 WorldsDriven = 0;
-        /// @brief Worlds skipped whole, because no view presents them.
-        u32 WorldsSkipped = 0;
-        /// @brief Capture surfaces driven across the driven worlds.
-        u32 SurfacesDriven = 0;
-        /// @brief Capture surfaces re-armed in skipped worlds, so a resumed one refreshes.
-        u32 SurfacesReArmed = 0;
-        /// @brief Captures built new this pass, at most WorldCaptureDriveInfo::MaxNewCaptures.
-        u32 CapturesBuilt = 0;
-        /// @brief Captures this pass took from the runner's pool of released ones instead of building.
-        u32 CapturesReused = 0;
-        /// @brief Surfaces left unmaterialized and undriven this pass because the build budget was spent.
-        u32 SurfacesDeferred = 0;
-        /// @brief Disabled surfaces in the driven worlds, whose runtime is released and left empty.
-        u32 SurfacesDisabled = 0;
     };
 
     /// @brief An RAII refcounted pause on one world, released when the scope drops.
@@ -519,45 +461,6 @@ namespace Veng
         /// @return The installed scene.
         Scene& InstallScene(WorldInstanceId world, Unique<Scene> scene);
 
-        /// @brief Discovers the presented worlds' CaptureSurface components and drives them into the compositor.
-        ///
-        /// Iterates every **presented** world's scene (regardless of pause — pause is not what gates
-        /// capture driving) for Renderer::CaptureSurface components, materializing each one's
-        /// SceneCapture on first sight and registering it through @p info.Register, then pushing this
-        /// frame's capture source. Requires the runner to have been given a context and asset manager
-        /// whenever a presented world holds a capture surface.
-        ///
-        /// Materialization is paced and pooled. A surface first takes a released capture of its
-        /// configuration from the runner's pool (see GetCapturePool); failing that, one is built new,
-        /// at most @p info.MaxNewCaptures per pass — a surface past the budget is left for a later
-        /// pass and not driven this one. A materialized capture returns to the pool when its surface
-        /// is destroyed, so a world swap that tears down and rebuilds the same captures reuses them.
-        ///
-        /// A world @p info.IsPresented rejects is skipped whole: with no view showing it, nothing can
-        /// sample a capture rendered from it, so the face render, its scene walk, and its view slot are
-        /// all waste — and several live worlds is the ordinary state of a runner holding worlds warm,
-        /// so the waste multiplies straight into the frame's view budget. Each already-materialized
-        /// capture in a skipped world is re-armed (CaptureSurface::MarkDirty) instead, so a world that
-        /// becomes presented again rebuilds its maps over the following frames rather than resuming
-        /// from content captured before it went dark.
-        ///
-        /// A capture binds onto the first MaterialInstance of its sibling MeshRenderer's mesh. That
-        /// instance belongs to the mesh asset and is shared by every entity drawing it, so on a
-        /// surface's first drive the runner installs a clone of it as the entity's
-        /// MeshRenderer::InstanceMaterials and binds the capture into the clone alone; see
-        /// Renderer::CaptureSurface.
-        /// @param info  The registration and presentation hooks this pass drives through.
-        /// @return What the pass drove, skipped, and re-armed.
-        WorldCaptureDriveResult DriveCaptureSurfaces(const WorldCaptureDriveInfo& info);
-
-        /// @brief Returns the pool released scene captures return to, and capture surfaces draw from.
-        ///
-        /// Null on a runner given no context and asset manager, which materializes no capture.
-        [[nodiscard]] Renderer::SceneCapturePool* GetCapturePool() const
-        {
-            return m_CapturePool.get();
-        }
-
         /// @brief Returns the owned worlds in id order, for per-world presentation drives.
         [[nodiscard]] const vector<Unique<World>>& GetWorlds() const { return m_Worlds; }
 
@@ -600,27 +503,6 @@ namespace Veng
         /// @param world  The world to test.
         [[nodiscard]] bool IsCloseQueued(WorldInstanceId world) const;
 
-        /// @brief Re-arms every already-materialized capture in a world whose captures are suppressed.
-        ///
-        /// A capture frozen while its world is unpresented holds the scene as it was when the world went
-        /// dark, so each one that has rendered is marked dirty and rebuilds its faces once the world is
-        /// presented again. A capture that never materialized has nothing to re-arm.
-        /// @param world  The skipped world whose capture surfaces are re-armed.
-        /// @return How many surfaces were re-armed.
-        static u32 ReArmCaptureSurfaces(const World& world);
-
-        /// @brief Gives an unmaterialized capture surface its capture, from the pool or newly built.
-        ///
-        /// A pooled capture of the surface's configuration is taken first and costs no build; past
-        /// that, a capture is built only while @p built is under @p maxNew.
-        /// @param surface  The surface to materialize; it holds no capture yet.
-        /// @param maxNew   The most captures this pass may build new.
-        /// @param built    The captures this pass has built so far; incremented on a build.
-        /// @param result   The pass's tally, counting the build or the reuse.
-        /// @return True when the surface now holds a capture; false when the build budget is spent.
-        bool MaterializeCapture(const Renderer::CaptureSurface& surface, u32 maxNew, u32& built,
-                                WorldCaptureDriveResult& result);
-
         /// @brief Returns a world's live simulation, or null when it is unminted or has none.
         /// @param world  The world to resolve.
         [[nodiscard]] SceneSimulation* ResolveSimulation(WorldInstanceId world) const;
@@ -639,15 +521,6 @@ namespace Veng
         PresentationScopes* m_Presentation = nullptr;
         /// @brief The asset manager cooked-level worlds spawn through; null on a device-free runner.
         AssetManager* m_Assets = nullptr;
-        /// @brief The render context capture-surface discovery uses; null on a device-free runner.
-        Renderer::Context* m_Context = nullptr;
-
-        /// @brief Released scene captures held for reuse; null on a device-free runner.
-        ///
-        /// Declared ahead of m_Worlds so it outlives them: a capture surface destroyed with its world
-        /// returns its capture here. Shared because each surface holds it weakly, so a surface that
-        /// outlives the runner drops its capture instead of returning it to a dead pool.
-        Ref<Renderer::SceneCapturePool> m_CapturePool;
 
         /// @brief The owned worlds, in ascending id (open) order.
         vector<Unique<World>> m_Worlds;
