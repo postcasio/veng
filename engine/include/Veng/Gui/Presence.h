@@ -33,6 +33,18 @@ namespace Veng::Gui
             m_Alpha = ExpApproach(m_Alpha, goal ? 1.0f : 0.0f, delta, Speed);
         }
 
+        /// @brief Stores the goal and settles the alpha on it at once, with no ease.
+        ///
+        /// For an element taken away by something other than its own close — its surface hidden,
+        /// its owner reset — that must not replay an animation when it is next drawn. Snapped open
+        /// it carries no slide; snapped closed it is hidden.
+        /// @param goal  True to settle open (alpha 1), false to settle closed (alpha 0).
+        void Snap(const bool goal)
+        {
+            m_Goal = goal;
+            m_Alpha = goal ? 1.0f : 0.0f;
+        }
+
         /// @brief Returns the current eased alpha, in 0..1.
         [[nodiscard]] f32 GetAlpha() const { return m_Alpha; }
 

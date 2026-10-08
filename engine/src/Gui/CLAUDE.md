@@ -899,7 +899,8 @@ attach lifecycle and re-attaches across a viewport recreation, with `SetOnInstan
 resolve-elements-once callback after every (re)instantiate (invoked immediately if the document is
 already live). `Gui::Presence` (`Veng/Gui/Presence.h`) eases a boolean open/close goal to an alpha
 through the frame-rate-independent `Veng::ExpApproach` (`Veng/Math/Ease.h`), reporting a hidden
-threshold and a signed slide offset; `Gui::KeyedPresence<Key>` wraps it as the close-over-stale /
+threshold and a signed slide offset (`Snap` settles it on a goal at once, for an element taken
+away by something other than its own close); `Gui::KeyedPresence<Key>` wraps it as the close-over-stale /
 adopt-once-hidden swap a keyed panel needs. Neither touches a document — the caller applies the
 alpha/slide (`SetOpacity`, `SetVisible`, `SetPlacement`), so placement stays caller-owned; a
 **declarative enter/exit-transition system is deliberately not built** (an exit animation needs

@@ -68,6 +68,26 @@ TEST_CASE("gui_presence: GetSlide is signed by the goal and collapses to zero wh
     CHECK(presence.GetSlide(100.0f) < 0.0f);
 }
 
+TEST_CASE("gui_presence: Snap settles on its goal at once, with no slide left")
+{
+    Presence presence;
+    presence.Update(true, Dt);
+    REQUIRE(presence.GetAlpha() > 0.0f);
+    REQUIRE(presence.GetAlpha() < 1.0f);
+
+    presence.Snap(false);
+    CHECK(presence.GetAlpha() == 0.0f);
+    CHECK(presence.IsHidden());
+
+    presence.Snap(true);
+    CHECK(presence.GetAlpha() == 1.0f);
+    CHECK(presence.GetSlide(100.0f) == 0.0f);
+
+    // The stored goal is what an ease continues from: a closing step after an open snap slides out.
+    presence.Update(false, Dt);
+    CHECK(presence.GetSlide(100.0f) < 0.0f);
+}
+
 TEST_CASE("gui_presence: KeyedPresence opens from empty and closes back to empty")
 {
     KeyedPresence<int> keyed;
