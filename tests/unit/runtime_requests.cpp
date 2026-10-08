@@ -6,10 +6,12 @@
 // retried and can be withdrawn, two worlds drain in id order, the fixed type order lets a
 // same-frame stop-net + host re-host, the request components are all unreplicated, and a host
 // request in a client-tier world fails without reaching server state. The focus and pause cases drive
-// the engine's own reconcile helpers.
+// the engine's own reconcile helpers. The policy cases wrap the stub dispatch in the engine's per-world
+// request policy (ApplyRequestPolicies), the stub exit standing in for the application's exit flag.
 
 #include <doctest/doctest.h>
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -550,4 +552,135 @@ TEST_CASE("Closing a world drops its request-driven pause")
     runner.CloseWorld(closing);
     CHECK(scopes.size() == 1);
     CHECK(runner.IsWorldPaused(peer));
+}
+
+namespace
+{
+    // The policies a drain consults, keyed by world id, as Application holds them.
+    using PolicyMap = std::map<u64, WorldRequestPolicy>;
+
+    WorldRequestPolicyLookup LookupIn(const PolicyMap& policies)
+    {
+        return [&policies](const WorldInstanceId world) -> const WorldRequestPolicy*
+        {
+            const auto it = policies.find(world.Value);
+            return it != policies.end() ? &it->second : nullptr;
+        };
+    }
+}
+
+TEST_CASE("A sandboxed world's travel fails, its focus reconciles, and its exit ends only itself")
+{
+    TypeRegistry types;
+    RegisterRequests(types);
+    SystemRegistry systems;
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    const WorldInstanceId world = OpenEmpty(runner);
+
+    PolicyMap policies;
+    vector<WorldInstanceId> exited;
+    // The session's exit closes its world, as a tool ending its play session does; the close drops
+    // the policy its exit handler was read from.
+    policies[world.Value] = WorldRequestPolicy{
+        .Mode = WorldRequestMode::Sandboxed,
+        .OnExit =
+            [&](const WorldInstanceId from)
+        {
+            exited.push_back(from);
+            policies.erase(from.Value);
+            runner.CloseWorld(from);
+        },
+    };
+
+    bool applicationExit = false;
+    int travels = 0;
+    int stops = 0;
+    vector<WorldInstanceId> focused;
+    RequestDispatch dispatch;
+    dispatch.Travel = [&](WorldInstanceId, const TravelRequest&, std::string&)
+    {
+        ++travels;
+        return RequestResult::Handled;
+    };
+    dispatch.StopNet = [&](WorldInstanceId, const StopNetRequest&, std::string&)
+    {
+        ++stops;
+        return RequestResult::Handled;
+    };
+    dispatch.Focus = [&](const WorldInstanceId from, const FocusRequest&, std::string&)
+    {
+        focused.push_back(from);
+        return RequestResult::Handled;
+    };
+    dispatch.Exit = [&](WorldInstanceId, const ExitRequest&, std::string&)
+    {
+        applicationExit = true;
+        return RequestResult::Handled;
+    };
+    const RequestDispatch policed = ApplyRequestPolicies(dispatch, LookupIn(policies));
+
+    Stamp<TravelRequest>(runner, world);
+    Stamp<StopNetRequest>(runner, world);
+    Stamp<FocusRequest>(runner, world);
+    DrainRequests(runner, policed);
+
+    // Travel never reached the application and is held failed with the reason; stop-net is a
+    // handled no-op; focus reconciled as in any world.
+    const auto* travel = Find<TravelRequest>(runner, world);
+    REQUIRE(travel != nullptr);
+    CHECK(travel->Status == RequestStatus::Failed);
+    CHECK(travel->Error == "not available in a sandboxed world");
+    CHECK(travels == 0);
+    CHECK(Find<StopNetRequest>(runner, world) == nullptr);
+    CHECK(stops == 0);
+    CHECK(focused == vector<WorldInstanceId>{world});
+
+    Stamp<ExitRequest>(runner, world);
+    DrainRequests(runner, policed);
+
+    // The exit ended the world it came from and nothing else.
+    CHECK(exited == vector<WorldInstanceId>{world});
+    CHECK(runner.ResolveWorld(world) == nullptr);
+    CHECK_FALSE(applicationExit);
+}
+
+TEST_CASE(
+    "A full world's exit handler takes its exit and it still travels; an unpoliced world exits")
+{
+    TypeRegistry types;
+    RegisterRequests(types);
+    SystemRegistry systems;
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    const WorldInstanceId handled = OpenEmpty(runner);
+    const WorldInstanceId plain = OpenEmpty(runner);
+
+    vector<WorldInstanceId> exited;
+    PolicyMap policies;
+    policies[handled.Value] =
+        WorldRequestPolicy{.OnExit = [&](const WorldInstanceId from) { exited.push_back(from); }};
+
+    vector<WorldInstanceId> travelled;
+    vector<WorldInstanceId> applicationExits;
+    RequestDispatch dispatch;
+    dispatch.Travel = [&](const WorldInstanceId from, const TravelRequest&, std::string&)
+    {
+        travelled.push_back(from);
+        return RequestResult::Handled;
+    };
+    dispatch.Exit = [&](const WorldInstanceId from, const ExitRequest&, std::string&)
+    {
+        applicationExits.push_back(from);
+        return RequestResult::Handled;
+    };
+
+    Stamp<TravelRequest>(runner, handled);
+    Stamp<ExitRequest>(runner, handled);
+    Stamp<ExitRequest>(runner, plain);
+    DrainRequests(runner, ApplyRequestPolicies(dispatch, LookupIn(policies)));
+
+    CHECK(travelled == vector<WorldInstanceId>{handled});
+    CHECK(exited == vector<WorldInstanceId>{handled});
+    CHECK(Find<ExitRequest>(runner, handled) == nullptr);
+    CHECK(applicationExits == vector<WorldInstanceId>{plain});
+    CHECK(Find<ExitRequest>(runner, plain) == nullptr);
 }

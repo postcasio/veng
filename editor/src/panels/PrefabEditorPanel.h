@@ -7,7 +7,7 @@
 #include <Veng/Result.h>
 #include <Veng/Renderer/ViewportId.h>
 #include <Veng/Scene/SceneSystem.h>
-#include <Veng/Scene/SimClock.h>
+#include <Veng/WorldRunner.h>
 
 #include <VengEditor/AssetEditorPanel.h>
 #include "CommandStack.h"
@@ -23,10 +23,8 @@ namespace Veng
     class InputRouter;
     class Prefab;
     class Scene;
-    class SceneSimulation;
     class SystemRegistry;
     class TypeRegistry;
-    enum class SystemContextPhase : u8;
 }
 
 namespace VengEditor
@@ -84,31 +82,40 @@ namespace VengEditor
         /// @return Empty on success; an error string on a missing source or an I/O failure.
         [[nodiscard]] Veng::VoidResult Save() override;
 
-        /// @brief Clones the edit scene and starts a play session running its systems over the clone.
+        /// @brief Clones the edit scene and opens it as a world of the host's runner, playing.
         ///
-        /// Repoints the shared context at the clone, builds the SceneSimulation on first
-        /// play, calls each system's OnStart, and clears the selection (its handles point
-        /// into the edit scene). The simulation runs the set GetPlaySystems() names — every
-        /// registered system for a prefab document, the level's ordered set for a level
-        /// document. A no-op while already playing.
+        /// The clone is seeded (SeedPlayScene), then opened through WorldRunner::OpenWorld over the
+        /// scene with the set GetPlaySystems() names — every registered system for a prefab document,
+        /// the level's ordered set for a level document — and started, so the runner ticks it as it
+        /// ticks any world. The world drains its requests under a Sandboxed policy whose exit stops
+        /// play, and the document viewport is registered as its presentation (through the clone's
+        /// presentation seat, pushing its own camera). Repoints the shared context at the world's
+        /// scene, clears the selection (its handles point into the edit scene) and captures the
+        /// cursor. A no-op while already playing.
         void Play();
 
-        /// @brief Stops the play session: calls OnStop, drops the clone, and restores the edit scene.
+        /// @brief Stops the play session: closes its world and restores the edit scene.
         ///
-        /// Repoints the shared context back at the edit scene, clears the selection, and
-        /// returns to Editing. A no-op while not playing.
+        /// Releases the cursor and the panel's pause, unregisters the viewport's presentation, and
+        /// closes the world (each system's OnStop runs, unless the world already closed). Repoints the
+        /// shared context back at the edit scene, clears the selection, and returns to Editing. A
+        /// no-op while not playing.
         void Stop();
 
-        /// @brief Pauses an active play session, holding the clone without advancing it. No-op unless Playing.
+        /// @brief Holds a pause on the play world and frees the cursor. No-op unless playing and
+        ///        not already holding one.
         void Pause();
 
-        /// @brief Resumes a paused play session. No-op unless Paused.
+        /// @brief Drops the panel's own pause on the play world and recaptures the cursor.
+        ///
+        /// A pause the running game requested (PauseRequest) is the game's to release, so this
+        /// releases only the hold Pause took. No-op unless the panel holds one.
         void Resume();
 
         /// @brief Draws the document toolbar above the dockspace: play transport, gizmo mode, entity count.
         ///
-        /// Also ticks the play simulation (when playing) so the next engine viewport render
-        /// shows the advanced clone — the same one-frame latency the editor camera carries.
+        /// Also follows the play session first (UpdatePlaySession), so the document draws over the
+        /// world's live scene and returns to editing once that world has closed.
         void OnUI() override;
 
         /// @brief Returns this document's undo/redo stack — the seam the host dispatches shortcuts to.
@@ -117,8 +124,12 @@ namespace VengEditor
         /// @brief Returns true when the edited scene has unsaved command-stack edits.
         [[nodiscard]] bool HasUnsavedChanges() const override { return m_Commands.IsDirty(); }
 
-        /// @brief Returns the document's live edit Scene — the world tools' focused scene.
-        [[nodiscard]] Veng::Scene* GetDocumentScene() override { return m_Context.Scene; }
+        /// @brief Returns the document's live scene — the play world's while playing, else the edit
+        ///        scene — the world tools' focused scene.
+        ///
+        /// Resolved through the runner while playing, so a play world closed since the last frame
+        /// yields null rather than its destroyed scene.
+        [[nodiscard]] Veng::Scene* GetDocumentScene() override;
 
         /// @brief Returns the scene viewport's Offscreen viewport — the screenshot seam's target.
         [[nodiscard]] Veng::Renderer::Viewport* GetDocumentViewport() override;
@@ -132,11 +143,15 @@ namespace VengEditor
         /// (PrefabEditContext::Gizmo) every viewport's gizmo reads.
         void DrawDocumentToolbar();
 
-        /// @brief Advances the play simulation one tick when a session is running; a no-op otherwise.
+        /// @brief Follows the play session this frame; a no-op while editing.
         ///
-        /// The base OnUI calls this; a subclass overriding OnUI (the level editor) must call it
-        /// too, or its play session spawns at Start but never advances — frozen poses, dead input.
-        void TickPlaySimulation();
+        /// The runner ticks the play world (before the editor's UI runs), so this only follows it:
+        /// a world that no longer resolves — its sandboxed exit, or a system closing it — returns the
+        /// document to editing; otherwise it repoints the context at the world's live scene, applies
+        /// the Shift+Esc cursor release, keeps the pointer association in step with the capture, and
+        /// reads the world's interpolation fraction. The base OnUI calls this; a subclass overriding
+        /// OnUI (the level editor) must call it too, before drawing anything over the context.
+        void UpdatePlaySession();
 
         /// @brief Constructs the document over a world prefab id, deferring child wiring to a subclass.
         ///
@@ -245,18 +260,6 @@ namespace VengEditor
         ///        session holds the cursor capture, so the captured pointer routes to the play scene.
         void SyncPlayPointer();
 
-        /// @brief Builds a play-session context through the host's context factory.
-        /// @param phase      The lifecycle call or tick phase the context is for.
-        /// @param tick       The tick to stamp.
-        /// @param alpha      The interpolation fraction to stamp (View only).
-        /// @param firstStep  Whether this is the frame's first Sim step.
-        /// @param lastStep   Whether this is the frame's last Sim step.
-        /// @return The context, naming no world.
-        [[nodiscard]] Veng::SystemContext PlayContext(Veng::SystemContextPhase phase,
-                                                      Veng::u64 tick = 0, Veng::f32 alpha = 0.0f,
-                                                      bool firstStep = false,
-                                                      bool lastStep = false) const;
-
         Veng::AssetId m_Id;
 
         /// @brief The preview look the scene is shown under, or nullptr for the viewport defaults.
@@ -267,8 +270,7 @@ namespace VengEditor
         /// @brief GetTitle()'s recomputed buffer: the marker + label + stable id suffix.
         mutable Veng::string m_DisplayTitle;
 
-        /// @brief The host the play session prepares its steps' input through and reports its
-        ///        frames to.
+        /// @brief The host whose WorldRunner runs the play session, and whose managed set presents it.
         Veng::Application& m_App;
         Veng::AssetManager& m_Assets;
         Veng::Input& m_Input;
@@ -280,17 +282,16 @@ namespace VengEditor
         /// @brief The authored scene, edited while not playing and cloned to start a play session.
         Veng::Unique<Veng::Scene> m_Scene;
 
-        /// @brief The throwaway play clone, non-null only during a play session.
-        Veng::Unique<Veng::Scene> m_PlayScene;
-
-        /// @brief The system driver, built lazily on the first Play and reused across sessions.
-        Veng::Unique<Veng::SceneSimulation> m_Simulation;
-
-        /// @brief The fixed-timestep accumulator driving the play clone, reset at the start of each Play.
+        /// @brief The world the play session runs in, or invalid while editing.
         ///
-        /// The editor's Play adopts the same accumulator as the launcher: the Sim phase steps at the
-        /// fixed rate with a monotonic tick, the View phase runs once per frame, and the residual
-        /// alpha (stored on the context) interpolates the render.
-        Veng::SimClock m_PlaySimClock;
+        /// Held by id, never by scene address: the runner owns the world, and a world closed under
+        /// the session simply stops resolving.
+        Veng::WorldInstanceId m_PlayWorld;
+
+        /// @brief The pause the toolbar's Pause holds on the play world; inert when not held.
+        Veng::WorldPauseScope m_PlayPause;
+
+        /// @brief The viewport registered as the play world's presentation, or null when none is.
+        Veng::Renderer::Viewport* m_PlayPresentation = nullptr;
     };
 }

@@ -9,6 +9,37 @@ namespace Veng
 {
     namespace
     {
+        constexpr string_view SandboxRefusal = "not available in a sandboxed world";
+
+        bool IsSandboxed(const WorldRequestPolicyLookup& policies, const WorldInstanceId world)
+        {
+            const WorldRequestPolicy* policy = policies(world);
+            return policy != nullptr && policy->Mode == WorldRequestMode::Sandboxed;
+        }
+
+        // Wraps one operation so a sandboxed world's request fails before reaching it; an operation
+        // the dispatch leaves unset stays unset, so the drain still skips its type.
+        template <class T>
+        function<RequestResult(WorldInstanceId, const T&, string&)> RefuseSandboxed(
+            const function<RequestResult(WorldInstanceId, const T&, string&)>& operation,
+            const Ref<const WorldRequestPolicyLookup>& policies)
+        {
+            if (!operation)
+            {
+                return {};
+            }
+            return
+                [operation, policies](const WorldInstanceId world, const T& request, string& error)
+            {
+                if (IsSandboxed(*policies, world))
+                {
+                    error = string{SandboxRefusal};
+                    return RequestResult::Failed;
+                }
+                return operation(world, request, error);
+            };
+        }
+
         // Drains one request type across the captured world snapshot, applying the uniform
         // consumption semantics. A held-Failed component (its one-frame observation window expired)
         // is removed without re-dispatching; a Pending one is dispatched and the outcome applied.
@@ -80,6 +111,46 @@ namespace Veng
                 }
             }
         }
+    }
+
+    RequestDispatch ApplyRequestPolicies(RequestDispatch dispatch, WorldRequestPolicyLookup lookup)
+    {
+        const auto policies = CreateRef<const WorldRequestPolicyLookup>(std::move(lookup));
+
+        RequestDispatch result = dispatch;
+        result.Travel = RefuseSandboxed(dispatch.Travel, policies);
+        result.Host = RefuseSandboxed(dispatch.Host, policies);
+        result.Connect = RefuseSandboxed(dispatch.Connect, policies);
+        if (dispatch.StopNet)
+        {
+            result.StopNet =
+                [policies, stopNet = std::move(dispatch.StopNet)](
+                    const WorldInstanceId world, const StopNetRequest& request, string& error)
+            {
+                // A sandboxed world has no transport of its own, so there is nothing for it to stop.
+                return IsSandboxed(*policies, world) ? RequestResult::Handled
+                                                     : stopNet(world, request, error);
+            };
+        }
+        result.Exit = [policies, exit = std::move(dispatch.Exit)](
+                          const WorldInstanceId world, const ExitRequest& request, string& error)
+        {
+            const WorldRequestPolicy* policy = (*policies)(world);
+            if (policy != nullptr && policy->OnExit)
+            {
+                // Copied first: an OnExit closing its world drops the policy it is read from.
+                const function<void(WorldInstanceId)> onExit = policy->OnExit;
+                onExit(world);
+                return RequestResult::Handled;
+            }
+            if (policy != nullptr && policy->Mode == WorldRequestMode::Sandboxed)
+            {
+                error = string{SandboxRefusal};
+                return RequestResult::Failed;
+            }
+            return exit ? exit(world, request, error) : RequestResult::Pending;
+        };
+        return result;
     }
 
     void DrainRequests(WorldRunner& runner, const RequestDispatch& dispatch)

@@ -514,6 +514,37 @@ namespace Veng
                 seats.push_back(managed.Info.Viewer);
             }
         }
+        for (const BoundViewport& bound : m_Bound)
+        {
+            if (bound.World == world && !bound.Viewer.IsNull())
+            {
+                seats.push_back(bound.Viewer);
+            }
+        }
+    }
+
+    Renderer::Viewport* ManagedViewportSet::FindPresentingViewport(const WorldInstanceId world,
+                                                                   const Scene& scene) const
+    {
+        if (!world.IsValid())
+        {
+            return nullptr;
+        }
+        for (const ManagedViewport& managed : m_Viewports)
+        {
+            if (managed.Info.World == world && managed.Viewport->GetPresentedScene() == &scene)
+            {
+                return managed.Viewport.get();
+            }
+        }
+        for (const BoundViewport& bound : m_Bound)
+        {
+            if (bound.World == world && bound.Viewport->GetPresentedScene() == &scene)
+            {
+                return bound.Viewport;
+            }
+        }
+        return nullptr;
     }
 
     bool ManagedViewportSet::IsWorldPresented(const WorldInstanceId world) const
@@ -643,18 +674,20 @@ namespace Veng
         // driving the frame's alpha, so each reads its world's own interpolation fraction.
         for (const BoundViewport& bound : m_Bound)
         {
+            if (!bound.PullsCamera)
+            {
+                continue;
+            }
             PushViewportView(*bound.Viewport, bound.World, bound.Viewer, runner, bound.Knobs, delta,
                              runner.ResolveAlpha(bound.World));
         }
     }
 
     void ManagedViewportSet::RegisterBoundViewport(Renderer::Viewport& viewport,
-                                                   WorldInstanceId world, Entity viewer,
-                                                   const Renderer::ViewState& knobs,
-                                                   optional<LevelRenderSettings> look)
+                                                   const BoundViewportInfo& info)
     {
-        // A bound viewport is created by its caller (a LevelOverlay), not by this set, so it has none
-        // of the engine services a set-created viewport is handed in ReconfigureManagedViewports.
+        // A bound viewport is created by its caller, not by this set, so it has none of the engine
+        // services a set-created viewport is handed in ReconfigureManagedViewports.
         // Wire the same four the set owns, so an engine-driven GuiOverlay/GuiSurface presented here
         // instantiates its driver and localizes its markup exactly as one on a managed viewport does;
         // without them the overlay renders raw loc-keys, plays no sound, and never drives its driver.
@@ -664,16 +697,26 @@ namespace Veng
         viewport.SetLocalization(m_Localization);
 
         m_Bound.push_back({.Viewport = &viewport,
-                           .World = world,
-                           .Viewer = viewer,
-                           .Knobs = knobs,
-                           .Look = std::move(look)});
+                           .World = info.World,
+                           .Viewer = info.Viewer,
+                           .Knobs = info.Knobs,
+                           .Look = info.Look,
+                           .PullsCamera = info.PullsCamera});
     }
 
-    void ManagedViewportSet::UnregisterBoundViewport(const Renderer::Viewport& viewport)
+    void ManagedViewportSet::UnregisterBoundViewport(Renderer::Viewport& viewport)
     {
-        std::erase_if(m_Bound, [&viewport](const BoundViewport& bound)
-                      { return bound.Viewport == &viewport; });
+        if (std::erase_if(m_Bound, [&viewport](const BoundViewport& bound)
+                          { return bound.Viewport == &viewport; }) == 0)
+        {
+            return;
+        }
+        // A viewport its owner keeps past the binding presents nothing of the engine's, so it drives
+        // no overlay the way an unbound viewport does not.
+        viewport.SetGuiDriverRegistry(nullptr);
+        viewport.SetAudioEngine(nullptr);
+        viewport.SetGuiTranslator(nullptr);
+        viewport.SetLocalization(nullptr);
     }
 
     void ManagedViewportSet::SetLevelLookResolver(LevelLookResolver resolver)

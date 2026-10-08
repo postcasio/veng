@@ -10,9 +10,8 @@ namespace Veng
 
     /// @brief The per-frame input protocol every simulation stepped in one frame shares.
     ///
-    /// The Input snapshot is one stream however many simulations a frame steps: a scheduler's
-    /// worlds, and any driver stepping a SimClock of its own (a tool's play session, a preview).
-    /// This decides, for all of them alike, what each frame does with that stream:
+    /// The Input snapshot is one stream however many simulations a frame steps — every world the
+    /// scheduler ticks. This decides, for all of them alike, what each frame does with that stream:
     ///
     /// - **Edges.** The next frame holds the pressed/released edges when something simulated and
     ///   nothing stepped, so a press and release landing between two steps is still read down by the
@@ -26,9 +25,6 @@ namespace Veng
     ///   latch consumes it; with no scene routed every step latches, so an unrouted stretch never
     ///   banks. Every step latches every pad's touchpad, the first step of the frame taking the
     ///   frame's motion.
-    ///
-    /// Every report and every step counts alike, so a driver outside the scheduler reads input
-    /// exactly as a scheduled world does.
     class SimInputFrame
     {
     public:

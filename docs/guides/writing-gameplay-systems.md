@@ -46,8 +46,8 @@ public:
 
 A `SceneSimulation` owns the registered systems and drives this lifecycle:
 `Start` → repeated `Update` → `Stop`. The runtime app and the editor's Play mode
-tick the *same* systems through the *same* driver, so a system you write behaves
-identically in both.
+tick the *same* systems through the *same* driver and the *same* host — Play is a
+`WorldRunner` world — so a system you write behaves identically in both.
 
 ### The SystemContext
 

@@ -172,11 +172,14 @@ namespace Veng
         PointerRouting Pointer;
         /// @brief The sim's primary presenting viewport's resolved view, or nullopt when unpresented.
         ///
-        /// Populated by the engine from the sole/primary registered Presented viewport whose retained
-        /// scene is this sim's — so it is the view **as of the last completed frame** (view pushes run
-        /// after ticks) and the **primary presenter's** view (see SystemViewInfo). nullopt for a
-        /// view-less sim (a background/offscreen scene no viewport presents) and on a viewport's very
-        /// first tick before any view has been pushed.
+        /// Resolved by the engine from the world this context names: the first viewport registered as
+        /// presenting it (a managed viewport, then a bound one — ManagedViewportSet::
+        /// FindPresentingViewport — of any role, so an editor's Offscreen document viewport counts),
+        /// else a Presented viewport its consumer drives itself, whose retained scene is this sim's.
+        /// So it is the view **as of the last completed frame** (view pushes run after ticks) and the
+        /// **primary presenter's** view (see SystemViewInfo). nullopt for a view-less sim (a
+        /// background scene no viewport presents) and on a viewport's very first tick before any view
+        /// has been pushed.
         optional<SystemViewInfo> View;
         /// @brief The primary presenting viewport's immediate-mode debug-draw sink, or null when unpresented.
         ///
@@ -369,7 +372,7 @@ namespace Veng
     /// Registered into the host-owned SystemRegistry exactly like a reflected type;
     /// the SceneSimulation driver instantiates and ticks the registered systems.
     /// The runtime app and the editor's Play mode tick the same systems, in
-    /// registration order.
+    /// registration order, through the same host: a Play session is a WorldRunner world.
     class SceneSystem
     {
     public:

@@ -51,6 +51,23 @@ namespace Veng
         function<RequestResult(WorldInstanceId, const PauseRequest&, string& error)> Pause;
     };
 
+    /// @brief Returns a world's request policy, or null when it has none (drained as Full).
+    using WorldRequestPolicyLookup = function<const WorldRequestPolicy*(WorldInstanceId world)>;
+
+    /// @brief Wraps a dispatch so each world's requests drain under that world's request policy.
+    ///
+    /// A world @p lookup answers no policy for drains through @p dispatch unchanged. Otherwise an
+    /// ExitRequest calls the policy's OnExit and is handled, when one is set. In a Sandboxed world,
+    /// TravelRequest, HostRequest and ConnectRequest fail with a stated reason, StopNetRequest is
+    /// handled with no effect, and an ExitRequest with no OnExit fails; FocusRequest and PauseRequest
+    /// reach @p dispatch as in any world. The policy is read as each request is dispatched, and OnExit
+    /// is copied before it is called, so an OnExit that closes its world (dropping the policy) is safe.
+    /// @param dispatch  The application's operations.
+    /// @param lookup    The per-world policy lookup.
+    /// @return The policy-applying dispatch.
+    [[nodiscard]] RequestDispatch ApplyRequestPolicies(RequestDispatch dispatch,
+                                                       WorldRequestPolicyLookup lookup);
+
     /// @brief Drains every open world's request components once, in the fixed type order.
     ///
     /// Captures a snapshot of the open-world ids (in id order) before it begins, so a world opened

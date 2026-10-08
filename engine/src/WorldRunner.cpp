@@ -89,9 +89,8 @@ namespace Veng
         return WorldInstanceId{.Value = m_NextId++};
     }
 
-    WorldInstanceId WorldRunner::OpenWorld(const WorldOpenInfo& info)
+    Unique<World> WorldRunner::CreateWorld(const WorldOpenInfo& info)
     {
-        VE_PROFILE_SCOPE("World/Open");
         auto world = CreateUnique<World>();
         world->Id = MintId();
         world->Clock = SimClock(SimClockInfo{
@@ -106,6 +105,13 @@ namespace Veng
             world->SimScopeName = profiler->InternName(prefix + " Sim");
             world->ViewScopeName = profiler->InternName(prefix + " View");
         }
+        return world;
+    }
+
+    WorldInstanceId WorldRunner::OpenWorld(const WorldOpenInfo& info)
+    {
+        VE_PROFILE_SCOPE("World/Open");
+        Unique<World> world = CreateWorld(info);
 
         if (info.Source.IsLoaded())
         {
@@ -125,6 +131,27 @@ namespace Veng
                     CreateUnique<SceneSimulation>(*m_Systems, *info.Systems));
             }
         }
+        return AdoptWorld(std::move(world), info);
+    }
+
+    WorldInstanceId WorldRunner::OpenWorld(const WorldOpenInfo& info, Unique<Scene> scene)
+    {
+        VE_PROFILE_SCOPE("World/Open");
+        VE_ASSERT(!info.Source.IsValid(),
+                  "WorldRunner::OpenWorld: a world opened over a scene spawns no level");
+        VE_ASSERT(scene != nullptr, "WorldRunner::OpenWorld: no scene to open a world over");
+        Unique<World> world = CreateWorld(info);
+        world->OwnedScene = std::move(scene);
+        if (info.Systems.has_value())
+        {
+            world->OwnedScene->SetSimulation(
+                CreateUnique<SceneSimulation>(*m_Systems, *info.Systems));
+        }
+        return AdoptWorld(std::move(world), info);
+    }
+
+    WorldInstanceId WorldRunner::AdoptWorld(Unique<World> world, const WorldOpenInfo& info)
+    {
         world->LiveScene = world->OwnedScene.get();
 
         const WorldInstanceId id = world->Id;
@@ -210,6 +237,7 @@ namespace Veng
     SystemContext WorldRunner::BuildContext(const SystemContextRequest& request) const
     {
         VE_ASSERT(m_ContextFactory != nullptr, "WorldRunner::BuildContext: no context factory");
+        VE_ASSERT(request.World.IsValid(), "WorldRunner::BuildContext: the context names no world");
         return m_ContextFactory(request);
     }
 

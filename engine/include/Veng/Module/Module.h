@@ -317,10 +317,16 @@ extern "C"
 /// reads the simulation's inline pause accessors, subclasses Application and registers its types
 /// beside the builtins, so a stale module lays World, SceneSimulation and Application out at the old
 /// layout.
+/// Version 79 makes the runner's worlds the only simulation host: WorldRunner gains an OpenWorld over
+/// a scene its caller hands over, ManagedViewportSet::RegisterBoundViewport takes a
+/// BoundViewportInfo (which may leave the camera to the viewport's owner) and grows its bound record,
+/// and Application gains per-world request policies while losing BeginSimStep, ReportSimFrame and
+/// GetSimPointer. A module opens worlds, registers bound viewports and subclasses Application, so a
+/// stale module calls a registration the host no longer exports and lays the application out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 78u
+#define VENG_MODULE_ABI_VERSION 79u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

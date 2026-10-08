@@ -10,8 +10,9 @@ namespace Veng
 
     /// @brief Drives a set of SceneSystems over a Scene.
     ///
-    /// The single simulation driver both the runtime app and the editor's Play mode
-    /// own. Constructed either from an ordered SystemId set selecting catalog entries —
+    /// The single simulation driver a scene owns, whichever world runs it — a level the runtime
+    /// app opens or a clone the editor's Play opens alike, since both are WorldRunner worlds.
+    /// Constructed either from an ordered SystemId set selecting catalog entries —
     /// it runs exactly those systems, in that order — or from a whole SystemRegistry as
     /// the "all registered" convenience. It instantiates its systems at construction and
     /// holds them, then Start/Update/Stop each across a play session, honoring the

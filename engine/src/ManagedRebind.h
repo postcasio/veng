@@ -11,19 +11,6 @@ namespace Veng
     class Scene;
     class WorldRunner;
 
-    /// @brief Resolves the seat a viewport re-points to when it is rebound to a destination scene.
-    ///
-    /// The seat-selection a world rebind applies, mirroring the claiming rules a GuiOverlay already
-    /// uses: the currently bound seat when it still resolves as a live Viewer in the destination scene
-    /// (entity handles are scene-local, so a handle carried from the departed scene usually does not),
-    /// else the scene's first locally-owned Viewer (IsLocallyOwned), else null. A Viewer a remote
-    /// peer owns is never adopted, so a host scene seating only remote peers resolves null. A null
-    /// result clears the viewport's seat association.
-    /// @param scene        The destination scene the seat is resolved in.
-    /// @param boundViewer  The seat the viewport was bound to before the rebind (Entity::Null if none).
-    /// @return The resolved destination seat, or Entity::Null when the scene seats none of this peer's.
-    [[nodiscard]] Entity ResolvePresentationSeat(const Scene& scene, Entity boundViewer);
-
     /// @brief Returns whether a world is ready to be presented by a present-on-ready rebind.
     ///
     /// A world is presentable once it resolves through @p runner, its live scene is installed, its

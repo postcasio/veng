@@ -20,16 +20,16 @@ namespace VengEditor
 {
     /// @brief Lifecycle phase of a prefab document: authoring, or running its systems.
     ///
-    /// Editing edits the authored scene; Playing/Paused run the registered SceneSystems
-    /// over a throwaway clone, so the authored scene is never mutated by play.
+    /// Editing edits the authored scene; Playing runs the document's systems over a throwaway clone
+    /// opened as a world of the host's WorldRunner, so the authored scene is never mutated by play.
+    /// Whether a playing session is paused is its world's pause (WorldRunner::IsWorldPaused), not a
+    /// phase of its own.
     enum class PlayState
     {
         /// @brief Authoring the scene; no systems run.
         Editing,
-        /// @brief Running the systems over the play clone, advancing each frame.
+        /// @brief Running the systems over the play clone's world.
         Playing,
-        /// @brief Holding the play clone without advancing it.
-        Paused,
     };
 
     /// @brief Shared editing state of one open prefab document.
@@ -74,17 +74,18 @@ namespace VengEditor
 
         /// @brief The document's current play phase.
         ///
-        /// Editing while authoring; Playing/Paused while the document runs its systems
-        /// over the play clone. Scene repoints to the play clone for the duration of a
-        /// play session and back to the edit scene on Stop, so every child panel follows
-        /// the active scene through this one pointer.
+        /// Editing while authoring; Playing while the document runs its systems over the play
+        /// clone. Scene repoints to the play world's live scene for the duration of a play session
+        /// (re-resolved each frame by PrefabEditorPanel::UpdatePlaySession) and back to the edit
+        /// scene on Stop, so every child panel follows the active scene through this one pointer.
         PlayState Play = PlayState::Editing;
 
-        /// @brief This frame's fixed-timestep interpolation fraction for the play clone, in [0, 1).
+        /// @brief This frame's fixed-timestep interpolation fraction for the play world, in [0, 1).
         ///
-        /// Written by PrefabEditorPanel::TickPlaySimulation each frame from the play accumulator and
-        /// read by the viewport push, so the editor's Play renders interpolated between the last two
-        /// Sim ticks exactly as the launcher does. Zero while not playing.
+        /// Written by PrefabEditorPanel::UpdatePlaySession each frame from the play world's clock
+        /// (WorldRunner::ResolveAlpha) and read by the viewport push, so the editor's Play renders
+        /// interpolated between the last two Sim ticks exactly as the launcher does. Zero while not
+        /// playing.
         Veng::f32 PlayAlpha = 0.0f;
 
         /// @brief The gameplay focus this document pushed to capture the cursor for Play.
@@ -93,8 +94,8 @@ namespace VengEditor
         /// entry, including one a window-focus loss has suspended.
         Veng::FocusToken PlayCapture;
 
-        /// @brief Returns true while a play session is active (Playing or Paused).
-        [[nodiscard]] bool IsPlaying() const { return Play != PlayState::Editing; }
+        /// @brief Returns true while a play session is active, paused or not.
+        [[nodiscard]] bool IsPlaying() const { return Play == PlayState::Playing; }
 
         /// @brief Returns true if @p entity is in the current selection.
         [[nodiscard]] bool IsSelected(Veng::Entity entity) const

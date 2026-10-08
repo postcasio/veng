@@ -127,8 +127,8 @@ runs:
 It returns a `LevelInstance { Unique<Scene> World; ResidencyBatch Pending; }`, which
 the `WorldRunner` takes ownership of. The runner starts the simulation with the
 `SystemContext` its context factory builds for the new world, then ticks it every
-frame — the same `SceneSimulation` driver the editor's Play mode uses, so a level
-plays identically in the editor and the shipped runtime.
+frame — the editor's Play mode opens its clone of the level as a `WorldRunner` world
+too, so a level plays identically in the editor and the shipped runtime.
 
 ---
 

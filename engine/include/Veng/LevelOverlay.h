@@ -72,8 +72,9 @@ namespace Veng
     ///
     /// A thin preset over WorldRunner::OpenWorld: opening an overlay opens an owned world (its own
     /// scene, systems, and HUD, ticked by the runner like any world) and applies an overlay policy —
-    /// register a Presented viewport on top (composited over the covered world, its camera pulled by
-    /// the managed-viewport presentation path and its region re-fit on resize by the compositor),
+    /// register a Presented viewport on top (composited over the covered world, bound to the
+    /// overlay's seat so its camera is pulled through that seat and the seat is marked locally
+    /// controlled, its region re-fit on resize by the compositor),
     /// hand the cursor seat and the covered seat's focus off to the overlay's own seat, and hold a
     /// WorldRunner::PauseScope on the caller-named covered world. The runner ticks the overlay's
     /// simulation and the engine pushes its camera each frame, so there is no per-frame game call.
@@ -94,7 +95,8 @@ namespace Veng
         /// info.Populate against the fresh scene, not started) → resolve the level's render settings
         /// through the managed set's level-look funnel (ManagedViewportSet::ResolveLevelLook, so the
         /// host's graphics resolve composes over them) → create and register a Presented
-        /// viewport configured with the result for the region and bind it to the world for the per-frame camera pull → route
+        /// viewport configured with the result for the region and bind it to the world through the
+        /// overlay's seat (ManagedViewportSet::RegisterBoundViewport) for the per-frame camera pull → route
         /// input (pointer association to the overlay seat, cursor-seat handoff, and a viewport-less
         /// focus scope suspending info.SuspendSeat) → hold a PauseScope on info.CoveredWorld when
         /// valid → start the world's simulation. The returned handle is move-only.

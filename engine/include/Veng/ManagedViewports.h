@@ -17,6 +17,7 @@ namespace Veng
     class AssetManager;
     class GuiDriverRegistry;
     class InputRouter;
+    class Scene;
     class WorldRunner;
 }
 
@@ -97,6 +98,50 @@ namespace Veng
         /// @brief The destination world the request never presented — timed out or vanished mid-wait.
         WorldInstanceId World;
     };
+
+    /// @brief One viewport a caller owns, registered as a presentation of a world (RegisterBoundViewport).
+    ///
+    /// A bound presentation is how a viewport the engine did not build — an overlay's, a tool's
+    /// document viewport — tells the engine which world it shows, so that world counts as presented
+    /// (capture surfaces, presentation pins), its systems' contexts resolve their View and Debug from
+    /// it, and its seat is marked locally controlled, exactly as for a managed viewport. Any viewport
+    /// role may be bound.
+    struct BoundViewportInfo
+    {
+        /// @brief The world the viewport presents.
+        WorldInstanceId World;
+        /// @brief The seat in World the viewport presents through, or Entity::Null for none.
+        ///
+        /// The seat whose camera a camera-pulling binding resolves (Entity::Null takes the scene
+        /// primary), and the seat the locally-controlled marker is derived from.
+        Entity Viewer = Entity::Null;
+        /// @brief The per-frame tone/bloom/environment knobs carried into each camera push.
+        Renderer::ViewState Knobs;
+        /// @brief The level look the viewport and Knobs were resolved from, or nullopt for none.
+        ///
+        /// Recorded so ReresolveBoundLevelLooks resolves them again; a viewport not configured from a
+        /// level is left alone by a re-resolve.
+        optional<LevelRenderSettings> Look;
+        /// @brief Whether PushViews pulls the world's camera into the viewport each frame.
+        ///
+        /// False for an owner that pushes its own ViewState (a tool rendering a world through a
+        /// camera of its choosing): PushViews leaves the viewport alone, and the binding still counts
+        /// as presenting the world for everything else.
+        bool PullsCamera = true;
+    };
+
+    /// @brief Resolves the seat a viewport presenting a scene presents through.
+    ///
+    /// The seat-selection a world rebind applies, mirroring the claiming rules a GuiOverlay already
+    /// uses: @p boundViewer when it still resolves as a live Viewer in @p scene (entity handles are
+    /// scene-local, so a handle carried from another scene usually does not), else the scene's first
+    /// locally-owned Viewer (IsLocallyOwned), else null. A Viewer a remote peer owns is never adopted,
+    /// so a host scene seating only remote peers resolves null. Also what a caller binding a viewport
+    /// of its own (BoundViewportInfo::Viewer) resolves its seat with.
+    /// @param scene        The scene the seat is resolved in.
+    /// @param boundViewer  The seat the viewport was bound to before, or Entity::Null for none.
+    /// @return The resolved seat, or Entity::Null when the scene seats none of this peer's.
+    [[nodiscard]] VE_API Entity ResolvePresentationSeat(const Scene& scene, Entity boundViewer);
 
     /// @brief Configuration for one engine-owned managed viewport, naming its world and seat.
     ///
@@ -302,17 +347,31 @@ namespace Veng
         /// @return The bound seat entity, or Entity::Null when the index is unbound or out of range.
         [[nodiscard]] Entity GetViewportViewer(usize index) const;
 
-        /// @brief Fills @p seats with the bound seats of every managed viewport presenting a world.
+        /// @brief Fills @p seats with the seats of every managed and bound viewport presenting a world.
         ///
         /// The presenting-viewport half of the locally-controlled derivation (see
         /// Veng/Scene/LocalControl.h): a world presented by two split-screen viewports yields both
-        /// their seats, and a world no managed viewport presents yields none — which is what lets a
-        /// reconcile clear the markers of a world that stopped being presented. Clears @p seats first,
-        /// so a caller reuses one buffer across worlds without a per-frame allocation. Unbound
-        /// viewports and the non-indexed bound (overlay) viewports contribute no seat.
+        /// their seats, an overlay or a tool's bound presentation yields the seat it was registered
+        /// with, and a world no viewport presents yields none — which is what lets a reconcile clear
+        /// the markers of a world that stopped being presented. Managed viewports come first, in index
+        /// order, then bound ones in registration order. Clears @p seats first, so a caller reuses one
+        /// buffer across worlds without a per-frame allocation. A viewport with no seat contributes
+        /// none.
         /// @param world  The world whose presenting seats to collect.
         /// @param seats  The buffer filled with the presenting seats; cleared on entry.
         void CollectPresentingSeats(WorldInstanceId world, vector<Entity>& seats) const;
+
+        /// @brief Returns the first viewport presenting a world's live scene, or null when none does.
+        ///
+        /// What a world's systems resolve their View and Debug from: managed viewports in index order,
+        /// then bound ones in registration order, of any role, whose binding names @p world **and**
+        /// whose retained scene (Viewport::GetPresentedScene, the last push) is @p scene. So a viewport
+        /// bound to the world but not yet pushed yields none, and its first push is what engages it.
+        /// @param world  The world presented.
+        /// @param scene  The world's live scene.
+        /// @return The presenting viewport, or nullptr.
+        [[nodiscard]] Renderer::Viewport* FindPresentingViewport(WorldInstanceId world,
+                                                                 const Scene& scene) const;
 
         /// @brief Returns whether any viewport in this set presents a world, in-flight rebinds included.
         ///
@@ -422,32 +481,33 @@ namespace Veng
                               Renderer::SceneRendererSettings& settings,
                               Renderer::ViewState& view) const;
 
-        /// @brief Registers a non-owning presented viewport bound to a world, driven beside the set.
+        /// @brief Registers a caller-owned viewport as a presentation of a world, driven beside the set.
         ///
-        /// The camera pull that serves a Presented viewport opened at runtime over the indexed managed
-        /// set (an overlay): the caller owns the viewport (and registers it with the compositor for
-        /// render and layout tracking), and this binds it to a world so PushViews resolves and pushes
-        /// its camera each frame through the identical { World, Viewer } path a managed viewport uses,
-        /// pulling the world's own interpolation fraction. The set never owns the viewport — the caller
-        /// unregisters the binding (UnregisterBoundViewport) before dropping the viewport. The bound
-        /// viewports are not indexed and Get / Build / Reconfigure never touch them.
-        /// @param viewport  The caller-owned presented viewport whose camera the set pushes.
-        /// @param world     The world the viewport presents.
-        /// @param viewer    The seat in @p world whose camera to resolve, or Entity::Null for the primary.
-        /// @param knobs     The per-frame tone/bloom/environment knobs carried into the push.
-        /// @param look      The level look @p viewport and @p knobs were resolved from, recorded so
-        ///                  ReresolveBoundLevelLooks resolves them again; nullopt for a viewport not
-        ///                  configured from a level, which a re-resolve leaves alone.
-        void RegisterBoundViewport(Renderer::Viewport& viewport, WorldInstanceId world,
-                                   Entity viewer, const Renderer::ViewState& knobs,
-                                   optional<LevelRenderSettings> look = std::nullopt);
+        /// How a viewport the set did not build — an overlay's Presented viewport, a tool's Offscreen
+        /// document viewport — presents a world: the caller owns the viewport (and registers it with
+        /// the compositor for render and layout tracking), and this binds it to @p info.World. The
+        /// world then counts as presented, its systems resolve View and Debug from the viewport
+        /// (FindPresentingViewport), and its seat is marked locally controlled
+        /// (CollectPresentingSeats). When @p info.PullsCamera, PushViews resolves and pushes its camera
+        /// each frame through the identical { World, Viewer } path a managed viewport uses, pulling
+        /// the world's own interpolation fraction; otherwise the caller pushes its own ViewState.
+        /// The viewport is handed the set's Gui driver catalog, audio engine, translator and
+        /// localization, so an engine-driven overlay presented through it drives as on a managed
+        /// viewport. The set never owns the viewport — the caller unregisters the binding
+        /// (UnregisterBoundViewport) before dropping the viewport. Bound viewports are not indexed and
+        /// Get / Build / Reconfigure never touch them.
+        /// @param viewport  The caller-owned viewport.
+        /// @param info      The world, seat, knobs, look and camera-pull choice of the binding.
+        void RegisterBoundViewport(Renderer::Viewport& viewport, const BoundViewportInfo& info);
 
-        /// @brief Removes a bound viewport's camera-pull binding; a no-op if it is not bound.
+        /// @brief Removes a bound viewport's binding; a no-op if it is not bound.
         ///
         /// The counterpart to RegisterBoundViewport, called before the caller drops the viewport so no
-        /// stale pointer lingers in the pull. Does not touch the compositor drive-list or the router.
+        /// stale pointer lingers in the pull. Clears the four services the registration handed the
+        /// viewport, so a viewport kept after it stops presenting (a tool's, between play sessions)
+        /// drives no overlay. Does not touch the compositor drive-list or the router.
         /// @param viewport  The bound viewport whose binding to remove.
-        void UnregisterBoundViewport(const Renderer::Viewport& viewport);
+        void UnregisterBoundViewport(Renderer::Viewport& viewport);
 
         /// @brief Resolves every bound viewport registered with a level look again, and applies it.
         ///
@@ -472,8 +532,9 @@ namespace Veng
         /// the viewport's aspect; Entity::Null takes the scene primary). A viewport whose World was
         /// closed pushes a null-scene ViewState (a cleared target, inert). A managed viewport with an
         /// invalid World is left untouched for the game to drive. Each registered bound viewport
-        /// (RegisterBoundViewport) is pushed the same way with its own carried knobs and its world's
-        /// own interpolation fraction. The runner never learns a viewport asked.
+        /// (RegisterBoundViewport) that pulls its camera is pushed the same way with its own carried
+        /// knobs and its world's own interpolation fraction; one that does not is left to its owner.
+        /// The runner never learns a viewport asked.
         /// @param runner  The world runner cameras are resolved through.
         /// @param knobs   The per-frame tone/bloom/environment view knobs carried into each managed push.
         /// @param delta   Frame delta in seconds, forwarded to the renderer.
@@ -506,19 +567,21 @@ namespace Veng
             ManagedViewportInfo Info;
         };
 
-        /// @brief A non-owning presented viewport bound to a world, pushed beside the indexed set.
+        /// @brief A non-owning viewport bound to a world, presenting it beside the indexed set.
         struct BoundViewport
         {
-            /// @brief The caller-owned viewport whose camera the set pushes; never owned here.
+            /// @brief The caller-owned viewport; never owned here.
             Renderer::Viewport* Viewport = nullptr;
             /// @brief The world this viewport presents.
             WorldInstanceId World;
-            /// @brief The seat in World whose camera to resolve, or Entity::Null for the scene primary.
+            /// @brief The seat in World the viewport presents through, or Entity::Null for none.
             Entity Viewer = Entity::Null;
             /// @brief The per-frame tone/bloom/environment knobs carried into the push.
             Renderer::ViewState Knobs;
             /// @brief The level look the viewport was resolved from; nullopt when it was not.
             optional<LevelRenderSettings> Look;
+            /// @brief Whether PushViews pulls the world's camera into this viewport.
+            bool PullsCamera = true;
         };
 
         /// @brief Pushes one viewport's resolved world source through the runner by its { World, Viewer } binding.
@@ -600,7 +663,7 @@ namespace Veng
         /// @brief The managed viewports in order; index 0 is the primary.
         vector<ManagedViewport> m_Viewports;
 
-        /// @brief The non-owning bound viewports (overlays) pushed beside the indexed set.
+        /// @brief The non-owning bound viewports (overlays, tools' viewports), in registration order.
         vector<BoundViewport> m_Bound;
 
         /// @brief A pending reconfigure, applied at the next ApplyPendingReconfigure; nullopt when none.

@@ -248,8 +248,8 @@ namespace Veng
         /// @brief Attaches (or replaces) the simulation that drives this scene's systems.
         ///
         /// A Scene optionally owns the SceneSimulation that runs over it: Level::LoadInto builds
-        /// one from the level's ordered system set and attaches it here, and the editor's Play
-        /// clone attaches its own. Passing a null pointer detaches and destroys the held one. The
+        /// one from the level's ordered system set and attaches it here, and WorldRunner::OpenWorld
+        /// attaches one built from its opener's set to an empty or adopted scene. Passing a null pointer detaches and destroys the held one. The
         /// scene drives it through Start/Tick/StopSimulation, which forward `*this`.
         /// @param simulation  The simulation to own, or null to detach.
         void SetSimulation(Unique<SceneSimulation> simulation);

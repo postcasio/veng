@@ -197,11 +197,13 @@ TEST_CASE("Opening a world ticks it, closing it stops, and an unopened scene nev
     {
         a.AddWorld({SystemIdOf<ProbeSystem<1>>()});
 
+        // Started under the opened world's id, since every context names a world: being started is
+        // not what makes the engine tick a scene, being one of its worlds is.
         unopened = Scene::Create(a.GetTypeRegistry());
         unopened->SetSimulation(CreateUnique<SceneSimulation>(
             a.GetSystemRegistry(), std::vector<SystemId>{SystemIdOf<ProbeSystem<2>>()}));
-        unopened->StartSimulation(a.GetWorldRunner().BuildContext(
-            SystemContextRequest{.Scene = *unopened, .Phase = SystemContextPhase::Start}));
+        unopened->StartSimulation(a.GetWorldRunner().BuildContext(SystemContextRequest{
+            .World = a.SimIds[0], .Scene = *unopened, .Phase = SystemContextPhase::Start}));
     };
 
     int atClose = 0;

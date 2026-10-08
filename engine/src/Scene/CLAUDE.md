@@ -168,9 +168,10 @@ already have every component type registered.
 attaches one and `GetSimulation` returns it; `StartSimulation` / `TickSimulation` /
 `StopSimulation` forward `*this` to the held simulation (no-ops when none). `Level::LoadInto`
 builds the level's simulation and attaches it here, so the running scene is a self-contained
-bundle. The simulation is optional — the editor's Play mode owns its own `SceneSimulation` driving
-a play-clone scene rather than attaching one, and a bare `Scene` (a static render source, a test
-world) has none. `Clone()` does **not** copy the simulation.
+bundle. The simulation is optional — a bare `Scene` (a static render source, a test world) has
+none. `Clone()` does **not** copy the simulation: the editor's Play clones its document's scene and
+opens the clone as a runner world (`WorldRunner::OpenWorld` over a scene), which attaches one built
+from the document's system set.
 
 ## Builtin components
 
@@ -434,8 +435,8 @@ which a game-specific control system reads to produce the abstract `Intent` game
   `WasTriggeredThisFrame`/`WasReleasedThisFrame`, which `InputMappingSystem` ORs across a frame's
   steps and resets on its first, so an edge on a non-final step of a multi-step frame survives to the
   View pass. A frame that runs **no** step — every other frame when the display outpaces the tick
-  rate — never reaches the system, so the world drive (`WorldRunner::Tick`, and the editor's Play
-  drive) clears the frame edges with `ResetFrameActionEdges` before that frame's View pass, leaving
+  rate — never reaches the system, so the world drive (`WorldRunner::Tick`, the editor's Play
+  included, since Play is a runner world) clears the frame edges with `ResetFrameActionEdges` before that frame's View pass, leaving
   `Phase` and `Value` for the next step to derive from. A **paused or unstarted** world runs no step
   either and is cleared the same way, though it gets no View pass, so per-frame code reading its
   `PlayerInput` sees no edge for as long as it is paused. A frame edge is therefore read on exactly
@@ -447,10 +448,8 @@ which a game-specific control system reads to produce the abstract `Intent` game
   dropped at the top of a frame following one on which nothing did. Both are decided by the
   `SimInputFrame` `Application` owns (`Veng/Input/SimInputFrame.h`), which also carries the frame's
   pointer scope and prepares every step — the pointer latch for the routed scene's steps, the
-  touchpad latch for every step. The runner's worlds report into it as one, and a driver stepping a
-  `SimClock` of its own (the editor's Play) goes through `Application::BeginSimStep`,
-  `GetSimPointer` and `ReportSimFrame`, so it reads input exactly as a runner world does, however
-  late in the frame it steps.
+  touchpad latch for every step. The runner's worlds report into it as one — the editor's Play among
+  them — so there is no second drive to feed it.
     **A pause drops a press it lands on; a key held through it is not lost.** A frame on which nothing
   simulates rolls the raw snapshot like a UI, so a tap pressed and released while the world is paused
   — or still latched for a step when the pause lands — never reaches a step, as the paused clock
@@ -586,7 +585,9 @@ The engine owns the whole lifecycle and **a consumer only ever reads it**.
 `ReconcileLocalControl(scene, presentingSeats)` stamps and clears a scene's markers against the seats
 presenting it; `ManagedViewportSet` runs it at a viewport↔seat rebind (both ends, so a departed world
 keeps nothing stale), and `Application` runs it once per frame over every live world after the sim
-ticks and the net pump. That per-frame pass is a **reconciling sweep**, because possession raises no
+ticks and the net pump. The presenting seats are every managed viewport's and every bound
+presentation's (`CollectPresentingSeats`) — so an overlay's seat and the editor's Play seat are
+marked as a managed viewport's is. That per-frame pass is a **reconciling sweep**, because possession raises no
 engine-side event to listen to: `Possesses` is a plain component a game writes directly and, on a
 client, one that changes through snapshot apply. Its cost is the presenting-viewport count, never a
 scan of a scene's entities. Each marker move raises `Application::OnClientPossession`, which is the

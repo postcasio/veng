@@ -6,6 +6,7 @@
 #include <Veng/Net/WorldKey.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Scene/Entity.h>
+#include <Veng/WorldInstanceId.h>
 
 // Veng/Scene/Requests.h — the builtin, local-only request components.
 //
@@ -178,6 +179,37 @@ namespace Veng
         RequestStatus Status = RequestStatus::Pending;
         /// @brief The failure reason, set when Status is Failed.
         string Error;
+    };
+
+    /// @brief How much of the application a world's requests may reach (WorldRequestPolicy::Mode).
+    enum class WorldRequestMode : u8
+    {
+        /// @brief Every request drains to its application operation.
+        Full,
+        /// @brief The world reaches nothing beyond itself and its own input focus.
+        ///
+        /// TravelRequest, HostRequest and ConnectRequest fail with a stated reason, StopNetRequest is
+        /// handled with no effect, and an ExitRequest the policy gives no OnExit fails rather than exit
+        /// the application. FocusRequest and PauseRequest drain as in any world. For a world a tool
+        /// runs inside an application that is not the game (an editor's play session).
+        Sandboxed,
+    };
+
+    /// @brief What the request drain lets one world's requests do (Application::SetWorldRequestPolicy).
+    ///
+    /// The two knobs are independent. A world with no policy set drains every request as Full with no
+    /// OnExit. The policy is dropped when its world closes.
+    struct WorldRequestPolicy
+    {
+        /// @brief Which application operations the world's requests reach.
+        WorldRequestMode Mode = WorldRequestMode::Full;
+        /// @brief Called with the world's id in place of the application exit, when set.
+        ///
+        /// Handles the world's ExitRequest in either mode, so the request never reaches
+        /// Application::RequestExit: a world that is one part of an application (an overlay, a
+        /// tool's session) ends itself rather than the process. Called during the frame-top request
+        /// drain, outside any tick, so it may close its world.
+        function<void(WorldInstanceId)> OnExit;
     };
 }
 

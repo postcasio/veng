@@ -858,6 +858,85 @@ TEST_CASE("A departing world still holds its presentation pin in the hook, and l
     app.Run({});
 }
 
+TEST_CASE(
+    "An Offscreen viewport bound to a world presents it, and keeps the camera its owner pushes")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    MvApp app(HeadlessInfo({}), types, systems);
+
+    MvApp::WorldSeat a{};
+    Entity pawn = Entity::Null;
+    Unique<Renderer::Viewport> viewport;
+    // The owner's own camera, nowhere near the seat's, so a camera pull would replace it visibly.
+    const CameraView own =
+        MakeCameraView(Camera{}, 1.0f, glm::translate(mat4(1.0f), vec3(500.0f, 40.0f, -9.0f)));
+
+    const auto contextFor = [&](MvApp& app)
+    {
+        return app.GetWorldRunner().BuildContext(SystemContextRequest{
+            .World = a.World, .Scene = *a.Scene, .Phase = SystemContextPhase::View});
+    };
+
+    app.InitFn = [&](MvApp& app)
+    {
+        a = app.OpenCameraWorld(vec3(0.0f, 0.0f, 5.0f));
+        Scene& scene = app.GetWorldRunner().ResolveWorld(a.World)->GetScene();
+        pawn = scene.CreateEntity();
+        scene.Add<Possesses>(a.Seat).Pawn = pawn;
+
+        viewport = Renderer::Viewport::Create({
+            .Context = app.GetRenderContext(),
+            .Assets = app.GetAssetManager(),
+            .Region = {.Offset = {0, 0}, .Extent = {64, 64}},
+            .Role = Renderer::ViewportRole::Offscreen,
+        });
+        viewport->SetEnabled(false); // this case pins presentation state, not pixels
+        app.RegisterViewport(*viewport);
+        app.GetManagedViewports().RegisterBoundViewport(
+            *viewport, BoundViewportInfo{.World = a.World, .Viewer = a.Seat, .PullsCamera = false});
+    };
+
+    app.StepFn = [&](MvApp& app, int frame)
+    {
+        const Scene& scene = *a.Scene;
+        if (frame == 0)
+        {
+            // Bound but never pushed: the viewport retains no scene, so it gives the world no view.
+            CHECK_FALSE(contextFor(app).View.has_value());
+            viewport->SetViewState({.World = a.Scene, .Camera = own, .Delta = 0.016f});
+        }
+        else if (frame == 2)
+        {
+            // The view pushes ran twice since the owner's push and left it standing.
+            CHECK(viewport->GetPresentedScene() == a.Scene);
+            CHECK_FALSE(CamerasDiffer(viewport->GetPresentedCamera(), own));
+
+            const SystemContext context = contextFor(app);
+            CHECK(context.View.has_value());
+            CHECK(context.Debug == &viewport->GetDebugDraw());
+            CHECK(app.IsWorldPresented(a.World));
+            const auto* control = scene.TryGet<LocalControl>(pawn);
+            REQUIRE(control != nullptr);
+            CHECK(control->Seat == a.Seat);
+
+            app.GetManagedViewports().UnregisterBoundViewport(*viewport);
+        }
+        else if (frame == 3)
+        {
+            // Unbound, the Offscreen viewport presents the world to none of its systems or seats.
+            CHECK_FALSE(contextFor(app).View.has_value());
+            CHECK(scene.TryGet<LocalControl>(pawn) == nullptr);
+            viewport.reset();
+        }
+    };
+
+    app.Frames = 4;
+    app.Run({});
+}
+
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "ManagedViewportSet teardown self-unregisters each viewport and retires its id "
                   "against the live Context registry")

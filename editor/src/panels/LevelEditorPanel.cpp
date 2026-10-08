@@ -269,8 +269,8 @@ namespace VengEditor
 
     void LevelEditorPanel::OnUI()
     {
-        // This overrides the base OnUI, so it owns driving the play tick the base would have run.
-        TickPlaySimulation();
+        // This overrides the base OnUI, so it owns following the play session the base would have.
+        UpdatePlaySession();
 
         if (const auto bar = UI::Toolbar("##level-toolbar"))
         {

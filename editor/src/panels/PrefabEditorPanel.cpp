@@ -3,18 +3,18 @@
 #include "EditorIcons.h"
 
 #include <Veng/Application.h>
+#include <Veng/ManagedViewports.h>
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Asset/Prefab.h>
 #include <Veng/Input.h>
 #include <Veng/Assert.h>
 #include <Veng/Log.h>
 #include <Veng/Scene/Components.h>
-#include <Veng/Scene/InputMappingSystem.h>
 #include <Veng/Scene/Scene.h>
-#include <Veng/Scene/SceneSimulation.h>
+#include <Veng/Scene/Requests.h>
 #include <Veng/Scene/SceneSystem.h>
+#include <Veng/Scene/SystemRegistry.h>
 #include <Veng/InputRouter.h>
-#include <Veng/Time.h>
 #include <Veng/UI/UI.h>
 #include <Veng/Vendor/ImGuiInternal.h>
 
@@ -133,14 +133,22 @@ namespace VengEditor
         return m_Viewport != nullptr ? m_Viewport->GetViewport() : nullptr;
     }
 
+    Scene* PrefabEditorPanel::GetDocumentScene()
+    {
+        if (!m_Context.IsPlaying())
+        {
+            return m_Context.Scene;
+        }
+        World* const world = m_App.GetWorldRunner().ResolveWorld(m_PlayWorld);
+        return world != nullptr ? &world->GetScene() : nullptr;
+    }
+
     PrefabEditorPanel::~PrefabEditorPanel()
     {
-        // Children (which hold m_Context and m_Scene by reference) are released by the
-        // base before the scenes, simulation, and prefab handle drop here. A document closed while
-        // playing gives the cursor back rather than leaving its capture on the stack.
-        ReleaseFromPlay();
-        m_Simulation.reset();
-        m_PlayScene.reset();
+        // A document closed mid-Play stops its systems and gives the cursor back. Children (which
+        // hold m_Context and m_Scene by reference) are released by the base after this body, and
+        // the viewport child is still alive here for the presentation to unregister from.
+        Stop();
         m_Scene.reset();
         m_Prefab = {};
     }
@@ -152,33 +160,53 @@ namespace VengEditor
             return;
         }
 
-        // Run the systems over an independent clone so the authored scene is never
-        // mutated; the selection's handles index the edit scene, so drop it.
-        m_PlayScene = m_Scene->Clone();
-        m_Context.Clear();
-        m_Context.Scene = m_PlayScene.get();
-        m_Context.Play = PlayState::Playing;
-
-        // A fresh session starts at tick 0 with an empty accumulator, so Play is reproducible run to
-        // run rather than inheriting the prior session's residual.
-        m_PlaySimClock = SimClock();
-        m_Context.PlayAlpha = 0.0f;
-
-        // Seed any document-scoped state (a level seeds its settings entity) before Start, so the
+        // Run the systems over an independent clone so the authored scene is never mutated. Seed any
+        // document-scoped state (a level seeds its settings entity) before the world starts, so the
         // spawn rules a system set runs at OnStart see the same initialized scene the runtime does.
-        SeedPlayScene(*m_PlayScene);
+        Unique<Scene> clone = m_Scene->Clone();
+        SeedPlayScene(*clone);
+        const Entity seat = ResolvePresentationSeat(*clone, Entity::Null);
 
-        if (m_Simulation == nullptr)
+        // A prefab document runs every registered system; a level document runs the ordered set
+        // GetPlaySystems() names, so Play matches exactly what the level authored.
+        vector<SystemId> systems;
+        if (const vector<SystemId>* playSystems = GetPlaySystems(); playSystems != nullptr)
         {
-            // A prefab document runs every registered system; a level document runs the
-            // ordered set GetPlaySystems() names, so Play matches exactly what the level
-            // authored.
-            const vector<SystemId>* playSystems = GetPlaySystems();
-            m_Simulation = playSystems != nullptr
-                               ? CreateUnique<SceneSimulation>(m_Systems, *playSystems)
-                               : CreateUnique<SceneSimulation>(m_Systems);
+            systems = *playSystems;
         }
-        m_Simulation->Start(*m_PlayScene, PlayContext(SystemContextPhase::Start));
+        else
+        {
+            for (const SystemEntry& entry : m_Systems.Entries())
+            {
+                systems.push_back(entry.Id);
+            }
+        }
+
+        WorldRunner& runner = m_App.GetWorldRunner();
+        m_PlayWorld =
+            runner.OpenWorld(WorldOpenInfo{.StartSimulation = true, .Systems = std::move(systems)},
+                             std::move(clone));
+
+        // The editor is not the game: the session may not travel, host or quit the editor, and its
+        // own exit ends the session.
+        m_App.SetWorldRequestPolicy(
+            m_PlayWorld, WorldRequestPolicy{.Mode = WorldRequestMode::Sandboxed,
+                                            .OnExit = [this](WorldInstanceId) { Stop(); }});
+
+        // The document viewport presents the world through the clone's seat, pushing its own camera.
+        m_PlayPresentation = GetDocumentViewport();
+        if (m_PlayPresentation != nullptr)
+        {
+            m_App.GetManagedViewports().RegisterBoundViewport(
+                *m_PlayPresentation,
+                BoundViewportInfo{.World = m_PlayWorld, .Viewer = seat, .PullsCamera = false});
+        }
+
+        // The selection's handles index the edit scene, so drop it.
+        m_Context.Clear();
+        m_Context.Scene = &runner.ResolveWorld(m_PlayWorld)->GetScene();
+        m_Context.Play = PlayState::Playing;
+        m_Context.PlayAlpha = 0.0f;
 
         // The running game owns input: capture the cursor in the viewport until the release
         // chord (or window-focus loss) pops it.
@@ -192,35 +220,44 @@ namespace VengEditor
             return;
         }
 
-        if (m_Simulation != nullptr && m_PlayScene != nullptr)
+        ReleaseFromPlay();
+        m_PlayPause = WorldPauseScope{};
+        if (m_PlayPresentation != nullptr)
         {
-            m_Simulation->Stop(*m_PlayScene, PlayContext(SystemContextPhase::Stop));
+            m_App.GetManagedViewports().UnregisterBoundViewport(*m_PlayPresentation);
+            m_PlayPresentation = nullptr;
         }
 
-        ReleaseFromPlay();
+        // A world already closed (its own exit, a system, shutdown) has stopped and dropped
+        // already, and closing it again is a no-op.
+        const WorldInstanceId world = m_PlayWorld;
+        m_PlayWorld = {};
         m_Context.Clear();
-        m_PlayScene.reset();
         m_Context.Scene = m_Scene.get();
         m_Context.Play = PlayState::Editing;
+        m_Context.PlayAlpha = 0.0f;
+        m_App.GetWorldRunner().CloseWorld(world);
     }
 
     void PrefabEditorPanel::Pause()
     {
-        if (m_Context.Play == PlayState::Playing)
+        if (!m_Context.IsPlaying() || m_PlayPause.IsHeld())
         {
-            m_Context.Play = PlayState::Paused;
-            // A paused game is not consuming input; free the cursor for editor interaction.
-            ReleaseFromPlay();
+            return;
         }
+        m_PlayPause = m_App.GetWorldRunner().PauseScope(m_PlayWorld);
+        // A paused game is not consuming input; free the cursor for editor interaction.
+        ReleaseFromPlay();
     }
 
     void PrefabEditorPanel::Resume()
     {
-        if (m_Context.Play == PlayState::Paused)
+        if (!m_PlayPause.IsHeld())
         {
-            m_Context.Play = PlayState::Playing;
-            CaptureForPlay();
+            return;
         }
+        m_PlayPause = WorldPauseScope{};
+        CaptureForPlay();
     }
 
     void PrefabEditorPanel::CaptureForPlay()
@@ -261,14 +298,29 @@ namespace VengEditor
         }
     }
 
-    void PrefabEditorPanel::TickPlaySimulation()
+    void PrefabEditorPanel::UpdatePlaySession()
     {
+        if (!m_Context.IsPlaying())
+        {
+            return;
+        }
+
+        // The runner owns the session: a world that closed since last frame (its sandboxed exit, a
+        // system closing it, shutdown) ends Play here.
+        WorldRunner& runner = m_App.GetWorldRunner();
+        World* const world = runner.ResolveWorld(m_PlayWorld);
+        if (world == nullptr)
+        {
+            Stop();
+            return;
+        }
+        m_Context.Scene = &world->GetScene();
+
         // Shift+Esc is this tool's own Play release, since a project's maps may bind no release of
         // their own. Read from the snapshot: a captured cursor starves the UI of key events.
         const bool shift = m_Input.IsKeyDown(Key::LeftShift) || m_Input.IsKeyDown(Key::RightShift);
-        if (m_Context.IsPlaying() && m_Router.IsGameplayFocused() &&
-            m_Router.IsFocusTokenLive(m_Context.PlayCapture) && shift &&
-            m_Input.WasKeyPressed(Key::Escape))
+        if (m_Router.IsGameplayFocused() && m_Router.IsFocusTokenLive(m_Context.PlayCapture) &&
+            shift && m_Input.WasKeyPressed(Key::Escape))
         {
             ReleaseFromPlay();
         }
@@ -277,58 +329,7 @@ namespace VengEditor
         // it on a click, and a ReleaseFocus role press pops it.
         SyncPlayPointer();
 
-        // Advance the play clone before the document body draws; the engine renders the viewport
-        // at the next frame's start from the ViewState the viewport child pushes this frame, so
-        // the tick and the camera carry the same one-frame latency. A subclass that overrides
-        // OnUI (the level editor) must call this, or its play session spawns but never advances.
-        if (m_Context.Play == PlayState::Playing && m_PlayScene != nullptr &&
-            m_Simulation != nullptr)
-        {
-            // Adopt the launcher's fixed-timestep accumulator: this frame's whole Sim steps at the
-            // fixed delta and shared tick numbers (snapshotting transform history after the steps
-            // interpolation reads), then one View pass carrying the interpolation alpha the viewport
-            // push reads. The pointer reaches the seats only while SyncPlayPointer has the play scene
-            // holding it.
-            const SimStep step = m_PlaySimClock.Run(
-                Time::GetDeltaTime(),
-                [&](const SimStepInfo& simStep)
-                {
-                    m_App.BeginSimStep(*m_PlayScene);
-                    m_Simulation->UpdatePhase(*m_PlayScene, SceneSystem::Phase::Sim, simStep.Delta,
-                                              PlayContext(SystemContextPhase::Sim, simStep.Tick,
-                                                          0.0f, simStep.First, simStep.Last));
-                    if (simStep.RecordsHistory)
-                    {
-                        m_PlayScene->SnapshotTransformHistory();
-                    }
-                    return true;
-                },
-                [] { return 0.0; });
-            // This clock is not the runner's, so the engine learns of its zero-step frames only here.
-            m_App.ReportSimFrame(step.Steps > 0);
-            if (step.Steps == 0)
-            {
-                ResetFrameActionEdges(*m_PlayScene);
-            }
-            m_Simulation->UpdatePhase(
-                *m_PlayScene, SceneSystem::Phase::View, Time::GetDeltaTime(),
-                PlayContext(SystemContextPhase::View, m_PlaySimClock.GetTick(), step.Alpha));
-            m_Context.PlayAlpha = step.Alpha;
-        }
-    }
-
-    SystemContext PrefabEditorPanel::PlayContext(const SystemContextPhase phase, const u64 tick,
-                                                 const f32 alpha, const bool firstStep,
-                                                 const bool lastStep) const
-    {
-        // The play clone is no runner world, so its contexts name none.
-        return m_App.GetWorldRunner().BuildContext(SystemContextRequest{.World = {},
-                                                                        .Scene = *m_PlayScene,
-                                                                        .Phase = phase,
-                                                                        .Tick = tick,
-                                                                        .Alpha = alpha,
-                                                                        .FirstStep = firstStep,
-                                                                        .LastStep = lastStep});
+        m_Context.PlayAlpha = runner.ResolveAlpha(m_PlayWorld);
     }
 
     void PrefabEditorPanel::DrawDocumentToolbar()
@@ -377,20 +378,27 @@ namespace VengEditor
             UI::Tooltip("Stop the play session and restore the edited scene");
 
             UI::SameLine();
-            const bool paused = m_Context.Play == PlayState::Paused;
-            if (UI::IconButton(paused ? Icons::Play : Icons::Pause))
+            // The world's pause, so a pause the running game requested shows here too; only the
+            // toolbar's own hold is the toolbar's to release.
+            const bool paused = playing && m_App.IsWorldPaused(m_PlayWorld);
+            const bool gamePaused = paused && !m_PlayPause.IsHeld();
             {
-                if (paused)
+                const UI::DisabledScope heldByGame = UI::Disabled(gamePaused);
+                if (UI::IconButton(paused ? Icons::Play : Icons::Pause))
                 {
-                    Resume();
-                }
-                else
-                {
-                    Pause();
+                    if (paused)
+                    {
+                        Resume();
+                    }
+                    else
+                    {
+                        Pause();
+                    }
                 }
             }
-            UI::Tooltip(paused ? "Resume the paused play session"
-                               : "Pause the play session (hold the current frame)");
+            UI::Tooltip(gamePaused ? "Paused by the running game"
+                        : paused   ? "Resume the paused play session"
+                                   : "Pause the play session (hold the current frame)");
         }
 
         UI::SameLine();
@@ -415,7 +423,7 @@ namespace VengEditor
 
     void PrefabEditorPanel::OnUI()
     {
-        TickPlaySimulation();
+        UpdatePlaySession();
 
         if (m_Context.Scene == nullptr)
         {

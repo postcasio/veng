@@ -316,6 +316,49 @@ TEST_CASE("An overlay whose world closed under it drops cleanly and restores the
     app.Run({});
 }
 
+TEST_CASE("An overlay's seat marks the pawn it possesses locally controlled")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+
+    OverlayApp app(HeadlessInfo(), types, systems);
+    AssetHandle<Level> level;
+    Entity pawn = Entity::Null;
+
+    app.InitFn = [&](OverlayApp& a)
+    { level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {}); };
+
+    app.StepFn = [&](OverlayApp& a, int frame)
+    {
+        if (frame == 0)
+        {
+            a.A = LevelOverlay::Open(
+                a, LevelOverlayInfo{.Source = level,
+                                    .Populate = [&pawn](Scene& scene)
+                                    {
+                                        pawn = scene.CreateEntity();
+                                        for (auto [seat, viewer] : scene.View<Viewer>())
+                                        {
+                                            scene.Add<Possesses>(seat).Pawn = pawn;
+                                            break;
+                                        }
+                                    }});
+            a.A->GetViewport().SetEnabled(false); // this case pins scene state, not pixels
+        }
+        else if (frame == 1)
+        {
+            const auto* control = a.A->GetScene().TryGet<LocalControl>(pawn);
+            REQUIRE(control != nullptr);
+            CHECK(control->Seat == SeatOf(*a.A).Viewer);
+            a.A.reset();
+        }
+    };
+
+    app.Frames = 3;
+    app.Run({});
+}
+
 TEST_CASE("LevelOverlay runs the populate hook before StartSimulation")
 {
     TypeRegistry types;

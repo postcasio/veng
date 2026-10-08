@@ -357,13 +357,14 @@ namespace Veng
             });
 
         // The router's focus stacks and the request-driven tokens are keyed by seat, and a seat names
-        // its world; a closed world's entries, and its request-driven pause, would otherwise outlive
-        // it for the process.
+        // its world; a closed world's entries, its request-driven pause and its request policy would
+        // otherwise outlive it for the process.
         m_WorldRunner->SetWorldClosedHook(
             [this](const WorldInstanceId world)
             {
                 ForgetWorldFocus(*m_InputRouter, m_FocusRequestTokens, world);
                 ForgetWorldPause(m_PauseRequestScopes, world);
+                m_RequestPolicies.erase(world.Value);
             });
 
         // ImGui needs a window (GLFW backend), so it's only available windowed.
@@ -2064,7 +2065,19 @@ namespace Veng
                                          RoleForWorld(world), request, error);
         };
 
-        DrainRequests(*m_WorldRunner, dispatch);
+        DrainRequests(*m_WorldRunner,
+                      ApplyRequestPolicies(std::move(dispatch),
+                                           [this](const WorldInstanceId world)
+                                           {
+                                               const auto it = m_RequestPolicies.find(world.Value);
+                                               return it != m_RequestPolicies.end() ? &it->second
+                                                                                    : nullptr;
+                                           }));
+    }
+
+    void Application::SetWorldRequestPolicy(const WorldInstanceId world, WorldRequestPolicy policy)
+    {
+        m_RequestPolicies.insert_or_assign(world.Value, std::move(policy));
     }
 
     WorldInstanceId Application::NextJoinTargetWorld()
@@ -2609,23 +2622,31 @@ namespace Veng
             .LastStepThisFrame = request.LastStep,
             .IsReplay = request.Phase == SystemContextPhase::Replay};
 
-        // Resolve the sim's primary presenting viewport — the first registered Presented viewport
-        // whose retained scene is this one — for the view descriptor and debug-draw sink. The
-        // retained view is last frame's push (view pushes run after ticks); a never-pushed viewport
-        // presents no scene, so it never matches and View stays nullopt.
-        for (const Renderer::Viewport* viewport : m_Compositor.GetViewports())
+        // The world's presenting viewport supplies the view descriptor and debug-draw sink: a managed
+        // or bound one registered for this world, of any role, else a Presented viewport a consumer
+        // registered and drives itself. Either matches on its retained scene — last frame's push,
+        // since view pushes run after ticks — so a never-pushed viewport leaves View nullopt.
+        const Renderer::Viewport* presenting =
+            m_ManagedViewports->FindPresentingViewport(request.World, request.Scene);
+        if (presenting == nullptr)
         {
-            if (viewport->GetRole() == Renderer::ViewportRole::Presented &&
-                viewport->GetPresentedScene() == &request.Scene)
-            {
-                context.View = SystemViewInfo{
-                    .Camera = viewport->GetPresentedCamera(),
-                    .Region = viewport->GetRegion(),
-                    .UiScale = viewport->GetUiScale(),
-                };
-                context.Debug = &viewport->GetDebugDraw();
-                break;
-            }
+            const auto selfDriven = std::ranges::find_if(
+                m_Compositor.GetViewports(),
+                [&request](const Renderer::Viewport* viewport)
+                {
+                    return viewport->GetRole() == Renderer::ViewportRole::Presented &&
+                           viewport->GetPresentedScene() == &request.Scene;
+                });
+            presenting = selfDriven != m_Compositor.GetViewports().end() ? *selfDriven : nullptr;
+        }
+        if (presenting != nullptr)
+        {
+            context.View = SystemViewInfo{
+                .Camera = presenting->GetPresentedCamera(),
+                .Region = presenting->GetRegion(),
+                .UiScale = presenting->GetUiScale(),
+            };
+            context.Debug = &presenting->GetDebugDraw();
         }
         return context;
     }
@@ -3146,8 +3167,7 @@ namespace Veng
         // before the frame renders — and each move raises OnClientPossession, in every mode.
         SyncLocalControl();
 
-        // The runner's worlds report as one simulation; a driver outside it reports through
-        // ReportSimFrame later in the frame, and the next frame's BeginFrame weighs them together.
+        // The runner's worlds report as one simulation, which the next frame's BeginFrame weighs.
         if (ticked.AnyActive)
         {
             m_SimInput.Report(ticked.AnyTicked);

@@ -219,7 +219,27 @@ so a free pointer over it routes to that seat. The gather + composite tail assem
 registered `Presented` viewport, so split-screen is "reconfigure to N quadrant `Layout`s," not a
 bespoke render path; a single default-`Layout` managed viewport is byte-identical to a
 hand-registered full-window one. The editor leaves the managed set unset, so `Get(0)` is null and
-it registers its own viewports through the compositor (which still mints their ids).
+it registers its own viewports through the compositor (which still mints their ids), binding a
+playing document's viewport to its play world as below.
+
+**A viewport the engine did not build presents a world by registering as its presentation.**
+`ManagedViewportSet::RegisterBoundViewport(viewport, BoundViewportInfo)` binds a caller-owned
+viewport of **any role** to a world — `{ World, Viewer, Knobs, Look, PullsCamera }` — and from then
+on that world is presented exactly as a managed viewport's is: `IsWorldPresented` counts it (capture
+surfaces, presentation pins), `CollectPresentingSeats` returns its `Viewer` so `SyncLocalControl`
+stamps `LocalControl` on that seat's pawn, and the context factory resolves the world's
+`SystemContext::View`/`Debug` from it through **`FindPresentingViewport(world, scene)`** — managed
+viewports in index order, then bound ones in registration order, each matching only once its
+retained scene is the world's live scene (so a bound viewport not yet pushed engages nothing). A
+`Presented` viewport a consumer registers and drives itself, never binding it, still gives its
+scene's world a `View` after those, as `IsWorldPresented` still counts it. `PullsCamera` (default
+true) has `PushViews` pull the seat's camera into the viewport each frame; false leaves the
+viewport's `ViewState` to its owner — the editor's Offscreen document viewport, which renders Play
+through a camera it resolves itself. Registration hands the viewport the set's Gui driver catalog,
+audio engine, translator and localization, and `UnregisterBoundViewport` clears them again, so a
+viewport kept past its binding drives no overlay. `ResolvePresentationSeat(scene, boundViewer)` (also
+in `Veng/ManagedViewports.h`) is the seat rule a rebind applies and a binder resolves its `Viewer`
+with.
 
 **A world rebind is a complete operation, and presentation state is queryable.**
 `RebindManagedViewport(index, world)` records a deferred rebind applied at the top-of-frame safe
@@ -391,8 +411,9 @@ unstarted: a client join target, an overlay), each Sim step and View pass, and e
 — so every context names its world, carries every service, and stamps the world's own
 role. A caller stepping a world outside those points builds through `WorldRunner::BuildContext` with a
 `SystemContextRequest` (world, scene, phase, tick, alpha, step edges): the reconciliation replay does,
-through `ReplaySimStep`, and so does the editor's Play session, which names no world because it is no
-runner world. A runner with no factory (a device-free one) drops a started world at `CloseWorld`
+through `ReplaySimStep`. **Every context names a world** — `BuildContext` asserts a valid id — since
+every simulation the engine drives, the editor's Play included, is a runner world (below); there is
+no separate drive with input hooks of its own to keep in step. A runner with no factory (a device-free one) drops a started world at `CloseWorld`
 (or a started scene at `InstallScene`) without running `OnStop`, and asserts on any start, stop or
 tick.
 
@@ -410,12 +431,22 @@ no context); an owner with a factory calls `CloseAllWorlds` first, as `Applicati
 **A closed world drops its input focus.** The runner's **world-closed hook**
 (`SetWorldClosedHook`, fired once per closed world after it is erased, in close order — not by
 `InstallScene`, which closes no world) is where `Application` calls `InputRouter::ForgetWorld`,
-forgets its request-driven focus tokens for that world, and drops the world's request-driven pause. `ForgetWorld` drops every focus stack and
+forgets its request-driven focus tokens for that world, and drops the world's request-driven pause
+and its request policy. `ForgetWorld` drops every focus stack and
 viewport association whose seat names the world and **retires** each dropped entry's token: a retired
 token is not live, and its holder's `PopFocus` is a silent no-op that forgets it, so a holder
 outliving the world (a `SeatFocusScope`, an editor capture) keeps its pop-exactly-once discipline,
 while a never-issued or double-popped token still asserts. A held cursor capture on the world's seat
 releases; where the cursor seat goes next is presentation's call.
+
+**A world can be opened over a scene its caller built.** `WorldRunner::OpenWorld(info, Unique<Scene>)`
+adopts a ready scene as the world's own (`info.Source` empty): an engaged `info.Systems` builds and
+attaches its `SceneSimulation`, replacing any the scene carried, and the load hook and the start run
+as for the other overloads. That is how the editor's Play runs — the document's scene is cloned,
+seeded, and opened as a world — so Play gets every runner behaviour (the change tick, `World`,
+haptics, the request drain, role resolution, `LocalControl`, edge resets while paused, captures,
+`OnStop` on every exit) by being one, rather than by copying each across. A caller wanting every
+registered system enumerates `SystemRegistry::Entries()`.
 
 **A system may open and close worlds from its own tick.** `WorldRunner::Tick` walks the worlds it
 holds, so a system deciding mid-update that a world must go — reaping a finished match, reloading a
@@ -523,7 +554,16 @@ None is `VE_REPLICATED` — a request never rides a snapshot, and on a `Client`-
 to the client-side meaning. Consumption is uniform: a handled request is **removed** (absence is the
 ack), an unhandleable one is left **Pending** to retry, and a failed one is marked
 `RequestStatus::Failed` with an `Error` and held exactly one frame so the stamper can read the
-outcome before re-stamping. **`Application::Travel(TravelInfo)`** is the one travel primitive the
+outcome before re-stamping. **What a world's requests reach is its request policy**
+(`Application::SetWorldRequestPolicy(world, WorldRequestPolicy { Mode, OnExit })`, held by world id
+and dropped by the world-closed hook; `Veng/Scene/Requests.h`). The two knobs are independent:
+`OnExit`, when set, takes the world's `ExitRequest` in place of `RequestExit` in either mode, so a
+world that is one part of the application ends itself; `Mode = Sandboxed` fails `TravelRequest`,
+`HostRequest`, `ConnectRequest` (and an `ExitRequest` with no `OnExit`) with "not available in a
+sandboxed world" and makes `StopNetRequest` a handled no-op, while `FocusRequest` and `PauseRequest`
+drain as anywhere. A world with no policy drains as `Full`. The editor's Play is the sandboxed case,
+its `OnExit` stopping Play. The wrap is `ApplyRequestPolicies` beside `DrainRequests`
+(`src/Scene/RequestDrain.h`), device-free-tested. **`Application::Travel(TravelInfo)`** is the one travel primitive the
 `TravelRequest` drain lowers onto — resolving standalone (directory get-or-place → present-on-ready
 rebind → pin/unpin), client (travel-request → server-directed travel), or listen-host — and
 `FocusRequest` drives the `InputRouter`'s coarse gameplay/UI focus for a seat through an
@@ -542,8 +582,8 @@ See
 (`Veng/LevelOverlay.h`) is a thin **preset over `WorldRunner::OpenWorld`**: opening an overlay
 opens an owned world (its own scene, systems, and HUD, ticked by the runner like any world) and
 applies an **overlay policy** — register a `Presented` viewport on top (composited over the covered
-world, its camera pulled by the managed-viewport presentation path and its region re-fit on resize
-by the compositor), hand the cursor seat and the covered seat's focus off to the overlay's own seat
+world, bound to the overlay's seat so its camera is pulled through that seat and the seat's pawn is
+marked `LocalControl`, its region re-fit on resize by the compositor), hand the cursor seat and the covered seat's focus off to the overlay's own seat
 (a `SeatFocusScope`), and hold a refcounted `WorldRunner::PauseScope` on the caller-named
 `CoveredWorld`. The one cross-scene seam is `LevelOverlayInfo::Populate` (run after load, before
 start). **There is no `LevelOverlay::Update`:** the runner ticks the overlay's simulation and the
@@ -594,7 +634,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 78** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 79** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative, and its prose records why each version moved). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the

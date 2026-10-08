@@ -95,6 +95,20 @@ namespace
         }
     };
 
+    // A probe recording which world each OnStart's context named, in start order.
+    struct StartProbe final : SceneSystem
+    {
+        static inline vector<WorldInstanceId> StartedWorlds;
+
+        static void Reset() { StartedWorlds.clear(); }
+
+        void OnStart(Scene&, const SystemContext& context) override
+        {
+            StartedWorlds.push_back(context.World);
+        }
+        void OnUpdate(Scene&, f32, const SystemContext&) override {}
+    };
+
     // A Sim-phase probe that drives the runner from inside its own update — the reentrancy the
     // deferral exists for. Target scripts which world each scene's update closes (its own, or a
     // peer) and Calls how many times it asks; the probe records what it saw while it ran, so the
@@ -235,6 +249,13 @@ namespace Veng
     {
         static constexpr SystemId Id = 0x0071D000000000A3ULL;
         static string Name() { return "StopProbe"; }
+    };
+
+    template <>
+    struct VengSystem<StartProbe>
+    {
+        static constexpr SystemId Id = 0xE398360503FCFCCFULL;
+        static string Name() { return "StartProbe"; }
     };
 
     template <>
@@ -486,6 +507,56 @@ TEST_CASE("Closing a runner-started world runs its systems' OnStop exactly once"
     // resource in OnStop depends on. The id then resolves to nothing.
     CHECK(StopProbe::Stops[scene] == 1);
     CHECK(runner.ResolveWorld(a) == nullptr);
+}
+
+TEST_CASE("A world opened over a handed scene starts, ticks and stops as any world does")
+{
+    StartProbe::Reset();
+    StopProbe::Reset();
+    OtherProbe::Reset();
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<StartProbe>();
+    systems.Register<StopProbe>();
+    systems.Register<OtherProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
+
+    // A scene its caller built, carrying an entity and a simulation of its own that the opener's
+    // system set replaces.
+    Unique<Scene> built = Scene::Create(types);
+    const Entity authored = built->CreateEntity();
+    built->SetSimulation(
+        CreateUnique<SceneSimulation>(systems, vector<SystemId>{SystemIdOf<OtherProbe>()}));
+    const Scene* handed = built.get();
+
+    const WorldInstanceId world = runner.OpenWorld(
+        WorldOpenInfo{
+            .SimTickRate = 60,
+            .StartSimulation = true,
+            .Systems = vector<SystemId>{SystemIdOf<StartProbe>(), SystemIdOf<StopProbe>()},
+        },
+        std::move(built));
+
+    // The world owns the very scene it was handed, and its start named the minted id.
+    const World* opened = runner.ResolveWorld(world);
+    REQUIRE(opened != nullptr);
+    CHECK(&opened->GetScene() == handed);
+    CHECK(opened->GetScene().IsAlive(authored));
+    CHECK(StartProbe::StartedWorlds == vector<WorldInstanceId>{world});
+
+    // One frame of several steps advances the scene's change tick with the world's clock, which a
+    // simulation stepped outside the runner never did.
+    runner.Tick(Frame(4.5f / 60.0f));
+    CHECK(opened->Clock.GetTick() == 4);
+    CHECK(opened->GetScene().GetChangeTick() == opened->Clock.GetTick());
+    CHECK(OtherProbe::Updates.empty());
+
+    runner.CloseWorld(world);
+    CHECK(StopProbe::Stops[handed] == 1);
+    CHECK(StopProbe::StoppedWorlds == vector<WorldInstanceId>{world});
 }
 
 TEST_CASE("Closing an externally-started world runs its systems' OnStop exactly once")

@@ -49,10 +49,11 @@ namespace Veng
 
     /// @brief Parameters for opening a world through WorldRunner::OpenWorld.
     ///
-    /// A world spawns either a cooked Level (Source resident) or an empty scene (Source empty). Only
-    /// the level path needs the asset manager; the empty path is device-free. The OnLoaded hook runs
-    /// once with the freshly-spawned scene before the simulation starts, which starts with the context
-    /// the runner's factory builds for the new world (WorldRunner::SetContextFactory).
+    /// A world spawns either a cooked Level (Source resident) or an empty scene (Source empty), or
+    /// adopts a ready scene its opener hands over (the OpenWorld overload taking a scene, Source
+    /// empty). Only the level path needs the asset manager; the other two are device-free. The
+    /// OnLoaded hook runs once with the world's scene before the simulation starts, which starts with
+    /// the context the runner's factory builds for the new world (WorldRunner::SetContextFactory).
     struct WorldOpenInfo
     {
         /// @brief The level to spawn into the world; an empty handle opens an empty scene.
@@ -76,14 +77,16 @@ namespace Veng
         optional<f32> MaxSimMillisecondsPerFrame;
         /// @brief Whether to start the world's simulation now; false defers it (the client join target).
         bool StartSimulation = true;
-        /// @brief For an empty-scene world, the ordered system set its SceneSimulation runs.
+        /// @brief For an empty-scene or adopted-scene world, the ordered system set its
+        /// SceneSimulation runs.
         ///
-        /// Meaningful only with an empty Source: engaged, the empty scene gets a SceneSimulation
-        /// built from exactly this ordered set — an empty vector is legal and attaches a simulation
-        /// running no systems (a ticking data world populated by other means); disengaged, the world
-        /// carries no simulation. An empty world runs the systems its opener names, exactly as a
-        /// level world runs the systems its level names; a caller wanting every registered system
-        /// enumerates SystemRegistry::Entries(). Ignored when Source is a level.
+        /// Meaningful only with an empty Source: engaged, the world's scene gets a SceneSimulation
+        /// built from exactly this ordered set, replacing any an adopted scene carried — an empty
+        /// vector is legal and attaches a simulation running no systems (a ticking data world
+        /// populated by other means); disengaged, an empty world carries no simulation and an adopted
+        /// scene keeps the one it carried, if any. Such a world runs the systems its opener names,
+        /// exactly as a level world runs the systems its level names; a caller wanting every
+        /// registered system enumerates SystemRegistry::Entries(). Ignored when Source is a level.
         optional<vector<SystemId>> Systems;
         /// @brief Invoked once with the spawned scene and its residency batch, before the sim starts.
         function<void(WorldInstanceId, Scene&, ResidencyBatch&)> OnLoaded;
@@ -111,7 +114,7 @@ namespace Veng
     /// stop and replay — in the same shape.
     struct SystemContextRequest
     {
-        /// @brief The world the context is for; invalid only for a simulation the runner does not hold.
+        /// @brief The world the context is for; always a world the runner holds.
         WorldInstanceId World;
         /// @brief The scene the context's systems run over.
         const Veng::Scene& Scene;
@@ -294,6 +297,22 @@ namespace Veng
         ///      simulation.
         [[nodiscard]] WorldInstanceId OpenWorld(const WorldOpenInfo& info);
 
+        /// @brief Opens a world over a ready scene its caller hands over, and returns its handle.
+        ///
+        /// The world owns @p scene from here exactly as it owns a scene it spawned: it ticks, pauses,
+        /// resolves and closes like any other world, so a tool simulating a scene it built itself (an
+        /// editor's play session over a clone of the scene it edits) gets every runner behaviour by
+        /// opening it rather than stepping it by hand. Mints an id; when @p info.Systems is engaged,
+        /// builds the scene's SceneSimulation from that set, replacing any the scene carried; then
+        /// runs @p info.OnLoaded and starts the simulation when @p info.StartSimulation, as the other
+        /// overload does. Immediate from inside Tick, as the other overload is.
+        /// @param info   How to start the world; Source must be empty.
+        /// @param scene  The scene the world adopts, created against this runner's type registry.
+        /// @return The opened world's handle.
+        /// @pre @p info.Source is empty and @p scene is non-null. A context factory is installed when
+        ///      @p info.StartSimulation and the scene carries or is given a simulation.
+        [[nodiscard]] WorldInstanceId OpenWorld(const WorldOpenInfo& info, Unique<Scene> scene);
+
         /// @brief Starts the simulation of a world opened with WorldOpenInfo::StartSimulation false.
         ///
         /// The deferred half of an open: a world whose scene arrives or is populated after the open
@@ -334,12 +353,12 @@ namespace Veng
 
         /// @brief Builds a SystemContext through the installed factory.
         ///
-        /// The one public entry every context builder calls. @p request names the world it is for;
-        /// the only caller that names no world (an invalid id) is a simulation the runner does not
-        /// hold — an editor's hand-driven Play session.
+        /// The one public entry every context builder calls. @p request names the world it is for:
+        /// every simulation the engine drives is one of this runner's worlds, so every context names
+        /// one.
         /// @param request  The world, scene, phase and step the context is for.
         /// @return The context the factory built.
-        /// @pre A context factory is installed.
+        /// @pre A context factory is installed, and @p request.World is a valid id.
         [[nodiscard]] SystemContext BuildContext(const SystemContextRequest& request) const;
 
         /// @brief Returns the world whose live scene is @p scene, or an invalid id when none is.
@@ -538,6 +557,17 @@ namespace Veng
 
         /// @brief Mints the next never-reused world id from the instance counter.
         [[nodiscard]] WorldInstanceId MintId();
+
+        /// @brief Builds a world holding no scene yet: a fresh id, its clock and its profiler scopes.
+        /// @param info  The clock settings the world steps with.
+        /// @return The new world, not yet held by the runner.
+        [[nodiscard]] Unique<World> CreateWorld(const WorldOpenInfo& info);
+
+        /// @brief Holds a world whose scene is in place, runs its load hook, and starts it.
+        /// @param world  The world to hold; its OwnedScene is set.
+        /// @param info   The load hook and whether to start the simulation.
+        /// @return The world's id.
+        WorldInstanceId AdoptWorld(Unique<World> world, const WorldOpenInfo& info);
 
         /// @brief Stops a world's started simulation and erases it, here and now.
         /// @param world  The world to close; an unminted or already-closed id is a no-op.

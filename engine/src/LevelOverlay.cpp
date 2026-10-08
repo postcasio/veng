@@ -136,16 +136,18 @@ namespace Veng
         }
         app.RegisterViewport(*overlay.m_Viewport);
 
-        // Bind the viewport to the overlay world so the managed-viewport presentation path pulls its
-        // scene primary camera each frame (Entity::Null viewer) — the new home for what the manual
-        // per-frame push did, with no game call. The look is recorded so a settings apply
-        // re-resolves this viewport too.
-        managed.RegisterBoundViewport(*overlay.m_Viewport, overlay.m_World, Entity::Null, knobs,
-                                      look);
+        // Bind the viewport to the overlay world through its seat, so the presentation path pulls that
+        // seat's camera each frame with no game call and marks the seat locally controlled. The look
+        // is recorded so a settings apply re-resolves this viewport too.
+        const InputSeat seat = ResolveInputSeat(&scene, overlay.m_World);
+        managed.RegisterBoundViewport(*overlay.m_Viewport,
+                                      BoundViewportInfo{.World = overlay.m_World,
+                                                        .Viewer = seat.GetRef().Viewer,
+                                                        .Knobs = knobs,
+                                                        .Look = look});
 
         // 3. Route input across the three seams, capturing what each must restore.
         InputRouter& router = app.GetInputRouter();
-        const InputSeat seat = ResolveInputSeat(&scene, overlay.m_World);
         overlay.m_OverlaySeat = seat.GetRef();
 
         // Pointer: a free pointer over the overlay's region routes to the overlay seat.

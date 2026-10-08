@@ -201,35 +201,54 @@ across the whole project's one AssetId namespace, not just its own pack.
   and the Save action's enabled state fold the config dirtiness in alongside the command stack
   (`HasUnsavedChanges`). Play runs **exactly the level's ordered system set** through the base's
   play machinery (`GetPlaySystems`), distinct from a bare prefab document's "all registered" set.
+- **Play is a runner world under a sandboxed request policy.** `PrefabEditorPanel::Play` clones the
+  edit scene, seeds the clone (`SeedPlayScene`), and opens it as a world of the host's `WorldRunner`
+  over that scene (`WorldRunner::OpenWorld(info, Unique<Scene>)`) with the document's system set —
+  `GetPlaySystems()`, else every registered system — started. So the runner ticks it exactly as it
+  ticks a game's world: the fixed-step clock and its budget, the scene's change tick, transform
+  history, edge resets (paused too), haptics, `SystemContext::World`, role resolution, capture
+  surfaces, `OnStop` on every exit, and the per-step input latch and frame report — there is no
+  second drive, and nothing to copy across when the runner learns something new. Two documents
+  playing at once are two worlds.
+  - **Its requests drain under `WorldRequestMode::Sandboxed`** (`Application::SetWorldRequestPolicy`):
+    a `TravelRequest`, `HostRequest` or `ConnectRequest` fails with a stated reason, `StopNetRequest`
+    is a no-op, `FocusRequest` and `PauseRequest` work as in the game, and the policy's `OnExit`
+    stops Play — so a system's own `ExitRequest` ends the session, never the editor. Per-world
+    setup a consumer does in its game `Application::OnWorldLoaded` cannot reach Play, since there is
+    no game `Application` in the editor; that belongs in authored data or a system's `OnStart`.
+  - **The document viewport is the world's bound presentation.** Play registers its `Offscreen`
+    `SceneViewportPanel` viewport through `ManagedViewportSet::RegisterBoundViewport` with the
+    clone's presentation seat (`ResolvePresentationSeat`) and `PullsCamera = false` — the panel keeps
+    pushing its own `ViewState` through the scene's authored camera — so Play's systems get `View`
+    and `Debug` from it, the seat's pawn is marked `LocalControl`, the world counts as presented, and
+    engine-driven Gui overlays drive through it. `Stop` unregisters it before closing the world.
+  - **Each frame, `UpdatePlaySession` only follows the world** (the runner ticked it before the
+    editor's UI ran, so Play keeps the one-frame tick-to-render latency): a world that no longer
+    resolves — its sandboxed exit, a system closing it, shutdown — returns the document to editing;
+    otherwise it repoints `PrefabEditContext::Scene` at the world's live scene (no scene address is
+    held across frames — `GetDocumentScene` resolves through the runner too), applies the Shift+Esc
+    release, syncs the pointer association, and reads `PlayAlpha` from `WorldRunner::ResolveAlpha`.
+    The level editor overrides `OnUI`, so it calls `UpdatePlaySession` itself.
+  - **Pause is the world's pause.** The toolbar's Pause holds a `WorldPauseScope` on the play world;
+    Resume drops only that hold. Whether the session is paused is `IsWorldPaused`, so a pause the
+    running game requested shows in the toolbar too (its button greyed: the game resumes itself).
+  - **Stop and document close are one path.** `Stop` releases the cursor and the panel's pause,
+    unregisters the presentation and closes the world (each system's `OnStop` runs), and
+    `~PrefabEditorPanel` calls it, so a document closed mid-Play stops its systems.
 - **The editor's Play seat is single, keyboard/mouse; multi-seat is a game-runtime concern.**
-  Play ticks the play-clone `SceneSimulation` (`PrefabEditorPanel::TickPlaySimulation`) on a
-  `SimClock` of its own rather than as a runner world, so it drives its steps through the same
-  seams a runner world's go through, and its seats read input exactly as they would in the game:
-  - **Each step is prepared by `Application::BeginSimStep`** before its systems run, latching the
-    per-tick mouse, wheel and touchpad motion (`SimInputFrame`). A multi-step frame's motion lands
-    on its first step, a zero-step frame holds it for the next, and a frame with nothing playing
-    drops it.
-  - **Each frame is reported to `Application::ReportSimFrame`**, so a tap made within a zero-step
-    Play frame is held for the next step exactly as a runner world's is; that frame's action frame
-    edges are cleared (`ResetFrameActionEdges`) as the runner clears its worlds'.
-  - **The pointer is Play's while the document holds the cursor capture.** The play scene renders
-    through the document's `Offscreen` `SceneViewportPanel` viewport, whose region tracks the
-    panel's on-window placement; while the document's capture token is live it associates that
-    viewport with the cursor seat (`SyncPlayPointer`, `InputRouter::AssociateViewportSeat`), so the
-    engine scopes the captured pointer to the play scene, which Play's steps read through their
-    `SystemContext::Pointer`. The scene's `UsesKeyboardMouse` seat then reads mouse look, buttons
-    and wheel; released, paused or stopped, the association is dropped and every seat reads a
-    neutral pointer, so editor clicks never drive the game.
-    `SystemContext::GameplayFocused` is stamped from the router as the engine stamps it, so a
-    context authored `RequiresGameplayFocus` resolves while captured.
-  - **Every Play context comes from the host's context factory**
-    (`Application::GetWorldRunner().BuildContext`), the one the runner builds its worlds' contexts
-    through, so Play's start, steps and stop carry the same services, pointer and focus a runner
-    world's do. The play clone is no runner world, so its requests name no world.
+  - **The pointer is Play's while the document holds the cursor capture.** The document viewport's
+    region tracks the panel's on-window placement; while the document's capture token is live it
+    associates that viewport with the cursor seat (`SyncPlayPointer`,
+    `InputRouter::AssociateViewportSeat`), so the engine scopes the captured pointer to the play
+    world's scene, whose steps read it through their `SystemContext::Pointer`. The scene's
+    `UsesKeyboardMouse` seat then reads mouse look, buttons and wheel; released, paused or stopped,
+    the association is dropped and every seat reads a neutral pointer, so editor clicks never drive
+    the game. `SystemContext::GameplayFocused` is stamped from the router as the engine stamps it,
+    so a context authored `RequiresGameplayFocus` resolves while captured.
   - **Split-screen is not exercised.** `ReconfigureManagedViewports`, the managed viewport list and
     the region-gated free pointer are `Application`-level game-runtime capabilities: the editor
-    registers no `Presented` viewport, drives no managed-viewport list, and previews a scene's
-    single authored `Viewer` seat. A seat's `SeatInput` is edited through the ordinary reflection
+    registers no `Presented` viewport, drives no managed-viewport list, and presents Play through a
+    scene's single authored `Viewer` seat. A seat's `SeatInput` is edited through the ordinary reflection
     inspector like any other component.
 
 ## The reflection-driven inspector
