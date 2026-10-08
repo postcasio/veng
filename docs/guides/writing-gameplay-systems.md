@@ -120,13 +120,10 @@ this: [Networking](networking.md) covers the full model.
 | On the wire | Replicated; authoritative | Never replicated; derived per client |
 
 **Why the line matters.** The Sim/View split is the structural seam a networking
-layer and a paused-sim editor both rely on. Replicate the *pawn* (Sim); each
-client derives its *own* camera (View). The net layer simulates the Sim
-phase authoritatively and lets every client run the View phase locally. The
-editor can pause the Sim phase while still running View systems to keep the
-camera responsive. Single-threaded today it is one extra partitioned pass over
-the system list — and it is agony to introduce after the fact, which is why it is
-set now.
+layer relies on. Replicate the *pawn* (Sim); each client derives its *own*
+camera (View). The net layer simulates the Sim phase authoritatively and lets
+every client run the View phase locally. A *paused* world runs neither phase.
+The split costs one extra partitioned pass over the system list.
 
 ### The Sim determinism contract
 
@@ -569,11 +566,11 @@ This example reuses the real shipped pieces:
 A `SystemContext` carries no `Application` back-reference by design, so a system
 **cannot call** the process-level operations: opening or joining a world, starting
 to host, connecting, stopping the net mode, exiting, or holding an input-focus
-token across frames. The bridge is a family of builtin, **local-only** request
+token or a world pause across frames. The bridge is a family of builtin, **local-only** request
 components in
 [`engine/include/Veng/Scene/Requests.h`](../../engine/include/Veng/Scene/Requests.h)
 — `TravelRequest`, `HostRequest`, `ConnectRequest`, `StopNetRequest`,
-`ExitRequest`, and `FocusRequest`. A system **stamps** one onto any world's scene;
+`ExitRequest`, `FocusRequest`, and `PauseRequest`. A system **stamps** one onto any world's scene;
 `Application::Frame` **drains** it at its frame-safe point (before the world tick)
 and reports the outcome back through the component. So a menu's Host button is a
 system that stamps a `HostRequest`, not a call into the app:
@@ -600,6 +597,15 @@ single per-seat token behind it and reconciles idempotently, so a *stateless*
 system can drive focus — which a raw `FocusToken` held across frames could not —
 and the request-driven token never disturbs a token an overlay suspend or a
 `SeatFocusScope` pushed.
+
+`PauseRequest` is the same idiom for pausing a world: stamp `PauseRequest{}` (or
+`{ .Paused = false }`) onto any entity of a world's scene and the engine pauses
+(or resumes) **that** world through one request-driven pause it holds per world.
+It composes with an overlay's pause and the application's `SetWorldPaused` toggle
+rather than overriding either, and fails on a `Client`-tier world. A paused world
+runs no system, so the resume is stamped from outside it — a Gui driver presenting
+that world, or a system in another world. Code outside a phase asks the scene
+whether it is paused with `Scene::IsSimulationPaused()`.
 
 **Focus-gated input contexts** are the authored, fine-grained complement to
 `FocusRequest`. An `InputMappingContext` can declare `RequiresGameplayFocus` in its

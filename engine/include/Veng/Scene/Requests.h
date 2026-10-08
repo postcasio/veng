@@ -10,9 +10,10 @@
 // Veng/Scene/Requests.h — the builtin, local-only request components.
 //
 // A gameplay system cannot reach the application-level operations that open and close worlds,
-// bind the transport, or hold an input-focus token across frames: StartHosting / Connect /
-// StopNet / RequestExit (and travel) are methods on Application, an InputRouter focus token is
-// held by whoever pushed it, and SystemContext carries no Application back-reference. These
+// bind the transport, hold an input-focus token or a world pause across frames: StartHosting /
+// Connect / StopNet / RequestExit (and travel) are methods on Application, an InputRouter focus
+// token or a WorldPauseScope is held by whoever took it, and SystemContext carries no Application
+// back-reference. These
 // components are the data channel across that gap. A system stamps one onto any world's scene; the
 // engine drains it at its frame-safe point and reports the outcome back through the component's
 // Status.
@@ -21,7 +22,7 @@
 // rides a snapshot; the engine drains them on the local Application only. On a Client-tier world a
 // request lowers to its client-side meaning (see the drain).
 //
-// Consumption semantics (uniform across all five):
+// Consumption semantics (uniform across all of them):
 //   - Handled  — the engine removes the component; absence is the acknowledgement, and the stamping
 //                system may re-stamp freely.
 //   - Pending  — the request is not yet handleable; it is left in place and retried next frame. A
@@ -156,6 +157,28 @@ namespace Veng
         /// @brief The failure reason, set when Status is Failed.
         string Error;
     };
+
+    /// @brief Requests that the world whose scene carries it be paused or resumed.
+    ///
+    /// A WorldPauseScope is held by whoever opened it, which no across-frames stateless system can
+    /// be, so the engine holds a single request-driven pause per world on the stampers' behalf and
+    /// reconciles idempotently: Paused with none held acquires one, not Paused with one held
+    /// releases it, and asking for the state already held is a no-op success. The request-driven
+    /// pause is one more holder of the world's pause refcount (SceneSimulation), so it composes
+    /// with — and never releases — a pause an overlay or the application's explicit toggle holds;
+    /// it is dropped when its world closes. A paused world runs no system, so the resume is stamped
+    /// from outside it: a Gui driver presenting the world, a system in another world, or the
+    /// application. Fails on a Client-tier world, whose time is the server's. Otherwise always
+    /// handled (removed the same frame); a system stamps only on the pause edge, not every frame.
+    struct PauseRequest
+    {
+        /// @brief True to pause the world, false to release the request-driven pause.
+        bool Paused = true;
+        /// @brief The engine-reported outcome; starts Pending.
+        RequestStatus Status = RequestStatus::Pending;
+        /// @brief The failure reason, set when Status is Failed.
+        string Error;
+    };
 }
 
 /// @cond DOXYGEN_EXCLUDE
@@ -194,6 +217,12 @@ VE_REFLECT_END();
 VE_REFLECT(::Veng::FocusRequest, 0x232F4A7AB3F5F74DULL)
 VE_FIELD(Seat, .DisplayName = "Seat")
 VE_FIELD(Focus, .DisplayName = "Focus")
+VE_FIELD(Status, .DisplayName = "Status", .ReadOnly = true)
+VE_FIELD(Error, .DisplayName = "Error", .ReadOnly = true)
+VE_REFLECT_END();
+
+VE_REFLECT(::Veng::PauseRequest, 0x0F3658CA70119E90ULL)
+VE_FIELD(Paused, .DisplayName = "Paused")
 VE_FIELD(Status, .DisplayName = "Status", .ReadOnly = true)
 VE_FIELD(Error, .DisplayName = "Error", .ReadOnly = true)
 VE_REFLECT_END();

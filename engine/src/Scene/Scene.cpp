@@ -170,6 +170,11 @@ namespace Veng
         m_Simulation = std::move(simulation);
     }
 
+    bool Scene::IsSimulationPaused() const
+    {
+        return m_Simulation && m_Simulation->IsPaused();
+    }
+
     void Scene::SetPhysicsWorld(Unique<PhysicsWorld> world)
     {
         m_PhysicsWorld = std::move(world);

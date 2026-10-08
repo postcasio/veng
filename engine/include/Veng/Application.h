@@ -1527,15 +1527,17 @@ namespace Veng
         ///
         /// Forwards to WorldRunner::SetWorldPaused. Paused, the engine still pushes the view each frame
         /// (the camera resolves and the scene renders) and still drives the scene's captures, but runs
-        /// no simulation tick — the path a fixed-pose capture or a game pause menu takes. Composes with
-        /// any held WorldRunner::PauseScope; a no-op for an unminted world.
+        /// none of the world's systems, Sim or View — the path a fixed-pose capture or a game pause
+        /// menu takes. Composes with any held WorldRunner::PauseScope and request-driven pause
+        /// (PauseRequest); a no-op for an unminted world or one with no simulation.
         /// @param world   The world to pause or resume.
         /// @param paused  True to stop ticking the world, false to clear the explicit toggle.
         void SetWorldPaused(WorldInstanceId world, bool paused);
 
         /// @brief Returns whether a world is paused (a held scope or the explicit toggle).
         ///
-        /// Forwards to WorldRunner::IsWorldPaused; false for an unminted world.
+        /// Forwards to WorldRunner::IsWorldPaused; false for an unminted world or one with no
+        /// simulation.
         /// @param world  The world to query.
         [[nodiscard]] bool IsWorldPaused(WorldInstanceId world) const;
 
@@ -2465,6 +2467,13 @@ namespace Veng
         /// dropping the list is inert; the router owns the actual focus stack, and says which seat
         /// each token is on.
         vector<FocusToken> m_FocusRequestTokens;
+
+        /// @brief The request-driven world pauses the PauseRequest drain holds, keyed by world id.
+        ///
+        /// At most one per world, held across frames on the stampers' behalf (they cannot hold a
+        /// scope) and dropped by a Paused = false request or by the world's close. Declared after
+        /// m_WorldRunner so each scope is destroyed while the runner it releases through still lives.
+        unordered_map<u64, WorldPauseScope> m_PauseRequestScopes;
 
         /// @brief A presenting travel awaiting its rebind, so OnWorldArrival can fire when it lands.
         ///

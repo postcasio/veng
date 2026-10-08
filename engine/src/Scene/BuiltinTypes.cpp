@@ -215,8 +215,8 @@ namespace Veng
         registry.Register<Net::SessionRecord>();
 
         // Local-only runtime requests a gameplay system stamps and the engine drains at its
-        // frame-safe point: travel, start-hosting, connect, stop-net, exit, and input-focus
-        // capture/release. None is replicated (they never ride a snapshot); RequestStatus registers
+        // frame-safe point: travel, start-hosting, connect, stop-net, exit, input-focus
+        // capture/release, and world pause. None is replicated (they never ride a snapshot); RequestStatus registers
         // transitively through each request's Status, and InputFocus through FocusRequest's Focus.
         registry.Register<TravelRequest>();
         registry.Register<HostRequest>();
@@ -224,6 +224,7 @@ namespace Veng
         registry.Register<StopNetRequest>();
         registry.Register<ExitRequest>();
         registry.Register<FocusRequest>();
+        registry.Register<PauseRequest>();
 
         // Level-scoped post/pipeline render knobs a Level carries and the app maps onto the renderer.
         registry.Register<Renderer::Tonemapper>();

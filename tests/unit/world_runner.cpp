@@ -10,6 +10,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <iterator>
 #include <map>
@@ -714,10 +715,8 @@ TEST_CASE("A paused world's sim does not advance while a peer's does")
     CHECK(runner.ResolveWorld(a)->Clock.GetTick() == 1);
 }
 
-TEST_CASE("Nested PauseScopes hold a world paused until the last one drops")
+TEST_CASE("Two pause scopes and the toggle hold one pause the scene sees, released in any order")
 {
-    TickProbe::Reset();
-
     TypeRegistry types;
     SystemRegistry systems;
     systems.Register<TickProbe>();
@@ -726,29 +725,81 @@ TEST_CASE("Nested PauseScopes hold a world paused until the last one drops")
     TestSupport::TestServices services;
     runner.SetContextFactory(services.Factory());
     const WorldInstanceId a = runner.OpenWorld(EmptyWorld());
-    const Scene* sceneA = &runner.ResolveWorld(a)->GetScene();
+    const Scene& scene = runner.ResolveWorld(a)->GetScene();
 
-    CHECK_FALSE(runner.IsWorldPaused(a));
+    // Holder 0 and 1 are scopes, 2 the explicit toggle; every release order is its own claim.
+    std::array<int, 3> order{0, 1, 2};
+    do
     {
-        const WorldPauseScope outer = runner.PauseScope(a);
-        CHECK(runner.IsWorldPaused(a));
+        std::array<WorldPauseScope, 2> scopes{runner.PauseScope(a), runner.PauseScope(a)};
+        runner.SetWorldPaused(a, true);
+        for (usize i = 0; i < order.size(); ++i)
         {
-            const WorldPauseScope inner = runner.PauseScope(a);
-            CHECK(runner.IsWorldPaused(a));
+            CHECK(scene.IsSimulationPaused());
+            if (order[i] == 2)
+            {
+                runner.SetWorldPaused(a, false);
+            }
+            else
+            {
+                scopes[static_cast<usize>(order[i])] = WorldPauseScope{};
+            }
         }
-        // The inner scope dropped, but the outer still holds the pause (refcount, not a boolean).
-        CHECK(runner.IsWorldPaused(a));
-
-        runner.Tick(OneStep());
-        CHECK(TickProbe::Updates.find(sceneA) == TickProbe::Updates.end());
-    }
-    // The last scope dropped: the world resumes.
-    CHECK_FALSE(runner.IsWorldPaused(a));
-    runner.Tick(OneStep());
-    CHECK(TickProbe::Updates[sceneA] == 1);
+        CHECK_FALSE(scene.IsSimulationPaused());
+        CHECK_FALSE(runner.IsWorldPaused(a));
+    } while (std::ranges::next_permutation(order).found);
 }
 
-TEST_CASE("A held PauseScope composes with the explicit toggle without clobbering")
+TEST_CASE("A pause scope outliving its world, or opened on one with no simulation, holds nothing")
+{
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<TickProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
+    const WorldInstanceId closing = runner.OpenWorld(EmptyWorld());
+    const WorldInstanceId peer = runner.OpenWorld(EmptyWorld());
+
+    WorldPauseScope outlived = runner.PauseScope(closing);
+    REQUIRE(outlived.IsHeld());
+    runner.CloseWorld(closing);
+    outlived = WorldPauseScope{};
+    CHECK_FALSE(runner.IsWorldPaused(peer));
+
+    // A world with no simulation never ticks, so there is nothing for a pause to hold.
+    const WorldInstanceId bare = runner.OpenWorld(WorldOpenInfo{.StartSimulation = false});
+    CHECK_FALSE(runner.PauseScope(bare).IsHeld());
+    runner.SetWorldPaused(bare, true);
+    CHECK_FALSE(runner.IsWorldPaused(bare));
+}
+
+TEST_CASE("A paused world runs neither its Sim nor its View systems")
+{
+    TickProbe::Reset();
+    ViewProbe::Reset();
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<TickProbe>();
+    systems.Register<ViewProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
+    const WorldInstanceId a =
+        runner.OpenWorld(WorldOf({SystemIdOf<TickProbe>(), SystemIdOf<ViewProbe>()}));
+    const Scene* scene = &runner.ResolveWorld(a)->GetScene();
+
+    // A frame long enough for several steps.
+    const WorldPauseScope pause = runner.PauseScope(a);
+    runner.Tick(Frame(3.5f / 60.0f));
+    CHECK(TickProbe::Updates.find(scene) == TickProbe::Updates.end());
+    CHECK(ViewProbe::Views.find(scene) == ViewProbe::Views.end());
+}
+
+TEST_CASE("A pause held across InstallScene survives it and releases onto the installed scene")
 {
     TypeRegistry types;
     SystemRegistry systems;
@@ -759,17 +810,18 @@ TEST_CASE("A held PauseScope composes with the explicit toggle without clobberin
     runner.SetContextFactory(services.Factory());
     const WorldInstanceId a = runner.OpenWorld(EmptyWorld());
 
-    // A scope and the explicit toggle are separate reasons: clearing one while the other holds
-    // leaves the world paused — the SeatFocusScope idiom, where a bare boolean would clobber.
     WorldPauseScope scope = runner.PauseScope(a);
     runner.SetWorldPaused(a, true);
-    CHECK(runner.IsWorldPaused(a));
 
+    Unique<Scene> replacement = Scene::Create(types);
+    replacement->SetSimulation(CreateUnique<SceneSimulation>(systems, vector<SystemId>{}));
+    const Scene& installed = runner.InstallScene(a, std::move(replacement));
+    CHECK(installed.IsSimulationPaused());
+
+    scope = WorldPauseScope{};
+    CHECK(installed.IsSimulationPaused()); // the carried toggle still holds it
     runner.SetWorldPaused(a, false);
-    CHECK(runner.IsWorldPaused(a)); // the scope still holds it
-
-    scope = WorldPauseScope{}; // drop the scope by move-assigning an inert one
-    CHECK_FALSE(runner.IsWorldPaused(a));
+    CHECK_FALSE(installed.IsSimulationPaused());
 }
 
 TEST_CASE("A system closing its own world from its update stops it after the walk, not during")

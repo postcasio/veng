@@ -4,8 +4,9 @@
 // operations). The cases assert the consumption semantics: handled removes the component the same
 // frame, a failure holds Status/Error for exactly one frame then retires, a pending request is
 // retried and can be withdrawn, two worlds drain in id order, the fixed type order lets a
-// same-frame stop-net + host re-host, the five components are all unreplicated, and a host request
-// in a client-tier world fails without reaching server state.
+// same-frame stop-net + host re-host, the request components are all unreplicated, and a host
+// request in a client-tier world fails without reaching server state. The focus and pause cases drive
+// the engine's own reconcile helpers.
 
 #include <doctest/doctest.h>
 
@@ -24,6 +25,7 @@
 #include <Veng/WorldRunner.h>
 
 #include <Scene/FocusRequestReconcile.h>
+#include <Scene/PauseRequestReconcile.h>
 #include <Scene/RequestDrain.h>
 
 using namespace Veng;
@@ -38,6 +40,7 @@ namespace
         types.Register<StopNetRequest>();
         types.Register<ExitRequest>();
         types.Register<FocusRequest>();
+        types.Register<PauseRequest>();
     }
 
     // Two distinct seat entities standing in for router seats.
@@ -49,6 +52,24 @@ namespace
     WorldInstanceId OpenEmpty(WorldRunner& runner)
     {
         return runner.OpenWorld(WorldOpenInfo{.StartSimulation = false});
+    }
+
+    // Opens a world whose scene carries a simulation running no systems, so it has a pause to hold.
+    WorldInstanceId OpenSimulated(WorldRunner& runner)
+    {
+        return runner.OpenWorld(
+            WorldOpenInfo{.StartSimulation = false, .Systems = vector<SystemId>{}});
+    }
+
+    // Routes the drain's pause hook through the engine reconcile, under a fixed role for every world.
+    RequestDispatch PauseDispatch(WorldRunner& runner, PauseRequestScopes& scopes,
+                                  const NetRole role = NetRole::Server)
+    {
+        RequestDispatch dispatch;
+        dispatch.Pause = [&runner, &scopes, role](const WorldInstanceId from,
+                                                  const PauseRequest& request, std::string& error)
+        { return ReconcilePauseRequest(runner, scopes, from, role, request, error); };
+        return dispatch;
     }
 
     template <class T>
@@ -244,6 +265,7 @@ TEST_CASE("Every request component is registered unreplicated")
     assertUnreplicated(types.IdOf<StopNetRequest>());
     assertUnreplicated(types.IdOf<ExitRequest>());
     assertUnreplicated(types.IdOf<FocusRequest>());
+    assertUnreplicated(types.IdOf<PauseRequest>());
 }
 
 TEST_CASE("A FocusRequest drain reconciles the engine-owned per-seat focus token")
@@ -439,4 +461,93 @@ TEST_CASE("A host request in a client-tier world fails without reaching server s
     REQUIRE(held != nullptr);
     CHECK(held->Status == RequestStatus::Failed);
     CHECK(held->Error == "cannot start hosting from a client-tier world");
+}
+
+TEST_CASE("A PauseRequest pauses its own world the same frame through one engine-held pause")
+{
+    TypeRegistry types;
+    RegisterRequests(types);
+    SystemRegistry systems;
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    const WorldInstanceId world = OpenSimulated(runner);
+    const WorldInstanceId peer = OpenSimulated(runner);
+
+    PauseRequestScopes scopes;
+    const RequestDispatch dispatch = PauseDispatch(runner, scopes);
+
+    Stamp<PauseRequest>(runner, world);
+    DrainRequests(runner, dispatch);
+    CHECK(runner.IsWorldPaused(world));
+    CHECK_FALSE(runner.IsWorldPaused(peer));
+    CHECK(Find<PauseRequest>(runner, world) == nullptr);
+
+    // A repeat is a no-op success, and an outside holder composes with the engine's pause.
+    Stamp<PauseRequest>(runner, world);
+    DrainRequests(runner, dispatch);
+    CHECK(Find<PauseRequest>(runner, world) == nullptr);
+    {
+        const WorldPauseScope external = runner.PauseScope(world);
+    }
+    CHECK(runner.IsWorldPaused(world));
+
+    // One resume releases it, so the repeat took no second ref.
+    Stamp<PauseRequest>(runner, world, PauseRequest{.Paused = false});
+    DrainRequests(runner, dispatch);
+    CHECK_FALSE(runner.IsWorldPaused(world));
+    CHECK(scopes.empty());
+
+    // A resume with no request pause held releases nobody else's.
+    const WorldPauseScope overlay = runner.PauseScope(world);
+    Stamp<PauseRequest>(runner, world, PauseRequest{.Paused = false});
+    DrainRequests(runner, dispatch);
+    CHECK(runner.IsWorldPaused(world));
+    CHECK(Find<PauseRequest>(runner, world) == nullptr);
+}
+
+TEST_CASE("A PauseRequest on a client-tier world fails and is held one frame")
+{
+    TypeRegistry types;
+    RegisterRequests(types);
+    SystemRegistry systems;
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    const WorldInstanceId world = OpenSimulated(runner);
+
+    PauseRequestScopes scopes;
+    const RequestDispatch dispatch = PauseDispatch(runner, scopes, NetRole::Client);
+
+    Stamp<PauseRequest>(runner, world);
+    DrainRequests(runner, dispatch);
+    CHECK_FALSE(runner.IsWorldPaused(world));
+    CHECK(scopes.empty());
+    const auto* held = Find<PauseRequest>(runner, world);
+    REQUIRE(held != nullptr);
+    CHECK(held->Status == RequestStatus::Failed);
+    CHECK(held->Error == "cannot pause a client-tier world");
+
+    DrainRequests(runner, dispatch);
+    CHECK(Find<PauseRequest>(runner, world) == nullptr);
+}
+
+TEST_CASE("Closing a world drops its request-driven pause")
+{
+    TypeRegistry types;
+    RegisterRequests(types);
+    SystemRegistry systems;
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    const WorldInstanceId closing = OpenSimulated(runner);
+    const WorldInstanceId peer = OpenSimulated(runner);
+
+    PauseRequestScopes scopes;
+    const RequestDispatch dispatch = PauseDispatch(runner, scopes);
+    runner.SetWorldClosedHook([&](const WorldInstanceId world)
+                              { ForgetWorldPause(scopes, world); });
+
+    Stamp<PauseRequest>(runner, closing);
+    Stamp<PauseRequest>(runner, peer);
+    DrainRequests(runner, dispatch);
+    REQUIRE(scopes.size() == 2);
+
+    runner.CloseWorld(closing);
+    CHECK(scopes.size() == 1);
+    CHECK(runner.IsWorldPaused(peer));
 }

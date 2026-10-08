@@ -306,7 +306,7 @@ TEST_CASE("The all-registered convenience builds every registered system")
     CHECK(registry.Count() == 3);
 }
 
-TEST_CASE("SceneSimulation tracks started state and per-sim pause independently")
+TEST_CASE("SceneSimulation's pause is a floored refcount beside a toggle, untouched by Start/Stop")
 {
     SystemA::Reset();
 
@@ -318,24 +318,29 @@ TEST_CASE("SceneSimulation tracks started state and per-sim pause independently"
     SceneSimulation sim(registry);
     TestSupport::TestServices services;
 
-    // Fresh: not started, not paused (the engine drive-list ticks only started, non-paused sims).
     CHECK_FALSE(sim.IsStarted());
     CHECK_FALSE(sim.IsPaused());
 
-    sim.Start(*scene, services.Make());
-    CHECK(sim.IsStarted());
-
-    // Pause is a separate knob; SceneSimulation::Update itself ignores it (the engine gates on it),
-    // so the flag is only what the engine reads. Start/Stop leave it untouched.
+    // Two held pauses and the toggle: paused until every one of them is let go.
+    sim.AcquirePause();
+    sim.AcquirePause();
     sim.SetPaused(true);
-    CHECK(sim.IsPaused());
     sim.SetPaused(false);
+    CHECK(sim.IsPaused());
+    sim.ReleasePause();
+    CHECK(sim.IsPaused());
+    sim.ReleasePause();
     CHECK_FALSE(sim.IsPaused());
 
-    sim.SetPaused(true);
-    sim.Start(*scene, services.Make());
+    // A release with none held is floored rather than banked against a later acquire.
+    sim.ReleasePause();
+    sim.AcquirePause();
     CHECK(sim.IsPaused());
 
+    // Start and Stop leave the held pause in place.
+    sim.Start(*scene, services.Make());
+    CHECK(sim.IsStarted());
+    CHECK(sim.IsPaused());
     sim.Stop(*scene, services.Make());
     CHECK_FALSE(sim.IsStarted());
     CHECK(sim.IsPaused());

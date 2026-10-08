@@ -102,23 +102,46 @@ namespace Veng
             return static_cast<const T*>(FindSystemById(SystemIdOf<T>()));
         }
 
-        /// @brief Pauses or resumes this simulation's per-frame tick.
+        /// @brief Sets or clears the explicit pause toggle, which composes with the held pause refs.
         ///
-        /// Paused, the engine's simulation drive-list skips this simulation's Update while still
-        /// driving its scene's captures and view (registration, not run-state, gates those). The
-        /// state is per-simulation, so one scene can pause while another keeps ticking. Start/Stop
-        /// leave the pause state untouched.
-        /// @param paused  True to skip ticking, false to resume.
-        void SetPaused(bool paused) { m_Paused = paused; }
+        /// The simulation holds its scene's whole pause: this toggle plus a refcount of held pauses
+        /// (AcquirePause / ReleasePause), so a game's own pause and every stacked holder (an overlay,
+        /// a drained PauseRequest) compose rather than one clobbering another. A paused simulation is
+        /// driven through no phase: the WorldRunner runs neither its Sim steps nor its View pass.
+        /// Start/Stop leave the pause untouched.
+        /// @param paused  True to set the toggle, false to clear it; held refs are unaffected.
+        void SetPaused(bool paused) { m_ExplicitPaused = paused; }
 
-        /// @brief Returns whether this simulation's tick is paused.
-        [[nodiscard]] bool IsPaused() const { return m_Paused; }
+        /// @brief Adds one held pause; the simulation stays paused until each is released.
+        void AcquirePause() { ++m_PauseRefs; }
+
+        /// @brief Releases one held pause; a no-op when none is held.
+        void ReleasePause()
+        {
+            if (m_PauseRefs > 0)
+            {
+                --m_PauseRefs;
+            }
+        }
+
+        /// @brief Adds another simulation's pause to this one: its held refs and its explicit toggle.
+        ///
+        /// What a scene replacement carries across, so every holder of the replaced simulation's pause
+        /// still holds it on this one and releases onto it.
+        /// @param previous  The simulation whose pause is carried over.
+        void AdoptPause(const SceneSimulation& previous)
+        {
+            m_PauseRefs += previous.m_PauseRefs;
+            m_ExplicitPaused = m_ExplicitPaused || previous.m_ExplicitPaused;
+        }
+
+        /// @brief Returns whether this simulation is paused: the explicit toggle or any held pause.
+        [[nodiscard]] bool IsPaused() const { return m_ExplicitPaused || m_PauseRefs > 0; }
 
         /// @brief Returns whether Start has run and Stop has not, so the engine may tick this simulation.
         ///
-        /// The engine's drive-list ticks a registered simulation only while it is started and not
-        /// paused; Start sets this, Stop clears it. A simulation registered but never started is
-        /// not auto-ticked.
+        /// The WorldRunner ticks a world's simulation only while it is started and not paused; Start
+        /// sets this, Stop clears it.
         [[nodiscard]] bool IsStarted() const { return m_Started; }
 
     private:
@@ -147,8 +170,11 @@ namespace Veng
         /// counting the step it runs on. A reconciliation replay neither counts nor runs them.
         vector<u32> m_StepsSinceRun;
 
-        /// @brief Whether the engine skips this simulation's per-frame tick (see SetPaused).
-        bool m_Paused = false;
+        /// @brief The explicit pause toggle (see SetPaused).
+        bool m_ExplicitPaused = false;
+
+        /// @brief The number of held pauses (see AcquirePause); paused while non-zero.
+        u32 m_PauseRefs = 0;
 
         /// @brief Whether Start has run without a matching Stop (see IsStarted).
         bool m_Started = false;

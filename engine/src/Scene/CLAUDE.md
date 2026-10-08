@@ -772,6 +772,16 @@ consult before touching an entity; an entity with no `Authority` defaults to `Se
 [../Net/CLAUDE.md](../Net/CLAUDE.md)). The two-pass split is the whole scheduling mechanism: no
 dependency graph, no parallelism.
 
+**A paused world runs neither phase.** The pause lives on the `SceneSimulation` — a refcount of held
+pauses beside an explicit toggle (see [engine/CLAUDE.md](../../CLAUDE.md), "Pause is a refcount") —
+and while it holds, the world drive runs no Sim step and no View pass, so a View system does not keep
+presenting a frozen world and a Sim system does not need to check a flag. The scene sees its own pause
+through **`Scene::IsSimulationPaused()`**, the query for code that runs outside a phase (`OnStart`,
+`OnStop`, a Gui driver presenting the scene); `SystemContext` carries no pause field, since a phase
+that could read one never runs paused. Gameplay pauses its own world by stamping the builtin
+**`PauseRequest`** (`Veng/Scene/Requests.h`), drained like its siblings; the resume comes from outside
+the paused world.
+
 **A `SystemContext` is built, never assembled by hand.** Every service on it is a required reference
 with no default, so an omission is a compile error; the defaulted fields (`Pointer`, `View`, `Debug`,
 `Tick`, `Alpha`, `Role`, `World`, `GameplayFocused`, the step edges, `IsReplay`) are per-call data. At

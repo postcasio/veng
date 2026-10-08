@@ -54,6 +54,7 @@
 #include "Platform/GamepadBackend.h"
 #include "Render/DisplayResolve.h"
 #include "Scene/FocusRequestReconcile.h"
+#include "Scene/PauseRequestReconcile.h"
 #include "Input/RoleResolver.h"
 #include "Scene/RequestDrain.h"
 
@@ -356,10 +357,14 @@ namespace Veng
             });
 
         // The router's focus stacks and the request-driven tokens are keyed by seat, and a seat names
-        // its world; a closed world's entries would otherwise outlive it for the process.
+        // its world; a closed world's entries, and its request-driven pause, would otherwise outlive
+        // it for the process.
         m_WorldRunner->SetWorldClosedHook(
             [this](const WorldInstanceId world)
-            { ForgetWorldFocus(*m_InputRouter, m_FocusRequestTokens, world); });
+            {
+                ForgetWorldFocus(*m_InputRouter, m_FocusRequestTokens, world);
+                ForgetWorldPause(m_PauseRequestScopes, world);
+            });
 
         // ImGui needs a window (GLFW backend), so it's only available windowed.
         if (!m_Info.Headless && m_Info.ImGui)
@@ -2050,6 +2055,13 @@ namespace Veng
             // input focus; the reconcile composes with overlay / SeatFocusScope tokens.
             return ReconcileFocusRequest(*m_InputRouter, m_FocusRequestTokens, world, request,
                                          error);
+        };
+
+        dispatch.Pause =
+            [this](const WorldInstanceId world, const PauseRequest& request, string& error)
+        {
+            return ReconcilePauseRequest(*m_WorldRunner, m_PauseRequestScopes, world,
+                                         RoleForWorld(world), request, error);
         };
 
         DrainRequests(*m_WorldRunner, dispatch);

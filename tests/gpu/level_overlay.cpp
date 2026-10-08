@@ -500,14 +500,15 @@ TEST_CASE("The covered-world pause is a refcount that stacks and composes with a
     OverlayApp app(HeadlessInfo(), types, systems);
     AssetHandle<Level> level;
 
-    // The world the overlays cover — an ordinary runner-owned world named as CoveredWorld. It needs
-    // no simulation for the pause assertions; IsWorldPaused reads its refcount + explicit toggle.
+    // The world the overlays cover — an ordinary runner-owned world named as CoveredWorld. Its pause
+    // lives on its simulation, so it carries one running no systems.
     WorldInstanceId baseWorld;
 
     app.InitFn = [&](OverlayApp& a)
     {
         level = BuildSeatLevel(a.GetAssetManager(), a.GetTypeRegistry(), {});
-        baseWorld = a.GetWorldRunner().OpenWorld(WorldOpenInfo{.StartSimulation = false});
+        baseWorld = a.GetWorldRunner().OpenWorld(
+            WorldOpenInfo{.StartSimulation = false, .Systems = vector<SystemId>{}});
     };
 
     app.StepFn = [&](OverlayApp& a, int frame)

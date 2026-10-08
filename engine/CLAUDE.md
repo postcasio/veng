@@ -308,7 +308,7 @@ pack it names **before `OnInitialize`**, so a subclass can load a cooked asset (
 config table, a boot UI atlas) during initialization; then, at the end of `Initialize` (after
 `OnInitialize`), it reuses that same parsed project to open the startup level
 as **world #0** through `WorldRunner::OpenWorld` — a first-class `World` bundling
-`{ WorldInstanceId, Unique<Scene> (+ its SceneSimulation), a per-world clock, pause state }`. The
+`{ WorldInstanceId, Unique<Scene> (+ its SceneSimulation, which holds the pause), a per-world clock }`. The
 open seeds the managed viewport's topology + per-frame view from the spawned scene (the level's
 `LevelRenderSettings` post knobs via `ApplyLevelRenderSettings`, plus the scene's author-opt-in
 `Sky` and `TimeOfDay`, resolved by the renderer itself each `Execute`), fires the
@@ -409,8 +409,8 @@ no context); an owner with a factory calls `CloseAllWorlds` first, as `Applicati
 
 **A closed world drops its input focus.** The runner's **world-closed hook**
 (`SetWorldClosedHook`, fired once per closed world after it is erased, in close order — not by
-`InstallScene`, which closes no world) is where `Application` calls `InputRouter::ForgetWorld` and
-forgets its request-driven focus tokens for that world. `ForgetWorld` drops every focus stack and
+`InstallScene`, which closes no world) is where `Application` calls `InputRouter::ForgetWorld`,
+forgets its request-driven focus tokens for that world, and drops the world's request-driven pause. `ForgetWorld` drops every focus stack and
 viewport association whose seat names the world and **retires** each dropped entry's token: a retired
 token is not live, and its holder's `PopFocus` is a silent no-op that forgets it, so a holder
 outliving the world (a `SeatFocusScope`, an editor capture) keeps its pop-exactly-once discipline,
@@ -451,11 +451,21 @@ reads. A driven frame clock disables the budget, so a driven run's step count de
 frame deltas — see
 [src/Net/CLAUDE.md](src/Net/CLAUDE.md) for the tick model and the `ApplicationInfo::Net` wiring
 (`--server` / `--dedicated` / `--join` / `--netsim`, `PumpNet`, and the runtime `StartHosting()` /
-`Connect()` / `StopNet()` operations that mount the same hosts after boot). **Pause is a refcount, not
-a boolean:**
-`WorldRunner::PauseScope(id)` is an RAII pause held for a scope's lifetime (a world is paused while
-any scope is held), composing with the explicit `SetWorldPaused(id, …)` toggle so stacked overlays
-and a game pause do not clobber each other.
+`Connect()` / `StopNet()` operations that mount the same hosts after boot).
+
+**Pause is a refcount, not a boolean, and it lives on the simulation.** A world's whole pause is held
+by its scene's `SceneSimulation`: a refcount (`AcquirePause` / `ReleasePause`) beside an explicit
+toggle (`SetPaused`), paused while either holds. `WorldRunner::PauseScope(id)` is an RAII pause held
+for a scope's lifetime, composing with the explicit `SetWorldPaused(id, …)` toggle so stacked
+overlays and a game pause do not clobber each other; both forward to the world's live simulation, a
+scope releases onto whatever simulation the world holds when it drops (`InstallScene` carries the
+pause onto a replacement scene), and a scope outliving its world, or one taken on a world with no
+simulation, releases nothing. **A paused world runs no phase** — neither its Sim steps nor its View
+pass — and clears its accumulator and frame edges. Because the pause is on the simulation, anything
+holding only the scene asks **`Scene::IsSimulationPaused()`** (a system's `OnStart`/`OnStop`, a Gui
+driver, presentation code); `SystemContext` carries no pause flag, since no phase that receives one
+runs while paused. **Gameplay requests a pause through the builtin `PauseRequest`** (below), the
+engine holding one request-driven pause per world.
 
 **Networking is per-world and multiplexed over one connection.** `NetRole` is a **per-world**
 property, not a process-global one: each world ticks under its own authority (a `Host`-side role map,
@@ -504,10 +514,11 @@ See [src/Net/CLAUDE.md](src/Net/CLAUDE.md) for the full model.
 `SystemContext` carries no `Application` back-reference, so a gameplay system cannot call the
 operations that open and close worlds, bind the transport, exit, or hold an input-focus token. The
 builtin, **local-only** request components (`Veng/Scene/Requests.h`) are that data channel:
-`TravelRequest`, `HostRequest`, `ConnectRequest`, `StopNetRequest`, `ExitRequest`, and
-`FocusRequest`. A system stamps one onto any world's scene; `Application::Frame` **drains** them at
-its frame-safe point (right after the deferred managed-viewport reconfigure, before the world tick),
-in the fixed order **StopNet → Host → Connect → Travel → Exit** over a snapshot of the open worlds.
+`TravelRequest`, `HostRequest`, `ConnectRequest`, `StopNetRequest`, `ExitRequest`, `FocusRequest`
+and `PauseRequest`. A system stamps one onto any world's scene; `Application::Frame` **drains** them
+at its frame-safe point (right after the deferred managed-viewport reconfigure, before the world
+tick), in the fixed order **StopNet → Host → Connect → Travel → Focus → Pause → Exit** over a
+snapshot of the open worlds.
 None is `VE_REPLICATED` — a request never rides a snapshot, and on a `Client`-tier world it lowers
 to the client-side meaning. Consumption is uniform: a handled request is **removed** (absence is the
 ack), an unhandleable one is left **Pending** to retry, and a failed one is marked
@@ -517,7 +528,13 @@ outcome before re-stamping. **`Application::Travel(TravelInfo)`** is the one tra
 rebind → pin/unpin), client (travel-request → server-directed travel), or listen-host — and
 `FocusRequest` drives the `InputRouter`'s coarse gameplay/UI focus for a seat through an
 engine-owned per-seat token (so a stateless system can capture or release focus), dropped when the
-seat's world closes. See
+seat's world closes. `PauseRequest` pauses or resumes **the world it is stamped in** through one
+engine-held `WorldPauseScope` per world (`Paused = true` acquires it when none is held, `false`
+releases it, a repeat is a no-op success), dropped when the world closes; it is one more holder of
+the refcount, so it never releases an overlay's pause or the explicit toggle, and it fails on a
+`Client`-tier world, whose time is the server's. A paused world runs no system, so its resume is
+stamped from outside it — a Gui driver presenting it, a system in another world, the application.
+See
 [src/Scene/CLAUDE.md](src/Scene/CLAUDE.md) for the request idiom and
 [src/Net/CLAUDE.md](src/Net/CLAUDE.md) for `Travel`.
 
@@ -577,7 +594,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 77** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 78** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative, and its prose records why each version moved). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the

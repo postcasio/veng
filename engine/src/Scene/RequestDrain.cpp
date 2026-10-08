@@ -101,6 +101,7 @@ namespace Veng
         DrainType<ConnectRequest>(runner, worlds, dispatch.Connect);
         DrainType<TravelRequest>(runner, worlds, dispatch.Travel);
         DrainType<FocusRequest>(runner, worlds, dispatch.Focus);
+        DrainType<PauseRequest>(runner, worlds, dispatch.Pause);
         DrainType<ExitRequest>(runner, worlds, dispatch.Exit);
     }
 }

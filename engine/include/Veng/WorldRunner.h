@@ -14,6 +14,7 @@ namespace Veng
     class AssetManager;
     class TypeRegistry;
     class SystemRegistry;
+    class SceneSimulation;
     class WorldRunner;
 }
 
@@ -208,9 +209,11 @@ namespace Veng
     /// @brief An RAII refcounted pause on one world, released when the scope drops.
     ///
     /// While any WorldPauseScope on a world is held the world is paused; the scopes nest (stacked
-    /// overlays) and compose with the explicit SetWorldPaused toggle, since the pause is a refcount
-    /// underneath rather than a boolean one holder can clobber. Move-only; a moved-from scope releases
-    /// nothing. Resolving a closed world's scope is inert.
+    /// overlays) and compose with the explicit SetWorldPaused toggle, since the pause is a refcount on
+    /// the world's SceneSimulation rather than a boolean one holder can clobber. The release resolves
+    /// the world when it runs, so it lands on whatever simulation the world holds then (InstallScene
+    /// carries the pause onto a replacement), and a scope outliving its world releases nothing.
+    /// Move-only; a moved-from scope releases nothing.
     class WorldPauseScope
     {
     public:
@@ -229,6 +232,12 @@ namespace Veng
         /// @brief Moves the pause, releasing any pause this scope currently holds first.
         WorldPauseScope& operator=(WorldPauseScope&& other) noexcept;
 
+        /// @brief Returns whether this scope holds a pause it will release.
+        ///
+        /// False for a default, moved-from or released scope, and for one opened on a world that was
+        /// unminted or had no simulation to pause.
+        [[nodiscard]] bool IsHeld() const { return m_Runner != nullptr; }
+
     private:
         friend class WorldRunner;
 
@@ -236,7 +245,7 @@ namespace Veng
 
         void Release();
 
-        /// @brief The runner holding the refcount; null on an inert or moved-from scope.
+        /// @brief The runner the pause is released through; null when this scope holds no pause.
         WorldRunner* m_Runner = nullptr;
         /// @brief The world this scope pauses.
         WorldInstanceId m_World;
@@ -446,17 +455,22 @@ namespace Veng
         [[nodiscard]] bool IsTicking() const { return m_Ticking; }
 
         /// @brief Sets a world's explicit pause toggle, composing with any held PauseScopes.
+        ///
+        /// Forwards to the world's live SceneSimulation::SetPaused; a no-op for an unminted world or
+        /// one whose scene has no simulation, which never ticks.
         /// @param world   The world to pause or resume.
         /// @param paused  True to pause, false to clear the explicit toggle.
         void SetWorldPaused(WorldInstanceId world, bool paused);
 
-        /// @brief Returns whether a world is paused (a held scope or the explicit toggle); false when unminted.
+        /// @brief Returns whether a world's live simulation is paused (a held scope or the toggle).
         /// @param world  The world to query.
+        /// @return False for an unminted world or one with no simulation.
         [[nodiscard]] bool IsWorldPaused(WorldInstanceId world) const;
 
         /// @brief Opens an RAII refcounted pause on a world, held for the returned scope's lifetime.
         /// @param world  The world to pause while the scope lives.
-        /// @return The pause scope; inert when the world is unminted.
+        /// @return The pause scope; inert (WorldPauseScope::IsHeld false) when the world is unminted or
+        ///         has no simulation.
         [[nodiscard]] WorldPauseScope PauseScope(WorldInstanceId world);
 
         /// @brief Installs a freshly-loaded scene as an already-open world's scene, and returns it.
@@ -466,7 +480,9 @@ namespace Veng
         /// the joined scene is a runner-owned world rather than a parallel one. The caller starts it
         /// once the install lands. A replaced scene whose simulation is started is stopped first
         /// (OnStop with the world's Stop context, as CloseWorld stops one), then retired and dropped;
-        /// the world itself stays open, so the closed hook does not fire.
+        /// the world itself stays open, so the closed hook does not fire. The replaced simulation's pause
+        /// (its held refs and explicit toggle) is carried onto the installed scene's simulation, so a
+        /// pause held across the replacement survives it; a side with no simulation carries nothing.
         /// @param world  The open world to install the scene into.
         /// @param scene  The loaded scene the runner takes ownership of.
         /// @return The installed scene.
@@ -563,10 +579,14 @@ namespace Veng
         bool MaterializeCapture(const Renderer::CaptureSurface& surface, u32 maxNew, u32& built,
                                 WorldCaptureDriveResult& result);
 
-        /// @brief Increments a world's pause refcount (a WorldPauseScope open).
-        void AcquirePause(WorldInstanceId world);
+        /// @brief Returns a world's live simulation, or null when it is unminted or has none.
+        /// @param world  The world to resolve.
+        [[nodiscard]] SceneSimulation* ResolveSimulation(WorldInstanceId world) const;
 
-        /// @brief Decrements a world's pause refcount (a WorldPauseScope drop).
+        /// @brief Releases one held pause on a world's live simulation (a WorldPauseScope drop).
+        ///
+        /// A no-op when the world has closed or holds no simulation.
+        /// @param world  The world the scope paused.
         void ReleasePause(WorldInstanceId world);
 
         /// @brief The type registry every world's scene is created against.

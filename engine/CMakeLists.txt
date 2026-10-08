@@ -253,6 +253,7 @@ add_library(veng SHARED
         src/Scene/LocalControl.cpp
         src/Scene/Motion.cpp
         src/Scene/Movement.cpp
+        src/Scene/PauseRequestReconcile.cpp
         src/Scene/RemoteInterpolationSystem.cpp
         src/Scene/RequestDrain.cpp
         src/Scene/Resolve.cpp

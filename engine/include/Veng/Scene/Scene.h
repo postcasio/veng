@@ -257,6 +257,13 @@ namespace Veng
         /// @brief Returns the attached simulation, or null when the scene has none.
         [[nodiscard]] SceneSimulation* GetSimulation() const { return m_Simulation.get(); }
 
+        /// @brief Returns whether the attached simulation is paused; false when the scene has none.
+        ///
+        /// The pause query for anything holding only the scene — a system's OnStart or OnStop, a Gui
+        /// driver, presentation code. No phase runs while the simulation is paused, so a system's
+        /// OnUpdate never observes true. See SceneSimulation::SetPaused.
+        [[nodiscard]] bool IsSimulationPaused() const;
+
         /// @brief Attaches (or replaces) the rigid-body simulation space this scene's bodies live in.
         ///
         /// A Scene optionally owns a PhysicsWorld the way it optionally owns a SceneSimulation, and

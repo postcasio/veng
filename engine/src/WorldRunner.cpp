@@ -61,6 +61,13 @@ namespace Veng
         }
     }
 
+    // ---- World -------------------------------------------------------------------------------------
+
+    bool World::IsPaused() const
+    {
+        return LiveScene != nullptr && LiveScene->IsSimulationPaused();
+    }
+
     // ---- WorldRunner -------------------------------------------------------------------------------
 
     WorldRunner::WorldRunner(const WorldRunnerInfo& info)
@@ -366,6 +373,15 @@ namespace Veng
                 m_SceneRetiringHook(*resolved->OwnedScene);
             }
         }
+        // The pause lives on the simulation, so it is carried across: a holder of the replaced scene's
+        // pause (an overlay over a world a client join replaces) still holds it, and releases here.
+        SceneSimulation* const previous =
+            resolved->OwnedScene != nullptr ? resolved->OwnedScene->GetSimulation() : nullptr;
+        SceneSimulation* const next = scene != nullptr ? scene->GetSimulation() : nullptr;
+        if (previous != nullptr && next != nullptr)
+        {
+            next->AdoptPause(*previous);
+        }
         resolved->OwnedScene = std::move(scene);
         resolved->LiveScene = resolved->OwnedScene.get();
         return *resolved->LiveScene;
@@ -405,8 +421,7 @@ namespace Veng
 
             Scene& scene = world->GetScene();
             const SceneSimulation* sim = scene.GetSimulation();
-            const bool active =
-                sim != nullptr && sim->IsStarted() && !sim->IsPaused() && !world->IsPaused();
+            const bool active = sim != nullptr && sim->IsStarted() && !sim->IsPaused();
             if (!active)
             {
                 // A paused or unstarted world drops its accumulator so resuming chases no backlog. It
@@ -485,11 +500,17 @@ namespace Veng
         return result;
     }
 
+    SceneSimulation* WorldRunner::ResolveSimulation(const WorldInstanceId world) const
+    {
+        const World* resolved = ResolveWorld(world);
+        return resolved != nullptr ? resolved->GetScene().GetSimulation() : nullptr;
+    }
+
     void WorldRunner::SetWorldPaused(const WorldInstanceId world, const bool paused)
     {
-        if (World* resolved = ResolveWorld(world); resolved != nullptr)
+        if (SceneSimulation* sim = ResolveSimulation(world); sim != nullptr)
         {
-            resolved->ExplicitPaused = paused;
+            sim->SetPaused(paused);
         }
     }
 
@@ -499,29 +520,24 @@ namespace Veng
         return resolved != nullptr && resolved->IsPaused();
     }
 
-    void WorldRunner::AcquirePause(const WorldInstanceId world)
-    {
-        if (World* resolved = ResolveWorld(world); resolved != nullptr)
-        {
-            ++resolved->PauseRefs;
-        }
-    }
-
     void WorldRunner::ReleasePause(const WorldInstanceId world)
     {
-        if (World* resolved = ResolveWorld(world); resolved != nullptr && resolved->PauseRefs > 0)
+        // Resolved at release time: the world may have closed, or had its scene replaced (which
+        // carried the pause onto the installed simulation).
+        if (SceneSimulation* sim = ResolveSimulation(world); sim != nullptr)
         {
-            --resolved->PauseRefs;
+            sim->ReleasePause();
         }
     }
 
     WorldPauseScope WorldRunner::PauseScope(const WorldInstanceId world)
     {
-        if (ResolveWorld(world) == nullptr)
+        SceneSimulation* sim = ResolveSimulation(world);
+        if (sim == nullptr)
         {
             return WorldPauseScope{};
         }
-        AcquirePause(world);
+        sim->AcquirePause();
         return WorldPauseScope(*this, world);
     }
 

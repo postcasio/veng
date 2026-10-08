@@ -311,10 +311,16 @@ extern "C"
 /// Version 77 grows WorldRunner with a world-closed hook and InputRouter with its retired focus
 /// tokens, so a stale module lays both classes out short; a module drives both through their inline
 /// accessors and the members after the new ones.
+/// Version 78 moves a world's pause onto its SceneSimulation (World loses PauseRefs and
+/// ExplicitPaused, SceneSimulation gains the refcount beside its toggle), registers the builtin
+/// PauseRequest component, and grows Application with the request-driven pauses it holds. A module
+/// reads the simulation's inline pause accessors, subclasses Application and registers its types
+/// beside the builtins, so a stale module lays World, SceneSimulation and Application out at the old
+/// layout.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 77u
+#define VENG_MODULE_ABI_VERSION 78u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.
