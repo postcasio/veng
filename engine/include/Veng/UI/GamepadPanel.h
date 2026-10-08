@@ -31,15 +31,18 @@ namespace Veng::UI
     };
 
     /// @brief Draws every connected pad's slot, family, name, buttons, axes and touchpad, its
-    ///        mixed rumble and live instances, and sliders driving its deadzones.
+    ///        mixed rumble with the one-shots and layers feeding it, and sliders driving its
+    ///        deadzones.
     ///
     /// Reads the pads through the application's Input, so what it shows is exactly what the action
     /// layer reads — neutral while the window is unfocused, a virtual pad like any other. Each axis
     /// shows its raw value beside the deadzone-shaped one the action layer reads, and the deadzone
     /// sliders set the pad's zones through Input::SetGamepadDeadzones, live. The rumble rows show the
-    /// haptics engine's mix for the pad and every instance playing on it; a button per offered clip
-    /// plays it on the pad through Haptics::HapticsEngine::Play, the motors' only writer.
+    /// haptics engine's mix for the pad and every one-shot and layer on it, each with its scope and
+    /// that scope's state; a button per offered clip plays it once on the pad in the application
+    /// scope (Application::GetApplicationHaptics), and Stop drops the application scope's one-shots
+    /// there.
     /// @param app    The application whose pads are shown.
     /// @param clips  The clips offered for playing on each pad; none draws no play buttons.
-    void GamepadPanel(Application& app, std::span<const GamepadPanelClip> clips = {});
+    void GamepadPanel(const Application& app, std::span<const GamepadPanelClip> clips = {});
 }

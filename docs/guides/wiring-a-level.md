@@ -70,7 +70,11 @@ and its `*.level.json` source carries four pieces. hello-triangle's
   this set, in this order (honoring the Sim/View phase split). The ids are the same
   zero-padded hex spelling in both: a `"0x…"` string in JSON, a `0x…ULL` literal in C++.
   The five above are, in
-  order, the spawn rule, control, movement, spinner, and camera-rig systems.
+  order, the spawn rule, control, movement, spinner, and camera-rig systems. The
+  presentation builtins are listed the same way: a level whose entities carry
+  `AudioSource`s lists `AudioSystem`, and one whose entities carry `RumbleSource`s
+  lists `HapticsSystem` (`"0x50A74EFB72674B7D"`) — a source in a level that names no
+  system to play it is silent. A one-shot fired through a system's context needs neither.
 - **`gameMode`** — the `GameModeConfig` seeded onto the settings entity at load:
   the `PlayerPrefab` a spawn rule instantiates. Selecting a different mode is
   choosing a different config plus a different registered rule set — no C++ path

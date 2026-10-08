@@ -327,10 +327,17 @@ extern "C"
 /// grows the required scope registry, and Application grows the registry it owns. A module is handed
 /// scenes, constructs runner infos and subclasses Application, so a stale module lays all three out
 /// short.
+/// Version 81 makes rumble scene-owned: SystemContext::Haptics becomes a ScopedHaptics held by
+/// value (the engine, the scene's presentation scope, the scene, the input and the replay flag), the
+/// HapticsEngine is rebuilt as a per-pad mixer over the scope registry with a new API, and the
+/// builtin RumbleSource component and HapticsSystem register beside the rest. A module reads the
+/// context every tick, calls the engine and spawns prefabs carrying builtin components, so a stale
+/// module reads the context at the old layout and calls haptics entry points the host no longer
+/// exports.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 80u
+#define VENG_MODULE_ABI_VERSION 81u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

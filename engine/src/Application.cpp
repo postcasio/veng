@@ -246,21 +246,9 @@ namespace Veng
             m_Gamepads = CreateUnique<GamepadBackend>();
         }
 
-        // The motors' one writer. A seat resolves to its assigned pad, the implicit seat to the
-        // first connected pad as its input does; only a run with a pad backend has motors to write.
-        Haptics::HapticsEngineInfo haptics{
-            .ResolveSeat = [this](const SeatRef& seat) { return ResolveSeatGamepad(seat); },
-            .WorldState =
-                [this](const WorldInstanceId world)
-            {
-                if (!m_WorldRunner || m_WorldRunner->ResolveWorld(world) == nullptr)
-                {
-                    return Haptics::HapticsWorldState::Closed;
-                }
-                return m_WorldRunner->IsWorldPaused(world) ? Haptics::HapticsWorldState::Paused
-                                                           : Haptics::HapticsWorldState::Open;
-            },
-        };
+        // The motors' one writer, judging what it holds by the presentation scopes; only a run with a
+        // pad backend has motors to write.
+        Haptics::HapticsEngineInfo haptics;
         if (m_Gamepads)
         {
             haptics.WriteMotors = [this](const GamepadId pad, const Haptics::RumbleChannels& levels)
@@ -271,7 +259,7 @@ namespace Veng
                                                          .RightTrigger = levels.RightTrigger});
             };
         }
-        m_Haptics = CreateUnique<Haptics::HapticsEngine>(std::move(haptics));
+        m_Haptics = CreateUnique<Haptics::HapticsEngine>(m_PresentationScopes, std::move(haptics));
 
         m_RenderContext.Initialize(
             {
@@ -1375,7 +1363,6 @@ namespace Veng
                     });
                 // The client host reconciles every joined world through this one hook, so the step
                 // replays under the world holding this scene, never the managed one.
-                const Haptics::HapticsEngine::ReplayScope replay = m_Haptics->BeginReplay();
                 m_WorldRunner->ReplaySimStep(scene, tick);
             },
             // Per-key reconcile tolerances, unset by default (every join uses the shared value): a
@@ -2532,20 +2519,10 @@ namespace Veng
         return *m_Haptics;
     }
 
-    GamepadId Application::ResolveSeatGamepad(const SeatRef& seat) const
+    Haptics::ScopedHaptics Application::GetApplicationHaptics() const
     {
-        if (seat.IsImplicit())
-        {
-            const std::span<const GamepadId> connected = m_Input->ConnectedGamepads();
-            return connected.empty() ? GamepadId::None : connected.front();
-        }
-        World* const world = m_WorldRunner ? m_WorldRunner->ResolveWorld(seat.World) : nullptr;
-        if (world == nullptr || !world->GetScene().IsAlive(seat.Viewer))
-        {
-            return GamepadId::None;
-        }
-        const SeatInput* input = world->GetScene().TryGet<SeatInput>(seat.Viewer);
-        return input != nullptr ? input->Gamepad : GamepadId::None;
+        return Haptics::ScopedHaptics(GetHaptics(), m_PresentationScopes.GetApplicationScope(),
+                                      *m_Input, nullptr, false);
     }
 
     Audio::AudioDevice& Application::GetAudioDevice()
@@ -2609,7 +2586,9 @@ namespace Veng
             .Input = *m_Input,
             .Tasks = *m_TaskSystem,
             .Audio = m_AudioDevice->GetEngine(),
-            .Haptics = *m_Haptics,
+            .Haptics = Haptics::ScopedHaptics(
+                *m_Haptics, request.Scene.GetPresentationScope()->GetId(), *m_Input, &request.Scene,
+                request.Phase == SystemContextPhase::Replay),
             .Localization = GetLocalization(),
             .Pointer = live ? m_SimInput.GetPointer(request.Scene) : PointerRouting{},
             .Tick = request.Tick,

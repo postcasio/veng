@@ -291,7 +291,9 @@ add_library(veng SHARED
         src/Gui/UIDocument.cpp
         src/Gui/YogaTree.cpp
         src/Haptics/Haptics.cpp
+        src/Haptics/HapticsSystem.cpp
         src/Haptics/RumbleClip.cpp
+        src/Haptics/ScopedHaptics.cpp
         src/Renderer/Passes/GuiScenePass.cpp
         src/Renderer/Passes/GuiHdrOverlayScenePass.cpp
         src/Renderer/Passes/GBufferScenePass.cpp

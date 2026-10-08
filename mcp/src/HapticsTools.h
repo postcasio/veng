@@ -8,7 +8,8 @@ namespace Veng::Mcp
     /// @brief Registers the read-only haptics tool (haptics.state) into the server.
     ///
     /// Adds haptics.state — each pad's mixed rumble output, the master intensity, whether the output
-    /// is suspended, and every live rumble instance. Always registered (like audio.list_voices), so a
+    /// is suspended, every one-shot held and every layer the last frame mixed, each with its owning
+    /// presentation scope and that scope's state. Always registered (like audio.list_voices), so a
     /// driven session can confirm a clip plays on a virtual pad with no hardware. The handler runs on
     /// the render thread during McpServer::Pump() and reaches the engine through McpHost::Haptics; a
     /// host that leaves it null makes the tool report haptics unavailable. The host must outlive the

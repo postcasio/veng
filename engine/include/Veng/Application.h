@@ -5,6 +5,7 @@
 #include <Veng/FrameClock.h>
 #include <Veng/LaunchArguments.h>
 #include <Veng/Window.h>
+#include <Veng/Haptics/ScopedHaptics.h>
 #include <Veng/Input.h>
 #include <Veng/InputRouter.h>
 #include <Veng/Input/SimInputFrame.h>
@@ -751,13 +752,23 @@ namespace Veng
         /// to the UI. Always present; headless borrows no window and routes nothing.
         [[nodiscard]] InputRouter& GetInputRouter() const { return *m_InputRouter; }
 
-        /// @brief Returns the haptics engine: the one writer of every pad's motors.
+        /// @brief Returns the haptics engine: the per-pad mixer and the one writer of every pad's motors.
         ///
-        /// The engine every system reaches through SystemContext::Haptics to play rumble clips, and
-        /// what application code outside a world plays through. It runs headless and on a dedicated
-        /// host too, where there is simply no device to write; pad state is read through GetInput.
+        /// What every scene's SystemContext::Haptics facade routes into, and what tooling inspects
+        /// (its one-shots, its layers, each pad's mix) and sets the master intensity on. It runs
+        /// headless and on a dedicated host too, where there is simply no device to write; pad state
+        /// is read through GetInput.
         /// @pre Run() has initialized the engine — the haptics engine exists only inside Run().
         [[nodiscard]] Haptics::HapticsEngine& GetHaptics() const;
+
+        /// @brief Returns the haptics facade over the application scope, for code outside every scene.
+        ///
+        /// A debug panel's test, an editor audition, OnUpdate code: what it plays belongs to the
+        /// always-Live application scope, so it is never held or muted. A seat target resolves only to
+        /// the implicit seat here, since no scene is named. Never for a scene's systems, which play
+        /// through their context.
+        /// @pre Run() has initialized the engine.
+        [[nodiscard]] Haptics::ScopedHaptics GetApplicationHaptics() const;
 
         /// @brief Returns the registry of presentation scopes: what each scene's sound and rumble does
         ///        this frame.
@@ -2171,15 +2182,6 @@ namespace Veng
         /// @return The assembled context.
         [[nodiscard]] SystemContext MakeSystemContext(const SystemContextRequest& request) const;
 
-        /// @brief Returns the pad a seat is assigned, for the haptics engine's seat targets.
-        ///
-        /// A world seat reads SeatInput::Gamepad off its Viewer, and is padless when the world, the
-        /// entity or the component is gone. The implicit seat reads every device, so it resolves to
-        /// the first connected pad, as its input does.
-        /// @param seat  The seat.
-        /// @return The pad slot, or GamepadId::None.
-        [[nodiscard]] GamepadId ResolveSeatGamepad(const SeatRef& seat) const;
-
         ApplicationInfo m_Info;
 
         /// @brief Command-line arguments parsed once in Run, before Initialize.
@@ -2383,10 +2385,10 @@ namespace Veng
         /// with a null backend when Headless, and pumped once per frame.
         Unique<Audio::AudioDevice> m_AudioDevice;
 
-        /// @brief The haptics engine, mixing every playing rumble clip into the pads' motors.
+        /// @brief The haptics engine, mixing every scope's rumble into the pads' motors.
         ///
-        /// Its instances hold clip handles, so it is declared after the asset manager and destructs
-        /// before it. Constructed in Initialize and updated once per frame in the presentation step
+        /// Its one-shots hold clip handles, so it is declared after the asset manager and destructs
+        /// before it; it judges them by m_PresentationScopes, declared ahead of it. Constructed in Initialize and updated once per frame in the presentation step
         /// after OnUpdate.
         Unique<Haptics::HapticsEngine> m_Haptics;
 

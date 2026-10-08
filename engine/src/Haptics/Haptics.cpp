@@ -35,44 +35,32 @@ namespace Veng::Haptics
             return index;
         }
 
-        /// @brief One slot of the instance table.
-        struct Instance
+        /// @brief One clip playing once through on a pad, owned by a scope.
+        struct OneShot
         {
-            /// @brief Bumped each time the slot is taken; a handle naming an older value is stale.
-            u32 Generation = 0;
-            /// @brief Whether the slot holds a playing instance.
-            bool Live = false;
-            /// @brief What the instance plays on.
-            RumbleTarget Target;
-            /// @brief The clip, held resident while the instance plays.
-            AssetHandle<RumbleClip> Clip;
-            /// @brief Seconds since the instance started.
-            f32 Time = 0.0f;
-            /// @brief The instance's intensity.
-            f32 Intensity = 1.0f;
-            /// @brief The effective loop setting.
-            bool Loop = false;
-            /// @brief The owning world; invalid for an application-owned instance.
-            WorldInstanceId World;
-            /// @brief Whether a fading Stop is ramping the instance out.
-            bool Stopping = false;
-            /// @brief The fade's length the remaining time is a fraction of.
-            f32 FadeTotal = 0.0f;
-            /// @brief Seconds of fade left.
-            f32 FadeRemaining = 0.0f;
-            /// @brief Started since the last Update, so that Update plays it from time zero.
-            bool Fresh = true;
-            /// @brief Whether the owning world was paused at the last Update.
-            bool Paused = false;
-            /// @brief The pad the target resolved to at the last Update.
+            /// @brief The owning scope.
+            PresentationScopeId Scope;
+            /// @brief The pad it plays on.
             GamepadId Pad = GamepadId::None;
+            /// @brief The clip, held resident while it plays.
+            AssetHandle<RumbleClip> Clip;
+            /// @brief Seconds it has advanced.
+            f32 Time = 0.0f;
+            /// @brief The intensity it plays at.
+            f32 Intensity = 1.0f;
+            /// @brief Not yet past an update its scope was not Held at, so it next sounds time zero.
+            bool Fresh = true;
+        };
 
-            /// @brief The stop fade's remaining fraction, 1 when not stopping.
-            [[nodiscard]] f32 FadeFactor() const
-            {
-                return Stopping && FadeTotal > 0.0f ? std::max(0.0f, FadeRemaining / FadeTotal)
-                                                    : 1.0f;
-            }
+        /// @brief One frame's submitted level on a pad, owned by a scope.
+        struct Layer
+        {
+            /// @brief The owning scope.
+            PresentationScopeId Scope;
+            /// @brief The pad it was submitted to.
+            GamepadId Pad = GamepadId::None;
+            /// @brief Its levels.
+            RumbleChannels Channels;
         };
     }
 
@@ -120,108 +108,39 @@ namespace Veng::Haptics
 
     struct HapticsEngine::State
     {
-        /// @brief The host hooks.
+        /// @brief The registry every owning scope is judged in.
+        const PresentationScopes* Scopes = nullptr;
+        /// @brief Where the mix goes.
         HapticsEngineInfo Info;
-        /// @brief Whether this is the inert engine.
-        bool Inert = false;
-        /// @brief The instance table; a retired slot is reused with its generation bumped.
-        vector<Instance> Instances;
+        /// @brief The one-shots, in the order they were played.
+        vector<OneShot> OneShots;
+        /// @brief The layers submitted since the last Update.
+        vector<Layer> Pending;
+        /// @brief The layers the last Update mixed, kept for inspection.
+        vector<Layer> Mixed;
         /// @brief Each pad slot's mix as of the last Update, before suspension.
         std::array<RumbleChannels, Input::MaxGamepads> Output{};
         /// @brief Whether the last Update silenced the output.
         bool Suspended = false;
         /// @brief The master intensity.
         f32 Master = 1.0f;
-        /// @brief How many ReplayScopes are held.
-        u32 ReplayDepth = 0;
         /// @brief Clips already reported as not loaded, so each warns once.
         std::unordered_set<u64> LoggedClips;
-
-        /// @brief Returns the live instance a handle names, or nullptr for a stale one.
-        Instance* Find(const RumbleHandle handle)
-        {
-            if (!handle.IsValid() || handle.Slot >= Instances.size())
-            {
-                return nullptr;
-            }
-            Instance& instance = Instances[handle.Slot];
-            return instance.Live && instance.Generation == handle.Generation ? &instance : nullptr;
-        }
-
-        /// @brief Empties a slot, releasing its clip.
-        static void Retire(Instance& instance)
-        {
-            instance.Live = false;
-            instance.Clip = {};
-        }
-
-        /// @brief Resolves a target to the pad it plays on this frame.
-        [[nodiscard]] GamepadId Resolve(const RumbleTarget& target) const
-        {
-            switch (target.Kind)
-            {
-            case RumbleTargetKind::Seat:
-                return Info.ResolveSeat ? Info.ResolveSeat(target.Seat) : GamepadId::None;
-            case RumbleTargetKind::Gamepad:
-                return target.Gamepad;
-            case RumbleTargetKind::None:
-                break;
-            }
-            return GamepadId::None;
-        }
-
-        /// @brief Builds the inspection view of a live instance.
-        [[nodiscard]] static RumbleInstanceInfo Describe(const Instance& instance, const usize slot)
-        {
-            const RumbleClip* clip = instance.Clip.IsLoaded() ? instance.Clip.Get() : nullptr;
-            return RumbleInstanceInfo{
-                .Handle = {.Slot = static_cast<u32>(slot), .Generation = instance.Generation},
-                .Target = instance.Target,
-                .Gamepad = instance.Pad,
-                .Clip = instance.Clip.Id(),
-                .Time = instance.Time,
-                .Duration = clip != nullptr ? clip->GetDuration() : 0.0f,
-                .Intensity = instance.Intensity,
-                .Fade = instance.FadeFactor(),
-                .Loop = instance.Loop,
-                .Stopping = instance.Stopping,
-                .Paused = instance.Paused,
-                .World = instance.World,
-            };
-        }
     };
 
-    HapticsEngine::ReplayScope::ReplayScope(HapticsEngine& engine) : m_Engine(engine)
+    HapticsEngine::HapticsEngine(const PresentationScopes& scopes, HapticsEngineInfo info)
+        : m_State(CreateUnique<State>())
     {
-        ++m_Engine.m_State->ReplayDepth;
-    }
-
-    HapticsEngine::ReplayScope::~ReplayScope()
-    {
-        --m_Engine.m_State->ReplayDepth;
-    }
-
-    HapticsEngine::HapticsEngine(HapticsEngineInfo info) : m_State(CreateUnique<State>())
-    {
+        m_State->Scopes = &scopes;
         m_State->Info = std::move(info);
-    }
-
-    HapticsEngine::HapticsEngine(InertTag) : m_State(CreateUnique<State>())
-    {
-        m_State->Inert = true;
     }
 
     HapticsEngine::~HapticsEngine() = default;
 
-    RumbleHandle HapticsEngine::Play(const RumbleTarget& target,
-                                     const AssetHandle<RumbleClip>& clip,
-                                     const RumbleParams& params)
+    void HapticsEngine::PlayOneShot(const PresentationScopeId scope, const GamepadId pad,
+                                    const AssetHandle<RumbleClip>& clip, const f32 intensity)
     {
         State& state = *m_State;
-        if (state.Inert || state.ReplayDepth > 0)
-        {
-            return {};
-        }
         if (!clip.IsLoaded())
         {
             if (state.LoggedClips.insert(clip.Id().Value).second)
@@ -229,81 +148,29 @@ namespace Veng::Haptics
                 Log::Warn("Haptics: rumble clip 0x{:016X} is not loaded; nothing plays",
                           clip.Id().Value);
             }
-            return {};
+            return;
         }
-
-        const auto free =
-            std::ranges::find_if(state.Instances, [](const Instance& slot) { return !slot.Live; });
-        const auto slot = static_cast<usize>(free - state.Instances.begin());
-        if (free == state.Instances.end())
-        {
-            state.Instances.emplace_back();
-        }
-
-        Instance& instance = state.Instances[slot];
-        const u32 generation = instance.Generation + 1u == 0u ? 1u : instance.Generation + 1u;
-        instance = Instance{
-            .Generation = generation,
-            .Live = true,
-            .Target = target,
-            .Clip = clip,
-            .Intensity = std::max(0.0f, params.Intensity),
-            .Loop = params.Loop.value_or(clip.Get()->IsLooping()),
-            .World = params.World,
-        };
-        return RumbleHandle{.Slot = static_cast<u32>(slot), .Generation = generation};
-    }
-
-    void HapticsEngine::SetIntensity(const RumbleHandle handle, const f32 intensity)
-    {
-        if (Instance* instance = m_State->Find(handle))
-        {
-            instance->Intensity = std::max(0.0f, intensity);
-        }
-    }
-
-    void HapticsEngine::Stop(const RumbleHandle handle, const f32 fadeSeconds)
-    {
-        Instance* instance = m_State->Find(handle);
-        if (instance == nullptr)
+        if (!PadIndex(pad) || state.Scopes->GetState(scope) == PresentationState::Closed)
         {
             return;
         }
-        if (!(fadeSeconds > 0.0f))
+        state.OneShots.push_back(OneShot{
+            .Scope = scope, .Pad = pad, .Clip = clip, .Intensity = std::max(0.0f, intensity)});
+    }
+
+    void HapticsEngine::SubmitLayer(const PresentationScopeId scope, const GamepadId pad,
+                                    const RumbleChannels& channels)
+    {
+        if (PadIndex(pad))
         {
-            State::Retire(*instance);
-            return;
-        }
-        if (!instance->Stopping)
-        {
-            instance->Stopping = true;
-            instance->FadeTotal = fadeSeconds;
-            instance->FadeRemaining = fadeSeconds;
-            return;
-        }
-        // Already fading: keep the level continuous, and take the new fade only if it ends sooner.
-        if (fadeSeconds < instance->FadeRemaining)
-        {
-            const f32 level = instance->FadeFactor();
-            instance->FadeRemaining = fadeSeconds;
-            instance->FadeTotal = fadeSeconds / level;
+            m_State->Pending.push_back(Layer{.Scope = scope, .Pad = pad, .Channels = channels});
         }
     }
 
-    bool HapticsEngine::IsPlaying(const RumbleHandle handle) const
+    void HapticsEngine::StopOneShots(const PresentationScopeId scope, const GamepadId pad)
     {
-        return m_State->Find(handle) != nullptr;
-    }
-
-    void HapticsEngine::StopAll(const RumbleTarget& target)
-    {
-        for (Instance& instance : m_State->Instances)
-        {
-            if (instance.Live && instance.Target == target)
-            {
-                State::Retire(instance);
-            }
-        }
+        std::erase_if(m_State->OneShots, [&](const OneShot& oneShot)
+                      { return oneShot.Scope == scope && oneShot.Pad == pad; });
     }
 
     void HapticsEngine::SetMasterIntensity(const f32 intensity)
@@ -316,29 +183,36 @@ namespace Veng::Haptics
         return m_State->Master;
     }
 
-    vector<RumbleInstanceInfo> HapticsEngine::GetInstances(const RumbleTarget& target) const
+    vector<RumbleOneShotInfo> HapticsEngine::GetOneShots() const
     {
-        vector<RumbleInstanceInfo> out;
-        for (usize slot = 0; slot < m_State->Instances.size(); ++slot)
+        vector<RumbleOneShotInfo> out;
+        out.reserve(m_State->OneShots.size());
+        for (const OneShot& oneShot : m_State->OneShots)
         {
-            const Instance& instance = m_State->Instances[slot];
-            if (instance.Live && instance.Target == target)
-            {
-                out.push_back(State::Describe(instance, slot));
-            }
+            const RumbleClip* clip = oneShot.Clip.IsLoaded() ? oneShot.Clip.Get() : nullptr;
+            out.push_back(RumbleOneShotInfo{
+                .Scope = oneShot.Scope,
+                .State = m_State->Scopes->GetState(oneShot.Scope),
+                .Gamepad = oneShot.Pad,
+                .Clip = oneShot.Clip.Id(),
+                .Time = oneShot.Time,
+                .Duration = clip != nullptr ? clip->GetDuration() : 0.0f,
+                .Intensity = oneShot.Intensity,
+            });
         }
         return out;
     }
 
-    vector<RumbleInstanceInfo> HapticsEngine::GetAllInstances() const
+    vector<RumbleLayerInfo> HapticsEngine::GetLayers() const
     {
-        vector<RumbleInstanceInfo> out;
-        for (usize slot = 0; slot < m_State->Instances.size(); ++slot)
+        vector<RumbleLayerInfo> out;
+        out.reserve(m_State->Mixed.size());
+        for (const Layer& layer : m_State->Mixed)
         {
-            if (const Instance& instance = m_State->Instances[slot]; instance.Live)
-            {
-                out.push_back(State::Describe(instance, slot));
-            }
+            out.push_back(RumbleLayerInfo{.Scope = layer.Scope,
+                                          .State = m_State->Scopes->GetState(layer.Scope),
+                                          .Gamepad = layer.Pad,
+                                          .Channels = layer.Channels});
         }
         return out;
     }
@@ -354,72 +228,62 @@ namespace Veng::Haptics
         return m_State->Suspended;
     }
 
+    const PresentationScopes& HapticsEngine::GetScopes() const
+    {
+        return *m_State->Scopes;
+    }
+
     void HapticsEngine::Update(const HapticsFrameInfo& frame)
     {
         State& state = *m_State;
         const f32 delta = std::max(0.0f, frame.Delta);
+        std::swap(state.Mixed, state.Pending);
+        state.Pending.clear();
 
-        // Advance and retire. A fresh instance holds at zero so its first mix is the clip's start.
-        for (Instance& instance : state.Instances)
-        {
-            if (!instance.Live)
-            {
-                continue;
-            }
+        // Advance by scope: Closed drops, Held freezes (a fresh one stays fresh), Muted and Live
+        // advance. A fresh one holds at zero on its first advancing update, so its start sounds first.
+        std::erase_if(state.OneShots,
+                      [&](OneShot& oneShot)
+                      {
+                          const PresentationState scope = state.Scopes->GetState(oneShot.Scope);
+                          if (scope == PresentationState::Closed || !oneShot.Clip.IsLoaded())
+                          {
+                              return true;
+                          }
+                          if (scope == PresentationState::Held)
+                          {
+                              return false;
+                          }
+                          if (oneShot.Fresh)
+                          {
+                              oneShot.Fresh = false;
+                              return false;
+                          }
+                          oneShot.Time += delta;
+                          return oneShot.Time >= oneShot.Clip.Get()->GetDuration();
+                      });
 
-            const HapticsWorldState world = instance.World.IsValid() && state.Info.WorldState
-                                                ? state.Info.WorldState(instance.World)
-                                                : HapticsWorldState::Open;
-            if (world == HapticsWorldState::Closed || !instance.Clip.IsLoaded())
-            {
-                State::Retire(instance);
-                continue;
-            }
-            instance.Paused = world == HapticsWorldState::Paused;
-            if (instance.Paused)
-            {
-                continue;
-            }
-            if (instance.Fresh)
-            {
-                instance.Fresh = false;
-                continue;
-            }
-
-            instance.Time += delta;
-            if (instance.Stopping)
-            {
-                instance.FadeRemaining -= delta;
-                if (instance.FadeRemaining <= 0.0f)
-                {
-                    State::Retire(instance);
-                    continue;
-                }
-            }
-            if (!instance.Loop && instance.Time >= instance.Clip.Get()->GetDuration())
-            {
-                State::Retire(instance);
-            }
-        }
-
-        // Mix: each pad takes the maximum over the instances resolving to it.
+        // Mix: each pad takes the maximum over what its Live scopes own.
         std::array<RumbleChannels, Input::MaxGamepads> peaks{};
-        for (Instance& instance : state.Instances)
+        for (const OneShot& oneShot : state.OneShots)
         {
-            if (!instance.Live)
+            if (state.Scopes->GetState(oneShot.Scope) != PresentationState::Live)
             {
                 continue;
             }
-            instance.Pad = state.Resolve(instance.Target);
-            const optional<usize> pad = PadIndex(instance.Pad);
-            if (!pad || instance.Paused)
-            {
-                continue;
-            }
+            const usize pad = *PadIndex(oneShot.Pad);
             const RumbleChannels level =
-                EvaluateClip(instance.Clip.Get()->GetData(), instance.Time, instance.Loop);
-            peaks[*pad] =
-                Max(peaks[*pad], ScaleRumble(level, instance.Intensity * instance.FadeFactor()));
+                EvaluateClip(oneShot.Clip.Get()->GetData(), oneShot.Time, false);
+            peaks[pad] = Max(peaks[pad], ScaleRumble(level, oneShot.Intensity));
+        }
+        for (const Layer& layer : state.Mixed)
+        {
+            if (state.Scopes->GetState(layer.Scope) != PresentationState::Live)
+            {
+                continue;
+            }
+            const usize pad = *PadIndex(layer.Pad);
+            peaks[pad] = Max(peaks[pad], layer.Channels);
         }
 
         state.Suspended = frame.OutputSuspended;
@@ -432,26 +296,5 @@ namespace Veng::Haptics
                                        state.Suspended ? RumbleChannels{} : state.Output[pad]);
             }
         }
-    }
-
-    HapticsEngine::ReplayScope HapticsEngine::BeginReplay()
-    {
-        return ReplayScope(*this);
-    }
-
-    bool HapticsEngine::IsReplaying() const
-    {
-        return m_State->ReplayDepth > 0;
-    }
-
-    bool HapticsEngine::IsInert() const
-    {
-        return m_State->Inert;
-    }
-
-    HapticsEngine& GetInertEngine()
-    {
-        static HapticsEngine s_Inert{HapticsEngine::InertTag{}};
-        return s_Inert;
     }
 }

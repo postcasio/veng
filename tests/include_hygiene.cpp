@@ -66,7 +66,10 @@
 #include <Veng/Event.h>
 #include <Veng/FrameClock.h>
 #include <Veng/Haptics/Haptics.h>
+#include <Veng/Haptics/HapticsSystem.h>
 #include <Veng/Haptics/RumbleClip.h>
+#include <Veng/Haptics/RumbleSource.h>
+#include <Veng/Haptics/ScopedHaptics.h>
 #include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
 #include <Veng/Input/RawInput.h>

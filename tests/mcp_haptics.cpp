@@ -1,12 +1,13 @@
 // Headless proof for the read-only haptics tool (haptics.state).
 //
 // Stands an McpServer up (read-only, the default) over an McpHost whose Haptics closure resolves a
-// HapticsEngine with no device, plays a clip on one pad slot and an application-owned clip on a seat
-// with no pad, mixes one frame, and reads haptics.state over loopback: the playing pad is reported
-// with its mixed levels, both instances appear with their targets and the pad each resolved to, and
-// idle slots are left out. A second server whose host leaves Haptics null reports the tool
-// unavailable. The engine is mutated only before the pump starts, so the pump thread only reads it.
-// Pure logic + loopback, no GPU, so it runs in the default band.
+// HapticsEngine with no device, plays one one-shot on pad 2 in the always-Live application scope and
+// one on pad 1 in a scope left unrenewed (Held), submits a layer on pad 2, mixes one frame, and reads
+// haptics.state over loopback: the playing pad is reported with its mixed level and its counts, each
+// one-shot and the layer carry their scope and its state, and idle slots are left out. A second
+// server whose host leaves Haptics null reports the tool unavailable. The engine is mutated only
+// before the pump starts, so the pump thread only reads it. Pure logic + loopback, no GPU, so it
+// runs in the default band.
 
 #include <Veng/Mcp/McpHost.h>
 #include <Veng/Mcp/McpServer.h>
@@ -15,6 +16,7 @@
 #include <Veng/Asset/AssetManager.h>
 #include <Veng/Haptics/Haptics.h>
 #include <Veng/Reflection/TypeRegistry.h>
+#include <Veng/Scene/PresentationScope.h>
 
 #include <nlohmann/json.hpp>
 
@@ -96,11 +98,14 @@ int main()
     const AssetHandle<Haptics::RumbleClip> clip = AssetManager::Adopt(Haptics::RumbleClip::Create(
         Haptics::RumbleClipData{.Duration = 1.0f, .Loop = true, .LowFrequency = flat}));
 
-    Haptics::HapticsEngine engine;
-    engine.Play(Haptics::RumbleTarget::ForGamepad(static_cast<GamepadId>(2)), clip);
-    engine.Play(Haptics::RumbleTarget::ForSeat(
-                    SeatRef{.World = WorldInstanceId{.Value = 3}, .Viewer = Entity{.Index = 1}}),
-                clip, Haptics::RumbleParams{.Intensity = 0.5f});
+    PresentationScopes scopes;
+    const Unique<PresentationScope> held = scopes.Open();
+    Haptics::HapticsEngine engine(scopes);
+    engine.PlayOneShot(scopes.GetApplicationScope(), static_cast<GamepadId>(2), clip);
+    engine.PlayOneShot(held->GetId(), static_cast<GamepadId>(1), clip, 0.5f);
+    engine.SubmitLayer(scopes.GetApplicationScope(), static_cast<GamepadId>(2),
+                       Haptics::RumbleChannels{.HighFrequency = 0.25f});
+    scopes.Resolve();
     engine.Update({.Delta = 0.0f});
 
     {
@@ -109,42 +114,60 @@ int main()
         Mcp::McpServerInfo info;
         info.Port = 0;
         const Unique<Mcp::McpServer> server = Mcp::McpServer::Create(info, host);
-        Serve(*server,
-              [](httplib::Client& client)
-              {
-                  const Json result = CallTool(client, "haptics.state");
-                  Check(result.is_object() && !result.value("isError", false),
-                        "haptics.state answers on a read-only server");
-                  const Json state = Json::parse(result["content"][0].value("text", std::string{}),
-                                                 nullptr, false);
+        Serve(
+            *server,
+            [](httplib::Client& client)
+            {
+                const Json result = CallTool(client, "haptics.state");
+                Check(result.is_object() && !result.value("isError", false),
+                      "haptics.state answers on a read-only server");
+                const Json state =
+                    Json::parse(result["content"][0].value("text", std::string{}), nullptr, false);
 
-                  Check(state.value("master_intensity", 0.0) == 1.0, "master intensity is 1");
-                  Check(!state.value("suspended", true), "output is not suspended");
+                Check(state.value("master_intensity", 0.0) == 1.0, "master intensity is 1");
+                Check(!state.value("suspended", true), "output is not suspended");
 
-                  const Json& pads = state["pads"];
-                  Check(pads.is_array() && pads.size() == 1, "only the playing pad is reported");
-                  if (pads.size() == 1)
-                  {
-                      Check(pads[0].value("pad", -1) == 2, "the playing pad is slot 2");
-                      Check(pads[0]["output"].value("low_frequency", 0.0) == 0.5,
-                            "slot 2 mixes the clip's level");
-                  }
+                const Json& pads = state["pads"];
+                Check(pads.is_array() && pads.size() == 2, "only the two pads in use are reported");
+                if (pads.size() == 2)
+                {
+                    Check(pads[0].value("pad", -1) == 1 && pads[1].value("pad", -1) == 2,
+                          "the pads in use are slots 1 and 2");
+                    Check(pads[0]["output"].value("low_frequency", 1.0) == 0.0,
+                          "slot 1's one-shot is held, so it mixes nothing");
+                    Check(pads[1]["output"].value("low_frequency", 0.0) == 0.5,
+                          "slot 2 mixes the live one-shot's level");
+                    Check(pads[1]["output"].value("high_frequency", 0.0) == 0.25,
+                          "slot 2 mixes the layer's level");
+                    Check(pads[1].value("one_shot_count", 0) == 1 &&
+                              pads[1].value("layer_count", 0) == 1,
+                          "slot 2 counts one one-shot and one layer");
+                }
 
-                  const Json& instances = state["instances"];
-                  Check(instances.is_array() && instances.size() == 2, "both instances reported");
-                  if (instances.size() == 2)
-                  {
-                      Check(instances[0]["target"].value("kind", "") == "gamepad",
-                            "the first instance targets a pad");
-                      Check(instances[0].value("pad", -1) == 2, "and resolved to slot 2");
-                      Check(instances[1]["target"].value("kind", "") == "seat",
-                            "the second instance targets a seat");
-                      Check(instances[1]["pad"].is_null(), "a padless seat resolves to no pad");
-                      Check(instances[1].value("intensity", 0.0) == 0.5,
-                            "the seat instance carries its intensity");
-                      Check(instances[1]["world"].is_null(), "an application-owned instance");
-                  }
-              });
+                const Json& shots = state["one_shots"];
+                Check(shots.is_array() && shots.size() == 2, "both one-shots reported");
+                if (shots.size() == 2)
+                {
+                    Check(shots[0].value("state", "") == "live" && shots[0].value("pad", -1) == 2,
+                          "the application scope's one-shot is live on slot 2");
+                    Check(shots[1].value("state", "") == "held" && shots[1].value("pad", -1) == 1,
+                          "the unrenewed scope's one-shot is held on slot 1");
+                    Check(shots[1].value("intensity", 0.0) == 0.5,
+                          "the held one-shot carries its intensity");
+                    Check(shots[0].value("scope", 0ULL) != shots[1].value("scope", 0ULL),
+                          "each one-shot names its own scope");
+                }
+
+                const Json& layers = state["layers"];
+                Check(layers.is_array() && layers.size() == 1, "the mixed layer is reported");
+                if (layers.size() == 1)
+                {
+                    Check(layers[0].value("state", "") == "live" && layers[0].value("pad", -1) == 2,
+                          "the layer is live on slot 2");
+                    Check(layers[0]["channels"].value("high_frequency", 0.0) == 0.25,
+                          "the layer carries its channels");
+                }
+            });
     }
 
     // A host with no Haptics reports the engine unavailable rather than dereferencing it.

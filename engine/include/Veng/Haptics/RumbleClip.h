@@ -19,7 +19,7 @@ namespace Veng::Haptics
     {
         /// @brief The clip's length in seconds; greater than zero.
         f32 Duration = 0.0f;
-        /// @brief Whether the clip wraps at Duration rather than ending; a play may override it.
+        /// @brief Whether the clip wraps at Duration rather than ending; a RumbleSource may override it.
         bool Loop = false;
         /// @brief The low-frequency (heavy) grip motor.
         Curve1D LowFrequency;
@@ -44,8 +44,8 @@ namespace Veng::Haptics
     /// @brief A cooked rumble clip: a CPU-only asset holding its motor curves.
     ///
     /// Cooked from a `*.rumble.json` source and loaded by AssetId through the ordinary path; played
-    /// through HapticsEngine::Play. The data is immutable once built, so a clip is shared freely
-    /// between every instance playing it.
+    /// by a RumbleSource or as a one-shot through ScopedHaptics::PlayOneShot. The data is immutable
+    /// once built, so a clip is shared freely between everything playing it.
     class RumbleClip
     {
     public:
@@ -60,7 +60,7 @@ namespace Veng::Haptics
         /// @brief Returns the clip's length in seconds.
         [[nodiscard]] f32 GetDuration() const { return m_Data.Duration; }
 
-        /// @brief Whether the clip loops unless a play overrides it.
+        /// @brief Whether the clip loops unless a RumbleSource overrides it.
         [[nodiscard]] bool IsLooping() const { return m_Data.Loop; }
 
     private:

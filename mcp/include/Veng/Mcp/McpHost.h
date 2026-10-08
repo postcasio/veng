@@ -227,8 +227,8 @@ namespace Veng::Mcp
 
         /// @brief Resolves the haptics engine the haptics.state tool inspects, or null.
         ///
-        /// The read-only haptics tool reads each pad's mixed rumble and the live instances through
-        /// here. A game fills it from GetHaptics(); a host that leaves it null makes the tool report
+        /// The read-only haptics tool reads each pad's mixed rumble, the one-shots and the layers
+        /// through here. A game fills it from GetHaptics(); a host that leaves it null makes the tool report
         /// haptics unavailable rather than dereferencing it. It runs on the render thread during
         /// Pump().
         function<Haptics::HapticsEngine*()> Haptics;

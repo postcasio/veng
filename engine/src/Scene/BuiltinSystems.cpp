@@ -2,6 +2,7 @@
 
 #include <Veng/Audio/AudioSystem.h>
 #include <Veng/Behavior/BehaviorSystem.h>
+#include <Veng/Haptics/HapticsSystem.h>
 #include <Veng/Net/LagCompensation.h>
 #include <Veng/Scene/AnimationSystem.h>
 #include <Veng/Scene/CameraRig.h>
@@ -105,5 +106,9 @@ namespace Veng
         // in the View phase so a sound sits where its emitter is drawn. Idles with no engine set,
         // so a device-less or headless scene naming it is untouched.
         registry.Register<AudioSystem>();
+
+        // Plays the scene's RumbleSources into its presentation scope, in the View phase beside
+        // AudioSystem. A level that does not name it plays no continuous rumble; a one-shot needs none.
+        registry.Register<HapticsSystem>();
     }
 }

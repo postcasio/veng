@@ -2,6 +2,7 @@
 
 #include <Veng/Veng.h>
 #include <Veng/InputRouter.h>
+#include <Veng/Haptics/ScopedHaptics.h>
 #include <Veng/Math/Ray.h>
 #include <Veng/Renderer/ViewportRegion.h>
 #include <Veng/Scene/Camera.h>
@@ -19,11 +20,6 @@ namespace Veng
 namespace Veng::Audio
 {
     class AudioEngine;
-}
-
-namespace Veng::Haptics
-{
-    class HapticsEngine;
 }
 
 namespace Veng::Localization
@@ -150,12 +146,15 @@ namespace Veng
         /// device when there is no hardware, so every call is a no-op that still tracks the request
         /// and no audio-triggering system needs a null-guard.
         Audio::AudioEngine& Audio;
-        /// @brief The haptics engine a system plays rumble clips on pads through.
+        /// @brief The haptics engine as this scene reaches it: rumble a system plays on pads.
         ///
-        /// A scene-agnostic Application service, the one writer of every pad's motors. A Sim system
-        /// plays through it without gating on IsReplay: during a reconciliation replay the engine
-        /// itself starts nothing.
-        Haptics::HapticsEngine& Haptics;
+        /// Held by value and bound by the context factory to the calling scene's presentation scope,
+        /// so every play routes into that scope — a one-shot holds while the world is paused, is
+        /// silent while nothing presents the scene, and ends when the scene goes — and a seat target
+        /// resolves in this scene. The facade applies the replay gate itself: inside a reconciliation
+        /// replay PlayOneShot starts nothing, so a Sim system plays without gating on IsReplay.
+        /// Continuous rumble is a RumbleSource component, played by HapticsSystem.
+        Haptics::ScopedHaptics Haptics;
         /// @brief The localization service a system resolves user-facing text through.
         ///
         /// A scene-agnostic Application service, always present: the engine binds it to the service

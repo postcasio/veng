@@ -39,6 +39,7 @@
 #include <Veng/Audio/AudioComponents.h>
 #include <Veng/Audio/AudioEngine.h>
 #include <Veng/Haptics/Haptics.h>
+#include <Veng/Haptics/RumbleSource.h>
 #include <Veng/Input.h>
 #include <Veng/Input/Actions.h>
 #include <Veng/Net/BlobCodec.h>
@@ -78,6 +79,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <numbers>
+#include <utility>
 #include <vector>
 
 #include <Veng/Math/AABB.h>
@@ -215,6 +217,9 @@ constexpr AssetId UiBlipClipId{0xC8B2D38BFEF02557ULL};
 // there to exercise every motor rather than to feel tuned.
 constexpr AssetId JumpRumbleClipId{0x64A87127B0361E70ULL};
 
+// The looping hum the socket slab's RumbleSource plays while a seat drives it.
+constexpr AssetId EngineRumbleClipId{0x4448DB5521D3F325ULL};
+
 // The cooked slab model carrying the two authored attachment nodes the socket demo attaches to,
 // and the cube it parents to one of them.
 constexpr AssetId SocketSlabMeshId{0xECFBCDB0FED94D6CULL};
@@ -277,6 +282,7 @@ public:
 
     void OnUpdate(Scene& scene, const f32, const SystemContext& context) override
     {
+        vector<std::pair<Entity, Entity>> driving;
         scene.Each<PlayerInput, Possesses>(
             [&](const Entity seat, PlayerInput& player, Possesses& possesses)
             {
@@ -292,19 +298,20 @@ public:
                     scene.Get<CameraLook>(viewer->Camera).Pitch += cameraPitchDelta;
                 }
 
-                // Jump rumbles the pad this seat reads, owned by this world so a pause holds it.
+                // Jump pulses the pad this seat reads. It belongs to this scene, so a pause holds it.
                 if (player.WasTriggered(Actions::Jump))
                 {
-                    context.Haptics.Play(Haptics::RumbleTarget::ForSeat(
-                                             SeatRef{.World = context.World, .Viewer = seat}),
-                                         m_JumpRumble,
-                                         Haptics::RumbleParams{.World = context.World});
+                    context.Haptics.PlayOneShot(Haptics::RumbleTarget::ForSeat(seat), m_JumpRumble);
                 }
 
                 // The seat may possess no pawn; skip rather than fault, so an unwired seat is inert.
                 if (possesses.Pawn == Entity::Null || !scene.IsAlive(possesses.Pawn))
                 {
                     return;
+                }
+                if (scene.Has<Vehicle>(possesses.Pawn))
+                {
+                    driving.emplace_back(possesses.Pawn, seat);
                 }
 
                 // Interact fires the vehicle seam: while driving a vehicle it leaves it, otherwise it
@@ -324,6 +331,20 @@ public:
                 if (scene.Has<Intent>(possesses.Pawn))
                 {
                     scene.Get<Intent>(possesses.Pawn) = MapInputToIntent(player);
+                }
+            });
+
+        // A vehicle's engine rumble plays on its driver's pad while it is driven, and fades out over
+        // its authored fade when the driver climbs out.
+        scene.Each<Vehicle, RumbleSource>(
+            [&](const Entity vehicle, Vehicle&, RumbleSource& rumble)
+            {
+                const auto driver =
+                    std::ranges::find(driving, vehicle, &std::pair<Entity, Entity>::first);
+                rumble.Playing = driver != driving.end();
+                if (rumble.Playing)
+                {
+                    rumble.Seat = driver->second;
                 }
             });
     }
@@ -1004,6 +1025,13 @@ protected:
                               .Context =
                                   GetAssetManager().Load<InputMappingContext>(GameplayInputMapId)});
         world.Add<Vehicle>(host, Vehicle{.Seats = {seat}});
+        // Its engine hum: authored stopped, and switched on by ControlSystem while a seat drives it.
+        world.Add<RumbleSource>(
+            host,
+            RumbleSource{.Clip = GetAssetManager().Load<Haptics::RumbleClip>(EngineRumbleClipId),
+                         .Loop = Haptics::RumbleLoop::Always,
+                         .Playing = false,
+                         .FadeOutSeconds = 0.4f});
     }
 
     // Opens a second flat-peer world spawning the same startup level and binds it to the corner

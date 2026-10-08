@@ -564,8 +564,9 @@ pad) unless background input is retained, matching keyboard and mouse. **Virtual
 slots like physical ones and are driven through `VirtualGamepadEvent`, posted to
 `InputRouter::PostInjectedEvent` (MCP's `input.send` pad events use exactly this), so automation
 reaches every pad path without hardware. A `SeatInputView`'s gamepad arm reads the seat's assigned
-pad through it, at the per-tick cadence. A pad's **motors** are written only by the haptics engine,
-which resolves a seat's rumble to the same assigned pad — see [../Haptics/CLAUDE.md](../Haptics/CLAUDE.md).
+pad through it, at the per-tick cadence. A pad's **motors** are written only by the haptics engine;
+a seat's rumble resolves through the same `SeatInput::Gamepad`, read in the seat's own scene — see
+[../Haptics/CLAUDE.md](../Haptics/CLAUDE.md).
 
 **A source's value is shaped in two places, and nowhere else.** The device layer shapes a pad as
 `Input::IngestGamepadStates` takes it in: each stick's two axes go through one **radial** deadzone

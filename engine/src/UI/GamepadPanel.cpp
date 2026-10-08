@@ -70,10 +70,29 @@ namespace Veng::UI
             }
         }
 
-        /// @brief Draws one pad's mixed rumble, its live instances and a play button per clip.
-        void RumbleRows(Haptics::HapticsEngine& haptics, const GamepadId slot,
+        /// @brief Names a presentation state for the rumble rows.
+        string_view StateName(const PresentationState state)
+        {
+            switch (state)
+            {
+            case PresentationState::Live:
+                return "live";
+            case PresentationState::Muted:
+                return "muted";
+            case PresentationState::Held:
+                return "held";
+            case PresentationState::Closed:
+                break;
+            }
+            return "closed";
+        }
+
+        /// @brief Draws one pad's mixed rumble, its one-shots and layers with their scopes, and a
+        ///        play button per clip.
+        void RumbleRows(const Haptics::ScopedHaptics& application, const GamepadId slot,
                         const std::span<const GamepadPanelClip> clips)
         {
+            Haptics::HapticsEngine& haptics = application.GetEngine();
             const Haptics::RumbleChannels output = haptics.GetOutput(slot);
             UI::ProgressBar(output.LowFrequency, {-1.0f, 0.0f},
                             fmt::format("Low {:.2f}", output.LowFrequency));
@@ -85,18 +104,28 @@ namespace Veng::UI
                             fmt::format("Right trigger {:.2f}", output.RightTrigger));
 
             bool any = false;
-            for (const Haptics::RumbleInstanceInfo& instance : haptics.GetAllInstances())
+            for (const Haptics::RumbleOneShotInfo& oneShot : haptics.GetOneShots())
             {
-                if (instance.Gamepad != slot)
+                if (oneShot.Gamepad != slot)
                 {
                     continue;
                 }
                 any = true;
-                UI::Text(fmt::format(
-                    "0x{:016X}  {:.2f}/{:.2f}s  x{:.2f}{}{}{}", instance.Clip.Value, instance.Time,
-                    instance.Duration, instance.Intensity * instance.Fade,
-                    instance.Loop ? "  loop" : "", instance.Stopping ? "  stopping" : "",
-                    instance.Paused ? "  paused" : ""));
+                UI::Text(fmt::format("one-shot 0x{:016X}  {:.2f}/{:.2f}s  x{:.2f}  scope {} ({})",
+                                     oneShot.Clip.Value, oneShot.Time, oneShot.Duration,
+                                     oneShot.Intensity, oneShot.Scope.Value,
+                                     StateName(oneShot.State)));
+            }
+            for (const Haptics::RumbleLayerInfo& layer : haptics.GetLayers())
+            {
+                if (layer.Gamepad != slot)
+                {
+                    continue;
+                }
+                any = true;
+                UI::Text(fmt::format("layer  low {:.2f} high {:.2f}  scope {} ({})",
+                                     layer.Channels.LowFrequency, layer.Channels.HighFrequency,
+                                     layer.Scope.Value, StateName(layer.State)));
             }
             if (!any)
             {
@@ -107,20 +136,21 @@ namespace Veng::UI
             {
                 if (UI::Button(fmt::format("Play {}", clip.Name)))
                 {
-                    haptics.Play(Haptics::RumbleTarget::ForGamepad(slot), clip.Clip);
+                    application.PlayOneShot(Haptics::RumbleTarget::ForGamepad(slot), clip.Clip);
                 }
                 UI::SameLine();
             }
             if (UI::Button("Stop"))
             {
-                haptics.StopAll(Haptics::RumbleTarget::ForGamepad(slot));
+                haptics.StopOneShots(application.GetScope(), slot);
             }
         }
     }
 
-    void GamepadPanel(Application& app, const std::span<const GamepadPanelClip> clips)
+    void GamepadPanel(const Application& app, const std::span<const GamepadPanelClip> clips)
     {
-        Haptics::HapticsEngine& haptics = app.GetHaptics();
+        const Haptics::ScopedHaptics application = app.GetApplicationHaptics();
+        const Haptics::HapticsEngine& haptics = application.GetEngine();
         UI::Text(fmt::format("Master intensity {:.2f}{}", haptics.GetMasterIntensity(),
                              haptics.IsOutputSuspended() ? " (suspended: window unfocused)" : ""));
 
@@ -160,7 +190,7 @@ namespace Veng::UI
                 UI::TextDisabled("Touchpad: no finger");
             }
 
-            RumbleRows(haptics, slot, clips);
+            RumbleRows(application, slot, clips);
             DeadzoneSliders(input, slot);
             ControlTable(input, slot);
         }

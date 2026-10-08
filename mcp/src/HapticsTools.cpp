@@ -35,29 +35,21 @@ namespace Veng::Mcp
                         {"right_trigger", channels.RightTrigger}};
         }
 
-        /// @brief An instance's target as a JSON object.
-        Json TargetJson(const Haptics::RumbleTarget& target)
+        /// @brief A presentation state's name.
+        const char* StateName(const PresentationState state)
         {
-            switch (target.Kind)
+            switch (state)
             {
-            case Haptics::RumbleTargetKind::Seat:
-            {
-                Json viewer = nullptr;
-                if (!target.Seat.IsImplicit())
-                {
-                    viewer = Json{{"index", target.Seat.Viewer.Index},
-                                  {"generation", target.Seat.Viewer.Generation}};
-                }
-                return Json{{"kind", "seat"},
-                            {"world", target.Seat.World.Value},
-                            {"viewer", std::move(viewer)}};
-            }
-            case Haptics::RumbleTargetKind::Gamepad:
-                return Json{{"kind", "gamepad"}, {"pad", PadOrNull(target.Gamepad)}};
-            case Haptics::RumbleTargetKind::None:
+            case PresentationState::Live:
+                return "live";
+            case PresentationState::Muted:
+                return "muted";
+            case PresentationState::Held:
+                return "held";
+            case PresentationState::Closed:
                 break;
             }
-            return Json{{"kind", "none"}};
+            return "closed";
         }
     }
 
@@ -71,11 +63,12 @@ namespace Veng::Mcp
             "Reports the haptics engine's rumble state: the master intensity, whether the device "
             "output is suspended (the window is unfocused), each pad slot that is playing or "
             "driven (its mixed low_frequency/high_frequency/left_trigger/right_trigger levels, "
-            "0..1, "
-            "before suspension), and every live rumble instance — its handle, target (a seat or a "
-            "pad), the pad it resolved to, clip (a hex AssetId), time, duration, intensity, fade, "
-            "loop, stopping and paused flags, and owning world (null when application-owned). "
-            "Works on virtual pads, so a driven session verifies rumble without hardware. Takes no "
+            "0..1, before suspension, and how many one-shots and layers feed it), every one-shot "
+            "held (its owning presentation scope and that scope's state — live, muted, held or "
+            "closed — the pad it plays on, clip as a hex AssetId, time, duration and intensity), "
+            "and "
+            "every layer the last frame mixed (its scope, state, pad and channels). Works on "
+            "virtual pads, so a driven session verifies rumble without hardware. Takes no "
             "arguments.";
         tool.InputSchemaJson = R"({"type":"object","properties":{}})";
         tool.Handler = [&host](string_view) -> Result<string>
@@ -87,48 +80,58 @@ namespace Veng::Mcp
                     string("haptics is unavailable: this host exposes no haptics engine"));
             }
 
-            const vector<Haptics::RumbleInstanceInfo> live = engine->GetAllInstances();
+            const vector<Haptics::RumbleOneShotInfo> oneShots = engine->GetOneShots();
+            const vector<Haptics::RumbleLayerInfo> layers = engine->GetLayers();
 
             Json pads = Json::array();
             for (u32 slot = 0; slot < Input::MaxGamepads; ++slot)
             {
                 const auto pad = static_cast<GamepadId>(slot);
                 const Haptics::RumbleChannels output = engine->GetOutput(pad);
-                const auto playing = static_cast<usize>(
-                    std::ranges::count_if(live, [pad](const Haptics::RumbleInstanceInfo& i)
-                                          { return i.Gamepad == pad; }));
-                if (playing == 0 && output == Haptics::RumbleChannels{})
+                const auto shotCount = static_cast<usize>(
+                    std::ranges::count_if(oneShots, [pad](const Haptics::RumbleOneShotInfo& info)
+                                          { return info.Gamepad == pad; }));
+                const auto layerCount = static_cast<usize>(
+                    std::ranges::count_if(layers, [pad](const Haptics::RumbleLayerInfo& info)
+                                          { return info.Gamepad == pad; }));
+                if (shotCount == 0 && layerCount == 0 && output == Haptics::RumbleChannels{})
                 {
                     continue;
                 }
-                pads.push_back(Json{
-                    {"pad", slot}, {"instance_count", playing}, {"output", ChannelsJson(output)}});
+                pads.push_back(Json{{"pad", slot},
+                                    {"one_shot_count", shotCount},
+                                    {"layer_count", layerCount},
+                                    {"output", ChannelsJson(output)}});
             }
 
-            Json instances = Json::array();
-            for (const Haptics::RumbleInstanceInfo& info : live)
+            Json shots = Json::array();
+            for (const Haptics::RumbleOneShotInfo& info : oneShots)
             {
-                instances.push_back(Json{
-                    {"slot", info.Handle.Slot},
-                    {"generation", info.Handle.Generation},
-                    {"target", TargetJson(info.Target)},
+                shots.push_back(Json{
+                    {"scope", info.Scope.Value},
+                    {"state", StateName(info.State)},
                     {"pad", PadOrNull(info.Gamepad)},
                     {"clip", fmt::format("0x{:016X}", info.Clip.Value)},
                     {"time", info.Time},
                     {"duration", info.Duration},
                     {"intensity", info.Intensity},
-                    {"fade", info.Fade},
-                    {"loop", info.Loop},
-                    {"stopping", info.Stopping},
-                    {"paused", info.Paused},
-                    {"world", info.World.IsValid() ? Json(info.World.Value) : Json(nullptr)},
                 });
+            }
+
+            Json mixed = Json::array();
+            for (const Haptics::RumbleLayerInfo& info : layers)
+            {
+                mixed.push_back(Json{{"scope", info.Scope.Value},
+                                     {"state", StateName(info.State)},
+                                     {"pad", PadOrNull(info.Gamepad)},
+                                     {"channels", ChannelsJson(info.Channels)}});
             }
 
             return Json{{"master_intensity", engine->GetMasterIntensity()},
                         {"suspended", engine->IsOutputSuspended()},
                         {"pads", std::move(pads)},
-                        {"instances", std::move(instances)}}
+                        {"one_shots", std::move(shots)},
+                        {"layers", std::move(mixed)}}
                 .dump();
         };
         server.RegisterTool(std::move(tool));

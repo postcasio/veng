@@ -8,6 +8,7 @@
 #include <Veng/Gui/Overlay.h>
 #include <Veng/Gui/Surface.h>
 #include <Veng/Haptics/RumbleClip.h>
+#include <Veng/Haptics/RumbleSource.h>
 #include <Veng/Localization/LocKey.h>
 #include <Veng/Net/InputFeed.h>
 #include <Veng/Net/LagCompensation.h>
@@ -97,6 +98,9 @@ namespace Veng
         registry.Register<AudioListener>();
         // The level's authored initial background-music track, handed to the music director on start.
         registry.Register<MusicState>();
+        // Continuous rumble, played by the View-phase HapticsSystem; its target kind and loop
+        // enums register through its fields.
+        registry.Register<RumbleSource>();
 
         // Rigid-body simulation: what the solver simulates, the shape it collides with, the
         // overlap-only sensor, and the three constraints. MotionType, PhysicsLayer and

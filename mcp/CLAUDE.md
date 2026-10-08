@@ -414,12 +414,13 @@ family registers from the editor side.
 - **`haptics.*`** (`src/HapticsTools.cpp`, read-only) — `haptics.state` reports the haptics engine's
   rumble: the master intensity, whether the device output is suspended (the window is unfocused),
   each pad slot that is playing or driven with its mixed `low_frequency` / `high_frequency` /
-  `left_trigger` / `right_trigger` levels (before suspension), and every live instance — its handle,
-  target (a seat or a pad), the pad it resolved to (null for a padless seat), clip (a hex `AssetId`),
-  time, duration, intensity, fade, loop / stopping / paused flags and owning world (null when
-  application-owned). With `input.send`'s virtual pads it lets a driven session verify that a clip
-  plays with no hardware. Reached through `McpHost::Haptics`; a host that leaves it null makes the
-  tool report haptics unavailable. Always registered.
+  `left_trigger` / `right_trigger` levels (before suspension) and its one-shot and layer counts, every
+  one-shot held — its owning presentation scope and that scope's state (`live` / `muted` / `held` /
+  `closed`), the pad it plays on, clip (a hex `AssetId`), time, duration and intensity — and every
+  layer the last frame mixed (scope, state, pad, channels). The state is what tells a paused or
+  unpresented world's rumble from a live one. With `input.send`'s virtual pads it lets a driven
+  session verify that a clip plays with no hardware. Reached through `McpHost::Haptics`; a host that
+  leaves it null makes the tool report haptics unavailable. Always registered.
 - **`world.load_prefab` and the `entity.*` mutation verbs**
   (`src/MutationTools.cpp`, registered only when `AllowMutations` is set) —
   `entity.add_component`, `entity.remove_component`, `entity.remove_component_many`,
@@ -641,9 +642,9 @@ httplib stays PRIVATE and `veng-config` already carries `find_dependency(nlohman
   shape-validation errors (pad ones included) are whole-call, a rejected batch applies nothing, a read-only server omits the tool, and a null
   `InjectInput` host reports it unavailable.
 - **`mcp_haptics`** — `haptics.state` over a read-only server and a device-free `HapticsEngine`
-  with one clip on a pad slot and one on a padless seat: the playing pad's mix and both instances
-  (targets, resolved pads, intensity, ownership) are reported and idle slots are not, and a host with
-  no `Haptics` reports the engine unavailable.
+  holding a one-shot in a live scope, one in a held scope and a submitted layer: the playing pad's
+  mix and counts, each entry's scope and state, and the layer's channels are reported and idle slots
+  are not, and a host with no `Haptics` reports the engine unavailable.
 - **`mcp_capture`** — the `render.capture_*` tools over a headless host with no recorder (a run with
   no swap chain presents no frame to record, so that is the honest shape): the write gate both ways,
   `render.capture_status` answering rather than erroring with `available` false and every state

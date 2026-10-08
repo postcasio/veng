@@ -3,9 +3,11 @@
 #include <Veng/Veng.h>
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Haptics/RumbleClip.h>
+#include <Veng/Haptics/ScopedHaptics.h>
 #include <Veng/Input.h>
-#include <Veng/Input/SeatRef.h>
-#include <Veng/WorldInstanceId.h>
+#include <Veng/Reflection/Reflect.h>
+#include <Veng/Scene/Entity.h>
+#include <Veng/Scene/PresentationScope.h>
 
 #include <span>
 
@@ -34,13 +36,13 @@ namespace Veng::Haptics
     /// zero everywhere.
     /// @param clip  The clip's data.
     /// @param time  The time since the clip started, in seconds.
-    /// @param loop  The instance's effective loop setting (the clip's own unless a play overrode it).
+    /// @param loop  Whether the playback wraps (a RumbleSource's resolved RumbleLoop).
     /// @return The channel levels.
     [[nodiscard]] RumbleChannels EvaluateClip(const RumbleClipData& clip, f32 time, bool loop);
 
     /// @brief Scales every channel by one factor, unclamped.
     /// @param channels  The levels.
-    /// @param scale     The factor (an instance's intensity times its stop fade).
+    /// @param scale     The factor (an intensity times a fade).
     /// @return The scaled levels.
     [[nodiscard]] RumbleChannels ScaleRumble(const RumbleChannels& channels, f32 scale);
 
@@ -49,40 +51,53 @@ namespace Veng::Haptics
     ///
     /// Maximum rather than sum, so overlapping effects never saturate: a strong pulse rises above a
     /// hum and the hum returns after it, with no priority between them.
-    /// @param layers  Each playing instance's scaled levels.
+    /// @param layers  Each sounding one-shot's and submitted layer's scaled levels.
     /// @param master  The master intensity applied after the maximum.
     /// @return The mixed levels; zero for no layers.
     [[nodiscard]] RumbleChannels MixRumble(std::span<const RumbleChannels> layers,
                                            f32 master = 1.0f);
 
-    /// @brief What a rumble instance plays on.
+    /// @brief What a rumble plays on.
     enum class RumbleTargetKind : u8
     {
-        /// @brief Nothing: an instance targeting it is silent.
+        /// @brief Nothing: a rumble targeting it is silent.
         None,
-        /// @brief A seat, resolved to its assigned pad every frame.
+        /// @brief A seat of the calling scene, resolved to the pad its SeatInput names.
         Seat,
         /// @brief One pad slot directly, for an application without seats.
         Gamepad,
     };
 
-    /// @brief Where a clip plays: a seat (following its pad assignment) or a raw pad slot.
+    /// @brief How a RumbleSource's clip runs out.
+    enum class RumbleLoop : u8
+    {
+        /// @brief As the clip itself says (RumbleClipData::Loop).
+        FromClip,
+        /// @brief Wraps at the clip's duration whatever the clip says.
+        Always,
+        /// @brief Plays the clip through once whatever the clip says.
+        Once,
+    };
+
+    /// @brief Where a rumble plays: a seat of the calling scene, or a raw pad slot.
+    ///
+    /// Scene-local: a seat is an entity in the scene whose system names it, resolved against that
+    /// scene (ResolveRumbleTarget), so two scenes' seats that share an entity handle never alias.
     struct RumbleTarget
     {
         /// @brief Which of the two the target names.
         RumbleTargetKind Kind = RumbleTargetKind::None;
-        /// @brief The seat, for a Seat target.
+        /// @brief The seat's Viewer entity, for a Seat target; Entity::Null is the implicit seat.
         ///
-        /// Resolved through SeatInput::Gamepad on the seat's Viewer every frame, so the rumble
-        /// follows a reassignment and is silent while the seat has no pad. The implicit seat (a null
-        /// Viewer) reads every device, so it resolves to the first connected pad.
-        SeatRef Seat;
+        /// Resolved through the entity's SeatInput::Gamepad, so a seat with no pad is silent. The
+        /// implicit seat reads every device, so it resolves to the first connected pad.
+        Entity Seat = Entity::Null;
         /// @brief The pad slot, for a Gamepad target.
         GamepadId Gamepad = GamepadId::None;
 
-        /// @brief Returns a target naming a seat.
-        /// @param seat  The seat.
-        [[nodiscard]] static RumbleTarget ForSeat(const SeatRef& seat)
+        /// @brief Returns a target naming a seat of the calling scene.
+        /// @param seat  The seat's Viewer entity, or Entity::Null for the implicit seat.
+        [[nodiscard]] static RumbleTarget ForSeat(const Entity seat)
         {
             return RumbleTarget{.Kind = RumbleTargetKind::Seat, .Seat = seat};
         }
@@ -114,85 +129,54 @@ namespace Veng::Haptics
         }
     };
 
-    /// @brief How one play of a clip runs.
-    struct RumbleParams
+    /// @brief Resolves a target to the pad it plays on now, in the scene it names a seat of.
+    ///
+    /// A seat entity resolves to its SeatInput::Gamepad (None when the entity, its SeatInput or a
+    /// scene to read it in is missing); the implicit seat to the first pad @p input reports
+    /// connected; a pad target to itself.
+    /// @param target  The target.
+    /// @param scene   The scene a seat target names an entity of; null resolves every seat entity to
+    ///                no pad.
+    /// @param input   The input whose connected pads the implicit seat reads.
+    /// @return The pad slot, or GamepadId::None.
+    [[nodiscard]] GamepadId ResolveRumbleTarget(const RumbleTarget& target, const Scene* scene,
+                                                const Input& input);
+
+    /// @brief A read-only view of one one-shot the engine holds, for tooling and tests.
+    struct RumbleOneShotInfo
     {
-        /// @brief Scales every channel of the clip; changed later through SetIntensity.
-        f32 Intensity = 1.0f;
-        /// @brief Overrides the clip's own Loop when set.
-        optional<bool> Loop;
-        /// @brief The world the instance belongs to; invalid means application-owned.
-        ///
-        /// An instance with a world holds its position and plays nothing while that world is
-        /// paused, and stops when the world closes. A scene system passes SystemContext::World.
-        WorldInstanceId World;
-    };
-
-    /// @brief Names one playing instance; slot plus generation, so a stale handle names nothing.
-    struct RumbleHandle
-    {
-        /// @brief The instance's slot.
-        u32 Slot = 0;
-        /// @brief The slot's generation when the instance started; zero is the null handle.
-        u32 Generation = 0;
-
-        /// @brief Whether the handle was returned by a play that started something.
-        [[nodiscard]] bool IsValid() const { return Generation != 0; }
-
-        /// @brief Compares slot and generation.
-        bool operator==(const RumbleHandle&) const = default;
-    };
-
-    /// @brief A read-only view of one live instance, for tooling and tests.
-    struct RumbleInstanceInfo
-    {
-        /// @brief The instance's handle.
-        RumbleHandle Handle;
-        /// @brief What the instance plays on.
-        RumbleTarget Target;
-        /// @brief The pad the target resolved to at the last Update, or GamepadId::None.
+        /// @brief The presentation scope that owns it.
+        PresentationScopeId Scope;
+        /// @brief That scope's state now (Live, Muted, Held, or Closed until the next update).
+        PresentationState State = PresentationState::Closed;
+        /// @brief The pad it plays on, resolved when it was played.
         GamepadId Gamepad = GamepadId::None;
         /// @brief The clip playing.
         AssetId Clip;
-        /// @brief Seconds since the instance started, unwrapped.
+        /// @brief Seconds it has advanced since it started.
         f32 Time = 0.0f;
         /// @brief The clip's duration in seconds.
         f32 Duration = 0.0f;
-        /// @brief The instance's intensity.
+        /// @brief The intensity it plays at.
         f32 Intensity = 1.0f;
-        /// @brief The stop fade's remaining fraction: 1 unless Stop with a fade is ramping it out.
-        f32 Fade = 1.0f;
-        /// @brief The instance's effective loop setting.
-        bool Loop = false;
-        /// @brief Whether a fading Stop is in progress.
-        bool Stopping = false;
-        /// @brief Whether the instance's world is paused, so it holds and plays nothing.
-        bool Paused = false;
-        /// @brief The world the instance belongs to; invalid for an application-owned instance.
-        WorldInstanceId World;
     };
 
-    /// @brief What the engine is told about a world an instance belongs to.
-    enum class HapticsWorldState : u8
+    /// @brief A read-only view of one layer the last update mixed, for tooling and tests.
+    struct RumbleLayerInfo
     {
-        /// @brief The world is open and running.
-        Open,
-        /// @brief The world is open and paused.
-        Paused,
-        /// @brief The world no longer resolves.
-        Closed,
+        /// @brief The presentation scope that submitted it.
+        PresentationScopeId Scope;
+        /// @brief That scope's state now.
+        PresentationState State = PresentationState::Closed;
+        /// @brief The pad it was submitted to.
+        GamepadId Gamepad = GamepadId::None;
+        /// @brief Its levels, before the master intensity.
+        RumbleChannels Channels;
     };
 
-    /// @brief What the engine needs from its host: how to resolve seats and worlds, and where the
-    ///        mixed output goes.
-    ///
-    /// Every member is optional, so a test builds an engine over exactly the hooks it exercises.
+    /// @brief Where the engine's mixed output goes.
     struct HapticsEngineInfo
     {
-        /// @brief Resolves a seat to the pad it is assigned; unset leaves every seat padless.
-        function<GamepadId(const SeatRef& seat)> ResolveSeat;
-        /// @brief Reports a world's state; unset treats every world as open.
-        function<HapticsWorldState(WorldInstanceId world)> WorldState;
         /// @brief Receives each pad slot's levels once per Update; unset drives no device.
         ///
         /// Called for every slot, 0 through Input::MaxGamepads - 1, with zeros where nothing plays
@@ -207,97 +191,68 @@ namespace Veng::Haptics
         f32 Delta = 0.0f;
         /// @brief Whether the device output is silenced this frame (the window lost focus).
         ///
-        /// Instances keep advancing, so a hum returns when it lifts and a pulse that ended meanwhile
-        /// does not replay; only what reaches WriteMotors is zeroed.
+        /// One-shots keep advancing, so a pulse that ended meanwhile does not replay; only what
+        /// reaches WriteMotors is zeroed.
         bool OutputSuspended = false;
     };
 
-    /// @brief Plays rumble clips on pads: layers, scales, loops and stops them, and mixes each pad.
+    /// @brief The per-pad rumble mixer: the application's one writer of every pad's motors.
     ///
-    /// The application's one writer of every pad's motors, reached as SystemContext::Haptics and
-    /// Application::GetHaptics. Once per frame Update advances every instance by the frame's unscaled
-    /// time, retires finished non-looping instances and completed fades, stops instances whose world
-    /// closed, mixes every pad (MixRumble over its instances, scaled by the master intensity) and
-    /// hands each slot's levels to the host. It runs the same headless and on a dedicated host, where
-    /// the host simply has no device to write.
+    /// Holds two things, each owned by a presentation scope: the **one-shots** played through a
+    /// ScopedHaptics (a clip, the pad it resolved to, its time and intensity), and **this frame's
+    /// layers** submitted through one (a RumbleSource's evaluated level, as HapticsSystem submits it).
+    /// Once per frame, after PresentationScopes::Resolve, Update judges each one-shot by its scope's
+    /// state — Closed drops it, Held freezes it, Muted and Live advance it, and a finished one is
+    /// dropped — then mixes every pad over the one-shots and layers whose scope is Live (MixRumble,
+    /// scaled by the master intensity), hands each slot's levels to the host, and clears the layers.
+    /// It runs the same headless and on a dedicated host, where the host has no device to write.
     ///
-    /// Main-thread only, like the rest of the frame.
+    /// Systems reach it only through their context's scoped facade (SystemContext::Haptics);
+    /// application code and tooling through Application::GetApplicationHaptics. Main-thread only,
+    /// like the rest of the frame.
     class HapticsEngine
     {
     public:
-        /// @brief Scope during which the engine treats every play as a reconciliation replay.
-        ///
-        /// While one is held, Play starts nothing and returns a null handle, so a Sim system re-run
-        /// to re-derive predicted state never re-triggers a clip it already started on the live tick.
-        /// Every other call works as usual. Scopes nest.
-        class ReplayScope
-        {
-        public:
-            /// @brief Ends the scope.
-            ~ReplayScope();
+        /// @brief Constructs an engine over the scope registry it judges its output by.
+        /// @param scopes  The registry every scope it is handed belongs to; must outlive the engine.
+        /// @param info    Where its output goes.
+        explicit HapticsEngine(const PresentationScopes& scopes, HapticsEngineInfo info = {});
 
-            /// @brief Not copyable: one scope, one end.
-            ReplayScope(const ReplayScope&) = delete;
-
-            /// @brief Not assignable.
-            ReplayScope& operator=(const ReplayScope&) = delete;
-
-        private:
-            friend class HapticsEngine;
-
-            explicit ReplayScope(HapticsEngine& engine);
-
-            /// @brief The engine whose replay depth this scope holds.
-            HapticsEngine& m_Engine;
-        };
-
-        /// @brief Constructs an engine over its host hooks.
-        /// @param info  How it resolves seats and worlds, and where its output goes.
-        explicit HapticsEngine(HapticsEngineInfo info = {});
-
-        /// @brief Destroys the engine, releasing every playing clip.
+        /// @brief Destroys the engine, releasing every clip it holds.
         ~HapticsEngine();
 
-        /// @brief Not copyable: instances are named by slot.
+        /// @brief Not copyable: it is the one writer of the motors.
         HapticsEngine(const HapticsEngine&) = delete;
 
-        /// @brief Not copyable: instances are named by slot.
+        /// @brief Not copyable: it is the one writer of the motors.
         HapticsEngine& operator=(const HapticsEngine&) = delete;
 
-        /// @brief Starts a clip on a target.
+        /// @brief Starts a clip once through on a pad, owned by a scope.
         ///
-        /// The instance starts at time zero and first sounds on the next Update. A clip that is not
-        /// loaded starts nothing and logs once per clip; so does a play inside a ReplayScope (without
-        /// the log) and any play on the inert engine.
-        /// @param target  Where the clip plays.
-        /// @param clip    The clip; held resident while the instance plays.
-        /// @param params  Intensity, loop override and owning world.
-        /// @return The instance's handle, or a null handle when nothing started.
-        RumbleHandle Play(const RumbleTarget& target, const AssetHandle<RumbleClip>& clip,
-                          const RumbleParams& params = {});
+        /// Fire and forget: it plays the clip through once (whatever the clip's own Loop) and is
+        /// dropped when it ends or its scope closes. It first sounds its time-zero level at the next
+        /// Update its scope is not Held. A clip that is not loaded starts nothing and logs once per
+        /// clip; so does a pad of None (without the log), and a scope already Closed.
+        /// @param scope      The scope that owns it.
+        /// @param pad        The pad slot it plays on.
+        /// @param clip       The clip; held resident while it plays.
+        /// @param intensity  Scales every channel; clamped to 0 or more.
+        void PlayOneShot(PresentationScopeId scope, GamepadId pad,
+                         const AssetHandle<RumbleClip>& clip, f32 intensity = 1.0f);
 
-        /// @brief Sets a playing instance's intensity; ignored for a stale handle.
-        /// @param handle     The instance.
-        /// @param intensity  The new intensity, clamped to 0 or more.
-        void SetIntensity(RumbleHandle handle, f32 intensity);
-
-        /// @brief Stops a playing instance, at once or over a fade; ignored for a stale handle.
+        /// @brief Adds a layer to a pad's mix for the coming Update only.
         ///
-        /// With a fade the instance keeps playing, scaled down linearly to zero over @p fadeSeconds,
-        /// and retires when the fade completes. A second Stop on a fading instance restarts the fade
-        /// from its current level only if the new fade ends sooner.
-        /// @param handle       The instance.
-        /// @param fadeSeconds  The fade's length; 0 or less stops at once.
-        void Stop(RumbleHandle handle, f32 fadeSeconds = 0.0f);
+        /// A continuous effect submits its current level every frame; one that stops submitting is
+        /// silent from the next Update. Ignored for a pad of None or out of range.
+        /// @param scope     The scope that owns it.
+        /// @param pad       The pad slot.
+        /// @param channels  The levels, already scaled by the caller's intensity.
+        void SubmitLayer(PresentationScopeId scope, GamepadId pad, const RumbleChannels& channels);
 
-        /// @brief Whether a handle names a live instance (a fading one included).
-        /// @param handle  The instance.
-        [[nodiscard]] bool IsPlaying(RumbleHandle handle) const;
-
-        /// @brief Stops at once every instance playing on a target.
-        /// @param target  The target, matched exactly (a seat target does not stop a pad target
-        ///                that happens to name the seat's pad).
-        void StopAll(const RumbleTarget& target);
+        /// @brief Drops at once every one-shot a scope owns on a pad, for tooling.
+        /// @param scope  The owning scope.
+        /// @param pad    The pad slot.
+        void StopOneShots(PresentationScopeId scope, GamepadId pad);
 
         /// @brief Sets the master intensity every pad's mix is scaled by, clamped to [0, 1].
         ///
@@ -308,12 +263,11 @@ namespace Veng::Haptics
         /// @brief Returns the master intensity.
         [[nodiscard]] f32 GetMasterIntensity() const;
 
-        /// @brief Returns every live instance playing on a target, in slot order.
-        /// @param target  The target, matched exactly.
-        [[nodiscard]] vector<RumbleInstanceInfo> GetInstances(const RumbleTarget& target) const;
+        /// @brief Returns every one-shot held, in the order they were played.
+        [[nodiscard]] vector<RumbleOneShotInfo> GetOneShots() const;
 
-        /// @brief Returns every live instance, in slot order.
-        [[nodiscard]] vector<RumbleInstanceInfo> GetAllInstances() const;
+        /// @brief Returns the layers the last Update mixed, in the order they were submitted.
+        [[nodiscard]] vector<RumbleLayerInfo> GetLayers() const;
 
         /// @brief Returns a pad's mixed levels as of the last Update, before any output suspension.
         /// @param pad  The pad slot; an out-of-range slot reads zero.
@@ -322,40 +276,32 @@ namespace Veng::Haptics
         /// @brief Whether the last Update silenced the device output.
         [[nodiscard]] bool IsOutputSuspended() const;
 
-        /// @brief Advances, retires, mixes and writes, once per frame.
+        /// @brief Returns the scope registry the engine judges its output by.
+        [[nodiscard]] const PresentationScopes& GetScopes() const;
+
+        /// @brief Advances the one-shots, mixes every pad, writes it and clears the layers.
+        ///
+        /// Called once per frame, after PresentationScopes::Resolve has latched this frame's states.
         /// @param frame  The frame's delta and output suspension.
         void Update(const HapticsFrameInfo& frame);
 
-        /// @brief Opens a scope during which every play is treated as a replay (see ReplayScope).
-        [[nodiscard]] ReplayScope BeginReplay();
-
-        /// @brief Whether a ReplayScope is held.
-        [[nodiscard]] bool IsReplaying() const;
-
-        /// @brief Whether this is the inert engine, which starts nothing.
-        [[nodiscard]] bool IsInert() const;
-
     private:
-        /// @brief Tags the private constructor of the inert engine.
-        struct InertTag
-        {
-        };
-
-        friend HapticsEngine& GetInertEngine();
-
-        /// @brief Constructs the inert engine.
-        explicit HapticsEngine(InertTag);
-
-        /// @brief The instance table, the per-pad mix and the logged-clip set.
+        /// @brief The one-shot table, the layers, the per-pad mix and the logged-clip set.
         struct State;
 
-        /// @brief The instance table, the per-pad mix and the logged-clip set.
+        /// @brief The one-shot table, the layers, the per-pad mix and the logged-clip set.
         Unique<State> m_State;
     };
-
-    /// @brief Returns the process's inert engine: every play starts nothing.
-    ///
-    /// An engine for a caller that must hand one over and wants no rumble from it. The
-    /// SystemContexts an Application builds bind its live engine instead.
-    [[nodiscard]] HapticsEngine& GetInertEngine();
 }
+
+VE_ENUM(::Veng::Haptics::RumbleTargetKind, 0x60B26D670CF337E3ULL)
+VE_ENUMERATOR(None)
+VE_ENUMERATOR(Seat)
+VE_ENUMERATOR(Gamepad)
+VE_ENUM_END();
+
+VE_ENUM(::Veng::Haptics::RumbleLoop, 0xDC0110FDE061E226ULL)
+VE_ENUMERATOR(FromClip)
+VE_ENUMERATOR(Always)
+VE_ENUMERATOR(Once)
+VE_ENUM_END();
