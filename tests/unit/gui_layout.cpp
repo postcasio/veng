@@ -677,3 +677,52 @@ TEST_CASE("gui layout: a case transform re-solves the box it changed the width o
     doc.Solve(vec2{400.0f, 200.0f});
     CHECK(label.Layout.Size.x == doctest::Approx(80.0f));
 }
+
+TEST_CASE("gui layout: a Text holding Text spans is one box measuring its spans as one run")
+{
+    // A paragraph's spans are runs of its own box, each in its own case and style: they are never
+    // laid out as boxes of their own, and a change to one re-measures the paragraph.
+    Document doc;
+    string measured;
+    doc.SetTextMeasurer(
+        [&measured](const string_view text, const Style&, optional<f32>) -> vec2
+        {
+            measured = text;
+            return vec2{static_cast<f32>(text.size()) * 8.0f, 16.0f};
+        });
+    Style column;
+    column.Direction = FlexDirection::Column;
+    column.AlignItems = Align::FlexStart;
+    doc.SetStyle(doc.Root(), column);
+
+    Element& paragraph = doc.Add(doc.Root(), ElementKind::Text);
+    Element& lead = doc.Add(paragraph, ElementKind::Text);
+    Element& body = doc.Add(paragraph, ElementKind::Text);
+    Style upper;
+    upper.Casing = TextTransform::Uppercase;
+    doc.SetStyle(lead, upper);
+    doc.SetText(lead, "Dock");
+    doc.SetText(body, " granted");
+    doc.Solve(vec2{400.0f, 200.0f});
+    CHECK(measured == "DOCK granted");
+    CHECK(paragraph.Layout.Size.x == doctest::Approx(96.0f));
+    CHECK(lead.Layout.Min == paragraph.Layout.Min);
+    CHECK(body.Layout.Size == paragraph.Layout.Size);
+
+    // A span's text, its visibility and its removal each re-measure the paragraph.
+    doc.SetText(body, " ok");
+    doc.Solve(vec2{400.0f, 200.0f});
+    CHECK(paragraph.Layout.Size.x == doctest::Approx(56.0f));
+    doc.SetVisible(lead, false);
+    doc.Solve(vec2{400.0f, 200.0f});
+    CHECK(measured == " ok");
+    CHECK(paragraph.Layout.Size.x == doctest::Approx(24.0f));
+    doc.Remove(body);
+    doc.Solve(vec2{400.0f, 200.0f});
+    CHECK(paragraph.Layout.Size.x == doctest::Approx(0.0f));
+
+    // The paragraph, not a span, is what the pointer finds.
+    doc.SetVisible(lead, true);
+    doc.Solve(vec2{400.0f, 200.0f});
+    CHECK(doc.HitTest(paragraph.Layout.Center()) == &paragraph);
+}

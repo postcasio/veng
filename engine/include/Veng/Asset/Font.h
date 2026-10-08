@@ -92,6 +92,19 @@ namespace Veng
         Renderer::TextureHandle Page;
         /// @brief The field type this glyph was rasterized into, selecting the shader coverage branch.
         Text::GlyphFieldType FieldType = Text::GlyphFieldType::Msdf;
+        /// @brief The em size the glyph was shaped at, in pixels.
+        f32 PixelSize = 0.0f;
+        /// @brief The index of the ShapeSpan the glyph came from; 0 for a single run.
+        u32 Span = 0;
+    };
+
+    /// @brief One stretch of a paragraph shaped at its own size (Font::ShapeSpans).
+    struct ShapeSpan
+    {
+        /// @brief The stretch's codepoints, in reading order.
+        std::span<const u32> Codepoints;
+        /// @brief The em size it shapes at, in pixels.
+        f32 PixelSize = 0.0f;
     };
 
     /// @brief Per-line geometry produced by shaping: the line's glyph span and its extent.
@@ -232,6 +245,24 @@ namespace Veng
         [[nodiscard]] ShapeResult ShapeRun(std::span<const u32> codepoints, f32 pixelSize,
                                            optional<f32> maxWidth,
                                            TextShapeMode mode = TextShapeMode::Measure) const;
+
+        /// @brief Shapes a paragraph of spans, each at its own size, laid out and line-broken as one
+        ///        run.
+        ///
+        /// The spans flow into each other: a line breaks where ShapeRun would break the
+        /// concatenated text, so a long span wraps on under the one before it rather than beside it.
+        /// Each line is as tall as the tallest span on it — its baseline sits at the largest
+        /// ascender among its glyphs, and the next line steps down by the largest line height — and
+        /// kerning applies between neighbouring glyphs of one size. Each ShapedGlyph names its span
+        /// (ShapedGlyph::Span) and the size it was shaped at, so a draw can style each span apart.
+        /// One span shapes exactly as ShapeRun does.
+        /// @param spans     The paragraph's spans, in reading order.
+        /// @param maxWidth  The available width in pixels to wrap within, or nullopt for no wrapping.
+        /// @param mode      Whether to measure device-free or ensure each glyph resident to draw.
+        /// @return The shaped glyph quads, per-line breakdown, and the paragraph's pixel bounds.
+        [[nodiscard]] ShapeResult ShapeSpans(std::span<const ShapeSpan> spans,
+                                             optional<f32> maxWidth,
+                                             TextShapeMode mode = TextShapeMode::Measure) const;
 
     private:
         friend class FontLoader;

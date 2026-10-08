@@ -1,6 +1,7 @@
 #include <Veng/Asset/Font.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 
 #include <Veng/Text/GlyphAtlas.h>
@@ -142,12 +143,26 @@ namespace Veng
     ShapeResult Font::ShapeRun(std::span<const u32> codepoints, f32 pixelSize,
                                optional<f32> maxWidth, TextShapeMode mode) const
     {
-        ShapeResult result;
+        const std::array<ShapeSpan, 1> span{
+            ShapeSpan{.Codepoints = codepoints, .PixelSize = pixelSize}};
+        return ShapeSpans(span, maxWidth, mode);
+    }
 
-        // The em-normalized metrics scale to pixels by the requested size; y grows downward, so the
-        // baseline sits at the ascender height and each new line steps down by the line height.
-        const f32 lineStep = m_LineHeight * pixelSize;
-        const f32 firstBaseline = m_Ascender * pixelSize;
+    ShapeResult Font::ShapeSpans(std::span<const ShapeSpan> spans, optional<f32> maxWidth,
+                                 TextShapeMode mode) const
+    {
+        ShapeResult result;
+        if (spans.empty())
+        {
+            return result;
+        }
+
+        // One size for the whole paragraph keeps the single-run arithmetic exactly: the block height
+        // is multiplied out rather than accumulated, so a one-span paragraph is bit-identical to a
+        // run shaped alone.
+        const bool uniform =
+            std::ranges::all_of(spans, [&](const ShapeSpan& span)
+                                { return span.PixelSize == spans.front().PixelSize; });
 
         // A pending line accumulates its glyphs before it is committed to result.Lines — the width
         // wrap decides retroactively where a line ends, so a line is only finalized once broken.
@@ -156,18 +171,49 @@ namespace Veng
             u32 Codepoint;
             f32 PenX; // pen origin x, in pixels, before this glyph's quad offset
             FontGlyph Metrics;
+            u32 Span;
+            f32 PixelSize;
         };
 
         vector<PendingGlyph> lineGlyphs;
         f32 penX = 0.0f;
-        f32 baseline = firstBaseline;
         f32 maxLineWidth = 0.0f;
+        // The size an empty line takes its height from: the span the pen stands in.
+        f32 penSize = spans.front().PixelSize;
+
+        // The previous line's metrics, which place the next line's baseline: each line is as tall as
+        // the tallest glyph on it, its baseline at the largest ascender among them. y grows downward.
+        f32 baseline = 0.0f;
+        f32 lineAscent = 0.0f;
+        f32 lineStep = 0.0f;
+        f32 lineDepth = 0.0f;
 
         // Emits the accumulated line's visible quads into the result and records its ShapedLine,
-        // then resets the pen for the next line. `advanceBaseline` steps to the next baseline unless
-        // this is the trailing flush of the final line.
-        const auto commitLine = [&](bool advanceBaseline)
+        // then resets the pen for the next line.
+        const auto commitLine = [&]()
         {
+            f32 ascent = 0.0f;
+            f32 step = 0.0f;
+            f32 depth = 0.0f;
+            if (lineGlyphs.empty())
+            {
+                ascent = m_Ascender * penSize;
+                step = m_LineHeight * penSize;
+                depth = -m_Descender * penSize;
+            }
+            for (const PendingGlyph& pending : lineGlyphs)
+            {
+                ascent = std::max(ascent, m_Ascender * pending.PixelSize);
+                step = std::max(step, m_LineHeight * pending.PixelSize);
+                depth = std::max(depth, -m_Descender * pending.PixelSize);
+            }
+            // The next baseline steps down the previous line's height, shifted by how much taller
+            // this line's ascender is: with one size the shift is exactly zero.
+            baseline = result.Lines.empty() ? ascent : baseline + lineStep + (ascent - lineAscent);
+            lineAscent = ascent;
+            lineStep = step;
+            lineDepth = depth;
+
             const u32 start = static_cast<u32>(result.Glyphs.size());
             for (const PendingGlyph& pending : lineGlyphs)
             {
@@ -179,17 +225,20 @@ namespace Veng
                 }
                 // Plane bounds are baseline-relative with y up; convert to run-origin pixels with y
                 // down: the quad top is baseline - PlaneMax.y, the bottom baseline - PlaneMin.y.
+                const f32 size = pending.PixelSize;
                 ShapedGlyph shaped;
                 shaped.Codepoint = pending.Codepoint;
                 shaped.Pen = {pending.PenX, baseline};
-                shaped.Min = {pending.PenX + glyph.PlaneMin.x * pixelSize,
-                              baseline - glyph.PlaneMax.y * pixelSize};
-                shaped.Max = {pending.PenX + glyph.PlaneMax.x * pixelSize,
-                              baseline - glyph.PlaneMin.y * pixelSize};
+                shaped.Min = {pending.PenX + glyph.PlaneMin.x * size,
+                              baseline - glyph.PlaneMax.y * size};
+                shaped.Max = {pending.PenX + glyph.PlaneMax.x * size,
+                              baseline - glyph.PlaneMin.y * size};
                 shaped.UvMin = glyph.UvMin;
                 shaped.UvMax = glyph.UvMax;
                 shaped.Page = glyph.Page;
                 shaped.FieldType = glyph.FieldType;
+                shaped.PixelSize = size;
+                shaped.Span = pending.Span;
                 result.Glyphs.push_back(shaped);
             }
 
@@ -204,10 +253,15 @@ namespace Veng
 
             lineGlyphs.clear();
             penX = 0.0f;
-            if (advanceBaseline)
-            {
-                baseline += lineStep;
-            }
+        };
+
+        // The kerning between two neighbouring glyphs, in pixels: only between glyphs of one size,
+        // since a pair's adjustment is a property of one face at one scale.
+        const auto kerningBetween = [&](const PendingGlyph& left, const PendingGlyph& right)
+        {
+            return left.PixelSize == right.PixelSize
+                       ? GetKerning(left.Codepoint, right.Codepoint) * right.PixelSize
+                       : 0.0f;
         };
 
         // Moves the trailing run (glyphs after the latest break opportunity on the current line) to a
@@ -236,7 +290,7 @@ namespace Veng
             vector<PendingGlyph> carried(lineGlyphs.begin() + static_cast<std::ptrdiff_t>(breakAt),
                                          lineGlyphs.end());
             lineGlyphs.resize(breakAt);
-            commitLine(true);
+            commitLine();
 
             // Re-lay the carried run from the new pen origin, re-applying kerning within it.
             for (usize i = 0; i < carried.size(); i++)
@@ -244,67 +298,76 @@ namespace Veng
                 PendingGlyph next = carried[i];
                 if (i > 0)
                 {
-                    penX += GetKerning(carried[i - 1].Codepoint, next.Codepoint) * pixelSize;
+                    penX += kerningBetween(carried[i - 1], next);
                 }
                 next.PenX = penX;
-                penX += next.Metrics.Advance * pixelSize;
+                penX += next.Metrics.Advance * next.PixelSize;
                 lineGlyphs.push_back(next);
             }
             return true;
         };
 
-        u32 previous = 0;
-        bool havePrevious = false;
-        for (const u32 codepoint : codepoints)
+        optional<PendingGlyph> previous;
+        for (u32 spanIndex = 0; spanIndex < spans.size(); ++spanIndex)
         {
-            if (codepoint == '\n')
+            const ShapeSpan& span = spans[spanIndex];
+            const f32 pixelSize = span.PixelSize;
+            penSize = pixelSize;
+            for (const u32 codepoint : span.Codepoints)
             {
-                commitLine(true);
-                havePrevious = false;
-                continue;
-            }
-
-            // A covered codepoint resolves through the fallback chain; an uncovered one lands on the
-            // resolved face's .notdef box (glyph 0), so a coverage gap stays visible and the layout
-            // honest rather than the character silently vanishing.
-            const FontGlyph glyph = mode == TextShapeMode::Draw ? GetGlyph(codepoint, pixelSize)
-                                                                : GetGlyphMetrics(codepoint);
-
-            if (havePrevious)
-            {
-                penX += GetKerning(previous, codepoint) * pixelSize;
-            }
-
-            PendingGlyph pending{.Codepoint = codepoint, .PenX = penX, .Metrics = glyph};
-            penX += glyph.Advance * pixelSize;
-            lineGlyphs.push_back(pending);
-            previous = codepoint;
-            havePrevious = true;
-
-            if (maxWidth && penX > *maxWidth && lineGlyphs.size() > 1)
-            {
-                // The line overflowed: wrap at the latest break opportunity, or hard-break before
-                // this glyph when the line offers no earlier break (one unbreakable run wider than
-                // the constraint).
-                if (!wrapTrailingRun())
+                if (codepoint == '\n')
                 {
-                    lineGlyphs.pop_back();
-                    commitLine(true);
-                    pending.PenX = 0.0f;
-                    penX = pending.Metrics.Advance * pixelSize;
-                    lineGlyphs.push_back(pending);
+                    commitLine();
+                    previous.reset();
+                    continue;
                 }
-                previous = lineGlyphs.empty() ? 0 : lineGlyphs.back().Codepoint;
-                havePrevious = !lineGlyphs.empty();
+
+                // A covered codepoint resolves through the fallback chain; an uncovered one lands on
+                // the resolved face's .notdef box (glyph 0), so a coverage gap stays visible and the
+                // layout honest rather than the character silently vanishing.
+                const FontGlyph glyph = mode == TextShapeMode::Draw ? GetGlyph(codepoint, pixelSize)
+                                                                    : GetGlyphMetrics(codepoint);
+
+                PendingGlyph pending{.Codepoint = codepoint,
+                                     .PenX = 0.0f,
+                                     .Metrics = glyph,
+                                     .Span = spanIndex,
+                                     .PixelSize = pixelSize};
+                if (previous.has_value())
+                {
+                    penX += kerningBetween(*previous, pending);
+                }
+                pending.PenX = penX;
+                penX += glyph.Advance * pixelSize;
+                lineGlyphs.push_back(pending);
+                previous = pending;
+
+                if (maxWidth && penX > *maxWidth && lineGlyphs.size() > 1)
+                {
+                    // The line overflowed: wrap at the latest break opportunity, or hard-break before
+                    // this glyph when the line offers no earlier break (one unbreakable run wider
+                    // than the constraint).
+                    if (!wrapTrailingRun())
+                    {
+                        lineGlyphs.pop_back();
+                        commitLine();
+                        pending.PenX = 0.0f;
+                        penX = pending.Metrics.Advance * pixelSize;
+                        lineGlyphs.push_back(pending);
+                    }
+                    previous = lineGlyphs.empty() ? optional<PendingGlyph>{}
+                                                  : optional<PendingGlyph>{lineGlyphs.back()};
+                }
             }
         }
 
-        commitLine(false);
+        commitLine();
 
-        const f32 blockHeight = result.Lines.empty()
-                                    ? 0.0f
-                                    : (static_cast<f32>(result.Lines.size() - 1) * lineStep +
-                                       (m_Ascender - m_Descender) * pixelSize);
+        const f32 pixelSize = spans.front().PixelSize;
+        const f32 blockHeight =
+            uniform ? (static_cast<f32>(result.Lines.size() - 1) * (m_LineHeight * pixelSize) +
+                       (m_Ascender - m_Descender) * pixelSize)
+                    : baseline + lineDepth;
         result.Size = {maxLineWidth, blockHeight};
         return result;
     }

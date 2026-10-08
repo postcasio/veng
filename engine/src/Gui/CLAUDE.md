@@ -173,6 +173,39 @@ The box was wrong, not the glyphs. Defaulting to `nowrap` makes the measure agre
 paint has always done, so an over-long run overflows horizontally — where `overflow: hidden` can
 catch it — instead of mis-sizing its box.
 
+**A paragraph is a `Text` holding `Text` spans, and the spans are runs, not boxes.** A line that
+mixes two styles — a small near-white lead and a larger body in another colour, say — has to wrap as
+one paragraph: the body continues on the lead's line and wraps on *under* it. Two sibling texts in a
+wrapping row cannot do that (the body would drop whole to a line of its own and wrap inside its own
+column), and a fixed-width lead column is a different layout altogether. So a `Text` may hold `Text`
+children, one level deep, and each child is an **inline span** of its parent:
+
+```xml
+<Text class="line">
+  <Text class="lead"/>
+  <Text class="body"/>
+</Text>
+```
+
+- **The paragraph is the one measured box.** Its run is its own text (if any) followed by each
+  visible span's, every span after its own `text-transform`; `Font::ShapeSpans` shapes them as one
+  run, breaking lines across span boundaries where `ShapeRun` would break the concatenation, each
+  line as tall as the tallest span on it. The paragraph's own style governs the box — its width,
+  `text-wrap`, `text-align`, padding — and its font serves every span (typography inherits, so a
+  span declaring a `font` of its own is not consulted).
+- **A span contributes its run and its look**: its `font-size`, its `color` and its `opacity`, each
+  resolved through the ordinary cascade, so a span is styled by class in the sheet like any element
+  and a driver writes it with the ordinary setters. Its glyphs are painted by the paragraph, each in
+  its span's colour and at its span's size (`DrawList::Text` over a `ShapeResult` and a colour per
+  span); the span itself emits nothing.
+- **A span is never in the layout tree**: `Document::Add` keeps its node out of Yoga, its `Layout` is
+  the paragraph's box, and hit-testing stops at the paragraph. Writing a span — its text, its
+  visibility, a style that moves its measure — re-measures the paragraph (`MarkTextDirty`
+  redirects), and a hidden span leaves the run. A span is cached with the paragraph's shaped run
+  (`ShapedTextRun::SpanEnds` / `SpanSizes`), so an unchanged paragraph is never shaped again.
+- An installed test measurer sees the paragraph's whole run in the paragraph's style. A `Text` takes
+  only `Text` children, one level deep; anything else is a fatal misuse.
+
 **So every paint-side deduction is correct, not a double count.** `ToPaddingBox` deflates `Layout`
 by the border; `ToContentBox` by border + padding; the text origin, the text-alignment slack, and
 the `TextInput` line box inset by the same amounts. All of them read the width through one clamp

@@ -140,6 +140,37 @@ TEST_CASE("gui localization: a generation bump re-resolves and re-measures a loc
     CHECK(label->Layout.Size.y == doctest::Approx(70.0f));
 }
 
+TEST_CASE("gui localization: a markup paragraph's loc-keyed span re-measures its paragraph")
+{
+    Renderer::Context context;
+    TaskSystem tasks;
+    TypeRegistry types;
+    AssetManager assets(context, tasks, types);
+
+    // `<Text><Text loc="greeting"/><Text> world</Text></Text>` as the loader hands it over.
+    const UIElementRecipe root{.Kind = ElementKind::Panel, .ChildCount = 1};
+    const UIElementRecipe paragraph{.Kind = ElementKind::Text, .ChildCount = 2};
+    const UIElementRecipe lead{.Kind = ElementKind::Text, .Text = "greeting", .IsLocKey = true};
+    const UIElementRecipe body{.Kind = ElementKind::Text, .Text = " world"};
+    const Ref<UIDocument> recipe = UIDocument::Create({root, paragraph, lead, body}, {}, {});
+    const Unique<Document> doc = Document::Instantiate(*recipe, assets);
+    Element* const line = doc->Root().Children.at(0);
+    REQUIRE(line->Children.size() == 2);
+    InstallLengthMeasurer(*doc);
+
+    FakeTranslator translator;
+    translator.SetActive(English);
+    doc->SetTranslator(&translator);
+    doc->Solve(vec2(400.0f, 200.0f));
+    // "Hello world" is eleven glyphs, measured as one run.
+    CHECK(line->Layout.Size.y == doctest::Approx(110.0f));
+
+    translator.SetActive(French);
+    doc->UpdateBindings();
+    doc->Solve(vec2(400.0f, 200.0f));
+    CHECK(line->Layout.Size.y == doctest::Approx(130.0f));
+}
+
 TEST_CASE("gui localization: a LocKey-typed bound leaf shows the resolved string")
 {
     Document doc;

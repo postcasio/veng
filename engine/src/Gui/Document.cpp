@@ -588,6 +588,19 @@ namespace Veng::Gui
             return kind == ElementKind::ScrollBar || kind == ElementKind::ScrollBarThumb;
         }
 
+        // Whether an element is an inline span of a paragraph: a Text inside a Text, shaped and
+        // painted as a run of its parent's rather than laid out as a box of its own.
+        bool IsInlineSpan(const Element& element)
+        {
+            return element.Parent != nullptr && element.Parent->Kind == ElementKind::Text;
+        }
+
+        // Whether an element is a paragraph: a Text holding inline spans.
+        bool IsParagraph(const Element& element)
+        {
+            return element.Kind == ElementKind::Text && !element.Children.empty();
+        }
+
         bool IsWidgetPart(ElementKind kind)
         {
             switch (kind)
@@ -871,7 +884,7 @@ namespace Veng::Gui
         // texture (a purely procedural fill), so the write is conditional on the reflected schema
         // rather than required by it — and it runs at resolve, not per frame, since a UI material
         // has no per-frame parameter channel.
-        void BindImageMaterialTexture(Element& element)
+        void BindImageMaterialTexture(const Element& element)
         {
             MaterialInstance* const material = element.ComputedStyle.ImageMaterial.Get();
             if (material == nullptr || !element.ImageTexture.IsValid())
@@ -1441,9 +1454,21 @@ namespace Veng::Gui
         VE_ASSERT(parentNode != nullptr && childNode != nullptr,
                   "Gui::Document::Add: parent element does not belong to this document");
 
+        // A Text's children are the inline spans of its paragraph: runs of its one measured box,
+        // shaped and painted by it, never laid out as boxes of their own — so the span's node stays
+        // out of the layout tree and the paragraph re-measures.
+        if (parent.Kind == ElementKind::Text)
+        {
+            VE_ASSERT(kind == ElementKind::Text && parent.Parent != nullptr &&
+                          parent.Parent->Kind != ElementKind::Text,
+                      "Gui::Document::Add: a Text holds only inline Text spans, one level deep");
+            MarkTextDirty(parent);
+            return child;
+        }
+
         // A Button, TextInput, or Image is a measured leaf until it takes a child, at which point it
         // becomes a container sized by its children like a Panel — a measured Yoga node cannot
-        // hold children. Text stays a hard leaf.
+        // hold children. A Text stays a measured leaf: its children are inline spans (above).
         if ((parent.Kind == ElementKind::Button || parent.Kind == ElementKind::TextInput ||
              parent.Kind == ElementKind::Image) &&
             YGNodeHasMeasureFunc(parentNode))
@@ -1497,7 +1522,8 @@ namespace Veng::Gui
         {
             const YGNodeRef parentNode = m_Yoga->Get(*parent);
             const YGNodeRef childNode = m_Yoga->Get(element);
-            if (parentNode != nullptr && childNode != nullptr)
+            // An inline span was never in the layout tree.
+            if (parentNode != nullptr && childNode != nullptr && parent->Kind != ElementKind::Text)
             {
                 YGNodeRemoveChild(parentNode, childNode);
             }
@@ -1514,6 +1540,10 @@ namespace Veng::Gui
         {
             MarkLayoutDirty(*parent, false);
             MarkPaintDirty(*parent);
+            if (parent->Kind == ElementKind::Text)
+            {
+                MarkTextDirty(*parent);
+            }
         }
     }
 
@@ -1524,15 +1554,7 @@ namespace Veng::Gui
             return;
         }
         element.Text.assign(text);
-        if (const YGNodeRef node = m_Yoga->Get(element);
-            node != nullptr && YGNodeHasMeasureFunc(node))
-        {
-            YGNodeMarkDirty(node);
-        }
-        // No layout input moved, but the path is marked so the solve knows where the text sits: a
-        // Table the element is a cell of re-measures its columns.
-        MarkLayoutDirty(element, false);
-        MarkPaintDirty(element);
+        MarkTextDirty(element);
     }
 
     void Document::SetVisible(Element& element, bool visible)
@@ -1544,6 +1566,11 @@ namespace Veng::Gui
         element.Visible = visible;
         MarkLayoutDirty(element, true);
         MarkPaintDirty(element);
+        // A hidden span leaves its paragraph's run.
+        if (IsInlineSpan(element))
+        {
+            MarkTextDirty(*element.Parent);
+        }
     }
 
     void Document::SetStyle(Element& element, const Style& style)
@@ -2532,6 +2559,11 @@ namespace Veng::Gui
     void Document::MarkPaintDirty(const Element& element)
     {
         element.Retained.PaintDirty = true;
+        // A span's glyphs are its paragraph's geometry.
+        if (IsInlineSpan(element))
+        {
+            element.Parent->Retained.PaintDirty = true;
+        }
         for (const Element* cursor = &element;
              cursor != nullptr && !cursor->Retained.SubtreePaintDirty; cursor = cursor->Parent)
         {
@@ -2795,6 +2827,11 @@ namespace Veng::Gui
         // its columns.
         MarkLayoutDirty(element, false);
         MarkPaintDirty(element);
+        // A span's run is part of its paragraph's, which is what is measured.
+        if (IsInlineSpan(element))
+        {
+            MarkTextDirty(*element.Parent);
+        }
     }
 
     const Font* Document::ResolveFont(const Element& element) const
@@ -2818,6 +2855,10 @@ namespace Veng::Gui
         if (element.ComputedStyle.Wrapping == TextWrap::NoWrap)
         {
             availableWidth.reset();
+        }
+        if (IsParagraph(element))
+        {
+            return MeasureParagraph(element, availableWidth);
         }
         // A TextInput is a line box: it holds one line of its typography open even with no value,
         // so the field reserves room for the run it paints at every value, empty included.
@@ -2874,7 +2915,7 @@ namespace Veng::Gui
         const auto matches = [&](const ShapedTextRun& cached)
         {
             return cached.Source == &font && cached.Size == size && cached.Width == width &&
-                   cached.Text == run;
+                   cached.SpanEnds.empty() && cached.Text == run;
         };
 
         // Most recent first: a hit in the second slot moves it to the front, so the two runs an
@@ -2899,7 +2940,119 @@ namespace Veng::Gui
         slot.Source = &font;
         slot.Size = size;
         slot.Width = width;
+        slot.SpanEnds.clear();
+        slot.SpanSizes.clear();
         slot.Shape = font.ShapeRun(DecodeUtf8(run), size, width);
+        retained.RunValid[0] = true;
+        return slot.Shape;
+    }
+
+    vector<Document::ParagraphSpan> Document::ParagraphSpansOf(const Element& paragraph)
+    {
+        vector<ParagraphSpan> spans;
+        const auto add = [&](const Element& source, const f32 opacity)
+        {
+            if (source.Text.empty())
+            {
+                return;
+            }
+            string cased;
+            const string_view run = RunOf(source, cased);
+            vec4 color = source.ComputedStyle.TextColor;
+            color.a *= opacity;
+            spans.push_back(ParagraphSpan{
+                .Run = string{run}, .Size = source.ComputedStyle.TextSize, .Color = color});
+        };
+        add(paragraph, 1.0f);
+        for (const Element* const span : paragraph.Children)
+        {
+            if (span->Kind == ElementKind::Text && span->Visible)
+            {
+                add(*span, span->ComputedStyle.Opacity);
+            }
+        }
+        return spans;
+    }
+
+    vec2 Document::MeasureParagraph(const Element& element,
+                                    const optional<f32> availableWidth) const
+    {
+        const vector<ParagraphSpan> spans = ParagraphSpansOf(element);
+        if (spans.empty())
+        {
+            return vec2(0.0f);
+        }
+        if (m_Measurer)
+        {
+            string whole;
+            for (const ParagraphSpan& span : spans)
+            {
+                whole += span.Run;
+            }
+            return m_Measurer(whole, element.ComputedStyle, availableWidth);
+        }
+        const Font* const font = ResolveFont(element);
+        return font != nullptr ? ShapeElementParagraph(element, spans, *font, availableWidth).Size
+                               : vec2(0.0f);
+    }
+
+    const ShapeResult& Document::ShapeElementParagraph(const Element& element,
+                                                       const std::span<const ParagraphSpan> spans,
+                                                       const Font& font,
+                                                       const optional<f32> width) const
+    {
+        string text;
+        vector<u32> ends;
+        vector<f32> sizes;
+        ends.reserve(spans.size());
+        sizes.reserve(spans.size());
+        for (const ParagraphSpan& span : spans)
+        {
+            text += span.Run;
+            ends.push_back(static_cast<u32>(text.size()));
+            sizes.push_back(span.Size);
+        }
+
+        ElementRetained& retained = element.Retained;
+        const auto matches = [&](const ShapedTextRun& cached)
+        {
+            return cached.Source == &font && cached.Width == width && cached.Text == text &&
+                   cached.SpanEnds == ends && cached.SpanSizes == sizes;
+        };
+        if (retained.RunValid[0] && matches(retained.Runs[0]))
+        {
+            return retained.Runs[0].Shape;
+        }
+        if (retained.RunValid[1] && matches(retained.Runs[1]))
+        {
+            std::swap(retained.Runs[0], retained.Runs[1]);
+            return retained.Runs[0].Shape;
+        }
+
+        VE_PROFILE_SCOPE("Gui/ShapeText");
+        Counters::CountShapedRun();
+        ++m_Stats.ShapedRuns;
+        // Each span's codepoints are decoded into one buffer the shaping spans view.
+        vector<vector<u32>> codepoints;
+        codepoints.reserve(spans.size());
+        vector<ShapeSpan> shapes;
+        shapes.reserve(spans.size());
+        for (const ParagraphSpan& span : spans)
+        {
+            codepoints.push_back(DecodeUtf8(span.Run));
+            shapes.push_back(ShapeSpan{.Codepoints = codepoints.back(), .PixelSize = span.Size});
+        }
+
+        std::swap(retained.Runs[0], retained.Runs[1]);
+        retained.RunValid[1] = retained.RunValid[0];
+        ShapedTextRun& slot = retained.Runs[0];
+        slot.Text = std::move(text);
+        slot.Source = &font;
+        slot.Size = 0.0f;
+        slot.Width = width;
+        slot.SpanEnds = std::move(ends);
+        slot.SpanSizes = std::move(sizes);
+        slot.Shape = font.ShapeSpans(shapes, width);
         retained.RunValid[0] = true;
         return slot.Shape;
     }
@@ -3994,6 +4147,19 @@ namespace Veng::Gui
             MarkPaintDirty(element);
         }
 
+        // A paragraph's spans are runs of its own box: they stand where it stands, and the layout
+        // tree holds nothing of them to read.
+        if (element.Kind == ElementKind::Text)
+        {
+            for (Element* const span : element.Children)
+            {
+                span->Retained.LayoutPath = false;
+                span->Retained.LaidOut = true;
+                span->Layout = element.Layout;
+            }
+            return;
+        }
+
         // A scrollable element shifts its content by its scroll offset, so the child origin is its
         // top-left minus the offset — the content slides under the clip it paints with. The shift
         // is recorded beside it, because the rects the children are about to take are the only
@@ -4606,7 +4772,8 @@ namespace Veng::Gui
         BuildWidget(element, list, opacity);
 
         const Font* const font = ResolveFont(element);
-        if (!element.Text.empty() && font != nullptr &&
+        const bool paragraph = IsParagraph(element);
+        if ((paragraph || !element.Text.empty()) && font != nullptr &&
             (element.Kind == ElementKind::Text || element.Kind == ElementKind::Button ||
              element.Kind == ElementKind::Dropdown))
         {
@@ -4646,7 +4813,37 @@ namespace Veng::Gui
                                            ? optional<f32>{rect.Size.x - 2.0f * border -
                                                            style.Padding.Left - style.Padding.Right}
                                            : optional<f32>{};
-            if (m_Measurer)
+            if (paragraph)
+            {
+                // Each span keeps its own colour and size; a paragraph flows them as one run.
+                const vector<ParagraphSpan> spans = ParagraphSpansOf(element);
+                vector<vec4> colors;
+                colors.reserve(spans.size());
+                for (const ParagraphSpan& span : spans)
+                {
+                    colors.emplace_back(vec3(span.Color), span.Color.a * opacity);
+                }
+                if (m_Measurer)
+                {
+                    vector<vector<u32>> codepoints;
+                    codepoints.reserve(spans.size());
+                    vector<ShapeSpan> shapes;
+                    shapes.reserve(spans.size());
+                    for (const ParagraphSpan& span : spans)
+                    {
+                        codepoints.push_back(DecodeUtf8(span.Run));
+                        shapes.push_back(
+                            ShapeSpan{.Codepoints = codepoints.back(), .PixelSize = span.Size});
+                    }
+                    list.Text(origin, *font, font->ShapeSpans(shapes, wrap), colors);
+                }
+                else if (!spans.empty())
+                {
+                    list.Text(origin, *font, ShapeElementParagraph(element, spans, *font, wrap),
+                              colors);
+                }
+            }
+            else if (m_Measurer)
             {
                 list.Text(origin, *font, run, style.TextSize, textColor, wrap);
             }
@@ -4657,7 +4854,11 @@ namespace Veng::Gui
             }
         }
 
-        return OpenedPaint{.Opacity = opacity, .Rotated = rotated, .Clipped = clip};
+        // A Text's children are its paragraph's spans, painted above as runs of its own.
+        return OpenedPaint{.Opacity = opacity,
+                           .Rotated = rotated,
+                           .Clipped = clip,
+                           .Children = element.Kind != ElementKind::Text};
     }
 
     void Document::CloseElement(const OpenedPaint& opened, DrawList& list)
@@ -4952,7 +5153,9 @@ namespace Veng::Gui
 
         // Children paint over the parent (and later children over earlier ones), so the last child
         // under the point is the topmost — walk children back-to-front for front-to-back hit order.
-        for (auto it = element.Children.rbegin(); it != element.Children.rend(); ++it)
+        // A paragraph's spans have no box of their own, so the paragraph is the target.
+        for (auto it = element.Children.rbegin();
+             element.Kind != ElementKind::Text && it != element.Children.rend(); ++it)
         {
             if (Element* hit = HitTestElement(**it, point, childClip))
             {

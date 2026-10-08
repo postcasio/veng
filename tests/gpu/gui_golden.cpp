@@ -281,6 +281,84 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 }
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui typography: a paragraph paints each span in its own colour and size")
+{
+    // A Text holding Text spans is one box whose spans flow as one run: each span keeps its own
+    // style's colour and size, and the spans draw nothing of their own.
+    const path fixtureDir = path(GPU_COOKER_FIXTURE_DIR);
+    const path packJson = fixtureDir / "font_pack.json";
+    const path outArchive = Veng::TestSupport::TempDir() / "veng_gpu_gui_paragraph.vengpack";
+
+    Cook::Cooker cooker;
+    Cook::RegisterBuiltinImporters(cooker);
+    REQUIRE(Veng::TestSupport::CookCached(cooker, packJson, outArchive).has_value());
+
+    Text::GlyphSource glyphSource;
+    Text::GlyphAtlas glyphAtlas(Context, glyphSource);
+    AssetManager assets(Context, Tasks, Types);
+    assets.SetGlyphSystems(&glyphSource, &glyphAtlas);
+    REQUIRE(assets.Mount(outArchive).has_value());
+    const AssetResult<AssetHandle<Font>> fontHandle = assets.LoadSync<Font>(FontId);
+    REQUIRE(fontHandle.has_value());
+
+    Gui::Document document;
+    Gui::Style rootStyle;
+    rootStyle.TextFont = *fontHandle;
+    rootStyle.Direction = Gui::FlexDirection::Column;
+    rootStyle.AlignItems = Gui::Align::FlexStart;
+    document.SetStyle(document.Root(), rootStyle);
+
+    constexpr vec4 LeadColor{1.0f, 0.0f, 0.0f, 1.0f};
+    constexpr vec4 BodyColor{0.0f, 1.0f, 0.0f, 1.0f};
+    Gui::Element& paragraph = document.Add(document.Root(), Gui::ElementKind::Text);
+    Gui::Element& lead = document.Add(paragraph, Gui::ElementKind::Text);
+    Gui::Element& body = document.Add(paragraph, Gui::ElementKind::Text);
+    Gui::Style leadStyle;
+    leadStyle.TextSize = 12.0f;
+    leadStyle.TextColor = LeadColor;
+    leadStyle.Casing = Gui::TextTransform::Uppercase;
+    document.SetStyle(lead, leadStyle);
+    Gui::Style bodyStyle;
+    bodyStyle.TextSize = 24.0f;
+    bodyStyle.TextColor = BodyColor;
+    document.SetStyle(body, bodyStyle);
+    document.SetText(lead, "dock");
+    document.SetText(body, " AV");
+    document.Update(0.0f);
+    document.Solve(vec2{400.0f, 200.0f});
+
+    // One box, as tall as the larger span asks.
+    CHECK(paragraph.Layout.Size.x > 0.0f);
+    CHECK(paragraph.Layout.Size.y >= 24.0f);
+
+    Gui::DrawList painted;
+    document.Build(painted);
+    usize leadVertices = 0;
+    usize bodyVertices = 0;
+    f32 leadHeight = 0.0f;
+    f32 bodyHeight = 0.0f;
+    const vector<Gui::GuiVertex>& vertices = painted.GetVertices();
+    for (usize quad = 0; quad + 3 < vertices.size(); quad += 4)
+    {
+        const f32 height = vertices[quad + 2].Position.y - vertices[quad].Position.y;
+        if (vertices[quad].Color == LeadColor)
+        {
+            leadVertices += 4;
+            leadHeight = std::max(leadHeight, height);
+        }
+        else if (vertices[quad].Color == BodyColor)
+        {
+            bodyVertices += 4;
+            bodyHeight = std::max(bodyHeight, height);
+        }
+    }
+    // "DOCK" is four glyphs and "AV" two; the space draws none.
+    CHECK(leadVertices == 16);
+    CHECK(bodyVertices == 8);
+    CHECK(bodyHeight > leadHeight);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "gui typography: a text field inherits its font and reserves a line for it")
 {
     // Typography inherits, so a control needs no font of its own: the font declared once on an

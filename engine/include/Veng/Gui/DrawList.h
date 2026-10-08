@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <span>
 
 #include <Veng/Veng.h>
 #include <Veng/Renderer/BindlessRegistry.h>
@@ -10,6 +11,7 @@ namespace Veng
     class Font;
     class MaterialInstance;
     struct ShapeResult;
+    struct ShapedGlyph;
 }
 
 /// @brief Device-free UI primitives: the draw list, its runs, and the shared value types.
@@ -608,6 +610,19 @@ namespace Veng::Gui
         /// @param color      Text tint, linear straight-alpha RGBA.
         void Text(vec2 pen, const Font& font, const ShapeResult& shaped, f32 pixelSize, vec4 color);
 
+        /// @brief Appends a paragraph shaped through Font::ShapeSpans, each span in its own colour.
+        ///
+        /// Draws as the single-run overload does — nothing is shaped again, each glyph is only
+        /// ensured resident — except that each glyph is placed at the size it was shaped at
+        /// (ShapedGlyph::PixelSize) and tinted by the colour of its span (ShapedGlyph::Span). A glyph
+        /// whose span has no colour is skipped.
+        /// @param pen     Top-left origin of the shaped block, in framebuffer pixels.
+        /// @param font    The resident font the paragraph was shaped through.
+        /// @param shaped  The shaped paragraph.
+        /// @param colors  Each span's tint, linear straight-alpha RGBA, indexed by span.
+        void Text(vec2 pen, const Font& font, const ShapeResult& shaped,
+                  std::span<const vec4> colors);
+
         /// @brief Appends another draw list's geometry with every vertex position remapped.
         ///
         /// Copies @p src's vertices (each position run through @p project), indices, runs, and
@@ -793,6 +808,15 @@ namespace Veng::Gui
         void PushQuad(const std::array<vec2, 4>& corners, const std::array<vec2, 4>& uvs,
                       vec4 color, vec2 rectHalf, vec2 center, vec4 params, u32 selector = 0,
                       vec4 shadow = vec4(0.0f), vec4 uvWrap = vec4(0.0f));
+
+        /// @brief Ensures one shaped glyph resident and emits its quad, recording it when asked.
+        /// @param pen        Top-left origin of the shaped block, in framebuffer pixels.
+        /// @param font       The resident font the glyph was shaped through.
+        /// @param shaped     The shaped glyph.
+        /// @param pixelSize  The em size it draws at, in pixels.
+        /// @param color      Its tint, linear straight-alpha RGBA.
+        void EmitGlyph(vec2 pen, const Font& font, const ShapedGlyph& shaped, f32 pixelSize,
+                       vec4 color);
 
         /// @brief Emits one textured quad, opening a Shape run keyed by its texture.
         /// @param radii   Per-corner radius; the shape path uses the uniform radius (zero for square).

@@ -249,3 +249,58 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
 
     std::filesystem::remove(archive);
 }
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "shape run: a paragraph of spans flows as one run, each line as tall as it asks")
+{
+    const path archive = CookSingleFont("spans", BaseFontId);
+
+    GlyphSource source;
+    GlyphAtlas atlas(Context, source);
+    AssetManager assets(Context, Tasks, Types);
+    assets.SetGlyphSystems(&source, &atlas);
+    REQUIRE(assets.Mount(archive).has_value());
+    const AssetResult<AssetHandle<Font>> handle = assets.LoadSync<Font>(BaseFontId);
+    REQUIRE(handle.has_value());
+    const Font& font = *handle->Get();
+
+    // A large lead and a small body wrapping under it within the width.
+    constexpr f32 Large = 32.0f;
+    constexpr f32 Small = 12.0f;
+    const std::array<u32, 3> lead = {'W', 'a', 'x'};
+    const std::array<u32, 24> body = {' ', 'f', 'l', 'y', ' ', 'o', 'n', ' ', 'a', 'n', 'd', ' ',
+                                      'o', 'n', ' ', 'a', 'n', 'd', ' ', 'o', 'n', ' ', 'u', 'p'};
+    const std::array<ShapeSpan, 2> paragraph{ShapeSpan{.Codepoints = lead, .PixelSize = Large},
+                                             ShapeSpan{.Codepoints = body, .PixelSize = Small}};
+    const ShapeResult shaped = font.ShapeSpans(paragraph, 120.0f);
+    REQUIRE(shaped.Lines.size() >= 2);
+
+    // Each glyph names its span and its size, in reading order.
+    bool ordered = true;
+    bool sized = true;
+    for (usize i = 0; i < shaped.Glyphs.size(); ++i)
+    {
+        const ShapedGlyph& glyph = shaped.Glyphs[i];
+        ordered = ordered && (i == 0 || glyph.Span >= shaped.Glyphs[i - 1].Span);
+        sized = sized && glyph.PixelSize == paragraph[glyph.Span].PixelSize;
+    }
+    CHECK(ordered);
+    CHECK(sized);
+
+    // The body runs on beside the lead on its first line and wraps under it.
+    const ShapedLine& first = shaped.Lines.front();
+    const ShapedLine& last = shaped.Lines.back();
+    CHECK(shaped.Glyphs[first.Start + first.Count - 1].Span == 1);
+    CHECK(shaped.Glyphs[last.Start].Span == 1);
+
+    // The lead's line sits at the large ascender; a line of body alone steps by the small line
+    // height and is shorter than a line of the lead.
+    CHECK(first.Baseline == doctest::Approx(font.GetAscender() * Large));
+    const ShapedLine& before = shaped.Lines[shaped.Lines.size() - 2];
+    if (shaped.Lines.size() >= 3)
+    {
+        CHECK(last.Baseline - before.Baseline == doctest::Approx(font.GetLineHeight() * Small));
+    }
+    CHECK(shaped.Size.y == doctest::Approx(last.Baseline - (font.GetDescender() * Small)));
+    CHECK(shaped.Size.y < static_cast<f32>(shaped.Lines.size()) * font.GetLineHeight() * Large);
+}

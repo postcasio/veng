@@ -293,10 +293,14 @@ extern "C"
 /// Version 72 grows StoreFamily with FlushIntervalSeconds and makes Store::Flush return nothing, its
 /// write moving to a background job. A module registers families in code and flushes its stores, so
 /// a stale module passes a family short and reads a result Flush no longer returns.
+/// Version 73 grows ShapedGlyph with the size and span it was shaped at, and the shaped-run cache
+/// every Gui::Element carries with each run's span ends and sizes, so a paragraph of styled spans
+/// shapes as one run. A module's drivers read elements and shaped runs, so a stale module reads
+/// every Element field after the cache, and every glyph past the first, at a shifted offset.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 72u
+#define VENG_MODULE_ABI_VERSION 73u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

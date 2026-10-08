@@ -688,58 +688,80 @@ namespace Veng::Gui
     void DrawList::Text(const vec2 pen, const Font& font, const ShapeResult& shaped,
                         const f32 pixelSize, const vec4 color)
     {
-        // The atlas owns the one shared sampler and the single distance-range constant both field
-        // types encode. A font loaded without the shared glyph systems (a headless manager) has no
-        // atlas, so its text draws nothing.
-        const Text::GlyphAtlas* const atlas = font.GetGlyphAtlas();
-        if (atlas == nullptr || shaped.Glyphs.empty())
+        // A font loaded without the shared glyph systems (a headless manager) has no atlas, so its
+        // text draws nothing.
+        if (font.GetGlyphAtlas() == nullptr)
         {
             return;
         }
-        const f32 distanceRange = atlas->GetDistanceRange();
-        const Renderer::SamplerHandle sampler = atlas->GetSamplerHandle();
-
         for (const ShapedGlyph& shapedGlyph : shaped.Glyphs)
         {
-            // Ensuring the glyph pins it in the shared atlas for the frame and names the slot it
-            // samples; the rendition's bounds are its own (padded for the distance field), so the
-            // quad is placed from them about the pen the shaping recorded.
-            const FontGlyph glyph = font.GetGlyph(shapedGlyph.Codepoint, pixelSize);
-            if (m_RecordsGlyphs)
-            {
-                m_GlyphUses.push_back(GlyphUse{.Source = &font,
-                                               .Codepoint = shapedGlyph.Codepoint,
-                                               .PixelSize = pixelSize,
-                                               .Page = glyph.Page.Index,
-                                               .UvMin = glyph.UvMin});
-            }
-
-            // A glyph not resident this frame (the atlas over capacity) carries an invalid page and
-            // no quad; its advance already sized the run, so skipping it leaves the layout intact.
-            if (!glyph.Page.IsValid() || glyph.PlaneMax.x <= glyph.PlaneMin.x ||
-                glyph.PlaneMax.y <= glyph.PlaneMin.y)
-            {
-                continue;
-            }
-
-            // The page handle and field type ride the existing params vec4 — no vertex-format change.
-            // params.z is the per-glyph atlas page, so a run spanning pages splits on the page change
-            // (EnsureRun keys on the texture index); params.y selects the fragment's field-type
-            // coverage branch (0 median-of-rgb Msdf, 1 red Sdf).
-            EnsureRun(GuiPipeline::Msdf, glyph.Page.Index);
-            const vec4 params{distanceRange, static_cast<f32>(static_cast<u32>(glyph.FieldType)),
-                              static_cast<f32>(glyph.Page.Index), static_cast<f32>(sampler.Index)};
-
-            // Plane bounds are baseline-relative with y up, so the quad's top is the baseline less
-            // the upper bound and its bottom the baseline less the lower one.
-            const vec2 origin = pen + shapedGlyph.Pen;
-            const vec2 min = origin + vec2(glyph.PlaneMin.x, -glyph.PlaneMax.y) * pixelSize;
-            const vec2 max = origin + vec2(glyph.PlaneMax.x, -glyph.PlaneMin.y) * pixelSize;
-            const std::array<vec2, 4> corners = {min, vec2(max.x, min.y), max, vec2(min.x, max.y)};
-            const std::array<vec2, 4> uvs = {glyph.UvMin, vec2(glyph.UvMax.x, glyph.UvMin.y),
-                                             glyph.UvMax, vec2(glyph.UvMin.x, glyph.UvMax.y)};
-            PushQuad(corners, uvs, color, vec2(0.0f), (min + max) * 0.5f, params);
+            EmitGlyph(pen, font, shapedGlyph, pixelSize, color);
         }
+    }
+
+    void DrawList::Text(const vec2 pen, const Font& font, const ShapeResult& shaped,
+                        const std::span<const vec4> colors)
+    {
+        if (font.GetGlyphAtlas() == nullptr)
+        {
+            return;
+        }
+        for (const ShapedGlyph& shapedGlyph : shaped.Glyphs)
+        {
+            if (shapedGlyph.Span < colors.size())
+            {
+                EmitGlyph(pen, font, shapedGlyph, shapedGlyph.PixelSize, colors[shapedGlyph.Span]);
+            }
+        }
+    }
+
+    void DrawList::EmitGlyph(const vec2 pen, const Font& font, const ShapedGlyph& shapedGlyph,
+                             const f32 pixelSize, const vec4 color)
+    {
+        // The atlas owns the one shared sampler and the single distance-range constant both field
+        // types encode.
+        const Text::GlyphAtlas& atlas = *font.GetGlyphAtlas();
+
+        // Ensuring the glyph pins it in the shared atlas for the frame and names the slot it
+        // samples; the rendition's bounds are its own (padded for the distance field), so the quad
+        // is placed from them about the pen the shaping recorded.
+        const FontGlyph glyph = font.GetGlyph(shapedGlyph.Codepoint, pixelSize);
+        if (m_RecordsGlyphs)
+        {
+            m_GlyphUses.push_back(GlyphUse{.Source = &font,
+                                           .Codepoint = shapedGlyph.Codepoint,
+                                           .PixelSize = pixelSize,
+                                           .Page = glyph.Page.Index,
+                                           .UvMin = glyph.UvMin});
+        }
+
+        // A glyph not resident this frame (the atlas over capacity) carries an invalid page and no
+        // quad; its advance already sized the run, so skipping it leaves the layout intact.
+        if (!glyph.Page.IsValid() || glyph.PlaneMax.x <= glyph.PlaneMin.x ||
+            glyph.PlaneMax.y <= glyph.PlaneMin.y)
+        {
+            return;
+        }
+
+        // The page handle and field type ride the existing params vec4 — no vertex-format change.
+        // params.z is the per-glyph atlas page, so a run spanning pages splits on the page change
+        // (EnsureRun keys on the texture index); params.y selects the fragment's field-type coverage
+        // branch (0 median-of-rgb Msdf, 1 red Sdf).
+        EnsureRun(GuiPipeline::Msdf, glyph.Page.Index);
+        const vec4 params{
+            atlas.GetDistanceRange(), static_cast<f32>(static_cast<u32>(glyph.FieldType)),
+            static_cast<f32>(glyph.Page.Index), static_cast<f32>(atlas.GetSamplerHandle().Index)};
+
+        // Plane bounds are baseline-relative with y up, so the quad's top is the baseline less the
+        // upper bound and its bottom the baseline less the lower one.
+        const vec2 origin = pen + shapedGlyph.Pen;
+        const vec2 min = origin + vec2(glyph.PlaneMin.x, -glyph.PlaneMax.y) * pixelSize;
+        const vec2 max = origin + vec2(glyph.PlaneMax.x, -glyph.PlaneMin.y) * pixelSize;
+        const std::array<vec2, 4> corners = {min, vec2(max.x, min.y), max, vec2(min.x, max.y)};
+        const std::array<vec2, 4> uvs = {glyph.UvMin, vec2(glyph.UvMax.x, glyph.UvMin.y),
+                                         glyph.UvMax, vec2(glyph.UvMin.x, glyph.UvMax.y)};
+        PushQuad(corners, uvs, color, vec2(0.0f), (min + max) * 0.5f, params);
     }
 
     void DrawList::PushClip(const Rect& rect)

@@ -373,6 +373,10 @@ namespace Veng::Gui
         f32 Size = 0.0f;
         /// @brief The width it wrapped within, or nullopt when it did not wrap.
         optional<f32> Width;
+        /// @brief Each span's end as a byte offset into Text, for a paragraph; empty for one run.
+        vector<u32> SpanEnds;
+        /// @brief Each span's em size in pixels, index-aligned with SpanEnds.
+        vector<f32> SpanSizes;
         /// @brief The shaped glyphs, lines, and bounds.
         ShapeResult Shape;
     };

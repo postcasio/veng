@@ -786,7 +786,10 @@ namespace Veng::Gui
         ///
         /// Uses the installed text measurer when one is set, otherwise shapes the element's text
         /// through its style's resident font. Returns a zero size when neither a measurer nor a
-        /// loaded font is available. This is the device-free sizing the layout leaf calls.
+        /// loaded font is available. This is the device-free sizing the layout leaf calls. A
+        /// paragraph — a Text holding inline Text spans — measures its spans shaped as one run
+        /// (Font::ShapeSpans); an installed measurer sees their concatenation in the paragraph's
+        /// style.
         /// @param element         The element whose text to measure.
         /// @param availableWidth  The width to wrap within, or nullopt for an unconstrained measure.
         /// @return The measured text block size, in pixels.
@@ -1173,6 +1176,41 @@ namespace Veng::Gui
         [[nodiscard]] const ShapeResult& ShapeElementRun(const Element& element, string_view run,
                                                          const Font& font, f32 size,
                                                          optional<f32> width) const;
+
+        /// @brief One span of a paragraph, as it shapes and paints.
+        struct ParagraphSpan
+        {
+            /// @brief The span's text after its own case transform.
+            string Run;
+            /// @brief The em size it shapes at, in pixels: its own style's text size.
+            f32 Size = 0.0f;
+            /// @brief Its tint: its own style's text colour, its opacity folded into the alpha.
+            vec4 Color{1.0f};
+        };
+
+        /// @brief A paragraph's spans in reading order: its own text, then each visible inline span
+        ///        holding text. Empty spans are left out.
+        /// @param paragraph  A Text element.
+        [[nodiscard]] static vector<ParagraphSpan> ParagraphSpansOf(const Element& paragraph);
+
+        /// @brief Measures a paragraph's spans shaped as one run (see MeasureElementText).
+        /// @param element         The paragraph.
+        /// @param availableWidth  The width to wrap within, or nullopt for an unconstrained measure.
+        /// @return The measured block size, in pixels.
+        [[nodiscard]] vec2 MeasureParagraph(const Element& element,
+                                            optional<f32> availableWidth) const;
+
+        /// @brief Returns a paragraph's spans shaped as one run, from the element's cache when they
+        ///        were shaped before.
+        /// @param element  The paragraph owning the cache.
+        /// @param spans    Its spans (ParagraphSpansOf).
+        /// @param font     The font to shape through: the paragraph's.
+        /// @param width    The width to wrap within, or nullopt.
+        /// @return The shaped paragraph, valid until the element's next shaped-run request.
+        [[nodiscard]] const ShapeResult& ShapeElementParagraph(const Element& element,
+                                                               std::span<const ParagraphSpan> spans,
+                                                               const Font& font,
+                                                               optional<f32> width) const;
 
         /// @brief Emits a DropdownArrow's downward chevron — two rotated bars in its fill color.
         /// @param element  The DropdownArrow part element, positioned by LayoutDropdownParts.
