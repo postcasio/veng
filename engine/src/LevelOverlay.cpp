@@ -47,16 +47,6 @@ namespace Veng
             World* const world = app.GetWorldRunner().ResolveWorld(seat.World);
             return world != nullptr ? &world->GetScene() : nullptr;
         }
-
-        SystemContext OverlaySystemContext(Application& app)
-        {
-            return SystemContext{.Assets = app.GetAssetManager(),
-                                 .Input = app.GetInput(),
-                                 .Tasks = app.GetTaskSystem(),
-                                 .Audio = app.GetAudioEngine(),
-                                 .Haptics = app.GetHaptics(),
-                                 .Localization = app.GetLocalization()};
-        }
     }
 
     LevelOverlay LevelOverlay::Open(Application& app, const LevelOverlayInfo& info)
@@ -187,7 +177,7 @@ namespace Veng
         }
 
         // 5. Start the simulation — each system's OnStart fires with the populated scene.
-        scene.StartSimulation(OverlaySystemContext(app));
+        runner.StartWorld(overlay.m_World);
 
         return overlay;
     }
@@ -235,11 +225,6 @@ namespace Veng
         Application& app = *m_App;
         WorldRunner& runner = app.GetWorldRunner();
         InputRouter& router = app.GetInputRouter();
-        Scene& scene = runner.ResolveWorld(m_World)->GetScene();
-
-        // Stop the simulation (each system's OnStop) while its scene is still live; CloseWorld below
-        // only drops the world, it does not run OnStop.
-        scene.StopSimulation(OverlaySystemContext(app));
 
         // Unwind the policy LIFO.
         // 1. Release the covered-world pause (refcount decrement; a no-op when none was held).
@@ -260,7 +245,7 @@ namespace Veng
         // 4. Drop the viewport (self-unregisters from the compositor drive-list).
         m_Viewport.reset();
 
-        // 5. Close the owned world (drops its scene).
+        // 5. Close the owned world: its systems stop (OnStop) and its scene drops.
         runner.CloseWorld(m_World);
         m_World = {};
         m_App = nullptr;

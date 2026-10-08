@@ -22,6 +22,7 @@
 #include <Veng/Scene/Movement.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSystem.h>
+#include "support/TestServices.h"
 
 using namespace Veng;
 
@@ -38,26 +39,6 @@ namespace
         RegisterBuiltinTypes(registry);
         return registry;
     }
-
-    // A SystemContext over a real headless Input (all-zeros) and never-dereferenced asset storage —
-    // the behaviour tick reads only Delta/Tick/authority/Debug from it.
-    struct ContextStorage
-    {
-        Input HeadlessInput{nullptr};
-        alignas(16) unsigned char AssetsBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
-
-        SystemContext Make()
-        {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = HeadlessInput,
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-            };
-        }
-    };
 
     // A leaf that returns a fixed status and tallies its enter/tick/exit calls, so a composite's
     // routing over it is observable.
@@ -169,7 +150,7 @@ namespace
         TypeRegistry Registry = MakeRegistry();
         Unique<Scene> World = Scene::Create(Registry);
         Entity Self = World->CreateEntity();
-        ContextStorage Storage;
+        TestSupport::TestServices Services;
 
         Status Tick(const Ref<BehaviorTree>& tree, vector<NodeSlot>& slots, const u64 seed,
                     const f32 delta)
@@ -179,7 +160,7 @@ namespace
                 slots.assign(tree->NodeCount(), NodeSlot{});
             }
             Rng random(seed);
-            const SystemContext system = Storage.Make();
+            const SystemContext system = Services.Make();
             const BehaviorContext context{
                 .Scene = *World,
                 .Agent = Self,
@@ -197,9 +178,9 @@ namespace
 TEST_CASE("Sequence stops at the first failure and never ticks past it")
 {
     Harness harness;
-    auto a = CreateRef<CountingTask>();
-    auto b = CreateRef<CountingTask>();
-    auto c = CreateRef<CountingTask>();
+    const auto a = CreateRef<CountingTask>();
+    const auto b = CreateRef<CountingTask>();
+    const auto c = CreateRef<CountingTask>();
     a->Result = Status::Success;
     b->Result = Status::Failure;
     c->Result = Status::Success;
@@ -217,8 +198,8 @@ TEST_CASE("Sequence stops at the first failure and never ticks past it")
 TEST_CASE("Sequence resumes a Running child at the same child next tick")
 {
     Harness harness;
-    auto a = CreateRef<CountingTask>();
-    auto b = CreateRef<ScriptTask>();
+    const auto a = CreateRef<CountingTask>();
+    const auto b = CreateRef<ScriptTask>();
     a->Result = Status::Success;
     b->Script = {Status::Running, Status::Running, Status::Success};
 
@@ -237,9 +218,9 @@ TEST_CASE("Sequence resumes a Running child at the same child next tick")
 TEST_CASE("Selector stops at the first success and mirrors Sequence")
 {
     Harness harness;
-    auto a = CreateRef<CountingTask>();
-    auto b = CreateRef<CountingTask>();
-    auto c = CreateRef<CountingTask>();
+    const auto a = CreateRef<CountingTask>();
+    const auto b = CreateRef<CountingTask>();
+    const auto c = CreateRef<CountingTask>();
     a->Result = Status::Failure;
     b->Result = Status::Success;
     c->Result = Status::Success;
@@ -260,8 +241,8 @@ TEST_CASE("Parallel ticks every child and succeeds on all, fails on any")
 
     SUBCASE("succeeds only once every child has")
     {
-        auto a = CreateRef<CountingTask>();
-        auto b = CreateRef<ScriptTask>();
+        const auto a = CreateRef<CountingTask>();
+        const auto b = CreateRef<ScriptTask>();
         a->Result = Status::Success;
         b->Script = {Status::Running, Status::Running, Status::Success};
 
@@ -277,8 +258,8 @@ TEST_CASE("Parallel ticks every child and succeeds on all, fails on any")
 
     SUBCASE("fails as soon as any child fails")
     {
-        auto a = CreateRef<CountingTask>();
-        auto b = CreateRef<CountingTask>();
+        const auto a = CreateRef<CountingTask>();
+        const auto b = CreateRef<CountingTask>();
         a->Result = Status::Success;
         b->Result = Status::Failure;
 
@@ -293,7 +274,7 @@ TEST_CASE("Parallel ticks every child and succeeds on all, fails on any")
 TEST_CASE("Inverter swaps Success and Failure and passes Running through")
 {
     Harness harness;
-    auto child = CreateRef<CountingTask>();
+    const auto child = CreateRef<CountingTask>();
     const Ref<BehaviorTree> tree = BehaviorTreeBuilder().Inverter().Leaf(child).Build();
 
     vector<NodeSlot> slots;
@@ -308,7 +289,7 @@ TEST_CASE("Inverter swaps Success and Failure and passes Running through")
 TEST_CASE("Succeeder maps any finish to Success")
 {
     Harness harness;
-    auto child = CreateRef<CountingTask>();
+    const auto child = CreateRef<CountingTask>();
     const Ref<BehaviorTree> tree = BehaviorTreeBuilder().Succeeder().Leaf(child).Build();
 
     vector<NodeSlot> slots;
@@ -321,7 +302,7 @@ TEST_CASE("Succeeder maps any finish to Success")
 TEST_CASE("Repeat re-runs its child a fixed number of times, then succeeds")
 {
     Harness harness;
-    auto child = CreateRef<CountingTask>();
+    const auto child = CreateRef<CountingTask>();
     child->Result = Status::Success;
     const Ref<BehaviorTree> tree = BehaviorTreeBuilder().Repeat(3).Leaf(child).Build();
 
@@ -335,7 +316,7 @@ TEST_CASE("Repeat re-runs its child a fixed number of times, then succeeds")
 TEST_CASE("Until repeats while its child returns the watched status")
 {
     Harness harness;
-    auto child = CreateRef<ScriptTask>();
+    const auto child = CreateRef<ScriptTask>();
     child->Script = {Status::Failure, Status::Failure, Status::Success};
     // Repeat while Failure — a retry-until-success guard.
     const Ref<BehaviorTree> tree = BehaviorTreeBuilder().Until(Status::Failure).Leaf(child).Build();
@@ -349,7 +330,7 @@ TEST_CASE("Until repeats while its child returns the watched status")
 TEST_CASE("Cooldown blocks its child for the cooldown after it succeeds")
 {
     Harness harness;
-    auto child = CreateRef<CountingTask>();
+    const auto child = CreateRef<CountingTask>();
     child->Result = Status::Success;
     const Ref<BehaviorTree> tree = BehaviorTreeBuilder().Cooldown(1.0f).Leaf(child).Build();
 
@@ -429,7 +410,7 @@ TEST_CASE("WaitRandom draws inside its bounds, reproducibly per seed")
 TEST_CASE("Two agents on one tree keep independent slots")
 {
     Harness harness;
-    auto child = CreateRef<CountingTask>();
+    const auto child = CreateRef<CountingTask>();
     child->Result = Status::Success;
     // A forever Repeat counts one completed iteration per tick into its slot.
     const Ref<BehaviorTree> tree = BehaviorTreeBuilder().Repeat().Leaf(child).Build();
@@ -468,7 +449,7 @@ TEST_CASE("The AI arm: a BehaviorAgent's leaf drives its possessed pawn through 
     scene->Add<Intent>(control, Intent{.Move = vec3(0.0f, 0.0f, 1.0f)});
     scene->Add<Mover>(control, Mover{.MoveSpeed = 2.0f, .TurnSpeed = 1.0f});
 
-    auto move = CreateRef<SetMoveTask>();
+    const auto move = CreateRef<SetMoveTask>();
     move->Move = vec3(0.0f, 0.0f, 1.0f);
     const Ref<BehaviorTree> tree = BehaviorTreeBuilder().Leaf(move).Build();
 
@@ -478,10 +459,10 @@ TEST_CASE("The AI arm: a BehaviorAgent's leaf drives its possessed pawn through 
 
     BehaviorSystem behavior;
     MovementSystem movement;
-    ContextStorage storage;
+    TestSupport::TestServices services;
 
-    behavior.OnUpdate(*scene, 1.0f, storage.Make());
-    movement.OnUpdate(*scene, 1.0f, storage.Make());
+    behavior.OnUpdate(*scene, 1.0f, services.Make());
+    movement.OnUpdate(*scene, 1.0f, services.Make());
 
     // The agent wrote the pawn's Intent; the movement system integrated it identically to the raw
     // producer: (0,0,1) at speed 2 over 1 s.
@@ -499,17 +480,17 @@ TEST_CASE("An agent with no Possesses acts on itself")
     scene->Add<Intent>(agent, Intent{});
     scene->Add<Mover>(agent, Mover{.MoveSpeed = 3.0f, .TurnSpeed = 1.0f});
 
-    auto move = CreateRef<SetMoveTask>();
+    const auto move = CreateRef<SetMoveTask>();
     move->Move = vec3(1.0f, 0.0f, 0.0f);
     const Ref<BehaviorTree> tree = BehaviorTreeBuilder().Leaf(move).Build();
     scene->Add<BehaviorAgent>(agent, BehaviorAgent{.Tree = tree, .Seed = 1});
 
     BehaviorSystem behavior;
     MovementSystem movement;
-    ContextStorage storage;
+    TestSupport::TestServices services;
 
-    behavior.OnUpdate(*scene, 1.0f, storage.Make());
-    movement.OnUpdate(*scene, 1.0f, storage.Make());
+    behavior.OnUpdate(*scene, 1.0f, services.Make());
+    movement.OnUpdate(*scene, 1.0f, services.Make());
 
     // Pawn resolved to the agent itself: (1,0,0) at speed 3 over 1 s.
     CHECK(VecApprox(scene->Get<Transform>(agent).Position, vec3(3.0f, 0.0f, 0.0f)));
@@ -525,14 +506,14 @@ TEST_CASE("A Remote-tier agent is not ticked")
     scene->Add<Intent>(agent, Intent{});
     scene->Add<Authority>(agent, Authority{.Tier = Tier::Remote});
 
-    auto move = CreateRef<SetMoveTask>();
+    const auto move = CreateRef<SetMoveTask>();
     move->Move = vec3(0.0f, 0.0f, 1.0f);
     const Ref<BehaviorTree> tree = BehaviorTreeBuilder().Leaf(move).Build();
     scene->Add<BehaviorAgent>(agent, BehaviorAgent{.Tree = tree, .Seed = 1});
 
     BehaviorSystem behavior;
-    ContextStorage storage;
-    behavior.OnUpdate(*scene, 1.0f, storage.Make());
+    TestSupport::TestServices services;
+    behavior.OnUpdate(*scene, 1.0f, services.Make());
 
     // The authority filter skipped the agent, so its tree never ran and its Intent is untouched.
     CHECK(VecApprox(scene->Get<Intent>(agent).Move, vec3(0.0f)));
@@ -543,8 +524,8 @@ TEST_CASE("ReactiveSelector hands the tick to a higher branch the tick its guard
     Harness harness;
     bool flag = false;
     vector<std::string> journal;
-    auto front = MakeRecording(Status::Running);
-    auto back = MakeRecording(Status::Running);
+    const auto front = MakeRecording(Status::Running);
+    const auto back = MakeRecording(Status::Running);
     front->Journal = &journal;
     front->Name = "front";
     back->Journal = &journal;
@@ -606,8 +587,8 @@ TEST_CASE("ReactiveSelector hands the tick to a higher branch the tick its guard
 TEST_CASE("ReactiveSelector fails when every child fails and leaves a failed child's state alone")
 {
     Harness harness;
-    auto attack = MakeRecording(Status::Success);
-    auto idle = MakeRecording(Status::Running);
+    const auto attack = MakeRecording(Status::Success);
+    const auto idle = MakeRecording(Status::Running);
     const Ref<BehaviorTree> tree = BehaviorTreeBuilder()
                                        .ReactiveSelector()
                                        .Cooldown(1.0f)
@@ -625,7 +606,7 @@ TEST_CASE("ReactiveSelector fails when every child fails and leaves a failed chi
     CHECK(attack->Ticks == 2);
     CHECK(idle->Aborts == 1);
 
-    auto never = MakeRecording(Status::Failure);
+    const auto never = MakeRecording(Status::Failure);
     const Ref<BehaviorTree> failing =
         BehaviorTreeBuilder().ReactiveSelector().Leaf(never).Leaf(never).End().Build();
     vector<NodeSlot> failingSlots;
@@ -638,7 +619,7 @@ TEST_CASE("ReactiveSequence aborts its running child the tick a guard stops hold
 {
     Harness harness;
     bool flag = true;
-    auto action = MakeRecording(Status::Running);
+    const auto action = MakeRecording(Status::Running);
     const Ref<BehaviorTree> tree = BehaviorTreeBuilder()
                                        .ReactiveSequence()
                                        .Condition([&flag](BehaviorContext&) { return flag; })
@@ -669,8 +650,8 @@ TEST_CASE("ReactiveSequence aborts its running child the tick a guard stops hold
 TEST_CASE("ReactiveSequence hands the run back to an earlier child that returns Running")
 {
     Harness harness;
-    auto guard = MakeRecording(Status::Success);
-    auto action = MakeRecording(Status::Running);
+    const auto guard = MakeRecording(Status::Success);
+    const auto action = MakeRecording(Status::Running);
     const Ref<BehaviorTree> tree =
         BehaviorTreeBuilder().ReactiveSequence().Leaf(guard).Leaf(action).End().Build();
 
@@ -694,12 +675,12 @@ TEST_CASE("ReactiveSequence hands the run back to an earlier child that returns 
 TEST_CASE("A failing Parallel aborts the siblings still running and no finished leaf")
 {
     Harness harness;
-    auto runner = MakeRecording(Status::Running);
-    auto failer = MakeRecording(Status::Running);
-    auto done = MakeRecording(Status::Success);
-    auto midway = MakeRecording(Status::Running);
-    auto finishedA = MakeRecording(Status::Success);
-    auto finishedB = MakeRecording(Status::Success);
+    const auto runner = MakeRecording(Status::Running);
+    const auto failer = MakeRecording(Status::Running);
+    const auto done = MakeRecording(Status::Success);
+    const auto midway = MakeRecording(Status::Running);
+    const auto finishedA = MakeRecording(Status::Success);
+    const auto finishedB = MakeRecording(Status::Success);
 
     const Ref<BehaviorTree> tree = BehaviorTreeBuilder()
                                        .Parallel()
@@ -742,8 +723,8 @@ TEST_CASE("Aborting one agent's branch leaves another agent on the same tree run
 {
     Harness harness;
     bool flag = false;
-    auto front = MakeRecording(Status::Running);
-    auto back = MakeRecording(Status::Running);
+    const auto front = MakeRecording(Status::Running);
+    const auto back = MakeRecording(Status::Running);
     const Ref<BehaviorTree> tree = BehaviorTreeBuilder()
                                        .ReactiveSelector()
                                        .Sequence()

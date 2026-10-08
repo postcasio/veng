@@ -18,6 +18,7 @@
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
+#include "support/TestServices.h"
 
 #include <glm/gtc/quaternion.hpp>
 
@@ -30,26 +31,19 @@ namespace
 {
     constexpr f32 FixedStep = 1.0f / 60.0f;
 
-    // A SystemContext over headless storage the systems never dereference. Tick and IsReplay are set
-    // per call; the default Role (Server) makes a Server-tier entity authoritative, which is what a
-    // single-peer prediction test wants.
+    // Contexts over real test services, stamped with the tick and replay flag a case drives; the
+    // default Role (Server) makes a Server-tier entity authoritative, which is what a single-peer
+    // prediction test wants.
     struct ContextStorage
     {
-        Input HeadlessInput{nullptr};
-        alignas(16) unsigned char AssetsBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
+        TestSupport::TestServices Services;
 
         SystemContext Make(const u64 tick, const bool replay)
         {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = HeadlessInput,
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-                .Tick = tick,
-                .IsReplay = replay,
-            };
+            SystemContext context = Services.Make();
+            context.Tick = tick;
+            context.IsReplay = replay;
+            return context;
         }
     };
 

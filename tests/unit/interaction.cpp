@@ -16,6 +16,7 @@
 #include <Veng/Scene/Interaction.h>
 #include <Veng/Scene/InteractionSystem.h>
 #include <Veng/Scene/Scene.h>
+#include "support/TestServices.h"
 
 using namespace Veng;
 
@@ -27,25 +28,6 @@ namespace
     // the mechanism — it need only exceed the interactor's reach, so that a sweep run in the wrong
     // frame finds nothing at all.
     constexpr dvec3 SolverOrigin(1000.0, 0.0, -2000.0);
-
-    // A SystemContext the InteractionSystem never reads into — it resolves purely from scene state.
-    struct ContextStorage
-    {
-        Input HeadlessInput{nullptr};
-        alignas(16) unsigned char AssetsBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
-
-        SystemContext Make()
-        {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = HeadlessInput,
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-            };
-        }
-    };
 
     // A scene with a physics world and the interactor at the origin facing -Z (its local forward).
     struct InteractionScene
@@ -133,9 +115,9 @@ namespace
         {
             // One step brings the static bodies into the broad phase so Overlap can find them.
             StepPhysics(*World, FixedStep);
-            ContextStorage storage;
+            TestSupport::TestServices services;
             InteractionSystem system;
-            system.OnUpdate(*World, FixedStep, storage.Make());
+            system.OnUpdate(*World, FixedStep, services.Make());
             return World->Get<Interactor>(Actor).Focused;
         }
     };

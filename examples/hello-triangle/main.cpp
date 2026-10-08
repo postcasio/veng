@@ -1021,17 +1021,6 @@ protected:
             .Source = level,
             .SimTickRate = 60,
             .StartSimulation = true,
-            .MakeStartContext =
-                [this]
-            {
-                return SystemContext{.Assets = GetAssetManager(),
-                                     .Input = GetInput(),
-                                     .Tasks = GetTaskSystem(),
-                                     .Audio = GetAudioEngine(),
-                                     .Haptics = GetHaptics(),
-                                     .Localization = GetLocalization(),
-                                     .Role = GetNetRole()};
-            },
         });
 
         // The PiP presents the second world's authored scene-primary camera (no bound Viewer); the
@@ -1731,17 +1720,6 @@ private:
             .Source = level,
             .SimTickRate = 60,
             .StartSimulation = true,
-            .MakeStartContext =
-                [this]
-            {
-                return SystemContext{.Assets = GetAssetManager(),
-                                     .Input = GetInput(),
-                                     .Tasks = GetTaskSystem(),
-                                     .Audio = GetAudioEngine(),
-                                     .Haptics = GetHaptics(),
-                                     .Localization = GetLocalization(),
-                                     .Role = NetRole::Server};
-            },
         });
         const World* regime = GetWorldRunner().ResolveWorld(m_RegimeWorld);
         host.AddWorld(

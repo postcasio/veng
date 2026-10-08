@@ -355,8 +355,7 @@ namespace Veng::Haptics
 
     /// @brief Returns the process's inert engine: every play starts nothing.
     ///
-    /// What a SystemContext a caller assembles without an application binds its Haptics to, so a
-    /// test or tool context compiles without naming one and a system playing rumble through it does
-    /// nothing. The Application points its contexts at its live engine instead.
+    /// An engine for a caller that must hand one over and wants no rumble from it. The
+    /// SystemContexts an Application builds bind its live engine instead.
     [[nodiscard]] HapticsEngine& GetInertEngine();
 }

@@ -15,6 +15,7 @@
 #include <Veng/Scene/Movement.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSystem.h>
+#include "support/TestServices.h"
 
 using namespace Veng;
 
@@ -66,25 +67,17 @@ namespace
         return true;
     }
 
-    // A SystemContext over never-dereferenced service storage, with a settable NetRole. HasAuthority
-    // (and the movement systems that call it) read only the scene and context.Role.
-    struct FakeContext
+    // Contexts over real test services, with a settable NetRole.
+    struct TestContext
     {
-        alignas(16) unsigned char AssetsBytes[64]{};
-        alignas(16) unsigned char InputBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
+        TestSupport::TestServices Services;
         NetRole Role = NetRole::Server;
 
         SystemContext Make()
         {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = *reinterpret_cast<Input*>(InputBytes),
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-                .Role = Role,
-            };
+            SystemContext context = Services.Make();
+            context.Role = Role;
+            return context;
         }
     };
 
@@ -370,7 +363,7 @@ TEST_CASE("A scripted client input drives the server pawn through the unchanged 
     scene->Add<Authority>(pawn, Authority{.Tier = Tier::Server});
     auto& seatInput = scene->Add<PlayerInput>(pawn);
 
-    FakeContext ctx;
+    TestContext ctx;
     ctx.Role = NetRole::Server;
     MovementSystem movement;
     constexpr f32 Delta = 1.0f / 60.0f;
@@ -414,7 +407,7 @@ TEST_CASE("The authority filter gates the builtin Sim advancers by role and tier
     scene->Add<Authority>(remote, Authority{.Tier = Tier::Remote});
     const Entity defaulted = scene->CreateEntity(); // no Authority component ⇒ Server-tier
 
-    FakeContext serverPeer;
+    TestContext serverPeer;
     serverPeer.Role = NetRole::Server;
     const SystemContext serverCtx = serverPeer.Make();
     CHECK(HasAuthority(serverCtx, *scene, server));
@@ -422,7 +415,7 @@ TEST_CASE("The authority filter gates the builtin Sim advancers by role and tier
     CHECK(HasAuthority(serverCtx, *scene, local));
     CHECK_FALSE(HasAuthority(serverCtx, *scene, remote));
 
-    FakeContext clientPeer;
+    TestContext clientPeer;
     clientPeer.Role = NetRole::Client;
     const SystemContext clientCtx = clientPeer.Make();
     CHECK_FALSE(HasAuthority(clientCtx, *scene, server));
@@ -444,7 +437,7 @@ TEST_CASE("MovementSystem advances a pawn on the server but a client leaves it t
         scene->Add<Transform>(pawn);
         scene->Add<Intent>(pawn, Intent{.Move = vec3(0.0f, 0.0f, 1.0f)});
         scene->Add<Authority>(pawn, Authority{.Tier = tier});
-        FakeContext ctx;
+        TestContext ctx;
         ctx.Role = role;
         movement.OnUpdate(*scene, Delta, ctx.Make());
         return scene->Get<Transform>(pawn).Position;

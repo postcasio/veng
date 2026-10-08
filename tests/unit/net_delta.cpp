@@ -17,6 +17,7 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/RemoteInterpolationSystem.h>
 #include <Veng/Scene/Scene.h>
+#include "support/TestServices.h"
 
 using namespace Veng;
 using namespace Veng::Net;
@@ -179,10 +180,10 @@ TEST_CASE("A reflect delta with no baseline is a decode error, never a crash")
 
 namespace
 {
-    AssetManager& FakeAssets()
+    // An asset manager the dependency-free prefabs and anchored spawns here never load through.
+    AssetManager& TestAssets()
     {
-        alignas(16) static unsigned char bytes[64]{};
-        return *reinterpret_cast<AssetManager*>(bytes);
+        return TestSupport::SharedTestServices().GetAssets();
     }
 
     struct DeltaWorld
@@ -224,7 +225,7 @@ namespace
             {
                 if (message.Channel == Net::Channel::ReliableOrdered)
                 {
-                    ReplClient.ApplyReliable(message.Bytes, *Client, FakeAssets());
+                    ReplClient.ApplyReliable(message.Bytes, *Client, TestAssets());
                 }
                 else
                 {
@@ -347,7 +348,7 @@ TEST_CASE("Delta + quantization shrink the steady-state stream well below the fu
         {
             if (message.Channel == Net::Channel::ReliableOrdered)
             {
-                replClient.ApplyReliable(message.Bytes, *client, FakeAssets());
+                replClient.ApplyReliable(message.Bytes, *client, TestAssets());
             }
             else
             {

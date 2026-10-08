@@ -23,6 +23,7 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/InputMappingSystem.h>
 #include <Veng/Scene/Scene.h>
+#include "support/TestServices.h"
 
 using namespace Veng;
 
@@ -98,25 +99,6 @@ namespace
         return handle;
     }
 
-    // A SystemContext over the given headless Input and never-dereferenced asset storage; the
-    // InputMappingSystem reads only the Input and the pointer routing (the seat_routing idiom).
-    struct ContextStorage
-    {
-        const Input& HeadlessInput;
-        alignas(16) unsigned char AssetsBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
-
-        SystemContext Make()
-        {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = HeadlessInput,
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-            };
-        }
-    };
 }
 
 TEST_CASE("Per-seat focus: each seat's stack top is independent")
@@ -466,10 +448,10 @@ TEST_CASE("A SeatFocusScope suspends its seat's gameplay resolution, the other s
     const Renderer::ViewportRegistry viewportRegistry;
     InputRouter router(nullptr, input, viewportRegistry);
     InputMappingSystem mapping;
-    ContextStorage storage{.HeadlessInput = input};
+    TestSupport::TestServices services({.Input = &input});
 
     // Baseline: both seats resolve Move.y = 1 from the held W.
-    mapping.OnUpdate(*scene, 0.016f, storage.Make());
+    mapping.OnUpdate(*scene, 0.016f, services.Make());
     CHECK(scene->Get<PlayerInput>(seatA).GetValue(Move).y == doctest::Approx(1.0f));
     CHECK(scene->Get<PlayerInput>(seatB).GetValue(Move).y == doctest::Approx(1.0f));
 
@@ -481,7 +463,7 @@ TEST_CASE("A SeatFocusScope suspends its seat's gameplay resolution, the other s
 
         input.BeginFrame();
         input.ApplyEvent(KeyPressedEvent{Key::W, 0, 0});
-        mapping.OnUpdate(*scene, 0.016f, storage.Make());
+        mapping.OnUpdate(*scene, 0.016f, services.Make());
 
         // Seat A swapped to the empty UI context, so its Move no longer resolves; seat B still does.
         CHECK(scene->Get<PlayerInput>(seatA).GetValue(Move).y == doctest::Approx(0.0f));
@@ -492,7 +474,7 @@ TEST_CASE("A SeatFocusScope suspends its seat's gameplay resolution, the other s
     // The scope closed: seat A's gameplay context is restored, so it resolves Move again.
     input.BeginFrame();
     input.ApplyEvent(KeyPressedEvent{Key::W, 0, 0});
-    mapping.OnUpdate(*scene, 0.016f, storage.Make());
+    mapping.OnUpdate(*scene, 0.016f, services.Make());
     CHECK(scene->Get<PlayerInput>(seatA).GetValue(Move).y == doctest::Approx(1.0f));
 }
 
@@ -522,7 +504,7 @@ TEST_CASE("A SeatFocusScope restores through a re-resolve after a structural cha
         const SeatFocusScope scope(router, seat, nullptr, MakeContext(0xBB22));
 
         // While the scope holds the seat, grow the InputContextStack pool with many more
-        // components — a structural change that reallocates the dense storage the seat's stack
+        // components — a structural change that reallocates the dense services the seat's stack
         // lived in, so a raw pointer captured at open would now dangle.
         for (int i = 0; i < 64; ++i)
         {

@@ -68,6 +68,7 @@
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SystemRegistry.h>
 #include <Veng/Scene/Transforms.h>
+#include "support/TestServices.h"
 
 #include <support/GpuProbe.h>
 #include <support/TestComponents.h>
@@ -267,12 +268,10 @@ namespace
         (void)scene->Get<DeathPosition>(e);
     }
 
-    // A never-dereferenced AssetManager: the anchored spawn carries no prefab, so the prefab arm
-    // (the only asset use) is never taken (the net-test FakeAssets precedent).
-    AssetManager& DeathFakeAssets()
+    // An asset manager the dependency-free prefabs and anchored spawns here never load through.
+    AssetManager& DeathTestAssets()
     {
-        alignas(16) static unsigned char bytes[64]{};
-        return *reinterpret_cast<AssetManager*>(bytes);
+        return TestSupport::SharedTestServices().GetAssets();
     }
 
     // A reliable Spawn message carrying an anchor and no components — the minimal anchored spawn that
@@ -319,7 +318,7 @@ namespace
 
         ReplicationClient client([](AssetId) -> Ref<Prefab> { return nullptr; });
         const vector<u8> spawn = MakeAnchoredSpawn(1, 7, 0);
-        (void)client.ApplyReliable(spawn, *scene, DeathFakeAssets());
+        (void)client.ApplyReliable(spawn, *scene, DeathTestAssets());
     }
 
     void RunAnchorSecondJoinBinds()
@@ -340,8 +339,8 @@ namespace
         second.SetAdoption(2, bindings);
 
         const vector<u8> spawn = MakeAnchoredSpawn(1, 7, 0);
-        (void)first.ApplyReliable(spawn, *scene, DeathFakeAssets());
-        (void)second.ApplyReliable(spawn, *scene, DeathFakeAssets());
+        (void)first.ApplyReliable(spawn, *scene, DeathTestAssets());
+        (void)second.ApplyReliable(spawn, *scene, DeathTestAssets());
     }
 
     // A replicated component grown past what one reliable message carries, after its entity has

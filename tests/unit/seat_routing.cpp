@@ -25,6 +25,7 @@
 #include <Veng/Scene/DeviceAssignmentSystem.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSystem.h>
+#include "support/TestServices.h"
 
 using namespace Veng;
 using Veng::Renderer::ViewportRegion;
@@ -131,25 +132,6 @@ namespace
         return registry;
     }
 
-    // A SystemContext over the given headless Input and never-dereferenced asset storage. The
-    // DeviceAssignmentSystem reads only the Input's connected-pad set.
-    struct ContextStorage
-    {
-        Input& HeadlessInput;
-        alignas(16) unsigned char AssetsBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
-
-        SystemContext Make()
-        {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = HeadlessInput,
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-            };
-        }
-    };
 }
 
 TEST_CASE("A keyboard seat sees the keyboard and no pad")
@@ -271,8 +253,8 @@ TEST_CASE("DeviceAssignmentSystem fills the first WantsGamepad seat and skips a 
     IngestPad(input, 0, pad);
 
     DeviceAssignmentSystem assignment;
-    ContextStorage storage{.HeadlessInput = input};
-    assignment.OnUpdate(*scene, 0.016f, storage.Make());
+    TestSupport::TestServices services({.Input = &input});
+    assignment.OnUpdate(*scene, 0.016f, services.Make());
 
     CHECK(scene->Get<SeatInput>(seat0).Gamepad == GamepadId::None);
     CHECK(scene->Get<SeatInput>(seat1).Gamepad == GamepadId(0));
@@ -280,7 +262,7 @@ TEST_CASE("DeviceAssignmentSystem fills the first WantsGamepad seat and skips a 
     // On disconnect the assigned seat is cleared back to None.
     input.BeginFrame();
     input.IngestGamepadStates(std::array<GamepadState, 16>{});
-    assignment.OnUpdate(*scene, 0.016f, storage.Make());
+    assignment.OnUpdate(*scene, 0.016f, services.Make());
 
     CHECK(scene->Get<SeatInput>(seat1).Gamepad == GamepadId::None);
 }
@@ -303,8 +285,8 @@ TEST_CASE("DeviceAssignmentSystem respects a level-authored pad slot")
     IngestPad(input, 1, pad);
 
     DeviceAssignmentSystem assignment;
-    ContextStorage storage{.HeadlessInput = input};
-    assignment.OnUpdate(*scene, 0.016f, storage.Make());
+    TestSupport::TestServices services({.Input = &input});
+    assignment.OnUpdate(*scene, 0.016f, services.Make());
 
     CHECK(scene->Get<SeatInput>(seat).Gamepad == GamepadId(1));
 }

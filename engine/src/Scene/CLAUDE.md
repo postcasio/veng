@@ -770,6 +770,14 @@ consult before touching an entity; an entity with no `Authority` defaults to `Se
 [../Net/CLAUDE.md](../Net/CLAUDE.md)). The two-pass split is the whole scheduling mechanism: no
 dependency graph, no parallelism.
 
+**A `SystemContext` is built, never assembled by hand.** Every service on it is a required reference
+with no default, so an omission is a compile error; the defaulted fields (`Pointer`, `View`, `Debug`,
+`Tick`, `Alpha`, `Role`, `World`, `GameplayFocused`, the step edges, `IsReplay`) are per-call data. At
+runtime one factory builds every context — start, Sim step, View pass, stop and replay — from a
+`SystemContextRequest` naming the world, scene and step (`WorldRunner::SetContextFactory` /
+`BuildContext`, installed by `Application`; see [../../CLAUDE.md](../../CLAUDE.md)). A unit test
+takes real device-free services from `tests/support/TestServices.h` instead.
+
 **A Sim system can run less often than every step.** `SceneSystem::GetTickPolicy()` returns a
 `TickPolicy` — `EveryStep()` (the default), `FirstStepOfFrame()`, `LastStepOfFrame()`, or
 `EveryNth(n, offset)` — and `SceneSimulation::UpdatePhase` runs a Sim system only on the steps it

@@ -216,12 +216,16 @@ across the whole project's one AssetId namespace, not just its own pack.
     through the document's `Offscreen` `SceneViewportPanel` viewport, whose region tracks the
     panel's on-window placement; while the document's capture token is live it associates that
     viewport with the cursor seat (`SyncPlayPointer`, `InputRouter::AssociateViewportSeat`), so the
-    engine scopes the captured pointer to the play scene and Play passes
-    `Application::GetSimPointer` as its `SystemContext::Pointer`. The scene's `UsesKeyboardMouse`
-    seat then reads mouse look, buttons and wheel; released, paused or stopped, the association is
-    dropped and every seat reads a neutral pointer, so editor clicks never drive the game.
+    engine scopes the captured pointer to the play scene, which Play's steps read through their
+    `SystemContext::Pointer`. The scene's `UsesKeyboardMouse` seat then reads mouse look, buttons
+    and wheel; released, paused or stopped, the association is dropped and every seat reads a
+    neutral pointer, so editor clicks never drive the game.
     `SystemContext::GameplayFocused` is stamped from the router as the engine stamps it, so a
     context authored `RequiresGameplayFocus` resolves while captured.
+  - **Every Play context comes from the host's context factory**
+    (`Application::GetWorldRunner().BuildContext`), the one the runner builds its worlds' contexts
+    through, so Play's start, steps and stop carry the same services, pointer and focus a runner
+    world's do. The play clone is no runner world, so its requests name no world.
   - **Split-screen is not exercised.** `ReconfigureManagedViewports`, the managed viewport list and
     the region-gated free pointer are `Application`-level game-runtime capabilities: the editor
     registers no `Presented` viewport, drives no managed-viewport list, and previews a scene's

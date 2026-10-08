@@ -48,6 +48,8 @@
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SystemRegistry.h>
 
+#include "support/TestServices.h"
+
 using namespace Veng;
 
 namespace
@@ -90,7 +92,7 @@ namespace
 {
     // A resident W -> Move.y context (an ordinary Adopt handle; InputMappingSystem gates on
     // IsLoaded(), not on the id, so an adopted resource resolves).
-    AssetHandle<InputMappingContext> MakeMoveContext(AssetManager& assets)
+    AssetHandle<InputMappingContext> MakeMoveContext(const AssetManager& assets)
     {
         Ref<InputMappingContext> resource = InputMappingContext::Create(
             {InputAction{.Id = Move, .Name = "Move", .Kind = ActionKind::Axis2D}},
@@ -115,21 +117,22 @@ namespace
     // PlayerInput / SeatInput) plus a Transform, resident and ready for LoadInto. `leadingDummies`
     // pads the prefab with that many Name-only entities before the seat, so two levels built here
     // resolve to distinct seat entities (the nesting checks need the two overlays' seats to differ).
-    AssetHandle<Level> BuildSeatLevel(AssetManager& assets, const TypeRegistry& types,
+    AssetHandle<Level> BuildSeatLevel(const AssetManager& assets, const TypeRegistry& types,
                                       vector<SystemId> systems, int leadingDummies = 0)
     {
         vector<Prefab::PrefabEntity> entities;
         for (int i = 0; i < leadingDummies; ++i)
         {
-            entities.push_back({{Comp(Name{"dummy"}, types)}});
+            entities.push_back({.Components = {Comp(Name{"dummy"}, types)}});
         }
-        entities.push_back({{
-            Comp(Viewer{}, types),
-            Comp(InputContextStack{}, types),
-            Comp(PlayerInput{}, types),
-            Comp(SeatInput{.UsesKeyboardMouse = true, .Gamepad = GamepadId::None}, types),
-            Comp(Transform{}, types),
-        }});
+        entities.push_back(
+            {.Components = {
+                 Comp(Viewer{}, types),
+                 Comp(InputContextStack{}, types),
+                 Comp(PlayerInput{}, types),
+                 Comp(SeatInput{.UsesKeyboardMouse = true, .Gamepad = GamepadId::None}, types),
+                 Comp(Transform{}, types),
+             }});
         const AssetHandle<Prefab> world =
             assets.Adopt<Prefab>(Prefab::Create(std::move(entities), {}));
         return assets.Adopt<Level>(
@@ -199,17 +202,9 @@ namespace
         input.BeginFrame();
         input.ApplyEvent(KeyPressedEvent{Key::W, 0, 0});
 
-        const Unique<Audio::AudioDevice> audio = Audio::AudioDevice::Create(
-            Audio::AudioDeviceInfo{.Backend = Audio::AudioBackend::Null});
-        Localization::Localization localization;
-
+        TestSupport::TestServices services({.Assets = &assets, .Input = &input});
         InputMappingSystem mapping;
-        mapping.OnUpdate(scene, 0.016f,
-                         SystemContext{.Assets = assets,
-                                       .Input = input,
-                                       .Tasks = assets.GetTaskSystem(),
-                                       .Audio = audio->GetEngine(),
-                                       .Localization = localization});
+        mapping.OnUpdate(scene, 0.016f, services.Make());
 
         const InputSeat seat = ResolveInputSeat(&scene, {});
         return scene.Get<PlayerInput>(seat.Viewer).GetValue(Move).y;

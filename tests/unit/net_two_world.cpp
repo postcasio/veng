@@ -41,6 +41,7 @@
 #include <Veng/World.h>
 #include <Veng/WorldDirectory.h>
 #include <Veng/WorldRunner.h>
+#include "support/TestServices.h"
 
 #include <algorithm>
 #include <cstring>
@@ -56,12 +57,10 @@ namespace
     // The sample's one game action: a 2D move axis the control mapping turns into an Intent.
     constexpr ActionId MoveAction{0xA1};
 
-    // A dependency-free prefab and the seat spawn never dereference the manager, so a
-    // never-dereferenced reference is safe (the net_join_flow.cpp / game_mode.cpp precedent).
-    AssetManager& FakeAssets()
+    // An asset manager the dependency-free prefabs and anchored spawns here never load through.
+    AssetManager& TestAssets()
     {
-        alignas(16) static unsigned char bytes[64]{};
-        return *reinterpret_cast<AssetManager*>(bytes);
+        return TestSupport::SharedTestServices().GetAssets();
     }
 
     // A held 2D move for one tick — the resolved input a client seat's InputMappingSystem would fill.
@@ -80,25 +79,17 @@ namespace
         return Intent{.Move = vec3(move.x, 0.0f, move.y)};
     }
 
-    // A SystemContext over never-dereferenced service storage with a settable role — MovementSystem
-    // and the interpolation system read only the scene, delta, and context.Role (net_input_flow.cpp).
-    struct FakeContext
+    // Contexts over real test services, with a settable NetRole.
+    struct TestContext
     {
-        alignas(16) unsigned char AssetsBytes[64]{};
-        alignas(16) unsigned char InputBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
+        TestSupport::TestServices Services;
         NetRole Role = NetRole::Server;
 
         SystemContext Make()
         {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = *reinterpret_cast<Input*>(InputBytes),
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-                .Role = Role,
-            };
+            SystemContext context = Services.Make();
+            context.Role = Role;
+            return context;
         }
     };
 
@@ -130,7 +121,7 @@ namespace
             Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
                 .Server = ServerInfo{.TransportOverride = &transport, .Connection = FastConfig},
                 .World = *World,
-                .Assets = FakeAssets(),
+                .Assets = TestAssets(),
                 .LevelId = LevelId,
                 .Replication =
                     ReplicationServer::Settings{.SnapshotInterval = 2, .QuantizeSpatial = quantize},
@@ -216,7 +207,7 @@ namespace
                 }
             }
 
-            FakeContext ctx;
+            TestContext ctx;
             ctx.Role = NetRole::Server;
             Movement.OnUpdate(*World, delta, ctx.Make());
         }
@@ -255,7 +246,7 @@ namespace
 
             Host = ClientHost::Create(ClientHostInfo{
                 .Client = *Client,
-                .Assets = FakeAssets(),
+                .Assets = TestAssets(),
                 .WorldKey = key,
                 .LoadLevel = [this](AssetId) -> Scene*
                 {
@@ -303,7 +294,7 @@ namespace
 
             if (Scene* world = Host->World())
             {
-                FakeContext ctx;
+                TestContext ctx;
                 ctx.Role = NetRole::Client;
                 Interp.OnUpdate(*world, delta, ctx.Make());
 
@@ -1135,7 +1126,7 @@ TEST_CASE("A client join loads into the WorldRunner's world #0, not a parallel s
 
     Unique<ClientHost> host = ClientHost::Create(ClientHostInfo{
         .Client = *client,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LoadLevel = [&](AssetId) -> Scene*
         {
             // Load into a fresh scene the runner takes ownership of (InstallScene), replacing world
@@ -1221,7 +1212,7 @@ TEST_CASE("Two worlds in one runner carry distinct NetRoles; authority gates eac
 {
     // One WorldRunner, two worlds ticked serially each frame: A ticks Server-tier, B ticks
     // Client-tier — the per-world role the world drive stamps onto each world's SystemContext through
-    // the runner's BuildContext seam, fed from a world→role map rather than a process-global role.
+    // the runner's context factory, fed from a world→role map rather than a process-global role.
     // Each world holds an identical authored Server-tier pawn (Transform + Intent + Mover). The
     // authority filter runs MovementSystem only where the pawn's tier matches the world's role, so the
     // Server world advances its pawn while the Client world leaves its own frozen (it would instead
@@ -1233,28 +1224,25 @@ TEST_CASE("Two worlds in one runner carry distinct NetRoles; authority gates eac
 
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
 
-    // Never-dereferenced fake services: MovementSystem reads only the scene, the delta, and the role.
-    alignas(16) unsigned char assetsBytes[64]{};
-    alignas(16) unsigned char inputBytes[64]{};
-    alignas(16) unsigned char tasksBytes[64]{};
-    const auto makeContext = [&](const u64 tick, const f32 alpha, const NetRole role)
-    {
-        return SystemContext{
-            .Assets = *reinterpret_cast<AssetManager*>(assetsBytes),
-            .Input = *reinterpret_cast<Input*>(inputBytes),
-            .Tasks = *reinterpret_cast<TaskSystem*>(tasksBytes),
-            .Audio = *reinterpret_cast<Audio::AudioEngine*>(tasksBytes),
-            .Localization = *reinterpret_cast<Localization::Localization*>(tasksBytes),
-            .Tick = tick,
-            .Alpha = alpha,
-            .Role = role,
-        };
-    };
+    // The host-side world→role map the drive consults, filled as each world opens: Server for A,
+    // Client for B. A world opens under the role its entry names.
+    std::unordered_map<u64, NetRole> roles;
+    NetRole opening = NetRole::Server;
+    TestSupport::TestServices services;
+    runner.SetContextFactory(
+        [&](const SystemContextRequest& request)
+        {
+            SystemContext context = services.Make(request);
+            const auto it = roles.find(request.World.Value);
+            context.Role = it != roles.end() ? it->second : opening;
+            return context;
+        });
 
     // Open a world driven by MovementSystem alone, seeding one authored Server-tier pawn moving +x.
     const auto openWorld = [&](const NetRole role)
     {
-        return runner.OpenWorld(WorldOpenInfo{
+        opening = role;
+        const WorldInstanceId world = runner.OpenWorld(WorldOpenInfo{
             .SimTickRate = 60,
             .StartSimulation = true,
             .Systems = vector<SystemId>{SystemIdOf<MovementSystem>()},
@@ -1267,27 +1255,18 @@ TEST_CASE("Two worlds in one runner carry distinct NetRoles; authority gates eac
                 scene.Add<Mover>(pawn);
                 scene.Add<Authority>(pawn, Authority{.Tier = Tier::Server});
             },
-            .MakeStartContext = [&makeContext, role]() { return makeContext(0, 0.0f, role); },
         });
+        roles[world.Value] = role;
+        return world;
     };
 
     const WorldInstanceId serverWorld = openWorld(NetRole::Server);
     const WorldInstanceId clientWorld = openWorld(NetRole::Client);
 
-    // The host-side world→role map the drive consults: Server for A, Client for B.
-    std::unordered_map<u64, NetRole> roles;
-    roles[serverWorld.Value] = NetRole::Server;
-    roles[clientWorld.Value] = NetRole::Client;
-
     constexpr f32 Delta = 1.0f / 60.0f;
     for (int frame = 0; frame < 30; ++frame)
     {
-        runner.Tick(WorldTickInfo{
-            .Delta = Delta,
-            .BuildContext = [&](const WorldInstanceId world, const Scene&, const u64 tick,
-                                const f32 alpha, bool)
-            { return makeContext(tick, alpha, roles.at(world.Value)); },
-        });
+        runner.Tick(WorldTickInfo{.Delta = Delta});
     }
 
     // The single Server-tier pawn in each world.
@@ -1347,7 +1326,7 @@ TEST_CASE("One ServerHost hosts two worlds with isolated replication over separa
         .WorldId = worldA,
         .Key = keyA,
         .World = *sceneA,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
         .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
         .Interest = InterestSettings{.Radius = 0.0f},
@@ -1396,7 +1375,7 @@ TEST_CASE("One ServerHost hosts two worlds with isolated replication over separa
             const f32 dir = world == worldA ? 1.0f : -1.0f;
             scene.Get<Intent>(possesses.Pawn).Move = moving ? vec3(dir, 0.0f, 0.0f) : vec3(0.0f);
         }
-        FakeContext ctx;
+        TestContext ctx;
         ctx.Role = NetRole::Server;
         movement.OnUpdate(*sceneA, delta, ctx.Make());
         movement.OnUpdate(*sceneB, delta, ctx.Make());
@@ -1520,7 +1499,7 @@ namespace
                 ClientInfo{.TransportOverride = &transport, .Connection = FastConfig});
             Host = ClientHost::Create(ClientHostInfo{
                 .Client = *Client,
-                .Assets = FakeAssets(),
+                .Assets = TestAssets(),
                 .AutoJoin = false,
                 .LoadLevel = [this](AssetId level) -> Scene*
                 {
@@ -1552,7 +1531,7 @@ namespace
         void Frame(f64 now, f32 delta)
         {
             Host->Pump(now);
-            FakeContext ctx;
+            TestContext ctx;
             ctx.Role = NetRole::Client;
             for (const JoinId join : Host->Joins())
             {
@@ -1599,7 +1578,7 @@ namespace
                     vec3(dirByWorld.at(world.Value), 0.0f, 0.0f);
             }
         }
-        FakeContext ctx;
+        TestContext ctx;
         ctx.Role = NetRole::Server;
         for (const auto& [value, scene] : scenes)
         {
@@ -1628,7 +1607,7 @@ TEST_CASE("One client multiplexes two worlds over one connection; identical NetI
         .WorldId = worldA,
         .Key = keyA,
         .World = *sceneA,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = levelA,
         .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
         .Interest = InterestSettings{.Radius = 0.0f},
@@ -1729,7 +1708,7 @@ TEST_CASE(
         .WorldId = worldA,
         .Key = keyA,
         .World = *sceneA,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = levelA,
         .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
         .Interest = InterestSettings{.Radius = 0.0f},
@@ -1769,7 +1748,7 @@ TEST_CASE(
 
     Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
         .Client = *client,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .AutoJoin = false,
         .LoadLevel = [&](AssetId) -> Scene*
         {
@@ -1903,7 +1882,7 @@ TEST_CASE("A drop/reorder burst on the shared connection leaves both multiplexed
         .WorldId = worldA,
         .Key = keyA,
         .World = *sceneA,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = AssetId{0x00000000000000A1ULL},
         .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
         .Interest = InterestSettings{.Radius = 0.0f},
@@ -1994,7 +1973,7 @@ namespace
                 .WorldId = WorldInstanceId{.Value = 1},
                 .Key = WorldKey::FromU64(0xFFFFFFFFULL), // primary key, presented by no client
                 .World = *Primary,
-                .Assets = FakeAssets(),
+                .Assets = TestAssets(),
                 .LevelId = LevelId,
                 .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
                 .Interest = InterestSettings{.Radius = 0.0f},
@@ -2124,7 +2103,7 @@ TEST_CASE(
             ClientInfo{.TransportOverride = clientT.get(), .Connection = FastConfig});
         host = ClientHost::Create(ClientHostInfo{
             .Client = *client,
-            .Assets = FakeAssets(),
+            .Assets = TestAssets(),
             .WorldKey = key,
             .LoadLevel = [&](AssetId) -> Scene*
             {
@@ -2201,7 +2180,7 @@ TEST_CASE("A join whose client-reconstructed world mismatches the echoed digest 
     Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
         .Digest = ContentDigest{.Lo = 0xDEADBEEF, .Hi = 0x1234},
         .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
@@ -2217,7 +2196,7 @@ TEST_CASE("A join whose client-reconstructed world mismatches the echoed digest 
     bool loaded = false;
     Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
         .Client = *client,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         // The client's own digest of the joined key disagrees with the server's echoed one.
         .WorldDigest = [](const WorldKey&, const Blob&) { return ContentDigest{.Lo = 0x0}; },
         .LoadLevel = [&](AssetId) -> Scene*
@@ -2259,7 +2238,7 @@ TEST_CASE("A join whose client-supplied per-key digest matches the echoed digest
     Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
         .Digest = ServerDigest,
         .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
@@ -2277,7 +2256,7 @@ TEST_CASE("A join whose client-supplied per-key digest matches the echoed digest
     WorldKey seenKey;
     Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
         .Client = *client,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         // The per-key provider yields the digest the client expects for the key it joins; it matches
         // the server's echo for the auto-joined DefaultWorldKey, so the join is admitted.
         .WorldDigest = [&](const WorldKey& key, const Blob&) -> ContentDigest
@@ -2324,7 +2303,7 @@ TEST_CASE("A peer with a stale ProtocolVersion is rejected at the connection han
     Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
     });
     REQUIRE(hostR.has_value());
@@ -2607,7 +2586,7 @@ TEST_CASE("A server host stood up after its world has ticked standalone still ac
     world->Add<Intent>(mover, Intent{.Move = vec3(1.0f, 0.0f, 0.0f)});
     world->Add<Mover>(mover);
     world->Add<Authority>(mover, Authority{.Tier = Tier::Server});
-    FakeContext ctx;
+    TestContext ctx;
     constexpr f32 Delta = 1.0f / 60.0f;
     for (u64 tick = 1; tick <= 30; ++tick)
     {
@@ -2623,7 +2602,7 @@ TEST_CASE("A server host stood up after its world has ticked standalone still ac
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .WorldId = WorldInstanceId{.Value = 1},
         .World = *world,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
         .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
         .Interest = InterestSettings{.Radius = 0.0f},
@@ -2693,7 +2672,7 @@ namespace
                 ClientInfo{.TransportOverride = &transport, .Connection = FastConfig});
             Host = ClientHost::Create(ClientHostInfo{
                 .Client = *Client,
-                .Assets = FakeAssets(),
+                .Assets = TestAssets(),
                 .AutoJoin = false,
                 .LoadLevel = [this](AssetId) -> Scene*
                 {
@@ -2741,7 +2720,7 @@ TEST_CASE("The travel payload reaches Authorize, Placement, and WorldFactory, an
         .WorldId = WorldInstanceId{.Value = 1},
         .Key = WorldKey::FromU64(0xFFFFFFFFULL), // the primary key, presented by no client
         .World = *primary,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
         .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
         .Interest = InterestSettings{.Radius = 0.0f},
@@ -2832,7 +2811,7 @@ TEST_CASE("The client world digest folds the echoed travel payload: a matching f
         .WorldId = WorldInstanceId{.Value = 1},
         .Key = WorldKey::FromU64(0xFFFFFFFFULL), // the primary key, presented by no client
         .World = *primary,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
         .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
         .WorldFactory = [&](const JoinRequestInfo&, const WorldKey&,
@@ -2867,7 +2846,7 @@ TEST_CASE("The client world digest folds the echoed travel payload: a matching f
 
     Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
         .Client = *client,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .AutoJoin = false,
         // The matching client folds the echoed payload itself; the diverged one folds a different
         // parameter value (a client whose reconstruction inputs disagree with the bucket's).
@@ -2943,7 +2922,7 @@ TEST_CASE("A payload-bucketing placement policy converges near params and splits
         .WorldId = WorldInstanceId{.Value = 1},
         .Key = WorldKey::FromU64(0xFFFFFFFFULL),
         .World = *primary,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
         .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
         .Interest = InterestSettings{.Radius = 0.0f},
@@ -3048,7 +3027,7 @@ TEST_CASE(
             .WorldId = WorldInstanceId{.Value = 1},
             .Key = keyA,
             .World = *sceneA,
-            .Assets = FakeAssets(),
+            .Assets = TestAssets(),
             .LevelId = AssetId{0x00000000000000A1ULL},
             .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
             .Interest = InterestSettings{.Radius = 0.0f},
@@ -3360,7 +3339,7 @@ TEST_CASE("Two hosted worlds with different quantization envelopes each decode o
         .WorldId = worldA,
         .Key = keyA,
         .World = *sceneA,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = AssetId{0x00000000000000A1ULL},
         .Replication = ReplicationServer::Settings{.SnapshotInterval = 2,
                                                    .QuantizeSpatial = true,
@@ -3390,7 +3369,7 @@ TEST_CASE("Two hosted worlds with different quantization envelopes each decode o
     std::unordered_map<u16, Unique<Scene>> scenes; // by JoinId
     Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
         .Client = *client,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .AutoJoin = false,
         .LoadLevel = [&](AssetId level) -> Scene*
         {
@@ -3449,7 +3428,7 @@ TEST_CASE("Two hosted worlds with different quantization envelopes each decode o
         IngestConnectionInputs(*host, jitter, InputJitterBuffer::Settings{}, serverTypes);
 
         clientHost->Pump(now);
-        FakeContext ctx;
+        TestContext ctx;
         ctx.Role = NetRole::Client;
         for (const JoinId join : clientHost->Joins())
         {
@@ -3516,7 +3495,7 @@ namespace
                 .WorldId = WorldInstanceId{.Value = 1},
                 .Key = AdoptKeyA,
                 .World = *SceneA,
-                .Assets = FakeAssets(),
+                .Assets = TestAssets(),
                 .LevelId = LevelId,
                 .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
                 .Interest = InterestSettings{.Radius = 0.0f},
@@ -3631,7 +3610,7 @@ namespace
                 ClientInfo{.TransportOverride = &transport, .Connection = FastConfig});
             Host = ClientHost::Create(ClientHostInfo{
                 .Client = *Client,
-                .Assets = FakeAssets(),
+                .Assets = TestAssets(),
                 .AutoJoin = false,
                 .LoadLevel = [](AssetId) -> Scene* { return nullptr; },
                 .ResolvePrefab = [](AssetId) -> Ref<Prefab> { return nullptr; },
@@ -3774,7 +3753,7 @@ TEST_CASE("Adopt-in-place: a digest mismatch refuses the join before any stream 
         ClientInfo{.TransportOverride = clientT.get(), .Connection = FastConfig});
     Unique<ClientHost> host = ClientHost::Create(ClientHostInfo{
         .Client = *conn,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .AutoJoin = false,
         .WorldDigest = [](const WorldKey&, const Blob&)
         { return ContentDigest{.Lo = 0xDEAD, .Hi = 0}; },
@@ -4102,7 +4081,7 @@ namespace
                 .Account = account, .TransportOverride = &transport, .Connection = FastConfig});
             Host = ClientHost::Create(ClientHostInfo{
                 .Client = *Client,
-                .Assets = FakeAssets(),
+                .Assets = TestAssets(),
                 .AutoJoin = false,
                 .LoadLevel = [this](AssetId) -> Scene*
                 {
@@ -4130,7 +4109,7 @@ TEST_CASE("The admitted account reaches Authorize, the seat's SeatAccount, and t
     Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
         .Authorize =
             [&](const JoinRequestInfo& request)
@@ -4199,7 +4178,7 @@ TEST_CASE("AdmitAccount refuses or normalizes the presented account at the hands
                     .Connection = FastConfig,
                 },
             .World = *serverScene,
-            .Assets = FakeAssets(),
+            .Assets = TestAssets(),
             .LevelId = LevelId,
         });
         REQUIRE(hostR.has_value());
@@ -4239,7 +4218,7 @@ TEST_CASE("AdmitAccount refuses or normalizes the presented account at the hands
                     .Connection = FastConfig,
                 },
             .World = *serverScene,
-            .Assets = FakeAssets(),
+            .Assets = TestAssets(),
             .LevelId = LevelId,
         });
         REQUIRE(hostR.has_value());
@@ -4284,7 +4263,7 @@ TEST_CASE("A duplicate live account is refused; the first connection is undistur
     Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
     });
     REQUIRE(hostR.has_value());
@@ -4366,7 +4345,7 @@ TEST_CASE("Reconnect after a disconnect re-admits the account onto a fresh conne
     Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
     });
     REQUIRE(hostR.has_value());
@@ -4447,7 +4426,7 @@ TEST_CASE("A reconnect inside the zombie window is refused, then admitted once t
     Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
     });
     REQUIRE(hostR.has_value());
@@ -4547,7 +4526,7 @@ TEST_CASE(
         .WorldId = worldA,
         .Key = keyA,
         .World = *sceneA,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
         .Directory = directory.get(),
     });
@@ -4653,7 +4632,7 @@ TEST_CASE("A remote join converges on a bucket a local standalone travel opened,
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .WorldId = primaryWorld,
         .World = *primaryScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
         .Directory = directory.get(),
     });
@@ -4750,7 +4729,7 @@ TEST_CASE("A presenting travel carries its key and presentation onto the install
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .WorldId = worldA,
         .World = *sceneA,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
     });
     REQUIRE(hostR.has_value());
@@ -4827,7 +4806,7 @@ TEST_CASE("An unconfigured client account mints a valid, process-unique id")
     Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
     });
     REQUIRE(hostR.has_value());
@@ -4908,7 +4887,7 @@ namespace
             Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
                 .Server = ServerInfo{.TransportOverride = &transport, .Connection = FastConfig},
                 .World = *Primary,
-                .Assets = FakeAssets(),
+                .Assets = TestAssets(),
                 .LevelId = LevelId,
                 .IdleKeepWarmDwell = 1.0,
                 .Authorize = std::move(hooks.Authorize),
@@ -5847,7 +5826,7 @@ TEST_CASE("Messages deliver reliable-ordered per channel under drop/reorder whil
         .WorldId = worldA,
         .Key = keyA,
         .World = *sceneA,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = AssetId{0x00000000000000A1ULL},
         .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
         .Interest = InterestSettings{.Radius = 0.0f},
@@ -5961,7 +5940,7 @@ TEST_CASE("A message reaches an account before it holds any world join (the invi
     Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
     });
     REQUIRE(hostR.has_value());
@@ -6011,7 +5990,7 @@ TEST_CASE("A send to an unknown or disconnected account fails immediately with i
     Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
     });
     REQUIRE(hostR.has_value());
@@ -6065,7 +6044,7 @@ TEST_CASE("The outbound queue cap fails the N+1th queued send loudly, by count a
     Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
     });
     REQUIRE(hostR.has_value());
@@ -6148,7 +6127,7 @@ TEST_CASE("An oversized payload fails at send; the exact bound transmits")
     Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
     });
     REQUIRE(hostR.has_value());
@@ -6206,7 +6185,7 @@ TEST_CASE("A truncated or malformed message frame drops before routing; the stre
     Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
     });
     REQUIRE(hostR.has_value());
@@ -6343,7 +6322,7 @@ TEST_CASE("A message on an unregistered channel drops with a one-shot per-channe
     Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
     });
     REQUIRE(hostR.has_value());
@@ -6459,7 +6438,7 @@ TEST_CASE("Account-addressed sends reach the wire, the local account loops back,
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .WorldId = worldId,
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
         .LocalAccount = localPlayer,
         .Directory = directory.get(),
@@ -6564,7 +6543,7 @@ namespace
                 .Account = account, .TransportOverride = &transport, .Connection = FastConfig});
             Host = ClientHost::Create(ClientHostInfo{
                 .Client = *Client,
-                .Assets = FakeAssets(),
+                .Assets = TestAssets(),
                 .WorldKey = autoJoin.value_or(DefaultWorldKey),
                 .AutoJoin = autoJoin.has_value(),
                 .WorldDigest = std::move(digest),
@@ -6611,7 +6590,7 @@ TEST_CASE("A level-less data world joins end to end: no LoadLevel, empty scene, 
         .WorldId = WorldInstanceId{.Value = 1},
         .Key = WorldKey::FromU64(0xFFFFFFFFULL), // primary key, presented by no client
         .World = *primary,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
         .WorldFactory = [&](const JoinRequestInfo&, const WorldKey&,
                             const Blob&) -> optional<ServerWorldResolution>
@@ -6722,7 +6701,7 @@ TEST_CASE("The join reply carries each world's SimTickRate; each join's estimato
         .WorldId = WorldInstanceId{.Value = 1},
         .Key = fastKey,
         .World = *sceneFast,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = AssetId{0x00000000000000A1ULL},
         .SimTickRate = 60,
         .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
@@ -6855,7 +6834,7 @@ TEST_CASE("A joined client adopts its server's snapshot interval and tick rate, 
     Result<Unique<ServerHost>> hostR = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
         .SimTickRate = ServerRate,
         .Replication = ReplicationServer::Settings{.SnapshotInterval = ServerInterval},
@@ -6872,7 +6851,7 @@ TEST_CASE("A joined client adopts its server's snapshot interval and tick rate, 
         ClientInfo{.TransportOverride = clientT.get(), .Connection = FastConfig});
     Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
         .Client = *client,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LoadLevel = [&](AssetId) -> Scene*
         {
             clientScene = Scene::Create(clientTypes);
@@ -6938,7 +6917,7 @@ TEST_CASE("A world below the host pump rate stamps cadence in its own tick space
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .WorldId = slowWorld,
         .World = *slowScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = AssetId{}, // level-less data world, joined through the default key
         .SimTickRate = 1,
         // Snapshot every 2 slow ticks; a keyframe interval far past this run, so no full re-send ever
@@ -7090,7 +7069,7 @@ TEST_CASE("A seatless data world's pump grows no input state, and a sparse snaps
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = FastConfig},
         .WorldId = dataWorld,
         .World = *dataScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = AssetId{}, // level-less: the data world through the default key
         .SimTickRate = 1,
         // A minutes-scale snapshot cadence (in ticks): no snapshot fires inside this run.
@@ -7181,7 +7160,7 @@ TEST_CASE("A world resolved with its own IdleDwell outlives the directory defaul
         .WorldId = WorldInstanceId{.Value = 1},
         .Key = WorldKey::FromU64(0xFFFFFFFFULL),
         .World = *primary,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
         .IdleKeepWarmDwell = DefaultDwell,
         .WorldFactory = [&](const JoinRequestInfo&, const WorldKey& key,
@@ -7292,7 +7271,7 @@ TEST_CASE("The default join budget holds the standing-join matrix; the ninth joi
         .WorldId = WorldInstanceId{.Value = 1},
         .Key = WorldKey::FromU64(0xFFFFFFFFULL),
         .World = *primary,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
         .WorldFactory = [&](const JoinRequestInfo&, const WorldKey&,
                             const Blob&) -> optional<ServerWorldResolution>
@@ -7485,7 +7464,7 @@ namespace
         Unique<Scene> SceneA;
         Unique<Scene> SceneB;
         Unique<ServerHost> Host;
-        FakeContext Context;
+        TestContext Context;
 
         explicit SeatReleaseServer(Transport& transport)
         {
@@ -7500,7 +7479,7 @@ namespace
                 .WorldId = WorldInstanceId{.Value = 1},
                 .Key = KeyA,
                 .World = *SceneA,
-                .Assets = FakeAssets(),
+                .Assets = TestAssets(),
                 .LevelId = AssetId{0x00000000000000A1ULL},
                 .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
                 .Interest = InterestSettings{.Radius = 0.0f},
@@ -7517,7 +7496,7 @@ namespace
         }
 
         // Steps one world's Sim phase, which is when its systems read the releases.
-        static void Tick(Scene& scene, FakeContext& context)
+        static void Tick(Scene& scene, TestContext& context)
         {
             scene.TickSimulationPhase(SceneSystem::Phase::Sim, 1.0f / 60.0f, context.Make());
         }

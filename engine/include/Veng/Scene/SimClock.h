@@ -183,6 +183,9 @@ namespace Veng
         /// @brief Returns the last completed tick number.
         [[nodiscard]] u64 GetTick() const { return m_Tick; }
 
+        /// @brief Returns the fixed simulation ticks per second this clock steps at.
+        [[nodiscard]] u32 GetTickRate() const { return m_TickRate; }
+
     private:
         /// @brief The shared body of Advance and Run.
         /// @param frameDelta  The wall-clock frame delta in seconds (>= 0).

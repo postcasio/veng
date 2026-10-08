@@ -35,6 +35,7 @@
 #include <Veng/Scene/SystemRegistry.h>
 #include <Veng/World.h>
 #include <Veng/WorldRunner.h>
+#include "support/TestServices.h"
 
 using namespace Veng;
 
@@ -51,26 +52,6 @@ namespace
         RegisterBuiltinTypes(registry);
         return registry;
     }
-
-    // A SystemContext over a real headless Input (all-zeros) and never-dereferenced asset
-    // storage. The movement system ignores the context; the control test reads the Input.
-    struct ContextStorage
-    {
-        Input HeadlessInput{nullptr};
-        alignas(16) unsigned char AssetsBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
-
-        SystemContext Make()
-        {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = HeadlessInput,
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-            };
-        }
-    };
 
     // The game's named actions, mirroring the example so the produced Intent is asserted
     // without linking the game module. Arbitrary distinct non-zero ids.
@@ -233,8 +214,8 @@ TEST_CASE("MovementSystem integrates each pawn's Intent through its Mover")
     scene->Get<Intent>(pawn).Move = vec3(0.0f, 0.0f, 1.0f);
 
     MovementSystem movement;
-    ContextStorage storage;
-    movement.OnUpdate(*scene, 0.25f, storage.Make());
+    TestSupport::TestServices services;
+    movement.OnUpdate(*scene, 0.25f, services.Make());
 
     CHECK(VecApprox(scene->Get<Transform>(pawn).Position, vec3(0.0f, 0.0f, 1.0f)));
 }
@@ -249,8 +230,8 @@ TEST_CASE("MovementSystem falls back to a default Mover when a pawn has none")
     scene->Add<Intent>(pawn, Intent{.Move = vec3(0.0f, 0.0f, 1.0f)});
 
     MovementSystem movement;
-    ContextStorage storage;
-    movement.OnUpdate(*scene, 1.0f, storage.Make());
+    TestSupport::TestServices services;
+    movement.OnUpdate(*scene, 1.0f, services.Make());
 
     // The default Mover's MoveSpeed (4.0) drives the integration.
     CHECK(VecApprox(scene->Get<Transform>(pawn).Position, vec3(0.0f, 0.0f, 4.0f)));
@@ -289,8 +270,8 @@ TEST_CASE("A neutral resolved PlayerInput produces a zero Intent and nothing mov
     scene->Get<Intent>(pawn) = intent;
 
     MovementSystem movement;
-    ContextStorage storage;
-    movement.OnUpdate(*scene, 0.5f, storage.Make());
+    TestSupport::TestServices services;
+    movement.OnUpdate(*scene, 0.5f, services.Make());
 
     CHECK(VecApprox(scene->Get<Transform>(pawn).Position, vec3(1.0f, 2.0f, 3.0f)));
 }
@@ -321,10 +302,10 @@ TEST_CASE("AI uniformity: a system writing Intent directly drives the same movem
 
     AiSystem ai;
     MovementSystem movement;
-    ContextStorage storage;
+    TestSupport::TestServices services;
 
-    ai.OnUpdate(*scene, 1.0f, storage.Make());
-    movement.OnUpdate(*scene, 1.0f, storage.Make());
+    ai.OnUpdate(*scene, 1.0f, services.Make());
+    movement.OnUpdate(*scene, 1.0f, services.Make());
 
     // Same result a player-produced Intent would give: 1 * 2 * 1 along local +Z.
     CHECK(VecApprox(scene->Get<Transform>(pawn).Position, vec3(0.0f, 0.0f, 2.0f)));
@@ -354,8 +335,8 @@ TEST_CASE("Moving a possessed pawn does not change a Viewer's resolved camera")
     REQUIRE(before.has_value());
 
     MovementSystem movement;
-    ContextStorage storage;
-    movement.OnUpdate(*scene, 1.0f, storage.Make());
+    TestSupport::TestServices services;
+    movement.OnUpdate(*scene, 1.0f, services.Make());
 
     // The pawn moved, but the camera entity is untouched, so the resolved view is identical.
     REQUIRE_FALSE(VecApprox(scene->Get<Transform>(pawn).Position, vec3(0.0f)));
@@ -391,8 +372,8 @@ TEST_CASE("End to end: scripted raw input resolves into PlayerInput and maps to 
     scene->Get<Intent>(pawn) = intent;
 
     MovementSystem movement;
-    ContextStorage storage;
-    movement.OnUpdate(*scene, 1.0f, storage.Make());
+    TestSupport::TestServices services;
+    movement.OnUpdate(*scene, 1.0f, services.Make());
 
     // Move = (1,0,-1) at speed 2 over 1s, no rotation: +2 on X, -2 on Z.
     CHECK(VecApprox(scene->Get<Transform>(pawn).Position, vec3(2.0f, 0.0f, -2.0f)));
@@ -415,8 +396,8 @@ TEST_CASE("InputMappingSystem resolves each seat's PlayerInput; a neutral snapsh
     scene->Add<SeatInput>(seat, SeatInput{});
 
     InputMappingSystem mapping;
-    ContextStorage storage;
-    mapping.OnUpdate(*scene, 0.016f, storage.Make());
+    TestSupport::TestServices services;
+    mapping.OnUpdate(*scene, 0.016f, services.Make());
 
     const PlayerInput& resolved = scene->Get<PlayerInput>(seat);
     // Both declared actions get a sample even with no active binding.
@@ -452,12 +433,12 @@ TEST_CASE("InputMappingSystem accumulates a release edge across a multi-step fra
     scene->Add<SeatInput>(seat, SeatInput{});
 
     InputMappingSystem mapping;
-    ContextStorage storage;
-    Input& input = storage.HeadlessInput;
+    TestSupport::TestServices services;
+    Input& input = services.GetInput();
 
     const auto tick = [&](const bool firstStep)
     {
-        SystemContext context = storage.Make();
+        SystemContext context = services.Make();
         context.FirstStepThisFrame = firstStep;
         mapping.OnUpdate(*scene, 0.016f, context);
     };
@@ -529,7 +510,7 @@ namespace
     {
         TypeRegistry Types = MakeRegistry();
         SystemRegistry Systems;
-        ContextStorage Storage;
+        TestSupport::TestServices Services;
         WorldRunner Runner{WorldRunnerInfo{.Types = &Types, .Systems = &Systems}};
         WorldInstanceId Id;
         bool Latched = false;
@@ -539,12 +520,12 @@ namespace
             FrameEdgeProbe::Triggered = 0;
             Systems.Register<InputMappingSystem>();
             Systems.Register<FrameEdgeProbe>();
+            Runner.SetContextFactory(Services.Factory());
             Id = Runner.OpenWorld(WorldOpenInfo{
                 .SimTickRate = 60,
                 .StartSimulation = true,
                 .Systems = vector<SystemId>{SystemIdOf<InputMappingSystem>(),
                                             SystemIdOf<FrameEdgeProbe>()},
-                .MakeStartContext = [this] { return Storage.Make(); },
             });
 
             const ResolvedContext jumpContext{
@@ -567,30 +548,18 @@ namespace
         // returns the steps run.
         u64 Frame(const f32 delta, const bool press = false, const bool release = false)
         {
-            Storage.HeadlessInput.BeginFrame(!Latched);
+            Services.GetInput().BeginFrame(!Latched);
             if (press)
             {
-                Storage.HeadlessInput.ApplyEvent(KeyPressedEvent(Key::Space, 0, 0));
+                Services.GetInput().ApplyEvent(KeyPressedEvent(Key::Space, 0, 0));
             }
             if (release)
             {
-                Storage.HeadlessInput.ApplyEvent(KeyReleasedEvent(Key::Space, 0, 0));
+                Services.GetInput().ApplyEvent(KeyReleasedEvent(Key::Space, 0, 0));
             }
             const World& world = *Runner.ResolveWorld(Id);
             const u64 before = world.Clock.GetTick();
-            const WorldTickResult result = Runner.Tick(WorldTickInfo{
-                .Delta = delta,
-                .BuildContext =
-                    [this](WorldInstanceId, const Scene&, const u64 tick, const f32 alpha,
-                           const bool firstStep)
-                {
-                    SystemContext context = Storage.Make();
-                    context.Tick = tick;
-                    context.Alpha = alpha;
-                    context.FirstStepThisFrame = firstStep;
-                    return context;
-                },
-            });
+            const WorldTickResult result = Runner.Tick(WorldTickInfo{.Delta = delta});
             Latched = result.AnyActive && !result.AnyTicked;
             return world.Clock.GetTick() - before;
         }

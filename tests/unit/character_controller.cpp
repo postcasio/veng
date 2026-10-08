@@ -17,6 +17,7 @@
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
+#include "support/TestServices.h"
 
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -92,25 +93,6 @@ namespace
                                      FixedStep);
     }
 
-    // A SystemContext over a headless Input and never-dereferenced asset/task storage — the
-    // CharacterMovementSystem touches neither, reading only the context's Server authority.
-    struct ContextStorage
-    {
-        Input HeadlessInput{nullptr};
-        alignas(16) unsigned char AssetsBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
-
-        SystemContext Make()
-        {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = HeadlessInput,
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-            };
-        }
-    };
 }
 
 TEST_CASE("A character on a flat floor grounds and walks at WalkSpeed through its state")
@@ -143,14 +125,14 @@ TEST_CASE("A character on a flat floor grounds and walks at WalkSpeed through it
     scene->Add<CharacterController>(pawn, controller);
     scene->Add<Intent>(pawn, Intent{.Move = vec3(0.0f, 0.0f, 1.0f)});
 
-    ContextStorage storage;
+    TestSupport::TestServices services;
     CharacterMovementSystem characters;
 
     // Settle onto the floor for a moment, then measure a stretch of steady walking.
     for (u32 tick = 0; tick < 30; ++tick)
     {
         StepPhysics(*scene, FixedStep);
-        characters.OnUpdate(*scene, FixedStep, storage.Make());
+        characters.OnUpdate(*scene, FixedStep, services.Make());
     }
 
     const f32 startZ = scene->Get<Transform>(pawn).Position.z;
@@ -158,7 +140,7 @@ TEST_CASE("A character on a flat floor grounds and walks at WalkSpeed through it
     for (u32 tick = 0; tick < WalkTicks; ++tick)
     {
         StepPhysics(*scene, FixedStep);
-        characters.OnUpdate(*scene, FixedStep, storage.Make());
+        characters.OnUpdate(*scene, FixedStep, services.Make());
     }
 
     const auto& state = scene->Get<CharacterState>(pawn);
@@ -438,11 +420,11 @@ TEST_CASE("A character reached by no gravity source keeps its up and does not tu
     // A steady forward drift, to prove it floats rather than falls or spins.
     scene->Add<Intent>(pawn, Intent{.Move = vec3(0.0f, 0.0f, 1.0f)});
 
-    ContextStorage storage;
+    TestSupport::TestServices services;
     CharacterMovementSystem characters;
     for (u32 tick = 0; tick < 200; ++tick)
     {
-        characters.OnUpdate(*scene, FixedStep, storage.Make());
+        characters.OnUpdate(*scene, FixedStep, services.Make());
     }
 
     const auto& state = scene->Get<CharacterState>(pawn);
@@ -478,12 +460,12 @@ TEST_CASE("A commanded look turns the character's heading about its up, and zero
     const Entity right = spawn(-TurnPerTick);
     const Entity still = spawn(0.0f);
 
-    ContextStorage storage;
+    TestSupport::TestServices services;
     CharacterMovementSystem characters;
     constexpr u32 Ticks = 50;
     for (u32 tick = 0; tick < Ticks; ++tick)
     {
-        characters.OnUpdate(*scene, FixedStep, storage.Make());
+        characters.OnUpdate(*scene, FixedStep, services.Make());
     }
 
     // Signed heading about +Y, read from the facing's forward (local -Z); positive is a left turn.
@@ -530,11 +512,11 @@ TEST_CASE("An authored spawn facing is preserved when the character is not comma
     scene->Add<CharacterController>(pawn, controller);
     scene->Add<Intent>(pawn, Intent{});
 
-    ContextStorage storage;
+    TestSupport::TestServices services;
     CharacterMovementSystem characters;
     for (u32 tick = 0; tick < 60; ++tick)
     {
-        characters.OnUpdate(*scene, FixedStep, storage.Make());
+        characters.OnUpdate(*scene, FixedStep, services.Make());
     }
 
     const vec3 authoredForward = authored * vec3(0.0f, 0.0f, -1.0f);
@@ -569,18 +551,18 @@ TEST_CASE("A character's movement follows the heading it has just turned to")
     scene->Add<CharacterController>(pawn, controller);
     scene->Add<Intent>(pawn, Intent{});
 
-    ContextStorage storage;
+    TestSupport::TestServices services;
     CharacterMovementSystem characters;
 
     // Settle onto the floor, then turn a quarter-turn left in place (no move command).
     for (u32 tick = 0; tick < 30; ++tick)
     {
         StepPhysics(*scene, FixedStep);
-        characters.OnUpdate(*scene, FixedStep, storage.Make());
+        characters.OnUpdate(*scene, FixedStep, services.Make());
     }
     scene->Get<Intent>(pawn) = Intent{.Look = vec3(glm::half_pi<f32>(), 0.0f, 0.0f)};
     StepPhysics(*scene, FixedStep);
-    characters.OnUpdate(*scene, FixedStep, storage.Make());
+    characters.OnUpdate(*scene, FixedStep, services.Make());
 
     // After a 90-degree left turn the heading's forward is -X, and pawn-local +Z maps to world +X.
     const vec3 forward = scene->Get<Transform>(pawn).Rotation * vec3(0.0f, 0.0f, -1.0f);
@@ -593,7 +575,7 @@ TEST_CASE("A character's movement follows the heading it has just turned to")
     for (u32 tick = 0; tick < 60; ++tick)
     {
         StepPhysics(*scene, FixedStep);
-        characters.OnUpdate(*scene, FixedStep, storage.Make());
+        characters.OnUpdate(*scene, FixedStep, services.Make());
     }
     const vec3 displacement = scene->Get<Transform>(pawn).Position - startPosition;
     CHECK(displacement.x > 0.5f);
@@ -624,7 +606,7 @@ TEST_CASE("A commanded facing stays orthonormal and planar to a slewing up")
     scene->Add<CharacterController>(pawn, controller);
     scene->Add<Intent>(pawn, Intent{.Look = vec3(0.03f, 0.0f, 0.0f)});
 
-    ContextStorage storage;
+    TestSupport::TestServices services;
     CharacterMovementSystem characters;
     constexpr u32 Ticks = 120;
     f32 worstNormError = 0.0f;
@@ -636,7 +618,7 @@ TEST_CASE("A commanded facing stays orthonormal and planar to a slewing up")
         const f32 angle = 0.0087f * static_cast<f32>(tick);
         scene->Get<GravitySource>(field).Direction =
             glm::angleAxis(angle, vec3(0.0f, 0.0f, 1.0f)) * vec3(0.0f, -1.0f, 0.0f);
-        characters.OnUpdate(*scene, FixedStep, storage.Make());
+        characters.OnUpdate(*scene, FixedStep, services.Make());
 
         const quat facing = scene->Get<Transform>(pawn).Rotation;
         worstNormError = std::max(worstNormError, std::abs(glm::length(facing) - 1.0f));

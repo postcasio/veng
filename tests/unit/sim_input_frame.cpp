@@ -18,6 +18,7 @@
 #include <Veng/Scene/SystemRegistry.h>
 #include <Veng/World.h>
 #include <Veng/WorldRunner.h>
+#include "support/TestServices.h"
 
 using namespace Veng;
 
@@ -57,7 +58,7 @@ namespace
         SystemRegistry Systems;
         Input Snapshot{nullptr};
         SimInputFrame Frame;
-        alignas(16) unsigned char ServiceBytes[64]{};
+        TestSupport::TestServices Services{TestSupport::TestServicesInfo{.Input = &Snapshot}};
         WorldRunner Runner{WorldRunnerInfo{.Types = &Types, .Systems = &Systems}};
         WorldInstanceId World;
         Unique<Scene> DriverScene = Scene::Create(Types);
@@ -70,13 +71,13 @@ namespace
         // With @p world, a runner world running no systems steps beside the driver.
         explicit Rig(const bool world)
         {
+            Runner.SetContextFactory(Services.Factory());
             if (world)
             {
                 World = Runner.OpenWorld(WorldOpenInfo{
                     .SimTickRate = 60,
                     .StartSimulation = true,
                     .Systems = vector<SystemId>{},
-                    .MakeStartContext = [this] { return Context(); },
                 });
             }
 
@@ -87,18 +88,6 @@ namespace
             Ingest();
             StepDriver(Tick60);
             DriverReads.clear();
-        }
-
-        // A context over never-dereferenced services; the worlds run no systems.
-        SystemContext Context()
-        {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(ServiceBytes),
-                .Input = Snapshot,
-                .Tasks = *reinterpret_cast<TaskSystem*>(ServiceBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(ServiceBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(ServiceBytes),
-            };
         }
 
         [[nodiscard]] Scene& WorldScene() { return Runner.ResolveWorld(World)->GetScene(); }
@@ -137,8 +126,6 @@ namespace
         {
             const WorldTickResult result = Runner.Tick(WorldTickInfo{
                 .Delta = delta,
-                .BuildContext = [this](WorldInstanceId, const Scene&, u64, f32, bool)
-                { return Context(); },
                 .BeforeSimStep =
                     [this](WorldInstanceId, const Scene& scene, u64)
                 {

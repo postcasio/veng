@@ -126,15 +126,6 @@ namespace
             Levels.push_back(level);
             const WorldInstanceId id = GetWorldRunner().OpenWorld(WorldOpenInfo{
                 .Source = level,
-                .MakeStartContext =
-                    [this]
-                {
-                    return SystemContext{.Assets = GetAssetManager(),
-                                         .Input = GetInput(),
-                                         .Tasks = GetTaskSystem(),
-                                         .Audio = GetAudioEngine(),
-                                         .Localization = GetLocalization()};
-                },
             });
             SimIds.push_back(id);
             return GetWorldRunner().ResolveWorld(id)->GetScene();
@@ -209,11 +200,8 @@ TEST_CASE("Opening a world ticks it, closing it stops, and an unopened scene nev
         unopened = Scene::Create(a.GetTypeRegistry());
         unopened->SetSimulation(CreateUnique<SceneSimulation>(
             a.GetSystemRegistry(), std::vector<SystemId>{SystemIdOf<ProbeSystem<2>>()}));
-        unopened->StartSimulation(SystemContext{.Assets = a.GetAssetManager(),
-                                                .Input = a.GetInput(),
-                                                .Tasks = a.GetTaskSystem(),
-                                                .Audio = a.GetAudioEngine(),
-                                                .Localization = a.GetLocalization()});
+        unopened->StartSimulation(a.GetWorldRunner().BuildContext(
+            SystemContextRequest{.Scene = *unopened, .Phase = SystemContextPhase::Start}));
     };
 
     int atClose = 0;

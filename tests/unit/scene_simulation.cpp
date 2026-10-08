@@ -5,7 +5,7 @@
 // device-bound (an AssetManager needs a Renderer::Context, an Input needs a Window),
 // so neither can be constructed in a pure unit test. The driver only forwards the
 // context to each system and the counting systems here never touch it, so a context
-// over never-dereferenced storage keeps the test device-free while still exercising
+// over never-dereferenced services keeps the test device-free while still exercising
 // the real SceneSimulation::Start/Update/Stop path.
 
 #include <doctest/doctest.h>
@@ -17,6 +17,7 @@
 #include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SystemRegistry.h>
+#include "support/TestServices.h"
 
 using namespace Veng;
 
@@ -85,32 +86,10 @@ namespace Veng
 
 namespace
 {
-
     TypeRegistry MakeRegistry()
     {
         return TypeRegistry{};
     }
-
-    // A SystemContext the driver forwards but no system here dereferences. The
-    // storage is never read as an AssetManager/Input; it only provides bindable
-    // lvalues for the aggregate's references.
-    struct ContextStorage
-    {
-        alignas(16) unsigned char AssetsBytes[64]{};
-        alignas(16) unsigned char InputBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
-
-        SystemContext Make()
-        {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = *reinterpret_cast<Input*>(InputBytes),
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-            };
-        }
-    };
 }
 
 TEST_CASE("SystemRegistry reports Count and Instantiate builds one of each")
@@ -155,21 +134,21 @@ TEST_CASE("SceneSimulation drives Start/Update/Stop on each system in registrati
 
     SceneSimulation sim(registry);
 
-    ContextStorage storage;
+    TestSupport::TestServices services;
 
-    sim.Start(*scene, storage.Make());
+    sim.Start(*scene, services.Make());
     CHECK(SystemA::Starts == 1);
     CHECK(SystemB::Starts == 1);
 
     constexpr int UpdateCount = 3;
     for (int i = 0; i < UpdateCount; ++i)
     {
-        sim.Update(*scene, 0.016f, storage.Make());
+        sim.Update(*scene, 0.016f, services.Make());
     }
     CHECK(SystemA::Updates == UpdateCount);
     CHECK(SystemB::Updates == UpdateCount);
 
-    sim.Stop(*scene, storage.Make());
+    sim.Stop(*scene, services.Make());
     CHECK(SystemA::Stops == 1);
     CHECK(SystemB::Stops == 1);
 
@@ -198,8 +177,8 @@ TEST_CASE("Update runs all Sim systems before all View systems, registration ord
     registry.Register<SystemB>();
 
     SceneSimulation sim(registry);
-    ContextStorage storage;
-    sim.Update(*scene, 0.016f, storage.Make());
+    TestSupport::TestServices services;
+    sim.Update(*scene, 0.016f, services.Make());
 
     // Sim phase first in registration order (1, 2), then View phase in registration order (3, 4).
     REQUIRE(g_UpdateOrder.size() == 4);
@@ -222,12 +201,12 @@ TEST_CASE("A Sim-default system ticks unchanged when a View system is present")
     registry.Register<ViewCountingSystem<3>>();
 
     SceneSimulation sim(registry);
-    ContextStorage storage;
+    TestSupport::TestServices services;
 
     constexpr int UpdateCount = 2;
     for (int i = 0; i < UpdateCount; ++i)
     {
-        sim.Update(*scene, 0.016f, storage.Make());
+        sim.Update(*scene, 0.016f, services.Make());
     }
 
     // The Sim-default SystemA ticks once per Update exactly as before the phase split.
@@ -278,8 +257,8 @@ TEST_CASE("SceneSimulation from an ordered id set runs exactly those systems, in
         SystemIdOf<ViewCountingSystem<3>>(),
     };
     SceneSimulation sim(registry, active);
-    ContextStorage storage;
-    sim.Update(*scene, 0.016f, storage.Make());
+    TestSupport::TestServices services;
+    sim.Update(*scene, 0.016f, services.Make());
 
     // SystemA (tag 1) was not named, so it never runs. The Sim phase runs first (tag 2),
     // then the View phase in the named order (4 before 3).
@@ -307,8 +286,8 @@ TEST_CASE("SceneSimulation from an id set skips an id absent from the catalog")
     CHECK_FALSE(sim.IsEmpty());
 
     SceneSimulation runnable(registry, active);
-    ContextStorage storage;
-    runnable.Update(*scene, 0.016f, storage.Make());
+    TestSupport::TestServices services;
+    runnable.Update(*scene, 0.016f, services.Make());
 
     // Only the present id ran.
     REQUIRE(g_UpdateOrder.size() == 1);
@@ -337,13 +316,13 @@ TEST_CASE("SceneSimulation tracks started state and per-sim pause independently"
     SystemRegistry registry;
     registry.Register<SystemA>();
     SceneSimulation sim(registry);
-    ContextStorage storage;
+    TestSupport::TestServices services;
 
     // Fresh: not started, not paused (the engine drive-list ticks only started, non-paused sims).
     CHECK_FALSE(sim.IsStarted());
     CHECK_FALSE(sim.IsPaused());
 
-    sim.Start(*scene, storage.Make());
+    sim.Start(*scene, services.Make());
     CHECK(sim.IsStarted());
 
     // Pause is a separate knob; SceneSimulation::Update itself ignores it (the engine gates on it),
@@ -354,10 +333,10 @@ TEST_CASE("SceneSimulation tracks started state and per-sim pause independently"
     CHECK_FALSE(sim.IsPaused());
 
     sim.SetPaused(true);
-    sim.Start(*scene, storage.Make());
+    sim.Start(*scene, services.Make());
     CHECK(sim.IsPaused());
 
-    sim.Stop(*scene, storage.Make());
+    sim.Stop(*scene, services.Make());
     CHECK_FALSE(sim.IsStarted());
     CHECK(sim.IsPaused());
 }

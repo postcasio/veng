@@ -371,6 +371,17 @@ path. `World` unset leaves the app to load and drive its own scene (the editor, 
 full control), and the runner is device-free when given no asset manager or context (it drives
 empty-scene worlds without a GPU).
 
+**Every `SystemContext` a world receives is built by one factory.** `Application` installs it on its
+runner at initialization (`WorldRunner::SetContextFactory`), and the runner builds through it at every
+lifecycle point it drives — a world's start (`OpenWorld`, and `StartWorld` for a world opened
+unstarted: a client join target, an overlay), each Sim step and View pass, and the stop at
+`CloseWorld` — so every context names its world, carries every service, and stamps the world's own
+role. A caller stepping a world outside those points builds through `WorldRunner::BuildContext` with a
+`SystemContextRequest` (world, scene, phase, tick, alpha, step edges): the reconciliation replay does,
+through `ReplaySimStep`, and so does the editor's Play session, which names no world because it is no
+runner world. A runner with no factory (a device-free one) drops a started world at `CloseWorld`
+without running `OnStop`, and asserts on any start or tick.
+
 **A system may open and close worlds from its own tick.** `WorldRunner::Tick` walks the worlds it
 holds, so a system deciding mid-update that a world must go — reaping a finished match, reloading a
 level, tearing down the session it came from — calls `CloseWorld` directly rather than publishing a
@@ -527,7 +538,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 75** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 76** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the

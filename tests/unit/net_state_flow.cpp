@@ -20,38 +20,31 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/RemoteInterpolationSystem.h>
 #include <Veng/Scene/Scene.h>
+#include "support/TestServices.h"
 
 using namespace Veng;
 using namespace Veng::Net;
 
 namespace
 {
-    // A SystemContext whose service references the interpolation system never dereferences (it reads
-    // only the scene and delta). Mirrors the game_mode.cpp device-free pattern.
-    struct FakeContext
+    // Contexts over real test services, with a settable NetRole.
+    struct TestContext
     {
-        alignas(16) unsigned char AssetsBytes[64]{};
-        alignas(16) unsigned char InputBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
+        TestSupport::TestServices Services;
+        NetRole Role = NetRole::Server;
 
         SystemContext Make()
         {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = *reinterpret_cast<Input*>(InputBytes),
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-            };
+            SystemContext context = Services.Make();
+            context.Role = Role;
+            return context;
         }
     };
 
-    // The prefab-arm spawn calls SpawnInto(scene, assets); a dependency-free prefab never touches the
-    // manager, so a never-dereferenced reference is safe (the game_mode.cpp precedent).
-    AssetManager& FakeAssets()
+    // An asset manager the dependency-free prefabs and anchored spawns here never load through.
+    AssetManager& TestAssets()
     {
-        alignas(16) static unsigned char bytes[64]{};
-        return *reinterpret_cast<AssetManager*>(bytes);
+        return TestSupport::SharedTestServices().GetAssets();
     }
 
     vector<u8> ComponentRecord(const TypeRegistry& registry, TypeId id, const void* value)
@@ -70,7 +63,7 @@ namespace
         {
             if (message.Channel == Channel::ReliableOrdered)
             {
-                client.ApplyReliable(message.Bytes, clientScene, FakeAssets());
+                client.ApplyReliable(message.Bytes, clientScene, TestAssets());
             }
             else
             {
@@ -125,7 +118,7 @@ TEST_CASE("The RemoteInterpolationSystem renders the delay-lagged, blended pose"
     system.SetSettings(RemoteInterpolationSystem::Settings{
         .SnapshotInterval = 2, .InterpolationDelayIntervals = 2, .SimTickRate = 60.0});
 
-    FakeContext ctx;
+    TestContext ctx;
 
     // First update seeds the playback clock at newest(8) − delay(4) = tick 4 → sample@4.
     system.OnUpdate(*scene, 0.0f, ctx.Make());
@@ -311,7 +304,7 @@ TEST_CASE("A snapshot for an unknown NetId drops idempotently and converges afte
     {
         if (message.Channel == Channel::ReliableOrdered)
         {
-            replClient.ApplyReliable(message.Bytes, *client, FakeAssets());
+            replClient.ApplyReliable(message.Bytes, *client, TestAssets());
         }
     }
     const Entity clientPawn = replClient.Map().Lookup(pawnId);
@@ -386,7 +379,7 @@ TEST_CASE("Two worlds converge over loopback: connect, spawn, interpolated movem
     RemoteInterpolationSystem interp;
     interp.SetSettings(RemoteInterpolationSystem::Settings{
         .SnapshotInterval = 2, .InterpolationDelayIntervals = 2, .SimTickRate = 60.0});
-    FakeContext ctx;
+    TestContext ctx;
 
     f64 now = 0.0;
     NetId moverId = InvalidNetId;
@@ -414,7 +407,7 @@ TEST_CASE("Two worlds converge over loopback: connect, spawn, interpolated movem
         // Client: apply reliable spawn/despawn (from the app inbox), then unreliable snapshots.
         for (const vector<u8>& message : client->ReliableAppMessages())
         {
-            replClient.ApplyReliable(message, *clientScene, FakeAssets());
+            replClient.ApplyReliable(message, *clientScene, TestAssets());
         }
         while (const optional<vector<u8>> snapshot =
                    client->Server().Receive(Channel::UnreliableSequenced))

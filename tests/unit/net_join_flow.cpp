@@ -18,18 +18,17 @@
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
+#include "support/TestServices.h"
 
 using namespace Veng;
 using namespace Veng::Net;
 
 namespace
 {
-    // A dependency-free prefab never touches the manager, so a never-dereferenced reference is safe
-    // (the game_mode.cpp / net_state_flow.cpp precedent).
-    AssetManager& FakeAssets()
+    // An asset manager the dependency-free prefabs and anchored spawns here never load through.
+    AssetManager& TestAssets()
     {
-        alignas(16) static unsigned char bytes[64]{};
-        return *reinterpret_cast<AssetManager*>(bytes);
+        return TestSupport::SharedTestServices().GetAssets();
     }
 
     vector<u8> Record(const TypeRegistry& registry, TypeId id, const void* value)
@@ -72,7 +71,7 @@ TEST_CASE("The accept spawns a connection-owned Viewer seat with no SeatInput, a
     Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = Config},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = levelId,
         .SeatPrefab = seatPrefab,
     });
@@ -89,7 +88,7 @@ TEST_CASE("The accept spawns a connection-owned Viewer seat with no SeatInput, a
     AssetId requestedLevel;
     Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
         .Client = *client,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LoadLevel = [&](AssetId requested) -> Scene*
         {
             requestedLevel = requested;
@@ -154,12 +153,12 @@ TEST_CASE("A client-mode level load skips server-authoritative authored entities
 
     // Full load: every authored entity spawns.
     Unique<Scene> full = Scene::Create(types);
-    CHECK(prefab->SpawnInto(*full, FakeAssets()).Roots.size() == 3);
+    CHECK(prefab->SpawnInto(*full, TestAssets()).Roots.size() == 3);
 
     // Client-mode load: the two server-authoritative entities are skipped; only the Local one spawns.
     Unique<Scene> client = Scene::Create(types);
     const Prefab::SpawnResult skipped = prefab->SpawnInto(
-        *client, FakeAssets(), Prefab::SpawnOptions{.SkipServerAuthoritative = true});
+        *client, TestAssets(), Prefab::SpawnOptions{.SkipServerAuthoritative = true});
     CHECK(skipped.Roots.size() == 1);
 
     u32 localCount = 0;
@@ -189,7 +188,7 @@ TEST_CASE("Full join: readiness gates the stream, seat + pawn arrive, possession
     Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = Config},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = levelId,
         .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
     });
@@ -210,7 +209,7 @@ TEST_CASE("Full join: readiness gates the stream, seat + pawn arrive, possession
 
     Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
         .Client = *client,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LoadLevel = [&](AssetId requested) -> Scene*
         {
             CHECK(requested.Value == levelId.Value);
@@ -309,7 +308,7 @@ TEST_CASE("Disconnect tears the seat down and surfaces the event")
     Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = Config},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = AssetId{0x0000000000000001ULL},
     });
     REQUIRE(host.has_value());
@@ -323,7 +322,7 @@ TEST_CASE("Disconnect tears the seat down and surfaces the event")
     Unique<Scene> clientScene;
     Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
         .Client = *client,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LoadLevel = [&](AssetId) -> Scene*
         {
             clientScene = Scene::Create(clientTypes);

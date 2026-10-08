@@ -18,6 +18,7 @@
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
+#include "support/TestServices.h"
 
 #include <array>
 
@@ -200,10 +201,10 @@ TEST_CASE("An owner-less scoped entity is OwnerOnly to nobody and ExceptOwner to
 
 namespace
 {
-    AssetManager& FakeAssets()
+    // An asset manager the dependency-free prefabs and anchored spawns here never load through.
+    AssetManager& TestAssets()
     {
-        alignas(16) static unsigned char bytes[64]{};
-        return *reinterpret_cast<AssetManager*>(bytes);
+        return TestSupport::SharedTestServices().GetAssets();
     }
 }
 
@@ -237,7 +238,7 @@ TEST_CASE("Interest gates spawns; a leave is a visibility despawn that re-baseli
         {
             if (message.Channel == Net::Channel::ReliableOrdered)
             {
-                const auto applied = replClient.ApplyReliable(message.Bytes, *client, FakeAssets());
+                const auto applied = replClient.ApplyReliable(message.Bytes, *client, TestAssets());
                 if (applied.Despawned)
                 {
                     lastDespawn = applied;

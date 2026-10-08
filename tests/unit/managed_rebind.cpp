@@ -24,6 +24,7 @@
 #include <Veng/Scene/SystemRegistry.h>
 #include <Veng/World.h>
 #include <Veng/WorldRunner.h>
+#include "support/TestServices.h"
 
 #include "ManagedRebind.h"
 
@@ -31,43 +32,18 @@ using namespace Veng;
 
 namespace
 {
-    // The fake SystemContext the runner forwards but no system dereferences (an empty registry runs no
-    // systems), keeping the whole case device-free while exercising the real open/tick/start path.
-    struct ContextStorage
-    {
-        alignas(16) unsigned char AssetsBytes[64]{};
-        alignas(16) unsigned char InputBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
-
-        SystemContext Make()
-        {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = *reinterpret_cast<Input*>(InputBytes),
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-            };
-        }
-    };
-
-    WorldOpenInfo StartedEmptyWorld(ContextStorage& storage)
+    WorldOpenInfo StartedEmptyWorld()
     {
         return WorldOpenInfo{
             .SimTickRate = 60,
             .StartSimulation = true,
             .Systems = vector<SystemId>{},
-            .MakeStartContext = [&storage] { return storage.Make(); },
         };
     }
 
-    WorldTickInfo OneStep(ContextStorage& storage)
+    WorldTickInfo OneStep()
     {
-        return WorldTickInfo{
-            .Delta = 1.0f / 60.0f,
-            .BuildContext = [&storage](WorldInstanceId, const Scene&, u64, f32, bool)
-            { return storage.Make(); },
-        };
+        return WorldTickInfo{.Delta = 1.0f / 60.0f};
     }
 }
 
@@ -136,7 +112,8 @@ TEST_CASE("IsWorldPresentable gates on resolve, started sim, residency, and a fi
     RegisterBuiltinTypes(types);
     SystemRegistry systems;
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-    ContextStorage storage;
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
 
     SUBCASE("An unresolved (unminted) world is never presentable")
     {
@@ -157,7 +134,7 @@ TEST_CASE("IsWorldPresentable gates on resolve, started sim, residency, and a fi
 
     SUBCASE("A started but not-yet-ticked world is not presentable; it becomes so after one tick")
     {
-        const WorldInstanceId world = runner.OpenWorld(StartedEmptyWorld(storage));
+        const WorldInstanceId world = runner.OpenWorld(StartedEmptyWorld());
 
         // Started, its empty residency batch is already resident, but the clock is still at tick 0.
         CHECK(runner.ResolveWorld(world)->Pending.IsResident());
@@ -165,15 +142,15 @@ TEST_CASE("IsWorldPresentable gates on resolve, started sim, residency, and a fi
         CHECK_FALSE(IsWorldPresentable(runner, world));
 
         // One tick advances the clock past zero: now fully presentable.
-        runner.Tick(OneStep(storage));
+        runner.Tick(OneStep());
         CHECK(runner.ResolveWorld(world)->Clock.GetTick() >= 1);
         CHECK(IsWorldPresentable(runner, world));
     }
 
     SUBCASE("A closed world stops being presentable")
     {
-        const WorldInstanceId world = runner.OpenWorld(StartedEmptyWorld(storage));
-        runner.Tick(OneStep(storage));
+        const WorldInstanceId world = runner.OpenWorld(StartedEmptyWorld());
+        runner.Tick(OneStep());
         REQUIRE(IsWorldPresentable(runner, world));
 
         runner.CloseWorld(world);
@@ -188,21 +165,22 @@ TEST_CASE("A consumer present-ready gate composes onto the engine's readiness ra
     RegisterBuiltinTypes(types);
     SystemRegistry systems;
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-    ContextStorage storage;
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
 
-    const WorldInstanceId world = runner.OpenWorld(StartedEmptyWorld(storage));
+    const WorldInstanceId world = runner.OpenWorld(StartedEmptyWorld());
 
     SUBCASE("An empty gate reduces the composed test to the engine's own")
     {
         const WorldPresentReadyGate none;
         CHECK_FALSE(IsWorldPresentable(runner, world, none));
-        runner.Tick(OneStep(storage));
+        runner.Tick(OneStep());
         CHECK(IsWorldPresentable(runner, world, none));
     }
 
     SUBCASE("A refusing gate holds an engine-ready world back")
     {
-        runner.Tick(OneStep(storage));
+        runner.Tick(OneStep());
         REQUIRE(IsWorldPresentable(runner, world));
 
         bool open = false;
@@ -228,7 +206,7 @@ TEST_CASE("A consumer present-ready gate composes onto the engine's readiness ra
         CHECK_FALSE(IsWorldPresentable(runner, world, gate));
         CHECK(calls == 0);
 
-        runner.Tick(OneStep(storage));
+        runner.Tick(OneStep());
         CHECK(IsWorldPresentable(runner, world, gate));
         CHECK(calls == 1);
         CHECK(seen == world);
@@ -242,12 +220,13 @@ TEST_CASE("A two-world runner carries overlay components, and GuiOverlay::Detach
     RegisterBuiltinTypes(types);
     SystemRegistry systems;
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-    ContextStorage storage;
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
 
     // Two worlds, each with a seat and an overlay-carrying entity — the departed/destination pair a
     // complete rebind moves between.
-    const WorldInstanceId worldA = runner.OpenWorld(StartedEmptyWorld(storage));
-    const WorldInstanceId worldB = runner.OpenWorld(StartedEmptyWorld(storage));
+    const WorldInstanceId worldA = runner.OpenWorld(StartedEmptyWorld());
+    const WorldInstanceId worldB = runner.OpenWorld(StartedEmptyWorld());
 
     Scene& sceneA = runner.ResolveWorld(worldA)->GetScene();
     const Entity seatA = sceneA.CreateEntity();

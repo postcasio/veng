@@ -22,6 +22,7 @@
 #include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SystemRegistry.h>
+#include "support/TestServices.h"
 
 using namespace Veng;
 
@@ -33,26 +34,6 @@ namespace
         RegisterBuiltinTypes(registry);
         return registry;
     }
-
-    // A SystemContext the driver forwards but no system here dereferences (the spawn mirrors
-    // the player prefab inline rather than loading one, so it never touches the AssetManager).
-    struct ContextStorage
-    {
-        alignas(16) unsigned char AssetsBytes[64]{};
-        alignas(16) unsigned char InputBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
-
-        SystemContext Make()
-        {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = *reinterpret_cast<Input*>(InputBytes),
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-            };
-        }
-    };
 
     // The spawn rule under test, mirroring the example's SpawnPlayerRule: a Sim-phase system
     // that, when the scene carries a GameModeConfig, spawns the player wiring (a camera, a seat
@@ -165,8 +146,8 @@ TEST_CASE("A spawn rule instantiates the possessed player when the scene carries
     systems.Register<TestSpawnPlayerRule>();
     SceneSimulation sim(systems);
 
-    ContextStorage storage;
-    sim.Start(*scene, storage.Make());
+    TestSupport::TestServices services;
+    sim.Start(*scene, services.Make());
 
     // After Start the scene holds a possessed pawn and a Viewer naming a (Transform, Camera).
     CHECK(CountPossessedSeats(*scene) == 1);
@@ -189,11 +170,11 @@ TEST_CASE("Stopping the simulation despawns the spawned player")
     systems.Register<TestSpawnPlayerRule>();
     SceneSimulation sim(systems);
 
-    ContextStorage storage;
-    sim.Start(*scene, storage.Make());
+    TestSupport::TestServices services;
+    sim.Start(*scene, services.Make());
     REQUIRE(CountPossessedSeats(*scene) == 1);
 
-    sim.Stop(*scene, storage.Make());
+    sim.Stop(*scene, services.Make());
 
     // The player wiring is gone: no seat, pawn, or camera survives.
     int seats = 0;
@@ -217,9 +198,9 @@ TEST_CASE("A scene with no game-mode config runs the rule unchanged — nothing 
     systems.Register<TestSpawnPlayerRule>();
     SceneSimulation sim(systems);
 
-    ContextStorage storage;
-    sim.Start(*scene, storage.Make());
-    sim.Update(*scene, 0.016f, storage.Make());
+    TestSupport::TestServices services;
+    sim.Start(*scene, services.Make());
+    sim.Update(*scene, 0.016f, services.Make());
 
     // No player wiring appeared.
     int seats = 0;
@@ -245,8 +226,8 @@ TEST_CASE("The spawn rule runs in the Sim phase, and its camera is trailed by th
     systems.Register<CameraRigSystem>();
     SceneSimulation sim(systems);
 
-    ContextStorage storage;
-    sim.Start(*scene, storage.Make());
+    TestSupport::TestServices services;
+    sim.Start(*scene, services.Make());
 
     // Find the spawned camera + pawn through the seat's references.
     Entity camera = Entity::Null;
@@ -263,7 +244,7 @@ TEST_CASE("The spawn rule runs in the Sim phase, and its camera is trailed by th
     // The pawn sits away from the camera's authored pose; one Update runs the View-phase
     // rig, which moves the camera to trail the pawn (snap: the CameraFollow Damping is 0).
     const vec3 cameraBefore = scene->Get<Transform>(camera).Position;
-    sim.Update(*scene, 0.016f, storage.Make());
+    sim.Update(*scene, 0.016f, services.Make());
     const vec3 cameraAfter = scene->Get<Transform>(camera).Position;
 
     // The rig wrote the camera transform — it no longer sits at its authored pose.

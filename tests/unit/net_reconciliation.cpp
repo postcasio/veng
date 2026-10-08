@@ -34,6 +34,7 @@
 #include <Veng/Scene/Movement.h>
 #include <Veng/Scene/RemoteInterpolationSystem.h>
 #include <Veng/Scene/Scene.h>
+#include "support/TestServices.h"
 
 #include <algorithm>
 #include <unordered_map>
@@ -48,10 +49,10 @@ namespace
     constexpr AssetId LevelId{0x00000000000000AAULL};
     constexpr AssetId PawnPrefabId{0x00000000000000BBULL};
 
-    AssetManager& FakeAssets()
+    // An asset manager the dependency-free prefabs and anchored spawns here never load through.
+    AssetManager& TestAssets()
     {
-        alignas(16) static unsigned char bytes[64]{};
-        return *reinterpret_cast<AssetManager*>(bytes);
+        return TestSupport::SharedTestServices().GetAssets();
     }
 
     ActionState MoveState(const vec2 move)
@@ -152,9 +153,7 @@ namespace
         MovementSystem Movement;
         Entity Pawn = Entity::Null;
 
-        alignas(16) unsigned char AssetsBytes[64]{};
-        alignas(16) unsigned char InputBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
+        TestSupport::TestServices Services;
 
         SoloWorld()
         {
@@ -172,15 +171,10 @@ namespace
 
         SystemContext Context(const bool replay)
         {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = *reinterpret_cast<Input*>(InputBytes),
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-                .Role = NetRole::Client,
-                .IsReplay = replay,
-            };
+            SystemContext context = Services.Make();
+            context.Role = NetRole::Client;
+            context.IsReplay = replay;
+            return context;
         }
 
         // One live client tick: derive Intent, integrate, record.
@@ -484,25 +478,19 @@ namespace
         return Prefab::Create(std::move(entities), {});
     }
 
-    struct FakeContext
+    // Contexts over real test services, with a settable NetRole and replay flag.
+    struct TestContext
     {
-        alignas(16) unsigned char AssetsBytes[64]{};
-        alignas(16) unsigned char InputBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
+        TestSupport::TestServices Services;
         NetRole Role = NetRole::Server;
         bool Replay = false;
 
         SystemContext Make()
         {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = *reinterpret_cast<Input*>(InputBytes),
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-                .Role = Role,
-                .IsReplay = Replay,
-            };
+            SystemContext context = Services.Make();
+            context.Role = Role;
+            context.IsReplay = Replay;
+            return context;
         }
     };
 
@@ -529,7 +517,7 @@ namespace
             Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
                 .Server = ServerInfo{.TransportOverride = &transport, .Connection = FastConfig},
                 .World = *World,
-                .Assets = FakeAssets(),
+                .Assets = TestAssets(),
                 .LevelId = LevelId,
                 .Replication = settings,
                 .Interest = InterestSettings{.Radius = interestRadius, .MinDwellSnapshots = 2},
@@ -552,7 +540,7 @@ namespace
                 {
                     continue;
                 }
-                const Prefab::SpawnResult spawned = PawnPrefab->SpawnInto(*World, FakeAssets());
+                const Prefab::SpawnResult spawned = PawnPrefab->SpawnInto(*World, TestAssets());
                 if (spawned.Roots.empty())
                 {
                     continue;
@@ -586,7 +574,7 @@ namespace
                 }
             }
 
-            FakeContext ctx;
+            TestContext ctx;
             ctx.Role = NetRole::Server;
             Movement.OnUpdate(*World, delta, ctx.Make());
         }
@@ -634,7 +622,7 @@ namespace
 
             Host = ClientHost::Create(ClientHostInfo{
                 .Client = *Client,
-                .Assets = FakeAssets(),
+                .Assets = TestAssets(),
                 .LoadLevel = [this](AssetId) -> Scene*
                 {
                     ClientScene = Scene::Create(Types);
@@ -677,7 +665,7 @@ namespace
                     {
                         world.Get<Intent>(OwnPawn) = ControlMap(input);
                     }
-                    FakeContext ctx;
+                    TestContext ctx;
                     ctx.Role = NetRole::Client;
                     ctx.Replay = true;
                     Movement.OnUpdate(world, Delta, ctx.Make());
@@ -700,7 +688,7 @@ namespace
             {
                 world->Get<Intent>(OwnPawn) = ControlMap(world->Get<PlayerInput>(LocalSeat));
             }
-            FakeContext ctx;
+            TestContext ctx;
             ctx.Role = NetRole::Client;
             Movement.OnUpdate(*world, delta, ctx.Make());
             Host->RecordPrediction(clientTick);
@@ -713,7 +701,7 @@ namespace
             PredictStep(clientTick, delta, scripted);
             if (Scene* world = Host->World())
             {
-                FakeContext ctx;
+                TestContext ctx;
                 ctx.Role = NetRole::Client;
                 Interp.OnUpdate(*world, delta, ctx.Make());
             }

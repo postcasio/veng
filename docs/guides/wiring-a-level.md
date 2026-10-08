@@ -98,9 +98,9 @@ at `OnStart` it spawns the config's `PlayerPrefab`, and tears it down at `OnStop
 
 ## The load-to-play flow
 
-Loading a level and starting play is a short, explicit sequence. From
-hello-triangle's `OnInitialize`
-([`main.cpp`](../../examples/hello-triangle/main.cpp)):
+Loading a level and starting play is a short, explicit sequence. An application
+that sets `ApplicationInfo::World` runs it for its startup level with no code at
+all; opening a further level at runtime is the same sequence by hand:
 
 ```cpp
 // 1. Load the level like any other asset.
@@ -108,40 +108,27 @@ const AssetResult<AssetHandle<Level>> level =
     GetAssetManager().LoadSync<Level>(AssetId{0x95C2E76206A11F08ULL});
 VE_ASSERT(level.has_value(), "{}", level.error().Detail);
 
-// 2. Seed the renderer from the level's render subset, before the renderer exists.
-const LevelRenderSettings& render = level->Get()->GetRender();
-m_SceneSettings.Bloom = render.Bloom;
-m_SceneSettings.Shadows = render.Shadows;
-m_SceneSettings.AO = render.AO;
-m_Exposure = render.Exposure;
-m_BloomIntensity = render.BloomIntensity;
-
-// ... create the SceneRenderer with m_SceneSettings ...
-
-// 3. Start the game: spawn the world, build the simulation, seed the settings.
-LevelInstance instance = level->Get()->LoadInto(GetAssetManager(), GetSystemRegistry());
-m_Scene = std::move(instance.World);
-m_Simulation = std::move(instance.Simulation);
-
-// 4. Start the simulation (the spawn rule fires here, at OnStart).
-m_Simulation->Start(*m_Scene,
-                    SystemContext{.Assets = GetAssetManager(), .Input = GetInput()});
+// 2. Open it as a world: spawn the world prefab, build the simulation, seed the
+//    settings, and start the simulation (the spawn rule fires here, at OnStart).
+const WorldInstanceId world = GetWorldRunner().OpenWorld(WorldOpenInfo{.Source = *level});
 ```
 
-`Level::LoadInto(AssetManager&, const SystemRegistry&)` does the assembly:
+`Level::LoadInto(AssetManager&, const SystemRegistry&)` does the assembly the open
+runs:
 
 1. creates a fresh `Scene`,
 2. spawns the world prefab into it (`Prefab::SpawnInto`),
 3. builds a `SceneSimulation` from the level's ordered `SystemId` set, resolving
-   each id against the catalog and honoring the Sim/View phases, and
+   each id against the catalog and honoring the Sim/View phases, and attaches it to
+   the scene, and
 4. creates one settings entity carrying the level's game-mode config and render
    settings.
 
-It returns a `LevelInstance { Unique<Scene> World; Unique<SceneSimulation> Simulation; }`
-— the bundle the app owns and drives. The simulation comes back *not yet started*;
-the caller calls `Start`. From there the app ticks `m_Simulation->Update(...)` each
-frame and renders `m_Scene` — the same `SceneSimulation` driver the editor's Play
-mode uses, so a level plays identically in the editor and the shipped runtime.
+It returns a `LevelInstance { Unique<Scene> World; ResidencyBatch Pending; }`, which
+the `WorldRunner` takes ownership of. The runner starts the simulation with the
+`SystemContext` its context factory builds for the new world, then ticks it every
+frame — the same `SceneSimulation` driver the editor's Play mode uses, so a level
+plays identically in the editor and the shipped runtime.
 
 ---
 

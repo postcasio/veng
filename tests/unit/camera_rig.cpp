@@ -19,6 +19,7 @@
 #include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/SystemRegistry.h>
 #include <Veng/Scene/Transforms.h>
+#include "support/TestServices.h"
 
 using namespace Veng;
 
@@ -36,25 +37,6 @@ namespace
         return registry;
     }
 
-    // A SystemContext over never-dereferenced storage: the systems under test (movement,
-    // camera rig) ignore the context entirely.
-    struct ContextStorage
-    {
-        alignas(16) unsigned char AssetsBytes[64]{};
-        alignas(16) unsigned char InputBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
-
-        SystemContext Make()
-        {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = *reinterpret_cast<Input*>(InputBytes),
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-            };
-        }
-    };
 }
 
 TEST_CASE("FollowCamera with zero damping snaps the camera behind the target")
@@ -166,8 +148,8 @@ TEST_CASE("The View-phase rig reads the pawn position the Sim-phase movement fin
     systems.Register<MovementSystem>();
 
     SceneSimulation sim(systems);
-    ContextStorage storage;
-    sim.Update(*scene, 0.1f, storage.Make());
+    TestSupport::TestServices services;
+    sim.Update(*scene, 0.1f, services.Make());
 
     // Movement: 1 * 10 * 0.1 = 1.0 along +Z. The rig snaps the camera onto that finalized pose.
     const vec3 pawnPosition = scene->Get<Transform>(pawn).Position;
@@ -187,8 +169,8 @@ TEST_CASE("The rig leaves a camera with an unwired follow target untouched")
     scene->Add<CameraFollow>(camera, CameraFollow{.Target = Entity::Null});
 
     CameraRigSystem rig;
-    ContextStorage storage;
-    rig.OnUpdate(*scene, 0.1f, storage.Make());
+    TestSupport::TestServices services;
+    rig.OnUpdate(*scene, 0.1f, services.Make());
 
     CHECK(VecApprox(scene->Get<Transform>(camera).Position, vec3(1.0f, 2.0f, 3.0f)));
 }
@@ -236,8 +218,8 @@ TEST_CASE("The rig writes a look camera's rotation and clamps its stored pitch")
         camera, CameraLook{.Yaw = glm::radians(90.0f), .Pitch = 5.0f, .PitchLimit = 1.2f});
 
     CameraRigSystem rig;
-    ContextStorage storage;
-    rig.OnUpdate(*scene, 0.016f, storage.Make());
+    TestSupport::TestServices services;
+    rig.OnUpdate(*scene, 0.016f, services.Make());
 
     // Position untouched; rotation faces the yawed heading; the wound-up pitch stored clamped.
     CHECK(VecApprox(scene->Get<Transform>(camera).Position, vec3(1.0f, 2.0f, 3.0f)));
@@ -334,7 +316,7 @@ TEST_CASE("OrbitCamera's focus glide is frame-rate-independent")
                            .FocusDamping = 3.0f};
 
     TypeRegistry registry = MakeRegistry();
-    ContextStorage storage;
+    TestSupport::TestServices services;
 
     // One big step.
     const Unique<Scene> sceneBig = Scene::Create(registry);
@@ -342,7 +324,7 @@ TEST_CASE("OrbitCamera's focus glide is frame-rate-independent")
     sceneBig->Add<Transform>(cameraBig, Transform{});
     sceneBig->Add<CameraOrbit>(cameraBig, base);
     CameraRigSystem rigBig;
-    rigBig.OnUpdate(*sceneBig, 1.0f, storage.Make());
+    rigBig.OnUpdate(*sceneBig, 1.0f, services.Make());
 
     // Many small steps summing to the same elapsed time.
     const Unique<Scene> sceneSmall = Scene::Create(registry);
@@ -352,7 +334,7 @@ TEST_CASE("OrbitCamera's focus glide is frame-rate-independent")
     CameraRigSystem rigSmall;
     for (int i = 0; i < 100; ++i)
     {
-        rigSmall.OnUpdate(*sceneSmall, 0.01f, storage.Make());
+        rigSmall.OnUpdate(*sceneSmall, 0.01f, services.Make());
     }
 
     CHECK(VecApprox(sceneBig->Get<Transform>(cameraBig).Position,

@@ -12,6 +12,7 @@
 #include <Veng/Scene/EffectPool.h>
 #include <Veng/Scene/FlipbookSystem.h>
 #include <Veng/Scene/Scene.h>
+#include "support/TestServices.h"
 
 using namespace Veng;
 
@@ -169,14 +170,8 @@ TEST_CASE("SpawnTransientEffect installs the scene's pool, and FlipbookSystem re
 
     // No flipbook is resident, so the sprite holds; the lifetime alone retires it.
     FlipbookSystem system;
-    alignas(16) unsigned char services[64]{};
-    const SystemContext context{
-        .Assets = *reinterpret_cast<AssetManager*>(services),
-        .Input = *reinterpret_cast<Input*>(services),
-        .Tasks = *reinterpret_cast<TaskSystem*>(services),
-        .Audio = *reinterpret_cast<Audio::AudioEngine*>(services),
-        .Localization = *reinterpret_cast<Localization::Localization*>(services),
-    };
+    TestSupport::TestServices services;
+    const SystemContext context = services.Make();
     system.OnUpdate(scene, 0.3f, context);
     CHECK(scene.Get<FlipbookSprite>(effect).Time == 0.0f);
     CHECK(scene.GetEffectPool()->IsLive(effect));

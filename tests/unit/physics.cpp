@@ -14,6 +14,7 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSystem.h>
+#include "support/TestServices.h"
 
 using namespace Veng;
 
@@ -22,26 +23,6 @@ namespace
     // The Sim tick the module is arranged around; every step below uses it so a step count is a
     // simulated duration.
     constexpr f32 FixedStep = 1.0f / 60.0f;
-
-    // A SystemContext the physics system never dereferences: it reads IsReplay and Debug and
-    // touches neither the Input, the TaskSystem, nor the AssetManager.
-    struct ContextStorage
-    {
-        alignas(16) unsigned char InputBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
-        alignas(16) unsigned char AssetsBytes[64]{};
-
-        SystemContext Make()
-        {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = *reinterpret_cast<Input*>(InputBytes),
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-            };
-        }
-    };
 
     // A scene with a physics world, the builtin types registered, and nothing else.
     struct PhysicsFixture
@@ -294,9 +275,9 @@ TEST_CASE("a mispredict of N replayed ticks advances the physics world by exactl
     fixture.SpawnBox(vec3(0.0f, 4.0f, 0.0f));
 
     PhysicsSystem system;
-    ContextStorage storage;
-    const SystemContext live = storage.Make();
-    SystemContext replay = storage.Make();
+    TestSupport::TestServices services;
+    const SystemContext live = services.Make();
+    SystemContext replay = services.Make();
     replay.IsReplay = true;
 
     const u64 before = fixture.Physics().GetStepCount();
@@ -370,9 +351,9 @@ TEST_CASE("stopping a world's physics with many bodies and constraints leaves no
     REQUIRE(fixture.Physics().GetBodyCount() == BoxCount + 1);
     REQUIRE(fixture.Physics().GetConstraintCount() == BoxCount / 2);
 
-    ContextStorage storage;
+    TestSupport::TestServices services;
     PhysicsSystem system;
-    system.OnStop(*fixture.World, storage.Make());
+    system.OnStop(*fixture.World, services.Make());
 
     CHECK(fixture.Physics().GetBodyCount() == 0);
     CHECK(fixture.Physics().GetConstraintCount() == 0);

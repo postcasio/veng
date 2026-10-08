@@ -63,6 +63,10 @@ struct SystemContext
 };
 ```
 
+You never build one yourself: the engine builds every context a world's systems
+receive — at start, each tick, at stop, and on a reconciliation replay — through one
+factory, so each names its world and carries every service.
+
 `Input` is **always present** — never null. In a headless run (the CI/smoke path,
 which has no window) the input service reports the neutral *all-zeros* state:
 nothing pressed, zero mouse delta. So a system reads `context.Input`

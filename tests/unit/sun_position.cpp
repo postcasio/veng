@@ -12,6 +12,7 @@
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/TimeOfDay.h>
+#include "support/TestServices.h"
 
 using namespace Veng;
 using namespace Veng::Renderer;
@@ -23,25 +24,6 @@ namespace
         return glm::all(glm::lessThan(glm::abs(a - b), vec3(eps)));
     }
 
-    // A SystemContext TimeOfDaySystem never reads: it touches neither the Input nor the
-    // AssetManager, so backing storage is never dereferenced.
-    struct ContextStorage
-    {
-        alignas(16) unsigned char InputBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
-        alignas(16) unsigned char AssetsBytes[64]{};
-
-        SystemContext Make()
-        {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = *reinterpret_cast<Input*>(InputBytes),
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-            };
-        }
-    };
 }
 
 TEST_CASE("Declination is zero at the equinoxes and peaks at the solstices")
@@ -199,9 +181,9 @@ TEST_CASE("TimeOfDaySystem derives the sun from TimeOfDay and writes the directi
     time.DayOfYear = 40.0f;
     scene->Add<TimeOfDay>(scene->CreateEntity(), time);
 
-    ContextStorage storage;
+    TestSupport::TestServices services;
     TimeOfDaySystem system;
-    system.OnUpdate(*scene, 0.016f, storage.Make());
+    system.OnUpdate(*scene, 0.016f, services.Make());
 
     const vec3 expected = ComputeSunDirection(time.Orbit, time.Hours, time.DayOfYear);
     // The directional light's travel direction is written from the derived sun (its negation),
@@ -221,9 +203,9 @@ TEST_CASE("TimeOfDaySystem without TimeOfDay leaves the authored light untouched
     light.Direction = glm::normalize(vec3(1.0f, -1.0f, 0.0f));
     scene->Add<Light>(lightEntity, light);
 
-    ContextStorage storage;
+    TestSupport::TestServices services;
     TimeOfDaySystem system;
-    system.OnUpdate(*scene, 0.016f, storage.Make());
+    system.OnUpdate(*scene, 0.016f, services.Make());
 
     CHECK(VecApprox(scene->Get<Light>(lightEntity).Direction,
                     glm::normalize(vec3(1.0f, -1.0f, 0.0f))));
@@ -253,9 +235,9 @@ TEST_CASE("TimeOfDaySystem writes the first directional light even behind other 
     time.Hours = 16.0f;
     scene->Add<TimeOfDay>(scene->CreateEntity(), time);
 
-    ContextStorage storage;
+    TestSupport::TestServices services;
     TimeOfDaySystem system;
-    system.OnUpdate(*scene, 0.016f, storage.Make());
+    system.OnUpdate(*scene, 0.016f, services.Make());
 
     const vec3 expected = ComputeSunDirection(time.Orbit, time.Hours, time.DayOfYear);
     CHECK(VecApprox(scene->Get<Light>(sunEntity).Direction, -expected));
@@ -273,9 +255,9 @@ TEST_CASE("TimeOfDaySystem with TimeOfDay but no directional light is a no-op")
     scene->Add<TimeOfDay>(scene->CreateEntity(), time);
 
     // No directional light to write; the system must run without touching anything.
-    ContextStorage storage;
+    TestSupport::TestServices services;
     TimeOfDaySystem system;
-    system.OnUpdate(*scene, 0.016f, storage.Make());
+    system.OnUpdate(*scene, 0.016f, services.Make());
 
     CHECK(scene->TryGetFirst<Light>() == nullptr);
 }

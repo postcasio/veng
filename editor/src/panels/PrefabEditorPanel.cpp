@@ -57,7 +57,7 @@ namespace VengEditor
                                          const PreviewLook* look)
         : m_Id(worldPrefab), m_Look(look), m_BaseTitle(std::move(title)),
           m_TitleId(fmt::format("##doc0x{:X}", worldPrefab.Value)), m_App(app), m_Assets(assets),
-          m_Input(input), m_Audio(app.GetAudioEngine()), m_Router(router), m_Systems(systems)
+          m_Input(input), m_Router(router), m_Systems(systems)
     {
         m_Scene = Scene::Create(types);
         m_Context.Scene = m_Scene.get();
@@ -178,11 +178,7 @@ namespace VengEditor
                                ? CreateUnique<SceneSimulation>(m_Systems, *playSystems)
                                : CreateUnique<SceneSimulation>(m_Systems);
         }
-        m_Simulation->Start(*m_PlayScene, SystemContext{.Assets = m_Assets,
-                                                        .Input = m_Input,
-                                                        .Tasks = m_Assets.GetTaskSystem(),
-                                                        .Audio = m_Audio,
-                                                        .Localization = m_Localization});
+        m_Simulation->Start(*m_PlayScene, PlayContext(SystemContextPhase::Start));
 
         // The running game owns input: capture the cursor in the viewport until the release
         // chord (or window-focus loss) pops it.
@@ -198,11 +194,7 @@ namespace VengEditor
 
         if (m_Simulation != nullptr && m_PlayScene != nullptr)
         {
-            m_Simulation->Stop(*m_PlayScene, SystemContext{.Assets = m_Assets,
-                                                           .Input = m_Input,
-                                                           .Tasks = m_Assets.GetTaskSystem(),
-                                                           .Audio = m_Audio,
-                                                           .Localization = m_Localization});
+            m_Simulation->Stop(*m_PlayScene, PlayContext(SystemContextPhase::Stop));
         }
 
         ReleaseFromPlay();
@@ -297,29 +289,14 @@ namespace VengEditor
             // interpolation reads), then one View pass carrying the interpolation alpha the viewport
             // push reads. The pointer reaches the seats only while SyncPlayPointer has the play scene
             // holding it.
-            const PointerRouting pointer = m_App.GetSimPointer(*m_PlayScene);
-            const auto context = [this, &pointer](const u64 tick, const f32 alpha)
-            {
-                return SystemContext{.Assets = m_Assets,
-                                     .Input = m_Input,
-                                     .Tasks = m_Assets.GetTaskSystem(),
-                                     .Audio = m_Audio,
-                                     .Localization = m_Localization,
-                                     .Pointer = pointer,
-                                     .Tick = tick,
-                                     .Alpha = alpha,
-                                     .GameplayFocused = m_Router.IsGameplayFocused()};
-            };
             const SimStep step = m_PlaySimClock.Run(
                 Time::GetDeltaTime(),
                 [&](const SimStepInfo& simStep)
                 {
                     m_App.BeginSimStep(*m_PlayScene);
-                    SystemContext stepContext = context(simStep.Tick, 0.0f);
-                    stepContext.FirstStepThisFrame = simStep.First;
-                    stepContext.LastStepThisFrame = simStep.Last;
                     m_Simulation->UpdatePhase(*m_PlayScene, SceneSystem::Phase::Sim, simStep.Delta,
-                                              stepContext);
+                                              PlayContext(SystemContextPhase::Sim, simStep.Tick,
+                                                          0.0f, simStep.First, simStep.Last));
                     if (simStep.RecordsHistory)
                     {
                         m_PlayScene->SnapshotTransformHistory();
@@ -333,10 +310,25 @@ namespace VengEditor
             {
                 ResetFrameActionEdges(*m_PlayScene);
             }
-            m_Simulation->UpdatePhase(*m_PlayScene, SceneSystem::Phase::View, Time::GetDeltaTime(),
-                                      context(m_PlaySimClock.GetTick(), step.Alpha));
+            m_Simulation->UpdatePhase(
+                *m_PlayScene, SceneSystem::Phase::View, Time::GetDeltaTime(),
+                PlayContext(SystemContextPhase::View, m_PlaySimClock.GetTick(), step.Alpha));
             m_Context.PlayAlpha = step.Alpha;
         }
+    }
+
+    SystemContext PrefabEditorPanel::PlayContext(const SystemContextPhase phase, const u64 tick,
+                                                 const f32 alpha, const bool firstStep,
+                                                 const bool lastStep) const
+    {
+        // The play clone is no runner world, so its contexts name none.
+        return m_App.GetWorldRunner().BuildContext(SystemContextRequest{.World = {},
+                                                                        .Scene = *m_PlayScene,
+                                                                        .Phase = phase,
+                                                                        .Tick = tick,
+                                                                        .Alpha = alpha,
+                                                                        .FirstStep = firstStep,
+                                                                        .LastStep = lastStep});
     }
 
     void PrefabEditorPanel::DrawDocumentToolbar()

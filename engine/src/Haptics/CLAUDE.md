@@ -79,9 +79,10 @@ them before its short duration lapses, so a stalled frame loop lets a pad fall s
 - **`HapticsEngineInfo`** carries the three host hooks — `ResolveSeat`, `WorldState`, `WriteMotors` —
   each optional, so a test builds an engine over exactly what it exercises. The Application fills them
   from its `WorldRunner`, `Input` and pad backend.
-- **`SystemContext::Haptics` is a reference with a default**: `Haptics::GetInertEngine()`, a
-  function-static engine on which every play starts nothing. A context a caller assembles without an
-  application compiles without naming one; every context the Application builds binds its live engine.
+- **`SystemContext::Haptics` is a required reference**, like every service on the context, so a
+  context that omits it does not compile; every context the Application builds binds its live engine.
+  `Haptics::GetInertEngine()` is a function-static engine on which every play starts nothing, for a
+  caller that must hand one over and wants no rumble.
 - **The pure core** is `EvaluateClip(clip, t, loop)` (a looping clip wraps, a non-looping one reads
   zero from its duration on) and `MixRumble(layers, master)`, unit-tested directly beside the engine
   (`tests/unit/haptics.cpp`; the curve in `tests/unit/curve.cpp`; the cook in

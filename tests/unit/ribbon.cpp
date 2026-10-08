@@ -19,6 +19,7 @@
 #include <Veng/Scene/FlipbookSystem.h>
 #include <Veng/Scene/RibbonSystem.h>
 #include <Veng/Scene/Scene.h>
+#include "support/TestServices.h"
 
 #include "Renderer/Passes/RibbonScenePass.h"
 
@@ -91,14 +92,7 @@ namespace
     // Per-tick services RibbonSystem and FlipbookSystem never touch.
     SystemContext IdleContext()
     {
-        alignas(16) static unsigned char services[64]{};
-        return SystemContext{
-            .Assets = *reinterpret_cast<AssetManager*>(services),
-            .Input = *reinterpret_cast<Input*>(services),
-            .Tasks = *reinterpret_cast<TaskSystem*>(services),
-            .Audio = *reinterpret_cast<Audio::AudioEngine*>(services),
-            .Localization = *reinterpret_cast<Localization::Localization*>(services),
-        };
+        return TestSupport::SharedTestServices().Make();
     }
 }
 

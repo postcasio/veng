@@ -18,6 +18,7 @@
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
+#include "support/TestServices.h"
 
 #include <glm/geometric.hpp>
 
@@ -30,10 +31,10 @@ namespace
 {
     constexpr ActionId MoveAction{0xA1};
 
-    AssetManager& FakeAssets()
+    // An asset manager the dependency-free prefabs and anchored spawns here never load through.
+    AssetManager& TestAssets()
     {
-        alignas(16) static unsigned char bytes[64]{};
-        return *reinterpret_cast<AssetManager*>(bytes);
+        return TestSupport::SharedTestServices().GetAssets();
     }
 
     ActionState MoveState(const vec2 move)
@@ -81,7 +82,7 @@ TEST_CASE("The world-drive input feed carries a client's input into the server s
     Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = Config},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = AssetId{0x0000000000000001ULL},
     });
     REQUIRE(host.has_value());
@@ -96,7 +97,7 @@ TEST_CASE("The world-drive input feed carries a client's input into the server s
     Unique<Scene> clientScene;
     Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
         .Client = *client,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LoadLevel = [&](AssetId) -> Scene*
         {
             clientScene = Scene::Create(clientTypes);

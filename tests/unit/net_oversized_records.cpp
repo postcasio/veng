@@ -16,6 +16,7 @@
 #include <Veng/Scene/Scene.h>
 
 #include "support/TestComponents.h"
+#include "support/TestServices.h"
 
 #include <algorithm>
 #include <utility>
@@ -25,12 +26,10 @@ using namespace Veng::Net;
 
 namespace
 {
-    // A dependency-free spawn never touches the manager, so a never-dereferenced reference is safe
-    // (the net_join_flow.cpp precedent).
-    AssetManager& FakeAssets()
+    // An asset manager the dependency-free prefabs and anchored spawns here never load through.
+    AssetManager& TestAssets()
     {
-        alignas(16) static unsigned char bytes[64]{};
-        return *reinterpret_cast<AssetManager*>(bytes);
+        return TestSupport::SharedTestServices().GetAssets();
     }
 
     constexpr ConnectionId PeerConnection = 1;
@@ -113,7 +112,7 @@ namespace
             {
                 if (message.Channel == Channel::ReliableOrdered)
                 {
-                    ReplClient.ApplyReliable(message.Bytes, *Client, FakeAssets());
+                    ReplClient.ApplyReliable(message.Bytes, *Client, TestAssets());
                 }
                 else
                 {
@@ -312,7 +311,7 @@ TEST_CASE("A dropped fragment behind a later snapshot still converges on the new
         u64 snapshotTick = 0;
         while (const optional<vector<u8>> message = clientSide.Receive(Channel::ReliableOrdered))
         {
-            fx.ReplClient.ApplyReliable(*message, *fx.Client, FakeAssets());
+            fx.ReplClient.ApplyReliable(*message, *fx.Client, TestAssets());
         }
         while (const optional<vector<u8>> packet = clientSide.Receive(Channel::UnreliableSequenced))
         {

@@ -14,6 +14,7 @@
 #include <Veng/Scene/Motion.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSystem.h>
+#include "support/TestServices.h"
 
 using namespace Veng;
 
@@ -30,25 +31,6 @@ namespace
         return glm::abs(glm::dot(a, b)) == doctest::Approx(1.0f).epsilon(eps);
     }
 
-    // A SystemContext the motion system never reads: it touches neither the Input nor the
-    // AssetManager, so backing storage is never dereferenced.
-    struct ContextStorage
-    {
-        alignas(16) unsigned char InputBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
-        alignas(16) unsigned char AssetsBytes[64]{};
-
-        SystemContext Make()
-        {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = *reinterpret_cast<Input*>(InputBytes),
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-            };
-        }
-    };
 }
 
 TEST_CASE("IntegrateConstantMotion scales the world linear velocity by delta")
@@ -141,8 +123,8 @@ TEST_CASE("ConstantMotionSystem integrates every (Transform, ConstantMotion) ent
     scene->Add<Transform>(still, Transform{});
 
     ConstantMotionSystem motion;
-    ContextStorage storage;
-    motion.OnUpdate(*scene, 0.25f, storage.Make());
+    TestSupport::TestServices services;
+    motion.OnUpdate(*scene, 0.25f, services.Make());
 
     const quat expected = glm::angleAxis(0.25f, vec3(0.0f, 1.0f, 0.0f));
     CHECK(QuatApprox(scene->Get<Transform>(spinner).Rotation, expected));

@@ -27,6 +27,7 @@
 #include <Veng/Scene/Transforms.h>
 #include <Veng/Scene/Vehicle.h>
 #include <Veng/Task/TaskSystem.h>
+#include "support/TestServices.h"
 
 using namespace Veng;
 
@@ -60,24 +61,6 @@ namespace
         return glm::normalize(seed - glm::dot(seed, up) * up);
     }
 
-    // A SystemContext over never-dereferenced storage: the camera rig ignores the context entirely.
-    struct ContextStorage
-    {
-        alignas(16) unsigned char AssetsBytes[64]{};
-        alignas(16) unsigned char InputBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
-
-        SystemContext Make()
-        {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = *reinterpret_cast<Input*>(InputBytes),
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-            };
-        }
-    };
 }
 
 TEST_CASE("FirstPersonBasis is orthonormal with a level horizon at 32 up-vectors over a sphere")
@@ -242,8 +225,8 @@ TEST_CASE("The View-phase rig reads the target's finalized up and writes the cam
                                                       .MaxPitch = 1.4f});
 
     CameraRigSystem rig;
-    ContextStorage storage;
-    rig.OnUpdate(*scene, 0.016f, storage.Make());
+    TestSupport::TestServices services;
+    rig.OnUpdate(*scene, 0.016f, services.Make());
 
     // EyeOffset is +1.6 along the target's local +Y, which its rotation maps onto world +X: the eye
     // sits 1.6 past the target along +X. The camera up is the target's up (+X), horizon level.
@@ -281,10 +264,10 @@ TEST_CASE("A seated target's up comes from its seat, not the frame it last stood
         camera, FirstPersonRig{.Target = occupant, .MinPitch = -1.4f, .MaxPitch = 1.4f});
 
     CameraRigSystem rig;
-    ContextStorage storage;
+    TestSupport::TestServices services;
 
     // Standing, the stale up is the right answer: the rig follows CharacterState.
-    rig.OnUpdate(*scene, 0.016f, storage.Make());
+    rig.OnUpdate(*scene, 0.016f, services.Make());
     CHECK(glm::dot(scene->Get<Transform>(camera).Rotation * vec3(0.0f, 1.0f, 0.0f),
                    vec3(0.0f, 1.0f, 0.0f)) > 0.99f);
 
@@ -292,7 +275,7 @@ TEST_CASE("A seated target's up comes from its seat, not the frame it last stood
     // longer winds the view bob forward.
     scene->Add<Seated>(occupant, Seated{.Vehicle = hull});
     const f32 bobBefore = scene->Get<FirstPersonRig>(camera).BobPhase;
-    rig.OnUpdate(*scene, 0.016f, storage.Make());
+    rig.OnUpdate(*scene, 0.016f, services.Make());
     CHECK(glm::dot(scene->Get<Transform>(camera).Rotation * vec3(0.0f, 1.0f, 0.0f),
                    vec3(1.0f, 0.0f, 0.0f)) > 0.99f);
     CHECK(scene->Get<FirstPersonRig>(camera).BobPhase == doctest::Approx(bobBefore));
@@ -311,8 +294,8 @@ TEST_CASE("The rig leaves a camera with an unwired target untouched")
     scene->Add<FirstPersonRig>(camera, FirstPersonRig{.Target = Entity::Null});
 
     CameraRigSystem rig;
-    ContextStorage storage;
-    rig.OnUpdate(*scene, 0.016f, storage.Make());
+    TestSupport::TestServices services;
+    rig.OnUpdate(*scene, 0.016f, services.Make());
 
     CHECK(VecApprox(scene->Get<Transform>(camera).Position, vec3(1.0f, 2.0f, 3.0f)));
 }
@@ -343,8 +326,8 @@ TEST_CASE("A socket-anchored eye resolves to the socket's world position")
         camera, FirstPersonRig{.Target = target, .EyeOffset = vec3(0.0f), .EyeSocket = "Eye"});
 
     CameraRigSystem rig;
-    ContextStorage storage;
-    rig.OnUpdate(*scene, 0.016f, storage.Make());
+    TestSupport::TestServices services;
+    rig.OnUpdate(*scene, 0.016f, services.Make());
 
     // With a zero EyeOffset the eye lands exactly on the socket's world position: the target's
     // position plus the socket's mesh-space offset (the target is unrotated).

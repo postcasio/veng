@@ -303,10 +303,15 @@ extern "C"
 /// Version 75 replaces that latch with a SimInputFrame, which also carries the frame's pointer
 /// routing to a driver stepping its own clock (Application::BeginSimStep / GetSimPointer), so
 /// Application grows again and a stale module lays it out short.
+/// Version 76 builds every SystemContext through one factory the WorldRunner holds: WorldOpenInfo
+/// loses MakeStartContext, WorldTickInfo loses BuildContext, the runner's stop-context factory member
+/// becomes the context factory, and SystemContext::Haptics loses its default. A module opens worlds
+/// and ticks runners, so a stale module lays both info structs out with fields the host no longer
+/// reads and leaves the start context it expects unbuilt.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 75u
+#define VENG_MODULE_ABI_VERSION 76u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

@@ -50,9 +50,8 @@ namespace Veng
     ///
     /// A world spawns either a cooked Level (Source resident) or an empty scene (Source empty). Only
     /// the level path needs the asset manager; the empty path is device-free. The OnLoaded hook runs
-    /// once with the freshly-spawned scene before the simulation starts, and MakeStartContext supplies
-    /// the per-tick context the start runs with (the runner is transport-agnostic, so the net role
-    /// rides in through this caller-built context, never a field on the world).
+    /// once with the freshly-spawned scene before the simulation starts, which starts with the context
+    /// the runner's factory builds for the new world (WorldRunner::SetContextFactory).
     struct WorldOpenInfo
     {
         /// @brief The level to spawn into the world; an empty handle opens an empty scene.
@@ -87,9 +86,48 @@ namespace Veng
         optional<vector<SystemId>> Systems;
         /// @brief Invoked once with the spawned scene and its residency batch, before the sim starts.
         function<void(WorldInstanceId, Scene&, ResidencyBatch&)> OnLoaded;
-        /// @brief Builds the SystemContext the simulation starts with; required when StartSimulation.
-        function<SystemContext()> MakeStartContext;
     };
+
+    /// @brief Which lifecycle call or tick phase a SystemContextRequest asks a context for.
+    enum class SystemContextPhase : u8
+    {
+        /// @brief The context a world's simulation starts with (each system's OnStart).
+        Start,
+        /// @brief The context of one live fixed Sim step.
+        Sim,
+        /// @brief The context of a frame's View pass.
+        View,
+        /// @brief The context a world's simulation stops with (each system's OnStop).
+        Stop,
+        /// @brief The context of one Sim step re-run by a client reconciliation replay.
+        Replay,
+    };
+
+    /// @brief What a caller knows about the SystemContext it needs: the world, the scene and the step.
+    ///
+    /// Everything per-call a context carries beyond the services comes from here, so the one factory
+    /// that fills the services (WorldRunner::SetContextFactory) builds every context — start, tick,
+    /// stop and replay — in the same shape.
+    struct SystemContextRequest
+    {
+        /// @brief The world the context is for; invalid only for a simulation the runner does not hold.
+        WorldInstanceId World;
+        /// @brief The scene the context's systems run over.
+        const Veng::Scene& Scene;
+        /// @brief The lifecycle call or tick phase the context is for.
+        SystemContextPhase Phase = SystemContextPhase::Sim;
+        /// @brief The tick number to stamp: the Sim step, or the last completed tick otherwise.
+        u64 Tick = 0;
+        /// @brief The interpolation fraction to stamp; nonzero only in the View phase.
+        f32 Alpha = 0.0f;
+        /// @brief Whether this is the frame's first Sim step (see SystemContext::FirstStepThisFrame).
+        bool FirstStep = false;
+        /// @brief Whether this is the frame's last Sim step (see SystemContext::LastStepThisFrame).
+        bool LastStep = false;
+    };
+
+    /// @brief Builds the SystemContext a request describes, over the services its installer owns.
+    using SystemContextFactory = function<SystemContext(const SystemContextRequest& request)>;
 
     /// @brief What one WorldRunner::Tick observed across all worlds this frame.
     struct WorldTickResult
@@ -102,28 +140,16 @@ namespace Veng
 
     /// @brief The per-frame hooks WorldRunner::Tick drives each world through.
     ///
-    /// The scheduler owns the loop (advance each world's clock, run its Sim steps then its View pass);
-    /// these hooks thread back the caller-owned concerns the runner does not know — building a
-    /// scene's SystemContext (which resolves the presenting viewport), the net server/client per-step
-    /// work, and the net client's sim time-scale. Every hook but BuildContext is optional.
+    /// The scheduler owns the loop (advance each world's clock, run its Sim steps then its View pass)
+    /// and builds each step's SystemContext through its factory; these hooks thread back the
+    /// caller-owned concerns the runner does not know — the net server/client per-step work and the
+    /// net client's sim time-scale. Every hook is optional.
     struct WorldTickInfo
     {
         /// @brief The wall-clock frame delta in seconds folded into every world's clock.
         f32 Delta = 0.0f;
         /// @brief When false, the View phase is skipped this frame (a dedicated server).
         bool RunViewPhase = true;
-        /// @brief Builds a world's per-tick SystemContext for a Sim step or the View pass.
-        ///
-        /// @param world      The world being ticked.
-        /// @param scene      The world's scene.
-        /// @param tick       The tick number to stamp (the Sim step, or the last completed tick in View).
-        /// @param alpha      The interpolation fraction (0 in Sim, the frame residual in View).
-        /// @param firstStep  True on the frame's first Sim step (false in View); resets a per-frame
-        ///                   accumulator (see SystemContext::FirstStepThisFrame). The runner sets
-        ///                   SystemContext::LastStepThisFrame on the returned context itself.
-        function<SystemContext(WorldInstanceId world, const Scene& scene, u64 tick, f32 alpha,
-                               bool firstStep)>
-            BuildContext;
         /// @brief Returns a world's sim time-scale this frame (the net client's slew); 1 by default.
         function<f32(WorldInstanceId world)> SimScale;
         /// @brief Runs before each of a world's Sim steps (net server: change-tick + seat-input feed).
@@ -242,8 +268,8 @@ namespace Veng
         ///
         /// Mints an id, spawns the world (@p info.Source resident → the level; empty → an empty
         /// scene), builds its simulation, runs @p info.OnLoaded with the spawned scene, and starts the
-        /// simulation when @p info.StartSimulation. Runtime open is first-class. Returns only the
-        /// handle, never a viewport or a Scene&.
+        /// simulation when @p info.StartSimulation, with the factory's Start context naming the new
+        /// world. Runtime open is first-class. Returns only the handle, never a viewport or a Scene&.
         ///
         /// An open issued from inside Tick — a system opening a world from its own update — is
         /// immediate: the load hook and the start run nested in the opening world's tick, so the
@@ -251,20 +277,64 @@ namespace Veng
         /// its first tick next frame, since the walk runs over the world count it captured at entry.
         /// @param info  How to spawn and start the world.
         /// @return The opened world's handle.
+        /// @pre A context factory is installed when @p info.StartSimulation and the world carries a
+        ///      simulation.
         [[nodiscard]] WorldInstanceId OpenWorld(const WorldOpenInfo& info);
 
-        /// @brief Sets the factory CloseWorld builds a started world's stop context from.
+        /// @brief Starts the simulation of a world opened with WorldOpenInfo::StartSimulation false.
         ///
-        /// The one place CloseWorld gets a SystemContext to run each system's OnStop with, uniform
-        /// across every world however its simulation was started — at open (WorldOpenInfo) or
-        /// externally (Scene::StartSimulation). Called with the closing world's id and live scene, it
-        /// returns a context built over the same services the world's ticks saw, or nullopt when none
-        /// can be built (a device-free runner has no services to fill one). Unset — the default — is
-        /// the device-free contract: CloseWorld drops a started world without running OnStop rather
-        /// than fabricating a context.
-        /// @param factory  The stop-context factory, or an empty function to clear it.
-        void
-        SetStopContextFactory(function<optional<SystemContext>(WorldInstanceId, Scene&)> factory);
+        /// The deferred half of an open: a world whose scene arrives or is populated after the open
+        /// (a client join target once its level installs, an overlay once its policy is applied)
+        /// starts here, with the factory's Start context naming the world. A world carrying no
+        /// simulation starts nothing.
+        /// @param world  The open, not yet started world to start.
+        /// @pre A context factory is installed, @p world resolves, and its simulation is not started.
+        void StartWorld(WorldInstanceId world);
+
+        /// @brief Installs the one factory every SystemContext the runner's worlds receive is built by.
+        ///
+        /// The runner builds through it at every lifecycle point it drives — a world's start (OpenWorld,
+        /// StartWorld), each Sim step and View pass (Tick), and its stop (CloseWorld) — and a caller
+        /// stepping a world's scene outside those (a reconciliation replay, ReplaySimStep) builds
+        /// through BuildContext, so every context names its world and carries the same services.
+        ///
+        /// Unset — the default — is the device-free contract: CloseWorld drops a started world without
+        /// running OnStop rather than fabricating a context, and starting or ticking a simulation
+        /// asserts.
+        /// @param factory  The context factory, or an empty function to clear it.
+        void SetContextFactory(SystemContextFactory factory);
+
+        /// @brief Returns whether a context factory is installed.
+        [[nodiscard]] bool HasContextFactory() const { return static_cast<bool>(m_ContextFactory); }
+
+        /// @brief Builds a SystemContext through the installed factory.
+        ///
+        /// The one public entry every context builder calls. @p request names the world it is for;
+        /// the only caller that names no world (an invalid id) is a simulation the runner does not
+        /// hold — an editor's hand-driven Play session.
+        /// @param request  The world, scene, phase and step the context is for.
+        /// @return The context the factory built.
+        /// @pre A context factory is installed.
+        [[nodiscard]] SystemContext BuildContext(const SystemContextRequest& request) const;
+
+        /// @brief Returns the world whose live scene is @p scene, or an invalid id when none is.
+        ///
+        /// The reverse of ResolveWorld, for a caller handed a scene by a layer that holds scenes rather
+        /// than runner handles (the net client host's replay hook).
+        /// @param scene  The scene to look up.
+        /// @return The holding world's id, or an invalid id.
+        [[nodiscard]] WorldInstanceId FindWorld(const Scene& scene) const;
+
+        /// @brief Re-runs one Sim step of a world's scene as a reconciliation replay.
+        ///
+        /// Resolves @p scene to the world holding it (FindWorld), builds its Replay context naming that
+        /// world and stamping @p tick, and advances the scene's Sim phase by that world's own fixed
+        /// step — so a client replaying any of several joined worlds replays it under its own id, role
+        /// and tick rate. The caller feeds the step's recorded input first.
+        /// @param scene  The live scene of a world this runner holds.
+        /// @param tick   The tick being replayed.
+        /// @pre A context factory is installed and @p scene is a world this runner holds.
+        void ReplaySimStep(Scene& scene, u64 tick);
 
         /// @brief Sets the hook told a world's scene is about to be destroyed.
         ///
@@ -279,7 +349,7 @@ namespace Veng
         ///
         /// Outside Tick the close is immediate. Issued from inside Tick — a system closing its own or
         /// another world from its update — it is deferred instead: the world is queued, takes no
-        /// further Sim or View phase this frame, and is stopped (OnStop with the stop context, exactly
+        /// further Sim or View phase this frame, and is stopped (OnStop with its Stop context, exactly
         /// as an immediate close) and dropped once the walk finishes, in the order the closes were
         /// issued. A queued world still resolves until it drains, so the caller's scene reference
         /// stays live for the rest of its own call. Closing one world twice within a tick closes it
@@ -475,8 +545,8 @@ namespace Veng
         /// @brief The owned worlds, in ascending id (open) order.
         vector<Unique<World>> m_Worlds;
 
-        /// @brief Builds a started world's stop context at CloseWorld; unset leaves OnStop unrun.
-        function<optional<SystemContext>(WorldInstanceId, Scene&)> m_StopContextFactory;
+        /// @brief Builds every context the worlds receive; unset leaves a closed world's OnStop unrun.
+        SystemContextFactory m_ContextFactory;
 
         /// @brief Told a scene is about to be destroyed; unset tells no one.
         function<void(const Scene&)> m_SceneRetiringHook;

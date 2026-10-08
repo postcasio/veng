@@ -21,6 +21,7 @@
 #include <Veng/Scene/Scene.h>
 
 #include "support/TestComponents.h"
+#include "support/TestServices.h"
 
 #include <utility>
 
@@ -29,12 +30,10 @@ using namespace Veng::Net;
 
 namespace
 {
-    // A dependency-free prefab spawn never touches the manager, so a never-dereferenced reference is
-    // safe (the net_join_flow.cpp precedent).
-    AssetManager& FakeAssets()
+    // An asset manager the dependency-free prefabs and anchored spawns here never load through.
+    AssetManager& TestAssets()
     {
-        alignas(16) static unsigned char bytes[64]{};
-        return *reinterpret_cast<AssetManager*>(bytes);
+        return TestSupport::SharedTestServices().GetAssets();
     }
 
     const ConnectionConfig Config{
@@ -119,7 +118,7 @@ namespace
                     ServerInfo{.TransportOverride = ServerTransport.get(), .Connection = Config},
                 .WorldId = HostWorld,
                 .World = *HostScene,
-                .Assets = FakeAssets(),
+                .Assets = TestAssets(),
                 .LevelId = HostLevel,
             });
             REQUIRE(host.has_value());
@@ -129,7 +128,7 @@ namespace
                 ClientInfo{.TransportOverride = ClientTransport.get(), .Connection = Config});
             Joiner = ClientHost::Create(ClientHostInfo{
                 .Client = *Connection,
-                .Assets = FakeAssets(),
+                .Assets = TestAssets(),
                 .LoadLevel = [this](AssetId) -> Scene*
                 {
                     ClientScenes.push_back(Scene::Create(ClientTypes));
@@ -388,7 +387,7 @@ namespace
             {
                 if (message.Channel == Net::Channel::ReliableOrdered)
                 {
-                    ReplClient.ApplyReliable(message.Bytes, *Client, FakeAssets());
+                    ReplClient.ApplyReliable(message.Bytes, *Client, TestAssets());
                 }
                 else
                 {
@@ -481,7 +480,7 @@ TEST_CASE("An entity mixing pre-tick and post-tick components arrives whole")
     {
         if (message.Channel == Net::Channel::ReliableOrdered)
         {
-            fx.ReplClient.ApplyReliable(message.Bytes, *fx.Client, FakeAssets());
+            fx.ReplClient.ApplyReliable(message.Bytes, *fx.Client, TestAssets());
         }
     }
 
@@ -618,7 +617,7 @@ TEST_CASE("SpawnInto stamps each spawned root with the prefab it came from")
     Unique<Scene> scene = Scene::Create(types);
 
     const Ref<Prefab> prefab = MakePawnPrefab(types, PawnPrefabId);
-    const Prefab::SpawnResult spawned = prefab->SpawnInto(*scene, FakeAssets());
+    const Prefab::SpawnResult spawned = prefab->SpawnInto(*scene, TestAssets());
     REQUIRE(spawned.Roots.size() == 1);
 
     REQUIRE(scene->Has<PrefabSource>(spawned.Roots.front()));
@@ -633,7 +632,7 @@ TEST_CASE("A prefab with no source id stamps no provenance")
 
     // A runtime-built prefab is not AssetId-addressable, so there is no provenance to record.
     const Ref<Prefab> prefab = MakePawnPrefab(types, AssetId{});
-    const Prefab::SpawnResult spawned = prefab->SpawnInto(*scene, FakeAssets());
+    const Prefab::SpawnResult spawned = prefab->SpawnInto(*scene, TestAssets());
     REQUIRE(spawned.Roots.size() == 1);
     CHECK_FALSE(scene->Has<PrefabSource>(spawned.Roots.front()));
 }
@@ -645,7 +644,7 @@ TEST_CASE("A marked locally-spawned host entity reaches a joiner as a real prefa
     Peers fx;
     fx.Join();
 
-    const Prefab::SpawnResult spawned = fx.Pawn->SpawnInto(*fx.HostScene, FakeAssets());
+    const Prefab::SpawnResult spawned = fx.Pawn->SpawnInto(*fx.HostScene, TestAssets());
     REQUIRE(spawned.Roots.size() == 1);
     const Entity pawn = spawned.Roots.front();
     fx.HostScene->Add<NetSpawn>(pawn);
@@ -670,7 +669,7 @@ TEST_CASE("A marked entity spawned before the join is picked up when the client 
 
     // Spawned into a world that replicates but has no joins yet, with no tick stepped — so this now
     // covers the pre-tick population path rather than one lifted above it by hand.
-    const Prefab::SpawnResult spawned = fx.Pawn->SpawnInto(*fx.HostScene, FakeAssets());
+    const Prefab::SpawnResult spawned = fx.Pawn->SpawnInto(*fx.HostScene, TestAssets());
     const Entity pawn = spawned.Roots.front();
     fx.HostScene->Add<NetSpawn>(pawn);
     fx.HostScene->Get<Transform>(pawn).Position = vec3(5.0f, 0.0f, 0.0f);
@@ -689,7 +688,7 @@ TEST_CASE("An unmarked provenance-carrying host entity replicates exactly as it 
     Peers fx;
     fx.Join();
 
-    const Prefab::SpawnResult spawned = fx.Pawn->SpawnInto(*fx.HostScene, FakeAssets());
+    const Prefab::SpawnResult spawned = fx.Pawn->SpawnInto(*fx.HostScene, TestAssets());
     const Entity prop = spawned.Roots.front();
     REQUIRE(fx.HostScene->Has<PrefabSource>(prop));
     fx.HostScene->Get<Transform>(prop).Position = vec3(8.0f, 0.0f, 0.0f);
@@ -710,7 +709,7 @@ TEST_CASE("A marked non-authoritative entity is still never replicated")
     Peers fx;
     fx.Join();
 
-    const Prefab::SpawnResult spawned = fx.Pawn->SpawnInto(*fx.HostScene, FakeAssets());
+    const Prefab::SpawnResult spawned = fx.Pawn->SpawnInto(*fx.HostScene, TestAssets());
     const Entity local = spawned.Roots.front();
     fx.HostScene->Add<Authority>(local, Authority{.Tier = Tier::Local});
     fx.HostScene->Add<NetSpawn>(local);
@@ -727,7 +726,7 @@ TEST_CASE("Destroying a marked entity tears its mirror down and leaves no dangli
     Peers fx;
     fx.Join();
 
-    const Prefab::SpawnResult spawned = fx.Pawn->SpawnInto(*fx.HostScene, FakeAssets());
+    const Prefab::SpawnResult spawned = fx.Pawn->SpawnInto(*fx.HostScene, TestAssets());
     const Entity pawn = spawned.Roots.front();
     fx.HostScene->Add<NetSpawn>(pawn);
     fx.Step(20);

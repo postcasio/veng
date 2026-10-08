@@ -33,6 +33,7 @@
 #include <Veng/Scene/Vehicle.h>
 #include <Veng/Scene/VehicleSystem.h>
 #include <Veng/Task/TaskSystem.h>
+#include "support/TestServices.h"
 
 using namespace Veng;
 
@@ -44,24 +45,6 @@ namespace
     // the mechanism — it need only exceed the exit capsule, so that a validation run in the wrong
     // frame misses what stands in the right one.
     constexpr dvec3 SolverOrigin(1000.0, 0.0, -2000.0);
-
-    struct ContextStorage
-    {
-        Input HeadlessInput{nullptr};
-        alignas(16) unsigned char AssetsBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
-
-        SystemContext Make()
-        {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = HeadlessInput,
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-            };
-        }
-    };
 
     // A vehicle mesh carrying a "Seat" and an "Exit" socket at authored local positions. The list is
     // sorted by name ("Exit" < "Seat"), as the cook emits and Mesh::FindSocket's binary search needs.
@@ -211,9 +194,9 @@ namespace
         void Interact(const Entity vehicle, const Entity interactor)
         {
             World->Add<InteractRequest>(vehicle, InteractRequest{.Interactor = interactor});
-            ContextStorage storage;
+            TestSupport::TestServices services;
             VehicleSystem system;
-            system.OnUpdate(*World, FixedStep, storage.Make());
+            system.OnUpdate(*World, FixedStep, services.Make());
         }
     };
 }
@@ -306,12 +289,12 @@ TEST_CASE("An enter/exit round trip restores the character to a grounded state a
     CHECK(exitWorld.y == doctest::Approx(0.1f).epsilon(0.05));
 
     // Re-enabled, it settles onto the floor: a valid grounded state, not stuck in geometry.
-    ContextStorage storage;
+    TestSupport::TestServices services;
     CharacterMovementSystem characters;
     for (u32 tick = 0; tick < 40; ++tick)
     {
         StepPhysics(world, FixedStep);
-        characters.OnUpdate(world, FixedStep, storage.Make());
+        characters.OnUpdate(world, FixedStep, services.Make());
     }
     const auto& state = world.Get<CharacterState>(character);
     CHECK(state.Grounded);
@@ -353,9 +336,9 @@ TEST_CASE("A blocked exit socket refuses the exit and reports rather than placin
     CHECK(world.Get<Possesses>(controlling).Pawn == vehicle);
 
     // The held failure is retired on the next drain, so the stamper may retry.
-    ContextStorage storage;
+    TestSupport::TestServices services;
     VehicleSystem system;
-    system.OnUpdate(world, FixedStep, storage.Make());
+    system.OnUpdate(world, FixedStep, services.Make());
     CHECK_FALSE(world.Has<InteractRequest>(vehicle));
 }
 
@@ -393,9 +376,9 @@ TEST_CASE("Exiting a moving vehicle transfers its velocity with no positional ju
 
     // One character tick: the re-created capsule keeps the seeded velocity (free-fall, gravity zero),
     // so the resolved planar speed matches the vehicle's, and the character has not jumped.
-    ContextStorage storage;
+    TestSupport::TestServices services;
     CharacterMovementSystem characters;
-    characters.OnUpdate(world, FixedStep, storage.Make());
+    characters.OnUpdate(world, FixedStep, services.Make());
 
     const auto& state = world.Get<CharacterState>(character);
     CHECK(state.PlanarSpeed == doctest::Approx(glm::length(VehicleVelocity)).epsilon(0.1));

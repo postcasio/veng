@@ -24,9 +24,6 @@ namespace Veng::Audio
 namespace Veng::Haptics
 {
     class HapticsEngine;
-
-    /// @brief Returns the process's inert haptics engine, on which every play starts nothing.
-    [[nodiscard]] HapticsEngine& GetInertEngine();
 }
 
 namespace Veng::Localization
@@ -129,6 +126,12 @@ namespace Veng
     /// not own them. The Input reference is the always-present frame-coherent input
     /// service; in headless mode it reports the neutral all-zeros state rather than
     /// being absent, so an input-reading system needs no null-guard.
+    ///
+    /// Every service is a required reference with no default, so a context that omits one does not
+    /// compile. The defaulted fields — Pointer, View, Debug, Tick, Alpha, Role, World,
+    /// GameplayFocused, the step edges and IsReplay — are per-call data, not services. A runtime
+    /// context is built by the one factory an Application installs on its WorldRunner
+    /// (WorldRunner::BuildContext), for every start, step, stop and replay.
     struct SystemContext
     {
         /// @brief The asset manager a system loads or builds resources through.
@@ -151,10 +154,8 @@ namespace Veng
         ///
         /// A scene-agnostic Application service, the one writer of every pad's motors. A Sim system
         /// plays through it without gating on IsReplay: during a reconciliation replay the engine
-        /// itself starts nothing. Defaults to the inert engine (Haptics::GetInertEngine), so a context
-        /// a caller assembles without an application need not name one; every context the
-        /// Application builds binds its live engine.
-        Haptics::HapticsEngine& Haptics = ::Veng::Haptics::GetInertEngine();
+        /// itself starts nothing.
+        Haptics::HapticsEngine& Haptics;
         /// @brief The localization service a system resolves user-facing text through.
         ///
         /// A scene-agnostic Application service, always present: the engine binds it to the service

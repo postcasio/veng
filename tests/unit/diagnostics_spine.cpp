@@ -20,6 +20,7 @@
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SystemRegistry.h>
 #include <Veng/Task/TaskSystem.h>
+#include "support/TestServices.h"
 
 #include "Diagnostics/TraceFormat.h"
 
@@ -118,24 +119,6 @@ namespace
         return out;
     }
 
-    // A SystemContext the driver forwards but no test system dereferences.
-    struct ContextStorage
-    {
-        alignas(16) unsigned char AssetsBytes[64]{};
-        alignas(16) unsigned char InputBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
-
-        SystemContext Make()
-        {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = *reinterpret_cast<Input*>(InputBytes),
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-            };
-        }
-    };
 }
 
 TEST_CASE("Per-system scope records the registered name, stable across frames")
@@ -155,7 +138,7 @@ TEST_CASE("Per-system scope records the registered name, stable across frames")
         // The simulation interns its systems' names at construction against the active profiler.
         SceneSimulation sim(registry);
         const Unique<Scene> scene = Scene::Create(types);
-        ContextStorage ctx;
+        TestSupport::TestServices ctx;
 
         for (int frame = 0; frame < 3; ++frame)
         {

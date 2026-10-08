@@ -2008,16 +2008,6 @@ namespace Veng
         /// @param scene  The runner-owned scene the join loaded into @p world.
         void StartWorldScene(WorldInstanceId world, Scene& scene);
 
-        /// @brief Builds the SystemContext a world's simulation starts and stops with, over the live services.
-        ///
-        /// The single source of the per-world context: the external start (StartWorldScene) and the
-        /// runner's stop-at-close factory both build through this, so the start-time and stop-time
-        /// contexts are the same shape and cannot drift. Fills the scene-agnostic Application services
-        /// and the world's authority role (RoleForWorld).
-        /// @param world  The world whose context is built, resolving its authority role.
-        /// @return The per-world system context.
-        [[nodiscard]] SystemContext MakeWorldContext(WorldInstanceId world) const;
-
         /// @brief Rebinds a managed viewport onto a presenting join's freshly installed world.
         ///
         /// The client arm of the present-on-ready front door: when a presenting join (its request or
@@ -2165,27 +2155,18 @@ namespace Veng
         /// @return The routing and the scene it applies to, or an empty routing scoped to no scene.
         [[nodiscard]] ScopedPointer ComputePointerRouting() const;
 
-        /// @brief Builds a ticked simulation's SystemContext, resolving its primary presenting viewport.
+        /// @brief The WorldRunner's context factory: builds the SystemContext a request describes.
         ///
-        /// Fills the always-present services (assets, input, tasks), stamps the world's authority @p role
-        /// and the given per-scene @p pointer, then resolves the sim's primary presenting viewport — the
-        /// first registered Presented viewport whose retained scene is @p scene — to populate View (its
-        /// retained camera + region + UI scale) and Debug (its debug-draw sink). View is nullopt and
-        /// Debug null for a view-less sim.
-        /// @param scene    The scene being ticked.
-        /// @param world    The runner handle of the world being ticked, stamped onto the context.
-        /// @param role     The authority role the world ticks under (from RoleForWorld).
-        /// @param pointer  This frame's routing for @p scene (empty when the pointer is elsewhere).
-        /// @param tick     The tick number to stamp (the Sim step, or the last completed tick in View).
-        /// @param alpha    The interpolation fraction to stamp (0 in Sim, the frame residual in View).
-        /// @param firstStepThisFrame  True on the frame's first Sim step (false in View); resets a
-        ///                            per-frame accumulator (see SystemContext::FirstStepThisFrame).
-        /// @param isReplay  True when this is a reconciliation replay step (see SystemContext::IsReplay).
-        /// @return The assembled per-tick context.
-        [[nodiscard]] SystemContext BuildSystemContext(const Scene& scene, WorldInstanceId world,
-                                                       NetRole role, const PointerRouting& pointer,
-                                                       u64 tick, f32 alpha, bool firstStepThisFrame,
-                                                       bool isReplay = false) const;
+        /// Fills every service, stamps the world (@p request.World) and its authority role
+        /// (RoleForWorld), the tick, alpha and step edges from the request, GameplayFocused from the
+        /// router, and IsReplay for a Replay request. Pointer is this frame's routing scoped to the
+        /// request's scene for a live Sim step or View pass, and empty otherwise. View and Debug
+        /// resolve from the scene's primary presenting viewport — the first registered Presented
+        /// viewport whose retained scene is the request's — and are nullopt and null for a view-less
+        /// scene.
+        /// @param request  The world, scene, phase and step the context is for.
+        /// @return The assembled context.
+        [[nodiscard]] SystemContext MakeSystemContext(const SystemContextRequest& request) const;
 
         /// @brief Returns the pad a seat is assigned, for the haptics engine's seat targets.
         ///

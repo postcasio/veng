@@ -20,6 +20,7 @@
 #include <Veng/Scene/Scene.h>
 
 #include "Net/Handshake.h"
+#include "support/TestServices.h"
 
 #include <algorithm>
 #include <deque>
@@ -31,12 +32,10 @@ using namespace Veng::Net;
 
 namespace
 {
-    // A dependency-free seat spawn never dereferences the manager, so a never-dereferenced
-    // reference is safe (the net_join_flow.cpp / game_mode.cpp precedent).
-    AssetManager& FakeAssets()
+    // An asset manager the dependency-free prefabs and anchored spawns here never load through.
+    AssetManager& TestAssets()
     {
-        alignas(16) static unsigned char bytes[64]{};
-        return *reinterpret_cast<AssetManager*>(bytes);
+        return TestSupport::SharedTestServices().GetAssets();
     }
 
     const ConnectionConfig Config{
@@ -180,7 +179,7 @@ TEST_CASE("A presented profile reaches ProfileOf and the join request the Author
     Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = Config},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
         .Authorize =
             [&](const JoinRequestInfo& request)
@@ -207,7 +206,7 @@ TEST_CASE("A presented profile reaches ProfileOf and the join request the Author
     Unique<Scene> clientScene;
     Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
         .Client = *client,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LoadLevel = [&](AssetId) -> Scene*
         {
             clientScene = Scene::Create(clientTypes);
@@ -253,7 +252,7 @@ TEST_CASE("An account presenting no profile resolves nullptr on both surfaces")
     Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = Config},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
         .Authorize =
             [&](const JoinRequestInfo& request)
@@ -274,7 +273,7 @@ TEST_CASE("An account presenting no profile resolves nullptr on both surfaces")
     Unique<Scene> clientScene;
     Unique<ClientHost> clientHost = ClientHost::Create(ClientHostInfo{
         .Client = *client,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LoadLevel = [&](AssetId) -> Scene*
         {
             clientScene = Scene::Create(clientTypes);
@@ -311,7 +310,7 @@ TEST_CASE("A reconnect re-presents the profile, and the fresh connection's entry
     Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = &serverTransport, .Connection = Config},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
     });
     REQUIRE(host.has_value());
@@ -383,7 +382,7 @@ TEST_CASE("A listen host's own account resolves its profile with no connect")
     Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = serverT.get(), .Connection = Config},
         .World = *scene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
         .LocalAccount = local,
         .LocalProfile = profile,
@@ -398,7 +397,7 @@ TEST_CASE("A listen host's own account resolves its profile with no connect")
     Result<Unique<ServerHost>> bare = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = clientT.get(), .Connection = Config},
         .World = *scene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
         .LocalAccount = local,
     });
@@ -500,7 +499,7 @@ TEST_CASE("No peer's datagrams ever carry another account's profile")
     Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
         .Server = ServerInfo{.TransportOverride = &serverTransport, .Connection = Config},
         .World = *serverScene,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LevelId = LevelId,
     });
     REQUIRE(host.has_value());
@@ -528,7 +527,7 @@ TEST_CASE("No peer's datagrams ever carry another account's profile")
     Unique<Scene> sceneB;
     Unique<ClientHost> hostA = ClientHost::Create(ClientHostInfo{
         .Client = *clientA,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LoadLevel = [&](AssetId) -> Scene*
         {
             sceneA = Scene::Create(clientTypes);
@@ -538,7 +537,7 @@ TEST_CASE("No peer's datagrams ever carry another account's profile")
     });
     Unique<ClientHost> hostB = ClientHost::Create(ClientHostInfo{
         .Client = *clientB,
-        .Assets = FakeAssets(),
+        .Assets = TestAssets(),
         .LoadLevel = [&](AssetId) -> Scene*
         {
             sceneB = Scene::Create(clientTypes);

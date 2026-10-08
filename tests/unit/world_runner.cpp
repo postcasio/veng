@@ -4,17 +4,23 @@
 // runner is built with only a TypeRegistry + SystemRegistry (no AssetManager, no Context), so the
 // empty-scene path spawns and drives worlds with no GPU.
 //
-// SystemContext aggregates device-bound services (AssetManager, Input, TaskSystem) none of which a
-// unit test can construct; the probe system never dereferences the context, so a context over
-// never-dereferenced storage keeps the whole test device-free while exercising the real Tick path.
+// Every runner takes its contexts from a TestServices bundle installed as its context factory: real,
+// device-free services, so the whole test exercises the real Tick path with no GPU.
 
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cstring>
 #include <iterator>
 #include <map>
 #include <utility>
+#include <vector>
 
+#include <Veng/Asset/AssetManager.h>
+#include <Veng/Asset/CookedBlobs.h>
+#include <Veng/Audio/AudioClip.h>
+#include <Veng/Audio/AudioEngine.h>
+#include <Veng/Localization/Localization.h>
 #include <Veng/Reflection/TypeRegistry.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Scene.h>
@@ -23,6 +29,8 @@
 #include <Veng/Scene/SystemRegistry.h>
 #include <Veng/World.h>
 #include <Veng/WorldRunner.h>
+
+#include "support/TestServices.h"
 
 using namespace Veng;
 
@@ -277,100 +285,49 @@ namespace Veng
 
 namespace
 {
-    // A SystemContext the runner forwards but no system here dereferences; the storage is never read
-    // as an AssetManager/Input/TaskSystem, it only backs the aggregate's references.
-    struct ContextStorage
-    {
-        alignas(16) unsigned char AssetsBytes[64]{};
-        alignas(16) unsigned char InputBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
-
-        SystemContext Make()
-        {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = *reinterpret_cast<Input*>(InputBytes),
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-            };
-        }
-    };
-
-    // A WorldOpenInfo for an empty-scene world running the opener-named probe, started with
-    // the fake context — the device-free open the runner supports with no AssetManager.
-    WorldOpenInfo EmptyWorld(ContextStorage& storage)
+    // A WorldOpenInfo for an empty-scene world running the opener-named probe — the device-free open
+    // the runner supports with no AssetManager.
+    WorldOpenInfo EmptyWorld()
     {
         return WorldOpenInfo{
             .SimTickRate = 60,
             .StartSimulation = true,
             .Systems = vector<SystemId>{SystemIdOf<TickProbe>()},
-            .MakeStartContext = [&storage] { return storage.Make(); },
         };
     }
 
-    // A WorldOpenInfo for an empty-scene world running the OnStop-recording probe, started with the
-    // fake context — so closing it exercises the runner's end-play stop.
-    WorldOpenInfo StopWorld(ContextStorage& storage)
+    // A WorldOpenInfo for an empty-scene world running the OnStop-recording probe, so closing it
+    // exercises the runner's end-play stop.
+    WorldOpenInfo StopWorld()
     {
         return WorldOpenInfo{
             .SimTickRate = 60,
             .StartSimulation = true,
             .Systems = vector<SystemId>{SystemIdOf<StopProbe>()},
-            .MakeStartContext = [&storage] { return storage.Make(); },
         };
     }
 
-    // A minimal device-free stop-context factory for CloseWorld: it hands back the same fake context
-    // the opens forward, so end-play runs without any real service. It ignores the world id and scene
-    // it is passed — the probe never dereferences the context — and always yields one, standing in
-    // for Application's factory over its live services.
-    function<optional<SystemContext>(WorldInstanceId, Scene&)> StopFactory(ContextStorage& storage)
-    {
-        return [&storage](WorldInstanceId, Scene&) -> optional<SystemContext>
-        { return storage.Make(); };
-    }
-
-    // A WorldOpenInfo for an empty-scene world running exactly the named systems, started with the
-    // fake context — how the reentrancy cases script one world's system set against another's.
-    WorldOpenInfo WorldOf(ContextStorage& storage, vector<SystemId> systems)
+    // A WorldOpenInfo for an empty-scene world running exactly the named systems — how the
+    // reentrancy cases script one world's system set against another's.
+    WorldOpenInfo WorldOf(vector<SystemId> systems)
     {
         return WorldOpenInfo{
             .SimTickRate = 60,
             .StartSimulation = true,
             .Systems = std::move(systems),
-            .MakeStartContext = [&storage] { return storage.Make(); },
         };
     }
 
-    // A tick info folding @p delta into every world and stamping each context with its tick, alpha
-    // and first-step flag, as the application's context builder does.
-    WorldTickInfo Frame(ContextStorage& storage, const f32 delta)
+    // A tick info folding @p delta into every world.
+    WorldTickInfo Frame(const f32 delta)
     {
-        return WorldTickInfo{
-            .Delta = delta,
-            .BuildContext =
-                [&storage](WorldInstanceId, const Scene&, const u64 tick, const f32 alpha,
-                           const bool firstStep)
-            {
-                SystemContext context = storage.Make();
-                context.Tick = tick;
-                context.Alpha = alpha;
-                context.FirstStepThisFrame = firstStep;
-                return context;
-            },
-        };
+        return WorldTickInfo{.Delta = delta};
     }
 
-    // A tick info that runs one Sim step per call (delta == the 60 Hz fixed step) and forwards the
-    // fake context; the probe reads only the scene, so BuildContext's tick/alpha are immaterial here.
-    WorldTickInfo OneStep(ContextStorage& storage)
+    // A tick info that runs one Sim step per call (delta == the 60 Hz fixed step).
+    WorldTickInfo OneStep()
     {
-        return WorldTickInfo{
-            .Delta = 1.0f / 60.0f,
-            .BuildContext = [&storage](WorldInstanceId, const Scene&, u64, f32, bool)
-            { return storage.Make(); },
-        };
+        return WorldTickInfo{.Delta = 1.0f / 60.0f};
     }
 }
 
@@ -385,9 +342,10 @@ TEST_CASE("A device-free WorldRunner opens two empty worlds and ticks both, reso
     // No AssetManager, no Context: the runner is device-free and drives only empty-scene worlds.
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
 
-    ContextStorage storage;
-    const WorldInstanceId a = runner.OpenWorld(EmptyWorld(storage));
-    const WorldInstanceId b = runner.OpenWorld(EmptyWorld(storage));
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
+    const WorldInstanceId a = runner.OpenWorld(EmptyWorld());
+    const WorldInstanceId b = runner.OpenWorld(EmptyWorld());
 
     // Each open mints a distinct valid handle, and each resolves live to its own world (distinct
     // scenes) — the flat-peer addressing, never a privileged primary.
@@ -402,7 +360,7 @@ TEST_CASE("A device-free WorldRunner opens two empty worlds and ticks both, reso
 
     for (int i = 0; i < 3; ++i)
     {
-        runner.Tick(OneStep(storage));
+        runner.Tick(OneStep());
     }
 
     // Both worlds advanced their own Sim by the same three steps, independently.
@@ -422,14 +380,14 @@ TEST_CASE("An empty world runs exactly its opener-named system set; an empty set
     systems.Register<TickProbe>();
     systems.Register<OtherProbe>();
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-    ContextStorage storage;
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
 
     // Named set: exactly TickProbe, though the registry also holds OtherProbe.
     const WorldInstanceId named = runner.OpenWorld(WorldOpenInfo{
         .SimTickRate = 60,
         .StartSimulation = true,
         .Systems = vector<SystemId>{SystemIdOf<TickProbe>()},
-        .MakeStartContext = [&storage] { return storage.Make(); },
     });
 
     // Empty set: a simulation running no systems — the world still starts and its clock ticks
@@ -438,14 +396,12 @@ TEST_CASE("An empty world runs exactly its opener-named system set; an empty set
         .SimTickRate = 60,
         .StartSimulation = true,
         .Systems = vector<SystemId>{},
-        .MakeStartContext = [&storage] { return storage.Make(); },
     });
 
     // Disengaged: no simulation at all — the world holds a scene but never ticks.
     const WorldInstanceId simless = runner.OpenWorld(WorldOpenInfo{
         .SimTickRate = 60,
         .StartSimulation = true,
-        .MakeStartContext = [&storage] { return storage.Make(); },
     });
 
     const Scene* namedScene = &runner.ResolveWorld(named)->GetScene();
@@ -454,7 +410,7 @@ TEST_CASE("An empty world runs exactly its opener-named system set; an empty set
 
     for (int i = 0; i < 3; ++i)
     {
-        runner.Tick(OneStep(storage));
+        runner.Tick(OneStep());
     }
 
     // The named world ran exactly its named system: TickProbe stepped, OtherProbe never did.
@@ -479,9 +435,10 @@ TEST_CASE("Closing a world resolves its id to nothing and leaves a peer untouche
     systems.Register<TickProbe>();
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
 
-    ContextStorage storage;
-    const WorldInstanceId a = runner.OpenWorld(EmptyWorld(storage));
-    const WorldInstanceId b = runner.OpenWorld(EmptyWorld(storage));
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
+    const WorldInstanceId a = runner.OpenWorld(EmptyWorld());
+    const WorldInstanceId b = runner.OpenWorld(EmptyWorld());
 
     const Scene* sceneB = &runner.ResolveWorld(b)->GetScene();
 
@@ -493,7 +450,7 @@ TEST_CASE("Closing a world resolves its id to nothing and leaves a peer untouche
 
     for (int i = 0; i < 2; ++i)
     {
-        runner.Tick(OneStep(storage));
+        runner.Tick(OneStep());
     }
 
     // Only the surviving world ticked (the closed world's scene was destroyed).
@@ -510,9 +467,9 @@ TEST_CASE("Closing a runner-started world runs its systems' OnStop exactly once"
     systems.Register<StopProbe>();
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
 
-    ContextStorage storage;
-    runner.SetStopContextFactory(StopFactory(storage));
-    const WorldInstanceId a = runner.OpenWorld(StopWorld(storage));
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
+    const WorldInstanceId a = runner.OpenWorld(StopWorld());
     const Scene* scene = &runner.ResolveWorld(a)->GetScene();
 
     // A started, unclosed world has not run end-play yet.
@@ -536,12 +493,11 @@ TEST_CASE("Closing an externally-started world runs its systems' OnStop exactly 
     systems.Register<StopProbe>();
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
 
-    ContextStorage storage;
-    runner.SetStopContextFactory(StopFactory(storage));
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
 
-    // The join/travel shape: open a world deferred (no MakeStartContext), install a scene carrying a
-    // simulation, then start it externally through Scene::StartSimulation — never the runner's own
-    // open-time start. This is the common case the per-world capture missed.
+    // The join/travel shape: open a world deferred, install a scene carrying a simulation, then start
+    // it externally through Scene::StartSimulation — never the runner's own start.
     const WorldInstanceId a = runner.OpenWorld(WorldOpenInfo{
         .SimTickRate = 60,
         .StartSimulation = false,
@@ -551,7 +507,7 @@ TEST_CASE("Closing an externally-started world runs its systems' OnStop exactly 
         CreateUnique<SceneSimulation>(systems, vector<SystemId>{SystemIdOf<StopProbe>()}));
     Scene& scene = runner.InstallScene(a, std::move(owned));
     const Scene* key = &scene;
-    scene.StartSimulation(storage.Make());
+    scene.StartSimulation(services.Make());
 
     // A started, unclosed world has not run end-play yet.
     CHECK(StopProbe::Stops.find(key) == StopProbe::Stops.end());
@@ -573,15 +529,15 @@ TEST_CASE("A world stopped before closing runs OnStop once, not twice")
     systems.Register<StopProbe>();
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
 
-    ContextStorage storage;
-    runner.SetStopContextFactory(StopFactory(storage));
-    const WorldInstanceId a = runner.OpenWorld(StopWorld(storage));
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
+    const WorldInstanceId a = runner.OpenWorld(StopWorld());
     Scene& scene = runner.ResolveWorld(a)->GetScene();
     const Scene* key = &scene;
 
     // Stop the simulation by hand first — the overlay-close idiom, which stops while the scene is
     // live and then closes the world. This runs OnStop once.
-    scene.StopSimulation(storage.Make());
+    scene.StopSimulation(services.Make());
     CHECK(StopProbe::Stops[key] == 1);
 
     // CloseWorld sees the already-stopped simulation and does not run OnStop again (Stop is
@@ -591,22 +547,24 @@ TEST_CASE("A world stopped before closing runs OnStop once, not twice")
     CHECK(runner.ResolveWorld(a) == nullptr);
 }
 
-TEST_CASE("A runner with no stop-context factory closes a started world without running OnStop")
+TEST_CASE("A runner with no context factory closes a started world without running OnStop")
 {
     StopProbe::Reset();
 
     TypeRegistry types;
     SystemRegistry systems;
     systems.Register<StopProbe>();
-
-    // No stop-context factory set — the device-free contract: a runner with no services to fill a
-    // context drops a started world without fabricating one, so OnStop simply does not run.
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
 
-    ContextStorage storage;
-    const WorldInstanceId a = runner.OpenWorld(StopWorld(storage));
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
+    const WorldInstanceId a = runner.OpenWorld(StopWorld());
     const Scene* scene = &runner.ResolveWorld(a)->GetScene();
 
+    // The device-free contract: a runner with no factory drops a started world without fabricating a
+    // context, so OnStop simply does not run.
+    runner.SetContextFactory({});
+    CHECK_FALSE(runner.HasContextFactory());
     runner.CloseWorld(a);
 
     // The started world closed cleanly and resolves to nothing; end-play never ran, since there was
@@ -624,9 +582,10 @@ TEST_CASE("A paused world's sim does not advance while a peer's does")
     systems.Register<TickProbe>();
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
 
-    ContextStorage storage;
-    const WorldInstanceId a = runner.OpenWorld(EmptyWorld(storage));
-    const WorldInstanceId b = runner.OpenWorld(EmptyWorld(storage));
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
+    const WorldInstanceId a = runner.OpenWorld(EmptyWorld());
+    const WorldInstanceId b = runner.OpenWorld(EmptyWorld());
 
     const Scene* sceneA = &runner.ResolveWorld(a)->GetScene();
     const Scene* sceneB = &runner.ResolveWorld(b)->GetScene();
@@ -637,7 +596,7 @@ TEST_CASE("A paused world's sim does not advance while a peer's does")
 
     for (int i = 0; i < 3; ++i)
     {
-        runner.Tick(OneStep(storage));
+        runner.Tick(OneStep());
     }
 
     // The paused world ran no Sim step and its tick held; the peer advanced normally.
@@ -649,7 +608,7 @@ TEST_CASE("A paused world's sim does not advance while a peer's does")
     // Resuming ticks it again, and — because a paused world drops its accumulator — it chases no
     // backlog for the frames it sat paused.
     runner.SetWorldPaused(a, false);
-    runner.Tick(OneStep(storage));
+    runner.Tick(OneStep());
     CHECK(TickProbe::Updates[sceneA] == 1);
     CHECK(runner.ResolveWorld(a)->Clock.GetTick() == 1);
 }
@@ -663,8 +622,9 @@ TEST_CASE("Nested PauseScopes hold a world paused until the last one drops")
     systems.Register<TickProbe>();
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
 
-    ContextStorage storage;
-    const WorldInstanceId a = runner.OpenWorld(EmptyWorld(storage));
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
+    const WorldInstanceId a = runner.OpenWorld(EmptyWorld());
     const Scene* sceneA = &runner.ResolveWorld(a)->GetScene();
 
     CHECK_FALSE(runner.IsWorldPaused(a));
@@ -678,12 +638,12 @@ TEST_CASE("Nested PauseScopes hold a world paused until the last one drops")
         // The inner scope dropped, but the outer still holds the pause (refcount, not a boolean).
         CHECK(runner.IsWorldPaused(a));
 
-        runner.Tick(OneStep(storage));
+        runner.Tick(OneStep());
         CHECK(TickProbe::Updates.find(sceneA) == TickProbe::Updates.end());
     }
     // The last scope dropped: the world resumes.
     CHECK_FALSE(runner.IsWorldPaused(a));
-    runner.Tick(OneStep(storage));
+    runner.Tick(OneStep());
     CHECK(TickProbe::Updates[sceneA] == 1);
 }
 
@@ -694,8 +654,9 @@ TEST_CASE("A held PauseScope composes with the explicit toggle without clobberin
     systems.Register<TickProbe>();
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
 
-    ContextStorage storage;
-    const WorldInstanceId a = runner.OpenWorld(EmptyWorld(storage));
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
+    const WorldInstanceId a = runner.OpenWorld(EmptyWorld());
 
     // A scope and the explicit toggle are separate reasons: clearing one while the other holds
     // leaves the world paused — the SeatFocusScope idiom, where a bare boolean would clobber.
@@ -723,16 +684,16 @@ TEST_CASE("A system closing its own world from its update stops it after the wal
     systems.Register<StopProbe>();
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
 
-    ContextStorage storage;
-    runner.SetStopContextFactory(StopFactory(storage));
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
     CloseProbe::Runner = &runner;
 
-    const WorldInstanceId a = runner.OpenWorld(WorldOf(
-        storage, {SystemIdOf<CloseProbe>(), SystemIdOf<ViewProbe>(), SystemIdOf<StopProbe>()}));
+    const WorldInstanceId a = runner.OpenWorld(
+        WorldOf({SystemIdOf<CloseProbe>(), SystemIdOf<ViewProbe>(), SystemIdOf<StopProbe>()}));
     const Scene* scene = &runner.ResolveWorld(a)->GetScene();
     CloseProbe::Target[scene] = a;
 
-    runner.Tick(OneStep(storage));
+    runner.Tick(OneStep());
 
     // The update ran to completion, saw the runner ticking, and still resolved its own world after
     // asking for the close: the scene a system is standing in stays live for the rest of its call.
@@ -760,19 +721,20 @@ TEST_CASE("A world closed from an earlier world's update takes no phase at all t
     systems.Register<ViewProbe>();
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
 
-    ContextStorage storage;
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
     CloseProbe::Runner = &runner;
 
     // The closer is opened first, so its victim sits later in the walk and is reached after the
     // close is issued — the ordering where an immediate erase would have moved the walk's footing.
-    const WorldInstanceId closer = runner.OpenWorld(WorldOf(storage, {SystemIdOf<CloseProbe>()}));
+    const WorldInstanceId closer = runner.OpenWorld(WorldOf({SystemIdOf<CloseProbe>()}));
     const WorldInstanceId victim =
-        runner.OpenWorld(WorldOf(storage, {SystemIdOf<CloseProbe>(), SystemIdOf<ViewProbe>()}));
+        runner.OpenWorld(WorldOf({SystemIdOf<CloseProbe>(), SystemIdOf<ViewProbe>()}));
     const Scene* closerScene = &runner.ResolveWorld(closer)->GetScene();
     const Scene* victimScene = &runner.ResolveWorld(victim)->GetScene();
     CloseProbe::Target[closerScene] = victim;
 
-    runner.Tick(OneStep(storage));
+    runner.Tick(OneStep());
 
     // The closer ticked normally; the victim ran neither a Sim step nor a View pass and its clock
     // never advanced, then went away with the walk.
@@ -795,15 +757,16 @@ TEST_CASE("A world opened from inside a tick is live at once and first ticks the
     systems.Register<TickProbe>();
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
 
-    ContextStorage storage;
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
     OpenProbe::Runner = &runner;
-    OpenProbe::Open = [&storage] { return WorldOf(storage, {SystemIdOf<TickProbe>()}); };
+    OpenProbe::Open = [] { return WorldOf({SystemIdOf<TickProbe>()}); };
 
     const WorldInstanceId opener =
-        runner.OpenWorld(WorldOf(storage, {SystemIdOf<OpenProbe>(), SystemIdOf<TickProbe>()}));
+        runner.OpenWorld(WorldOf({SystemIdOf<OpenProbe>(), SystemIdOf<TickProbe>()}));
     const Scene* openerScene = &runner.ResolveWorld(opener)->GetScene();
 
-    runner.Tick(OneStep(storage));
+    runner.Tick(OneStep());
 
     // The open landed at once: the system held a valid handle resolving to a live world before its
     // update returned.
@@ -816,7 +779,7 @@ TEST_CASE("A world opened from inside a tick is live at once and first ticks the
     CHECK(TickProbe::Updates.find(openedScene) == TickProbe::Updates.end());
     CHECK(runner.ResolveWorld(OpenProbe::Opened)->Clock.GetTick() == 0);
 
-    runner.Tick(OneStep(storage));
+    runner.Tick(OneStep());
 
     // The next frame is its first: one step to the opener's two.
     CHECK(TickProbe::Updates[openedScene] == 1);
@@ -836,12 +799,13 @@ TEST_CASE("An open that reallocates the world vector leaves the opening world's 
     systems.Register<ViewProbe>();
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
 
-    ContextStorage storage;
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
     OpenProbe::Runner = &runner;
-    OpenProbe::Open = [&storage] { return WorldOf(storage, {SystemIdOf<TickProbe>()}); };
+    OpenProbe::Open = [] { return WorldOf({SystemIdOf<TickProbe>()}); };
 
-    const WorldInstanceId opener = runner.OpenWorld(WorldOf(
-        storage, {SystemIdOf<OpenProbe>(), SystemIdOf<TickProbe>(), SystemIdOf<ViewProbe>()}));
+    const WorldInstanceId opener = runner.OpenWorld(
+        WorldOf({SystemIdOf<OpenProbe>(), SystemIdOf<TickProbe>(), SystemIdOf<ViewProbe>()}));
     const Scene* openerScene = &runner.ResolveWorld(opener)->GetScene();
 
     // Fill the world vector to exactly its capacity, so the open issued from inside the tick is
@@ -849,11 +813,11 @@ TEST_CASE("An open that reallocates the world vector leaves the opening world's 
     // survive, while the heap World the walk holds does.
     while (runner.GetWorlds().size() < runner.GetWorlds().capacity())
     {
-        (void)runner.OpenWorld(EmptyWorld(storage));
+        (void)runner.OpenWorld(EmptyWorld());
     }
     const Unique<World>* const slotsBefore = runner.GetWorlds().data();
 
-    runner.Tick(OneStep(storage));
+    runner.Tick(OneStep());
 
     CHECK(runner.GetWorlds().data() != slotsBefore);
 
@@ -876,17 +840,17 @@ TEST_CASE("Two closes of one world within a tick close it once")
     systems.Register<StopProbe>();
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
 
-    ContextStorage storage;
-    runner.SetStopContextFactory(StopFactory(storage));
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
     CloseProbe::Runner = &runner;
     CloseProbe::Calls = 2;
 
     const WorldInstanceId a =
-        runner.OpenWorld(WorldOf(storage, {SystemIdOf<CloseProbe>(), SystemIdOf<StopProbe>()}));
+        runner.OpenWorld(WorldOf({SystemIdOf<CloseProbe>(), SystemIdOf<StopProbe>()}));
     const Scene* scene = &runner.ResolveWorld(a)->GetScene();
     CloseProbe::Target[scene] = a;
 
-    runner.Tick(OneStep(storage));
+    runner.Tick(OneStep());
 
     // The second ask is absorbed: end-play ran once, not twice.
     CHECK(StopProbe::Stops[scene] == 1);
@@ -904,14 +868,14 @@ TEST_CASE("A close issued from a system's OnStop is drained in its turn")
     systems.Register<StopProbe>();
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
 
-    ContextStorage storage;
-    runner.SetStopContextFactory(StopFactory(storage));
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
     CloseProbe::Runner = &runner;
     StopProbe::Runner = &runner;
 
     const WorldInstanceId first =
-        runner.OpenWorld(WorldOf(storage, {SystemIdOf<CloseProbe>(), SystemIdOf<StopProbe>()}));
-    const WorldInstanceId cascaded = runner.OpenWorld(WorldOf(storage, {SystemIdOf<StopProbe>()}));
+        runner.OpenWorld(WorldOf({SystemIdOf<CloseProbe>(), SystemIdOf<StopProbe>()}));
+    const WorldInstanceId cascaded = runner.OpenWorld(WorldOf({SystemIdOf<StopProbe>()}));
     const Scene* firstScene = &runner.ResolveWorld(first)->GetScene();
     const Scene* cascadedScene = &runner.ResolveWorld(cascaded)->GetScene();
 
@@ -920,7 +884,7 @@ TEST_CASE("A close issued from a system's OnStop is drained in its turn")
     CloseProbe::Target[firstScene] = first;
     StopProbe::Cascade = cascaded;
 
-    runner.Tick(OneStep(storage));
+    runner.Tick(OneStep());
 
     CHECK(StopProbe::Stops[firstScene] == 1);
     CHECK(StopProbe::Stops[cascadedScene] == 1);
@@ -938,7 +902,8 @@ TEST_CASE("The scene-retiring hook names each scene the runner destroys, while i
     systems.Register<CloseProbe>();
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
 
-    ContextStorage storage;
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
     CloseProbe::Runner = &runner;
 
     // Each call records the scene and whether its world still resolved: a hook that ran after the
@@ -952,10 +917,10 @@ TEST_CASE("The scene-retiring hook names each scene the runner destroys, while i
             retired.emplace_back(&scene, world != nullptr && &world->GetScene() == &scene);
         });
 
-    const WorldInstanceId immediate = runner.OpenWorld(EmptyWorld(storage));
-    const WorldInstanceId queued = runner.OpenWorld(WorldOf(storage, {SystemIdOf<CloseProbe>()}));
-    const WorldInstanceId installed = runner.OpenWorld(EmptyWorld(storage));
-    const WorldInstanceId peer = runner.OpenWorld(EmptyWorld(storage));
+    const WorldInstanceId immediate = runner.OpenWorld(EmptyWorld());
+    const WorldInstanceId queued = runner.OpenWorld(WorldOf({SystemIdOf<CloseProbe>()}));
+    const WorldInstanceId installed = runner.OpenWorld(EmptyWorld());
+    const WorldInstanceId peer = runner.OpenWorld(EmptyWorld());
     const Scene* immediateScene = &runner.ResolveWorld(immediate)->GetScene();
     const Scene* queuedScene = &runner.ResolveWorld(queued)->GetScene();
     const Scene* placeholder = &runner.ResolveWorld(installed)->GetScene();
@@ -969,7 +934,7 @@ TEST_CASE("The scene-retiring hook names each scene the runner destroys, while i
     // A close a system issues inside the tick retires the scene at the drain, once.
     expected = queued;
     CloseProbe::Target[queuedScene] = queued;
-    runner.Tick(OneStep(storage));
+    runner.Tick(OneStep());
     REQUIRE(retired.size() == 2);
     CHECK(retired[1] == std::pair{queuedScene, true});
 
@@ -993,9 +958,9 @@ TEST_CASE("A close issued outside a tick applies before the call returns")
     systems.Register<StopProbe>();
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
 
-    ContextStorage storage;
-    runner.SetStopContextFactory(StopFactory(storage));
-    const WorldInstanceId a = runner.OpenWorld(WorldOf(storage, {SystemIdOf<StopProbe>()}));
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
+    const WorldInstanceId a = runner.OpenWorld(WorldOf({SystemIdOf<StopProbe>()}));
     const Scene* scene = &runner.ResolveWorld(a)->GetScene();
 
     // Nothing is ticking, so the deferral does not apply: the world is stopped and gone at the call
@@ -1015,13 +980,14 @@ TEST_CASE("OpenWorld's MaxTicksPerFrame caps the Sim steps a world runs in one f
     systems.Register<TickProbe>();
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
 
-    ContextStorage storage;
-    WorldOpenInfo info = EmptyWorld(storage);
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
+    WorldOpenInfo info = EmptyWorld();
     info.MaxTicksPerFrame = 2;
     const WorldInstanceId world = runner.OpenWorld(info);
 
     // A one-second frame owes sixty steps; the world runs its own cap of two.
-    runner.Tick(Frame(storage, 1.0f));
+    runner.Tick(Frame(1.0f));
     CHECK(TickProbe::Updates[&runner.ResolveWorld(world)->GetScene()] == 2);
     CHECK(runner.ResolveWorld(world)->Clock.GetTick() == 2);
 }
@@ -1033,12 +999,13 @@ TEST_CASE(
     types.Register<Transform>("Transform");
     SystemRegistry systems;
     systems.Register<MotionProbe>();
-    ContextStorage storage;
+    TestSupport::TestServices services;
     constexpr f32 Step = 1.0f / 60.0f;
 
     // Opens a world holding one Transform the motion probe moves, returning the world and entity.
     const auto open = [&](WorldRunner& runner)
     {
+        runner.SetContextFactory(services.Factory());
         Entity entity;
         const WorldInstanceId world = runner.OpenWorld(WorldOpenInfo{
             .SimTickRate = 60,
@@ -1050,7 +1017,6 @@ TEST_CASE(
                 entity = scene.CreateEntity();
                 scene.Add<Transform>(entity, Transform{});
             },
-            .MakeStartContext = [&storage] { return storage.Make(); },
         });
         return std::pair{world, entity};
     };
@@ -1059,12 +1025,12 @@ TEST_CASE(
     // into the next tick.
     WorldRunner fiveRunner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
     const auto [five, fiveEntity] = open(fiveRunner);
-    fiveRunner.Tick(Frame(storage, Step * 5.5f));
+    fiveRunner.Tick(Frame(Step * 5.5f));
 
     WorldRunner twoRunner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
     const auto [two, twoEntity] = open(twoRunner);
     twoRunner.ResolveWorld(two)->Clock.SetTick(3);
-    twoRunner.Tick(Frame(storage, Step * 2.5f));
+    twoRunner.Tick(Frame(Step * 2.5f));
 
     const World& fiveWorld = *fiveRunner.ResolveWorld(five);
     const World& twoWorld = *twoRunner.ResolveWorld(two);
@@ -1081,7 +1047,7 @@ TEST_CASE(
     CHECK(twoX == doctest::Approx(fiveX));
 
     // A step told not to record leaves the history where it was; one told to record rolls it.
-    SystemContext context = storage.Make();
+    SystemContext context = services.Make();
     context.Tick = 6;
     fiveScene.TickSimulationPhase(SceneSystem::Phase::Sim, Step, context, false);
     CHECK(fiveScene.GetInterpolatedWorldTransform(fiveEntity, 0.5f)[3].x == doctest::Approx(20.5f));
@@ -1098,16 +1064,16 @@ TEST_CASE("An EveryNth system runs on the ticks its period selects, however fram
     SystemRegistry systems;
     systems.Register<PolicyProbe<0>>();
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-    ContextStorage storage;
-    const WorldInstanceId world =
-        runner.OpenWorld(WorldOf(storage, {SystemIdOf<PolicyProbe<0>>()}));
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
+    const WorldInstanceId world = runner.OpenWorld(WorldOf({SystemIdOf<PolicyProbe<0>>()}));
     constexpr f32 Step = 1.0f / 60.0f;
 
     // Frames of uneven step counts, until sixty ticks have run.
     constexpr f32 Pattern[] = {1.25f, 3.25f, 0.5f, 4.25f, 2.25f};
     for (usize frame = 0; runner.ResolveWorld(world)->Clock.GetTick() < 60; ++frame)
     {
-        runner.Tick(Frame(storage, Step * Pattern[frame % std::size(Pattern)]));
+        runner.Tick(Frame(Step * Pattern[frame % std::size(Pattern)]));
     }
 
     vector<u64> expected;
@@ -1137,9 +1103,10 @@ TEST_CASE("Frame-keyed systems run once per frame and are handed the time since 
     systems.Register<PolicyProbe<1>>();
     systems.Register<PolicyProbe<2>>();
     WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
-    ContextStorage storage;
-    const WorldInstanceId world = runner.OpenWorld(
-        WorldOf(storage, {SystemIdOf<PolicyProbe<1>>(), SystemIdOf<PolicyProbe<2>>()}));
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
+    const WorldInstanceId world =
+        runner.OpenWorld(WorldOf({SystemIdOf<PolicyProbe<1>>(), SystemIdOf<PolicyProbe<2>>()}));
     constexpr f32 Step = 1.0f / 60.0f;
 
     // Each stepping frame's first and last tick, read off the clock around it.
@@ -1149,7 +1116,7 @@ TEST_CASE("Frame-keyed systems run once per frame and are handed the time since 
     for (usize frame = 0; frame < 18; ++frame)
     {
         const u64 before = runner.ResolveWorld(world)->Clock.GetTick();
-        runner.Tick(Frame(storage, Step * Pattern[frame % std::size(Pattern)]));
+        runner.Tick(Frame(Step * Pattern[frame % std::size(Pattern)]));
         const u64 after = runner.ResolveWorld(world)->Clock.GetTick();
         if (after > before)
         {
@@ -1179,4 +1146,160 @@ TEST_CASE("Frame-keyed systems run once per frame and are handed the time since 
     REQUIRE_FALSE(firstRan.empty());
     CHECK(firstTime == doctest::Approx(static_cast<f32>(firstRan.back()) * Step));
     CHECK(lastTime == doctest::Approx(static_cast<f32>(lastRan.back()) * Step));
+}
+
+namespace
+{
+    // A Sim-phase probe recording, per scene, the world each lifecycle call's context names, and the
+    // delta and replay flag of the last step it ran.
+    struct WorldProbe final : SceneSystem
+    {
+        static inline std::map<const Scene*, WorldInstanceId> Started;
+        static inline std::map<const Scene*, WorldInstanceId> Stepped;
+        static inline std::map<const Scene*, f32> StepDelta;
+        static inline std::map<const Scene*, bool> StepReplay;
+
+        static void Reset()
+        {
+            Started.clear();
+            Stepped.clear();
+            StepDelta.clear();
+            StepReplay.clear();
+        }
+
+        void OnStart(Scene& scene, const SystemContext& context) override
+        {
+            Started[&scene] = context.World;
+        }
+
+        void OnUpdate(Scene& scene, const f32 delta, const SystemContext& context) override
+        {
+            Stepped[&scene] = context.World;
+            StepDelta[&scene] = delta;
+            StepReplay[&scene] = context.IsReplay;
+        }
+    };
+}
+
+namespace Veng
+{
+    template <>
+    struct VengSystem<WorldProbe>
+    {
+        static constexpr SystemId Id = 0xA89FBC5EDE1C2DCBULL;
+        static string Name() { return "WorldProbe"; }
+    };
+}
+
+TEST_CASE("A world's start context names the world, whether it starts at open or deferred")
+{
+    WorldProbe::Reset();
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<WorldProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
+
+    const WorldInstanceId atOpen = runner.OpenWorld(WorldOf({SystemIdOf<WorldProbe>()}));
+    WorldOpenInfo deferredInfo = WorldOf({SystemIdOf<WorldProbe>()});
+    deferredInfo.StartSimulation = false;
+    const WorldInstanceId deferred = runner.OpenWorld(deferredInfo);
+    const Scene* deferredScene = &runner.ResolveWorld(deferred)->GetScene();
+    CHECK(WorldProbe::Started.find(deferredScene) == WorldProbe::Started.end());
+    runner.StartWorld(deferred);
+
+    CHECK(WorldProbe::Started[&runner.ResolveWorld(atOpen)->GetScene()] == atOpen);
+    CHECK(WorldProbe::Started[deferredScene] == deferred);
+    CHECK(runner.ResolveWorld(deferred)->GetScene().GetSimulation()->IsStarted());
+}
+
+TEST_CASE("The runner builds every context through its factory, each naming the world")
+{
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<TickProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    TestSupport::TestServices services;
+
+    std::map<SystemContextPhase, int> counts;
+    vector<WorldInstanceId> named;
+    int lastSteps = 0;
+    runner.SetContextFactory(
+        [&](const SystemContextRequest& request)
+        {
+            ++counts[request.Phase];
+            named.push_back(request.World);
+            lastSteps += request.LastStep ? 1 : 0;
+            return services.Make(request);
+        });
+
+    const WorldInstanceId world = runner.OpenWorld(EmptyWorld());
+    constexpr int Steps = 3;
+    runner.Tick(Frame(static_cast<f32>(Steps) / 60.0f + 0.001f));
+    runner.CloseWorld(world);
+
+    CHECK(counts[SystemContextPhase::Start] == 1);
+    CHECK(counts[SystemContextPhase::Sim] == Steps);
+    CHECK(counts[SystemContextPhase::View] == 1);
+    CHECK(counts[SystemContextPhase::Stop] == 1);
+    CHECK(counts[SystemContextPhase::Replay] == 0);
+    CHECK(lastSteps == 1);
+    CHECK(std::ranges::all_of(named, [world](const WorldInstanceId id) { return id == world; }));
+}
+
+TEST_CASE("A replayed step runs under the world holding its scene, at that world's tick rate")
+{
+    WorldProbe::Reset();
+
+    TypeRegistry types;
+    SystemRegistry systems;
+    systems.Register<WorldProbe>();
+    WorldRunner runner(WorldRunnerInfo{.Types = &types, .Systems = &systems});
+    TestSupport::TestServices services;
+    runner.SetContextFactory(services.Factory());
+
+    WorldOpenInfo first = WorldOf({SystemIdOf<WorldProbe>()});
+    first.SimTickRate = 60;
+    WorldOpenInfo second = WorldOf({SystemIdOf<WorldProbe>()});
+    second.SimTickRate = 20;
+    const WorldInstanceId a = runner.OpenWorld(first);
+    const WorldInstanceId b = runner.OpenWorld(second);
+    Scene& sceneB = runner.ResolveWorld(b)->GetScene();
+    REQUIRE(runner.FindWorld(sceneB) == b);
+    REQUIRE(runner.FindWorld(runner.ResolveWorld(a)->GetScene()) == a);
+
+    runner.ReplaySimStep(sceneB, 7);
+
+    CHECK(WorldProbe::Stepped[&sceneB] == b);
+    CHECK(WorldProbe::StepDelta[&sceneB] == doctest::Approx(1.0f / 20.0f));
+    CHECK(WorldProbe::StepReplay[&sceneB]);
+    CHECK(WorldProbe::Stepped.size() == 1);
+}
+
+TEST_CASE("A test services context reaches working audio and localization")
+{
+    TestSupport::TestServices services;
+    TypeRegistry types;
+    const Unique<Scene> scene = Scene::Create(types);
+    const SystemContext context = services.Make(SystemContextRequest{.Scene = *scene});
+
+    // A resident one-frame clip: the null device plays it as any device would.
+    const CookedAudioHeader header{
+        .Version = CookedAudioVersion,
+        .Storage = static_cast<u32>(CookedAudioStorage::Pcm),
+        .SampleFormat = static_cast<u32>(CookedAudioSampleFormat::F32),
+        .Codec = static_cast<u32>(CookedAudioCodec::None),
+        .SampleRate = 48000,
+        .Channels = 1,
+        .FrameCount = 64,
+    };
+    std::vector<u8> blob(sizeof(header) + 64 * sizeof(f32), 0);
+    std::memcpy(blob.data(), &header, sizeof(header));
+    const Result<Ref<Audio::AudioClip>> clip = Audio::AudioClip::Decode(blob);
+    REQUIRE(clip.has_value());
+
+    CHECK(context.Audio.PlayOneShot(AssetManager::Adopt<Audio::AudioClip>(*clip)).IsValid());
+    CHECK(context.Localization.Get("menu.title") == "menu.title");
 }

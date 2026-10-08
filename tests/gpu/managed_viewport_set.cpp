@@ -89,16 +89,6 @@ namespace
                 .SimTickRate = 60,
                 .StartSimulation = true,
                 .Systems = vector<SystemId>{},
-                .MakeStartContext =
-                    [this]
-                {
-                    return SystemContext{.Assets = GetAssetManager(),
-                                         .Input = GetInput(),
-                                         .Tasks = GetTaskSystem(),
-                                         .Audio = GetAudioEngine(),
-                                         .Localization = GetLocalization(),
-                                         .Role = GetNetRole()};
-                },
             });
             Scene& scene = GetWorldRunner().ResolveWorld(world)->GetScene();
             const Entity camera = scene.CreateEntity();
@@ -117,16 +107,6 @@ namespace
                 .SimTickRate = 60,
                 .StartSimulation = true,
                 .Systems = vector<SystemId>{},
-                .MakeStartContext =
-                    [this]
-                {
-                    return SystemContext{.Assets = GetAssetManager(),
-                                         .Input = GetInput(),
-                                         .Tasks = GetTaskSystem(),
-                                         .Audio = GetAudioEngine(),
-                                         .Localization = GetLocalization(),
-                                         .Role = GetNetRole()};
-                },
             });
         }
 

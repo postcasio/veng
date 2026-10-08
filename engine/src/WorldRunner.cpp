@@ -133,19 +133,63 @@ namespace Veng
 
         if (info.StartSimulation && scene.GetSimulation() != nullptr)
         {
-            VE_ASSERT(info.MakeStartContext != nullptr,
-                      "WorldRunner: StartSimulation needs a MakeStartContext");
+            VE_ASSERT(m_ContextFactory != nullptr,
+                      "WorldRunner: StartSimulation needs a context factory");
             VE_PROFILE_SCOPE("World/Start");
-            scene.StartSimulation(info.MakeStartContext());
+            scene.StartSimulation(BuildContext(SystemContextRequest{
+                .World = id, .Scene = scene, .Phase = SystemContextPhase::Start}));
         }
 
         return id;
     }
 
-    void WorldRunner::SetStopContextFactory(
-        function<optional<SystemContext>(WorldInstanceId, Scene&)> factory)
+    void WorldRunner::StartWorld(const WorldInstanceId world)
     {
-        m_StopContextFactory = std::move(factory);
+        World* resolved = ResolveWorld(world);
+        VE_ASSERT(resolved != nullptr, "WorldRunner::StartWorld: world {} is not open",
+                  world.Value);
+        Scene& scene = resolved->GetScene();
+        const SceneSimulation* sim = scene.GetSimulation();
+        if (sim == nullptr)
+        {
+            return;
+        }
+        VE_ASSERT(!sim->IsStarted(), "WorldRunner::StartWorld: world {} is already started",
+                  world.Value);
+        VE_PROFILE_SCOPE("World/Start");
+        scene.StartSimulation(BuildContext(SystemContextRequest{
+            .World = world, .Scene = scene, .Phase = SystemContextPhase::Start}));
+    }
+
+    void WorldRunner::SetContextFactory(SystemContextFactory factory)
+    {
+        m_ContextFactory = std::move(factory);
+    }
+
+    SystemContext WorldRunner::BuildContext(const SystemContextRequest& request) const
+    {
+        VE_ASSERT(m_ContextFactory != nullptr, "WorldRunner::BuildContext: no context factory");
+        return m_ContextFactory(request);
+    }
+
+    WorldInstanceId WorldRunner::FindWorld(const Scene& scene) const
+    {
+        const auto it = std::ranges::find_if(m_Worlds, [&scene](const Unique<World>& w)
+                                             { return &w->GetScene() == &scene; });
+        return it != m_Worlds.end() ? (*it)->Id : WorldInstanceId{};
+    }
+
+    void WorldRunner::ReplaySimStep(Scene& scene, const u64 tick)
+    {
+        const WorldInstanceId world = FindWorld(scene);
+        VE_ASSERT(world.IsValid(), "WorldRunner::ReplaySimStep: the scene is no world's");
+        const f32 simDelta = 1.0f / static_cast<f32>(ResolveWorld(world)->Clock.GetTickRate());
+        scene.TickSimulationPhase(
+            SceneSystem::Phase::Sim, simDelta,
+            BuildContext(SystemContextRequest{.World = world,
+                                              .Scene = scene,
+                                              .Phase = SystemContextPhase::Replay,
+                                              .Tick = tick}));
     }
 
     void WorldRunner::SetSceneRetiringHook(function<void(const Scene&)> hook)
@@ -202,22 +246,17 @@ namespace Veng
         // End-play before teardown: run each system's OnStop while its scene is still live, symmetric
         // with a simulation start. Destructing the world (Scene::~Scene → the systems) runs no
         // OnStop — a destructor has no SystemContext to supply — so a system that releases an
-        // engine-owned resource in OnStop depends on this stop, not on destruction. The stop context
-        // comes from the runner-level factory, which builds one over the live services for any
-        // started world regardless of how its simulation was started; a runner with no factory, or a
-        // factory that returns nullopt (a device-free runner with no services), drops a started world
-        // without running OnStop rather than fabricating one. Stopping is idempotent, so a caller
-        // that already stopped before closing takes a harmless second no-op here.
+        // engine-owned resource in OnStop depends on this stop, not on destruction. A runner with no
+        // factory drops a started world without running OnStop rather than fabricating a context.
+        // Stopping is idempotent, so a caller that already stopped takes a harmless no-op here.
         const World& closing = **it;
         Scene& scene = closing.GetScene();
         if (const SceneSimulation* sim = scene.GetSimulation();
-            sim != nullptr && sim->IsStarted() && m_StopContextFactory)
+            sim != nullptr && sim->IsStarted() && m_ContextFactory)
         {
-            if (optional<SystemContext> context = m_StopContextFactory(closing.Id, scene))
-            {
-                VE_PROFILE_SCOPE("World/Stop");
-                scene.StopSimulation(*context);
-            }
+            VE_PROFILE_SCOPE("World/Stop");
+            scene.StopSimulation(BuildContext(SystemContextRequest{
+                .World = closing.Id, .Scene = scene, .Phase = SystemContextPhase::Stop}));
         }
 
         if (m_SceneRetiringHook)
@@ -342,11 +381,15 @@ namespace Veng
                         {
                             info.BeforeSimStep(world->Id, scene, simStep.Tick);
                         }
-                        SystemContext context =
-                            info.BuildContext(world->Id, scene, simStep.Tick, 0.0f, simStep.First);
-                        context.LastStepThisFrame = simStep.Last;
-                        scene.TickSimulationPhase(SceneSystem::Phase::Sim, simStep.Delta, context,
-                                                  simStep.RecordsHistory);
+                        scene.TickSimulationPhase(
+                            SceneSystem::Phase::Sim, simStep.Delta,
+                            BuildContext(SystemContextRequest{.World = world->Id,
+                                                              .Scene = scene,
+                                                              .Phase = SystemContextPhase::Sim,
+                                                              .Tick = simStep.Tick,
+                                                              .FirstStep = simStep.First,
+                                                              .LastStep = simStep.Last}),
+                            simStep.RecordsHistory);
                         if (info.AfterSimStep)
                         {
                             info.AfterSimStep(world->Id, scene, simStep.Tick);
@@ -377,7 +420,11 @@ namespace Veng
                 VE_PROFILE_SCOPE_ID(world->ViewScopeName);
                 scene.TickSimulationPhase(
                     SceneSystem::Phase::View, info.Delta,
-                    info.BuildContext(world->Id, scene, world->Clock.GetTick(), step.Alpha, false));
+                    BuildContext(SystemContextRequest{.World = world->Id,
+                                                      .Scene = scene,
+                                                      .Phase = SystemContextPhase::View,
+                                                      .Tick = world->Clock.GetTick(),
+                                                      .Alpha = step.Alpha}));
             }
         }
 

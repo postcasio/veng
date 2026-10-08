@@ -337,21 +337,10 @@ namespace Veng
             .Context = &m_RenderContext,
         });
 
-        // The one place CloseWorld gets a stop context, covering every world however its simulation
-        // was started (at open, or externally through StartWorldScene). Built over the same services a
-        // world's ticks saw, so each system's OnStop releases what its OnStart acquired. The services
-        // are all live by now, so the guard is defensive; a window without them yields nullopt and the
-        // world closes without running OnStop rather than dereferencing a missing service.
-        m_WorldRunner->SetStopContextFactory(
-            [this](const WorldInstanceId world, Scene&) -> optional<SystemContext>
-            {
-                if (m_AssetManager == nullptr || m_Input == nullptr || m_TaskSystem == nullptr ||
-                    m_AudioDevice == nullptr)
-                {
-                    return std::nullopt;
-                }
-                return MakeWorldContext(world);
-            });
+        // Every context a world receives — start, step, stop, replay — is built here, so none can
+        // drift from another or omit a service.
+        m_WorldRunner->SetContextFactory([this](const SystemContextRequest& request)
+                                         { return MakeSystemContext(request); });
 
         // A viewport retains the scene it last presented until its next push, which runs after the
         // tick, so a world closed in between (a departure, a reap, a drained request) would leave the
@@ -791,19 +780,6 @@ namespace Veng
             {
                 SeedViewportFromWorld(scene);
                 OnWorldLoaded(world, scene, pending);
-            },
-            // The standalone/server bootstrap opens the managed world Server-tier: it owns and advances
-            // authoritative state whether or not a transport is later bound (`--server`).
-            .MakeStartContext =
-                [this]
-            {
-                return SystemContext{.Assets = *m_AssetManager,
-                                     .Input = *m_Input,
-                                     .Tasks = *m_TaskSystem,
-                                     .Audio = m_AudioDevice->GetEngine(),
-                                     .Haptics = *m_Haptics,
-                                     .Localization = GetLocalization(),
-                                     .Role = NetRole::Server};
             },
         });
 
@@ -1365,13 +1341,13 @@ namespace Veng
             { NotifyPossession(world, pawn); },
             .Prediction = net.PredictionPolicy,
             .Replay =
-                [this](Scene& world, const u64 tick, const PlayerInput& input)
+                [this](Scene& scene, const u64 tick, const PlayerInput& input)
             {
                 // Feed the recorded input to the local seat, then advance the Sim phase for this tick
                 // with IsReplay set: InputMappingSystem leaves the fed input alone and side-effecting
                 // systems gate their effects, while control + movement re-derive the predicted state.
                 bool fed = false;
-                world.Each<SeatInput, PlayerInput>(
+                scene.Each<SeatInput, PlayerInput>(
                     [&](const Entity, const SeatInput&, PlayerInput& seatInput)
                     {
                         if (!fed)
@@ -1380,14 +1356,10 @@ namespace Veng
                             fed = true;
                         }
                     });
-                const f32 simDelta =
-                    1.0f / static_cast<f32>(m_Info.World ? m_Info.World->SimTickRate : 60u);
+                // The client host reconciles every joined world through this one hook, so the step
+                // replays under the world holding this scene, never the managed one.
                 const Haptics::HapticsEngine::ReplayScope replay = m_Haptics->BeginReplay();
-                world.TickSimulationPhase(SceneSystem::Phase::Sim, simDelta,
-                                          BuildSystemContext(world, m_ManagedWorld,
-                                                             RoleForWorld(m_ManagedWorld),
-                                                             PointerRouting{}, tick, 0.0f, false,
-                                                             /*isReplay=*/true));
+                m_WorldRunner->ReplaySimStep(scene, tick);
             },
             // Per-key reconcile tolerances, unset by default (every join uses the shared value): a
             // world in a non-metre unit supplies its own so its client does not reconcile unbounded
@@ -2151,19 +2123,7 @@ namespace Veng
         // assert. The standalone path's batch is a local that dies here for the same reason.
         state.Pending = ResidencyBatch{};
 
-        scene.StartSimulation(MakeWorldContext(world));
-    }
-
-    SystemContext Application::MakeWorldContext(const WorldInstanceId world) const
-    {
-        return SystemContext{.Assets = *m_AssetManager,
-                             .Input = *m_Input,
-                             .Tasks = *m_TaskSystem,
-                             .Audio = m_AudioDevice->GetEngine(),
-                             .Haptics = *m_Haptics,
-                             .Localization = GetLocalization(),
-                             .Role = RoleForWorld(world),
-                             .World = world};
+        m_WorldRunner->StartWorld(world);
     }
 
     void Application::PresentJoinedWorld(const Net::JoinId join, const WorldInstanceId world)
@@ -2598,12 +2558,12 @@ namespace Veng
         }
     }
 
-    SystemContext Application::BuildSystemContext(const Scene& scene, const WorldInstanceId world,
-                                                  const NetRole role, const PointerRouting& pointer,
-                                                  const u64 tick, const f32 alpha,
-                                                  const bool firstStepThisFrame,
-                                                  const bool isReplay) const
+    SystemContext Application::MakeSystemContext(const SystemContextRequest& request) const
     {
+        // Only a live step reads the pointer: a start or stop is not a frame of input, and a replay
+        // re-runs a tick whose input was recorded.
+        const bool live =
+            request.Phase == SystemContextPhase::Sim || request.Phase == SystemContextPhase::View;
         SystemContext context{
             .Assets = *m_AssetManager,
             .Input = *m_Input,
@@ -2611,16 +2571,17 @@ namespace Veng
             .Audio = m_AudioDevice->GetEngine(),
             .Haptics = *m_Haptics,
             .Localization = GetLocalization(),
-            .Pointer = pointer,
-            .Tick = tick,
-            .Alpha = alpha,
-            .Role = role,
-            .World = world,
+            .Pointer = live ? m_SimInput.GetPointer(request.Scene) : PointerRouting{},
+            .Tick = request.Tick,
+            .Alpha = request.Alpha,
+            .Role = RoleForWorld(request.World),
+            .World = request.World,
             // The focus gate every seat's input resolution reads: true only while the router reports
             // the cursor seat gameplay-focused, false headless (no window owns focus).
             .GameplayFocused = m_InputRouter->IsGameplayFocused(),
-            .FirstStepThisFrame = firstStepThisFrame,
-            .IsReplay = isReplay};
+            .FirstStepThisFrame = request.FirstStep,
+            .LastStepThisFrame = request.LastStep,
+            .IsReplay = request.Phase == SystemContextPhase::Replay};
 
         // Resolve the sim's primary presenting viewport — the first registered Presented viewport
         // whose retained scene is this one — for the view descriptor and debug-draw sink. The
@@ -2629,7 +2590,7 @@ namespace Veng
         for (const Renderer::Viewport* viewport : m_Compositor.GetViewports())
         {
             if (viewport->GetRole() == Renderer::ViewportRole::Presented &&
-                viewport->GetPresentedScene() == &scene)
+                viewport->GetPresentedScene() == &request.Scene)
             {
                 context.View = SystemViewInfo{
                     .Camera = viewport->GetPresentedCamera(),
@@ -3096,13 +3057,6 @@ namespace Veng
         const WorldTickResult ticked = m_WorldRunner->Tick(WorldTickInfo{
             .Delta = delta,
             .RunViewPhase = !dedicatedServer,
-            .BuildContext =
-                [this](const WorldInstanceId world, const Scene& scene, const u64 tick,
-                       const f32 alpha, const bool firstStep)
-            {
-                return BuildSystemContext(scene, world, RoleForWorld(world),
-                                          m_SimInput.GetPointer(scene), tick, alpha, firstStep);
-            },
             .SimScale = [this](const WorldInstanceId world) -> f32
             {
                 if (m_Net)

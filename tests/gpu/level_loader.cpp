@@ -26,6 +26,8 @@
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SystemRegistry.h>
 
+#include "support/TestServices.h"
+
 #include <gpu/fixture.h>
 
 using namespace Veng;
@@ -91,7 +93,7 @@ namespace
             WriteFields(name.Record, &rootName, Types.Info(name.Type), Types);
 
             vector<Prefab::PrefabEntity> entities;
-            entities.push_back({{std::move(name)}});
+            entities.push_back({.Components = {std::move(name)}});
             return Assets->Adopt<Prefab>(Prefab::Create(std::move(entities), {}));
         }
     };
@@ -138,17 +140,8 @@ TEST_CASE_FIXTURE(LevelFixture,
     CHECK(seeded == 1);
 
     // Ticking the simulation runs exactly the named system (B), not the unnamed one (A).
-    // The counting systems never read Input, so a never-dereferenced placeholder lvalue
-    // satisfies the SystemContext aggregate without a Window-bound Input.
-    alignas(16) unsigned char inputBytes[64]{};
-    // The counting systems read neither Input nor Audio, so a never-dereferenced placeholder
-    // lvalue satisfies the SystemContext aggregate without a device.
-    const SystemContext context{.Assets = *Assets,
-                                .Input = *reinterpret_cast<Input*>(inputBytes),
-                                .Tasks = Tasks,
-                                .Audio = *reinterpret_cast<Audio::AudioEngine*>(inputBytes),
-                                .Localization =
-                                    *reinterpret_cast<Localization::Localization*>(inputBytes)};
+    TestSupport::TestServices services;
+    const SystemContext context = services.Make();
     instance.World->TickSimulation(0.016f, context);
     CHECK(g_RanA == 0);
     CHECK(g_RanB == 1);

@@ -17,6 +17,7 @@
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSystem.h>
+#include "support/TestServices.h"
 
 #include <algorithm>
 #include <cstring>
@@ -56,26 +57,6 @@ namespace
         REQUIRE(clip.has_value());
         return AssetManager::Adopt<AudioClip>(*clip);
     }
-
-    // A SystemContext the AudioSystem never dereferences beyond context.Audio: Assets, Input, and
-    // Tasks stay faked while the audio engine is the live one under test.
-    struct ContextStorage
-    {
-        alignas(16) unsigned char InputBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
-        alignas(16) unsigned char AssetsBytes[64]{};
-
-        SystemContext Make(AudioEngine& engine)
-        {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = *reinterpret_cast<Input*>(InputBytes),
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = engine,
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-            };
-        }
-    };
 
     // The applied gain of the pair member that is (or is not) fading out; -1 when absent.
     f32 GainOf(const vector<MusicDirector::VoiceState>& states, const bool fadingOut)
@@ -260,8 +241,8 @@ TEST_CASE("an authored MusicState starts its track once on world start")
     scene->Add<MusicState>(settings, MusicState{.Track = track, .FadeSeconds = 0.0f, .Loop = true});
 
     AudioSystem system;
-    ContextStorage storage;
-    system.OnStart(*scene, storage.Make(engine));
+    TestSupport::TestServices services({.Audio = &engine});
+    system.OnStart(*scene, services.Make());
     REQUIRE(engine.Music().GetVoiceCount() == 1);
     CHECK(engine.Music().Current().Get() == track.Get());
     const VoiceHandle voice = engine.Music().GetVoiceStates().front().Voice;
@@ -269,7 +250,7 @@ TEST_CASE("an authored MusicState starts its track once on world start")
     // Ticking does not re-trigger the authored track: the same voice persists.
     for (int i = 0; i < 3; ++i)
     {
-        system.OnUpdate(*scene, 1.0f / 60.0f, storage.Make(engine));
+        system.OnUpdate(*scene, 1.0f / 60.0f, services.Make());
     }
     CHECK(engine.Music().GetVoiceCount() == 1);
     CHECK(engine.Music().GetVoiceStates().front().Voice == voice);

@@ -628,7 +628,10 @@ leads while a 60 Hz world sharing the socket keeps its own fast lead (`TickSync(
 `ObserveTickSync(join, tick)`; `ClientHostInfo::TickSync.TickRate` is only the pre-reply default). The
 flat `ClientHostInfo` hooks (`LoadLevel` / `OnPossession` / `Prediction` / `Replay` / `Tolerances`)
 are shared across joins — a multiplexed client distinguishes joins by the level id (or scene)
-`LoadLevel` returns. Both hosts are usable standalone; **`Application` mounts them** as the
+`LoadLevel` returns. The host holds borrowed scenes, never runner ids, so `Application`'s `Replay`
+hook resolves the scene it is handed to the world holding it (`WorldRunner::ReplaySimStep`, over
+`FindWorld`): a replayed step runs under that world's id and role, at that world's own clock rate,
+whichever joined world it reconciles; a scene the runner does not hold is a fatal assert. Both hosts are usable standalone; **`Application` mounts them** as the
 plug-and-play path.
 
 **Adopt-in-place, leave, and the swap.** `ClientHost::JoinInto(key, scene)` is the **adopt** join:

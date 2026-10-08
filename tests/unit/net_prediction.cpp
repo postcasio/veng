@@ -28,6 +28,7 @@
 #include <Veng/Scene/Movement.h>
 #include <Veng/Scene/RemoteInterpolationSystem.h>
 #include <Veng/Scene/Scene.h>
+#include "support/TestServices.h"
 
 #include <algorithm>
 #include <unordered_map>
@@ -45,12 +46,10 @@ namespace
     // pawn (Intent/Mover are not replicated — only a prefab spawn carries them to the client).
     constexpr AssetId PawnPrefabId{0x00000000000000BBULL};
 
-    // A dependency-free prefab and the seat spawn never dereference the manager (the net_two_world
-    // precedent), so a never-dereferenced reference is safe.
-    AssetManager& FakeAssets()
+    // An asset manager the dependency-free prefabs and anchored spawns here never load through.
+    AssetManager& TestAssets()
     {
-        alignas(16) static unsigned char bytes[64]{};
-        return *reinterpret_cast<AssetManager*>(bytes);
+        return TestSupport::SharedTestServices().GetAssets();
     }
 
     ActionState MoveState(const vec2 move)
@@ -68,23 +67,17 @@ namespace
         return Intent{.Move = vec3(move.x, 0.0f, move.y)};
     }
 
-    struct FakeContext
+    // Contexts over real test services, with a settable NetRole.
+    struct TestContext
     {
-        alignas(16) unsigned char AssetsBytes[64]{};
-        alignas(16) unsigned char InputBytes[64]{};
-        alignas(16) unsigned char TasksBytes[64]{};
+        TestSupport::TestServices Services;
         NetRole Role = NetRole::Server;
 
         SystemContext Make()
         {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(AssetsBytes),
-                .Input = *reinterpret_cast<Input*>(InputBytes),
-                .Tasks = *reinterpret_cast<TaskSystem*>(TasksBytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(TasksBytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(TasksBytes),
-                .Role = Role,
-            };
+            SystemContext context = Services.Make();
+            context.Role = Role;
+            return context;
         }
     };
 
@@ -148,7 +141,7 @@ namespace
             Result<Unique<ServerHost>> host = ServerHost::Create(ServerHostInfo{
                 .Server = ServerInfo{.TransportOverride = &transport, .Connection = FastConfig},
                 .World = *World,
-                .Assets = FakeAssets(),
+                .Assets = TestAssets(),
                 .LevelId = LevelId,
                 .Replication = ReplicationServer::Settings{.SnapshotInterval = 2},
             });
@@ -174,7 +167,7 @@ namespace
                 {
                     continue;
                 }
-                const Prefab::SpawnResult spawned = PawnPrefab->SpawnInto(*World, FakeAssets());
+                const Prefab::SpawnResult spawned = PawnPrefab->SpawnInto(*World, TestAssets());
                 if (spawned.Roots.empty())
                 {
                     continue;
@@ -211,7 +204,7 @@ namespace
                 }
             }
 
-            FakeContext ctx;
+            TestContext ctx;
             ctx.Role = NetRole::Server;
             Movement.OnUpdate(*World, delta, ctx.Make());
         }
@@ -259,7 +252,7 @@ namespace
 
             Host = ClientHost::Create(ClientHostInfo{
                 .Client = *Client,
-                .Assets = FakeAssets(),
+                .Assets = TestAssets(),
                 .LoadLevel = [this](AssetId) -> Scene*
                 {
                     ClientScene = Scene::Create(Types);
@@ -325,7 +318,7 @@ namespace
                 }
             }
 
-            FakeContext ctx;
+            TestContext ctx;
             ctx.Role = NetRole::Client;
             Movement.OnUpdate(*world, delta, ctx.Make());
             Host->RecordPrediction(clientTick);
@@ -341,7 +334,7 @@ namespace
 
             if (Scene* world = Host->World())
             {
-                FakeContext ctx;
+                TestContext ctx;
                 ctx.Role = NetRole::Client;
                 Interp.OnUpdate(*world, delta, ctx.Make());
             }
@@ -449,7 +442,7 @@ TEST_CASE("The predicted pawn responds on the tick its input is sampled, with no
         now += Delta;
         client.PredictStep(tick, Delta, move);
         // Interpolation runs every client frame and must not touch the predicted pawn.
-        FakeContext ctx;
+        TestContext ctx;
         ctx.Role = NetRole::Client;
         client.Interp.OnUpdate(world, Delta, ctx.Make());
     }

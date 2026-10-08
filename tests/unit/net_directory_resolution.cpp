@@ -19,6 +19,7 @@
 #include <Veng/Scene/BuiltinTypes.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/WorldDirectory.h>
+#include "support/TestServices.h"
 
 #include <utility>
 
@@ -27,12 +28,10 @@ using namespace Veng::Net;
 
 namespace
 {
-    // A dependency-free seat spawn never touches the manager, so a never-dereferenced reference is
-    // safe (the net_join_flow.cpp precedent).
-    AssetManager& FakeAssets()
+    // An asset manager the dependency-free prefabs and anchored spawns here never load through.
+    AssetManager& TestAssets()
     {
-        alignas(16) static unsigned char bytes[64]{};
-        return *reinterpret_cast<AssetManager*>(bytes);
+        return TestSupport::SharedTestServices().GetAssets();
     }
 
     const ConnectionConfig Config{
@@ -129,7 +128,7 @@ namespace
                     ServerInfo{.TransportOverride = ServerTransport.get(), .Connection = Config},
                 .WorldId = PrimaryWorld,
                 .World = *PrimaryScene,
-                .Assets = FakeAssets(),
+                .Assets = TestAssets(),
                 .LevelId = PrimaryLevel,
                 .IdleKeepWarmDwell = dwell,
                 .WorldFactory = [this](const JoinRequestInfo&, const WorldKey&,
@@ -149,7 +148,7 @@ namespace
                 ClientInfo{.TransportOverride = ClientTransport.get(), .Connection = Config});
             Joiner = ClientHost::Create(ClientHostInfo{
                 .Client = *Connection,
-                .Assets = FakeAssets(),
+                .Assets = TestAssets(),
                 .LoadLevel = [this](AssetId) -> Scene*
                 {
                     ClientScenes.push_back(Scene::Create(ClientTypes));

@@ -31,6 +31,7 @@
 #include <Veng/Task/TaskSystem.h>
 
 #include "support/CookedSkeleton.h"
+#include "support/TestServices.h"
 
 using namespace Veng;
 
@@ -548,8 +549,7 @@ namespace
         MountHandle Mount;
         Unique<Scene> World;
         AssetHandle<Mesh> RigMesh;
-        Input HeadlessInput{nullptr};
-        alignas(16) unsigned char Unused[64]{};
+        TestSupport::TestServices Services;
         AnimationSystem System;
 
         PosingScene()
@@ -576,17 +576,7 @@ namespace
             return entity;
         }
 
-        void Tick()
-        {
-            const SystemContext context{
-                .Assets = *Assets,
-                .Input = HeadlessInput,
-                .Tasks = Tasks,
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(Unused),
-                .Localization = *reinterpret_cast<Localization::Localization*>(Unused),
-            };
-            System.OnUpdate(*World, 1.0f / 60.0f, context);
-        }
+        void Tick() { System.OnUpdate(*World, 1.0f / 60.0f, Services.Make()); }
 
         [[nodiscard]] const vector<mat4>& Skinning(const Entity entity) const
         {

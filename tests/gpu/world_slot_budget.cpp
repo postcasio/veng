@@ -188,15 +188,6 @@ namespace
             m_Levels.push_back(level);
             return GetWorldRunner().OpenWorld(WorldOpenInfo{
                 .Source = level,
-                .MakeStartContext =
-                    [this]
-                {
-                    return SystemContext{.Assets = GetAssetManager(),
-                                         .Input = GetInput(),
-                                         .Tasks = GetTaskSystem(),
-                                         .Audio = GetAudioEngine(),
-                                         .Localization = GetLocalization()};
-                },
             });
         }
 

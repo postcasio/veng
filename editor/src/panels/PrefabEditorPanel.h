@@ -5,7 +5,6 @@
 #include <Veng/Asset/AssetHandle.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/Result.h>
-#include <Veng/Localization/Localization.h>
 #include <Veng/Renderer/ViewportId.h>
 #include <Veng/Scene/SceneSystem.h>
 #include <Veng/Scene/SimClock.h>
@@ -27,10 +26,7 @@ namespace Veng
     class SceneSimulation;
     class SystemRegistry;
     class TypeRegistry;
-    namespace Audio
-    {
-        class AudioEngine;
-    }
+    enum class SystemContextPhase : u8;
 }
 
 namespace VengEditor
@@ -249,6 +245,18 @@ namespace VengEditor
         ///        session holds the cursor capture, so the captured pointer routes to the play scene.
         void SyncPlayPointer();
 
+        /// @brief Builds a play-session context through the host's context factory.
+        /// @param phase      The lifecycle call or tick phase the context is for.
+        /// @param tick       The tick to stamp.
+        /// @param alpha      The interpolation fraction to stamp (View only).
+        /// @param firstStep  Whether this is the frame's first Sim step.
+        /// @param lastStep   Whether this is the frame's last Sim step.
+        /// @return The context, naming no world.
+        [[nodiscard]] Veng::SystemContext PlayContext(Veng::SystemContextPhase phase,
+                                                      Veng::u64 tick = 0, Veng::f32 alpha = 0.0f,
+                                                      bool firstStep = false,
+                                                      bool lastStep = false) const;
+
         Veng::AssetId m_Id;
 
         /// @brief The preview look the scene is shown under, or nullptr for the viewport defaults.
@@ -264,10 +272,6 @@ namespace VengEditor
         Veng::Application& m_App;
         Veng::AssetManager& m_Assets;
         Veng::Input& m_Input;
-        Veng::Audio::AudioEngine& m_Audio;
-        // The editor sets no locale index, so the play simulation resolves keys through this inert
-        // null-object localization service — the same referent GetLocalization() would return.
-        Veng::Localization::Localization m_Localization;
         Veng::InputRouter& m_Router;
         Veng::SystemRegistry& m_Systems;
 

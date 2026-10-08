@@ -19,6 +19,7 @@
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/SceneSimulation.h>
 #include <Veng/Scene/SystemRegistry.h>
+#include "support/TestServices.h"
 
 #include <glm/gtc/quaternion.hpp>
 
@@ -33,23 +34,17 @@ namespace
     // One wire step of the view delay, the precision the stamp survives to.
     constexpr f64 WireStep = 1.0 / static_cast<f64>(InputViewDelayStepsPerTick);
 
-    // The systems under test read only the scene, the tick and the role; the service references are
-    // never dereferenced.
+    // Contexts over real test services, stamped with the tick and role a case drives.
     struct ContextStorage
     {
-        alignas(16) unsigned char Bytes[64]{};
+        TestSupport::TestServices Services;
 
         SystemContext Make(const u64 tick, const NetRole role = NetRole::Server)
         {
-            return SystemContext{
-                .Assets = *reinterpret_cast<AssetManager*>(Bytes),
-                .Input = *reinterpret_cast<Input*>(Bytes),
-                .Tasks = *reinterpret_cast<TaskSystem*>(Bytes),
-                .Audio = *reinterpret_cast<Audio::AudioEngine*>(Bytes),
-                .Localization = *reinterpret_cast<Localization::Localization*>(Bytes),
-                .Tick = tick,
-                .Role = role,
-            };
+            SystemContext context = Services.Make();
+            context.Tick = tick;
+            context.Role = role;
+            return context;
         }
     };
 
