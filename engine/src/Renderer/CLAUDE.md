@@ -984,8 +984,14 @@ fragment discard switched off by the push block's `Occluded` word.
   consecutive points merge, and each point's tangent is taken across its neighbours — wrapping on a
   closed strip, falling back to the segment's own direction at a hairpin whose neighbours coincide
   — so the two segments meeting at a joint share its edge and a curve draws without gaps or notches,
-  the closing joint included. Each 96-byte `GpuRibbonSegment` carries both ends' positions, widths,
-  colours and opacities and the per-end tangents. The records sit in a host-mapped ring sized at the
+  the closing joint included. **A trail with a `CrossSection` draws its emitter's shape**: each
+  end's width is set on the CPU, where the eye, the end and its tangent are all at hand, to the
+  extent of the end's elliptical cross-section — semi-axes from the axes its sample recorded,
+  tapered with the width — across the side the vertex stage will expand it along
+  (`TrailCrossSectionWidth`, perpendicular to the tangent and the eye ray), so a flat plume reads
+  wide square-on and thin edge on with no change to the record or the shader. Each 96-byte
+  `GpuRibbonSegment` carries both ends' positions, widths, colours and opacities and the per-end
+  tangents. The records sit in a host-mapped ring sized at the
   budget below, one region per frame in flight at set 3, as the sprite pass's do — so a frame's
   ribbons, trail samples and path segments all draw from one fixed region and never grow it.
 - **A path stands where its entity's meshes draw.** A `RibbonPath`'s local points go through its

@@ -4,11 +4,13 @@
 // a pooled beam fades over its lifetime and returns to the pool, a path's strips join into the
 // expected segments with shared joints, placed by their entity's drawn pose, a one-point strip is a
 // dot of its width, and a path's placement routes it to the scene or the post-resolve plan under
-// one shared budget.
+// one shared budget. A trail's cross-section draws the extent of its emitter's shape across the side
+// it is seen from.
 
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <numbers>
 
 #include <Veng/Reflection/TypeRegistry.h>
@@ -19,6 +21,7 @@
 #include <Veng/Scene/FlipbookSystem.h>
 #include <Veng/Scene/RibbonSystem.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/Transforms.h>
 #include "support/TestServices.h"
 
 #include "Renderer/Passes/RibbonScenePass.h"
@@ -145,6 +148,96 @@ TEST_CASE(
     fixture.Step(mover, rest + vec3(5.0f, 0.0f, 0.0f));
     AttachTrail(*fixture.World, mover, Trail{.Lifetime = 0.5f});
     CHECK(fixture.World->Get<Trail>(mover).Samples.empty());
+}
+
+TEST_CASE("A trail's cross-section shows its extent across the side it is seen from")
+{
+    // A 3 x 1 ellipse across a trail running along -z.
+    const vec3 wide(1.5f, 0.0f, 0.0f);
+    const vec3 thin(0.0f, 0.5f, 0.0f);
+    const vec3 along(0.0f, 0.0f, -1.0f);
+
+    // Seen from above, the band runs across x: the wide extent. Seen from the side, the thin one.
+    CHECK(TrailCrossSectionWidth(wide, thin, along, vec3(0.0f, -10.0f, 0.0f)) ==
+          doctest::Approx(3.0f));
+    CHECK(TrailCrossSectionWidth(wide, thin, along, vec3(-10.0f, 0.0f, 0.0f)) ==
+          doctest::Approx(1.0f));
+
+    // From any side it lies between the two, and a circle shows its diameter from every side.
+    f32 least = 1e9f;
+    f32 most = 0.0f;
+    f32 circleLeast = 1e9f;
+    f32 circleMost = 0.0f;
+    for (int step = 0; step < 24; ++step)
+    {
+        const f32 angle = static_cast<f32>(step) * std::numbers::pi_v<f32> / 12.0f;
+        const vec3 eyeToPoint(10.0f * std::cos(angle), 10.0f * std::sin(angle), 3.0f);
+        const f32 width = TrailCrossSectionWidth(wide, thin, along, eyeToPoint);
+        least = std::min(least, width);
+        most = std::max(most, width);
+        const f32 circle = TrailCrossSectionWidth(vec3(0.7f, 0.0f, 0.0f), vec3(0.0f, 0.7f, 0.0f),
+                                                  along, eyeToPoint);
+        circleLeast = std::min(circleLeast, circle);
+        circleMost = std::max(circleMost, circle);
+    }
+    CHECK(least >= 1.0f - 1e-4f);
+    CHECK(most <= 3.0f + 1e-4f);
+    CHECK(circleLeast == doctest::Approx(1.4f));
+    CHECK(circleMost == doctest::Approx(1.4f));
+
+    // Looking straight down the trail still draws a band within the ellipse's extents.
+    const f32 endOn = TrailCrossSectionWidth(wide, thin, along, vec3(0.0f, 0.0f, -10.0f));
+    CHECK(endOn >= 1.0f - 1e-4f);
+    CHECK(endOn <= 3.0f + 1e-4f);
+}
+
+TEST_CASE("A trail records its emitter's axes and draws its cross-section from the viewer's side")
+{
+    RibbonScene fixture;
+    Scene& scene = *fixture.World;
+
+    // Turned a quarter about y and doubled, the emitter's local x lies along world -z and its local
+    // z along world x, the way it flies; a 1.5 x 0.5 cross-section is 3 m deep and 1 m tall in world.
+    const quat turn = glm::angleAxis(std::numbers::pi_v<f32> / 2.0f, vec3(0.0f, 1.0f, 0.0f));
+    const Entity emitter = scene.CreateEntity();
+    scene.Add<Transform>(emitter, Transform{.Rotation = turn, .Scale = vec3(2.0f)});
+    AttachTrail(
+        scene, emitter,
+        Trail{
+            .Lifetime = 10.0f, .Width = 1.0f, .CrossSection = vec2(1.5f, 0.5f), .MaxSamples = 64});
+    for (u32 frame = 0; frame <= 30; ++frame)
+    {
+        scene.Get<Transform>(emitter).Position =
+            vec3(-3.0f + (0.2f * static_cast<f32>(frame)), 0.0f, 0.0f);
+        AdvanceTrail(scene.Get<Trail>(emitter), WorldMatrix(scene, emitter), Frame);
+    }
+    const TrailSample& sample = scene.Get<Trail>(emitter).Samples.back();
+    CHECK(glm::distance(sample.AxisX, vec3(0.0f, 0.0f, -2.0f)) < 1e-4f);
+    CHECK(glm::distance(sample.AxisY, vec3(0.0f, 2.0f, 0.0f)) < 1e-4f);
+
+    // The extremes of every drawn end's width, from wherever the camera stands.
+    const auto widths = [&fixture]
+    {
+        f32 least = 1e9f;
+        f32 most = 0.0f;
+        for (const Renderer::GpuRibbonSegment& segment : fixture.Gather().Additive)
+        {
+            least = std::min({least, segment.Start.w, segment.End.w});
+            most = std::max({most, segment.Start.w, segment.End.w});
+        }
+        return std::pair{least, most};
+    };
+
+    // From the side (the fixture's camera, out along +z) the band is the 1 m height.
+    const auto [sideLeast, sideMost] = widths();
+    CHECK(sideLeast == doctest::Approx(1.0f).epsilon(1e-3));
+    CHECK(sideMost == doctest::Approx(1.0f).epsilon(1e-3));
+
+    // From overhead it is the 3 m depth.
+    fixture.Camera.SetView(vec3(0.0f, 20.0f, 0.0f), vec3(0.0f), vec3(0.0f, 0.0f, -1.0f));
+    const auto [topLeast, topMost] = widths();
+    CHECK(topLeast == doctest::Approx(3.0f).epsilon(1e-3));
+    CHECK(topMost == doctest::Approx(3.0f).epsilon(1e-3));
 }
 
 TEST_CASE("A re-based origin carries every ribbon and trail sample with it, and their shape too")

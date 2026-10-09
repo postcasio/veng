@@ -22,6 +22,7 @@
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/RemoteInterpolationSystem.h>
+#include <Veng/Scene/RibbonSystem.h>
 #include <Veng/Scene/Scene.h>
 #include <Veng/Scene/Transforms.h>
 
@@ -77,7 +78,20 @@ namespace Veng::Renderer
             dvec3 Position{0.0};
             f32 Width = 0.0f;
             vec4 Color{0.0f};
+            // A trail's cross-section semi-axes in world space; zero on both draws a band of Width.
+            vec3 SemiX{0.0f};
+            vec3 SemiY{0.0f};
         };
+
+        // The width a point is drawn at from the eye: its Width, or its cross-section's silhouette.
+        f32 DrawnWidth(const StripPoint& point, const vec3& tangent, const vec3& eyeToPoint)
+        {
+            if (point.SemiX == vec3(0.0f) && point.SemiY == vec3(0.0f))
+            {
+                return point.Width;
+            }
+            return TrailCrossSectionWidth(point.SemiX, point.SemiY, tangent, eyeToPoint);
+        }
 
         // One placement's plan, with its alpha records held for the back-to-front sort.
         struct PlanSink
@@ -102,10 +116,12 @@ namespace Veng::Renderer
             void Add(const StripPoint& start, const StripPoint& end, const vec3& startTangent,
                      const vec3& endTangent, const bool additive)
             {
+                const vec3 startAt(start.Position - Eye);
+                const vec3 endAt(end.Position - Eye);
                 Push(
                     GpuRibbonSegment{
-                        .Start = vec4(vec3(start.Position - Eye), start.Width),
-                        .End = vec4(vec3(end.Position - Eye), end.Width),
+                        .Start = vec4(startAt, DrawnWidth(start, startTangent, startAt)),
+                        .End = vec4(endAt, DrawnWidth(end, endTangent, endAt)),
                         .StartColor = start.Color,
                         .EndColor = end.Color,
                         .StartTangent = vec4(startTangent, 0.0f),
@@ -208,7 +224,7 @@ namespace Veng::Renderer
             }
         }
 
-        void GatherTrail(const Trail& trail, const optional<vec3> head, SegmentSink& sink,
+        void GatherTrail(const Trail& trail, const optional<mat4>& head, SegmentSink& sink,
                          vector<StripPoint>& points)
         {
             if (trail.Lifetime <= 0.0f)
@@ -216,25 +232,32 @@ namespace Veng::Renderer
                 return;
             }
 
-            // The point at an age: full at the head, fading and tapering to the tail.
-            const auto pointAt = [&trail](const vec3& position, const f32 age)
+            // The point at an age: full at the head, fading and tapering to the tail; a
+            // cross-section tapers with the width, about the axes the sample was recorded with.
+            const auto pointAt =
+                [&trail](const vec3& position, const vec3& axisX, const vec3& axisY, const f32 age)
             {
                 const f32 t = std::clamp(age / trail.Lifetime, 0.0f, 1.0f);
+                const f32 width = trail.Width * (1.0f + (trail.TailWidthScale - 1.0f) * t);
                 return StripPoint{
                     .Position = dvec3(position),
-                    .Width = trail.Width * (1.0f + (trail.TailWidthScale - 1.0f) * t),
+                    .Width = width,
                     .Color = vec4(trail.Color, trail.Opacity * (1.0f - t)),
+                    .SemiX = axisX * (0.5f * trail.CrossSection.x * width),
+                    .SemiY = axisY * (0.5f * trail.CrossSection.y * width),
                 };
             };
 
             points.clear();
             for (const TrailSample& sample : trail.Samples)
             {
-                AppendPoint(points, pointAt(sample.Position, sample.Age));
+                AppendPoint(points,
+                            pointAt(sample.Position, sample.AxisX, sample.AxisY, sample.Age));
             }
             if (head)
             {
-                AppendPoint(points, pointAt(*head, 0.0f));
+                const mat4& pose = *head;
+                AppendPoint(points, pointAt(vec3(pose[3]), vec3(pose[0]), vec3(pose[1]), 0.0f));
             }
             JoinStrip(points, false, trail.Additive, sink);
         }
@@ -373,10 +396,10 @@ namespace Veng::Renderer
             {
                 continue;
             }
-            optional<vec3> head;
+            optional<mat4> head;
             if (trail.Emitting && scene.Has<Transform>(entity))
             {
-                head = vec3(DrawnWorld(scene, entity, alpha)[3]);
+                head = DrawnWorld(scene, entity, alpha);
             }
             GatherTrail(trail, head, sink, points);
         }

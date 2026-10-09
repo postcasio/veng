@@ -1397,6 +1397,10 @@ namespace Veng
         vec3 Position{0.0f};
         /// @brief Seconds since the sample was recorded.
         f32 Age = 0.0f;
+        /// @brief The entity's local X axis in world space as it stood, carrying its world scale.
+        vec3 AxisX{1.0f, 0.0f, 0.0f};
+        /// @brief The entity's local Y axis in world space as it stood, carrying its world scale.
+        vec3 AxisY{0.0f, 1.0f, 0.0f};
     };
 
     /// @brief A ribbon through the recent positions of its entity: a projectile's tracer, a
@@ -1411,12 +1415,20 @@ namespace Veng
     /// the head, so the trail drains away behind a stopped or finished emitter; the trail goes with
     /// its entity when the entity is destroyed. Presentation only, never replicated: a prefab's
     /// Trail stands on every peer that instantiates it. See AttachTrail.
+    ///
+    /// A non-zero CrossSection gives the trail the shape of its emitter: an elliptical tube whose
+    /// extents lie along the entity's local X and Y as each sample was recorded, drawn as that tube's
+    /// silhouette from the viewer, so a flat emitter leaves a plume that reads wide from one side and
+    /// thin from the other. Width then scales the cross-section, tapering by TailWidthScale as it does.
     struct Trail
     {
         /// @brief Seconds a sample lives; a trail with none draws nothing.
         f32 Lifetime = 0.5f;
-        /// @brief The world width at the head.
+        /// @brief The world width at the head; with a CrossSection, the scale applied to it.
         f32 Width = 0.2f;
+        /// @brief The full extents of the trail's cross-section across its entity's local X and Y,
+        ///        in the entity's units; zero on both draws a camera-facing band of Width.
+        vec2 CrossSection{0.0f};
         /// @brief The width at the tail as a fraction of Width; 1 keeps the trail even, 0 tapers it.
         f32 TailWidthScale = 1.0f;
         /// @brief The linear HDR colour; above 1 drives bloom.
@@ -2125,6 +2137,9 @@ VE_REFLECT(::Veng::Trail, 0xCA5518C6D69E6858ULL)
 VE_FIELD(Lifetime, .DisplayName = "Lifetime", .Tooltip = "Seconds a sample lives",
          .Display = {.Min = 0.0, .Step = 0.01})
 VE_FIELD(Width, .DisplayName = "Width", .Display = {.Min = 0.0, .Step = 0.01})
+VE_FIELD(CrossSection, .DisplayName = "Cross Section",
+         .Tooltip = "Extents across the entity's local X and Y; zero draws a camera-facing band",
+         .Display = {.Min = 0.0, .Step = 0.01})
 VE_FIELD(TailWidthScale, .DisplayName = "Tail Width Scale",
          .Tooltip = "Width at the tail as a fraction of the head's", .Display = {.Min = 0.0})
 VE_FIELD(Color, .DisplayName = "Color", .Tooltip = "Linear HDR colour")

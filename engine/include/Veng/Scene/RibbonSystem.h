@@ -17,9 +17,34 @@ namespace Veng
     /// most MaxSamples remain. A trail whose head stops moving therefore empties to its one newest
     /// sample within Lifetime, and draws nothing.
     /// @param trail  The trail to advance.
+    /// @param head   The trail's entity's world transform this frame; a recorded sample keeps its
+    ///               position and its X and Y axes, which orient a CrossSection.
+    /// @param delta  Seconds since the previous advance.
+    VE_API void AdvanceTrail(Trail& trail, const mat4& head, f32 delta);
+
+    /// @brief Advances one trail by a frame with its head at a position, its axes the world's.
+    ///
+    /// The overload for a trail with no CrossSection, which reads no orientation.
+    /// @param trail  The trail to advance.
     /// @param head   The trail's entity's world position this frame.
     /// @param delta  Seconds since the previous advance.
     VE_API void AdvanceTrail(Trail& trail, const vec3& head, f32 delta);
+
+    /// @brief The width a trail's elliptical cross-section shows a viewer at one point of it.
+    ///
+    /// The cross-section is the ellipse with semi-axes @p semiX and @p semiY, and the trail runs
+    /// along @p tangent. The band is drawn across the side perpendicular to the trail and to the eye
+    /// ray, as the ribbon pass draws every band, and its width is the ellipse's extent along that
+    /// side: the full span of an axis seen square across it, the span of the other seen edge on, and
+    /// the same for a circle from every side. Looking straight down the trail leaves no such side,
+    /// and one perpendicular to the trail stands in.
+    /// @param semiX       The ellipse's first semi-axis, world space.
+    /// @param semiY       The ellipse's second semi-axis, world space.
+    /// @param tangent     The trail's direction at the point.
+    /// @param eyeToPoint  The point less the eye's position.
+    /// @return The band's full width there.
+    [[nodiscard]] VE_API f32 TrailCrossSectionWidth(const vec3& semiX, const vec3& semiY,
+                                                    const vec3& tangent, const vec3& eyeToPoint);
 
     /// @brief Gives @p entity a trail that starts fresh at its current position.
     ///

@@ -397,10 +397,13 @@ extern "C"
 /// GetLightingSourceDeriveCount becomes GetLightingDeriveCount. A module spawns prefabs carrying the
 /// builtin and may read the renderer's diagnostics, so a stale module lays Sky out long and calls an
 /// entry point the host no longer exports.
+/// Version 93 gives a trail its emitter's shape: Trail grows CrossSection, TrailSample grows the
+/// emitter's AxisX and AxisY, and AdvanceTrail gains an overload taking the head's world transform.
+/// A module spawns and writes trails, so a stale module lays both out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 92u
+#define VENG_MODULE_ABI_VERSION 93u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

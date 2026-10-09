@@ -251,15 +251,20 @@ carry HDR colour that feeds bloom, and choose `Additive` (order-free light) or a
   Width, colour and opacity run linearly `From` → `To`. A positive `Lifetime` fades it linearly to
   nothing as `Age` advances; `Lifetime` 0 holds it.
 - **`Trail`** — the View-phase **`RibbonSystem`** calls `AdvanceTrail` each frame with the entity's
-  world position at the frame's render fraction: samples age, those at `Lifetime` drop, the head is
+  world transform at the frame's render fraction: samples age, those at `Lifetime` drop, the head is
   recorded when the trail is empty or has moved more than `MinSampleDistance`, and the ring is
   trimmed to `MaxSamples`. The runtime `Samples` carry no `VE_FIELD`. The drawn band is full at the
   head and fades (opacity to 0, width to `Width × TailWidthScale`) by each sample's age, so a trail
   that stops moving empties within `Lifetime`. Clearing `Emitting` stops recording and detaches the
   head, so the trail drains where it lies; destroying the entity takes the trail with it.
-  **`AttachTrail(scene, entity, trail)`** adds or replaces one with its samples cleared, so a reused
-  or teleported entity starts fresh instead of streaking from where it stood. A prefab may carry a
-  `Trail`; it stands on every peer that instantiates the prefab.
+  **A non-zero `CrossSection` gives it its emitter's shape**: each sample also records the entity's
+  world X and Y axes (scale included), and the band is drawn as the silhouette of the elliptical
+  tube those axes and the extents describe, `Width` scaling the extents and tapering them with
+  `TailWidthScale` — so a wide, flat nozzle leaves a plume wide from one side and thin from the
+  other. `AdvanceTrail` takes the head's world transform for this; its position overload records the
+  world's axes. **`AttachTrail(scene, entity, trail)`** adds or replaces one with its samples
+  cleared, so a reused or teleported entity starts fresh instead of streaking from where it stood. A
+  prefab may carry a `Trail`; it stands on every peer that instantiates the prefab.
 - **`RibbonPath`** — `Strips`, each a `RibbonStrip` of `Points` in the entity's **local** space with
   its own `Width`, `Color`, `Opacity` and `Closed`, all drawn `Additive` or alpha-over together. The
   points follow the entity's drawn (interpolated) world transform, so a wireframe, a drawn orbit, a
