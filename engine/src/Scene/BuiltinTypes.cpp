@@ -22,6 +22,7 @@
 #include <Veng/Render/GraphicsSettings.h>
 #include <Veng/Renderer/Atmosphere.h>
 #include <Veng/Renderer/CaptureSurface.h>
+#include <Veng/Renderer/ModelPortrait.h>
 #include <Veng/Scene/AnimationBlend.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Camera.h>
@@ -296,6 +297,10 @@ namespace Veng
         // output sampled by the entity's material. Renderer::CaptureShape and CaptureRefresh register
         // transitively through its fields; the runtime-only Unique carries no reflected field.
         registry.Register<Renderer::CaptureSurface>();
+
+        // A model rendered offscreen for UI, driven like a capture. Its enums and its framing and
+        // lighting records register transitively through its fields; the runtime carries none.
+        registry.Register<Renderer::ModelPortrait>();
 
         // Every leaf type the engine declares, whether or not a builtin component happens to
         // reference one. They are the vocabulary a consumer names a type *by* — a data table

@@ -1968,6 +1968,11 @@ if (VENG_BUILD_TESTS)
             # settles then re-arms, every-frame never idles), and teardown unregistering the
             # capture from the drive-list on component/entity/scene destruction.
             tests/gpu/capture_surface.cpp
+            # model_portrait.cpp drives the ModelPortrait component through a compositor: a shaded
+            # portrait's coverage, a depth-normal portrait's facing normal, explicit framing, a
+            # per-frame pose, repopulation and the model-only bounds, pool reuse, steady bindless
+            # occupancy, and no render for a scene nothing presents.
+            tests/gpu/model_portrait.cpp
             # scene_capture_cube.cpp drives SceneCapture's opt-in radiance cube over a green self-lit
             # backdrop and feeds the published cube to EnvironmentIbl::GenerateFromCube — the cube is
             # a valid IBL source carrying the scene in the right direction, the revision advances only

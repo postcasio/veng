@@ -42,6 +42,11 @@
       "source": "ui/panel.vui.xml"
     },
     {
+      "id": "0xE23FB5CB14618116",
+      "type": "Prefab",
+      "source": "prefabs/portrait.prefab.json"
+    },
+    {
       "id": "0xE5B54C65A4A62A31",
       "type": "Prefab",
       "source": "prefabs/scene.prefab.json"

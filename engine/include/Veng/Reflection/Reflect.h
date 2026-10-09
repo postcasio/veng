@@ -363,6 +363,26 @@ namespace Veng::Detail
         }                                                                                          \
     }
 
+/// @brief Declares a component's removal hook, by specialising VengOnRemove\<T\>.
+///
+/// Placed beside the type's describe block (like VE_REQUIRES), it names a callable invoked as
+/// `Function(Scene&, Entity, Type&)` when the component is removed or its entity destroyed, while
+/// the owner and its siblings are still present (see TypeInfo::OnRemove). It is for a component
+/// whose runtime reaches outside the scene — a presentation binding to tell it is going, a lease to
+/// hand back — and that needs its owner to do so; a release needing nothing but the component
+/// belongs in its destructor. The type is named fully qualified from global scope, and the header
+/// placing the macro must make Scene and Entity visible.
+#define VE_ON_REMOVE(Type, Function)                                                               \
+    template <>                                                                                    \
+    struct ::Veng::VengOnRemove<Type>                                                              \
+    {                                                                                              \
+        static constexpr bool Present = true;                                                      \
+        static void Call(::Veng::Scene& scene, ::Veng::Entity entity, void* component)             \
+        {                                                                                          \
+            Function(scene, entity, *static_cast<Type*>(component));                               \
+        }                                                                                          \
+    }
+
 /// @brief Declares a Variant\<Ts...\>'s identity by specialising VengReflect\<T\>.
 ///
 /// Type already is a Variant\<Ts...\> (or an alias of one), so the alternatives are

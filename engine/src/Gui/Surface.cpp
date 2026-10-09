@@ -29,6 +29,16 @@ namespace Veng
         Unique<GuiDriver> Driver;
         /// @brief The document the driver was last OnInstantiate'd against; detects a re-instantiate.
         Gui::Document* DriverDocument = nullptr;
+        /// @brief Whether the drivers are attached: a claiming drive reached the document, no detach since.
+        bool Attached = false;
+        /// @brief The viewport whose claiming drive attached the drivers; compared, never dereferenced.
+        Renderer::ViewportId AttachedBy;
+        /// @brief The seat the attached drivers answer to, handed back to them at detach.
+        Entity Seat = Entity::Null;
+        /// @brief The localization service the attached drivers were handed; never null once attached.
+        const Localization::Localization* Localization = nullptr;
+        /// @brief The recipe the live document was instantiated from; invalid for an injected one.
+        AssetId InstantiatedFrom;
         /// @brief Whether the emissive material's white default has been applied once.
         bool EmissiveSeeded = false;
 
@@ -107,6 +117,36 @@ namespace Veng
         }
     }
 
+    namespace
+    {
+        /// @brief Detaches the attached drivers: the surface's own OnDetach, then its components'.
+        void DetachDrivers(GuiSurfaceRuntime& runtime, Scene& scene, const Entity owner)
+        {
+            if (!runtime.Attached)
+            {
+                return;
+            }
+            runtime.Attached = false;
+            Gui::Document* const document = runtime.Host != nullptr ? runtime.Host->Get() : nullptr;
+            if (document == nullptr)
+            {
+                runtime.DriverDocument = nullptr;
+                return;
+            }
+            if (runtime.Driver != nullptr && runtime.DriverDocument != nullptr)
+            {
+                runtime.Driver->OnDetach(GuiDriverContext{.Document = *document,
+                                                          .Root = document->Root(),
+                                                          .Scene = scene,
+                                                          .Owner = owner,
+                                                          .Seat = runtime.Seat,
+                                                          .Localization = *runtime.Localization});
+            }
+            runtime.DriverDocument = nullptr;
+            document->DetachComponents(scene, owner, runtime.Seat, *runtime.Localization);
+        }
+    }
+
     GuiSurface::GuiSurface() = default;
     GuiSurface::~GuiSurface() = default;
     GuiSurface::GuiSurface(GuiSurface&&) noexcept = default;
@@ -137,6 +177,19 @@ namespace Veng
             return nullptr;
         }
         return Runtime->Host ? Runtime->Host->Get() : Runtime->Pending.get();
+    }
+
+    void GuiSurface::DetachDriver(Scene& scene, const Entity owner) const
+    {
+        if (Runtime)
+        {
+            DetachDrivers(*Runtime, scene, owner);
+        }
+    }
+
+    bool GuiSurface::IsDriverAttachedBy(const Renderer::ViewportId viewport) const
+    {
+        return Runtime && Runtime->Attached && Runtime->AttachedBy == viewport;
     }
 
     Gui::RenderTarget* GuiSurface::GetTarget() const
@@ -186,6 +239,20 @@ namespace Veng
             }
         }
 
+        // A Document re-pointed at another recipe drops the live tree so it re-instantiates. Attached
+        // drivers leave the old tree first, which only the claiming drive (holding the scene) can do;
+        // an unclaimed drive keeps drawing the old tree until it has.
+        if (runtime.InstantiatedFrom.IsValid() && runtime.InstantiatedFrom != Document.Id() &&
+            (!runtime.Attached || driver.World != nullptr))
+        {
+            if (driver.World != nullptr)
+            {
+                DetachDrivers(runtime, *driver.World, driver.Owner);
+            }
+            runtime.Host->SetDocument(nullptr);
+            runtime.InstantiatedFrom = {};
+        }
+
         // Instantiate a cooked recipe on first use; an imperative document is injected through
         // SetDocument. With neither available yet (a recipe still loading), there is nothing to draw.
         if (runtime.Host->Get() == nullptr)
@@ -194,6 +261,7 @@ namespace Veng
             {
                 VE_PROFILE_SCOPE("Gui/Instantiate");
                 runtime.Host->SetDocument(Gui::Document::Instantiate(*Document.Get(), assets));
+                runtime.InstantiatedFrom = Document.Id();
             }
             else
             {
@@ -275,21 +343,35 @@ namespace Veng
 
             if (runtime.Driver != nullptr)
             {
-                // Re-run OnInstantiate whenever the live document changed identity, so cached element
-                // pointers stay valid — the same contract SetOnInstantiate carries. A whole-document
-                // driver drives the document root.
-                if (document != runtime.DriverDocument)
+                const GuiDriverContext context{.Document = *document,
+                                               .Root = document->Root(),
+                                               .Scene = *services.World,
+                                               .Owner = services.Owner,
+                                               .Seat = services.Seat,
+                                               .Localization = strings};
+                // A re-instantiate replaced the tree the driver attached to: it detaches first, so
+                // the two hooks pair.
+                if (runtime.DriverDocument != nullptr && runtime.DriverDocument != document)
                 {
-                    runtime.Driver->OnInstantiate(GuiDriverContext{.Document = *document,
-                                                                   .Root = document->Root(),
-                                                                   .Scene = *services.World,
-                                                                   .Seat = services.Seat,
-                                                                   .Localization = strings});
+                    runtime.Driver->OnDetach(context);
+                    runtime.DriverDocument = nullptr;
+                }
+                // Re-run OnInstantiate whenever the driver is not attached to the live document, so
+                // cached element pointers stay valid — the same contract SetOnInstantiate carries. A
+                // whole-document driver drives the document root.
+                if (runtime.DriverDocument != document)
+                {
+                    runtime.Driver->OnInstantiate(context);
                     runtime.DriverDocument = document;
                 }
                 runtime.Driver->OnUpdate(frame);
             }
         }
+
+        runtime.Attached = true;
+        runtime.AttachedBy = services.Presenter;
+        runtime.Seat = services.Seat;
+        runtime.Localization = &strings;
 
         // Drive the document's embedded component drivers, whether or not the surface itself is driven.
         document->DriveComponents(services.Drivers, frame);

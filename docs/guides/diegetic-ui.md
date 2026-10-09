@@ -79,7 +79,9 @@ entity with. It is authored as prefab data beside a `MeshRenderer`:
   surface's document and drives each frame — the ergonomic path for a panel whose content is
   computed rather than data-bound. It is the same field, catalog, and contract `GuiOverlay`
   carries; the surface's is run by the viewport that claims it, **ahead** of the render gather, so
-  what the driver writes is what this frame's panel shows. See
+  what the driver writes is what this frame's panel shows. Its `OnDetach` runs when that viewport
+  stops claiming the surface, when the component is removed or its entity destroyed, and when its
+  world closes through the runner — the owner still alive in every case. See
   [Screen-space UI and overlays](screen-space-ui-and-overlays.md#the-ergonomic-path--a-per-instance-guidriver).
 
 The engine drives every `GuiSurface` in a viewport's bound scene into its target **ahead

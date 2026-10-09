@@ -34,7 +34,7 @@ Each major system's architecture lives in a `CLAUDE.md` inside its source direct
   ImGui (debug panels and the editor), including the engine-tier reflection inspector.
 - **[src/Gui/CLAUDE.md](src/Gui/CLAUDE.md)** — `Veng::Gui`, the retained, data-driven game UI
   (cooked `*.vui.xml`/`*.vuss` documents, Yoga layout, binding, per-seat input, the
-  `GuiOverlay`/`GuiSurface`/`CaptureSurface` component family).
+  `GuiOverlay`/`GuiSurface`/`CaptureSurface`/`ModelPortrait` component family).
 - **[src/Net/CLAUDE.md](src/Net/CLAUDE.md)** — `Veng/Net/`, the server-authoritative
   client/server layer (transport, replication, prediction/reconciliation, interest management).
 - **[src/Physics/CLAUDE.md](src/Physics/CLAUDE.md)** — `Veng/Physics/`, rigid-body simulation: the
@@ -191,7 +191,9 @@ above and three collaborators it drives each frame:
   `CaptureSurface`s from the viewports that present them**: a pre-pass ahead of the capture renders
   drives each scene a registered viewport will render this frame — once, from its first such
   viewport — plus a waiting rebind's destination, building at most one new capture per frame and
-  reusing a released one from the compositor's `SceneCapturePool`. See
+  reusing a released one from the compositor's `SceneCapturePool`. The same pass drives each
+  scene's `ModelPortrait`s — models rendered offscreen for UI — rendering them ahead of every
+  viewport and pooling their renderers in a `ModelPortraitPool`. See
   [src/Renderer/CLAUDE.md](src/Renderer/CLAUDE.md).
 - **`ManagedViewportSet`** (`Veng/ManagedViewports.h`) — the managed-viewport policy. It owns the
   engine-managed `Presented` viewports, registers them into the compositor, and each frame **pulls**
@@ -261,7 +263,8 @@ with.
 `RebindManagedViewport(index, world)` records a deferred rebind applied at the top-of-frame safe
 point, where it is a **complete rebind**: it detaches the *departed* world's engine-driven overlay
 documents from the viewport (`GuiOverlay::Detach`, the exact inverse of the per-frame `Drive` — the
-runtime host survives, only what the engine attached is touched, hand-attached documents untouched),
+runtime host survives, only what the engine attached is touched, hand-attached documents untouched —
+and with them the Gui drivers that viewport attached, whose `OnDetach` runs),
 **re-resolves the seat** in the destination scene (the bound `Viewer` when it still resolves
 there, else the scene's sole/first `Viewer`, else cleared), re-pointing the `InputRouter` association
 and — when the departed association owned it — **moving the cursor seat with the focus it holds**
@@ -512,8 +515,9 @@ scene it last presented until its next view push, and the push runs after the ti
 closed at the top of a frame (a departure, a reap, a drained request) would otherwise leave
 `GetPresentedScene` dangling for the frame-top pointer routing. The runner's scene-retiring hook
 (`SetSceneRetiringHook`, fired by a close and by `InstallScene`'s replacement, each after the
-scene's `OnStop`) lets the
-`Application` call `Viewport::ReleasePresentedScene` on every registered viewport first.
+scene's `OnStop`, and handed the scene mutable) lets the `Application` first detach every
+`GuiOverlay`'s and `GuiSurface`'s drivers — their `OnDetach` runs with the scene and its entities
+intact — and then call `Viewport::ReleasePresentedScene` on every registered viewport.
 
 The world drive is an accumulator: each world's Sim phase steps at its own fixed `SimTickRate`
 (`GameWorldInfo`, default 60 Hz) with a monotonic tick, its View phase runs once per frame, and the
@@ -691,7 +695,7 @@ and calls `Run()`.
   (`string`, `vector`, `Ref<T>` flow across freely). veng is **not** a binary-plugin platform — a
   module is recompiled with the engine from one tree. A one-integer `VengModuleAbiVersion`
   handshake (checked by `ModuleLoader` before the entry runs) **rejects a stale module loudly at
-  load**. The ABI is at **version 90** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
+  load**. The ABI is at **version 91** (`VENG_MODULE_ABI_VERSION`, `Veng/Module/Module.h` — the
   header is authoritative, and its prose records why each version moved). The host struct is `{ ApplicationRegistry& App; TypeRegistry& Types;
   SystemRegistry& Systems; AssetTypeRegistry& AssetTypes; AssetLoaderRegistry& AssetLoaders;
   GuiDriverRegistry* Drivers; EditorRegistry* Editor; }` — the `Drivers` registry (the

@@ -13,8 +13,16 @@
 
 namespace Veng
 {
+    class Scene;
+    struct Entity;
+
     /// @brief The ordinal no registered type carries: what TypeRegistry::OrdinalOf reports for an unregistered type.
     inline constexpr u32 InvalidTypeOrdinal = ~0u;
+
+    /// @brief A component's removal hook: called with its scene, its entity and the component itself.
+    ///
+    /// See TypeInfo::OnRemove for when it runs and what it may do.
+    using ComponentRemoveHook = void (*)(Scene& scene, Entity entity, void* component);
 
     namespace Detail
     {
@@ -133,6 +141,19 @@ namespace Veng
         }
     };
 
+    /// @brief Primary template authoring a component's removal hook; absent unless VE_ON_REMOVE marks it.
+    ///
+    /// TypeRegistry::Register<T>() reads VengOnRemove<T>::Call into TypeInfo::OnRemove when Present
+    /// is true. A separate specialisation point from VengReflect<T>, like VengRequires<T>, so it
+    /// composes with every reflection macro.
+    /// @tparam T  The type whose removal hook is authored.
+    template <class T>
+    struct VengOnRemove
+    {
+        /// @brief Whether the type declares a removal hook; false for the primary template.
+        static constexpr bool Present = false;
+    };
+
     /// @brief The recorded description of a registered type.
     ///
     /// Carries the name, layout, construct/destruct/move thunks a type-erased
@@ -206,6 +227,15 @@ namespace Veng
         /// only: an entity mid-assembly may carry this component before its siblings. Empty for
         /// every unmarked type. Set from VengRequires<T>::Required().
         vector<TypeId> Requires;
+        /// @brief The component's removal hook, authored via VE_ON_REMOVE; null for every unmarked type.
+        ///
+        /// Scene::RemoveComponent and Scene::DestroyEntity call it while the component, its entity
+        /// and every sibling on that entity are still present — DestroyEntity runs the hooks of its
+        /// whole subtree before it removes anything — so a component holding state that reaches
+        /// outside the scene can release it against an owner it can still read. The hook may read
+        /// the scene and add components (a request stamped on the owner is removed with it); it
+        /// must not remove the component it was called for. A scene being destroyed calls none.
+        ComponentRemoveHook OnRemove = nullptr;
         /// @brief Field descriptors for Struct-class types; empty for leaves.
         vector<FieldDescriptor> Fields;
         /// @brief The type's default presentation, authored via VE_DISPLAY; the type-default arm of the cascade.
@@ -402,6 +432,10 @@ namespace Veng
             info.Fields = std::move(fields);
             info.Display = VengDisplay<T>::Get();
             info.Requires = VengRequires<T>::Required();
+            if constexpr (VengOnRemove<T>::Present)
+            {
+                info.OnRemove = &VengOnRemove<T>::Call;
+            }
             static_assert(!VengServerOwned<T>::ServerOwned || VengReplication<T>::Replicated,
                           "VE_SERVER_OWNED requires VE_REPLICATED on the same type");
             info.Replicated = VengReplication<T>::Replicated;

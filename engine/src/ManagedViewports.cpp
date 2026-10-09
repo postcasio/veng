@@ -4,6 +4,7 @@
 #include <Veng/Log.h>
 #include <Veng/WorldRunner.h>
 #include <Veng/Gui/Overlay.h>
+#include <Veng/Gui/Surface.h>
 #include <Veng/Renderer/Context.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
@@ -374,9 +375,17 @@ namespace Veng
         {
             if (const World* departed = runner.ResolveWorld(departedWorld); departed != nullptr)
             {
-                for (auto [entity, overlay] : departed->GetScene().View<GuiOverlay>())
+                Scene& scene = departed->GetScene();
+                for (auto [entity, overlay] : scene.View<GuiOverlay>())
                 {
-                    overlay.Detach(*managed.Viewport);
+                    overlay.Detach(*managed.Viewport, scene, entity);
+                }
+                for (auto [entity, surface] : scene.View<GuiSurface>())
+                {
+                    if (surface.IsDriverAttachedBy(managed.Viewport->GetId()))
+                    {
+                        surface.DetachDriver(scene, entity);
+                    }
                 }
             }
         }

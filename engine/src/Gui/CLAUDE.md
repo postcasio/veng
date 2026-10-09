@@ -453,6 +453,15 @@ through `object-fit` / `image-repeat` / `image-slice` — the widget-side spelli
   grow on, the centre on both. Nothing about it is widget-specific; the two hosts differ only in
   which box they fill.
 
+**An `Image` can paint a runtime texture.** `Document::SetImageTexture(element, texture, sampler,
+extent)` points the element's bindless slots at a texture no asset owns — a render a component
+produced this frame (`ModelPortrait`), a capture — with the layout contract a `src` has: the extent
+is the element's intrinsic size, so a changed extent re-measures and a changed handle at the same
+extent only repaints (`SetImageUv`'s contract), and the same handle again is free, so a driver can
+re-point it every frame. `ClearImageTexture` returns the element to the texture its `src` resolved
+to (`Element::Image`, kept resident throughout), or to none. Writing `ImageTexture`/`ImageSize`
+directly skips the re-measure; the setters are the way in.
+
 **The measure reads the whole texture, never the `uv` sub-rect.** Reading `ImageUv` there would make
 `Document::SetImageUv` a layout input, turning a per-frame atlas flipbook advance into a per-frame
 layout re-solve; the setter keeps its paint-only, no-dirty contract. *Fit* and *slice*, by contrast,
@@ -1028,7 +1037,7 @@ the two is written up beside the shell's section in the same guide.
 ## The engine-driven scene component family
 
 The screen-space overlay is a reflected component too — the engine-driven scene component family
-has three members (scene/ECS material is [../Scene/CLAUDE.md](../Scene/CLAUDE.md)). A
+has four members (scene/ECS material is [../Scene/CLAUDE.md](../Scene/CLAUDE.md)). A
 **`GuiOverlay`** (`Veng/Gui/Overlay.h`) is the screen-space sibling of `GuiSurface`: a reflected
 scene component `{ AssetHandle<Gui::UIDocument> Document; i32 Layer; GuiDriverId Driver; bool
 Interactive; bool DrawsCursor; bool Visible; Reference TargetSeat; }` the **Viewport** discovers the same way (`View<GuiOverlay>()`) and drives onto its
@@ -1048,10 +1057,10 @@ input attachment list, so an overlay stops counting the frame it goes display-on
 `Gui::Document::IsDrawingCursor`, restamped every drive so a re-instantiated tree keeps it.
 **`Visible` (default true) gates whether it draws** — cleared, the claiming viewport skips its drive and detaches an attached
 layer-stack document, so the runtime and bindings stand and restoring the flag re-presents with no
-reload (the screen-space peer of `MeshRenderer::Visible`). **`Detach(viewport)` is the
-exact inverse of `Drive`** — it releases the driven document from a viewport's layer stack while the
-runtime host survives for the next `Drive`, idempotent and touching only the document the engine
-attached. `~GuiOverlay` detaches on component destruction (the right lifetime when the *component*
+reload (the screen-space peer of `MeshRenderer::Visible`). **`Detach(viewport, scene, owner)` is
+the exact inverse of `Drive`** — it releases the driven document from a viewport's layer stack, and
+detaches the drivers that viewport attached (see "The driver" below), while the runtime host survives
+for the next `Drive`, idempotent and touching only the document the engine attached. `~GuiOverlay` detaches on component destruction (the right lifetime when the *component*
 goes); `Detach` covers the other case — a viewport stops presenting a world that stays alive (a world
 rebind), where the engine detaches the departed scene's overlays without waiting on component
 teardown. **`Prepare(assets)` is the first drive's load and instantiate, without the drive** — it
@@ -1101,7 +1110,7 @@ runtime strings through (`Localization` is the peer of `SystemContext::Localizat
 viewport by `Viewport::SetLocalization`; it is a **reference, never null** — a viewport handed no
 service hands the driver `Localization::NullService()`, which resolves every key to itself).
 `OnInstantiate` takes the one-time half of the same thing, a
-**`GuiDriverContext { Document, Root, Scene, Seat, Localization }`** — so the two hooks together are
+**`GuiDriverContext { Document, Root, Scene, Owner, Seat, Localization }`** — so the hooks together are
 the whole of what a driver may reach, and a driver needing a host service the engine does not hand
 it is a gap in these two structs rather than a reason to smuggle one in through a scene component.
 The frame's `Localization` is read **per frame** rather than cached at instantiate:
@@ -1115,6 +1124,36 @@ pose being drawn rather than the tick pose. Two claimed instances of one overlay
 system would key by entity dissolves. `OnInstantiate` resolves elements and binds the driver's
 `Gui::BindingContext` through `Document::BindContext(context)` (the registry-free overload — the
 document supplies its own).
+
+**A driver is attached, then detached, and `OnDetach` is the pair of `OnInstantiate`.** A driver
+holding a lease, a published pointer or view-output state needs to know when it stops driving, and
+the moment it stops is exactly when its only channel to a system — stamping a request component —
+would otherwise be gone. So `GuiDriver::OnDetach(const GuiDriverContext&)` (default empty) runs once
+per attach→detach transition, **always while the scene and the owner are alive**, on every way a
+driver stops:
+
+- the overlay's `Visible` cleared, or the viewport that drove it no longer claiming it (a seat
+  rebinding) — the drivers are attached *by a viewport* (`IsDriverAttachedBy`), and only that
+  viewport's loss of claim detaches them;
+- a world rebind's `GuiOverlay::Detach(viewport, scene, owner)` (and the surfaces that viewport drove);
+- the component removed or its entity destroyed — through the component's removal hook
+  (`VE_ON_REMOVE`, [../Scene/CLAUDE.md](../Scene/CLAUDE.md)), which runs before the scene removes
+  anything, so the driver can still read its owner's siblings and stamp a request on it;
+- its `Document` re-pointed at another recipe — the drivers leave the old tree while it is live, and
+  the host is rebuilt for the new one;
+- its world closed, or its scene replaced, through the `WorldRunner`: `Application`'s scene-retiring
+  hook — handed the scene mutable for it — detaches every overlay's and surface's drivers before the
+  viewports release the scene and before it is destroyed.
+
+`GuiOverlay::DetachDriver` / `GuiSurface::DetachDriver` is the one operation behind all of them, and
+it detaches the document's **component drivers** too (`Document::DetachComponents`), so a document's
+drivers attach and detach together. The next drive attaches them again — `OnInstantiate` runs afresh —
+so instantiations minus detaches is always 0 or 1. A re-instantiate (the document replaced under a
+live driver) runs `OnDetach` before the next `OnInstantiate`; its old tree is already gone, so that
+`OnDetach` is handed the replacement. **A scene destroyed outside the runner** (an asset preview, a
+test's own scene) destroys its drivers with no `OnDetach` — after the runner became the only
+simulation host, only those do. `GuiDriverContext::Owner` is the entity the driven component sits on,
+for either hook; as in every hook, a driver must not add or remove the component it is driven from.
 
 **Where in the frame a driver runs differs between the two components, and it is the one asymmetry.**
 An overlay composites *after* the scene, so `DriveOverlays` runs after the render gather and what its
@@ -1215,6 +1254,22 @@ screen-space), and `CaptureSurface` (the scene rendered into a texture, sampled 
 material) — each discovered by `View<…>()` and driven by the engine. Authoring the screen-space and
 RTT members, and opening a level as an overlay, is
 [docs/guides/screen-space-ui-and-overlays.md](../../../docs/guides/screen-space-ui-and-overlays.md).
+
+The **fourth** member is **`ModelPortrait`** (`Veng/Renderer/ModelPortrait.h`): a model rendered
+offscreen for UI — a portrait of a selected object, an equipment preview, a character on a loadout
+screen. It owns a private scene holding an instance of its `Model` prefab under a root posed by
+`ModelPose`, a key light (`Lighting`), a camera (`Framing`: `AutoFit` on the model's bounds from yaw,
+pitch, field of view and padding, or `Explicit`, a caller-placed pose taken as given), and a lean
+renderer from the compositor's pool, and it is driven exactly as a `CaptureSurface` is — by the
+compositor pre-pass, for the scenes its viewports render, ahead of every viewport — so a driver reading
+`GetOutput()` in that frame's drive paints this frame's render. `SetOnPopulate` attaches parts to the
+model in the private scene after each instantiation, and `Repopulate()` destroys every entity a
+populate created and runs it again without re-instantiating the model. The output carries the colour
+(tonemapped, coverage in alpha) or the depth and normal (`PortraitOutput::GeometryDepthNormal`), the
+camera, the model transform, and two bounds — `Bounds` over everything, `ModelBounds` over the model
+alone. Showing one is a driver calling `Document::SetImageTexture` with it each frame (and
+`ClearImageTexture` while it is not `Ready`). The renderer side is in
+[../Renderer/CLAUDE.md](../Renderer/CLAUDE.md), "Model portraits".
 
 ## Authoring surfaces
 

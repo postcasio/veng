@@ -1,0 +1,38 @@
+{
+  "entities": [
+    {
+      "components": {
+        "::Veng::Name": {
+          "Value": "Portrait Cube"
+        },
+        "::Veng::Transform": {
+          "Position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "Rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "Scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "::Veng::MeshRenderer": {
+          "Source": {
+            "type": "::Veng::CubeShape",
+            "value": {
+              "Extent": 1.0,
+              "Material": "0x6B3337487AD11FFC"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

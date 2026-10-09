@@ -6,6 +6,7 @@
 #include <Veng/Gui/UIDocument.h>
 #include <Veng/Reflection/Reflect.h>
 #include <Veng/Renderer/BindlessRegistry.h>
+#include <Veng/Renderer/ViewportId.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Entity.h>
 
@@ -62,6 +63,10 @@ namespace Veng
         GuiDriverRegistry* Drivers = nullptr;
         /// @brief The entity carrying this surface — the driver's own instance, handed to it verbatim.
         Entity Owner = Entity::Null;
+        /// @brief The claiming viewport, recorded as the one that attached the drivers.
+        ///
+        /// That viewport detaches them when it stops claiming the surface (see DetachDriver).
+        Renderer::ViewportId Presenter;
         /// @brief The seat the driven document answers to, for the driver's frame.
         Entity Seat = Entity::Null;
         /// @brief Interpolation fraction into the next Sim tick, in [0, 1) — the render gather's own.
@@ -212,6 +217,22 @@ namespace Veng
                    Renderer::SamplerHandle sampler, MaterialInstance* material, f32 delta,
                    const GuiSurfaceDriveContext& driver = {}) const;
 
+        /// @brief Detaches the surface's drivers when attached: its own OnDetach, then its components'.
+        ///
+        /// The engine calls it on every way a surface stops being driven — the claiming viewport no
+        /// longer claiming it, the component removed or its entity destroyed (its removal hook), its
+        /// Document re-pointed, and its world closed or replaced through the WorldRunner — so a
+        /// driver's OnDetach runs once per attach, while the scene and @p owner are alive (see
+        /// GuiDriver::OnDetach). The next claiming drive attaches them again. Idempotent.
+        /// @param scene  The scene the surface lives in.
+        /// @param owner  The entity carrying this surface.
+        void DetachDriver(Scene& scene, Entity owner) const;
+
+        /// @brief Whether the drivers are attached, by a claiming drive @p viewport ran.
+        /// @param viewport  The viewport to ask about.
+        /// @return True when @p viewport's claiming drive attached the drivers and they have not detached.
+        [[nodiscard]] bool IsDriverAttachedBy(Renderer::ViewportId viewport) const;
+
     private:
         /// @brief Instantiates the named driver on first use and runs its OnInstantiate/OnUpdate.
         ///
@@ -231,6 +252,12 @@ VE_ENUM(::Veng::GuiSurfaceDomain, 0xF83AA418CECFCB46ULL)
 VE_ENUMERATOR(Translucent)
 VE_ENUMERATOR(OpaqueEmissive)
 VE_ENUM_END();
+
+// The drivers detach while the owner and its siblings stand, so a driver's OnDetach can still read
+// and stamp them.
+VE_ON_REMOVE(::Veng::GuiSurface,
+             [](::Veng::Scene& scene, const ::Veng::Entity owner, const ::Veng::GuiSurface& surface)
+             { surface.DetachDriver(scene, owner); });
 
 VE_REFLECT(::Veng::GuiSurface, 0x8D6C050074173888ULL)
 VE_FIELD(Document, .DisplayName = "Document")

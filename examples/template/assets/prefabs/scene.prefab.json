@@ -286,7 +286,15 @@
         "::Veng::GuiOverlay": {
           "Document": "0x5F30E0E78A88D61D",
           "Layer": 0,
+          "Driver": "0x4799243B384791D3",
           "Interactive": false
+        },
+        "::Veng::Renderer::ModelPortrait": {
+          "Model": "0xE23FB5CB14618116",
+          "Extent": [
+            96,
+            96
+          ]
         }
       }
     }

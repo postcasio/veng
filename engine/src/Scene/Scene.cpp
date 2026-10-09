@@ -586,6 +586,8 @@ namespace Veng
             }
         }
 
+        RunRemoveHooks(collected);
+
         bool spatialTouched = false;
         for (const Entity dead : collected)
         {
@@ -609,6 +611,33 @@ namespace Veng
         if (spatialTouched)
         {
             BumpTopology();
+        }
+    }
+
+    void Scene::RunRemoveHooks(const std::span<const Entity> dying)
+    {
+        // Collected before any hook runs: a hook may add a component, which can add a pool.
+        vector<std::pair<ComponentPool*, Entity>> hooked;
+        for (const Unique<ComponentPool>& pool : m_Pools)
+        {
+            if (pool->GetInfo().OnRemove == nullptr)
+            {
+                continue;
+            }
+            for (const Entity entity : dying)
+            {
+                if (pool->Contains(entity))
+                {
+                    hooked.emplace_back(pool.get(), entity);
+                }
+            }
+        }
+        for (const auto& [pool, entity] : hooked)
+        {
+            if (void* const component = pool->TryGet(entity); component != nullptr)
+            {
+                pool->GetInfo().OnRemove(*this, entity, component);
+            }
         }
     }
 
@@ -880,6 +909,12 @@ namespace Veng
                 return std::unexpected(fmt::format(
                     "cannot remove '{}': '{}' on the same entity requires it",
                     m_Registry->Info(id).QualifiedName, m_Registry->Info(requirer).QualifiedName));
+            }
+
+            // The hook runs while the component and its siblings are all still here.
+            if (const ComponentRemoveHook hook = pool->GetInfo().OnRemove; hook != nullptr)
+            {
+                hook(*this, entity, pool->TryGet(entity));
             }
         }
 

@@ -2260,6 +2260,41 @@ sky). So a material can walk the recorded distance along a reflected ray rather 
 hand-authored stand-in volume — but the walk, and the correction, are the material's; the engine
 records how far away what it saw was and stops there.
 
+## Model portraits: a model rendered offscreen for UI
+
+`ModelPortrait` (`Veng/Renderer/ModelPortrait.h`) is the component a UI uses to show a model — a
+portrait of a selected object, an equipment preview — without hand-rolling a private scene, a
+renderer and a release path. Authoring and the document side are in
+[../Gui/CLAUDE.md](../Gui/CLAUDE.md), "The engine-driven scene component family"; the render side is
+the capture pre-pass's, extended:
+
+- **Driven where captures are.** `ViewportCompositor::DriveCaptureSurfaces` walks each claimed
+  scene's portraits after its captures (`DriveScenePortraits`): a disabled portrait is released, a
+  renderer no longer matching `Extent`/`Output` is handed back, one is materialized from the
+  compositor's `ModelPortraitPool` or built — sharing the capture pass's one-new-build-per-frame
+  budget (`MaxNewCapturesPerFrame`) — and `Prepare` brings the private scene current (instantiate,
+  populate, pose, light, frame) and says whether this frame renders (`EveryFrame`, or an `OnDemand`
+  portrait that owes one — after `MarkDirty`, an instantiation, a pose change, or a frame its scene
+  went unrendered, the capture re-arm rule). The tally is `GetModelPortraitDrive`.
+- **Rendered first, inside the view budget.** `RenderRegistered` renders the queued portraits
+  before the captures and the viewports (`DrivePortraits`), each claiming its view slot only while
+  one is left beyond the viewports' reserved ones; a portrait the budget cannot seat keeps its last
+  render and still owes one. Rendering ahead of the viewports is what lets a Gui driver, running in
+  the viewport's drive later in the same command buffer, paint this frame's render.
+- **A lean renderer, pooled.** `PortraitRenderer` (`src/Renderer/PortraitRenderer.h`) owns a
+  `SceneRenderer` at the portrait's extent with every view battery off (no bloom, shadows, AO, SSR,
+  post effects or anti-aliasing) — `RenderPath::GeometryDepthNormal` for a depth-normal portrait.
+  The pool holds released renderers by configuration (`PortraitRendererConfig`: extent and output),
+  so a UI opening and closing a portrait builds once; a returned renderer drops the scene it last
+  gathered (`SceneRenderer::ReleaseScene`) before the private scene it drew is destroyed.
+- **Coverage from depth.** The tonemap leaves alpha opaque, so a shaded portrait runs one more
+  fullscreen pass (`portrait_coverage.frag`) into its own colour target: the output's colour, alpha 1
+  where the render's depth holds geometry and 0 where it holds the reverse-Z clear. An `Image`
+  painting it composites the model over whatever the UI draws behind it.
+- **Static and silent.** The private scene has no systems and no presentation scope; it is posed by
+  `ModelPose` and by what the populate callback attaches, and lit by one key light and an ambient
+  floor (`SceneView::AmbientFloor`). Its clip planes are fitted to everything in it each frame.
+
 ## Generated textures: compute something expensive once, then sample it
 
 `GeneratedTextureService` (`Veng/Renderer/GeneratedTextureService.h`) is the engine's answer to

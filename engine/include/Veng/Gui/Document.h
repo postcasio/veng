@@ -18,7 +18,14 @@ namespace Veng
     class TypeRegistry;
     class GuiDriver;
     class GuiDriverRegistry;
+    class Scene;
+    struct Entity;
     struct GuiDriverFrame;
+
+    namespace Localization
+    {
+        class Localization;
+    }
 }
 
 namespace Veng::Renderer
@@ -355,6 +362,29 @@ namespace Veng::Gui
         /// @param uv       The UV sub-rect to sample, in normalized 0..1 texture coordinates.
         void SetImageUv(Element& element, const Rect& uv);
 
+        /// @brief Has an Image paint a runtime texture in place of its resident one.
+        ///
+        /// Writes the element's bindless texture and sampler slots and its intrinsic size, keeping
+        /// the layout contract an authored `src` has: a changed @p extent re-measures the element (an
+        /// Image with no authored size lays out at it), while a changed handle at the same extent is a
+        /// paint-only write, like SetImageUv — so a driver re-reading a render's output each frame
+        /// pays nothing when nothing moved. The element's resident texture (Element::Image) is kept,
+        /// for ClearImageTexture to return to. The slots are inert on every kind but Image.
+        /// @param element  The Image to paint the texture.
+        /// @param texture  The bindless texture to paint.
+        /// @param sampler  The bindless sampler to read it through.
+        /// @param extent   The texture's size in pixels — the element's intrinsic size.
+        void SetImageTexture(Element& element, Renderer::TextureHandle texture,
+                             Renderer::SamplerHandle sampler, uvec2 extent);
+
+        /// @brief Returns an Image to its resident texture, undoing SetImageTexture.
+        ///
+        /// Restores the slots and intrinsic size from Element::Image — the texture the markup's
+        /// `src` resolved to — or clears them when it names none, under the same layout contract.
+        /// A no-op when the element already paints its resident texture.
+        /// @param element  The Image to return to its resident texture.
+        void ClearImageTexture(Element& element);
+
         /// @brief Sets an Image element's tint — a paint-only write, no layout re-solve.
         ///
         /// Replaces the linear straight-alpha RGBA the markup's `tint` attribute authored, so a
@@ -624,6 +654,20 @@ namespace Veng::Gui
         /// @param drivers  The driver catalog boundary ids resolve against, or nullptr.
         /// @param frame    The ambient per-frame services; rebased per boundary (its Document is this).
         void DriveComponents(GuiDriverRegistry* drivers, const GuiDriverFrame& frame);
+
+        /// @brief Runs OnDetach on every component driver whose OnInstantiate has run.
+        ///
+        /// The detach of DriveComponents, called by the component that drives this document when it
+        /// detaches its own driver (see GuiDriver::OnDetach), so a document's drivers detach
+        /// together. Each driver is handed its boundary as the subtree root; one whose boundary is
+        /// gone is marked detached without the call. The next DriveComponents runs OnInstantiate on
+        /// each again.
+        /// @param scene         The scene the driving component lives in.
+        /// @param owner         The entity carrying the driving component.
+        /// @param seat          The seat the drivers answered to.
+        /// @param localization  The localization service handed to the drivers.
+        void DetachComponents(Scene& scene, Entity owner, Entity seat,
+                              const Localization::Localization& localization);
 
         /// @brief Installs the translator loc-keyed text and LocKey-typed bound leaves resolve through.
         ///

@@ -7,7 +7,9 @@
 //   - multi-viewport claim by seat: two Presented viewports on two seats each attach only their
 //     seat's overlay, and an unbound overlay attaches to the sole/primary presenter;
 //   - a failed document load surfaces as a null document, not an abort — the viewport still renders;
-//   - a driver's sound belongs to the scene it drives, through any viewport on a compositor.
+//   - a driver's sound belongs to the scene it drives, through any viewport on a compositor;
+//   - a driver detaches once per attach — when the overlay is hidden, its component removed, its
+//     entity destroyed, or its world closed through the runner — with its owner alive in the call.
 
 #include <filesystem>
 
@@ -19,6 +21,10 @@
 #include <Veng/Audio/AudioEngine.h>
 #include <Veng/Cook/BuiltinImporters.h>
 #include <Veng/Cook/Cooker.h>
+#include <Veng/Application.h>
+#include <Veng/ManagedViewports.h>
+#include <Veng/World.h>
+#include <Veng/WorldRunner.h>
 #include <Veng/Gui/BindingContext.h>
 #include <Veng/Gui/Document.h>
 #include <Veng/Gui/DocumentHost.h>
@@ -39,6 +45,7 @@
 #include <Veng/Scene/Camera.h>
 #include <Veng/Scene/PresentationScope.h>
 #include <Veng/Scene/Scene.h>
+#include <Veng/Scene/SystemRegistry.h>
 
 #include <gpu/fixture.h>
 #include "support/TempPath.h"
@@ -132,7 +139,50 @@ namespace
     };
 }
 
+namespace
+{
+    // What the detach-counting driver saw across its hooks.
+    struct DetachTrace
+    {
+        int Instantiates = 0;
+        int Detaches = 0;
+        // Whether attaches minus detaches stayed within [0, 1] after every hook.
+        bool Paired = true;
+        Entity AttachOwner;
+        Entity DetachOwner;
+        // Whether every OnDetach found its owner alive and read the sibling Name it carries.
+        bool OwnerReadable = true;
+        string SiblingName;
+    };
+
+    DetachTrace g_Detach;
+
+    // Counts its two hooks, and at detach reads the sibling the overlay's entity carries.
+    struct DetachCountingDriver final : GuiDriver
+    {
+        void OnInstantiate(const GuiDriverContext& context) override
+        {
+            ++g_Detach.Instantiates;
+            g_Detach.AttachOwner = context.Owner;
+            g_Detach.Paired = g_Detach.Paired && g_Detach.Instantiates - g_Detach.Detaches == 1;
+        }
+
+        void OnDetach(const GuiDriverContext& context) override
+        {
+            ++g_Detach.Detaches;
+            g_Detach.DetachOwner = context.Owner;
+            g_Detach.Paired = g_Detach.Paired && g_Detach.Instantiates == g_Detach.Detaches;
+            const Name* name = context.Scene.IsAlive(context.Owner)
+                                   ? context.Scene.TryGet<Name>(context.Owner)
+                                   : nullptr;
+            g_Detach.OwnerReadable = g_Detach.OwnerReadable && name != nullptr;
+            g_Detach.SiblingName = name != nullptr ? name->Value : string{};
+        }
+    };
+}
+
 VE_GUI_DRIVER(::ChimeDriver, 0x11083B92FD6D271BULL, "Chime");
+VE_GUI_DRIVER(::DetachCountingDriver, 0xB52846F9B8A9DAE7ULL, "Detach Counting");
 
 VE_REFLECT(::DocHostPlayer, 0x1D6E9E2B0A4C7711ULL)
 VE_FIELD(health)
@@ -368,13 +418,13 @@ TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
     CHECK(viewport->GetAttachedDocuments().size() == 2);
 
     // Detach releases only the overlay's document from this viewport; the hand-attached one survives.
-    driven->Detach(*viewport);
+    driven->Detach(*viewport, *scene, entity);
     CHECK(driven->GetDocument()->GetHostViewport() == nullptr);
     CHECK(handLayer.Get()->GetHostViewport() == viewport.get());
     CHECK(viewport->GetAttachedDocuments().size() == 1);
 
     // Detach is idempotent: a second call with the document already detached is a safe no-op.
-    driven->Detach(*viewport);
+    driven->Detach(*viewport, *scene, entity);
     CHECK(viewport->GetAttachedDocuments().size() == 1);
 
     // The next drive re-attaches the overlay's document (the runtime host survived the detach), so the
@@ -540,4 +590,153 @@ TEST_CASE_FIXTURE(
 
     g_Chime = {};
     std::filesystem::remove(archive);
+}
+
+TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
+                  "gui overlay: a driver detaches once per attach, with its owner alive, when the "
+                  "overlay is hidden, removed or its entity destroyed")
+{
+    RegisterBuiltinTypes(Types);
+    g_Detach = DetachTrace{};
+
+    const path archive = CookUiPack();
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(archive).has_value());
+
+    GuiDriverRegistry drivers;
+    drivers.Register<DetachCountingDriver>();
+
+    const Unique<Scene> scene = Scene::Create(Types);
+    const auto AddHud = [&](const char* name)
+    {
+        const Entity entity = scene->CreateEntity();
+        scene->Add<Name>(entity).Value = name;
+        auto& overlay = scene->Add<GuiOverlay>(entity);
+        overlay.Document = *assets.LoadSync<Gui::UIDocument>(UIDocumentId);
+        overlay.Driver = GuiDriverIdOf<DetachCountingDriver>();
+        return entity;
+    };
+    const Entity hud = AddHud("hud");
+
+    const Unique<Viewport> viewport = MakeViewport(Context, assets);
+    viewport->SetGuiDriverRegistry(&drivers);
+    viewport->SetViewState({.World = scene.get(), .Delta = 0.016f});
+
+    RenderOnce(Context, *viewport);
+    CHECK(g_Detach.Instantiates == 1);
+    CHECK(g_Detach.AttachOwner == hud);
+
+    // Hidden: detached once, however many frames it stays hidden; shown again: attached again.
+    scene->Get<GuiOverlay>(hud).Visible = false;
+    RenderOnce(Context, *viewport);
+    RenderOnce(Context, *viewport);
+    CHECK(g_Detach.Detaches == 1);
+    CHECK(g_Detach.DetachOwner == hud);
+    scene->Get<GuiOverlay>(hud).Visible = true;
+    RenderOnce(Context, *viewport);
+    CHECK(g_Detach.Instantiates == 2);
+
+    // Removed: detached inside the removal, the owner and its sibling still there.
+    REQUIRE(scene->Remove<GuiOverlay>(hud).has_value());
+    CHECK(g_Detach.Detaches == 2);
+    CHECK(g_Detach.SiblingName == "hud");
+
+    // Destroyed with its entity: the same, the sibling read before anything on the entity goes.
+    const Entity menu = AddHud("menu");
+    RenderOnce(Context, *viewport);
+    CHECK(g_Detach.Instantiates == 3);
+    scene->DestroyEntity(menu);
+    CHECK(g_Detach.Detaches == 3);
+    CHECK(g_Detach.DetachOwner == menu);
+    CHECK(g_Detach.SiblingName == "menu");
+
+    CHECK(g_Detach.Paired);
+    CHECK(g_Detach.OwnerReadable);
+
+    g_Detach = {};
+    std::filesystem::remove(archive);
+}
+
+namespace
+{
+    // A headless application presenting one world with a driven overlay, closed from OnUpdate.
+    class DetachApp final : public Application
+    {
+    public:
+        using Application::Application;
+
+        path Archive;
+        WorldInstanceId World;
+        Entity Hud = Entity::Null;
+        int Frame = 0;
+        int DetachesAtClose = -1;
+
+    protected:
+        void OnInitialize() override
+        {
+            REQUIRE(GetAssetManager().Mount(Archive).has_value());
+            World = GetWorldRunner().OpenWorld(WorldOpenInfo{});
+            Scene& scene = GetWorldRunner().ResolveWorld(World)->GetScene();
+            const Entity camera = scene.CreateEntity();
+            scene.Add<Transform>(camera);
+            scene.Add<Camera>(camera);
+            Hud = scene.CreateEntity();
+            scene.Add<Name>(Hud).Value = "hud";
+            auto& overlay = scene.Add<GuiOverlay>(Hud);
+            overlay.Document = *GetAssetManager().LoadSync<Gui::UIDocument>(UIDocumentId);
+            overlay.Driver = GuiDriverIdOf<DetachCountingDriver>();
+            GetManagedViewports().SetViewportWorld(0, World);
+        }
+
+        void OnUpdate(f32) override
+        {
+            ++Frame;
+            if (Frame == 3)
+            {
+                DetachesAtClose = g_Detach.Detaches;
+                GetWorldRunner().CloseWorld(World);
+            }
+            if (Frame >= 4)
+            {
+                RequestExit();
+            }
+        }
+    };
+}
+
+TEST_CASE(
+    "gui overlay: a world closed through the runner detaches its drivers before its scene goes")
+{
+    TypeRegistry types;
+    RegisterBuiltinTypes(types);
+    SystemRegistry systems;
+    g_Detach = DetachTrace{};
+
+    GuiDriverRegistry drivers;
+    drivers.Register<DetachCountingDriver>();
+
+    ApplicationInfo info;
+    info.Name = "veng-gui-overlay-detach-test";
+    info.Headless = true;
+    info.ImGui = std::nullopt;
+    info.HeadlessExtent = Extent;
+    info.ManagedViewport = ManagedViewportInfo{};
+
+    DetachApp app(info, types, systems);
+    app.Archive = CookUiPack();
+    app.SetGuiDriverRegistry(&drivers);
+    app.Run({});
+
+    // Attached while presented, nothing detached until the close, then exactly one detach with the
+    // owner and its sibling still readable — the scene had not been destroyed yet.
+    CHECK(g_Detach.Instantiates == 1);
+    CHECK(app.DetachesAtClose == 0);
+    CHECK(g_Detach.Detaches == 1);
+    CHECK(g_Detach.DetachOwner == app.Hud);
+    CHECK(g_Detach.SiblingName == "hud");
+    CHECK(g_Detach.OwnerReadable);
+    CHECK(g_Detach.Paired);
+
+    g_Detach = {};
+    std::filesystem::remove(app.Archive);
 }

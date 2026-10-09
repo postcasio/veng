@@ -19,11 +19,13 @@ namespace Veng::Renderer
 {
     class CommandBuffer;
     class Viewport;
+    class ModelPortraitPool;
     class SceneCapture;
     class SceneCapturePool;
     class SwapChainCompositePass;
     class CompiledGraph;
     struct CaptureSurface;
+    struct ModelPortrait;
 
     /// @brief What one frame's capture pre-pass did across the scenes the viewports will render.
     struct CaptureSurfaceDriveResult
@@ -42,6 +44,23 @@ namespace Veng::Renderer
         u32 SurfacesDisabled = 0;
     };
 
+    /// @brief What one frame's pre-pass did with the model portraits of the scenes the viewports render.
+    struct ModelPortraitDriveResult
+    {
+        /// @brief Portraits driven across the claimed scenes.
+        u32 PortraitsDriven = 0;
+        /// @brief Portraits rendered this frame, within the view budget.
+        u32 PortraitsRendered = 0;
+        /// @brief Renderers built new this pass, sharing ViewportCompositor::MaxNewCapturesPerFrame.
+        u32 RenderersBuilt = 0;
+        /// @brief Renderers taken from the compositor's pool of released ones instead of building.
+        u32 RenderersReused = 0;
+        /// @brief Portraits left without a renderer because the build budget was spent.
+        u32 PortraitsDeferred = 0;
+        /// @brief Disabled portraits, whose runtime is released and left empty.
+        u32 PortraitsDisabled = 0;
+    };
+
     /// @brief Renders the registered viewports and composites them to the swapchain each frame.
     ///
     /// Owns the render-order viewport drive-list and the capture drive-list, plus the gather +
@@ -54,8 +73,9 @@ namespace Veng::Renderer
     /// owning Unique self-unregisters it. The compositor never owns a viewport or capture; the
     /// drive-lists hold non-owning pointers whose lifetime stays with the caller.
     ///
-    /// It also drives the scenes' authored CaptureSurface components, from the viewports that present
-    /// them (see RenderRegistered), and owns the pool their released captures return to.
+    /// It also drives the scenes' authored CaptureSurface and ModelPortrait components, from the
+    /// viewports that present them (see RenderRegistered), and owns the pools their released
+    /// captures and portrait renderers return to.
     ///
     /// Borrows the Context for the swapchain and the per-frame command buffer. The tail is built
     /// only through InitializeTail (present alongside an ImGui overlay); without it RenderRegistered
@@ -146,13 +166,20 @@ namespace Veng::Renderer
         /// at most MaxNewCapturesPerFrame captures, takes a released capture of a surface's
         /// configuration from the pool first (GetCapturePool), registers each newly materialized
         /// capture, and releases a disabled surface's runtime. Its tally is GetCaptureSurfaceDrive.
+        /// The same pass drives each claimed scene's ModelPortrait components: it gives each a
+        /// renderer — from GetPortraitPool, or built under the same one-per-frame budget the captures
+        /// spend — brings its private scene current, and queues it when it owes a render; its tally
+        /// is GetModelPortraitDrive.
         ///
-        /// Captures then render (each into its own target), then every viewport in registration order
+        /// The queued portraits render first, so a Gui driver reading a portrait's output in this
+        /// frame's viewport drive paints this frame's render; then the captures (each into its own
+        /// target); then every viewport in registration order
         /// (each doing its own Execute + Sample barrier), so every output is in Sample layout before a
         /// later consumer samples it.
         ///
-        /// The capture drive spends only the part of the frame's view budget it can leave the
-        /// viewports — one slot each is reserved — and round-robins across frames when the captures
+        /// The portraits and the captures spend only the part of the frame's view budget they can
+        /// leave the viewports — one slot each is reserved. A portrait the budget cannot seat keeps
+        /// its last render and owes another; the captures round-robin across frames when they
         /// outnumber what is left, so a capture set larger than the budget refreshes in turn rather
         /// than the frame failing (see BindlessRegistry::MaxViewsPerFrame).
         /// @param cmd  The command buffer to record into.
@@ -198,6 +225,15 @@ namespace Veng::Renderer
         {
             return m_CaptureSurfaceDrive;
         }
+
+        /// @brief Returns what the last RenderRegistered's pre-pass did with the model portraits.
+        [[nodiscard]] const ModelPortraitDriveResult& GetModelPortraitDrive() const
+        {
+            return m_PortraitDrive;
+        }
+
+        /// @brief Returns the pool a destroyed or disabled portrait's renderer returns to.
+        [[nodiscard]] ModelPortraitPool& GetPortraitPool() const { return *m_PortraitPool; }
 
         /// @brief Returns the pool a destroyed or disabled surface's capture returns to.
         ///
@@ -246,6 +282,23 @@ namespace Veng::Renderer
         /// @param built   The captures this pass has built so far; incremented on a build.
         void DriveSceneCaptures(Scene& scene, f32 alpha, AssetManager& assets, u32& built);
 
+        /// @brief Drives every ModelPortrait in one scene, materializing and queueing as needed.
+        /// @param scene   The claimed scene.
+        /// @param assets  The asset manager of the claiming viewport.
+        /// @param built   The captures and portrait renderers this pass has built so far.
+        void DriveScenePortraits(Scene& scene, AssetManager& assets, u32& built);
+
+        /// @brief Gives a portrait with no renderer one, from the pool or newly built.
+        /// @param portrait  The portrait to materialize.
+        /// @param assets    The asset manager the renderer is built against.
+        /// @param built     The builds this pass has spent; incremented on a build.
+        /// @return True when the portrait now holds a renderer; false when the build budget is spent.
+        bool MaterializePortrait(const ModelPortrait& portrait, AssetManager& assets, u32& built);
+
+        /// @brief Renders the queued portraits against the view budget left over from the viewports.
+        /// @param cmd  The command buffer to record into.
+        void DrivePortraits(CommandBuffer& cmd);
+
         /// @brief Gives an unmaterialized surface its capture, from the pool or newly built.
         ///
         /// A pooled capture of the surface's configuration is taken first and costs no build; past
@@ -288,6 +341,20 @@ namespace Veng::Renderer
 
         /// @brief The last capture pre-pass's tally.
         CaptureSurfaceDriveResult m_CaptureSurfaceDrive;
+
+        /// @brief Released portrait renderers held for reuse by a portrait of the same configuration.
+        ///
+        /// Shared because each portrait holds it weakly, as the capture pool is.
+        Ref<ModelPortraitPool> m_PortraitPool;
+
+        /// @brief The last pre-pass's portrait tally.
+        ModelPortraitDriveResult m_PortraitDrive;
+
+        /// @brief The portraits the pre-pass queued to render this frame; valid only within it.
+        vector<const ModelPortrait*> m_PortraitQueue;
+
+        /// @brief Latch for the spent-portrait-budget warning, so it is logged once per compositor.
+        bool m_WarnedPortraitBudget = false;
 
         /// @brief Index into m_Captures the next frame's bounded capture drive resumes at.
         usize m_CaptureCursor = 0;

@@ -43,3 +43,11 @@
     background: var(--accent);
     corner-radius: 3px;
 }
+
+/* The model portrait: an Image whose texture the HUD's driver points at a ModelPortrait's render
+   each frame; transparent where the model is not, so the panel shows through around it. */
+.portrait {
+    width: 96px;
+    height: 96px;
+    margin: 4px;
+}

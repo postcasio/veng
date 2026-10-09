@@ -9,6 +9,7 @@
 #include <Veng/Reflection/TypeRegistry.h>
 
 #include <array>
+#include <span>
 #include <utility>
 
 namespace Veng
@@ -109,7 +110,8 @@ namespace Veng
         /// Recursively destroys the entity's whole Hierarchy subtree, walking the
         /// FirstChild → NextSibling links in O(subtree). Detaches the destroyed
         /// root from any surviving parent's child list first, so siblings stay
-        /// consistent.
+        /// consistent. Every component removal hook in the subtree (VE_ON_REMOVE) runs first,
+        /// while the whole subtree is still present.
         void DestroyEntity(Entity entity);
 
         /// @brief Reparents `child` under `parent`, appending it to `parent`'s child list.
@@ -488,6 +490,8 @@ namespace Veng
         /// the component stays and the error names both types. Removing the requirer first is what
         /// a caller that means to dismantle the pair does; FindRequirer answers the question ahead
         /// of the call. DestroyEntity is not gated — a whole entity going away breaks no sibling.
+        /// A component declaring a removal hook (VE_ON_REMOVE) has it called first, with its
+        /// siblings still present.
         /// @param entity  The entity to remove from.
         /// @param id      The component type to remove.
         /// @return Success, or an error naming the sibling that requires this component.
@@ -880,6 +884,11 @@ namespace Veng
         [[nodiscard]] const Hierarchy* TryHierarchy(Entity entity) const;
         /// @brief Unlinks `child` from its current parent's child list, leaving its Parent edge intact.
         void UnlinkFromSiblings(Entity child);
+        /// @brief Runs the removal hook (TypeInfo::OnRemove) of every hooked component on @p dying.
+        ///
+        /// Every hook runs before anything is removed, so each sees the whole set still present.
+        /// @param dying  The entities about to be destroyed.
+        void RunRemoveHooks(std::span<const Entity> dying);
         /// @brief Returns true if `candidate` is `entity` or one of its descendants.
         [[nodiscard]] bool IsDescendantOf(Entity candidate, Entity entity) const;
 

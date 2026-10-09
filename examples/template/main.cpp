@@ -20,6 +20,7 @@
 #include <Veng/LevelOverlay.h>
 #include <Veng/Log.h>
 #include <Veng/Reflection/Reflect.h>
+#include <Veng/Renderer/ModelPortrait.h>
 #include <Veng/Scene/Components.h>
 #include <Veng/Scene/Requests.h>
 #include <Veng/Scene/Scene.h>
@@ -32,6 +33,7 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <utility>
 
 #include "MarkerSet.h"
 
@@ -102,6 +104,51 @@ private:
 };
 
 VE_GUI_DRIVER(TemplateOverlayDriver, 0xE9906144475EB699ULL, "Template Overlay");
+
+// Paints the primary HUD's model portrait: a ModelPortrait on the HUD's own entity, which the engine
+// renders offscreen ahead of the viewport. Each frame the driver hands the render to the HUD's Image,
+// or returns the Image to nothing while the portrait is not ready, so the HUD binds no texture the
+// portrait has handed back.
+class TemplateHudDriver final : public GuiDriver
+{
+public:
+    void OnInstantiate(const GuiDriverContext& context) override
+    {
+        m_Portrait = context.Document.FindById("portrait");
+    }
+
+    void OnUpdate(const GuiDriverFrame& frame) override
+    {
+        if (m_Portrait == nullptr)
+        {
+            return;
+        }
+        const auto* portrait =
+            std::as_const(frame.Scene).TryGet<Renderer::ModelPortrait>(frame.Owner);
+        const Renderer::ModelPortraitOutput output =
+            portrait != nullptr ? portrait->GetOutput() : Renderer::ModelPortraitOutput{};
+        if (!output.Ready)
+        {
+            frame.Document.ClearImageTexture(*m_Portrait);
+            return;
+        }
+        frame.Document.SetImageTexture(*m_Portrait, output.Color, output.Sampler, output.Extent);
+        if (!m_Reported)
+        {
+            Log::Info("template: model portrait painted into the HUD at {}x{}", output.Extent.x,
+                      output.Extent.y);
+            m_Reported = true;
+        }
+    }
+
+    void OnDetach(const GuiDriverContext&) override { m_Portrait = nullptr; }
+
+private:
+    Gui::Element* m_Portrait = nullptr;
+    bool m_Reported = false;
+};
+
+VE_GUI_DRIVER(TemplateHudDriver, 0x4799243B384791D3ULL, "Template HUD");
 
 // The embedded emblem component's own view-model: a counter the component owns and no host knows
 // about. The emblem fragment's `{Beats}` binding resolves this through the component's scoped
@@ -547,6 +594,8 @@ extern "C" void VengModuleRegister(VengModuleHost* host)
     if (host->Drivers != nullptr)
     {
         host->Drivers->Register<TemplateOverlayDriver>();
+        // The primary HUD's driver paints the model portrait its entity carries.
+        host->Drivers->Register<TemplateHudDriver>();
         // The primary HUD embeds an emblem component that drives its own subtree — its driver is
         // named on the `<Component>` boundary and instantiated by the engine, one per embed.
         host->Drivers->Register<EmblemDriver>();

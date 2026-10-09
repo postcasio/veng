@@ -34,11 +34,115 @@ namespace Veng
         Unique<GuiDriver> Driver;
         /// @brief The document the driver was last OnInstantiate'd against; detects a re-instantiate.
         Gui::Document* DriverDocument = nullptr;
+        /// @brief Whether the drivers are attached: a drive reached the live document, no detach since.
+        bool Attached = false;
+        /// @brief The viewport whose drive attached the drivers; compared, never dereferenced.
+        Renderer::ViewportId AttachedBy;
+        /// @brief The seat the attached drivers answer to, handed back to them at detach.
+        Entity Seat = Entity::Null;
+        /// @brief The localization service the attached drivers were handed; never null once attached.
+        const Localization::Localization* Localization = nullptr;
+        /// @brief The recipe the host was built for; a Document re-pointed elsewhere rebuilds the host.
+        AssetId HostDocument;
         /// @brief The resident composite material, LoadSync'd once from Material on the first DriveHdr.
         AssetHandle<MaterialInstance> CompositeMaterial;
         /// @brief Whether the composite-material load was attempted (so a failed load is not retried).
         bool CompositeMaterialAttempted = false;
     };
+
+    namespace
+    {
+        /// @brief Detaches the attached drivers: the overlay's own OnDetach, then its components'.
+        void DetachDrivers(GuiOverlayRuntime& runtime, Scene& scene, const Entity owner)
+        {
+            if (!runtime.Attached)
+            {
+                return;
+            }
+            runtime.Attached = false;
+            Gui::Document* const document = runtime.Host != nullptr ? runtime.Host->Get() : nullptr;
+            if (document == nullptr)
+            {
+                runtime.DriverDocument = nullptr;
+                return;
+            }
+            const GuiDriverContext context{.Document = *document,
+                                           .Root = document->Root(),
+                                           .Scene = scene,
+                                           .Owner = owner,
+                                           .Seat = runtime.Seat,
+                                           .Localization = *runtime.Localization};
+            if (runtime.Driver != nullptr && runtime.DriverDocument != nullptr)
+            {
+                runtime.Driver->OnDetach(context);
+            }
+            runtime.DriverDocument = nullptr;
+            document->DetachComponents(scene, owner, runtime.Seat, *runtime.Localization);
+        }
+
+        /// @brief Instantiates the named driver once, attaches it, and runs this frame's updates.
+        ///
+        /// Shared by Drive and DriveHdr. A live document whose identity changed since the driver
+        /// attached is a re-instantiate: the driver detaches from it first, so the two hooks pair.
+        void RunDrivers(GuiOverlayRuntime& runtime, const GuiDriverId id,
+                        GuiDriverRegistry* const drivers, const GuiDriverFrame& frame,
+                        const Renderer::ViewportId viewport)
+        {
+            Gui::Document& document = frame.Document;
+
+            // Instantiate the named driver once, when a registry is available and the id resolves;
+            // an unresolved id logs once and leaves the overlay undriven (a recoverable miss).
+            if (runtime.Driver == nullptr && id != GuiDriverId::Null && drivers != nullptr)
+            {
+                runtime.Driver = drivers->Instantiate(id);
+                runtime.DriverDocument = nullptr;
+                if (runtime.Driver == nullptr)
+                {
+                    Log::Warn("GuiOverlay names GuiDriver {:#018x}, which no registered driver "
+                              "claims; leaving the overlay undriven.",
+                              static_cast<u64>(id));
+                }
+            }
+
+            const GuiDriverContext context{.Document = document,
+                                           .Root = document.Root(),
+                                           .Scene = frame.Scene,
+                                           .Owner = frame.Owner,
+                                           .Seat = frame.Seat,
+                                           .Localization = frame.Localization};
+            if (runtime.Driver != nullptr && runtime.DriverDocument != nullptr &&
+                runtime.DriverDocument != &document)
+            {
+                runtime.Driver->OnDetach(context);
+                runtime.DriverDocument = nullptr;
+            }
+
+            runtime.Attached = true;
+            runtime.AttachedBy = viewport;
+            runtime.Seat = frame.Seat;
+            runtime.Localization = &frame.Localization;
+
+            if (runtime.Driver != nullptr)
+            {
+                // Re-run OnInstantiate whenever the driver is not attached to the live document (a
+                // first drive, a re-instantiate, or a drive after a detach), so cached element
+                // pointers stay valid — exactly like SetOnInstantiate. A whole-document driver
+                // drives the document root.
+                if (runtime.DriverDocument != &document)
+                {
+                    runtime.Driver->OnInstantiate(context);
+                    runtime.DriverDocument = &document;
+                }
+                VE_PROFILE_SCOPE("Gui/DriverUpdate");
+                runtime.Driver->OnUpdate(frame);
+            }
+
+            // Drive the document's embedded component drivers — those run whether or not the
+            // overlay itself is driven, so a plain overlay may still host a self-driving component.
+            VE_PROFILE_SCOPE("Gui/DriveComponents");
+            document.DriveComponents(drivers, frame);
+        }
+    }
 
     GuiOverlay::GuiOverlay() = default;
     GuiOverlay::~GuiOverlay() = default;
@@ -96,6 +200,7 @@ namespace Veng
         {
             return;
         }
+        runtime.HostDocument = Document.Id();
 
         // The host is id-driven from the authored recipe; it does its own LoadSync on the first Drive
         // (a cache hit on the resident prefab dependency) and logs a failed load once. The deferred
@@ -123,6 +228,7 @@ namespace Veng
                            const Gui::GuiTranslator* const translator,
                            const Localization::Localization* const localization) const
     {
+        ReleaseRepointedHost(scene, owner);
         EnsureHost(assets);
         GuiOverlayRuntime& runtime = *Runtime;
 
@@ -177,42 +283,7 @@ namespace Veng
             .Localization = strings,
         };
 
-        // Instantiate the named driver once, when a registry is available and the id resolves; an
-        // unresolved id logs once and leaves the overlay undriven (a recoverable miss).
-        if (runtime.Driver == nullptr && Driver != GuiDriverId::Null && drivers != nullptr)
-        {
-            runtime.Driver = drivers->Instantiate(Driver);
-            runtime.DriverDocument = nullptr;
-            if (runtime.Driver == nullptr)
-            {
-                Log::Warn("GuiOverlay names GuiDriver {:#018x}, which no registered driver claims; "
-                          "leaving the overlay undriven.",
-                          static_cast<u64>(Driver));
-            }
-        }
-
-        if (runtime.Driver != nullptr)
-        {
-            // Re-run OnInstantiate whenever the live document changed identity (first instantiate or
-            // a re-instantiate), so cached element pointers stay valid — exactly like SetOnInstantiate.
-            // A whole-document driver drives the document root.
-            if (document != runtime.DriverDocument)
-            {
-                runtime.Driver->OnInstantiate(GuiDriverContext{.Document = *document,
-                                                               .Root = document->Root(),
-                                                               .Scene = scene,
-                                                               .Seat = viewport.GetSeat().Viewer,
-                                                               .Localization = strings});
-                runtime.DriverDocument = document;
-            }
-            VE_PROFILE_SCOPE("Gui/DriverUpdate");
-            runtime.Driver->OnUpdate(frame);
-        }
-
-        // Drive the document's embedded component drivers — those run whether or not the overlay
-        // itself is driven, so a plain overlay may still host a self-driving component.
-        VE_PROFILE_SCOPE("Gui/DriveComponents");
-        document->DriveComponents(drivers, frame);
+        RunDrivers(runtime, Driver, drivers, frame, viewport.GetId());
     }
 
     void GuiOverlay::DriveHdr(Renderer::Viewport& viewport, AssetManager& assets, Scene& scene,
@@ -224,6 +295,7 @@ namespace Veng
                               const Localization::Localization* const localization) const
     {
         out.Clear();
+        ReleaseRepointedHost(scene, owner);
         EnsureHost(assets);
         GuiOverlayRuntime& runtime = *Runtime;
 
@@ -297,38 +369,7 @@ namespace Veng
             .Localization = strings,
         };
 
-        // Instantiate and run the named driver, mirroring Drive: an unresolved id logs once and
-        // leaves the overlay undriven, OnInstantiate re-runs on a document re-instantiate, OnUpdate
-        // runs each frame.
-        if (runtime.Driver == nullptr && Driver != GuiDriverId::Null && drivers != nullptr)
-        {
-            runtime.Driver = drivers->Instantiate(Driver);
-            runtime.DriverDocument = nullptr;
-            if (runtime.Driver == nullptr)
-            {
-                Log::Warn("GuiOverlay names GuiDriver {:#018x}, which no registered driver claims; "
-                          "leaving the overlay undriven.",
-                          static_cast<u64>(Driver));
-            }
-        }
-        if (runtime.Driver != nullptr)
-        {
-            if (document != runtime.DriverDocument)
-            {
-                runtime.Driver->OnInstantiate(GuiDriverContext{.Document = *document,
-                                                               .Root = document->Root(),
-                                                               .Scene = scene,
-                                                               .Seat = viewport.GetSeat().Viewer,
-                                                               .Localization = strings});
-                runtime.DriverDocument = document;
-            }
-            VE_PROFILE_SCOPE("Gui/DriverUpdate");
-            runtime.Driver->OnUpdate(frame);
-        }
-        {
-            VE_PROFILE_SCOPE("Gui/DriveComponents");
-            document->DriveComponents(drivers, frame);
-        }
+        RunDrivers(runtime, Driver, drivers, frame, viewport.GetId());
 
         // Lay the document out at the authored logical extent and build its geometry into the caller's
         // draw list; the engine projects and records it in the pre-bloom pass.
@@ -345,12 +386,46 @@ namespace Veng
         return Runtime->Host->Prepare();
     }
 
-    void GuiOverlay::Detach(Renderer::Viewport& viewport) const
+    void GuiOverlay::DetachDriver(Scene& scene, const Entity owner) const
+    {
+        if (Runtime != nullptr)
+        {
+            DetachDrivers(*Runtime, scene, owner);
+        }
+    }
+
+    bool GuiOverlay::IsDriverAttachedBy(const Renderer::Viewport& viewport) const
+    {
+        return Runtime != nullptr && Runtime->Attached && Runtime->AttachedBy == viewport.GetId();
+    }
+
+    void GuiOverlay::ReleaseRepointedHost(Scene& scene, const Entity owner) const
+    {
+        if (Runtime == nullptr || Runtime->Host == nullptr ||
+            Runtime->HostDocument == Document.Id())
+        {
+            return;
+        }
+        // The drivers leave the old document while it is still live; the host and its presenter go
+        // with it, and the next EnsureHost builds both for the recipe now named.
+        DetachDrivers(*Runtime, scene, owner);
+        Runtime->Layer.reset();
+        Runtime->Host.reset();
+    }
+
+    void GuiOverlay::Detach(Renderer::Viewport& viewport, Scene& scene, const Entity owner) const
     {
         // An overlay that never drove holds no document, so there is nothing to detach.
         if (Runtime == nullptr || Runtime->Host == nullptr)
         {
             return;
+        }
+
+        // The drivers detach only from the viewport that attached them: another viewport letting go
+        // of a document it never drove leaves them driving.
+        if (IsDriverAttachedBy(viewport))
+        {
+            DetachDrivers(*Runtime, scene, owner);
         }
 
         // Detach only when the live document is hosted on this exact viewport: a document attached

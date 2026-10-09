@@ -783,6 +783,7 @@ namespace Veng::Renderer
                     .World = &world,
                     .Drivers = m_GuiDrivers,
                     .Owner = entity,
+                    .Presenter = m_Id,
                     .Seat = m_Seat.Viewer,
                     .Alpha = m_ViewState.Alpha,
                     .View = SystemViewInfo{.Camera = m_ViewState.Camera,
@@ -792,6 +793,11 @@ namespace Veng::Renderer
                     .Haptics = MakeDriverHaptics(world),
                     .Localization = m_Localization,
                 };
+            }
+            else if (surface.IsDriverAttachedBy(m_Id))
+            {
+                // This viewport drove the surface's drivers and no longer claims it.
+                surface.DetachDriver(world, entity);
             }
 
             surface.Drive(m_Context, m_Assets, cmd, m_SurfaceSamplerHandle, material,
@@ -908,17 +914,24 @@ namespace Veng::Renderer
                 continue;
             }
             // A hidden overlay is suppressed without releasing its runtime: detach the document from
-            // this viewport's layer stack (idempotent, and only what Drive attached) so it stops
-            // drawing, and skip the drive so restoring Visible re-attaches with no reload.
+            // this viewport's layer stack (idempotent, and only what Drive attached) and its drivers,
+            // and skip the drive so restoring Visible re-attaches with no reload.
             if (!overlay.Visible)
             {
-                overlay.Detach(*this);
+                overlay.Detach(*this, world, entity);
+                overlay.DetachDriver(world, entity);
                 continue;
             }
             if (ClaimsOverlay(world, entity, overlay))
             {
                 overlay.Drive(*this, m_Assets, world, entity, m_GuiDrivers, MakeDriverAudio(world),
                               MakeDriverHaptics(world), m_GuiTranslator, m_Localization);
+            }
+            else if (overlay.IsDriverAttachedBy(*this))
+            {
+                // This viewport drove the overlay and no longer claims it (its seat moved): let go
+                // of what it attached, so the claimer's drive attaches afresh.
+                overlay.Detach(*this, world, entity);
             }
         }
     }
@@ -950,10 +963,15 @@ namespace Veng::Renderer
             // never joins the layer stack, so there is nothing to detach.
             if (!overlay.Visible)
             {
+                overlay.DetachDriver(world, entity);
                 continue;
             }
             if (!ClaimsOverlay(world, entity, overlay))
             {
+                if (overlay.IsDriverAttachedBy(*this))
+                {
+                    overlay.DetachDriver(world, entity);
+                }
                 continue;
             }
 

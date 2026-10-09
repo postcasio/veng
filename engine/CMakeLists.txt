@@ -341,6 +341,8 @@ add_library(veng SHARED
         src/Settings/SettingsSchema.cpp
         src/Settings/SettingsStore.cpp
         src/Renderer/CaptureSurface.cpp
+        src/Renderer/ModelPortrait.cpp
+        src/Renderer/PortraitRenderer.cpp
         src/Renderer/CompositeSource.cpp
         src/Renderer/DepthInstancing.cpp
         src/Renderer/DrawGather.cpp

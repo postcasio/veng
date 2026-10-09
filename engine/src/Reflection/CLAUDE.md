@@ -55,13 +55,15 @@ a **fieldless component** with **`VE_TYPE`** — all three macros specialise the
 `FieldClassOf<T>()` read it directly and the registry has one `Register<T>()` path (no separate
 leaf registration).
 
-Beside the identity trait sit five **separate specialisation points**, each authored by its own
+Beside the identity trait sit six **separate specialisation points**, each authored by its own
 macro next to the describe block and read into `TypeInfo` by `Register<T>()`: `VE_REPLICATED`
 (`Replicated`), `VE_SERVER_OWNED` (`ServerOwned`, which requires `VE_REPLICATED` — a static assertion
 in `Register<T>()`; see [../Net/CLAUDE.md](../Net/CLAUDE.md)), `VE_ALWAYS_RELEVANT`
-(`AlwaysRelevant`), `VE_VIEW_OUTPUT` (`ViewOutput`), and
+(`AlwaysRelevant`), `VE_VIEW_OUTPUT` (`ViewOutput`),
 **`VE_REQUIRES(Type, Siblings…)`** (`Requires`, the sibling components an entity carrying the type
-must keep — see [../Scene/CLAUDE.md](../Scene/CLAUDE.md) for the removal gate that reads it). Being
+must keep — see [../Scene/CLAUDE.md](../Scene/CLAUDE.md) for the removal gate that reads it), and
+**`VE_ON_REMOVE(Type, Function)`** (`OnRemove`, the hook the scene calls before it removes the
+component, with the owner and its siblings still present — see the same doc). Being
 separate from `VengReflect<T>` is what lets them compose with every reflection macro without
 touching one. `VengRequires<T>::Required()` is a member template on a defaulted parameter for the
 same reason `Enumerators()` is: the `vector` it builds must be dependent, so it instantiates only

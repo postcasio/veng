@@ -108,13 +108,13 @@ namespace Veng
         const Localization::Localization& Localization;
     };
 
-    /// @brief What a GuiDriver is handed once per (re)instantiate — the one-time half of the frame.
+    /// @brief What a GuiDriver is handed when it attaches and when it detaches.
     ///
-    /// Borrowed for the duration of the OnInstantiate call. It carries the tree the driver resolves
-    /// its elements against, the scene and seat it answers to, and the host services that are stable
-    /// for the run — so a driver binding a localized view-model needs no back-channel component to
-    /// reach the application. Everything that moves per frame (timing, the resolved view, the
-    /// sound and rumble facades) lives on GuiDriverFrame instead.
+    /// Borrowed for the duration of the OnInstantiate or OnDetach call. It carries the tree the
+    /// driver resolves its elements against, the scene, owner and seat it answers to, and the host
+    /// services that are stable for the run — so a driver binding a localized view-model needs no
+    /// back-channel component to reach the application. Everything that moves per frame (timing, the
+    /// resolved view, the sound and rumble facades) lives on GuiDriverFrame instead.
     struct GuiDriverContext
     {
         /// @brief The freshly instantiated live document this driver drives.
@@ -127,6 +127,12 @@ namespace Veng
         Gui::Element& Root;
         /// @brief The presented scene the driven component lives in; mutable within the driver boundary.
         Scene& Scene;
+        /// @brief The entity carrying the driven GuiOverlay/GuiSurface — the driver's own instance.
+        ///
+        /// The same entity GuiDriverFrame::Owner names, alive for the whole call in either hook: in
+        /// OnDetach it is where a driver stamps the request a system acts on for it, or reads the
+        /// sibling it published into, before the component goes.
+        Entity Owner = Entity::Null;
         /// @brief The claiming viewport's bound seat, or Entity::Null when unbound (see GuiDriverFrame::Seat).
         Entity Seat = Entity::Null;
         /// @brief The localization service, never null — the inert null-object stands in.
@@ -146,6 +152,15 @@ namespace Veng
     /// (re)instantiates, and calls OnUpdate each drive. Two claimed instances of one overlay
     /// (split-screen) are two driver instances with independent view-models, so the per-instance
     /// state a per-world system would have keyed by entity dissolves.
+    ///
+    /// **A driver is attached, then detached, and the two pair.** OnInstantiate runs when it starts
+    /// driving a document; OnDetach runs once when it stops — its overlay hidden or no longer claimed
+    /// by the viewport that drove it, a world rebind taking the document off that viewport, its
+    /// component removed or re-pointed at another document, its entity destroyed, or its world
+    /// closed or replaced through the WorldRunner — always while the scene and the owner are still
+    /// alive. A later attach runs OnInstantiate again, so a driver alternates between the two and
+    /// never sees either twice running. A scene destroyed outside the runner (an asset preview, a
+    /// test's own scene) destroys its drivers without OnDetach.
     ///
     /// **Where in the frame the driver runs differs between the two, and it is the one asymmetry.**
     /// An overlay composites after the scene, so its driver runs after the render gather and its
@@ -175,9 +190,9 @@ namespace Veng
 
         /// @brief Once per (re)instantiate: resolve elements, build the view-model, bind the context.
         ///
-        /// Runs on the first drive that instantiates the document and again on any re-instantiate
-        /// (exactly like GuiOverlay::SetOnInstantiate), so cached element pointers stay valid. The
-        /// default does nothing.
+        /// Runs on the first drive that instantiates the document, again on any re-instantiate
+        /// (exactly like GuiOverlay::SetOnInstantiate), so cached element pointers stay valid, and
+        /// again on the first drive after an OnDetach. The default does nothing.
         ///
         /// `context.Root` is the subtree this driver drives: the document root for a whole-document
         /// driver, or the embedded component boundary for a driver scoped to one. A whole-document
@@ -187,6 +202,17 @@ namespace Veng
         /// `{obj.field}` bindings and named handlers resolve against its own context.
         /// @param context  The document, subtree root, scene, seat, and host services (see GuiDriverContext).
         virtual void OnInstantiate(const GuiDriverContext& context) { (void)context; }
+
+        /// @brief Once when the driver stops driving its document, before the owner or scene goes.
+        ///
+        /// The pair of OnInstantiate (see the class notes for every way a driver detaches). Where a
+        /// driver drops what it acquired, clears view-output state it published, or stamps a request
+        /// on `context.Owner` for a system to act on — the sanctioned way to reach one. As in every
+        /// hook, it must not add or remove the component it is driven from. `context.Document` is the
+        /// tree the driver is leaving; on a re-instantiate, whose old tree is already gone, it is the
+        /// replacement the OnInstantiate that follows binds. The default does nothing.
+        /// @param context  The document, subtree root, scene, owner, seat, and host services.
+        virtual void OnDetach(const GuiDriverContext& context) { (void)context; }
 
         /// @brief Once per frame while the document is attached, after the scene's View phase.
         ///

@@ -963,3 +963,45 @@ TEST_CASE("gui polyline: the point list parses x,y pairs and rejects anything el
         CHECK_FALSE(ParsePolylinePoints(bad).has_value());
     }
 }
+
+TEST_CASE("gui document: SetImageTexture measures at its extent and re-solves only when it moves")
+{
+    Document doc;
+    Element& image = doc.Add(doc.Root(), ElementKind::Image);
+    // Absolute, so the root's stretch leaves the element at its own measure.
+    Style style;
+    style.Position = PositionType::Absolute;
+    doc.SetStyle(image, style);
+    doc.Solve(vec2(400.0f, 400.0f));
+    CHECK(image.Layout.Size.x == doctest::Approx(0.0f));
+
+    // A runtime texture sizes an Image that authors no size, as a resident `src` would.
+    doc.SetImageTexture(image, Renderer::TextureHandle{.Index = 7},
+                        Renderer::SamplerHandle{.Index = 2}, uvec2(96, 64));
+    CHECK(doc.IsDirty());
+    doc.Solve(vec2(400.0f, 400.0f));
+    CHECK(image.Layout.Size.x == doctest::Approx(96.0f));
+    CHECK(image.Layout.Size.y == doctest::Approx(64.0f));
+    CHECK(image.ImageTexture.Index == 7);
+
+    // A new handle at the same extent only repaints; the same handle again is free.
+    doc.SetImageTexture(image, Renderer::TextureHandle{.Index = 9},
+                        Renderer::SamplerHandle{.Index = 2}, uvec2(96, 64));
+    CHECK(!doc.IsDirty());
+    CHECK(image.ImageTexture.Index == 9);
+
+    // A new extent re-measures.
+    doc.SetImageTexture(image, Renderer::TextureHandle{.Index = 9},
+                        Renderer::SamplerHandle{.Index = 2}, uvec2(48, 48));
+    CHECK(doc.IsDirty());
+    doc.Solve(vec2(400.0f, 400.0f));
+    CHECK(image.Layout.Size.x == doctest::Approx(48.0f));
+
+    // Clearing returns to the resident texture's measure — none here, so the element is unsized and
+    // paints nothing.
+    doc.ClearImageTexture(image);
+    CHECK(doc.IsDirty());
+    doc.Solve(vec2(400.0f, 400.0f));
+    CHECK(image.Layout.Size.x == doctest::Approx(0.0f));
+    CHECK_FALSE(image.ImageTexture.IsValid());
+}

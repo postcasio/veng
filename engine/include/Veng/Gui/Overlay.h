@@ -322,15 +322,43 @@ namespace Veng
         /// @brief Detaches the presented document from a viewport's layer stack — the inverse of Drive.
         ///
         /// Removes the live document from @p viewport's layer stack when it is hosted there, leaving the
-        /// runtime host and its document intact so the next Drive re-attaches. Idempotent: an undriven
-        /// overlay, a document hosted on another viewport, or a document already detached is a no-op.
-        /// Used to release an overlay a viewport stopped presenting while its world stays alive (a world
-        /// rebind), where ~GuiOverlay's destroy-time detach is the wrong lifetime. Only the document the
-        /// engine attached through Drive is touched.
+        /// runtime host and its document intact so the next Drive re-attaches, and detaches the
+        /// drivers when @p viewport is the one whose drive attached them (DetachDriver). Idempotent:
+        /// an undriven overlay, a document hosted on another viewport, or a document already
+        /// detached is a no-op. Used to release an overlay a viewport stopped presenting while its
+        /// world stays alive (a world rebind), where ~GuiOverlay's destroy-time detach is the wrong
+        /// lifetime. Only the document the engine attached through Drive is touched.
         /// @param viewport  The viewport to detach the document from, if it is hosted there.
-        void Detach(Renderer::Viewport& viewport) const;
+        /// @param scene     The scene the overlay lives in, handed to the detaching drivers.
+        /// @param owner     The entity carrying this overlay.
+        void Detach(Renderer::Viewport& viewport, Scene& scene, Entity owner) const;
+
+        /// @brief Detaches the overlay's drivers when attached: its own OnDetach, then its components'.
+        ///
+        /// The engine calls it on every way an overlay stops being driven — Visible cleared, the
+        /// claiming viewport no longer claiming it, a world rebind (through Detach), the component
+        /// removed or its entity destroyed (its removal hook), its Document re-pointed, and its world
+        /// closed or replaced through the WorldRunner — so a driver's OnDetach runs once per attach,
+        /// while the scene and @p owner are alive (see GuiDriver::OnDetach). The next drive attaches
+        /// the drivers again. Idempotent.
+        /// @param scene  The scene the overlay lives in.
+        /// @param owner  The entity carrying this overlay.
+        void DetachDriver(Scene& scene, Entity owner) const;
+
+        /// @brief Whether the drivers are attached, by a drive @p viewport ran.
+        /// @param viewport  The viewport to ask about.
+        /// @return True when a drive on @p viewport attached the drivers and they have not detached.
+        [[nodiscard]] bool IsDriverAttachedBy(const Renderer::Viewport& viewport) const;
 
     private:
+        /// @brief Drops the host when Document names another recipe than the one it was built for.
+        ///
+        /// The drivers detach from the old document first, while it is live; the next EnsureHost
+        /// builds a host for the new recipe, and the next drive attaches them to it.
+        /// @param scene  The scene the overlay lives in.
+        /// @param owner  The entity carrying this overlay.
+        void ReleaseRepointedHost(Scene& scene, Entity owner) const;
+
         /// @brief Ensures the runtime record exists, holding the deferred binding before first Drive.
         GuiOverlayRuntime& EnsureRuntime() const;
 
@@ -349,6 +377,12 @@ VE_ENUM(::Veng::GuiOverlayProjection, 0x9BEC8506284EF46BULL)
 VE_ENUMERATOR(ScreenSpace)
 VE_ENUMERATOR(WorldAnchored)
 VE_ENUM_END();
+
+// The drivers detach while the owner and its siblings stand, so a driver's OnDetach can still read
+// and stamp them.
+VE_ON_REMOVE(::Veng::GuiOverlay,
+             [](::Veng::Scene& scene, const ::Veng::Entity owner, const ::Veng::GuiOverlay& overlay)
+             { overlay.DetachDriver(scene, owner); });
 
 VE_REFLECT(::Veng::GuiOverlay, 0xC703A9C84AC4BA09ULL)
 VE_FIELD(Document, .DisplayName = "Document")

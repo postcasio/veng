@@ -11,7 +11,9 @@
 //  - OpaqueEmissive occludes — its opaque g-buffer surface writes depth, so the same transparent
 //    region shows the panel's dark bezel, not the scene behind, and the EmissiveColor=(1,1,1) default
 //    passes the document value through;
-//  - the dirty-gate: an idle panel does not re-record its document on a frame where nothing changed.
+//  - the dirty-gate: an idle panel does not re-record its document on a frame where nothing changed;
+//  - a surface's driver detaches once when its viewport stops claiming it and once when its
+//    component is removed, its owner alive in the call.
 //
 // The whole render runs under the validation gate, so the producer-before-consumer handoff (the
 // panel target is left shader-readable by its own barrier before the translucent pass or the
@@ -249,7 +251,47 @@ namespace
     }
 }
 
+namespace
+{
+    // What the detach-counting surface driver saw across its hooks.
+    struct SurfaceDetachTrace
+    {
+        int Instantiates = 0;
+        int Detaches = 0;
+        // Whether attaches minus detaches stayed within [0, 1] after every hook.
+        bool Paired = true;
+        Entity Owner;
+        // Whether every OnDetach read the sibling MeshRenderer off a live owner.
+        bool OwnerReadable = true;
+    };
+
+    SurfaceDetachTrace g_SurfaceDetach;
+
+    struct SurfaceDetachDriver final : GuiDriver
+    {
+        void OnInstantiate(const GuiDriverContext& context) override
+        {
+            ++g_SurfaceDetach.Instantiates;
+            g_SurfaceDetach.Owner = context.Owner;
+            g_SurfaceDetach.Paired = g_SurfaceDetach.Paired &&
+                                     g_SurfaceDetach.Instantiates - g_SurfaceDetach.Detaches == 1;
+        }
+
+        void OnDetach(const GuiDriverContext& context) override
+        {
+            ++g_SurfaceDetach.Detaches;
+            g_SurfaceDetach.Paired =
+                g_SurfaceDetach.Paired && g_SurfaceDetach.Instantiates == g_SurfaceDetach.Detaches;
+            g_SurfaceDetach.OwnerReadable =
+                g_SurfaceDetach.OwnerReadable && context.Owner == g_SurfaceDetach.Owner &&
+                context.Scene.IsAlive(context.Owner) &&
+                std::as_const(context.Scene).TryGet<MeshRenderer>(context.Owner) != nullptr;
+        }
+    };
+}
+
 VE_GUI_DRIVER(PanelDriver, 0x9E1C0F2A73B4D586ULL, "Panel");
+VE_GUI_DRIVER(SurfaceDetachDriver, 0x12D1F941F8450EA1ULL, "Surface Detach");
 
 TEST_CASE_FIXTURE(Veng::Test::GpuFixture,
                   "gui surface: a translucent panel is self-radiant and see-through, an opaque "
@@ -483,4 +525,66 @@ TEST_CASE_FIXTURE(
     const vec4 center = DecodeTexel(pixels, PanelRes.x, PanelRes.x / 2, PanelRes.y / 2);
     CHECK(center.r > 1.0f);
     CHECK(center.g < 0.01f);
+}
+
+TEST_CASE_FIXTURE(
+    Veng::Test::GpuFixture,
+    "gui surface: a driver detaches once when its viewport stops claiming the surface "
+    "and once when the component is removed")
+{
+    RegisterBuiltinTypes(Types);
+    g_SurfaceDetach = SurfaceDetachTrace{};
+
+    AssetManager assets(Context, Tasks, Types);
+    REQUIRE(assets.Mount(CookGuiSurfacePack()).has_value());
+    const AssetResult<AssetHandle<MaterialInstance>> translucent =
+        assets.LoadSync<MaterialInstance>(TranslucentInstance);
+    const AssetResult<AssetHandle<MaterialInstance>> brick =
+        assets.LoadSync<MaterialInstance>(BrickInstance);
+    REQUIRE(translucent.has_value());
+    REQUIRE(brick.has_value());
+
+    vector<Ref<Mesh>> meshes;
+    Entity panelEntity;
+    const Unique<Scene> scene =
+        BuildPanelScene(Context, assets, Types, GuiSurfaceDomain::Translucent, *translucent, *brick,
+                        meshes, panelEntity);
+    const Entity seat = scene->CreateEntity();
+    const Entity otherSeat = scene->CreateEntity();
+    auto& surface = scene->Get<GuiSurface>(panelEntity);
+    surface.Driver = GuiDriverIdOf<SurfaceDetachDriver>();
+    surface.Seat = seat;
+
+    GuiDriverRegistry drivers;
+    drivers.Register<SurfaceDetachDriver>();
+    const Unique<Viewport> viewport = MakeViewport(Context, assets);
+    viewport->SetGuiDriverRegistry(&drivers);
+    const auto RenderFrame = [&]
+    {
+        viewport->SetViewState({.World = scene.get(), .Camera = FrontCamera(), .Delta = 0.016f});
+        Context.ImmediateCommands([&](CommandBuffer& cmd) { viewport->Render(cmd); });
+    };
+
+    // The viewport on the surface's seat claims it and attaches the driver.
+    viewport->SetSeat({.Viewer = seat});
+    RenderFrame();
+    CHECK(g_SurfaceDetach.Instantiates == 1);
+    CHECK(g_SurfaceDetach.Owner == panelEntity);
+
+    // Rebound to another seat, it no longer claims the surface: one detach, however many frames.
+    viewport->SetSeat({.Viewer = otherSeat});
+    RenderFrame();
+    RenderFrame();
+    CHECK(g_SurfaceDetach.Detaches == 1);
+
+    // Claimed again, then removed: attached once more, detached inside the removal.
+    viewport->SetSeat({.Viewer = seat});
+    RenderFrame();
+    CHECK(g_SurfaceDetach.Instantiates == 2);
+    REQUIRE(scene->Remove<GuiSurface>(panelEntity).has_value());
+    CHECK(g_SurfaceDetach.Detaches == 2);
+
+    CHECK(g_SurfaceDetach.Paired);
+    CHECK(g_SurfaceDetach.OwnerReadable);
+    g_SurfaceDetach = {};
 }

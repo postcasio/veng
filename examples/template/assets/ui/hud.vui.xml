@@ -2,4 +2,5 @@
   <Component src="0x8C245DEE9B8C3576" param:name="veng" driver="0xC8CA6B412AB63897"/>
   <Text class="caption" value="{Caption}"/>
   <ProgressBar class="bar" value="{Level}"/>
+  <Image id="portrait" class="portrait"/>
 </Panel>

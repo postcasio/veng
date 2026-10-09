@@ -337,9 +337,10 @@ namespace Veng
         /// Called with the scene while it is still live, once per scene the runner destroys: a world
         /// dropped by CloseWorld (after its OnStop), or a scene InstallScene replaces (likewise). A
         /// presentation layer that retains a raw scene pointer across frames uses it to drop that
-        /// pointer before it dangles.
+        /// pointer before it dangles, and one holding state bound to the scene's entities releases
+        /// it against them — so the scene is handed mutable.
         /// @param hook  The retiring hook, or an empty function to clear it.
-        void SetSceneRetiringHook(function<void(const Scene&)> hook);
+        void SetSceneRetiringHook(function<void(Scene&)> hook);
 
         /// @brief Closes a world, stopping its simulation and dropping it; the id then resolves to nothing.
         ///
@@ -529,7 +530,7 @@ namespace Veng
         SystemContextFactory m_ContextFactory;
 
         /// @brief Told a scene is about to be destroyed; unset tells no one.
-        function<void(const Scene&)> m_SceneRetiringHook;
+        function<void(Scene&)> m_SceneRetiringHook;
 
         /// @brief Told a world has closed, after it is erased; unset tells no one.
         function<void(WorldInstanceId)> m_WorldClosedHook;

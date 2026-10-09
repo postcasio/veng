@@ -1,6 +1,6 @@
 # Screen-space UI, level overlays, and scene captures
 
-This guide covers three engine-driven scene facilities that a game reaches by **authoring
+This guide covers four engine-driven scene facilities that a game reaches by **authoring
 data on entities** rather than hand-wiring per-frame code:
 
 - **Presenting screen-space UI** with a **`GuiOverlay`** component — the screen-space
@@ -9,11 +9,14 @@ data on entities** rather than hand-wiring per-frame code:
   menu, a picture-in-picture view, or a full-screen modal world running over the game.
 - **Authoring a scene capture** with a **`CaptureSurface`** component — the
   render-to-texture member of the same family (a mirror, a monitor, an environment probe).
+- **Showing a model in a document** with a **`ModelPortrait`** component — a model rendered
+  offscreen for UI (a portrait of a selected object, an equipment preview).
 
 The live reference is the [template](../../examples/template/) module: its primary HUD is a
 `GuiOverlay` on an entity in
 [`assets/prefabs/scene.prefab.json`](../../examples/template/assets/prefabs/scene.prefab.json),
-its mirror is a `CaptureSurface` on the same prefab, and a Tab key opens a **secondary
+its mirror is a `CaptureSurface` on the same prefab, the HUD's entity carries a `ModelPortrait` its
+HUD driver paints into an `Image`, and a Tab key opens a **secondary
 overlay level** ([`assets/levels/overlay.level.json`](../../examples/template/assets/levels/overlay.level.json)
 + [`assets/prefabs/overlay.prefab.json`](../../examples/template/assets/prefabs/overlay.prefab.json))
 through `LevelOverlay`. Open [`main.cpp`](../../examples/template/main.cpp) beside this guide.
@@ -24,11 +27,11 @@ stylesheet, and font are authored the same way) and is the screen-space companio
 
 ---
 
-## The family: one discovery-and-drive pattern, three targets
+## The family: one discovery-and-drive pattern, four targets
 
 `GuiSurface` established the pattern: a **reflected scene component** the
 **Viewport** discovers in the scene it renders (`world.View<GuiSurface>()`) and **drives**
-each frame. Two more components join it, all discovered the same way and differing only in
+each frame. Three more components join it, all discovered the same way and differing only in
 where the engine drives them:
 
 | Component | Target | Space |
@@ -36,12 +39,14 @@ where the engine drives them:
 | `GuiSurface` | a `Gui::Document` onto a **world mesh** | HDR, pre-bloom — it **glows** |
 | `GuiOverlay` | a `Gui::Document` onto the **viewport layer stack** | LDR, post-tonemap — it does **not** glow |
 | `CaptureSurface` | the **scene rendered into a texture** | sampled by the entity's material |
+| `ModelPortrait` | a **model rendered into a texture** | painted by a document's `Image` |
 
 The engine owns the boilerplate every consumer used to hand-roll — load → instantiate →
-attach for a document, build → register → rebind for a capture. The game owns only what the
-engine cannot know: the **data binding** (for the UI members) and the **refresh policy** (for
-the capture). None of the three is a new subsystem or a cooked-format change; each is an
-additive reflected component authored in a prefab like any other.
+attach for a document, build → register → rebind for a capture, a private scene → render →
+release for a portrait. The game owns only what the engine cannot know: the **data binding**
+(for the UI members) and the **refresh policy** (for the capture and the portrait). None of the
+four is a new subsystem or a cooked-format change; each is an additive reflected component
+authored in a prefab like any other.
 
 ---
 
@@ -153,13 +158,17 @@ path is a driver**: a named, registered, **per-instance** presentation binding t
 instantiates *with the document* and destroys *with it*. A `GuiOverlay` names one in a reflected
 `Driver` field, and the game writes no find-and-bind system at all.
 
-A `GuiDriver` (`Veng/Gui/Driver.h`) has two hooks — `OnInstantiate` (handed a
-`GuiDriverContext { Document, Root, Scene, Seat, Localization }`: resolve elements and bind the
-driver's own `Gui::BindingContext`, re-run on any re-instantiate) and `OnUpdate` (once per frame
+A `GuiDriver` (`Veng/Gui/Driver.h`) has three hooks — `OnInstantiate` (handed a
+`GuiDriverContext { Document, Root, Scene, Owner, Seat, Localization }`: resolve elements and bind
+the driver's own `Gui::BindingContext`, re-run on any re-instantiate), `OnUpdate` (once per frame
 while attached, handed a `GuiDriverFrame { Document, Root, Scene, Owner, Seat, Delta, Alpha, View,
 Assets, Audio, Localization }` with the claiming viewport's real view, the entity the driven
-component sits on, and the render gather's interpolation fraction). Both carry the engine-owned
-services a driver may reach, so a driver needs no back-channel to find the application. The
+component sits on, and the render gather's interpolation fraction), and `OnDetach` (the pair of
+`OnInstantiate`, handed the same context: once when the driver stops driving — its overlay hidden or
+no longer claimed, a world rebind, its component removed or re-pointed, its entity destroyed, or its
+world closed through the runner — always with the scene and the owner alive, so a driver drops what
+it acquired or stamps a request on `context.Owner` for a system to act on). They carry the
+engine-owned services a driver may reach, so a driver needs no back-channel to find the application. The
 template's `TemplateOverlayDriver` in
 [`main.cpp`](../../examples/template/main.cpp) is the live reference — it seeds its model from the
 snapshot seeded into its scene, binds the dismiss handler, and stamps a request on a press:
@@ -475,12 +484,56 @@ volume the ray is intersected with — is then expressed in that one frame, and 
 knowledge of how its own surface is oriented. A world-aligned capture publishes the identity here, so
 the same fragment serves both alignments unchanged.
 
+## 4. Showing a model in a document — `ModelPortrait`
+
+A UI showing a model — the selected object's portrait, the item on a loadout screen — needs a private
+scene, a camera framed on the model, a light, an offscreen render ahead of the UI that samples it,
+and the release of all of that when the UI goes. **`ModelPortrait`** (`Veng/Renderer/ModelPortrait.h`)
+is all of it, as a component: put it on an entity of the scene the UI is presented over, and the
+engine renders it whenever a viewport renders that scene, and releases it when the component goes.
+
+```json
+"::Veng::Renderer::ModelPortrait": { "Model": "0x…", "Extent": [96, 96] }
+```
+
+- **`Model`** is a prefab, instantiated into the portrait's private scene under a root that
+  **`ModelPose`** poses every frame — turn the model there, never by re-pointing it.
+- **`Framing`** is `AutoFit` (a camera fitted to the model's bounds from `Yaw`, `Pitch`,
+  `FieldOfView` and `Padding`) or `Explicit` (`CameraPosition`, `CameraRotation` and `FieldOfView`
+  taken as given, for a caller framing by its own rule). **`Lighting`** is one key light and an
+  ambient floor. **`Output`** is `Shaded`, or `GeometryDepthNormal` for a fill that shades the shape
+  itself. **`Refresh`** is `EveryFrame` or `OnDemand` (`MarkDirty`).
+- **`SetOnPopulate(callback)`** attaches parts to the model in the private scene after each
+  instantiation; **`Repopulate()`** swaps them (every entity the last populate created is destroyed
+  first) without re-instantiating the model.
+
+Painting it is a driver's job. The template's `TemplateHudDriver` in
+[`main.cpp`](../../examples/template/main.cpp) reads the portrait on its own entity each frame and
+points the HUD's `<Image id="portrait"/>` at it:
+
+```cpp
+void OnUpdate(const GuiDriverFrame& frame) override
+{
+    const auto* portrait = std::as_const(frame.Scene).TryGet<Renderer::ModelPortrait>(frame.Owner);
+    const Renderer::ModelPortraitOutput output =
+        portrait != nullptr ? portrait->GetOutput() : Renderer::ModelPortraitOutput{};
+    if (!output.Ready) { frame.Document.ClearImageTexture(*m_Portrait); return; }
+    frame.Document.SetImageTexture(*m_Portrait, output.Color, output.Sampler, output.Extent);
+}
+```
+
+`SetImageTexture` sizes an unsized `Image` at the render's extent and costs a repaint, not a layout,
+when only the handle moves. The colour carries the model's coverage in alpha, so the HUD's own
+background shows around it. Read the output every frame rather than holding its handles: they belong
+to the portrait's renderer, which goes back to a pool the moment the component is disabled or
+destroyed.
+
 ## Verifying it
 
-The engine drives all three components automatically, so there is nothing to call each frame for
-the authored HUD, the mirror, or the overlay level's own HUD. Build and run the
-[template](../../examples/template/): its primary HUD renders over the scene, its mirror reflects
-the cube, and **Tab** opens the secondary overlay level — its interactive HUD dismissable by the
+The engine drives all four components automatically, so there is nothing to call each frame for
+the authored HUD, the mirror, the portrait, or the overlay level's own HUD. Build and run the
+[template](../../examples/template/): its primary HUD renders over the scene with a cube portrait in
+it, its mirror reflects the cube, and **Tab** opens the secondary overlay level — its interactive HUD dismissable by the
 Tab key **or** by its `Resume` button, which ends the overlay through an `ExitRequest` in its own
 scene. In the editor, each component is inspectable like any
 other — its `Document` / `Layer` / `Interactive` / `TargetSeat` (or `Shape` / `Resolution` /

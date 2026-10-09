@@ -384,10 +384,18 @@ extern "C"
 /// whether the edit changed the field. A module reads the context every tick, registers into the
 /// system catalog and may register field widgets, so a stale module reads the context and the
 /// registry at their old layouts and registers widgets of the old signature.
+/// Version 91 renders a model offscreen from a component and tells a Gui driver when it detaches:
+/// GuiDriver grows the OnDetach virtual, GuiDriverContext grows Owner, GuiSurfaceDriveContext grows
+/// Presenter, TypeInfo grows the OnRemove hook, the builtin ModelPortrait registers, GuiOverlay's
+/// Detach takes the scene and owner, Gui::Document grows SetImageTexture, ClearImageTexture and
+/// DetachComponents, ViewportCompositor grows the portrait pool and its drive, and the WorldRunner's
+/// scene-retiring hook is handed the scene mutable. A module subclasses GuiDriver, builds driver
+/// contexts and registers types, so a stale module dispatches through a short vtable and lays the
+/// context and the type record out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 90u
+#define VENG_MODULE_ABI_VERSION 91u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

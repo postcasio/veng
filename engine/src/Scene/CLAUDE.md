@@ -57,6 +57,18 @@ declaration the engine ships: the document is drawn into the sibling renderer's 
 nowhere else to land, so stripping the renderer would leave the surface resolving a component that
 has gone.
 
+**A component can be told it is going, while its entity still stands.**
+`VE_ON_REMOVE(::Ns::Component, Function)` records a hook (`TypeInfo::OnRemove`) the scene calls as
+`Function(Scene&, Entity, Component&)` before it removes the component: `RemoveComponent` calls it
+after the requirement gate passes, and `DestroyEntity` calls every hooked component's hook across the
+whole subtree before it removes anything, so each hook reads the owner and every sibling as they
+were. It is for a component whose runtime reaches outside the scene and needs its owner to let go —
+`GuiOverlay` and `GuiSurface` use it to run their drivers' `OnDetach` (see
+[../Gui/CLAUDE.md](../Gui/CLAUDE.md), "The driver"). A hook may read and add components (a request
+stamped on a dying owner is removed with it) but must not remove the component it was called for. A
+scene being destroyed calls no hook — the runner's scene-retiring hook is where a world's teardown
+reaches what such a component holds.
+
 `Scene::ForEachComponent(Entity, const function<void(TypeId, void*)>&)` iterates every pool that
 holds the entity, calling the visitor with each component's `TypeId` and an erased pointer — the
 type-agnostic enumeration the editor inspector walks (templated `Get`/`Has` need the type at

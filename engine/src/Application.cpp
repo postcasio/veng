@@ -8,6 +8,8 @@
 #include <Veng/Diagnostics/Profiler.h>
 #include <Veng/Gui/GuiConsumer.h>
 #include <Veng/Gui/GuiTranslator.h>
+#include <Veng/Gui/Overlay.h>
+#include <Veng/Gui/Surface.h>
 #include <Veng/Log.h>
 #include <Veng/Platform/CrashReport.h>
 #include <Veng/Platform/UserPaths.h>
@@ -338,10 +340,19 @@ namespace Veng
         // A viewport retains the scene it last presented until its next push, which runs after the
         // tick, so a world closed in between (a departure, a reap, a drained request) would leave the
         // pointer dangling for the frame-top pointer routing and the tick's view lookup. Drop it
-        // from every registered viewport before the scene is destroyed.
+        // from every registered viewport before the scene is destroyed — after the scene's Gui
+        // drivers have detached, while the entities they answer to still stand.
         m_WorldRunner->SetSceneRetiringHook(
-            [this](const Scene& scene)
+            [this](Scene& scene)
             {
+                for (auto [entity, overlay] : scene.View<GuiOverlay>())
+                {
+                    overlay.DetachDriver(scene, entity);
+                }
+                for (auto [entity, surface] : scene.View<GuiSurface>())
+                {
+                    surface.DetachDriver(scene, entity);
+                }
                 for (Renderer::Viewport* viewport : m_Compositor.GetViewports())
                 {
                     viewport->ReleasePresentedScene(scene);

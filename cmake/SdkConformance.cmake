@@ -151,6 +151,13 @@ if (NOT LAUNCHER_OUTPUT MATCHES "MarkerBeacon resolved")
         "sdk_conformance(${VENG_MODE}): template-launcher exited 0 but never resolved its "
         "prefab-authored game-defined asset")
 endif ()
+# The HUD driver logs this once it has painted the HUD's ModelPortrait into its Image, so the line
+# witnesses the offscreen model render, the portrait drive and the runtime-texture Image together.
+if (NOT LAUNCHER_OUTPUT MATCHES "model portrait painted into the HUD")
+    message(FATAL_ERROR
+        "sdk_conformance(${VENG_MODE}): template-launcher exited 0 but never painted its HUD's "
+        "model portrait")
+endif ()
 
 # ---- Smoke the editor exe's own runtime resolution --------------------------
 # --version prints and exits before any window or device, so it covers the editor exe's

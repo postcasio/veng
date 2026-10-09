@@ -10,6 +10,7 @@
 #include <Veng/Renderer/GatherPass.h>
 #include <Veng/Renderer/Image.h>
 #include <Veng/Renderer/ImageView.h>
+#include <Veng/Renderer/ModelPortrait.h>
 #include <Veng/Renderer/RenderGraph.h>
 #include <Veng/Renderer/SceneCapture.h>
 #include <Veng/Renderer/SceneCapturePool.h>
@@ -22,6 +23,7 @@
 #include "CaptureDrive.h"
 #include "CaptureRotation.h"
 #include "CompositeSource.h"
+#include "PortraitRenderer.h"
 
 #include <algorithm>
 
@@ -46,7 +48,8 @@ namespace Veng::Renderer
     }
 
     ViewportCompositor::ViewportCompositor(Context& context)
-        : m_Context(context), m_CapturePool(CreateRef<SceneCapturePool>())
+        : m_Context(context), m_CapturePool(CreateRef<SceneCapturePool>()),
+          m_PortraitPool(CreateRef<ModelPortraitPool>())
     {
     }
 
@@ -222,8 +225,12 @@ namespace Veng::Renderer
         // the pre-pass reads them before any Render consumes its push.
         DriveCaptureSurfaces();
 
-        // Scene captures render first, so a material sampling a capture's output reads this frame's
-        // result during the viewport renders that follow. Rendering first is also what puts them
+        // Portraits render ahead of everything that may sample them: a Gui driver paints one in its
+        // viewport's drive, later this frame.
+        DrivePortraits(cmd);
+
+        // Scene captures render next, so a material sampling a capture's output reads this frame's
+        // result during the viewport renders that follow. Rendering before them is also what puts them
         // ahead of the viewports in the frame's view budget, so the drive spends only what it can
         // leave the viewports: a missing reflection is a blemish, a viewport that could not claim a
         // slot is a stale window. One slot per registered viewport is the floor, which a viewport
@@ -242,6 +249,8 @@ namespace Veng::Renderer
     {
         VE_PROFILE_SCOPE("Capture/DriveSurfaces");
         m_CaptureSurfaceDrive = {};
+        m_PortraitDrive = {};
+        m_PortraitQueue.clear();
 
         vector<CapturePresenter> presenters;
         presenters.reserve(m_Viewports.size());
@@ -263,8 +272,92 @@ namespace Veng::Renderer
             const f32 alpha = claim.Pending ? viewport.GetPendingAlpha() : viewport.GetViewAlpha();
             // A viewport borrows its scene const for rendering; the drive is the sanctioned point that
             // installs a capturing entity's material clone, as RenderSurfaces drives its drivers.
-            DriveSceneCaptures(const_cast<Scene&>(*claim.World), alpha, viewport.m_Assets, built);
+            auto& scene = const_cast<Scene&>(*claim.World);
+            DriveSceneCaptures(scene, alpha, viewport.m_Assets, built);
+            DriveScenePortraits(scene, viewport.m_Assets, built);
         }
+    }
+
+    void ViewportCompositor::DriveScenePortraits(Scene& scene, AssetManager& assets, u32& built)
+    {
+        for (auto [entity, portrait] : scene.View<ModelPortrait>())
+        {
+            // A disabled or empty portrait holds nothing: its renderer goes back to the pool.
+            if (!portrait.Enabled || portrait.Extent.x == 0 || portrait.Extent.y == 0)
+            {
+                portrait.Release();
+                ++m_PortraitDrive.PortraitsDisabled;
+                continue;
+            }
+
+            ReleaseMismatchedRenderer(portrait);
+            if (!portrait.HasRenderer() && !MaterializePortrait(portrait, assets, built))
+            {
+                ++m_PortraitDrive.PortraitsDeferred;
+                continue;
+            }
+
+            ++m_PortraitDrive.PortraitsDriven;
+            if (portrait.Prepare(m_Context, assets))
+            {
+                m_PortraitQueue.push_back(&portrait);
+            }
+        }
+    }
+
+    bool ViewportCompositor::MaterializePortrait(const ModelPortrait& portrait,
+                                                 AssetManager& assets, u32& built)
+    {
+        const PortraitRendererConfig config{.Extent = portrait.Extent, .Output = portrait.Output};
+        Unique<PortraitRenderer> renderer = m_PortraitPool->Take(config);
+        if (renderer != nullptr)
+        {
+            ++m_PortraitDrive.RenderersReused;
+        }
+        else
+        {
+            if (built >= MaxNewCapturesPerFrame)
+            {
+                return false;
+            }
+            VE_PROFILE_SCOPE("Portrait/Materialize");
+            renderer = CreatePortraitRenderer(m_Context, assets, config);
+            ++built;
+            ++m_PortraitDrive.RenderersBuilt;
+        }
+        portrait.Materialize(std::move(renderer), m_PortraitPool);
+        return true;
+    }
+
+    void ViewportCompositor::DrivePortraits(CommandBuffer& cmd)
+    {
+        if (m_PortraitQueue.empty())
+        {
+            return;
+        }
+        VE_PROFILE_SCOPE("Portrait/Render");
+        const BindlessRegistry& registry = m_Context.GetBindlessRegistry();
+        const u32 reserved = static_cast<u32>(m_Viewports.size());
+        for (const ModelPortrait* portrait : m_PortraitQueue)
+        {
+            // A portrait left out keeps its last render and still owes one, so it renders on a
+            // later frame with room.
+            if (!CaptureDriveHasRoom(registry.GetRemainingViews(), reserved))
+            {
+                if (!m_WarnedPortraitBudget)
+                {
+                    m_WarnedPortraitBudget = true;
+                    Log::Warn("ViewportCompositor: the frame's {} view slots cover {} viewport(s) "
+                              "and {} of {} model portraits; the rest keep their last render.",
+                              BindlessRegistry::MaxViewsPerFrame, reserved,
+                              m_PortraitDrive.PortraitsRendered, m_PortraitQueue.size());
+                }
+                break;
+            }
+            portrait->Render(cmd);
+            ++m_PortraitDrive.PortraitsRendered;
+        }
+        m_PortraitQueue.clear();
     }
 
     void ViewportCompositor::DriveSceneCaptures(Scene& scene, const f32 alpha, AssetManager& assets,

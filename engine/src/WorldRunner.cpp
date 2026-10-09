@@ -259,7 +259,7 @@ namespace Veng
                                               .Tick = tick}));
     }
 
-    void WorldRunner::SetSceneRetiringHook(function<void(const Scene&)> hook)
+    void WorldRunner::SetSceneRetiringHook(function<void(Scene&)> hook)
     {
         m_SceneRetiringHook = std::move(hook);
     }

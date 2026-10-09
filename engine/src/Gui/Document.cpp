@@ -1731,6 +1731,38 @@ namespace Veng::Gui
         MarkPaintDirty(element);
     }
 
+    void Document::SetImageTexture(Element& element, const Renderer::TextureHandle texture,
+                                   const Renderer::SamplerHandle sampler, const uvec2 extent)
+    {
+        const vec2 size = vec2(extent);
+        if (size != element.ImageSize)
+        {
+            element.ImageTexture = texture;
+            element.ImageSampler = sampler;
+            element.ImageSize = size;
+            // The measure reads the intrinsic size, so the element re-measures as a text leaf does.
+            MarkTextDirty(element);
+            return;
+        }
+        if (element.ImageTexture.Index == texture.Index &&
+            element.ImageSampler.Index == sampler.Index)
+        {
+            return;
+        }
+        element.ImageTexture = texture;
+        element.ImageSampler = sampler;
+        MarkPaintDirty(element);
+    }
+
+    void Document::ClearImageTexture(Element& element)
+    {
+        const Texture* const resident = element.Image.Get();
+        SetImageTexture(
+            element, resident != nullptr ? resident->GetHandle() : Renderer::TextureHandle{},
+            resident != nullptr ? resident->GetSamplerHandle() : Renderer::SamplerHandle{},
+            resident != nullptr ? resident->GetExtent() : uvec2(0));
+    }
+
     void Document::SetImageTint(Element& element, const vec4 tint)
     {
         if (element.ImageTint == tint)
@@ -5585,6 +5617,7 @@ namespace Veng::Gui
                     GuiDriverContext{.Document = *this,
                                      .Root = *boundary,
                                      .Scene = frame.Scene,
+                                     .Owner = frame.Owner,
                                      .Seat = frame.Seat,
                                      .Localization = frame.Localization});
                 driver.Instantiated = true;
@@ -5595,6 +5628,28 @@ namespace Veng::Gui
             GuiDriverFrame scoped = frame;
             scoped.Root = boundary;
             driver.Instance->OnUpdate(scoped);
+        }
+    }
+
+    void Document::DetachComponents(Scene& scene, const Entity owner, const Entity seat,
+                                    const Localization::Localization& localization)
+    {
+        for (ComponentDriverInstance& driver : m_ComponentDrivers)
+        {
+            if (!driver.Instantiated)
+            {
+                continue;
+            }
+            driver.Instantiated = false;
+            if (Element* const boundary = Resolve(driver.Boundary); boundary != nullptr)
+            {
+                driver.Instance->OnDetach(GuiDriverContext{.Document = *this,
+                                                           .Root = *boundary,
+                                                           .Scene = scene,
+                                                           .Owner = owner,
+                                                           .Seat = seat,
+                                                           .Localization = localization});
+            }
         }
     }
 
