@@ -1,8 +1,9 @@
 // The View-phase AudioSystem over a Scene and a null device: it publishes a well-formed voice
 // snapshot (a Playing source sounds, a no-listener scene still plays non-spatial voices, the cap
 // keeps the loudest), Playing is a live control a finished clip clears, a generator plays from a
-// source as one voice at its entity's drawn pose, and it reads the interpolated drawn pose rather than
-// the raw Sim transform; a world's MusicState plays while it is presented and stops with the world.
+// source as one voice at its entity's drawn pose — restarting as one voice when the mixer drops it —
+// and it reads the interpolated drawn pose rather than the raw Sim transform; a world's MusicState
+// plays while it is presented and stops with the world.
 // Pure CPU — the null device runs the whole mix path on the main thread, so no hardware is touched.
 
 #include <doctest/doctest.h>
@@ -588,6 +589,49 @@ TEST_CASE("a generator replaced on a live source restarts the voice on the new o
     CHECK(world.Voices().size() == 1);
     CHECK(world.Services.GetAudio().IsGeneratorInUse(*second));
     CHECK_FALSE(world.Services.GetAudio().IsGeneratorInUse(*first));
+}
+
+TEST_CASE("a generator source whose voice the mixer dropped restarts as one voice on its generator")
+{
+    SourceScene world;
+    AudioEngine& engine = world.Services.GetAudio();
+    const auto generator = CreateRef<ConstantGenerator>();
+    world.Spawn(AudioSource{.Playing = true, .Spatial = false, .Generator = generator});
+    world.Frame();
+    REQUIRE(world.Voices().size() == 1);
+    const VoiceHandle dropped = world.Voices().front().Handle;
+
+    // Live generator voices plus sources awaiting reclamation counts every place the engine holds
+    // the generator, since it is the only source in play.
+    usize mostRegistrations = 0;
+    const auto measure = [&]
+    {
+        const vector<VoiceInfo> voices = engine.GetVoiceInfos();
+        const auto live = static_cast<usize>(
+            std::ranges::count_if(voices, [](const VoiceInfo& voice) { return voice.Generator; }));
+        mostRegistrations = std::max(mostRegistrations, live + engine.GetPendingReclaimCount());
+    };
+
+    // Stopped underneath the source, as an eviction does; it stays Playing, so it restarts once the
+    // dropped voice's generator is reclaimed.
+    engine.StopVoice(dropped);
+    measure();
+    const auto restarted = [&]
+    {
+        const vector<VoiceInfo> voices = engine.GetVoiceInfos();
+        return voices.size() == 1 && voices.front().Handle != dropped;
+    };
+    for (int i = 0; i < 16 && !restarted(); ++i)
+    {
+        world.Update();
+        measure();
+        world.Services.GetAudioDevice().Pump(1.0f / 60.0f);
+        measure();
+    }
+    REQUIRE(restarted());
+    CHECK(world.Voices().front().Generator);
+    CHECK(engine.IsGeneratorInUse(*generator));
+    CHECK(mostRegistrations == 1);
 }
 
 TEST_CASE("a buffered generator source toggled within a frame never registers its generator twice")
