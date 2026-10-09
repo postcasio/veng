@@ -2,9 +2,10 @@
 // inspector. The ImGui-drawing path needs a live ImGui frame (a backend), so the
 // cases here cover the picker's testable seam: the AssetHandle-type filter and
 // the write-back ApplyAssetPick performs on a combo selection (asserting the
-// chosen id lands at the leading u64 of the handle). The extraction leaves the
-// entity inspector's field walk unchanged — exercised by walking a descriptor
-// table the same way both inspectors do.
+// chosen id lands at the leading u64 of the handle), and which custom widget a
+// walk resolves — its own override or the shared registry's. The extraction
+// leaves the entity inspector's field walk unchanged — exercised by walking a
+// descriptor table the same way both inspectors do.
 
 #include <doctest/doctest.h>
 
@@ -19,7 +20,9 @@
 #include <Veng/Asset/Texture.h>
 #include <Veng/Reflection/FieldDescriptor.h>
 #include <Veng/Reflection/TypeId.h>
+#include <VengEditor/EditorRegistry.h>
 
+#include <array>
 #include <cstring>
 
 using namespace VengEditor;
@@ -144,4 +147,52 @@ TEST_CASE("FieldWidget: a field walk skips hidden fields and addresses by offset
     REQUIRE(visited.size() == 2);
     CHECK(visited[0] == "Texture");
     CHECK(visited[1] == "Tint");
+}
+
+TEST_CASE("FieldWidget: a walk's override draws only in that walk, ahead of the registry")
+{
+    // Two distinct leaf types: one the host registers (as it does the behaviour-tree picker), one a
+    // document panel supplies for its own walk (as the input-map editor does its action combo).
+    const Veng::TypeId hostType = TypeIdOf<Veng::u32>();
+    const Veng::TypeId docType = TypeIdOf<Veng::u64>();
+
+    int hostCalls = 0;
+    int docCalls = 0;
+    int shadowCalls = 0;
+    Veng::EditorRegistry editors;
+    editors.RegisterFieldWidget(hostType, [&](void*, const Veng::FieldDescriptor&)
+                                { return ++hostCalls > 0; });
+
+    const Veng::FieldDescriptor field{.Name = "F"};
+    {
+        const std::array<FieldWidgetOverride, 2> overrides{{
+            {.Type = docType,
+             .Widget = [&](void*, const Veng::FieldDescriptor&) { return ++docCalls > 0; }},
+            {.Type = hostType,
+             .Widget = [&](void*, const Veng::FieldDescriptor&) { return ++shadowCalls > 0; }},
+        }};
+
+        // Inside the walk, the override claims its type; a claimed registry type is shadowed.
+        const Veng::FieldWidgetFn* doc = FindFieldWidget(overrides, editors, docType);
+        REQUIRE(doc != nullptr);
+        CHECK((*doc)(nullptr, field));
+        const Veng::FieldWidgetFn* shadowed = FindFieldWidget(overrides, editors, hostType);
+        REQUIRE(shadowed != nullptr);
+        CHECK((*shadowed)(nullptr, field));
+
+        // A type no override claims falls through to the registry, unshadowed.
+        const std::array<FieldWidgetOverride, 1> docOnly{{overrides[0]}};
+        const Veng::FieldWidgetFn* host = FindFieldWidget(docOnly, editors, hostType);
+        REQUIRE(host != nullptr);
+        CHECK((*host)(nullptr, field));
+    }
+    CHECK(docCalls == 1);
+    CHECK(shadowCalls == 1);
+    CHECK(hostCalls == 1);
+
+    // Any other walk — an inspector with no overrides, after the supplying panel is gone — never
+    // reaches the override: the shared registry holds nothing for the document's type.
+    CHECK(FindFieldWidget({}, editors, docType) == nullptr);
+    CHECK(editors.FieldWidgetFor(docType) == nullptr);
+    CHECK(FindFieldWidget({}, editors, hostType) == editors.FieldWidgetFor(hostType));
 }

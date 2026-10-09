@@ -273,10 +273,16 @@ across the whole project's one AssetId namespace, not just its own pack.
 - **The editor's `DrawFieldWidget` is a thin hook provider** (`editor/src/FieldWidget.{h,cpp}`,
   taking a `FieldWidgetContext { AssetManager&, const AssetSourceIndex&, const EditorRegistry& }`):
   it builds `Veng::UI::InspectorHooks` supplying the editor-only pieces the engine core can't
-  resolve — the `AssetHandle` asset chip, the `Reference` Entity drop target, and the
-  `EditorRegistry`'s per-`TypeId` custom widgets (the host registers the `BehaviorTreeId` picker,
-  a combo over the tree catalog, ahead of the modules) — and
-  delegates to the engine walk. A bare game passes no hooks, so AssetHandle/Reference fields draw
+  resolve — the `AssetHandle` asset chip, the `Reference` Entity drop target, and the per-`TypeId`
+  custom widgets — and delegates to the engine walk. **A custom widget comes from one of two
+  places, by lifetime.** A widget meaningful in every inspector is registered on the shared
+  `EditorRegistry` (the host registers the `BehaviorTreeId` picker, a combo over the tree catalog,
+  ahead of the modules); a registration is never removed, so it captures only host-lifetime state.
+  A widget meaningful only inside one document — the input-map editor's `ActionId` combo over that
+  map's own actions — is a `FieldWidgetOverride` on the walk's `FieldWidgetContext::Overrides`,
+  consulted ahead of the registry (`FindFieldWidget`) and reaching only that walk's fields. A panel
+  never registers a widget that captures itself: the registration would outlive it and draw in
+  every other inspector. A bare game passes no hooks, so AssetHandle/Reference fields draw
   the engine's read-only fallbacks. The entity inspector and the node-property inspector both call
   `DrawFieldWidget`, so the two share identical widget behavior.
 - **`DrawFieldValue` is the same widget without the row.** `DrawFieldWidget` emits a property-table
@@ -354,7 +360,8 @@ across the whole project's one AssetId namespace, not just its own pack.
   inspector (`DrawFields` over the same `FieldClass::Array` path the project-settings panel uses),
   so the binding table is add/remove/edit-able with **no** bespoke widget code. The one custom
   widget is an `ActionId` name combo scoped to the document's own declared actions (a `u64` leaf
-  has no default scalar widget), so a binding picks its action by name, not a raw id. The file is
+  has no default scalar widget), so a binding picks its action by name, not a raw id; it is the
+  panel's own walk override, so an `ActionId` drawn in any other inspector is untouched by it. The file is
   read and written through the shared JSON walker too (`ReadInputMapDocument` /
   `WriteInputMapDocument`), so every reflected action and binding field round-trips with no panel
   code of its own. Save merge-writes the document, then recooks and hot-reloads behind the stable handle. It exposes a

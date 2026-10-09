@@ -45,20 +45,14 @@ namespace VengEditor
     }
 
     InputMappingEditorPanel::InputMappingEditorPanel(AssetId id, path sourcePath,
-                                                     AssetManager& assets, EditorRegistry& editors,
+                                                     AssetManager& assets,
+                                                     const EditorRegistry& editors,
                                                      const AssetSourceIndex& sources,
                                                      const Input& input, CookDriver cook)
         : m_Id(id), m_SourcePath(std::move(sourcePath)), m_Assets(assets), m_Sources(sources),
           m_Editors(editors), m_Input(input), m_Cook(std::move(cook))
     {
         m_Title = fmt::format("Input Map: {}", m_SourcePath.filename().string());
-
-        // The one custom widget: an ActionId is a u64 leaf with no default scalar widget, so
-        // register a name combo scoped to this document's declared actions. Registered on the
-        // shared EditorRegistry keyed by TypeId, so it draws every ActionId field this panel walks.
-        editors.RegisterFieldWidget(TypeIdOf<ActionId>(),
-                                    [this](void* fieldPtr, const FieldDescriptor&)
-                                    { return DrawActionCombo(fieldPtr); });
 
         LoadDocument();
         // Cook once on open so the asset is addressable behind the shadow mount; this reads the
@@ -153,7 +147,7 @@ namespace VengEditor
             });
     }
 
-    bool InputMappingEditorPanel::DrawActionCombo(void* fieldPtr)
+    bool InputMappingEditorPanel::DrawActionCombo(void* fieldPtr) const
     {
         ActionId current{};
         std::memcpy(&current, fieldPtr, sizeof(current));
@@ -190,18 +184,26 @@ namespace VengEditor
         }
 
         const vector<string_view> items(labels.begin(), labels.end());
-        if (UI::Combo("##actionid", index, items))
+        if (!UI::Combo("##actionid", index, items))
         {
-            ActionId chosen = ActionId::Null;
-            if (index >= 1 && static_cast<usize>(index) <= m_Doc.Actions.size())
-            {
-                chosen = m_Doc.Actions[static_cast<usize>(index) - 1].Id;
-            }
-            std::memcpy(fieldPtr, &chosen, sizeof(chosen));
-            m_Dirty = true;
-            return true;
+            return false;
         }
-        return false;
+        // Re-picking the unknown row keeps the id it names.
+        ActionId chosen = current;
+        if (index == 0)
+        {
+            chosen = ActionId::Null;
+        }
+        else if (static_cast<usize>(index) <= m_Doc.Actions.size())
+        {
+            chosen = m_Doc.Actions[static_cast<usize>(index) - 1].Id;
+        }
+        if (chosen == current)
+        {
+            return false;
+        }
+        std::memcpy(fieldPtr, &chosen, sizeof(chosen));
+        return true;
     }
 
     void InputMappingEditorPanel::DrawPreview()
@@ -264,22 +266,24 @@ namespace VengEditor
         const TypeRegistry& types = m_Assets.GetTypeRegistry();
         const TypeInfo& info = types.Info(types.IdOf<InputMapData>());
 
-        // Reflection draws both arrays: the registered ActionId combo makes each binding's action
+        // Reflection draws both arrays: the ActionId combo makes each binding's action
         // readable/pickable by name, the VE_ENUM combos handle device/kind/axis, and the
-        // FieldClass::Array add/remove widget makes the table editable.
+        // FieldClass::Array add/remove widget makes the table editable. The combo names this
+        // document's actions, so it is this walk's override rather than a registry widget, which
+        // would draw in every inspector and outlive the panel.
+        const std::array<FieldWidgetOverride, 1> widgets{{
+            {.Type = TypeIdOf<ActionId>(),
+             .Widget = [this](void* fieldPtr, const FieldDescriptor&)
+             { return DrawActionCombo(fieldPtr); }},
+        }};
         const FieldWidgetContext ctx{
-            .Assets = m_Assets, .Sources = m_Sources, .Editors = m_Editors};
-        bool changed = false;
+            .Assets = m_Assets, .Sources = m_Sources, .Editors = m_Editors, .Overrides = widgets};
         if (const auto table = UI::PropertyTable("##inputmap"))
         {
-            changed = DrawFields(&m_Doc, info.Fields, ctx);
-        }
-
-        if (changed)
-        {
-            // The ActionId combo marks itself dirty inline: its void widget signature carries no
-            // change signal to this walk.
-            m_Dirty = true;
+            if (DrawFields(&m_Doc, info.Fields, ctx))
+            {
+                m_Dirty = true;
+            }
         }
 
         UI::Separator();

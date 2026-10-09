@@ -419,7 +419,7 @@ namespace VengEditor
         {
         public:
             InputMapEditorFactory(const AssetSourceIndex& index, AssetManager& assets,
-                                  EditorRegistry& editors, Input& input,
+                                  const EditorRegistry& editors, Input& input,
                                   VengEditor::CookDriver cook)
                 : m_Index(index), m_Assets(assets), m_Editors(editors), m_Input(input),
                   m_Cook(std::move(cook))
@@ -444,7 +444,7 @@ namespace VengEditor
         private:
             const AssetSourceIndex& m_Index;
             AssetManager& m_Assets;
-            EditorRegistry& m_Editors;
+            const EditorRegistry& m_Editors;
             Input& m_Input;
             VengEditor::CookDriver m_Cook;
         };

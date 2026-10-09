@@ -111,6 +111,9 @@ namespace Veng
 
         /// @brief Registers a custom inspector widget for a type, overriding the
         /// built-in widget selected from the field's FieldClass.
+        ///
+        /// A registration lives as long as the registry and draws in every inspector, so the
+        /// widget may capture only state that outlives the registry. Nothing unregisters it.
         /// @param type   TypeId the widget handles.
         /// @param widget The widget function; replaces any previous registration.
         void RegisterFieldWidget(TypeId type, FieldWidgetFn widget)

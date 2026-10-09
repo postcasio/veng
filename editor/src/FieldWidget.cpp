@@ -14,6 +14,7 @@
 #include <Veng/UI/UI.h>
 #include <VengEditor/EditorRegistry.h>
 
+#include <algorithm>
 #include <cstring>
 
 namespace VengEditor
@@ -24,6 +25,13 @@ namespace VengEditor
     {
         const u64 value = chosen.Value;
         std::memcpy(fieldPtr, &value, sizeof(value));
+    }
+
+    const FieldWidgetFn* FindFieldWidget(std::span<const FieldWidgetOverride> overrides,
+                                         const EditorRegistry& editors, TypeId type)
+    {
+        const auto it = std::ranges::find(overrides, type, &FieldWidgetOverride::Type);
+        return it != overrides.end() ? &it->Widget : editors.FieldWidgetFor(type);
     }
 
     void RegisterBehaviorTreePicker(EditorRegistry& editors, const BehaviorTreeRegistry& trees)
@@ -176,9 +184,10 @@ namespace VengEditor
         }
 
         // Builds the engine inspector's hooks from the editor's dependency bundle: the asset chip
-        // for AssetHandle fields, the entity drop target for Reference fields, and the
-        // EditorRegistry's per-type custom widgets. The lambdas capture `ctx` by reference — the
-        // hooks are consumed synchronously within the DrawFields/DrawFieldWidget call.
+        // for AssetHandle fields, the entity drop target for Reference fields, and the custom
+        // widgets — the context's per-walk overrides ahead of the EditorRegistry's. The lambdas
+        // capture `ctx` by reference — the hooks are consumed synchronously within the
+        // DrawFields/DrawFieldWidget call.
         UI::InspectorHooks MakeHooks(const FieldWidgetContext& ctx)
         {
             UI::InspectorHooks hooks;
@@ -194,7 +203,8 @@ namespace VengEditor
             hooks.CustomWidget = [&ctx](void* fieldPtr, const FieldDescriptor& field,
                                         string_view displayName) -> optional<bool>
             {
-                const FieldWidgetFn* custom = ctx.Editors.FieldWidgetFor(field.Type);
+                const FieldWidgetFn* custom =
+                    FindFieldWidget(ctx.Overrides, ctx.Editors, field.Type);
                 if (custom == nullptr)
                 {
                     return std::nullopt;

@@ -3,6 +3,7 @@
 #include <Veng/Reflection/FieldDescriptor.h>
 #include <Veng/Asset/AssetId.h>
 #include <Veng/UI/Inspector.h>
+#include <VengEditor/EditorRegistry.h>
 
 #include <span>
 
@@ -36,6 +37,29 @@ namespace VengEditor
     void RegisterBehaviorTreePicker(Veng::EditorRegistry& editors,
                                     const Veng::BehaviorTreeRegistry& trees);
 
+    /// @brief A custom widget one inspector walk draws for a type, ahead of the registry's.
+    ///
+    /// The scoped counterpart of `EditorRegistry::RegisterFieldWidget`: a registry widget lives as
+    /// long as the registry and draws in every inspector, so it may capture only host-lifetime
+    /// state. A widget whose meaning comes from one document — a name combo over that document's own
+    /// declarations — is supplied per walk instead, and reaches only the fields that walk draws.
+    struct FieldWidgetOverride
+    {
+        /// @brief TypeId of the fields the widget draws.
+        Veng::TypeId Type = Veng::InvalidTypeId;
+        /// @brief The widget; returns whether the edit changed the field.
+        Veng::FieldWidgetFn Widget;
+    };
+
+    /// @brief Resolves the custom widget for @p type: an override first, then the registry's.
+    /// @param overrides The walk's own overrides; the first whose Type matches wins.
+    /// @param editors   The registry consulted when no override claims the type.
+    /// @param type      The field's TypeId.
+    /// @return The widget to draw, or nullptr when neither supplies one.
+    [[nodiscard]] const Veng::FieldWidgetFn*
+    FindFieldWidget(std::span<const FieldWidgetOverride> overrides,
+                    const Veng::EditorRegistry& editors, Veng::TypeId type);
+
     /// @brief Dependencies a field widget needs beyond the field bytes themselves.
     struct FieldWidgetContext
     {
@@ -59,14 +83,19 @@ namespace VengEditor
         /// reflection cannot see (a per-frame renderer fact, a host capability) supplies it here
         /// rather than hand-iterating the field list.
         Veng::UI::FieldGateFn FieldEnabled;
+        /// @brief Widgets this walk draws ahead of the registry's, for this walk alone.
+        ///
+        /// Consulted before `Editors` (see FindFieldWidget) at every level of the walk, nested
+        /// structs and array elements included. The span must outlive the draw call.
+        std::span<const FieldWidgetOverride> Overrides;
     };
 
     /// @brief Draws one field as a property-table row: label in column 0, value in column 1.
     ///
     /// Emits a `UI::PropertyLabel(displayName)` then a label-less value widget filling the
-    /// value column, so the caller must be inside a `UI::PropertyTable` scope. Applies a
-    /// RegisterFieldWidget override when one is registered for the field's TypeId; otherwise
-    /// uses the per-FieldClass built-in widget. A nested struct flattens into further indented
+    /// value column, so the caller must be inside a `UI::PropertyTable` scope. Applies the
+    /// context's own override for the field's TypeId, else a RegisterFieldWidget registration,
+    /// else the per-FieldClass built-in widget. A nested struct flattens into further indented
     /// rows of the same table (no nested table). Respects `ReadOnly` (disabled or read-only
     /// value), `Hidden` (skipped), and `Tooltip`. Both the entity inspector and the
     /// node-property inspector call this function, so they share identical widget behavior.

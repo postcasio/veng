@@ -73,13 +73,14 @@ namespace VengEditor
         /// @param sourcePath The .inputmap.json source the panel reads, writes, and recooks.
         /// @param assets     Asset manager supplying the TypeRegistry the inspector walks and the
         ///                   hot-reload handle.
-        /// @param editors    Editor registry the ActionId field widget registers into.
+        /// @param editors    Editor registry whose custom widgets the inspector draws; read only.
         /// @param sources    Manifest source index the inspector's asset pickers read.
         /// @param input      The editor host's always-fed input snapshot the preview resolves over.
         /// @param cook       Cook-on-demand driver bound to EditorHost::RequestCook.
         InputMappingEditorPanel(Veng::AssetId id, Veng::path sourcePath, Veng::AssetManager& assets,
-                                Veng::EditorRegistry& editors, const AssetSourceIndex& sources,
-                                const Veng::Input& input, CookDriver cook);
+                                const Veng::EditorRegistry& editors,
+                                const AssetSourceIndex& sources, const Veng::Input& input,
+                                CookDriver cook);
         ~InputMappingEditorPanel() override;
 
         [[nodiscard]] Veng::string_view GetTitle() const override { return m_Title; }
@@ -115,9 +116,11 @@ namespace VengEditor
         ///
         /// The one custom field widget: an ActionId is a u64 leaf with no default scalar widget, so
         /// the generic path draws it disabled. This combo picks an action by name from m_Doc.Actions.
+        /// It is supplied to the panel's own inspector walk as a FieldWidgetOverride, never
+        /// registered on the shared EditorRegistry, so it draws only this document's fields.
         /// @param fieldPtr Pointer to the ActionId field bytes.
         /// @return True when the pick changed the field.
-        bool DrawActionCombo(void* fieldPtr);
+        bool DrawActionCombo(void* fieldPtr) const;
 
         Veng::AssetId m_Id;
         Veng::path m_SourcePath;
