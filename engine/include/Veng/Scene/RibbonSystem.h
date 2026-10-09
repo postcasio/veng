@@ -17,7 +17,8 @@ namespace Veng
     /// by @p delta and those at or past the trail's Lifetime are dropped. A new sample leaves with
     /// the trail's EmitVelocity carried into world space by the head's rotation (not its scale),
     /// plus InheritVelocity of the emitter's velocity — the head's travel since the last advance
-    /// over @p delta, zero on the first advance after a restart. A trail whose samples move drops
+    /// over @p delta, zero on the first advance after a restart — or the trail's EmitterVelocity
+    /// when its owner supplied one, which this advance consumes. A trail whose samples move drops
     /// any sample a newer one has overtaken — the chain is joined in emission order, so a faster
     /// sample passing a slower one would double it back on itself. While
     /// the trail is Emitting, @p head is recorded as a new sample when the trail holds none or when

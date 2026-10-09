@@ -86,9 +86,16 @@ namespace Veng
     void AdvanceTrail(Trail& trail, const mat4& head, const f32 delta)
     {
         const vec3 position(head[3]);
-        const vec3 emitter = trail.HasPreviousHead && delta > 0.0f
-                                 ? (position - trail.PreviousHead) / delta
-                                 : vec3(0.0f);
+        vec3 emitter(0.0f);
+        if (trail.HasEmitterVelocity)
+        {
+            emitter = trail.EmitterVelocity;
+        }
+        else if (trail.HasPreviousHead && delta > 0.0f)
+        {
+            emitter = (position - trail.PreviousHead) / delta;
+        }
+        trail.HasEmitterVelocity = false;
         trail.PreviousHead = position;
         trail.HasPreviousHead = true;
 

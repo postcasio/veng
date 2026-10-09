@@ -404,10 +404,12 @@ extern "C"
 /// Outline, Softness, EmitVelocity, InheritVelocity, Drag and its runtime head, TrailSample grows
 /// Velocity, and RestartTrail is new. A module spawns and writes trails, so a stale module lays both
 /// out short.
+/// Version 95 lets a trail's owner supply its emitter's velocity: Trail grows EmitterVelocity and
+/// HasEmitterVelocity. A module spawns and writes trails, so a stale module lays Trail out short.
 /// The loader compares host vs. module values before calling VengModuleRegister.
 /// Guarded with #ifndef so a target can force a mismatch via -D for testing.
 #ifndef VENG_MODULE_ABI_VERSION
-#define VENG_MODULE_ABI_VERSION 94u
+#define VENG_MODULE_ABI_VERSION 95u
 #endif
 
 /// @brief Emits the VengModuleAbiVersion() export; place in exactly one TU per module.

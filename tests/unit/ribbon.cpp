@@ -320,6 +320,33 @@ TEST_CASE("A sample inherits its emitter's velocity, and a restart forgets where
     CHECK(trail.Samples.front().Velocity == vec3(0.0f));
 }
 
+TEST_CASE("A supplied emitter velocity holds a stepped emitter's samples to one, for one advance")
+{
+    // The head moves two units every other frame: one unit a frame on average, read as 0 and 2.
+    // Fired back at twice the emitter's speed, so the samples stream out behind it.
+    const vec3 velocity(1.0f / Frame, 0.0f, 0.0f);
+    const vec3 exhaust(-2.0f / Frame, 0.0f, 0.0f);
+    Trail trail{.Lifetime = 10.0f, .EmitVelocity = exhaust, .InheritVelocity = 1.0f};
+    f32 spread = 0.0f;
+    for (u32 frame = 0; frame <= 30; ++frame)
+    {
+        trail.EmitterVelocity = velocity;
+        trail.HasEmitterVelocity = true;
+        AdvanceTrail(trail, vec3(static_cast<f32>(frame & ~1U), 0.0f, 0.0f), Frame);
+    }
+    for (const TrailSample& sample : trail.Samples)
+    {
+        spread = std::max(spread, glm::distance(sample.Velocity, velocity + exhaust));
+    }
+    CHECK(trail.Samples.size() > 10);
+    CHECK(spread < 1e-3f);
+    CHECK_FALSE(trail.HasEmitterVelocity);
+
+    // Unsupplied, the next advance reads the head's own travel again.
+    AdvanceTrail(trail, vec3(40.0f, 0.0f, 0.0f), Frame);
+    CHECK(trail.Samples.back().Velocity.x == doctest::Approx(8.0f / Frame));
+}
+
 TEST_CASE("A faster sample sweeps up the slower ones it overtakes, so the trail never doubles back")
 {
     // The exhaust speeds up and the emitter accelerates after it: each new sample is faster than

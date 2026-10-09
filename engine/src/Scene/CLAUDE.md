@@ -268,7 +268,9 @@ carry HDR colour that feeds bloom, and choose `Additive` (order-free light) or a
   **Samples may be fired rather than dropped**: a new one leaves with `EmitVelocity`
   (along the entity's local axes) plus `InheritVelocity` of the emitter's own velocity, and every
   sample's velocity decays by `Drag`, integrated exactly so its path does not depend on the frame
-  rate. The chain is joined in emission order, so a faster sample passing a slower one would double
+  rate. The emitter's velocity is the head's travel since the last advance, unless the owner
+  supplies it for the advance (`EmitterVelocity`): an emitter stepped on a fixed tick under a faster
+  frame rate moves on some frames and not others, and inheriting that reading scatters the trail. The chain is joined in emission order, so a faster sample passing a slower one would double
   it back on itself; `AdvanceTrail` drops a sample a newer one has overtaken, as faster exhaust sweeps
   up slower exhaust ahead of it. A trail whose samples do not move keeps every one. `AdvanceTrail` takes the head's world transform for this; its position overload records the
   world's axes. **`AttachTrail(scene, entity, trail)`** adds or replaces one with its samples

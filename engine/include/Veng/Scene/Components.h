@@ -1442,7 +1442,8 @@ namespace Veng
     /// EmitVelocity (along the entity's local axes) plus InheritVelocity of the emitter's own
     /// velocity, and every sample's velocity decays by Drag: so a jet stays straight out of its
     /// nozzle while it is fast, and slows to rest into an ordinary trail. With all three zero, as
-    /// they default, a sample stays where it was recorded.
+    /// they default, a sample stays where it was recorded. The emitter's velocity is read from the
+    /// head's motion between advances unless its owner supplies it (EmitterVelocity).
     struct Trail
     {
         /// @brief Seconds a sample lives; a trail with none draws nothing.
@@ -1494,6 +1495,15 @@ namespace Veng
         vec3 PreviousHead{0.0f};
         /// @brief Whether PreviousHead holds an advance's head. Runtime-only.
         bool HasPreviousHead = false;
+        /// @brief The emitter's world velocity, supplied by its owner for the next advance only.
+        ///        Runtime-only.
+        ///
+        /// Read in place of the head's motion between advances, which is exact only when the head
+        /// moves every frame: an emitter stepped on a fixed tick moves on some frames and not
+        /// others, so its motion reads as zero on one frame and double on the next.
+        vec3 EmitterVelocity{0.0f};
+        /// @brief Whether EmitterVelocity is supplied; the next advance clears it. Runtime-only.
+        bool HasEmitterVelocity = false;
     };
 
     /// @brief Where in the frame a RibbonPath draws.
